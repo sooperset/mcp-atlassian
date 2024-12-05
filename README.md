@@ -1,6 +1,6 @@
 # mcp-atlassian
 
-MCP server to interact with Atlassian products (currently supporting Confluence). This integration is designed specifically for Atlassian Cloud instances and does not support Atlassian Server or Data Center deployments.
+MCP server to interact with Atlassian products. This integration is designed specifically for Atlassian Cloud instances and does not support Atlassian Server or Data Center deployments.
 
 
 ## Features
