@@ -1,195 +1,94 @@
-# mcp-atlassian
+# MCP Atlassian
 
-MCP server to interact with Atlassian products. This integration is designed specifically for Atlassian Cloud instances and does not support Atlassian Server or Data Center deployments.
-
+Model Context Protocol (MCP) server for Atlassian Cloud products (Confluence and Jira). This integration is designed specifically for Atlassian Cloud instances and does not support Atlassian Server or Data Center deployments.
 
 ## Features
 
+- Search and read Confluence spaces/pages
+- Get Confluence page comments
+- Search and read Jira issues
+- Get project issues and metadata
+
+## API
+
+### Resources
+
+- `confluence://{space_key}`: Access Confluence spaces and pages
+- `confluence://{space_key}/pages/{title}`: Access specific Confluence pages
+- `jira://{project_key}`: Access Jira project and its issues
+- `jira://{project_key}/issues/{issue_key}`: Access specific Jira issues
+
 ### Tools
 
-- search_confluence: Search Confluence content using natural language
-- get_page_content: Get content of a specific Confluence page
-- get_page_comments: Get comments for a specific page
+#### Confluence Tools
 
-### Example prompts
+- **confluence.search**
+  - Search Confluence content using CQL
+  - Inputs:
+    - `query` (string): CQL query string
+    - `limit` (number, optional): Results limit (1-50, default: 10)
 
-- "Search for all documentation related to authentication and summarize the key points"
-- "Get the content of the onboarding guide and create a checklist from it"
-- "Find all comments on the project requirements page and highlight any concerns raised"
+- **confluence.get_page**
+  - Get content of a specific Confluence page
+  - Inputs:
+    - `page_id` (string): Confluence page ID
+    - `include_metadata` (boolean, optional): Include page metadata (default: true)
 
-## Installation
+- **confluence.get_comments**
+  - Get comments for a specific Confluence page
+  - Input: `page_id` (string)
 
-```bash
-# Using pip
-pip install mcp-atlassian
+#### Jira Tools
 
-# Or using uv (recommended)
-uv pip install mcp-atlassian
-```
+- **jira.get_issue**
+  - Get details of a specific Jira issue
+  - Inputs:
+    - `issue_key` (string): Jira issue key (e.g., 'PROJ-123')
+    - `expand` (string, optional): Fields to expand
 
-## Setup
+- **jira.search**
+  - Search Jira issues using JQL
+  - Inputs:
+    - `jql` (string): JQL query string
+    - `fields` (string, optional): Comma-separated fields (default: "*all")
+    - `limit` (number, optional): Results limit (1-50, default: 10)
 
-### Requirements
+- **jira.get_project_issues**
+  - Get all issues for a specific Jira project
+  - Inputs:
+    - `project_key` (string): Project key
+    - `limit` (number, optional): Results limit (1-50, default: 10)
 
-Create a `.env` file with:
-```
-CONFLUENCE_CLOUD_URL=your_confluence_url
-CONFLUENCE_CLOUD_USER=your_username
-CONFLUENCE_CLOUD_TOKEN=your_api_token
-```
+## Usage with Claude Desktop
 
-To get an API token:
-1. Log in to https://id.atlassian.com/manage-profile/security/api-tokens
-2. Click Create API token
-3. Enter a memorable Label for your token and click Create
-4. Click Copy to clipboard to save your token securely
+1. Get API tokens from: https://id.atlassian.com/manage-profile/security/api-tokens
 
-### Claude Desktop Configuration
-
-Location:
-- MacOS: `~/Library/Application\ Support/Claude/claude_desktop_config.json`
-- Windows: `%APPDATA%/Claude/claude_desktop_config.json`
-
-### Configuration
-
-<details>
-  <summary>Development/Unpublished Servers Configuration</summary>
-  
+2. Add to your `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
     "mcp-atlassian": {
       "command": "uv",
-      "args": [
-        "--directory",
-        "<dir_to>/mcp-atlassian",
-        "run",
-        "mcp-atlassian"
-      ],
+      "args": ["mcp-atlassian"],
       "env": {
-        "CONFLUENCE_CLOUD_URL": "your_confluence_url",
-        "CONFLUENCE_CLOUD_USER": "your_username",
-        "CONFLUENCE_CLOUD_TOKEN": "your_api_token"
+        "CONFLUENCE_URL": "your_confluence_url",
+        "CONFLUENCE_USERNAME": "your_username",
+        "CONFLUENCE_API_TOKEN": "your_api_token",
+        "JIRA_URL": "your_jira_url",
+        "JIRA_USERNAME": "your_username",
+        "JIRA_API_TOKEN": "your_api_token"
       }
     }
   }
 }
 ```
 
-</details>
+## Security
 
-<details>
-  <summary>Published Servers Configuration</summary>
-  
-```json
-{
-  "mcpServers": {
-    "mcp-atlassian": {
-      "command": "uvx",
-      "args": [
-        "mcp-atlassian"
-      ],
-      "env": {
-        "CONFLUENCE_CLOUD_URL": "your_confluence_url",
-        "CONFLUENCE_CLOUD_USER": "your_username",
-        "CONFLUENCE_CLOUD_TOKEN": "your_api_token"
-      }
-    }
-  }
-}
-```
-
-</details>
-
-## Development
-
-### Building
-
-```bash
-# Install dependencies
-uv sync
-
-# Build package
-uv build
-
-# Publish to PyPI
-uv publish
-```
-
-### Debugging
-
-Use MCP Inspector:
-```bash
-npx @modelcontextprotocol/inspector mcp-atlassian
-```
-
-View logs:
-```bash
-tail -n 20 -f ~/Library/Logs/Claude/mcp-server-mcp-atlassian.log
-```
-
-## Todo
-
-- [ ] Jira integration
-
-### Configuration
-
-<details>
-  <summary>Development/Unpublished Servers Configuration</summary>
-  
-```json
-{
-  "mcpServers": {
-    "mcp-atlassian": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "<dir_to>/mcp-atlassian",
-        "run",
-        "mcp-atlassian"
-      ],
-      "env": {
-        "CONFLUENCE_CLOUD_URL": "your_confluence_url",
-        "CONFLUENCE_CLOUD_USER": "your_username",
-        "CONFLUENCE_CLOUD_TOKEN": "your_api_token"
-      }
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-  <summary>Published Servers Configuration</summary>
-  
-```json
-{
-  "mcpServers": {
-    "mcp-atlassian": {
-      "command": "uvx",
-      "args": [
-        "mcp-atlassian"
-      ],
-      "env": {
-        "CONFLUENCE_CLOUD_URL": "your_confluence_url",
-        "CONFLUENCE_CLOUD_USER": "your_username",
-        "CONFLUENCE_CLOUD_TOKEN": "your_api_token"
-      }
-    }
-  }
-}
-```
-
-</details>
-
-## Legal & Security
-
-This is not an official Atlassian product. Licensed under MIT - see [LICENSE](LICENSE) file.
-
-### Security
 - Never share API tokens
 - Keep .env files secure and private
 - See [SECURITY.md](SECURITY.md) for best practices
 
-For security issues, please email [security contact].
+## License
+
+Licensed under MIT - see [LICENSE](LICENSE) file. This is not an official Atlassian product.

@@ -22,43 +22,90 @@ app = Server("mcp-atlassian")
 
 @app.list_resources()
 async def list_resources() -> list[Resource]:
-    """List available Confluence spaces as resources."""
+    """List available Confluence spaces and Jira projects as resources."""
+    resources = []
+
+    # Add Confluence spaces
     spaces = confluence_fetcher.get_spaces()
-    return [
-        Resource(
-            uri=AnyUrl(f"confluence://{space['key']}"),
-            name=f"Confluence Space: {space['name']}",
-            mimeType="text/plain",
-            description=space.get("description", {}).get("plain", {}).get("value", ""),
+    resources.extend(
+        [
+            Resource(
+                uri=AnyUrl(f"confluence://{space['key']}"),
+                name=f"Confluence Space: {space['name']}",
+                mimeType="text/plain",
+                description=space.get("description", {}).get("plain", {}).get("value", ""),
+            )
+            for space in spaces
+        ]
+    )
+
+    # Add Jira projects
+    try:
+        projects = jira_fetcher.jira.projects()
+        resources.extend(
+            [
+                Resource(
+                    uri=AnyUrl(f"jira://{project['key']}"),
+                    name=f"Jira Project: {project['name']}",
+                    mimeType="text/plain",
+                    description=project.get("description", ""),
+                )
+                for project in projects
+            ]
         )
-        for space in spaces
-    ]
+    except Exception as e:
+        logger.error(f"Error fetching Jira projects: {str(e)}")
+
+    return resources
 
 
 @app.read_resource()
 async def read_resource(uri: AnyUrl) -> str:
-    """Read content from Confluence."""
-    parts = str(uri).replace("confluence://", "").split("/")
+    """Read content from Confluence or Jira."""
+    uri_str = str(uri)
 
-    # Handle space listing
-    if len(parts) == 1:
-        space_key = parts[0]
-        documents = confluence_fetcher.get_space_pages(space_key)
-        content = []
-        for doc in documents:
-            content.append(f"# {doc.metadata['title']}\n\n{doc.page_content}\n---")
-        return "\n\n".join(content)
+    # Handle Confluence resources
+    if uri_str.startswith("confluence://"):
+        parts = uri_str.replace("confluence://", "").split("/")
 
-    # Handle specific page
-    elif len(parts) >= 3 and parts[1] == "pages":
-        space_key = parts[0]
-        title = parts[2]
-        doc = confluence_fetcher.get_page_by_title(space_key, title)
+        # Handle space listing
+        if len(parts) == 1:
+            space_key = parts[0]
+            documents = confluence_fetcher.get_space_pages(space_key)
+            content = []
+            for doc in documents:
+                content.append(f"# {doc.metadata['title']}\n\n{doc.page_content}\n---")
+            return "\n\n".join(content)
 
-        if not doc:
-            raise ValueError(f"Page not found: {title}")
+        # Handle specific page
+        elif len(parts) >= 3 and parts[1] == "pages":
+            space_key = parts[0]
+            title = parts[2]
+            doc = confluence_fetcher.get_page_by_title(space_key, title)
 
-        return doc.page_content
+            if not doc:
+                raise ValueError(f"Page not found: {title}")
+
+            return doc.page_content
+
+    # Handle Jira resources
+    elif uri_str.startswith("jira://"):
+        parts = uri_str.replace("jira://", "").split("/")
+
+        # Handle project listing
+        if len(parts) == 1:
+            project_key = parts[0]
+            issues = jira_fetcher.get_project_issues(project_key)
+            content = []
+            for issue in issues:
+                content.append(f"# {issue.metadata['key']}: {issue.metadata['title']}\n\n{issue.page_content}\n---")
+            return "\n\n".join(content)
+
+        # Handle specific issue
+        elif len(parts) >= 3 and parts[1] == "issues":
+            issue_key = parts[2]
+            issue = jira_fetcher.get_issue(issue_key)
+            return issue.page_content
 
     raise ValueError(f"Invalid resource URI: {uri}")
 
