@@ -12,13 +12,36 @@ logger = logging.getLogger("mcp-atlassian")
 class TextPreprocessor:
     """Handles text preprocessing for Confluence and Jira content."""
 
-    def __init__(self, base_url: str):
+    def __init__(self, base_url: str, confluence_client=None):
         self.base_url = base_url.rstrip("/")
+        self.confluence_client = confluence_client
 
     def process_html_content(self, html_content: str, space_key: str = "") -> Tuple[str, str]:
         """Process HTML content to replace user refs and page links."""
         try:
             soup = BeautifulSoup(html_content, "html.parser")
+
+            # Process user mentions
+            user_mentions = soup.find_all("ri:user")
+            for user in user_mentions:
+                account_id = user.get("ri:account-id")
+                if account_id and self.confluence_client:
+                    try:
+                        # Fetch user info using the Confluence API
+                        user_info = self.confluence_client.get_user_details_by_accountid(account_id)
+                        display_name = user_info.get("displayName", account_id)
+
+                        # Replace the entire ac:link structure with @mention
+                        link_tag = user.find_parent("ac:link")
+                        if link_tag:
+                            link_tag.replace_with(f"@{display_name}")
+                    except Exception as e:
+                        logger.warning(f"Could not fetch user info for {account_id}: {e}")
+                        # Fallback: just use the account ID
+                        link_tag = user.find_parent("ac:link")
+                        if link_tag:
+                            link_tag.replace_with(f"@user_{account_id}")
+
             processed_html = str(soup)
             processed_markdown = md(processed_html)
 

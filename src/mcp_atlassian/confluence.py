@@ -34,7 +34,7 @@ class ConfluenceFetcher:
             password=self.config.api_token,  # API token is used as password
             cloud=True,
         )
-        self.preprocessor = TextPreprocessor(self.config.url)
+        self.preprocessor = TextPreprocessor(self.config.url, self.confluence)
 
     def _process_html_content(self, html_content: str, space_key: str) -> tuple[str, str]:
         return self.preprocessor.process_html_content(html_content, space_key)
