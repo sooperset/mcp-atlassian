@@ -244,8 +244,8 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             comments = confluence_fetcher.get_page_comments(arguments["page_id"])
             formatted_comments = [
                 {
-                    "author": comment.metadata["author"],
-                    "created": comment.metadata["created"],
+                    "author": comment.metadata["author_name"],
+                    "created": comment.metadata["last_modified"],
                     "content": comment.page_content,
                 }
                 for comment in comments
