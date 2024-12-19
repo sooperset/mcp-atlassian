@@ -26,18 +26,20 @@ async def list_resources() -> list[Resource]:
     resources = []
 
     # Add Confluence spaces
-    spaces = confluence_fetcher.get_spaces()
-    resources.extend(
-        [
-            Resource(
-                uri=AnyUrl(f"confluence://{space['key']}"),
-                name=f"Confluence Space: {space['name']}",
-                mimeType="text/plain",
-                description=space.get("description", {}).get("plain", {}).get("value", ""),
-            )
-            for space in spaces
-        ]
-    )
+    spaces_response = confluence_fetcher.get_spaces()
+    if isinstance(spaces_response, dict) and "results" in spaces_response:
+        spaces = spaces_response["results"]
+        resources.extend(
+            [
+                Resource(
+                    uri=AnyUrl(f"confluence://{space['key']}"),
+                    name=f"Confluence Space: {space['name']}",
+                    mimeType="text/plain",
+                    description=space.get("description", {}).get("plain", {}).get("value", ""),
+                )
+                for space in spaces
+            ]
+        )
 
     # Add Jira projects
     try:
