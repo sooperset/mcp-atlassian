@@ -32,6 +32,8 @@ Model Context Protocol (MCP) server for Atlassian Cloud products (Confluence and
   - Inputs:
     - `query` (string): CQL query string
     - `limit` (number, optional): Results limit (1-50, default: 10)
+  - Returns:
+    - Array of search results with page_id, title, space, url, last_modified, type, and excerpt
 
 - **confluence_get_page**
   - Get content of a specific Confluence page

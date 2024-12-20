@@ -154,20 +154,26 @@ class ConfluenceFetcher:
 
         return comment_documents
 
-    def search(self, cql: str, limit: int = 10, clean_html: bool = True) -> list[Document]:
+    def search(self, cql: str, limit: int = 10) -> list[Document]:
         """Search content using Confluence Query Language (CQL)."""
         try:
-            results = self.confluence.cql(cql=cql, limit=limit, expand="body.storage,version")
+            results = self.confluence.cql(cql=cql, limit=limit)
             documents = []
+
             for result in results.get("results", []):
                 content = result.get("content", {})
                 if content.get("type") == "page":
-                    try:
-                        doc = self.get_page_content(content["id"], clean_html)
-                        documents.append(doc)
-                    except Exception as e:
-                        logger.error(f"Error processing search result {content['id']}: {str(e)}")
-                        continue
+                    metadata = {
+                        "page_id": content["id"],
+                        "title": result["title"],
+                        "space": result.get("resultGlobalContainer", {}).get("title"),
+                        "url": f"{self.config.url}{result['url']}",
+                        "last_modified": result.get("lastModified"),
+                        "type": content["type"],
+                    }
+
+                    # Use the excerpt as page_content since it's already a good summary
+                    documents.append(Document(page_content=result.get("excerpt", ""), metadata=metadata))
 
             return documents
         except Exception as e:

@@ -222,9 +222,11 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 {
                     "page_id": doc.metadata["page_id"],
                     "title": doc.metadata["title"],
-                    "space": doc.metadata.get("space_key"),
-                    "excerpt": doc.page_content[:500] + "...",
-                    "url": doc.metadata.get("url", ""),
+                    "space": doc.metadata["space"],
+                    "url": doc.metadata["url"],
+                    "last_modified": doc.metadata["last_modified"],
+                    "type": doc.metadata["type"],
+                    "excerpt": doc.page_content,
                 }
                 for doc in documents
             ]

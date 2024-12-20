@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.7] - 2024-03-20
+
+### Changed
+- Optimized Confluence search performance by removing individual page fetching
+- Updated search results format to use pre-generated excerpts
+
 ## [0.1.6] - 2024-03-19
 
 ### Changed
