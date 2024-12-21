@@ -48,6 +48,52 @@ class JiraFetcher:
 
         return self.preprocessor.clean_jira_text(text)
 
+    def create_issue(self, project_key: str, fields: dict) -> Document:
+        """
+        Create a new Jira issue.
+
+        Args:
+            fields: Dictionary of fields to create the issue. It must adhere with Jira API documentation.
+
+        Returns:
+            Document containing created issue content and metadata
+        """
+        try:
+            fields["project"] = {"key": project_key}
+            issue = self.jira.create_issue(fields)
+            return self.get_issue(issue["key"])
+        except Exception as e:
+            logger.error(f"Error creating issue: {e}")
+            raise
+
+    def update_issue(self, issue_key: str, fields: dict) -> Document:
+        """
+        Update an existing Jira issue.
+
+        Args:
+            issue_key: The issue key (e.g. 'PROJ-123')
+            fields: Dictionary of fields to update. Examples:
+                   {
+                       'summary': 'New title',
+                       'description': 'New description',
+                       'assignee': {'name': 'username'},
+                       'priority': {'name': 'High'}
+                   }
+
+        Returns:
+            Document containing updated issue content
+        """
+        try:
+            # Update the issue
+            self.jira.update_issue_field(issue_key, fields)
+
+            # Fetch and return the updated issue
+            return self.get_issue(issue_key)
+
+        except Exception as e:
+            logger.error(f"Error updating issue {issue_key}: {str(e)}")
+            raise
+
     def get_issue(self, issue_key: str, expand: Optional[str] = None) -> Document:
         """
         Get a single issue with all its details.
