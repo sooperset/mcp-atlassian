@@ -1,8 +1,10 @@
 # MCP Atlassian
+[![smithery badge](https://smithery.ai/badge/mcp-atlassian)](https://smithery.ai/server/mcp-atlassian)
 
 Model Context Protocol (MCP) server for Atlassian Cloud products (Confluence and Jira). This integration is designed specifically for Atlassian Cloud instances and does not support Atlassian Server or Data Center deployments.
 
 <a href="https://glama.ai/mcp/servers/kc33m1kh5m"><img width="380" height="200" src="https://glama.ai/mcp/servers/kc33m1kh5m/badge" alt="Atlassian MCP server" /></a>
+
 
 ## Feature Demo
 ![Demo](https://github.com/user-attachments/assets/995d96a8-4cf3-4a03-abe1-a9f6aea27ac0)
@@ -67,6 +69,14 @@ Model Context Protocol (MCP) server for Atlassian Cloud products (Confluence and
     - `limit` (number, optional): Results limit (1-50, default: 10)
 
 ## Usage with Claude Desktop
+
+### Installing via Smithery
+
+To install Atlassian Integration for Claude Desktop automatically via [Smithery](https://smithery.ai/server/mcp-atlassian):
+
+```bash
+npx -y @smithery/cli install mcp-atlassian --client claude
+```
 
 1. Get API tokens from: https://id.atlassian.com/manage-profile/security/api-tokens
 
