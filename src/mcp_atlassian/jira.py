@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from .config import JiraConfig
 from .preprocessing import TextPreprocessor
 from .types import Document
-
+from typing import Any, Dict
 # Load environment variables
 load_dotenv()
 
@@ -157,3 +157,79 @@ Comments:
         """
         jql = f"project = {project_key} ORDER BY created DESC"
         return self.search_issues(jql, start=start, limit=limit)
+    
+    def create_issue(
+        self,
+        project_key: str,
+        summary: str,
+        issue_type: str,
+        description: str = "",
+        **kwargs: Any,
+    ) -> Document:
+        """
+        Create a new issue in Jira and return it as a Document.
+
+        :param project_key: The key of the project (e.g. 'PROJ')
+        :param summary: Summary of the issue
+        :param issue_type: Issue type (e.g. 'Task', 'Bug', 'Story')
+        :param description: Issue description
+        :param kwargs: Any other custom Jira fields
+        :return: Document representing the newly created issue
+        """
+        fields = {
+            "project": {"key": project_key},
+            "summary": summary,
+            "issuetype": {"name": issue_type},
+            "description": description,
+        }
+        # Merge any additional fields into the "fields" dictionary
+        for key, value in kwargs.items():
+            fields[key] = value
+
+        try:
+            created = self.jira.issue_create(fields=fields)
+            # The 'issue_create' method returns a dict with 'key' if successful
+            issue_key = created.get("key")
+            if not issue_key:
+                raise ValueError(f"Failed to create issue in project {project_key}")
+
+            return self.get_issue(issue_key)  # Retrieve the newly created issue
+        except Exception as e:
+            logger.error(f"Error creating issue in project {project_key}: {str(e)}")
+            raise
+    
+    def update_issue(self, issue_key: str, fields: Dict[str, Any] = None, **kwargs: Any) -> Document:
+        """
+        Update an existing issue.
+
+        :param issue_key: The key of the issue (e.g. 'PROJ-123')
+        :param fields: Dictionary of fields to update
+        :param kwargs: Additional fields to update
+        :return: Document representing the updated issue
+        """
+        fields = fields or {}
+        # Merge any additional fields into the "fields" dictionary
+        for k, v in kwargs.items():
+            fields[k] = v
+
+        try:
+            self.jira.issue_update(issue_key, fields=fields)
+            return self.get_issue(issue_key)
+        except Exception as e:
+            logger.error(f"Error updating issue {issue_key}: {str(e)}")
+            raise
+
+
+    def delete_issue(self, issue_key: str) -> bool:
+        """
+        Delete an existing issue.
+
+        :param issue_key: The key of the issue (e.g. 'PROJ-123')
+        :return: True if delete succeeded, otherwise raise an exception
+        """
+        try:
+            self.jira.delete_issue(issue_key)
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting issue {issue_key}: {str(e)}")
+            raise
