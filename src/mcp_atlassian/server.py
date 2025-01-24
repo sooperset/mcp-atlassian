@@ -208,6 +208,50 @@ async def list_tools() -> list[Tool]:
                 "required": ["project_key"],
             },
         ),
+        Tool(
+            name="jira_create_issue",
+            description="Create a new Jira issue",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_key": {"type": "string", "description": "Project key (e.g., PROJ)"},
+                    "summary": {"type": "string", "description": "Issue summary"},
+                    "issue_type": {"type": "string", "description": "Issue type (e.g. Bug, Task, Story)"},
+                    "description": {"type": "string", "description": "Issue description", "default": ""},
+                    "fields": {
+                        "type": "object",
+                        "description": "Additional Jira fields in JSON structure (optional)",
+                    },
+                },
+                "required": ["project_key", "summary", "issue_type"],
+            },
+        ),
+        Tool(
+            name="jira_update_issue",
+            description="Update an existing Jira issue",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "issue_key": {"type": "string", "description": "Jira issue key (e.g. PROJ-123)"},
+                    "fields": {
+                        "type": "object",
+                        "description": "Issue fields to update in JSON structure (e.g. {'summary': 'New title'})",
+                    },
+                },
+                "required": ["issue_key"],
+            },
+        ),
+        Tool(
+            name="jira_delete_issue",
+            description="Delete an existing Jira issue",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "issue_key": {"type": "string", "description": "Jira issue key (e.g. PROJ-123)"},
+                },
+                "required": ["issue_key"],
+            },
+        ),
     ]
 
 
@@ -297,6 +341,37 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 for doc in documents
             ]
             return [TextContent(type="text", text=json.dumps(project_issues, indent=2))]
+
+        elif name == "jira_create_issue":
+            project_key = arguments["project_key"]
+            summary = arguments["summary"]
+            issue_type = arguments["issue_type"]
+            description = arguments.get("description", "")
+            extra_fields = arguments.get("fields", {})
+
+            doc = jira_fetcher.create_issue(
+                project_key=project_key,
+                summary=summary,
+                issue_type=issue_type,
+                description=description,
+                **extra_fields,
+            )
+            result = {"content": doc.page_content, "metadata": doc.metadata}
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        elif name == "jira_update_issue":
+            issue_key = arguments["issue_key"]
+            fields = arguments.get("fields", {})
+            doc = jira_fetcher.update_issue(issue_key, fields=fields)
+            result = {"content": doc.page_content, "metadata": doc.metadata}
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        elif name == "jira_delete_issue":
+            issue_key = arguments["issue_key"]
+            deleted = jira_fetcher.delete_issue(issue_key)
+            result = {"message": f"Issue {issue_key} has been deleted successfully."}
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
 
         raise ValueError(f"Unknown tool: {name}")
 
