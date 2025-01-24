@@ -182,18 +182,16 @@ Comments:
             "issuetype": {"name": issue_type},
             "description": description,
         }
-        # Merge any additional fields into the "fields" dictionary
         for key, value in kwargs.items():
             fields[key] = value
 
         try:
             created = self.jira.issue_create(fields=fields)
-            # The 'issue_create' method returns a dict with 'key' if successful
             issue_key = created.get("key")
             if not issue_key:
                 raise ValueError(f"Failed to create issue in project {project_key}")
 
-            return self.get_issue(issue_key)  # Retrieve the newly created issue
+            return self.get_issue(issue_key) 
         except Exception as e:
             logger.error(f"Error creating issue in project {project_key}: {str(e)}")
             raise
@@ -208,7 +206,6 @@ Comments:
         :return: Document representing the updated issue
         """
         fields = fields or {}
-        # Merge any additional fields into the "fields" dictionary
         for k, v in kwargs.items():
             fields[k] = v
 
