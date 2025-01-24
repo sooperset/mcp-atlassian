@@ -77,6 +77,7 @@ Model Context Protocol (MCP) server for Atlassian Cloud products (Confluence and
   "mcpServers": {
     "mcp-atlassian": {
       "command": "uvx",
+      "description": "Atlassian(Jira, Confluence) tasks",
       "args": ["mcp-atlassian"],
       "env": {
         "CONFLUENCE_URL": "https://your-domain.atlassian.net/wiki",
@@ -99,6 +100,7 @@ Model Context Protocol (MCP) server for Atlassian Cloud products (Confluence and
   "mcpServers": {
     "mcp-atlassian": {
       "command": "uv",
+      "description": "Atlassian(Jira, Confluence) tasks",
       "args": [
         "--directory",
         "/path/to/mcp-atlassian",
