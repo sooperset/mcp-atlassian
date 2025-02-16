@@ -7,8 +7,8 @@ from atlassian import Jira
 from dotenv import load_dotenv
 
 from .config import JiraConfig
+from .document_types import Document
 from .preprocessing import TextPreprocessor
-from .types import Document
 
 # Load environment variables
 load_dotenv()

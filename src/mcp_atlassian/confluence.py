@@ -6,8 +6,8 @@ from atlassian import Confluence
 from dotenv import load_dotenv
 
 from .config import ConfluenceConfig
+from .document_types import Document
 from .preprocessing import TextPreprocessor
-from .types import Document
 
 # Load environment variables
 load_dotenv()
