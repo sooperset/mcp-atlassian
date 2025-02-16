@@ -80,15 +80,52 @@ npx -y @smithery/cli install mcp-atlassian --client claude
 
 ## Configuration
 
+The MCP Atlassian integration supports using either Confluence, Jira, or both services. You only need to provide the environment variables for the service(s) you want to use.
+
 ### Usage with Claude Desktop
 
 1. Get API tokens from: https://id.atlassian.com/manage-profile/security/api-tokens
 
-2. Add to your `claude_desktop_config.json`:
+2. Add to your `claude_desktop_config.json` with only the services you need:
 
 <details>
 <summary>Using uvx</summary>
 
+For Confluence only:
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "uvx",
+      "args": ["mcp-atlassian"],
+      "env": {
+        "CONFLUENCE_URL": "https://your-domain.atlassian.net/wiki",
+        "CONFLUENCE_USERNAME": "your.email@domain.com",
+        "CONFLUENCE_API_TOKEN": "your_api_token"
+      }
+    }
+  }
+}
+```
+
+For Jira only:
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "uvx",
+      "args": ["mcp-atlassian"],
+      "env": {
+        "JIRA_URL": "https://your-domain.atlassian.net",
+        "JIRA_USERNAME": "your.email@domain.com",
+        "JIRA_API_TOKEN": "your_api_token"
+      }
+    }
+  }
+}
+```
+
+For both services:
 ```json
 {
   "mcpServers": {
@@ -120,12 +157,7 @@ There are two ways to configure the Docker environment:
   "mcpServers": {
     "mcp-atlassian": {
       "command": "docker",
-      "args": [
-        "run",
-        "--rm",
-        "-i",
-        "mcp/atlassian"
-      ],
+      "args": ["run", "--rm", "-i", "mcp/atlassian"],
       "env": {
         "CONFLUENCE_URL": "https://your-domain.atlassian.net/wiki",
         "CONFLUENCE_USERNAME": "your.email@domain.com",
