@@ -11,8 +11,9 @@ from .confluence import ConfluenceFetcher
 from .jira import JiraFetcher
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger("mcp-atlassian")
+logging.getLogger("mcp.server.lowlevel.server").setLevel(logging.WARNING)
 
 # Initialize the content fetchers
 confluence_fetcher = ConfluenceFetcher()
