@@ -22,3 +22,8 @@ build-backend = "hatchling.build"
 
 [project.scripts]
 mcp-atlassian = "mcp_atlassian:main"
+
+[project.optional-dependencies]
+dev = [
+    "uv>=0.1.0"
+]
