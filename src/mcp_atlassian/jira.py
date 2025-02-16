@@ -52,11 +52,16 @@ class JiraFetcher:
         """Parse date string to handle various ISO formats."""
         if not date_str:
             return ""
-        # Convert +0000 format to +00:00 format
+
+        # Handle various timezone formats
         if "+0000" in date_str:
             date_str = date_str.replace("+0000", "+00:00")
         elif "-0000" in date_str:
             date_str = date_str.replace("-0000", "+00:00")
+        # Handle other timezone formats like +0900, -0500, etc.
+        elif len(date_str) >= 5 and date_str[-5] in "+-" and date_str[-4:].isdigit():
+            # Insert colon between hours and minutes of timezone
+            date_str = date_str[:-2] + ":" + date_str[-2:]
 
         try:
             date = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
