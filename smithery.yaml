@@ -1,0 +1,37 @@
+# Smithery configuration file: https://smithery.ai/docs/config#smitheryyaml
+
+startCommand:
+  type: stdio
+  configSchema:
+    # JSON Schema defining the configuration options for the MCP.
+    type: object
+    required:
+      - confluenceUrl
+      - confluenceUsername
+      - confluenceApiToken
+      - jiraUrl
+      - jiraUsername
+      - jiraApiToken
+    properties:
+      confluenceUrl:
+        type: string
+        description: The URL of the Confluence instance.
+      confluenceUsername:
+        type: string
+        description: The username for Confluence access.
+      confluenceApiToken:
+        type: string
+        description: The API token for Confluence.
+      jiraUrl:
+        type: string
+        description: The URL of the Jira instance.
+      jiraUsername:
+        type: string
+        description: The username for Jira access.
+      jiraApiToken:
+        type: string
+        description: The API token for Jira.
+  commandFunction:
+    # A function that produces the CLI command to start the MCP on stdio.
+    |-
+    (config) => ({command:'python', args:['-m', 'mcp_atlassian'], env:{CONFLUENCE_URL:config.confluenceUrl, CONFLUENCE_USERNAME:config.confluenceUsername, CONFLUENCE_API_TOKEN:config.confluenceApiToken, JIRA_URL:config.jiraUrl, JIRA_USERNAME:config.jiraUsername, JIRA_API_TOKEN:config.jiraApiToken}})
