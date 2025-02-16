@@ -112,6 +112,9 @@ npx -y @smithery/cli install mcp-atlassian --client claude
 <details>
 <summary>Using docker</summary>
 
+There are two ways to configure the Docker environment:
+
+1. Using environment variables directly in the config:
 ```json
 {
   "mcpServers": {
@@ -135,6 +138,36 @@ npx -y @smithery/cli install mcp-atlassian --client claude
   }
 }
 ```
+
+2. Using an environment file (recommended):
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "--env-file",
+        "/path/to/your/.env",
+        "mcp/atlassian"
+      ]
+    }
+  }
+}
+```
+
+The .env file should contain:
+```env
+CONFLUENCE_URL=https://your-domain.atlassian.net/wiki
+CONFLUENCE_USERNAME=your.email@domain.com
+CONFLUENCE_API_TOKEN=your_api_token
+JIRA_URL=https://your-domain.atlassian.net
+JIRA_USERNAME=your.email@domain.com
+JIRA_API_TOKEN=your_api_token
+```
+
 </details>
 
 ## Debugging
