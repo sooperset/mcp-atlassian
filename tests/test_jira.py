@@ -161,25 +161,23 @@ def test_clean_text(mock_jira_fetcher):
 def test_create_issue(mock_jira_fetcher):
     """Test creating a new issue."""
     # Mock the create_issue response
-    mock_jira_fetcher.jira.create_issue.return_value = {"key": "PROJ-123"}
+    mock_jira_fetcher.jira.issue_create.return_value = {"key": "PROJ-123"}
     mock_jira_fetcher.jira.issue.return_value = MOCK_JIRA_ISSUE_RESPONSE
 
-    # Test data
-    fields = {
-        "summary": "Test Issue",
-        "description": "Test Description",
-        "issuetype": {"name": "Task"}
-    }
-
     # Create issue
-    document = mock_jira_fetcher.create_issue("PROJ", fields)
+    document = mock_jira_fetcher.create_issue(
+        project_key="PROJ",
+        summary="Test Issue",
+        issue_type="Task",
+        description="Test Description"
+    )
 
     # Verify create_issue was called with correct parameters
-    mock_jira_fetcher.jira.create_issue.assert_called_once_with({
+    mock_jira_fetcher.jira.issue_create.assert_called_once_with(fields={
         "project": {"key": "PROJ"},
         "summary": "Test Issue",
-        "description": "Test Description",
-        "issuetype": {"name": "Task"}
+        "issuetype": {"name": "Task"},
+        "description": "Test Description"
     })
 
     # Verify the returned document
@@ -189,15 +187,19 @@ def test_create_issue(mock_jira_fetcher):
 
 def test_create_issue_error(mock_jira_fetcher):
     """Test error handling when creating an issue."""
-    mock_jira_fetcher.jira.create_issue.side_effect = Exception("API Error")
+    mock_jira_fetcher.jira.issue_create.side_effect = Exception("API Error")
 
     with pytest.raises(Exception, match="API Error"):
-        mock_jira_fetcher.create_issue("PROJ", {"summary": "Test"})
+        mock_jira_fetcher.create_issue(
+            project_key="PROJ",
+            summary="Test Issue",
+            issue_type="Task"
+        )
 
 def test_update_issue(mock_jira_fetcher):
     """Test updating an existing issue."""
     # Mock the update response
-    mock_jira_fetcher.jira.update_issue_field.return_value = None
+    mock_jira_fetcher.jira.issue_update.return_value = None
     mock_jira_fetcher.jira.issue.return_value = MOCK_JIRA_ISSUE_RESPONSE
 
     # Test data
@@ -209,8 +211,11 @@ def test_update_issue(mock_jira_fetcher):
     # Update issue
     document = mock_jira_fetcher.update_issue("PROJ-123", fields)
 
-    # Verify update_issue_field was called with correct parameters
-    mock_jira_fetcher.jira.update_issue_field.assert_called_once_with("PROJ-123", fields)
+    # Verify update_issue was called with correct parameters
+    mock_jira_fetcher.jira.issue_update.assert_called_once_with(
+        "PROJ-123",
+        fields=fields
+    )
 
     # Verify the returned document
     assert document.metadata["key"] == "PROJ-123"
@@ -218,7 +223,25 @@ def test_update_issue(mock_jira_fetcher):
 
 def test_update_issue_error(mock_jira_fetcher):
     """Test error handling when updating an issue."""
-    mock_jira_fetcher.jira.update_issue_field.side_effect = Exception("API Error")
+    mock_jira_fetcher.jira.issue_update.side_effect = Exception("API Error")
 
     with pytest.raises(Exception, match="API Error"):
         mock_jira_fetcher.update_issue("PROJ-123", {"summary": "Test"})
+
+def test_delete_issue(mock_jira_fetcher):
+    """Test deleting an issue."""
+    mock_jira_fetcher.jira.delete_issue.return_value = None
+
+    result = mock_jira_fetcher.delete_issue("PROJ-123")
+    mock_jira_fetcher.jira.delete_issue.assert_called_once_with("PROJ-123")
+
+    assert result is True
+
+def test_delete_issue_error(mock_jira_fetcher):
+    """Test error handling when deleting an issue."""
+    mock_jira_fetcher.jira.delete_issue.side_effect = Exception("API Error")
+
+    with pytest.raises(Exception, match="API Error"):
+        mock_jira_fetcher.delete_issue("PROJ-123")
+
+    mock_jira_fetcher.jira.delete_issue.assert_called_once_with("PROJ-123")
