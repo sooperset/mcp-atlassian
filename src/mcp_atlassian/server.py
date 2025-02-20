@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from collections.abc import Sequence
 from typing import Any
 
@@ -11,12 +12,26 @@ from .confluence import ConfluenceFetcher
 from .jira import JiraFetcher
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger("mcp-atlassian")
+logging.getLogger("mcp.server.lowlevel.server").setLevel(logging.WARNING)
 
-# Initialize the content fetchers
-confluence_fetcher = ConfluenceFetcher()
-jira_fetcher = JiraFetcher()
+
+def get_available_services():
+    """Determine which services are available based on environment variables."""
+    confluence_vars = all(
+        [os.getenv("CONFLUENCE_URL"), os.getenv("CONFLUENCE_USERNAME"), os.getenv("CONFLUENCE_API_TOKEN")]
+    )
+
+    jira_vars = all([os.getenv("JIRA_URL"), os.getenv("JIRA_USERNAME"), os.getenv("JIRA_API_TOKEN")])
+
+    return {"confluence": confluence_vars, "jira": jira_vars}
+
+
+# Initialize services based on available credentials
+services = get_available_services()
+confluence_fetcher = ConfluenceFetcher() if services["confluence"] else None
+jira_fetcher = JiraFetcher() if services["jira"] else None
 app = Server("mcp-atlassian")
 
 
@@ -26,37 +41,39 @@ async def list_resources() -> list[Resource]:
     resources = []
 
     # Add Confluence spaces
-    spaces_response = confluence_fetcher.get_spaces()
-    if isinstance(spaces_response, dict) and "results" in spaces_response:
-        spaces = spaces_response["results"]
-        resources.extend(
-            [
-                Resource(
-                    uri=AnyUrl(f"confluence://{space['key']}"),
-                    name=f"Confluence Space: {space['name']}",
-                    mimeType="text/plain",
-                    description=space.get("description", {}).get("plain", {}).get("value", ""),
-                )
-                for space in spaces
-            ]
-        )
+    if confluence_fetcher:
+        spaces_response = confluence_fetcher.get_spaces()
+        if isinstance(spaces_response, dict) and "results" in spaces_response:
+            spaces = spaces_response["results"]
+            resources.extend(
+                [
+                    Resource(
+                        uri=AnyUrl(f"confluence://{space['key']}"),
+                        name=f"Confluence Space: {space['name']}",
+                        mimeType="text/plain",
+                        description=space.get("description", {}).get("plain", {}).get("value", ""),
+                    )
+                    for space in spaces
+                ]
+            )
 
     # Add Jira projects
-    try:
-        projects = jira_fetcher.jira.projects()
-        resources.extend(
-            [
-                Resource(
-                    uri=AnyUrl(f"jira://{project['key']}"),
-                    name=f"Jira Project: {project['name']}",
-                    mimeType="text/plain",
-                    description=project.get("description", ""),
-                )
-                for project in projects
-            ]
-        )
-    except Exception as e:
-        logger.error(f"Error fetching Jira projects: {str(e)}")
+    if jira_fetcher:
+        try:
+            projects = jira_fetcher.jira.projects()
+            resources.extend(
+                [
+                    Resource(
+                        uri=AnyUrl(f"jira://{project['key']}"),
+                        name=f"Jira Project: {project['name']}",
+                        mimeType="text/plain",
+                        description=project.get("description", ""),
+                    )
+                    for project in projects
+                ]
+            )
+        except Exception as e:
+            logger.error(f"Error fetching Jira projects: {str(e)}")
 
     return resources
 
@@ -68,6 +85,8 @@ async def read_resource(uri: AnyUrl) -> str:
 
     # Handle Confluence resources
     if uri_str.startswith("confluence://"):
+        if not services["confluence"]:
+            raise ValueError("Confluence is not configured. Please provide Confluence credentials.")
         parts = uri_str.replace("confluence://", "").split("/")
 
         # Handle space listing
@@ -92,6 +111,8 @@ async def read_resource(uri: AnyUrl) -> str:
 
     # Handle Jira resources
     elif uri_str.startswith("jira://"):
+        if not services["jira"]:
+            raise ValueError("Jira is not configured. Please provide Jira credentials.")
         parts = uri_str.replace("jira://", "").split("/")
 
         # Handle project listing
@@ -115,145 +136,147 @@ async def read_resource(uri: AnyUrl) -> str:
 @app.list_tools()
 async def list_tools() -> list[Tool]:
     """List available Confluence and Jira tools."""
-    return [
-        Tool(
-            name="confluence_search",
-            description="Search Confluence content using CQL",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "CQL query string (e.g. 'type=page AND space=DEV')"},
-                    "limit": {
-                        "type": "number",
-                        "description": "Maximum number of results (1-50)",
-                        "default": 10,
-                        "minimum": 1,
-                        "maximum": 50,
-                    },
-                },
-                "required": ["query"],
-            },
-        ),
-        Tool(
-            name="confluence_get_page",
-            description="Get content of a specific Confluence page by ID",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "page_id": {"type": "string", "description": "Confluence page ID"},
-                    "include_metadata": {
-                        "type": "boolean",
-                        "description": "Whether to include page metadata",
-                        "default": True,
-                    },
-                },
-                "required": ["page_id"],
-            },
-        ),
-        Tool(
-            name="confluence_get_comments",
-            description="Get comments for a specific Confluence page",
-            inputSchema={
-                "type": "object",
-                "properties": {"page_id": {"type": "string", "description": "Confluence page ID"}},
-                "required": ["page_id"],
-            },
-        ),
-        Tool(
-            name="jira_get_issue",
-            description="Get details of a specific Jira issue",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "issue_key": {"type": "string", "description": "Jira issue key (e.g., 'PROJ-123')"},
-                    "expand": {"type": "string", "description": "Optional fields to expand", "default": None},
-                },
-                "required": ["issue_key"],
-            },
-        ),
-        Tool(
-            name="jira_search",
-            description="Search Jira issues using JQL",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "jql": {"type": "string", "description": "JQL query string"},
-                    "fields": {"type": "string", "description": "Comma-separated fields to return", "default": "*all"},
-                    "limit": {
-                        "type": "number",
-                        "description": "Maximum number of results (1-50)",
-                        "default": 10,
-                        "minimum": 1,
-                        "maximum": 50,
-                    },
-                },
-                "required": ["jql"],
-            },
-        ),
-        Tool(
-            name="jira_get_project_issues",
-            description="Get all issues for a specific Jira project",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "project_key": {"type": "string", "description": "The project key"},
-                    "limit": {
-                        "type": "number",
-                        "description": "Maximum number of results (1-50)",
-                        "default": 10,
-                        "minimum": 1,
-                        "maximum": 50,
-                    },
-                },
-                "required": ["project_key"],
-            },
-        ),
-        Tool(
-            name="jira_create_issue",
-            description="Create a new Jira issue",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "project_key": {"type": "string", "description": "Project key (e.g., PROJ)"},
-                    "summary": {"type": "string", "description": "Issue summary"},
-                    "issue_type": {"type": "string", "description": "Issue type (e.g. Bug, Task, Story)"},
-                    "description": {"type": "string", "description": "Issue description", "default": ""},
-                    "fields": {
-                        "type": "object",
-                        "description": "Additional Jira fields in JSON structure (optional)",
-                    },
-                },
-                "required": ["project_key", "summary", "issue_type"],
-            },
-        ),
-        Tool(
-            name="jira_update_issue",
-            description="Update an existing Jira issue",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "issue_key": {"type": "string", "description": "Jira issue key (e.g. PROJ-123)"},
-                    "fields": {
-                        "type": "object",
-                        "description": "Issue fields to update in JSON structure (e.g. {'summary': 'New title'})",
-                    },
-                },
-                "required": ["issue_key"],
-            },
-        ),
-        Tool(
-            name="jira_delete_issue",
-            description="Delete an existing Jira issue",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "issue_key": {"type": "string", "description": "Jira issue key (e.g. PROJ-123)"},
-                },
-                "required": ["issue_key"],
-            },
-        ),
-    ]
+    tools = []
 
+    if confluence_fetcher:
+        tools.extend([
+            Tool(
+                name="confluence_search",
+                description="Search Confluence content using CQL",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "CQL query string (e.g. 'type=page AND space=DEV')"},
+                        "limit": {
+                            "type": "number",
+                            "description": "Maximum number of results (1-50)",
+                            "default": 10,
+                            "minimum": 1,
+                            "maximum": 50,
+                        },
+                    },
+                    "required": ["query"],
+                },
+            ),
+            Tool(
+                name="confluence_get_page",
+                description="Get content of a specific Confluence page by ID",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "page_id": {"type": "string", "description": "Confluence page ID"},
+                        "include_metadata": {
+                            "type": "boolean",
+                            "description": "Whether to include page metadata",
+                            "default": True,
+                        },
+                    },
+                    "required": ["page_id"],
+                },
+            ),
+            Tool(
+                name="confluence_get_comments",
+                description="Get comments for a specific Confluence page",
+                inputSchema={
+                    "type": "object",
+                    "properties": {"page_id": {"type": "string", "description": "Confluence page ID"}},
+                    "required": ["page_id"],
+                },
+            ),
+        ])
+
+    if jira_fetcher:
+        tools.extend([
+            Tool(
+                name="jira_get_issue",
+                description="Get details of a specific Jira issue",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "issue_key": {"type": "string", "description": "Jira issue key (e.g., 'PROJ-123')"},
+                        "expand": {"type": "string", "description": "Optional fields to expand", "default": None},
+                    },
+                    "required": ["issue_key"],
+                },
+            ),
+            Tool(
+                name="jira_search",
+                description="Search Jira issues using JQL",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "jql": {"type": "string", "description": "JQL query string"},
+                        "fields": {"type": "string", "description": "Comma-separated fields to return", "default": "*all"},
+                        "limit": {
+                            "type": "number",
+                            "description": "Maximum number of results (1-50)",
+                            "default": 10,
+                            "minimum": 1,
+                            "maximum": 50,
+                        },
+                    },
+                    "required": ["jql"],
+                },
+            ),
+            Tool(
+                name="jira_get_project_issues",
+                description="Get all issues for a specific Jira project",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "project_key": {"type": "string", "description": "The project key"},
+                        "limit": {
+                            "type": "number",
+                            "description": "Maximum number of results (1-50)",
+                            "default": 10,
+                            "minimum": 1,
+                            "maximum": 50,
+                        },
+                    },
+                    "required": ["project_key"],
+                },
+            ),
+            Tool(
+                name="jira_create_issue",
+                description="Create a new Jira issue",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "project_key": {"type": "string", "description": "The JIRA project key. Never assume what it might be, always ask the user."},
+                        "fields": {"type": "string", "description": "A valid JSON object of fields to create the issue. It must adhere with Jira API documentation."},
+                    },
+                    "required": ["project_key", "fields"],
+                },
+            ),
+            Tool(
+                name="jira_update_issue",
+                description="Update an existing Jira issue",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "issue_key": {"type": "string", "description": "Jira issue key"},
+                        "fields": {
+                            "type": "string",
+                            "description": "A valid JSON object of fields to update. It must adhere with Jira API documentation. If there are no specific instructions, assume that most likely it is to update the summary or description.",
+                        },
+                    },
+                    "required": ["issue_key", "fields"],
+                },
+            ),
+            Tool(
+                name="jira_delete_issue",
+                description="Delete an existing Jira issue",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "issue_key": {"type": "string", "description": "Jira issue key (e.g. PROJ-123)"},
+                    },
+                    "required": ["issue_key"],
+                },
+            ),
+        ])
+
+    return tools
 
 @app.call_tool()
 async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
@@ -343,35 +366,20 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             return [TextContent(type="text", text=json.dumps(project_issues, indent=2))]
 
         elif name == "jira_create_issue":
-            project_key = arguments["project_key"]
-            summary = arguments["summary"]
-            issue_type = arguments["issue_type"]
-            description = arguments.get("description", "")
-            extra_fields = arguments.get("fields", {})
-
-            doc = jira_fetcher.create_issue(
-                project_key=project_key,
-                summary=summary,
-                issue_type=issue_type,
-                description=description,
-                **extra_fields,
-            )
-            result = {"content": doc.page_content, "metadata": doc.metadata}
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            doc = jira_fetcher.create_issue(arguments["project_key"], json.loads(arguments["fields"]))
+            result = json.dumps({"content": doc.page_content, "metadata": doc.metadata}, indent=2)
+            return [TextContent(type="text", text=f"Issue created successfully:\n{result}")]
 
         elif name == "jira_update_issue":
-            issue_key = arguments["issue_key"]
-            fields = arguments.get("fields", {})
-            doc = jira_fetcher.update_issue(issue_key, fields=fields)
-            result = {"content": doc.page_content, "metadata": doc.metadata}
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            doc = jira_fetcher.update_issue(arguments["issue_key"], json.loads(arguments["fields"]))
+            result = json.dumps({"content": doc.page_content, "metadata": doc.metadata}, indent=2)
+            return [TextContent(type="text", text=f"Issue updated successfully:\n{result}")]
 
         elif name == "jira_delete_issue":
             issue_key = arguments["issue_key"]
             deleted = jira_fetcher.delete_issue(issue_key)
             result = {"message": f"Issue {issue_key} has been deleted successfully."}
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
-
 
         raise ValueError(f"Unknown tool: {name}")
 
