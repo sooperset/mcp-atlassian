@@ -59,7 +59,7 @@ class ConfluenceFetcher:
             "page_id": page_id,
             "title": page["title"],
             "version": version.get("number"),
-            "url": f"{self.config.url}/wiki/spaces/{space_key}/pages/{page_id}",
+            "url": f"{self.config.url}/spaces/{space_key}/pages/{page_id}",
             "space_key": space_key,
             "author_name": author.get("displayName"),
             "space_name": page.get("space", {}).get("name", ""),
@@ -77,18 +77,17 @@ class ConfluenceFetcher:
                 return None
 
             content = page["body"]["storage"]["value"]
-            if clean_html:
-                content = self._clean_html_content(content)
+            processed_html, processed_markdown = self._process_html_content(content, space_key)
 
             metadata = {
                 "page_id": page["id"],
                 "title": page["title"],
                 "version": page.get("version", {}).get("number"),
                 "space_key": space_key,
-                "url": f"{self.config.url}/wiki/spaces/{space_key}/pages/{page['id']}",
+                "url": f"{self.config.url}/spaces/{space_key}/pages/{page['id']}",
             }
 
-            return Document(page_content=content, metadata=metadata)
+            return Document(page_content=processed_markdown if clean_html else processed_html, metadata=metadata)
 
         except Exception as e:
             logger.error(f"Error fetching page: {str(e)}")
@@ -105,18 +104,17 @@ class ConfluenceFetcher:
         documents = []
         for page in pages:
             content = page["body"]["storage"]["value"]
-            if clean_html:
-                content = self._clean_html_content(content)
+            processed_html, processed_markdown = self._process_html_content(content, space_key)
 
             metadata = {
                 "page_id": page["id"],
                 "title": page["title"],
                 "space_key": space_key,
                 "version": page.get("version", {}).get("number"),
-                "url": f"{self.config.url}/wiki/spaces/{space_key}/pages/{page['id']}",
+                "url": f"{self.config.url}/spaces/{space_key}/pages/{page['id']}",
             }
 
-            documents.append(Document(page_content=content, metadata=metadata))
+            documents.append(Document(page_content=processed_markdown if clean_html else processed_html, metadata=metadata))
 
         return documents
 
