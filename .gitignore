@@ -57,3 +57,7 @@ local/
 
 # Credentials
 .pypirc
+
+# Pytest
+.pytest_cache/
+.coverage/

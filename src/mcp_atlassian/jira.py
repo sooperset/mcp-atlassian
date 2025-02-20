@@ -93,6 +93,7 @@ class JiraFetcher:
         except Exception as e:
             logger.error(f"Error updating issue {issue_key}: {str(e)}")
             raise
+
     def _parse_date(self, date_str: str) -> str:
         """Parse date string to handle various ISO formats."""
         if not date_str:

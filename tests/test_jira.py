@@ -157,3 +157,68 @@ def test_clean_text(mock_jira_fetcher):
         mock_clean.return_value = "cleaned text"
         assert mock_jira_fetcher._clean_text("some text") == "cleaned text"
         mock_clean.assert_called_once_with("some text")
+
+def test_create_issue(mock_jira_fetcher):
+    """Test creating a new issue."""
+    # Mock the create_issue response
+    mock_jira_fetcher.jira.create_issue.return_value = {"key": "PROJ-123"}
+    mock_jira_fetcher.jira.issue.return_value = MOCK_JIRA_ISSUE_RESPONSE
+
+    # Test data
+    fields = {
+        "summary": "Test Issue",
+        "description": "Test Description",
+        "issuetype": {"name": "Task"}
+    }
+
+    # Create issue
+    document = mock_jira_fetcher.create_issue("PROJ", fields)
+
+    # Verify create_issue was called with correct parameters
+    mock_jira_fetcher.jira.create_issue.assert_called_once_with({
+        "project": {"key": "PROJ"},
+        "summary": "Test Issue",
+        "description": "Test Description",
+        "issuetype": {"name": "Task"}
+    })
+
+    # Verify the returned document
+    assert document.metadata["key"] == "PROJ-123"
+    assert document.metadata["title"] == "Test Issue Summary"
+    assert "Type: Task" in document.page_content
+
+def test_create_issue_error(mock_jira_fetcher):
+    """Test error handling when creating an issue."""
+    mock_jira_fetcher.jira.create_issue.side_effect = Exception("API Error")
+
+    with pytest.raises(Exception, match="API Error"):
+        mock_jira_fetcher.create_issue("PROJ", {"summary": "Test"})
+
+def test_update_issue(mock_jira_fetcher):
+    """Test updating an existing issue."""
+    # Mock the update response
+    mock_jira_fetcher.jira.update_issue_field.return_value = None
+    mock_jira_fetcher.jira.issue.return_value = MOCK_JIRA_ISSUE_RESPONSE
+
+    # Test data
+    fields = {
+        "summary": "Updated Title",
+        "description": "Updated Description"
+    }
+
+    # Update issue
+    document = mock_jira_fetcher.update_issue("PROJ-123", fields)
+
+    # Verify update_issue_field was called with correct parameters
+    mock_jira_fetcher.jira.update_issue_field.assert_called_once_with("PROJ-123", fields)
+
+    # Verify the returned document
+    assert document.metadata["key"] == "PROJ-123"
+    assert "Title: Test Issue Summary" in document.page_content
+
+def test_update_issue_error(mock_jira_fetcher):
+    """Test error handling when updating an issue."""
+    mock_jira_fetcher.jira.update_issue_field.side_effect = Exception("API Error")
+
+    with pytest.raises(Exception, match="API Error"):
+        mock_jira_fetcher.update_issue("PROJ-123", {"summary": "Test"})
