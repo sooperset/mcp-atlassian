@@ -242,10 +242,13 @@ async def list_tools() -> list[Tool]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "project_key": {"type": "string", "description": "The JIRA project key. Never assume what it might be, always ask the user."},
-                        "fields": {"type": "string", "description": "A valid JSON object of fields to create the issue. It must adhere with Jira API documentation."},
+                        "project_key": {"type": "string", "description": "The JIRA project key (e.g. 'PROJ'). Never assume what it might be, always ask the user."},
+                        "summary": {"type": "string", "description": "Summary/title of the issue"},
+                        "issue_type": {"type": "string", "description": "Issue type (e.g. 'Task', 'Bug', 'Story')"},
+                        "description": {"type": "string", "description": "Issue description", "default": ""},
+                        "additional_fields": {"type": "string", "description": "Optional JSON string of additional fields to set", "default": "{}"},
                     },
-                    "required": ["project_key", "fields"],
+                    "required": ["project_key", "summary", "issue_type"],
                 },
             ),
             Tool(
@@ -255,10 +258,8 @@ async def list_tools() -> list[Tool]:
                     "type": "object",
                     "properties": {
                         "issue_key": {"type": "string", "description": "Jira issue key"},
-                        "fields": {
-                            "type": "string",
-                            "description": "A valid JSON object of fields to update. It must adhere with Jira API documentation. If there are no specific instructions, assume that most likely it is to update the summary or description.",
-                        },
+                        "fields": {"type": "string", "description": "A valid JSON object of fields to update"},
+                        "additional_fields": {"type": "string", "description": "Optional JSON string of additional fields to update", "default": "{}"},
                     },
                     "required": ["issue_key", "fields"],
                 },
@@ -366,12 +367,25 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             return [TextContent(type="text", text=json.dumps(project_issues, indent=2))]
 
         elif name == "jira_create_issue":
-            doc = jira_fetcher.create_issue(arguments["project_key"], json.loads(arguments["fields"]))
+            additional_fields = json.loads(arguments.get("additional_fields", "{}"))
+            doc = jira_fetcher.create_issue(
+                project_key=arguments["project_key"],
+                summary=arguments["summary"],
+                issue_type=arguments["issue_type"],
+                description=arguments.get("description", ""),
+                **additional_fields
+            )
             result = json.dumps({"content": doc.page_content, "metadata": doc.metadata}, indent=2)
             return [TextContent(type="text", text=f"Issue created successfully:\n{result}")]
 
         elif name == "jira_update_issue":
-            doc = jira_fetcher.update_issue(arguments["issue_key"], json.loads(arguments["fields"]))
+            fields = json.loads(arguments["fields"])
+            additional_fields = json.loads(arguments.get("additional_fields", "{}"))
+            doc = jira_fetcher.update_issue(
+                issue_key=arguments["issue_key"],
+                fields=fields,
+                **additional_fields
+            )
             result = json.dumps({"content": doc.page_content, "metadata": doc.metadata}, indent=2)
             return [TextContent(type="text", text=f"Issue updated successfully:\n{result}")]
 
