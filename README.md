@@ -64,6 +64,30 @@ Model Context Protocol (MCP) server for Atlassian Cloud products (Confluence and
      - `limit` (number, optional): Results limit (1-50, default: 10)
    - Returns: Array of project issues with metadata
 
+4. `jira_create_issue`
+   - Create a new issue in Jira
+   - Inputs:
+     - `project_key` (string): The JIRA project key (e.g. 'PROJ')
+     - `summary` (string): Summary/title of the issue
+     - `issue_type` (string): Issue type (e.g. 'Task', 'Bug', 'Story')
+     - `description` (string, optional): Issue description
+     - `additional_fields` (string, optional): JSON string of additional fields
+   - Returns: Created issue details with metadata
+
+5. `jira_update_issue`
+   - Update an existing Jira issue
+   - Inputs:
+     - `issue_key` (string): Jira issue key
+     - `fields` (string): JSON object of fields to update
+     - `additional_fields` (string, optional): JSON string of additional fields
+   - Returns: Updated issue details with metadata
+
+6. `jira_delete_issue`
+   - Delete an existing Jira issue
+   - Inputs:
+     - `issue_key` (string): Jira issue key (e.g. PROJ-123)
+   - Returns: Success confirmation message
+
 ## Installation
 
 ### Using uv (recommended)
