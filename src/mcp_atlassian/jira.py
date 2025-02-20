@@ -1,7 +1,7 @@
 import logging
 import os
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Any, Dict
 
 from atlassian import Jira
 from dotenv import load_dotenv
