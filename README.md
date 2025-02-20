@@ -36,7 +36,7 @@ Model Context Protocol (MCP) server for Atlassian Cloud products (Confluence and
 
 3. `confluence_get_comments`
    - Get comments for a specific Confluence page
-   - Input: 
+   - Input:
      - `page_id` (string): Confluence page ID
    - Returns: Array of comments with author, creation date, and content
 

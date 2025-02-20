@@ -1,7 +1,6 @@
 import logging
 import re
 import warnings
-from typing import Tuple
 
 from bs4 import BeautifulSoup
 from markdownify import markdownify as md
@@ -16,7 +15,7 @@ class TextPreprocessor:
         self.base_url = base_url.rstrip("/")
         self.confluence_client = confluence_client
 
-    def process_html_content(self, html_content: str, space_key: str = "") -> Tuple[str, str]:
+    def process_html_content(self, html_content: str, space_key: str = "") -> tuple[str, str]:
         """Process HTML content to replace user refs and page links."""
         try:
             soup = BeautifulSoup(html_content, "html.parser")

@@ -1,0 +1,69 @@
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+    -   id: trailing-whitespace
+    -   id: end-of-file-fixer
+    -   id: check-yaml
+    -   id: check-added-large-files
+    -   id: check-toml
+    -   id: debug-statements
+
+-   repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.3.0
+    hooks:
+    -   id: ruff
+        args: [
+            "--fix",
+            "--exit-non-zero-on-fix",
+            # Ignore common issues initially
+            "--ignore=E501",  # Line too long
+            "--ignore=ANN",   # Missing type annotations
+            "--ignore=D",     # Missing docstrings
+            "--ignore=N",     # Missing module docstrings
+            "--ignore=B",     # Bug-related checks
+            "--ignore=UP",    # pyupgrade checks
+            "--ignore=ERA",   # Found commented-out code
+            "--ignore=FBT",   # Boolean positional arg in function definition
+            "--ignore=S",     # Security issues
+            "--ignore=T20",   # Print found
+            "--ignore=RUF100", # Unused noqa directive
+            "--ignore=EM",    # Exception message formatting
+            "--ignore=BLE",   # Blind exception catching
+            "--ignore=F841"   # Unused local variable
+        ]
+    -   id: ruff-format
+        args: ["--line-length=120"]
+
+-   repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.8.0
+    hooks:
+    -   id: mypy
+        args: [
+            "--ignore-missing-imports",
+            "--disable-error-code=attr-defined",
+            "--disable-error-code=name-defined",
+            "--disable-error-code=call-arg",
+            "--disable-error-code=arg-type",
+            "--disable-error-code=assignment",
+            "--disable-error-code=valid-type",
+            "--disable-error-code=index",
+            "--disable-error-code=unreachable",
+            "--no-strict-optional",
+            "--allow-untyped-defs",
+            "--allow-untyped-calls",
+            "--allow-incomplete-defs",
+            "--allow-untyped-decorators",
+            "--disable-error-code=no-untyped-def"
+        ]
+        additional_dependencies: [
+            'types-beautifulsoup4',
+            'types-requests',
+            'types-setuptools',
+            'types-urllib3',
+            'atlassian-python-api',
+            'beautifulsoup4',
+            'httpx',
+            'python-dotenv',
+            'markdownify'
+        ]

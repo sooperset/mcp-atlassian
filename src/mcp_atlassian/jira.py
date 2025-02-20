@@ -1,7 +1,7 @@
 import logging
 import os
 from datetime import datetime
-from typing import List, Optional, Any, Dict
+from typing import Any
 
 from atlassian import Jira
 from dotenv import load_dotenv
@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from .config import JiraConfig
 from .document_types import Document
 from .preprocessing import TextPreprocessor
+
 # Load environment variables
 load_dotenv()
 
@@ -83,12 +84,12 @@ class JiraFetcher:
             if not issue_key:
                 raise ValueError(f"Failed to create issue in project {project_key}")
 
-            return self.get_issue(issue_key) 
+            return self.get_issue(issue_key)
         except Exception as e:
             logger.error(f"Error creating issue in project {project_key}: {str(e)}")
             raise
 
-    def update_issue(self, issue_key: str, fields: Dict[str, Any] = None, **kwargs: Any) -> Document:
+    def update_issue(self, issue_key: str, fields: dict[str, Any] = None, **kwargs: Any) -> Document:
         """
         Update an existing issue.
 
@@ -150,7 +151,7 @@ class JiraFetcher:
             logger.warning(f"Error parsing date {date_str}: {e}")
             return date_str
 
-    def get_issue(self, issue_key: str, expand: Optional[str] = None) -> Document:
+    def get_issue(self, issue_key: str, expand: str | None = None) -> Document:
         """
         Get a single issue with all its details.
 
@@ -174,7 +175,13 @@ class JiraFetcher:
                     processed_comment = self._clean_text(comment["body"])
                     created = self._parse_date(comment["created"])
                     author = comment["author"].get("displayName", "Unknown")
-                    comments.append({"body": processed_comment, "created": created, "author": author})
+                    comments.append(
+                        {
+                            "body": processed_comment,
+                            "created": created,
+                            "author": author,
+                        }
+                    )
 
             # Format created date using new parser
             created_date = self._parse_date(issue["fields"]["created"])
@@ -190,9 +197,7 @@ Description:
 {description}
 
 Comments:
-""" + "\n".join(
-                [f"{c['created']} - {c['author']}: {c['body']}" for c in comments]
-            )
+""" + "\n".join([f"{c['created']} - {c['author']}: {c['body']}" for c in comments])
 
             # Streamlined metadata with only essential information
             metadata = {
@@ -212,8 +217,13 @@ Comments:
             raise
 
     def search_issues(
-        self, jql: str, fields: str = "*all", start: int = 0, limit: int = 50, expand: Optional[str] = None
-    ) -> List[Document]:
+        self,
+        jql: str,
+        fields: str = "*all",
+        start: int = 0,
+        limit: int = 50,
+        expand: str | None = None,
+    ) -> list[Document]:
         """
         Search for issues using JQL.
 
@@ -242,7 +252,7 @@ Comments:
             logger.error(f"Error searching issues with JQL {jql}: {str(e)}")
             raise
 
-    def get_project_issues(self, project_key: str, start: int = 0, limit: int = 50) -> List[Document]:
+    def get_project_issues(self, project_key: str, start: int = 0, limit: int = 50) -> list[Document]:
         """
         Get all issues for a project.
 

@@ -17,4 +17,4 @@ Please report security vulnerabilities to [security contact].
 
 3. **Access Control**
    - Regularly audit Confluence space access
-   - Follow principle of least privilege 
+   - Follow principle of least privilege

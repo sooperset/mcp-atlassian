@@ -27,5 +27,9 @@ mcp-atlassian = "mcp_atlassian:main"
 dev = [
     "uv>=0.1.0",
     "pytest>=8.0.0",
-    "pytest-cov>=4.1.0"
+    "pytest-cov>=4.1.0",
+    "pre-commit>=3.6.0",
+    "ruff>=0.3.0",
+    "black>=24.2.0",
+    "mypy>=1.8.0"
 ]

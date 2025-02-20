@@ -20,7 +20,11 @@ logging.getLogger("mcp.server.lowlevel.server").setLevel(logging.WARNING)
 def get_available_services():
     """Determine which services are available based on environment variables."""
     confluence_vars = all(
-        [os.getenv("CONFLUENCE_URL"), os.getenv("CONFLUENCE_USERNAME"), os.getenv("CONFLUENCE_API_TOKEN")]
+        [
+            os.getenv("CONFLUENCE_URL"),
+            os.getenv("CONFLUENCE_USERNAME"),
+            os.getenv("CONFLUENCE_API_TOKEN"),
+        ]
     )
 
     jira_vars = all([os.getenv("JIRA_URL"), os.getenv("JIRA_USERNAME"), os.getenv("JIRA_API_TOKEN")])
@@ -139,145 +143,208 @@ async def list_tools() -> list[Tool]:
     tools = []
 
     if confluence_fetcher:
-        tools.extend([
-            Tool(
-                name="confluence_search",
-                description="Search Confluence content using CQL",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "CQL query string (e.g. 'type=page AND space=DEV')"},
-                        "limit": {
-                            "type": "number",
-                            "description": "Maximum number of results (1-50)",
-                            "default": 10,
-                            "minimum": 1,
-                            "maximum": 50,
+        tools.extend(
+            [
+                Tool(
+                    name="confluence_search",
+                    description="Search Confluence content using CQL",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "CQL query string (e.g. 'type=page AND space=DEV')",
+                            },
+                            "limit": {
+                                "type": "number",
+                                "description": "Maximum number of results (1-50)",
+                                "default": 10,
+                                "minimum": 1,
+                                "maximum": 50,
+                            },
                         },
+                        "required": ["query"],
                     },
-                    "required": ["query"],
-                },
-            ),
-            Tool(
-                name="confluence_get_page",
-                description="Get content of a specific Confluence page by ID",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "page_id": {"type": "string", "description": "Confluence page ID"},
-                        "include_metadata": {
-                            "type": "boolean",
-                            "description": "Whether to include page metadata",
-                            "default": True,
+                ),
+                Tool(
+                    name="confluence_get_page",
+                    description="Get content of a specific Confluence page by ID",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "page_id": {
+                                "type": "string",
+                                "description": "Confluence page ID",
+                            },
+                            "include_metadata": {
+                                "type": "boolean",
+                                "description": "Whether to include page metadata",
+                                "default": True,
+                            },
                         },
+                        "required": ["page_id"],
                     },
-                    "required": ["page_id"],
-                },
-            ),
-            Tool(
-                name="confluence_get_comments",
-                description="Get comments for a specific Confluence page",
-                inputSchema={
-                    "type": "object",
-                    "properties": {"page_id": {"type": "string", "description": "Confluence page ID"}},
-                    "required": ["page_id"],
-                },
-            ),
-        ])
+                ),
+                Tool(
+                    name="confluence_get_comments",
+                    description="Get comments for a specific Confluence page",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "page_id": {
+                                "type": "string",
+                                "description": "Confluence page ID",
+                            }
+                        },
+                        "required": ["page_id"],
+                    },
+                ),
+            ]
+        )
 
     if jira_fetcher:
-        tools.extend([
-            Tool(
-                name="jira_get_issue",
-                description="Get details of a specific Jira issue",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "issue_key": {"type": "string", "description": "Jira issue key (e.g., 'PROJ-123')"},
-                        "expand": {"type": "string", "description": "Optional fields to expand", "default": None},
-                    },
-                    "required": ["issue_key"],
-                },
-            ),
-            Tool(
-                name="jira_search",
-                description="Search Jira issues using JQL",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "jql": {"type": "string", "description": "JQL query string"},
-                        "fields": {"type": "string", "description": "Comma-separated fields to return", "default": "*all"},
-                        "limit": {
-                            "type": "number",
-                            "description": "Maximum number of results (1-50)",
-                            "default": 10,
-                            "minimum": 1,
-                            "maximum": 50,
+        tools.extend(
+            [
+                Tool(
+                    name="jira_get_issue",
+                    description="Get details of a specific Jira issue",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "issue_key": {
+                                "type": "string",
+                                "description": "Jira issue key (e.g., 'PROJ-123')",
+                            },
+                            "expand": {
+                                "type": "string",
+                                "description": "Optional fields to expand",
+                                "default": None,
+                            },
                         },
+                        "required": ["issue_key"],
                     },
-                    "required": ["jql"],
-                },
-            ),
-            Tool(
-                name="jira_get_project_issues",
-                description="Get all issues for a specific Jira project",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "project_key": {"type": "string", "description": "The project key"},
-                        "limit": {
-                            "type": "number",
-                            "description": "Maximum number of results (1-50)",
-                            "default": 10,
-                            "minimum": 1,
-                            "maximum": 50,
+                ),
+                Tool(
+                    name="jira_search",
+                    description="Search Jira issues using JQL",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "jql": {
+                                "type": "string",
+                                "description": "JQL query string",
+                            },
+                            "fields": {
+                                "type": "string",
+                                "description": "Comma-separated fields to return",
+                                "default": "*all",
+                            },
+                            "limit": {
+                                "type": "number",
+                                "description": "Maximum number of results (1-50)",
+                                "default": 10,
+                                "minimum": 1,
+                                "maximum": 50,
+                            },
                         },
+                        "required": ["jql"],
                     },
-                    "required": ["project_key"],
-                },
-            ),
-            Tool(
-                name="jira_create_issue",
-                description="Create a new Jira issue",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "project_key": {"type": "string", "description": "The JIRA project key (e.g. 'PROJ'). Never assume what it might be, always ask the user."},
-                        "summary": {"type": "string", "description": "Summary/title of the issue"},
-                        "issue_type": {"type": "string", "description": "Issue type (e.g. 'Task', 'Bug', 'Story')"},
-                        "description": {"type": "string", "description": "Issue description", "default": ""},
-                        "additional_fields": {"type": "string", "description": "Optional JSON string of additional fields to set", "default": "{}"},
+                ),
+                Tool(
+                    name="jira_get_project_issues",
+                    description="Get all issues for a specific Jira project",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "project_key": {
+                                "type": "string",
+                                "description": "The project key",
+                            },
+                            "limit": {
+                                "type": "number",
+                                "description": "Maximum number of results (1-50)",
+                                "default": 10,
+                                "minimum": 1,
+                                "maximum": 50,
+                            },
+                        },
+                        "required": ["project_key"],
                     },
-                    "required": ["project_key", "summary", "issue_type"],
-                },
-            ),
-            Tool(
-                name="jira_update_issue",
-                description="Update an existing Jira issue",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "issue_key": {"type": "string", "description": "Jira issue key"},
-                        "fields": {"type": "string", "description": "A valid JSON object of fields to update"},
-                        "additional_fields": {"type": "string", "description": "Optional JSON string of additional fields to update", "default": "{}"},
+                ),
+                Tool(
+                    name="jira_create_issue",
+                    description="Create a new Jira issue",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "project_key": {
+                                "type": "string",
+                                "description": "The JIRA project key (e.g. 'PROJ'). Never assume what it might be, always ask the user.",
+                            },
+                            "summary": {
+                                "type": "string",
+                                "description": "Summary/title of the issue",
+                            },
+                            "issue_type": {
+                                "type": "string",
+                                "description": "Issue type (e.g. 'Task', 'Bug', 'Story')",
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": "Issue description",
+                                "default": "",
+                            },
+                            "additional_fields": {
+                                "type": "string",
+                                "description": "Optional JSON string of additional fields to set",
+                                "default": "{}",
+                            },
+                        },
+                        "required": ["project_key", "summary", "issue_type"],
                     },
-                    "required": ["issue_key", "fields"],
-                },
-            ),
-            Tool(
-                name="jira_delete_issue",
-                description="Delete an existing Jira issue",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "issue_key": {"type": "string", "description": "Jira issue key (e.g. PROJ-123)"},
+                ),
+                Tool(
+                    name="jira_update_issue",
+                    description="Update an existing Jira issue",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "issue_key": {
+                                "type": "string",
+                                "description": "Jira issue key",
+                            },
+                            "fields": {
+                                "type": "string",
+                                "description": "A valid JSON object of fields to update",
+                            },
+                            "additional_fields": {
+                                "type": "string",
+                                "description": "Optional JSON string of additional fields to update",
+                                "default": "{}",
+                            },
+                        },
+                        "required": ["issue_key", "fields"],
                     },
-                    "required": ["issue_key"],
-                },
-            ),
-        ])
+                ),
+                Tool(
+                    name="jira_delete_issue",
+                    description="Delete an existing Jira issue",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "issue_key": {
+                                "type": "string",
+                                "description": "Jira issue key (e.g. PROJ-123)",
+                            },
+                        },
+                        "required": ["issue_key"],
+                    },
+                ),
+            ]
+        )
 
     return tools
+
 
 @app.call_tool()
 async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
@@ -373,7 +440,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 summary=arguments["summary"],
                 issue_type=arguments["issue_type"],
                 description=arguments.get("description", ""),
-                **additional_fields
+                **additional_fields,
             )
             result = json.dumps({"content": doc.page_content, "metadata": doc.metadata}, indent=2)
             return [TextContent(type="text", text=f"Issue created successfully:\n{result}")]
@@ -381,11 +448,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
         elif name == "jira_update_issue":
             fields = json.loads(arguments["fields"])
             additional_fields = json.loads(arguments.get("additional_fields", "{}"))
-            doc = jira_fetcher.update_issue(
-                issue_key=arguments["issue_key"],
-                fields=fields,
-                **additional_fields
-            )
+            doc = jira_fetcher.update_issue(issue_key=arguments["issue_key"], fields=fields, **additional_fields)
             result = json.dumps({"content": doc.page_content, "metadata": doc.metadata}, indent=2)
             return [TextContent(type="text", text=f"Issue updated successfully:\n{result}")]
 

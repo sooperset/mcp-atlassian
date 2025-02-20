@@ -1,6 +1,5 @@
 import logging
 import os
-from typing import Optional
 
 from atlassian import Confluence
 from dotenv import load_dotenv
@@ -66,9 +65,12 @@ class ConfluenceFetcher:
             "last_modified": version.get("when"),
         }
 
-        return Document(page_content=processed_markdown if clean_html else processed_html, metadata=metadata)
+        return Document(
+            page_content=processed_markdown if clean_html else processed_html,
+            metadata=metadata,
+        )
 
-    def get_page_by_title(self, space_key: str, title: str, clean_html: bool = True) -> Optional[Document]:
+    def get_page_by_title(self, space_key: str, title: str, clean_html: bool = True) -> Document | None:
         """Get page content by space key and title."""
         try:
             page = self.confluence.get_page_by_title(space=space_key, title=title, expand="body.storage,version")
@@ -87,7 +89,10 @@ class ConfluenceFetcher:
                 "url": f"{self.config.url}/spaces/{space_key}/pages/{page['id']}",
             }
 
-            return Document(page_content=processed_markdown if clean_html else processed_html, metadata=metadata)
+            return Document(
+                page_content=processed_markdown if clean_html else processed_html,
+                metadata=metadata,
+            )
 
         except Exception as e:
             logger.error(f"Error fetching page: {str(e)}")
@@ -114,7 +119,12 @@ class ConfluenceFetcher:
                 "url": f"{self.config.url}/spaces/{space_key}/pages/{page['id']}",
             }
 
-            documents.append(Document(page_content=processed_markdown if clean_html else processed_html, metadata=metadata))
+            documents.append(
+                Document(
+                    page_content=processed_markdown if clean_html else processed_html,
+                    metadata=metadata,
+                )
+            )
 
         return documents
 
@@ -147,7 +157,10 @@ class ConfluenceFetcher:
             }
 
             comment_documents.append(
-                Document(page_content=processed_markdown if clean_html else processed_html, metadata=metadata)
+                Document(
+                    page_content=processed_markdown if clean_html else processed_html,
+                    metadata=metadata,
+                )
             )
 
         return comment_documents
