@@ -7,8 +7,8 @@ from atlassian import Jira
 from dotenv import load_dotenv
 
 from .config import JiraConfig
+from .document_types import Document
 from .preprocessing import TextPreprocessor
-from .types import Document
 
 # Load environment variables
 load_dotenv()
@@ -93,6 +93,27 @@ class JiraFetcher:
         except Exception as e:
             logger.error(f"Error updating issue {issue_key}: {str(e)}")
             raise
+    def _parse_date(self, date_str: str) -> str:
+        """Parse date string to handle various ISO formats."""
+        if not date_str:
+            return ""
+
+        # Handle various timezone formats
+        if "+0000" in date_str:
+            date_str = date_str.replace("+0000", "+00:00")
+        elif "-0000" in date_str:
+            date_str = date_str.replace("-0000", "+00:00")
+        # Handle other timezone formats like +0900, -0500, etc.
+        elif len(date_str) >= 5 and date_str[-5] in "+-" and date_str[-4:].isdigit():
+            # Insert colon between hours and minutes of timezone
+            date_str = date_str[:-2] + ":" + date_str[-2:]
+
+        try:
+            date = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+            return date.strftime("%Y-%m-%d")
+        except Exception as e:
+            logger.warning(f"Error parsing date {date_str}: {e}")
+            return date_str
 
     def get_issue(self, issue_key: str, expand: Optional[str] = None) -> Document:
         """
@@ -116,22 +137,19 @@ class JiraFetcher:
             if "comment" in issue["fields"]:
                 for comment in issue["fields"]["comment"]["comments"]:
                     processed_comment = self._clean_text(comment["body"])
-                    created = datetime.fromisoformat(comment["created"].replace("Z", "+00:00"))
+                    created = self._parse_date(comment["created"])
                     author = comment["author"].get("displayName", "Unknown")
-                    comments.append(
-                        {"body": processed_comment, "created": created.strftime("%Y-%m-%d"), "author": author}
-                    )
+                    comments.append({"body": processed_comment, "created": created, "author": author})
 
-            # Format created date
-            created_date = datetime.fromisoformat(issue["fields"]["created"].replace("Z", "+00:00"))
-            formatted_created = created_date.strftime("%Y-%m-%d")
+            # Format created date using new parser
+            created_date = self._parse_date(issue["fields"]["created"])
 
             # Combine content in a more structured way
             content = f"""Issue: {issue_key}
 Title: {issue['fields'].get('summary', '')}
 Type: {issue['fields']['issuetype']['name']}
 Status: {issue['fields']['status']['name']}
-Created: {formatted_created}
+Created: {created_date}
 
 Description:
 {description}
@@ -147,7 +165,7 @@ Comments:
                 "title": issue["fields"].get("summary", ""),
                 "type": issue["fields"]["issuetype"]["name"],
                 "status": issue["fields"]["status"]["name"],
-                "created_date": formatted_created,
+                "created_date": created_date,
                 "priority": issue["fields"].get("priority", {}).get("name", "None"),
                 "link": f"{self.config.url.rstrip('/')}/browse/{issue_key}",
             }
