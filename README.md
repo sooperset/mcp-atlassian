@@ -94,12 +94,16 @@ Model Context Protocol (MCP) server for Atlassian Cloud products (Confluence and
 
 When using [`uv`](https://docs.astral.sh/uv/), use [`uvx`](https://docs.astral.sh/uv/guides/tools/) to directly run *mcp-atlassian*.
 
-### Using Smithery
+```bash
+uvx mcp-atlassian
+```
 
-To install Atlassian Integration automatically via [Smithery](https://smithery.ai/server/mcp-atlassian):
+### Using PIP
+
+Alternatively you can install mcp-atlassian via pip:
 
 ```bash
-npx -y @smithery/cli install mcp-atlassian --client claude
+pip install mcp-atlassian
 ```
 
 ## Configuration
@@ -226,6 +230,27 @@ JIRA_API_TOKEN=your_api_token
 
 </details>
 
+### Cursor IDE Configuration
+
+To integrate the MCP server with Cursor IDE:
+
+1. First, [build the Docker image](#build) if you haven't already:
+   ```bash
+   docker build -t mcp/atlassian .
+   ```
+
+2. Configure the server:
+   - Open Cursor Settings
+   - Navigate to `Features` > `MCP Servers`
+   - Click `Add new MCP server`
+   - Enter this configuration:
+     ```yaml
+     name: mcp-atlassian
+     type: command
+     command: docker run --rm -i --env-file /path/to/.env mcp/atlassian
+     ```
+   - Replace `/path/to/.env` with your actual .env file path
+
 ## Debugging
 
 You can use the MCP inspector to debug the server:
@@ -250,7 +275,7 @@ tail -n 20 -f ~/Library/Logs/Claude/mcp*.log
 For local development testing:
 
 1. Use the MCP inspector (see [Debugging](#debugging))
-2. Test with Claude Desktop using the configuration above
+2. Test with Claude Desktop or Cursor IDE using the configuration above
 
 ## Build
 
