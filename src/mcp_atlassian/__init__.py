@@ -40,10 +40,13 @@ def main(
 
     logging.basicConfig(level=logging_level, stream=sys.stderr)
 
-    # Load environment variables from file if specified
+    # Load environment variables from file if specified, otherwise try default .env
     if env_file:
         logger.debug(f"Loading environment from file: {env_file}")
         load_dotenv(env_file)
+    else:
+        logger.debug("Attempting to load environment from default .env file")
+        load_dotenv()
 
     # Set environment variables from command line arguments if provided
     if confluence_url:
