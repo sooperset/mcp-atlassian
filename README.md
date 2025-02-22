@@ -96,6 +96,8 @@ When using [`uv`](https://docs.astral.sh/uv/), use [`uvx`](https://docs.astral.s
 
 ```bash
 uvx mcp-atlassian
+# or
+uv pip install mcp-atlassian
 ```
 
 ### Using PIP
@@ -104,6 +106,14 @@ Alternatively you can install mcp-atlassian via pip:
 
 ```bash
 pip install mcp-atlassian
+```
+
+### Installing via Smithery
+
+To install Atlassian Integration for Claude Desktop automatically via [Smithery](https://smithery.ai/server/mcp-atlassian):
+
+```bash
+npx -y @smithery/cli install mcp-atlassian --client claude
 ```
 
 ## Configuration
