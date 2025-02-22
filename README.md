@@ -209,7 +209,7 @@ There are two ways to configure the Docker environment:
 }
 ```
 
-2. Using an environment file (recommended):
+2. Using an environment file:
 ```json
 {
   "mcpServers": {
