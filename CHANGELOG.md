@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.10] - 2025-02-22
+
+### Added
+- Added CLI support with click for configurable server initialization
+- Support environment variable loading from .env file
+- Implement flexible configuration via command-line options
+
 ## [0.1.9] - 2025-02-21
 
 ### Added
