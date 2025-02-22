@@ -234,12 +234,10 @@ JIRA_API_TOKEN=your_api_token
 
 To integrate the MCP server with Cursor IDE:
 
-1. First, [build the Docker image](#build) if you haven't already:
+1. Install mcp-atlassian using uvx:
    ```bash
-   docker build -t mcp/atlassian .
+   uvx mcp-atlassian
    ```
-
-![image](https://github.com/user-attachments/assets/fa3728fe-ab04-4a60-a8b0-5aae1be5fed5)
 
 2. Configure the server:
    - Open Cursor Settings
@@ -249,9 +247,8 @@ To integrate the MCP server with Cursor IDE:
      ```yaml
      name: mcp-atlassian
      type: command
-     command: docker run --rm -i --env-file /path/to/.env mcp/atlassian
+     command: uvx mcp-atlassian --confluence-url=https://your-domain.atlassian.net/wiki --confluence-username=your.email@domain.com --confluence-token=your_api_token --jira-url=https://your-domain.atlassian.net --jira-username=your.email@domain.com --jira-token=your_api_token
      ```
-   - Replace `/path/to/.env` with your actual .env file path
 
 ## Debugging
 

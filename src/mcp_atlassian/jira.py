@@ -4,14 +4,10 @@ from datetime import datetime
 from typing import Any
 
 from atlassian import Jira
-from dotenv import load_dotenv
 
 from .config import JiraConfig
 from .document_types import Document
 from .preprocessing import TextPreprocessor
-
-# Load environment variables
-load_dotenv()
 
 # Configure logging
 logger = logging.getLogger("mcp-jira")

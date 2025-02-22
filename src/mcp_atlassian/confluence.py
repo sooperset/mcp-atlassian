@@ -2,14 +2,10 @@ import logging
 import os
 
 from atlassian import Confluence
-from dotenv import load_dotenv
 
 from .config import ConfluenceConfig
 from .document_types import Document
 from .preprocessing import TextPreprocessor
-
-# Load environment variables
-load_dotenv()
 
 # Configure logging
 logger = logging.getLogger("mcp-atlassian")
