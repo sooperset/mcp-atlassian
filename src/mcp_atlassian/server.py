@@ -340,6 +340,34 @@ async def list_tools() -> list[Tool]:
                         "required": ["issue_key"],
                     },
                 ),
+                Tool(
+                    name="jira_create_subtask",
+                    description="Create a sub-task under an existing Jira issue",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "parent_issue_key": {
+                                "type": "string",
+                                "description": "The key of the parent issue (e.g. 'PROJ-123')",
+                            },
+                            "summary": {
+                                "type": "string",
+                                "description": "Summary/title of the sub-task",
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": "Sub-task description",
+                                "default": "",
+                            },
+                            "additional_fields": {
+                                "type": "string",
+                                "description": "Optional JSON string of additional fields to set",
+                                "default": "{}",
+                            },
+                        },
+                        "required": ["parent_issue_key", "summary"],
+                    },
+                ),
             ]
         )
 
@@ -457,6 +485,17 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             deleted = jira_fetcher.delete_issue(issue_key)
             result = {"message": f"Issue {issue_key} has been deleted successfully."}
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        elif name == "jira_create_subtask":
+            additional_fields = json.loads(arguments.get("additional_fields", "{}"))
+            doc = jira_fetcher.create_subtask(
+                parent_issue_key=arguments["parent_issue_key"],
+                summary=arguments["summary"],
+                description=arguments.get("description", ""),
+                **additional_fields,
+            )
+            result = json.dumps({"content": doc.page_content, "metadata": doc.metadata}, indent=2)
+            return [TextContent(type="text", text=f"Sub-task created successfully:\n{result}")]
 
         raise ValueError(f"Unknown tool: {name}")
 

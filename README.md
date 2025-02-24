@@ -88,6 +88,15 @@ Model Context Protocol (MCP) server for Atlassian Cloud products (Confluence and
      - `issue_key` (string): Jira issue key (e.g. PROJ-123)
    - Returns: Success confirmation message
 
+7. `jira_create_subtask`
+   - Create a sub-task under an existing Jira issue
+   - Inputs:
+     - `parent_issue_key` (string): The key of the parent issue (e.g. 'PROJ-123')
+     - `summary` (string): Summary/title of the sub-task
+     - `description` (string, optional): Sub-task description
+     - `additional_fields` (string, optional): JSON string of additional fields to set
+   - Returns: Created sub-task details with metadata
+
 ## Installation
 
 ### Using uv (recommended)

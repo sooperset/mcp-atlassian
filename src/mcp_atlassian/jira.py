@@ -85,6 +85,53 @@ class JiraFetcher:
             logger.error(f"Error creating issue in project {project_key}: {str(e)}")
             raise
 
+    def create_subtask(
+        self,
+        parent_issue_key: str,
+        summary: str,
+        description: str = "",
+        **kwargs: Any,
+    ) -> Document:
+        """
+        Create a sub-task under an existing Jira issue.
+
+        Args:
+            parent_issue_key: The key of the parent issue (e.g. 'PROJ-123')
+            summary: Summary of the sub-task
+            description: Sub-task description
+            kwargs: Any other custom Jira fields
+
+        Returns:
+            Document representing the newly created sub-task
+        """
+        # Get parent issue to determine the project
+        parent_issue = self.jira.issue(parent_issue_key)
+        project_key = parent_issue["fields"]["project"]["key"]
+
+        # Create fields dictionary with sub-task specific settings
+        fields = {
+            "project": {"key": project_key},
+            "summary": summary,
+            "description": description,
+            "issuetype": {"name": "Sub-task"},  # Specify that this is a sub-task
+            "parent": {"key": parent_issue_key},  # Link to parent issue
+        }
+        
+        # Add any additional fields
+        for key, value in kwargs.items():
+            fields[key] = value
+
+        try:
+            created = self.jira.issue_create(fields=fields)
+            issue_key = created.get("key")
+            if not issue_key:
+                raise ValueError(f"Failed to create sub-task under issue {parent_issue_key}")
+
+            return self.get_issue(issue_key)
+        except Exception as e:
+            logger.error(f"Error creating sub-task under issue {parent_issue_key}: {str(e)}")
+            raise
+
     def update_issue(self, issue_key: str, fields: dict[str, Any] = None, **kwargs: Any) -> Document:
         """
         Update an existing issue.
