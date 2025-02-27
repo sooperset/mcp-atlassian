@@ -48,6 +48,7 @@ Model Context Protocol (MCP) server for Atlassian Cloud products (Confluence and
      - `content` (string): The content of the page in Markdown format
      - `parent_id` (string, optional): Optional parent page ID
    - Returns: Created page details with metadata
+   - Note: Uses markdown-to-confluence library for proper Confluence storage format conversion
 
 5. `confluence_update_page`
    - Update an existing Confluence page
@@ -58,6 +59,7 @@ Model Context Protocol (MCP) server for Atlassian Cloud products (Confluence and
      - `minor_edit` (boolean, optional): Whether this is a minor edit (default: false)
      - `version_comment` (string, optional): Optional comment for this version (default: "")
    - Returns: Updated page details with metadata
+   - Note: Uses markdown-to-confluence library for proper Confluence storage format conversion
 
 #### Jira Tools
 

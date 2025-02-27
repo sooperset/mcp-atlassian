@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.11] - 2025-02-27
+
+### Added
+- Added markdown-to-confluence library for proper Confluence storage format conversion
+
+### Fixed
+- Fixed issue with Confluence page creation/update where content was incorrectly wrapped in HTML macro
+- Improved Markdown to Confluence storage format conversion to properly handle headings, lists, and code blocks
+
 ## [0.1.10] - 2025-02-22
 
 ### Added

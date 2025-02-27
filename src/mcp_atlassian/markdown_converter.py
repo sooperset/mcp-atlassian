@@ -16,12 +16,20 @@ logger = logging.getLogger("mcp-atlassian.markdown_converter")
 def markdown_to_confluence_storage(markdown_content):
     """
     Convert Markdown content to Confluence storage format (XHTML)
-
+    
+    This function uses the markdown-to-confluence library to properly convert
+    Markdown to Confluence storage format. The library handles proper formatting of:
+    - Headings with anchors
+    - Text formatting (bold, italic, etc.)
+    - Lists (ordered and unordered)
+    - Code blocks with syntax highlighting
+    - Tables and other Markdown elements
+    
     Args:
         markdown_content: The markdown content to convert
-
+        
     Returns:
-        String in Confluence storage format
+        String in Confluence storage format (XHTML with Confluence macros)
     """
     try:
         # First convert markdown to HTML
