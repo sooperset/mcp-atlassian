@@ -40,6 +40,27 @@ Model Context Protocol (MCP) server for Atlassian Cloud products (Confluence and
      - `page_id` (string): Confluence page ID
    - Returns: Array of comments with author, creation date, and content
 
+4. `confluence_create_page`
+   - Create a new Confluence page
+   - Inputs:
+     - `space_key` (string): The key of the space to create the page in
+     - `title` (string): The title of the page
+     - `content` (string): The content of the page in Markdown format
+     - `parent_id` (string, optional): Optional parent page ID
+   - Returns: Created page details with metadata
+   - Note: Uses markdown-to-confluence library for proper Confluence storage format conversion
+
+5. `confluence_update_page`
+   - Update an existing Confluence page
+   - Inputs:
+     - `page_id` (string): The ID of the page to update
+     - `title` (string): The new title of the page
+     - `content` (string): The new content of the page in Markdown format
+     - `minor_edit` (boolean, optional): Whether this is a minor edit (default: false)
+     - `version_comment` (string, optional): Optional comment for this version (default: "")
+   - Returns: Updated page details with metadata
+   - Note: Uses markdown-to-confluence library for proper Confluence storage format conversion
+
 #### Jira Tools
 
 1. `jira_get_issue`

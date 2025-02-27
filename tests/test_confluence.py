@@ -38,6 +38,12 @@ def mock_confluence():
         confluence_instance.get_page_comments.return_value = MOCK_COMMENTS_RESPONSE
         confluence_instance.cql.return_value = MOCK_CQL_SEARCH_RESPONSE
 
+        # Mock create_page to return a page with the given title
+        confluence_instance.create_page.return_value = {"id": "123456789", "title": "New Test Page"}
+
+        # Mock update_page to return None (as the actual method does)
+        confluence_instance.update_page.return_value = None
+
         yield confluence_instance
 
 
@@ -167,3 +173,103 @@ def test_get_page_by_title_with_error(fetcher, mock_confluence):
         space="PROJ", title="Example Page", expand="body.storage,version"
     )
     assert document is None
+
+
+def test_create_page(fetcher, mock_confluence):
+    space_key = "PROJ"
+    title = "New Test Page"
+    body = "<p>Test content</p>"
+    parent_id = "987654321"
+
+    document = fetcher.create_page(space_key, title, body, parent_id)
+
+    mock_confluence.create_page.assert_called_once_with(
+        space=space_key, title=title, body=body, parent_id=parent_id, representation="storage"
+    )
+
+    assert isinstance(document, Document)
+    # The page_id should match what's returned by create_page (123456789)
+    # rather than what's in MOCK_PAGE_RESPONSE (987654321)
+    assert document.metadata["page_id"] == "123456789"
+
+
+def test_create_page_without_parent(fetcher, mock_confluence):
+    space_key = "PROJ"
+    title = "New Test Page"
+    body = "<p>Test content</p>"
+
+    document = fetcher.create_page(space_key, title, body)
+
+    mock_confluence.create_page.assert_called_once_with(
+        space=space_key, title=title, body=body, parent_id=None, representation="storage"
+    )
+
+    assert isinstance(document, Document)
+
+
+def test_create_page_with_error(fetcher, mock_confluence):
+    mock_confluence.create_page.side_effect = Exception("API Error")
+
+    with pytest.raises(Exception, match="API Error"):
+        fetcher.create_page("PROJ", "Test Page", "<p>Content</p>")
+
+    mock_confluence.create_page.assert_called_once()
+
+
+def test_update_page(fetcher, mock_confluence):
+    page_id = "987654321"
+    title = "Updated Test Page"
+    body = "<p>Updated content</p>"
+    minor_edit = True
+
+    document = fetcher.update_page(page_id, title, body, minor_edit)
+
+    # First it should get the current page to get the version number
+    # We don't check the exact parameters since they may include expand parameters
+    assert mock_confluence.get_page_by_id.call_args[1]["page_id"] == page_id
+
+    # Then it should update the page
+    mock_confluence.update_page.assert_called_once_with(
+        page_id=page_id,
+        title=title,
+        body=body,
+        minor_edit=minor_edit,
+        version_comment="",  # Default empty string for version_comment
+    )
+
+    assert isinstance(document, Document)
+    assert document.metadata["page_id"] == "987654321"  # From MOCK_PAGE_RESPONSE
+    assert document.metadata["title"] == "Example Meeting Notes"  # From MOCK_PAGE_RESPONSE
+
+
+def test_update_page_with_version_comment(fetcher, mock_confluence):
+    page_id = "987654321"
+    title = "Updated Test Page"
+    body = "<p>Updated content</p>"
+    minor_edit = False
+    version_comment = "Updated with new information"
+
+    document = fetcher.update_page(page_id, title, body, minor_edit, version_comment)
+
+    # First it should get the current page
+    assert mock_confluence.get_page_by_id.call_args[1]["page_id"] == page_id
+
+    # Then it should update the page with the version comment
+    mock_confluence.update_page.assert_called_once_with(
+        page_id=page_id, title=title, body=body, minor_edit=minor_edit, version_comment=version_comment
+    )
+
+    assert isinstance(document, Document)
+
+
+def test_update_page_with_error(fetcher, mock_confluence):
+    mock_confluence.update_page.side_effect = Exception("API Error")
+
+    with pytest.raises(Exception, match="API Error"):
+        fetcher.update_page("987654321", "Test Page", "<p>Content</p>")
+
+    # First it should get the current page
+    mock_confluence.get_page_by_id.assert_called_once()
+
+    # Then it should try to update the page
+    mock_confluence.update_page.assert_called_once()
