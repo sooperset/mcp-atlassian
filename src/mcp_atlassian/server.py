@@ -199,6 +199,59 @@ async def list_tools() -> list[Tool]:
                         "required": ["page_id"],
                     },
                 ),
+                Tool(
+                    name="confluence_create_page",
+                    description="Create a new Confluence page",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "space_key": {
+                                "type": "string",
+                                "description": "The key of the space to create the page in",
+                            },
+                            "title": {
+                                "type": "string",
+                                "description": "The title of the page",
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "The content of the page in Markdown format",
+                            },
+                            "parent_id": {
+                                "type": "string",
+                                "description": "Optional parent page ID",
+                            },
+                        },
+                        "required": ["space_key", "title", "content"],
+                    },
+                ),
+                Tool(
+                    name="confluence_update_page",
+                    description="Update an existing Confluence page",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "page_id": {
+                                "type": "string",
+                                "description": "The ID of the page to update",
+                            },
+                            "title": {
+                                "type": "string",
+                                "description": "The new title of the page",
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "The new content of the page in Markdown format",
+                            },
+                            "minor_edit": {
+                                "type": "boolean",
+                                "description": "Whether this is a minor edit",
+                                "default": False,
+                            },
+                        },
+                        "required": ["page_id", "title", "content"],
+                    },
+                ),
             ]
         )
 
@@ -457,6 +510,57 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             deleted = jira_fetcher.delete_issue(issue_key)
             result = {"message": f"Issue {issue_key} has been deleted successfully."}
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            
+        elif name == "confluence_create_page":
+            # Convert markdown content to HTML storage format
+            space_key = arguments["space_key"]
+            title = arguments["title"]
+            content = arguments["content"]
+            parent_id = arguments.get("parent_id")
+            
+            # Create the page
+            doc = confluence_fetcher.create_page(
+                space_key=space_key,
+                title=title,
+                body=content,  # The content will be processed by the Confluence API
+                parent_id=parent_id
+            )
+            
+            result = {
+                "page_id": doc.metadata["page_id"],
+                "title": doc.metadata["title"],
+                "space_key": doc.metadata["space_key"],
+                "url": doc.metadata["url"],
+                "version": doc.metadata["version"],
+                "content": doc.page_content[:500] + "..." if len(doc.page_content) > 500 else doc.page_content
+            }
+            
+            return [TextContent(type="text", text=f"Page created successfully:\n{json.dumps(result, indent=2)}")]
+            
+        elif name == "confluence_update_page":
+            page_id = arguments["page_id"]
+            title = arguments["title"]
+            content = arguments["content"]
+            minor_edit = arguments.get("minor_edit", False)
+            
+            # Update the page
+            doc = confluence_fetcher.update_page(
+                page_id=page_id,
+                title=title,
+                body=content,  # The content will be processed by the Confluence API
+                minor_edit=minor_edit
+            )
+            
+            result = {
+                "page_id": doc.metadata["page_id"],
+                "title": doc.metadata["title"],
+                "space_key": doc.metadata["space_key"],
+                "url": doc.metadata["url"],
+                "version": doc.metadata["version"],
+                "content": doc.page_content[:500] + "..." if len(doc.page_content) > 500 else doc.page_content
+            }
+            
+            return [TextContent(type="text", text=f"Page updated successfully:\n{json.dumps(result, indent=2)}")]
 
         raise ValueError(f"Unknown tool: {name}")
 
