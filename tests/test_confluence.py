@@ -242,12 +242,36 @@ def test_update_page(fetcher, mock_confluence):
         title=title,
         body=body,
         minor_edit=minor_edit,
-        version_number=2  # MOCK_PAGE_RESPONSE has version 1, so update should use version 2
+        version_comment=""  # Default empty string for version_comment
     )
     
     assert isinstance(document, Document)
     assert document.metadata["page_id"] == "987654321"  # From MOCK_PAGE_RESPONSE
     assert document.metadata["title"] == "Example Meeting Notes"  # From MOCK_PAGE_RESPONSE
+
+
+def test_update_page_with_version_comment(fetcher, mock_confluence):
+    page_id = "987654321"
+    title = "Updated Test Page"
+    body = "<p>Updated content</p>"
+    minor_edit = False
+    version_comment = "Updated with new information"
+    
+    document = fetcher.update_page(page_id, title, body, minor_edit, version_comment)
+    
+    # First it should get the current page
+    assert mock_confluence.get_page_by_id.call_args[1]['page_id'] == page_id
+    
+    # Then it should update the page with the version comment
+    mock_confluence.update_page.assert_called_once_with(
+        page_id=page_id,
+        title=title,
+        body=body,
+        minor_edit=minor_edit,
+        version_comment=version_comment
+    )
+    
+    assert isinstance(document, Document)
 
 
 def test_update_page_with_error(fetcher, mock_confluence):

@@ -10,6 +10,7 @@ from pydantic import AnyUrl
 
 from .confluence import ConfluenceFetcher
 from .jira import JiraFetcher
+from .markdown_converter import markdown_to_confluence_storage
 
 # Configure logging
 logging.basicConfig(level=logging.WARNING)
@@ -247,6 +248,11 @@ async def list_tools() -> list[Tool]:
                                 "type": "boolean",
                                 "description": "Whether this is a minor edit",
                                 "default": False,
+                            },
+                            "version_comment": {
+                                "type": "string",
+                                "description": "Optional comment for this version",
+                                "default": "",
                             },
                         },
                         "required": ["page_id", "title", "content"],
@@ -518,11 +524,14 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             content = arguments["content"]
             parent_id = arguments.get("parent_id")
             
+            # Convert markdown to Confluence storage format
+            storage_format = markdown_to_confluence_storage(content)
+            
             # Create the page
             doc = confluence_fetcher.create_page(
                 space_key=space_key,
                 title=title,
-                body=content,  # The content will be processed by the Confluence API
+                body=storage_format,  # Now using the converted storage format
                 parent_id=parent_id
             )
             
@@ -543,12 +552,16 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             content = arguments["content"]
             minor_edit = arguments.get("minor_edit", False)
             
+            # Convert markdown to Confluence storage format
+            storage_format = markdown_to_confluence_storage(content)
+            
             # Update the page
             doc = confluence_fetcher.update_page(
                 page_id=page_id,
                 title=title,
-                body=content,  # The content will be processed by the Confluence API
-                minor_edit=minor_edit
+                body=storage_format,  # Now using the converted storage format
+                minor_edit=minor_edit,
+                version_comment=arguments.get("version_comment", "")
             )
             
             result = {

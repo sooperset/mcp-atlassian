@@ -56,6 +56,7 @@ Model Context Protocol (MCP) server for Atlassian Cloud products (Confluence and
      - `title` (string): The new title of the page
      - `content` (string): The new content of the page in Markdown format
      - `minor_edit` (boolean, optional): Whether this is a minor edit (default: false)
+     - `version_comment` (string, optional): Optional comment for this version (default: "")
    - Returns: Updated page details with metadata
 
 #### Jira Tools

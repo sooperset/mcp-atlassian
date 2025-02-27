@@ -216,7 +216,7 @@ class ConfluenceFetcher:
             logger.error(f"Error creating page in space {space_key}: {str(e)}")
             raise
 
-    def update_page(self, page_id: str, title: str, body: str, minor_edit: bool = False) -> Document:
+    def update_page(self, page_id: str, title: str, body: str, minor_edit: bool = False, version_comment: str = "") -> Document:
         """
         Update an existing Confluence page.
         
@@ -225,6 +225,7 @@ class ConfluenceFetcher:
             title: The new title of the page
             body: The new content of the page in storage format (HTML)
             minor_edit: Whether this is a minor edit
+            version_comment: Optional comment for this version
             
         Returns:
             Document representing the updated page
@@ -239,7 +240,7 @@ class ConfluenceFetcher:
                 title=title,
                 body=body,
                 minor_edit=minor_edit,
-                version_number=current_page['version']['number'] + 1
+                version_comment=version_comment
             )
             
             # Return the updated page as a Document
