@@ -11,7 +11,8 @@ dependencies = [
     "mcp>=1.0.0",
     "python-dotenv>=1.0.1",
     "markdownify>=0.11.6",
-    "markdown>=3.7.0"
+    "markdown>=3.7.0",
+    "markdown-to-confluence>=0.3.0"
 ]
 [[project.authors]]
 name = "sooperset"
