@@ -190,59 +190,53 @@ class ConfluenceFetcher:
     def create_page(self, space_key: str, title: str, body: str, parent_id: str = None) -> Document:
         """
         Create a new page in a Confluence space.
-        
+
         Args:
             space_key: The key of the space
             title: The title of the page
             body: The content of the page in storage format (HTML)
             parent_id: Optional parent page ID
-            
+
         Returns:
             Document representing the newly created page
         """
         try:
             # Create the page
             page = self.confluence.create_page(
-                space=space_key,
-                title=title,
-                body=body,
-                parent_id=parent_id,
-                representation='storage'
+                space=space_key, title=title, body=body, parent_id=parent_id, representation="storage"
             )
-            
+
             # Return the created page as a Document
-            return self.get_page_content(page['id'])
+            return self.get_page_content(page["id"])
         except Exception as e:
             logger.error(f"Error creating page in space {space_key}: {str(e)}")
             raise
 
-    def update_page(self, page_id: str, title: str, body: str, minor_edit: bool = False, version_comment: str = "") -> Document:
+    def update_page(
+        self, page_id: str, title: str, body: str, minor_edit: bool = False, version_comment: str = ""
+    ) -> Document:
         """
         Update an existing Confluence page.
-        
+
         Args:
             page_id: The ID of the page to update
             title: The new title of the page
             body: The new content of the page in storage format (HTML)
             minor_edit: Whether this is a minor edit
             version_comment: Optional comment for this version
-            
+
         Returns:
             Document representing the updated page
         """
         try:
             # Get the current page to get its version number
             current_page = self.confluence.get_page_by_id(page_id=page_id)
-            
+
             # Update the page
             self.confluence.update_page(
-                page_id=page_id,
-                title=title,
-                body=body,
-                minor_edit=minor_edit,
-                version_comment=version_comment
+                page_id=page_id, title=title, body=body, minor_edit=minor_edit, version_comment=version_comment
             )
-            
+
             # Return the updated page as a Document
             return self.get_page_content(page_id)
         except Exception as e:

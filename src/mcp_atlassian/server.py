@@ -516,63 +516,63 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             deleted = jira_fetcher.delete_issue(issue_key)
             result = {"message": f"Issue {issue_key} has been deleted successfully."}
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
-            
+
         elif name == "confluence_create_page":
             # Convert markdown content to HTML storage format
             space_key = arguments["space_key"]
             title = arguments["title"]
             content = arguments["content"]
             parent_id = arguments.get("parent_id")
-            
+
             # Convert markdown to Confluence storage format
             storage_format = markdown_to_confluence_storage(content)
-            
+
             # Create the page
             doc = confluence_fetcher.create_page(
                 space_key=space_key,
                 title=title,
                 body=storage_format,  # Now using the converted storage format
-                parent_id=parent_id
+                parent_id=parent_id,
             )
-            
+
             result = {
                 "page_id": doc.metadata["page_id"],
                 "title": doc.metadata["title"],
                 "space_key": doc.metadata["space_key"],
                 "url": doc.metadata["url"],
                 "version": doc.metadata["version"],
-                "content": doc.page_content[:500] + "..." if len(doc.page_content) > 500 else doc.page_content
+                "content": doc.page_content[:500] + "..." if len(doc.page_content) > 500 else doc.page_content,
             }
-            
+
             return [TextContent(type="text", text=f"Page created successfully:\n{json.dumps(result, indent=2)}")]
-            
+
         elif name == "confluence_update_page":
             page_id = arguments["page_id"]
             title = arguments["title"]
             content = arguments["content"]
             minor_edit = arguments.get("minor_edit", False)
-            
+
             # Convert markdown to Confluence storage format
             storage_format = markdown_to_confluence_storage(content)
-            
+
             # Update the page
             doc = confluence_fetcher.update_page(
                 page_id=page_id,
                 title=title,
                 body=storage_format,  # Now using the converted storage format
                 minor_edit=minor_edit,
-                version_comment=arguments.get("version_comment", "")
+                version_comment=arguments.get("version_comment", ""),
             )
-            
+
             result = {
                 "page_id": doc.metadata["page_id"],
                 "title": doc.metadata["title"],
                 "space_key": doc.metadata["space_key"],
                 "url": doc.metadata["url"],
                 "version": doc.metadata["version"],
-                "content": doc.page_content[:500] + "..." if len(doc.page_content) > 500 else doc.page_content
+                "content": doc.page_content[:500] + "..." if len(doc.page_content) > 500 else doc.page_content,
             }
-            
+
             return [TextContent(type="text", text=f"Page updated successfully:\n{json.dumps(result, indent=2)}")]
 
         raise ValueError(f"Unknown tool: {name}")
