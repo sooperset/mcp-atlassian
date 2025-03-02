@@ -319,7 +319,7 @@ async def list_tools() -> list[Tool]:
                             },
                             "fields": {
                                 "type": "string",
-                                "description": "A valid JSON object of fields to update. Use this to set the assignee with format: {\"assignee\": \"user@email.com\"} or {\"assignee\": null} to unassign",
+                                "description": 'A valid JSON object of fields to update. Use this to set the assignee with format: {"assignee": "user@email.com"} or {"assignee": null} to unassign',
                             },
                             "additional_fields": {
                                 "type": "string",
@@ -439,7 +439,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
 
         elif name == "jira_create_issue":
             additional_fields = json.loads(arguments.get("additional_fields", "{}"))
-            
+
             # If assignee is in additional_fields, move it to the main arguments
             if "assignee" in additional_fields:
                 if not arguments.get("assignee"):  # Only if not already specified in main arguments
@@ -448,7 +448,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                         arguments["assignee"] = assignee_data.get("id") or assignee_data.get("accountId")
                     else:
                         arguments["assignee"] = str(assignee_data)
-            
+
             doc = jira_fetcher.create_issue(
                 project_key=arguments["project_key"],
                 summary=arguments["summary"],
@@ -463,13 +463,8 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
         elif name == "jira_update_issue":
             fields = json.loads(arguments["fields"])
             additional_fields = json.loads(arguments.get("additional_fields", "{}"))
-            
-            
-            doc = jira_fetcher.update_issue(
-                issue_key=arguments["issue_key"], 
-                fields=fields, 
-                **additional_fields
-            )
+
+            doc = jira_fetcher.update_issue(issue_key=arguments["issue_key"], fields=fields, **additional_fields)
             result = json.dumps({"content": doc.page_content, "metadata": doc.metadata}, indent=2)
             return [TextContent(type="text", text=f"Issue updated successfully:\n{result}")]
 
