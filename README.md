@@ -11,10 +11,10 @@ Model Context Protocol (MCP) server for Atlassian Cloud products (Confluence and
 
 ### Resources
 
-- `confluence://{space_key}`: Access Confluence spaces and pages
-- `confluence://{space_key}/pages/{title}`: Access specific Confluence pages
-- `jira://{project_key}`: Access Jira project and its issues
-- `jira://{project_key}/issues/{issue_key}`: Access specific Jira issues
+> **Note:** The MCP server filters resources to only show Confluence spaces and Jira projects that the user is actively interacting with, based on their contributions and assignments. This makes the integration more efficient and focused on relevant content.
+
+- `confluence://{space_key}`: Access Confluence spaces
+- `jira://{project_key}`: Access Jira projects
 
 ### Tools
 

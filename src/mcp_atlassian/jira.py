@@ -350,3 +350,23 @@ Comments:
         """
         jql = f"project = {project_key} ORDER BY created DESC"
         return self.search_issues(jql, start=start, limit=limit)
+
+    def get_current_user_account_id(self) -> str:
+        """
+        Get the account ID of the current user.
+
+        Returns:
+            The account ID string of the current user
+
+        Raises:
+            ValueError: If unable to get the current user's account ID
+        """
+        try:
+            myself = self.jira.myself()
+            account_id: str | None = myself.get("accountId")
+            if not account_id:
+                raise ValueError("Unable to get account ID from user profile")
+            return account_id
+        except Exception as e:
+            logger.error(f"Error getting current user account ID: {str(e)}")
+            raise ValueError(f"Failed to get current user account ID: {str(e)}")

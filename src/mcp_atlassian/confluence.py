@@ -186,3 +186,54 @@ class ConfluenceFetcher:
         except Exception as e:
             logger.error(f"Search failed with error: {str(e)}")
             return []
+
+    def get_user_contributed_spaces(self, limit: int = 250) -> dict:
+        """
+        Get spaces the current user has contributed to.
+
+        Args:
+            limit: Maximum number of results to return
+
+        Returns:
+            Dictionary of space keys to space information
+        """
+        try:
+            # Use CQL to find content the user has contributed to
+            cql = "contributor = currentUser() order by lastmodified DESC"
+            results = self.confluence.cql(cql=cql, limit=limit)
+
+            # Extract and deduplicate spaces
+            spaces = {}
+            for result in results.get("results", []):
+                space_key = None
+                space_name = None
+
+                # Try to extract space from container
+                if "resultGlobalContainer" in result:
+                    container = result.get("resultGlobalContainer", {})
+                    space_name = container.get("title")
+                    display_url = container.get("displayUrl", "")
+                    if display_url and "/spaces/" in display_url:
+                        space_key = display_url.split("/spaces/")[1].split("/")[0]
+
+                # Try to extract from content expandable
+                if not space_key and "content" in result and "_expandable" in result["content"]:
+                    expandable = result["content"].get("_expandable", {})
+                    space_path = expandable.get("space", "")
+                    if space_path and space_path.startswith("/rest/api/space/"):
+                        space_key = space_path.split("/rest/api/space/")[1]
+
+                # Try to extract from URL
+                if not space_key and "url" in result:
+                    url = result.get("url", "")
+                    if url and url.startswith("/spaces/"):
+                        space_key = url.split("/spaces/")[1].split("/")[0]
+
+                # If we found a space key, add it to our dictionary
+                if space_key and space_key not in spaces:
+                    spaces[space_key] = {"key": space_key, "name": space_name or space_key, "description": ""}
+
+            return spaces
+        except Exception as e:
+            logger.error(f"Error getting user contributed spaces: {str(e)}")
+            return {}

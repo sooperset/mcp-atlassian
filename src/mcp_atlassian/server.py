@@ -41,30 +41,53 @@ app = Server("mcp-atlassian")
 
 @app.list_resources()
 async def list_resources() -> list[Resource]:
-    """List available Confluence spaces and Jira projects as resources."""
+    """List Confluence spaces and Jira projects the user is actively interacting with."""
     resources = []
 
-    # Add Confluence spaces
+    # Add Confluence spaces the user has contributed to
     if confluence_fetcher:
-        spaces_response = confluence_fetcher.get_spaces()
-        if isinstance(spaces_response, dict) and "results" in spaces_response:
-            spaces = spaces_response["results"]
+        try:
+            # Get spaces the user has contributed to
+            spaces = confluence_fetcher.get_user_contributed_spaces(limit=250)
+
+            # Add spaces to resources
             resources.extend(
                 [
                     Resource(
                         uri=AnyUrl(f"confluence://{space['key']}"),
                         name=f"Confluence Space: {space['name']}",
                         mimeType="text/plain",
-                        description=space.get("description", {}).get("plain", {}).get("value", ""),
+                        description=space.get("description", ""),
                     )
-                    for space in spaces
+                    for space in spaces.values()
                 ]
             )
+        except Exception as e:
+            logger.error(f"Error fetching Confluence spaces: {str(e)}")
 
-    # Add Jira projects
+    # Add Jira projects the user is involved with
     if jira_fetcher:
         try:
-            projects = jira_fetcher.jira.projects()
+            # Get current user's account ID
+            account_id = jira_fetcher.get_current_user_account_id()
+
+            # Use JQL to find issues the user is assigned to or reported
+            jql = f"assignee = {account_id} OR reporter = {account_id} ORDER BY updated DESC"
+            issues = jira_fetcher.jira.jql(jql, limit=250, fields=["project"])
+
+            # Extract and deduplicate projects
+            projects = {}
+            for issue in issues.get("issues", []):
+                project = issue.get("fields", {}).get("project", {})
+                project_key = project.get("key")
+                if project_key and project_key not in projects:
+                    projects[project_key] = {
+                        "key": project_key,
+                        "name": project.get("name", project_key),
+                        "description": project.get("description", ""),
+                    }
+
+            # Add projects to resources
             resources.extend(
                 [
                     Resource(
@@ -73,7 +96,7 @@ async def list_resources() -> list[Resource]:
                         mimeType="text/plain",
                         description=project.get("description", ""),
                     )
-                    for project in projects
+                    for project in projects.values()
                 ]
             )
         except Exception as e:
@@ -96,10 +119,23 @@ async def read_resource(uri: AnyUrl) -> str:
         # Handle space listing
         if len(parts) == 1:
             space_key = parts[0]
-            documents = confluence_fetcher.get_space_pages(space_key)
+
+            # Use CQL to find recently updated pages in this space
+            cql = f'space = "{space_key}" AND contributor = currentUser() ORDER BY lastmodified DESC'
+            documents = confluence_fetcher.search(cql=cql, limit=20)
+
+            if not documents:
+                # Fallback to regular space pages if no user-contributed pages found
+                documents = confluence_fetcher.get_space_pages(space_key, limit=10)
+
             content = []
             for doc in documents:
-                content.append(f"# {doc.metadata['title']}\n\n{doc.page_content}\n---")
+                title = doc.metadata.get("title", "Untitled")
+                page_id = doc.metadata.get("page_id", "")
+                url = doc.metadata.get("url", "")
+
+                content.append(f"# [{title}]({url})\n\n{doc.page_content}\n\n---")
+
             return "\n\n".join(content)
 
         # Handle specific page
@@ -122,10 +158,27 @@ async def read_resource(uri: AnyUrl) -> str:
         # Handle project listing
         if len(parts) == 1:
             project_key = parts[0]
-            issues = jira_fetcher.get_project_issues(project_key)
+
+            # Get current user's account ID
+            account_id = jira_fetcher.get_current_user_account_id()
+
+            # Use JQL to find issues in this project that the user is involved with
+            jql = f"project = {project_key} AND (assignee = {account_id} OR reporter = {account_id}) ORDER BY updated DESC"
+            issues = jira_fetcher.search_issues(jql=jql, limit=20)
+
+            if not issues:
+                # Fallback to recent issues if no user-related issues found
+                issues = jira_fetcher.get_project_issues(project_key, limit=10)
+
             content = []
             for issue in issues:
-                content.append(f"# {issue.metadata['key']}: {issue.metadata['title']}\n\n{issue.page_content}\n---")
+                key = issue.metadata.get("key", "")
+                title = issue.metadata.get("title", "Untitled")
+                url = issue.metadata.get("url", "")
+                status = issue.metadata.get("status", "")
+
+                content.append(f"# [{key}: {title}]({url})\nStatus: {status}\n\n{issue.page_content}\n\n---")
+
             return "\n\n".join(content)
 
         # Handle specific issue
