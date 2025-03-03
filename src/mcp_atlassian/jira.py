@@ -235,13 +235,14 @@ class JiraFetcher:
             logger.warning(f"Error parsing date {date_str}: {e}")
             return date_str
 
-    def get_issue(self, issue_key: str, expand: str | None = None) -> Document:
+    def get_issue(self, issue_key: str, expand: str | None = None, comment_limit: int | None = None) -> Document:
         """
         Get a single issue with all its details.
 
         Args:
             issue_key: The issue key (e.g. 'PROJ-123')
             expand: Optional fields to expand
+            comment_limit: Maximum number of comments to include (None for no comments)
 
         Returns:
             Document containing issue content and metadata
@@ -252,20 +253,10 @@ class JiraFetcher:
             # Process description and comments
             description = self._clean_text(issue["fields"].get("description", ""))
 
-            # Get comments
+            # Get comments if limit is specified
             comments = []
-            if "comment" in issue["fields"]:
-                for comment in issue["fields"]["comment"]["comments"]:
-                    processed_comment = self._clean_text(comment["body"])
-                    created = self._parse_date(comment["created"])
-                    author = comment["author"].get("displayName", "Unknown")
-                    comments.append(
-                        {
-                            "body": processed_comment,
-                            "created": created,
-                            "author": author,
-                        }
-                    )
+            if comment_limit is not None and comment_limit > 0:
+                comments = self.get_issue_comments(issue_key, limit=comment_limit)
 
             # Format created date using new parser
             created_date = self._parse_date(issue["fields"]["created"])
@@ -279,9 +270,11 @@ Created: {created_date}
 
 Description:
 {description}
-
-Comments:
-""" + "\n".join([f"{c['created']} - {c['author']}: {c['body']}" for c in comments])
+"""
+            if comments:
+                content += "\nComments:\n" + "\n".join(
+                    [f"{c['created']} - {c['author']}: {c['body']}" for c in comments]
+                )
 
             # Streamlined metadata with only essential information
             metadata = {
@@ -293,6 +286,8 @@ Comments:
                 "priority": issue["fields"].get("priority", {}).get("name", "None"),
                 "link": f"{self.config.url.rstrip('/')}/browse/{issue_key}",
             }
+            if comments:
+                metadata["comments"] = comments
 
             return Document(page_content=content, metadata=metadata)
 
@@ -370,3 +365,56 @@ Comments:
         except Exception as e:
             logger.error(f"Error getting current user account ID: {str(e)}")
             raise ValueError(f"Failed to get current user account ID: {str(e)}")
+
+    def get_issue_comments(self, issue_key: str, limit: int = 50) -> list[dict]:
+        """
+        Get comments for a specific issue.
+
+        Args:
+            issue_key: The issue key (e.g. 'PROJ-123')
+            limit: Maximum number of comments to return
+
+        Returns:
+            List of comments with author, creation date, and content
+        """
+        try:
+            comments = self.jira.issue_get_comments(issue_key)
+            processed_comments = []
+
+            for comment in comments.get("comments", [])[:limit]:
+                processed_comment = {
+                    "id": comment.get("id"),
+                    "body": self._clean_text(comment.get("body", "")),
+                    "created": self._parse_date(comment.get("created")),
+                    "updated": self._parse_date(comment.get("updated")),
+                    "author": comment.get("author", {}).get("displayName", "Unknown"),
+                }
+                processed_comments.append(processed_comment)
+
+            return processed_comments
+        except Exception as e:
+            logger.error(f"Error getting comments for issue {issue_key}: {str(e)}")
+            raise
+
+    def add_comment(self, issue_key: str, comment: str) -> dict:
+        """
+        Add a comment to an issue.
+
+        Args:
+            issue_key: The issue key (e.g. 'PROJ-123')
+            comment: Comment text to add
+
+        Returns:
+            The created comment details
+        """
+        try:
+            result = self.jira.issue_add_comment(issue_key, comment)
+            return {
+                "id": result.get("id"),
+                "body": self._clean_text(result.get("body", "")),
+                "created": self._parse_date(result.get("created")),
+                "author": result.get("author", {}).get("displayName", "Unknown"),
+            }
+        except Exception as e:
+            logger.error(f"Error adding comment to issue {issue_key}: {str(e)}")
+            raise
