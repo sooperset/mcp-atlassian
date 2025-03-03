@@ -128,7 +128,12 @@ The MCP Atlassian integration supports using either Confluence, Jira, or both se
 
 1. Get API tokens from: https://id.atlassian.com/manage-profile/security/api-tokens
 
-2. Add to your `claude_desktop_config.json` with only the services you need:
+2. Add to your `claude_desktop_config.json` using one of the following methods:
+
+> **Note:** For all configuration methods, include only the environment variables needed for your services:
+> - For Confluence only: Include `CONFLUENCE_URL`, `CONFLUENCE_USERNAME`, and `CONFLUENCE_API_TOKEN`
+> - For Jira only: Include `JIRA_URL`, `JIRA_USERNAME`, and `JIRA_API_TOKEN`
+> - For both services: Include all six variables
 
 <details>
 <summary>Using uvx</summary>
@@ -140,12 +145,12 @@ The MCP Atlassian integration supports using either Confluence, Jira, or both se
       "command": "uvx",
       "args": ["mcp-atlassian"],
       "env": {
-        "CONFLUENCE_URL": "https://your-domain.atlassian.net/wiki",  // Required for Confluence
-        "CONFLUENCE_USERNAME": "your.email@domain.com",              // Required for Confluence
-        "CONFLUENCE_API_TOKEN": "your_api_token",                    // Required for Confluence
-        "JIRA_URL": "https://your-domain.atlassian.net",             // Required for Jira
-        "JIRA_USERNAME": "your.email@domain.com",                    // Required for Jira
-        "JIRA_API_TOKEN": "your_api_token"                           // Required for Jira
+        "CONFLUENCE_URL": "https://your-domain.atlassian.net/wiki",
+        "CONFLUENCE_USERNAME": "your.email@domain.com",
+        "CONFLUENCE_API_TOKEN": "your_api_token",
+        "JIRA_URL": "https://your-domain.atlassian.net",
+        "JIRA_USERNAME": "your.email@domain.com",
+        "JIRA_API_TOKEN": "your_api_token"
       }
     }
   }
@@ -164,12 +169,12 @@ The MCP Atlassian integration supports using either Confluence, Jira, or both se
       "command": "python",
       "args": ["-m", "mcp-atlassian"],
       "env": {
-        "CONFLUENCE_URL": "https://your-domain.atlassian.net/wiki",  // Required for Confluence
-        "CONFLUENCE_USERNAME": "your.email@domain.com",              // Required for Confluence
-        "CONFLUENCE_API_TOKEN": "your_api_token",                    // Required for Confluence
-        "JIRA_URL": "https://your-domain.atlassian.net",             // Required for Jira
-        "JIRA_USERNAME": "your.email@domain.com",                    // Required for Jira
-        "JIRA_API_TOKEN": "your_api_token"                           // Required for Jira
+        "CONFLUENCE_URL": "https://your-domain.atlassian.net/wiki",
+        "CONFLUENCE_USERNAME": "your.email@domain.com",
+        "CONFLUENCE_API_TOKEN": "your_api_token",
+        "JIRA_URL": "https://your-domain.atlassian.net",
+        "JIRA_USERNAME": "your.email@domain.com",
+        "JIRA_API_TOKEN": "your_api_token"
       }
     }
   }
