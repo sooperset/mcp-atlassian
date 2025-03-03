@@ -98,12 +98,10 @@ On macOS:
 brew install uv
 ```
 
-When using [`uv`](https://docs.astral.sh/uv/), use [`uvx`](https://docs.astral.sh/uv/guides/tools/) to directly run *mcp-atlassian*.
+When using [`uv`](https://docs.astral.sh/uv/), no specific installation is needed. We will use [`uvx`](https://docs.astral.sh/uv/guides/tools/) to directly run *mcp-atlassian*.
 
 ```bash
 uvx mcp-atlassian
-# or
-uv pip install mcp-atlassian
 ```
 
 ### Using PIP
@@ -135,7 +133,6 @@ The MCP Atlassian integration supports using either Confluence, Jira, or both se
 <details>
 <summary>Using uvx</summary>
 
-For Confluence only:
 ```json
 {
   "mcpServers": {
@@ -143,51 +140,42 @@ For Confluence only:
       "command": "uvx",
       "args": ["mcp-atlassian"],
       "env": {
-        "CONFLUENCE_URL": "https://your-domain.atlassian.net/wiki",
-        "CONFLUENCE_USERNAME": "your.email@domain.com",
-        "CONFLUENCE_API_TOKEN": "your_api_token"
+        "CONFLUENCE_URL": "https://your-domain.atlassian.net/wiki",  // Required for Confluence
+        "CONFLUENCE_USERNAME": "your.email@domain.com",              // Required for Confluence
+        "CONFLUENCE_API_TOKEN": "your_api_token",                    // Required for Confluence
+        "JIRA_URL": "https://your-domain.atlassian.net",             // Required for Jira
+        "JIRA_USERNAME": "your.email@domain.com",                    // Required for Jira
+        "JIRA_API_TOKEN": "your_api_token"                           // Required for Jira
       }
     }
   }
 }
 ```
 
-For Jira only:
+</details>
+
+<details>
+<summary>Using pip</summary>
+
 ```json
 {
   "mcpServers": {
     "mcp-atlassian": {
-      "command": "uvx",
-      "args": ["mcp-atlassian"],
+      "command": "python",
+      "args": ["-m", "mcp-atlassian"],
       "env": {
-        "JIRA_URL": "https://your-domain.atlassian.net",
-        "JIRA_USERNAME": "your.email@domain.com",
-        "JIRA_API_TOKEN": "your_api_token"
+        "CONFLUENCE_URL": "https://your-domain.atlassian.net/wiki",  // Required for Confluence
+        "CONFLUENCE_USERNAME": "your.email@domain.com",              // Required for Confluence
+        "CONFLUENCE_API_TOKEN": "your_api_token",                    // Required for Confluence
+        "JIRA_URL": "https://your-domain.atlassian.net",             // Required for Jira
+        "JIRA_USERNAME": "your.email@domain.com",                    // Required for Jira
+        "JIRA_API_TOKEN": "your_api_token"                           // Required for Jira
       }
     }
   }
 }
 ```
 
-For both services:
-```json
-{
-  "mcpServers": {
-    "mcp-atlassian": {
-      "command": "uvx",
-      "args": ["mcp-atlassian"],
-      "env": {
-        "CONFLUENCE_URL": "https://your-domain.atlassian.net/wiki",
-        "CONFLUENCE_USERNAME": "your.email@domain.com",
-        "CONFLUENCE_API_TOKEN": "your_api_token",
-        "JIRA_URL": "https://your-domain.atlassian.net",
-        "JIRA_USERNAME": "your.email@domain.com",
-        "JIRA_API_TOKEN": "your_api_token"
-      }
-    }
-  }
-}
-```
 </details>
 
 <details>
@@ -262,6 +250,31 @@ Configure the server:
   type: command
   command: uvx mcp-atlassian --confluence-url=https://your-domain.atlassian.net/wiki --confluence-username=your.email@domain.com --confluence-token=your_api_token --jira-url=https://your-domain.atlassian.net --jira-username=your.email@domain.com --jira-token=your_api_token
   ```
+
+### Using a Local Development Version
+
+If you've cloned the repository and want to run a local version of `mcp-atlassian`:
+
+Configure in Claude Desktop:
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "uv",
+      "args": [
+        "--directory", "/path/to/your/mcp-atlassian",
+        "run", "mcp-atlassian",
+        "--confluence-url=https://your-domain.atlassian.net",
+        "--confluence-username=your.email@domain.com",
+        "--confluence-token=your_api_token",
+        "--jira-url=https://your-domain.atlassian.net",
+        "--jira-username=your.email@domain.com",
+        "--jira-token=your_api_token"
+      ]
+    }
+  }
+}
+```
 
 ## Debugging
 
