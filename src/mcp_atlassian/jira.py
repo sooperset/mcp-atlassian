@@ -44,12 +44,76 @@ class JiraFetcher:
 
         return self.preprocessor.clean_jira_text(text)
 
+    def _get_account_id(self, assignee: str) -> str:
+        """
+        Get account ID from email or full name.
+
+        Args:
+            assignee: Email, full name, or account ID of the user
+
+        Returns:
+            Account ID of the user
+
+        Raises:
+            ValueError: If user cannot be found
+        """
+        # If it looks like an account ID (alphanumeric with hyphens), return as is
+        if assignee and assignee.replace("-", "").isalnum():
+            logger.info(f"Using '{assignee}' as account ID")
+            return assignee
+
+        try:
+            # First try direct user lookup
+            try:
+                users = self.jira.user_find_by_user_string(query=assignee)
+                if users:
+                    if len(users) > 1:
+                        # Log all found users for debugging
+                        user_details = [f"{u.get('displayName')} ({u.get('emailAddress')})" for u in users]
+                        logger.warning(
+                            f"Multiple users found for '{assignee}', using first match. "
+                            f"Found users: {', '.join(user_details)}"
+                        )
+
+                    user = users[0]
+                    account_id = user.get("accountId")
+                    if account_id and isinstance(account_id, str):
+                        logger.info(
+                            f"Found account ID via direct lookup: {account_id} "
+                            f"({user.get('displayName')} - {user.get('emailAddress')})"
+                        )
+                        return str(account_id)  # Explicit str conversion
+                    logger.warning(f"Direct user lookup failed for '{assignee}': user found but no account ID present")
+                else:
+                    logger.warning(f"Direct user lookup failed for '{assignee}': no users found")
+            except Exception as e:
+                logger.warning(f"Direct user lookup failed for '{assignee}': {str(e)}")
+
+            # Fall back to project permission based search
+            users = self.jira.get_users_with_browse_permission_to_a_project(username=assignee)
+            if not users:
+                logger.warning(f"No user found matching '{assignee}'")
+                raise ValueError(f"No user found matching '{assignee}'")
+
+            # Return the first matching user's account ID
+            account_id = users[0].get("accountId")
+            if not account_id or not isinstance(account_id, str):
+                logger.warning(f"Found user '{assignee}' but no account ID was returned")
+                raise ValueError(f"Found user '{assignee}' but no account ID was returned")
+
+            logger.info(f"Found account ID via browse permission lookup: {account_id}")
+            return str(account_id)  # Explicit str conversion
+        except Exception as e:
+            logger.error(f"Error finding user '{assignee}': {str(e)}")
+            raise ValueError(f"Could not resolve account ID for '{assignee}'") from e
+
     def create_issue(
         self,
         project_key: str,
         summary: str,
         issue_type: str,
         description: str = "",
+        assignee: str | None = None,
         **kwargs: Any,
     ) -> Document:
         """
@@ -60,6 +124,7 @@ class JiraFetcher:
             summary: Summary of the issue
             issue_type: Issue type (e.g. 'Task', 'Bug', 'Story')
             description: Issue description
+            assignee: Email, full name, or account ID of the user to assign the issue to
             kwargs: Any other custom Jira fields
 
         Returns:
@@ -71,6 +136,19 @@ class JiraFetcher:
             "issuetype": {"name": issue_type},
             "description": description,
         }
+
+        # Add assignee if provided
+        if assignee:
+            account_id = self._get_account_id(assignee)
+            fields["assignee"] = {"accountId": account_id}
+
+        # Remove assignee from additional_fields if present to avoid conflicts
+        if "assignee" in kwargs:
+            logger.warning(
+                "Assignee found in additional_fields - this will be ignored. Please use the assignee parameter instead."
+            )
+            kwargs.pop("assignee")
+
         for key, value in kwargs.items():
             fields[key] = value
 
@@ -98,6 +176,16 @@ class JiraFetcher:
             Document representing the updated issue
         """
         fields = fields or {}
+
+        # Handle assignee if provided in fields
+        if "assignee" in fields:
+            assignee = fields.pop("assignee")  # Remove from fields to handle separately
+            if assignee:
+                account_id = self._get_account_id(assignee)
+                fields["assignee"] = {"accountId": account_id}
+            else:
+                fields["assignee"] = None  # Unassign the issue
+
         for k, v in kwargs.items():
             fields[k] = v
 

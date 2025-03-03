@@ -14,7 +14,7 @@ from .jira import JiraFetcher
 # Configure logging
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger("mcp-atlassian")
-logging.getLogger("mcp.server.lowlevel.server").setLevel(logging.WARNING)
+logging.getLogger("mcp.server.lowlevel.server").setLevel(logging.INFO)
 
 
 def get_available_services():
@@ -296,6 +296,10 @@ async def list_tools() -> list[Tool]:
                                 "type": "string",
                                 "description": "Issue type (e.g. 'Task', 'Bug', 'Story')",
                             },
+                            "assignee": {
+                                "type": "string",
+                                "description": "Assignee of the ticket (accountID, full name or e-mail)",
+                            },
                             "description": {
                                 "type": "string",
                                 "description": "Issue description",
@@ -322,7 +326,7 @@ async def list_tools() -> list[Tool]:
                             },
                             "fields": {
                                 "type": "string",
-                                "description": "A valid JSON object of fields to update",
+                                "description": 'A valid JSON object of fields to update. Use this to set the assignee with format: {"assignee": "user@email.com"} or {"assignee": null} to unassign',
                             },
                             "additional_fields": {
                                 "type": "string",
@@ -462,11 +466,22 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
 
         elif name == "jira_create_issue":
             additional_fields = json.loads(arguments.get("additional_fields", "{}"))
+
+            # If assignee is in additional_fields, move it to the main arguments
+            if "assignee" in additional_fields:
+                if not arguments.get("assignee"):  # Only if not already specified in main arguments
+                    assignee_data = additional_fields.pop("assignee")
+                    if isinstance(assignee_data, dict):
+                        arguments["assignee"] = assignee_data.get("id") or assignee_data.get("accountId")
+                    else:
+                        arguments["assignee"] = str(assignee_data)
+
             doc = jira_fetcher.create_issue(
                 project_key=arguments["project_key"],
                 summary=arguments["summary"],
                 issue_type=arguments["issue_type"],
                 description=arguments.get("description", ""),
+                assignee=arguments.get("assignee"),
                 **additional_fields,
             )
             result = json.dumps({"content": doc.page_content, "metadata": doc.metadata}, indent=2)
@@ -475,6 +490,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
         elif name == "jira_update_issue":
             fields = json.loads(arguments["fields"])
             additional_fields = json.loads(arguments.get("additional_fields", "{}"))
+
             doc = jira_fetcher.update_issue(issue_key=arguments["issue_key"], fields=fields, **additional_fields)
             result = json.dumps({"content": doc.page_content, "metadata": doc.metadata}, indent=2)
             return [TextContent(type="text", text=f"Issue updated successfully:\n{result}")]
