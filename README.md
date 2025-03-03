@@ -47,6 +47,7 @@ Model Context Protocol (MCP) server for Atlassian Cloud products (Confluence and
    - Inputs:
      - `issue_key` (string): Jira issue key (e.g., 'PROJ-123')
      - `expand` (string, optional): Fields to expand
+     - `comment_limit` (integer, optional): Maximum number of comments to include (0 or null for no comments)
    - Returns: Issue details including content and metadata
 
 2. `jira_search`

@@ -220,6 +220,13 @@ async def list_tools() -> list[Tool]:
                                 "description": "Optional fields to expand",
                                 "default": None,
                             },
+                            "comment_limit": {
+                                "type": "integer",
+                                "description": "Maximum number of comments to include (0 or null for no comments)",
+                                "minimum": 0,
+                                "maximum": 100,
+                                "default": None,
+                            },
                         },
                         "required": ["issue_key"],
                     },
@@ -340,6 +347,24 @@ async def list_tools() -> list[Tool]:
                         "required": ["issue_key"],
                     },
                 ),
+                Tool(
+                    name="jira_add_comment",
+                    description="Add a comment to a Jira issue",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "issue_key": {
+                                "type": "string",
+                                "description": "Jira issue key (e.g., 'PROJ-123')",
+                            },
+                            "comment": {
+                                "type": "string",
+                                "description": "Comment text to add",
+                            },
+                        },
+                        "required": ["issue_key", "comment"],
+                    },
+                ),
             ]
         )
 
@@ -393,7 +418,9 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             return [TextContent(type="text", text=json.dumps(formatted_comments, indent=2))]
 
         elif name == "jira_get_issue":
-            doc = jira_fetcher.get_issue(arguments["issue_key"], expand=arguments.get("expand"))
+            doc = jira_fetcher.get_issue(
+                arguments["issue_key"], expand=arguments.get("expand"), comment_limit=arguments.get("comment_limit")
+            )
             result = {"content": doc.page_content, "metadata": doc.metadata}
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
@@ -457,6 +484,10 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             deleted = jira_fetcher.delete_issue(issue_key)
             result = {"message": f"Issue {issue_key} has been deleted successfully."}
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        elif name == "jira_add_comment":
+            comment = jira_fetcher.add_comment(arguments["issue_key"], arguments["comment"])
+            return [TextContent(type="text", text=json.dumps(comment, indent=2))]
 
         raise ValueError(f"Unknown tool: {name}")
 
