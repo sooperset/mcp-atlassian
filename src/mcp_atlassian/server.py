@@ -10,7 +10,7 @@ from pydantic import AnyUrl
 
 from .confluence import ConfluenceFetcher
 from .jira import JiraFetcher
-from .markdown_converter import markdown_to_confluence_storage
+from .preprocessing import markdown_to_confluence_storage
 
 # Configure logging
 logging.basicConfig(level=logging.WARNING)
