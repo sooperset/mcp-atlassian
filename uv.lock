@@ -378,6 +378,15 @@ wheels = [
 ]
 
 [[package]]
+name = "markdown"
+version = "3.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/54/28/3af612670f82f4c056911fbbbb42760255801b3068c48de792d354ff4472/markdown-3.7.tar.gz", hash = "sha256:2ae2471477cfd02dbbf038d5d9bc226d40def84b4fe2986e49b59b6b472bbed2", size = 357086 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3f/08/83871f3c50fc983b88547c196d11cf8c3340e37c32d2e9d6152abe2c61f7/Markdown-3.7-py3-none-any.whl", hash = "sha256:7eb6df5690b81a1d7942992c97fad2938e956e79df20cbc6186e9c3a77b1c803", size = 106349 },
+]
+
+[[package]]
 name = "markdownify"
 version = "0.14.1"
 source = { registry = "https://pypi.org/simple" }
@@ -411,12 +420,13 @@ wheels = [
 
 [[package]]
 name = "mcp-atlassian"
-version = "0.1.11"
+version = "0.1.12"
 source = { editable = "." }
 dependencies = [
     { name = "atlassian-python-api" },
     { name = "beautifulsoup4" },
     { name = "httpx" },
+    { name = "markdown" },
     { name = "markdownify" },
     { name = "mcp" },
     { name = "python-dotenv" },
@@ -438,6 +448,7 @@ requires-dist = [
     { name = "atlassian-python-api", specifier = ">=3.41.16" },
     { name = "beautifulsoup4", specifier = ">=4.12.3" },
     { name = "httpx", specifier = ">=0.28.0" },
+    { name = "markdown", specifier = ">=3.7.0" },
     { name = "markdownify", specifier = ">=0.11.6" },
     { name = "mcp", specifier = ">=1.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.1" },

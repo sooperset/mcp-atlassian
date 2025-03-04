@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.12] - 2025-03-04
+
+### Added
+- Added Confluence page creation and update capabilities with markdown-to-confluence support
+- Enhanced resource and tool descriptions with more context and examples
+
 ## [0.1.11] - 2025-03-03
 
 ### Added
