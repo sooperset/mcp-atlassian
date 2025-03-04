@@ -374,7 +374,7 @@ async def list_tools() -> list[Tool]:
                                 "type": "string",
                                 "description": "Optional JSON string of additional fields to set. Examples:\n"
                                 '- Link to Epic: {"parent": {"key": "PROJ-123"}}\n'
-                                '- Set priority: {"priority": {"name": "High"}}\n'
+                                '- Set priority: {"priority": {"name": "High"}} or {"priority": null} for no priority (common values: High, Medium, Low, None)\n'
                                 '- Add labels: {"labels": ["label1", "label2"]}\n'
                                 '- Set due date: {"duedate": "2023-12-31"}\n'
                                 '- Custom fields: {"customfield_10XXX": "value"}',
@@ -403,7 +403,7 @@ async def list_tools() -> list[Tool]:
                                 '- Update description: {"description": "New description"}\n'
                                 "- Change status: requires transition IDs - use jira_get_issue first to see available statuses\n"
                                 '- Add labels: {"labels": ["label1", "label2"]}\n'
-                                '- Set priority: {"priority": {"name": "High"}}\n'
+                                '- Set priority: {"priority": {"name": "High"}} or {"priority": null} for no priority (common values: High, Medium, Low, None)\n'
                                 '- Update custom fields: {"customfield_10XXX": "value"}',
                             },
                             "additional_fields": {
