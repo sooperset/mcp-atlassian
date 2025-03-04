@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.13] - 2025-03-05
+
+### Fixed
+- Added missing `md2conf` dependency to fix ModuleNotFoundError
+
 ## [0.1.12] - 2025-03-04
 
 ### Added

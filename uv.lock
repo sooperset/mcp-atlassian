@@ -420,7 +420,7 @@ wheels = [
 
 [[package]]
 name = "mcp-atlassian"
-version = "0.1.12"
+version = "0.1.13"
 source = { editable = "." }
 dependencies = [
     { name = "atlassian-python-api" },
@@ -429,6 +429,7 @@ dependencies = [
     { name = "markdown" },
     { name = "markdownify" },
     { name = "mcp" },
+    { name = "md2conf" },
     { name = "python-dotenv" },
 ]
 
@@ -451,6 +452,7 @@ requires-dist = [
     { name = "markdown", specifier = ">=3.7.0" },
     { name = "markdownify", specifier = ">=0.11.6" },
     { name = "mcp", specifier = ">=1.0.0" },
+    { name = "md2conf", specifier = ">=0.1.2" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
 ]
 
@@ -464,6 +466,17 @@ dev = [
     { name = "ruff", specifier = ">=0.3.0" },
     { name = "uv", specifier = ">=0.1.0" },
 ]
+
+[[package]]
+name = "md2conf"
+version = "0.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "beautifulsoup4" },
+    { name = "markdown" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2a/4c/6981f915b86fce527310edaa959a3d8e438f8ea51af14de2006cda0adf32/md2conf-0.3.tar.gz", hash = "sha256:14f320a23f03732232ab7dfb5091cecc5b2648a92fc1c84ede6c31998d4f9b54", size = 4026 }
 
 [[package]]
 name = "mypy"
