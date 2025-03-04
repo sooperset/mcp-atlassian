@@ -64,3 +64,5 @@ local/
 
 # Pre-commit
 .pre-commit-config.yaml.cache
+
+playground/

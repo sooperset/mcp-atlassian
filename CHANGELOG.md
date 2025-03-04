@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.11] - 2025-03-03
+
+### Added
+- Added support for setting and updating assignee in Jira issues
+- Added Jira comment functionality and enhanced get_issue with comment support
+- Enhanced resource filtering to focus on user-contributed content
+
 ## [0.1.10] - 2025-02-22
 
 ### Added

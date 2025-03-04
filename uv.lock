@@ -411,7 +411,7 @@ wheels = [
 
 [[package]]
 name = "mcp-atlassian"
-version = "0.1.10"
+version = "0.1.11"
 source = { editable = "." }
 dependencies = [
     { name = "atlassian-python-api" },
@@ -422,7 +422,7 @@ dependencies = [
     { name = "python-dotenv" },
 ]
 
-[package.optional-dependencies]
+[package.dev-dependencies]
 dev = [
     { name = "black" },
     { name = "mypy" },
@@ -437,19 +437,22 @@ dev = [
 requires-dist = [
     { name = "atlassian-python-api", specifier = ">=3.41.16" },
     { name = "beautifulsoup4", specifier = ">=4.12.3" },
-    { name = "black", marker = "extra == 'dev'", specifier = ">=24.2.0" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "markdownify", specifier = ">=0.11.6" },
     { name = "mcp", specifier = ">=1.0.0" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8.0" },
-    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.6.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3.0" },
-    { name = "uv", marker = "extra == 'dev'", specifier = ">=0.1.0" },
 ]
-provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "black", specifier = ">=24.2.0" },
+    { name = "mypy", specifier = ">=1.8.0" },
+    { name = "pre-commit", specifier = ">=3.6.0" },
+    { name = "pytest", specifier = ">=8.0.0" },
+    { name = "pytest-cov", specifier = ">=4.1.0" },
+    { name = "ruff", specifier = ">=0.3.0" },
+    { name = "uv", specifier = ">=0.1.0" },
+]
 
 [[package]]
 name = "mypy"

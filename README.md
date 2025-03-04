@@ -11,10 +11,10 @@ Model Context Protocol (MCP) server for Atlassian Cloud products (Confluence and
 
 ### Resources
 
-- `confluence://{space_key}`: Access Confluence spaces and pages
-- `confluence://{space_key}/pages/{title}`: Access specific Confluence pages
-- `jira://{project_key}`: Access Jira project and its issues
-- `jira://{project_key}/issues/{issue_key}`: Access specific Jira issues
+> **Note:** The MCP server filters resources to only show Confluence spaces and Jira projects that the user is actively interacting with, based on their contributions and assignments. This makes the integration more efficient and focused on relevant content.
+
+- `confluence://{space_key}`: Access Confluence spaces
+- `jira://{project_key}`: Access Jira projects
 
 ### Tools
 
@@ -68,6 +68,7 @@ Model Context Protocol (MCP) server for Atlassian Cloud products (Confluence and
    - Inputs:
      - `issue_key` (string): Jira issue key (e.g., 'PROJ-123')
      - `expand` (string, optional): Fields to expand
+     - `comment_limit` (integer, optional): Maximum number of comments to include (0 or null for no comments)
    - Returns: Issue details including content and metadata
 
 2. `jira_search`
@@ -118,12 +119,10 @@ On macOS:
 brew install uv
 ```
 
-When using [`uv`](https://docs.astral.sh/uv/), use [`uvx`](https://docs.astral.sh/uv/guides/tools/) to directly run *mcp-atlassian*.
+When using [`uv`](https://docs.astral.sh/uv/), no specific installation is needed. We will use [`uvx`](https://docs.astral.sh/uv/guides/tools/) to directly run *mcp-atlassian*.
 
 ```bash
 uvx mcp-atlassian
-# or
-uv pip install mcp-atlassian
 ```
 
 ### Using PIP
@@ -150,46 +149,16 @@ The MCP Atlassian integration supports using either Confluence, Jira, or both se
 
 1. Get API tokens from: https://id.atlassian.com/manage-profile/security/api-tokens
 
-2. Add to your `claude_desktop_config.json` with only the services you need:
+2. Add to your `claude_desktop_config.json` using one of the following methods:
+
+> **Note:** For all configuration methods, include only the environment variables needed for your services:
+> - For Confluence only: Include `CONFLUENCE_URL`, `CONFLUENCE_USERNAME`, and `CONFLUENCE_API_TOKEN`
+> - For Jira only: Include `JIRA_URL`, `JIRA_USERNAME`, and `JIRA_API_TOKEN`
+> - For both services: Include all six variables
 
 <details>
 <summary>Using uvx</summary>
 
-For Confluence only:
-```json
-{
-  "mcpServers": {
-    "mcp-atlassian": {
-      "command": "uvx",
-      "args": ["mcp-atlassian"],
-      "env": {
-        "CONFLUENCE_URL": "https://your-domain.atlassian.net/wiki",
-        "CONFLUENCE_USERNAME": "your.email@domain.com",
-        "CONFLUENCE_API_TOKEN": "your_api_token"
-      }
-    }
-  }
-}
-```
-
-For Jira only:
-```json
-{
-  "mcpServers": {
-    "mcp-atlassian": {
-      "command": "uvx",
-      "args": ["mcp-atlassian"],
-      "env": {
-        "JIRA_URL": "https://your-domain.atlassian.net",
-        "JIRA_USERNAME": "your.email@domain.com",
-        "JIRA_API_TOKEN": "your_api_token"
-      }
-    }
-  }
-}
-```
-
-For both services:
 ```json
 {
   "mcpServers": {
@@ -208,6 +177,31 @@ For both services:
   }
 }
 ```
+
+</details>
+
+<details>
+<summary>Using pip</summary>
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "python",
+      "args": ["-m", "mcp-atlassian"],
+      "env": {
+        "CONFLUENCE_URL": "https://your-domain.atlassian.net/wiki",
+        "CONFLUENCE_USERNAME": "your.email@domain.com",
+        "CONFLUENCE_API_TOKEN": "your_api_token",
+        "JIRA_URL": "https://your-domain.atlassian.net",
+        "JIRA_USERNAME": "your.email@domain.com",
+        "JIRA_API_TOKEN": "your_api_token"
+      }
+    }
+  }
+}
+```
+
 </details>
 
 <details>
@@ -282,6 +276,31 @@ Configure the server:
   type: command
   command: uvx mcp-atlassian --confluence-url=https://your-domain.atlassian.net/wiki --confluence-username=your.email@domain.com --confluence-token=your_api_token --jira-url=https://your-domain.atlassian.net --jira-username=your.email@domain.com --jira-token=your_api_token
   ```
+
+### Using a Local Development Version
+
+If you've cloned the repository and want to run a local version of `mcp-atlassian`:
+
+Configure in Claude Desktop:
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "uv",
+      "args": [
+        "--directory", "/path/to/your/mcp-atlassian",
+        "run", "mcp-atlassian",
+        "--confluence-url=https://your-domain.atlassian.net",
+        "--confluence-username=your.email@domain.com",
+        "--confluence-token=your_api_token",
+        "--jira-url=https://your-domain.atlassian.net",
+        "--jira-username=your.email@domain.com",
+        "--jira-token=your_api_token"
+      ]
+    }
+  }
+}
+```
 
 ## Debugging
 
