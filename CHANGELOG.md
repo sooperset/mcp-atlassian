@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.14] - 2025-03-05
+
+### Fixed
+- Changed `md2conf` dependency to `markdown-to-confluence`
+
 ## [0.1.13] - 2025-03-05
 
 ### Fixed
