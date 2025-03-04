@@ -57,7 +57,12 @@ async def list_resources() -> list[Resource]:
                         uri=AnyUrl(f"confluence://{space['key']}"),
                         name=f"Confluence Space: {space['name']}",
                         mimeType="text/plain",
-                        description=space.get("description", ""),
+                        description=(
+                            f"A Confluence space containing documentation and knowledge base articles. "
+                            f"Space Key: {space['key']}. "
+                            f"{space.get('description', '')} "
+                            f"Access content using: confluence://{space['key']}/pages/PAGE_TITLE"
+                        ).strip(),
                     )
                     for space in spaces.values()
                 ]
@@ -94,7 +99,9 @@ async def list_resources() -> list[Resource]:
                         uri=AnyUrl(f"jira://{project['key']}"),
                         name=f"Jira Project: {project['name']}",
                         mimeType="text/plain",
-                        description=project.get("description", ""),
+                        description=(
+                            f"A Jira project tracking issues and tasks. Project Key: {project['key']}. "
+                        ).strip(),
                     )
                     for project in projects.values()
                 ]
@@ -131,7 +138,6 @@ async def read_resource(uri: AnyUrl) -> str:
             content = []
             for doc in documents:
                 title = doc.metadata.get("title", "Untitled")
-                page_id = doc.metadata.get("page_id", "")
                 url = doc.metadata.get("url", "")
 
                 content.append(f"# [{title}]({url})\n\n{doc.page_content}\n\n---")
@@ -227,7 +233,7 @@ async def list_tools() -> list[Tool]:
                         "properties": {
                             "page_id": {
                                 "type": "string",
-                                "description": "Confluence page ID",
+                                "description": "Confluence page ID (numeric ID, can be parsed from URL, e.g. from 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title' -> '123456789')",
                             },
                             "include_metadata": {
                                 "type": "boolean",
@@ -246,7 +252,7 @@ async def list_tools() -> list[Tool]:
                         "properties": {
                             "page_id": {
                                 "type": "string",
-                                "description": "Confluence page ID",
+                                "description": "Confluence page ID (numeric ID, can be parsed from URL, e.g. from 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title' -> '123456789')",
                             }
                         },
                         "required": ["page_id"],
@@ -260,7 +266,7 @@ async def list_tools() -> list[Tool]:
             [
                 Tool(
                     name="jira_get_issue",
-                    description="Get details of a specific Jira issue",
+                    description="Get details of a specific Jira issue including its Epic links",
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -270,7 +276,7 @@ async def list_tools() -> list[Tool]:
                             },
                             "expand": {
                                 "type": "string",
-                                "description": "Optional fields to expand",
+                                "description": "Optional fields to expand. Examples: 'renderedFields' (for rendered content), 'transitions' (for available status transitions), 'changelog' (for history)",
                                 "default": None,
                             },
                             "comment_limit": {
@@ -286,13 +292,19 @@ async def list_tools() -> list[Tool]:
                 ),
                 Tool(
                     name="jira_search",
-                    description="Search Jira issues using JQL",
+                    description="Search Jira issues using JQL (Jira Query Language)",
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "jql": {
                                 "type": "string",
-                                "description": "JQL query string",
+                                "description": "JQL query string. Examples:\n"
+                                '- Find Epics: "issuetype = Epic AND project = PROJ"\n'
+                                '- Find issues in Epic: "parent = PROJ-123"\n'
+                                "- Find by status: \"status = 'In Progress' AND project = PROJ\"\n"
+                                '- Find by assignee: "assignee = currentUser()"\n'
+                                '- Find recently updated: "updated >= -7d AND project = PROJ"\n'
+                                '- Find by label: "labels = frontend AND project = PROJ"',
                             },
                             "fields": {
                                 "type": "string",
@@ -333,7 +345,7 @@ async def list_tools() -> list[Tool]:
                 ),
                 Tool(
                     name="jira_create_issue",
-                    description="Create a new Jira issue",
+                    description="Create a new Jira issue with optional Epic link",
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -360,7 +372,12 @@ async def list_tools() -> list[Tool]:
                             },
                             "additional_fields": {
                                 "type": "string",
-                                "description": "Optional JSON string of additional fields to set",
+                                "description": "Optional JSON string of additional fields to set. Examples:\n"
+                                '- Link to Epic: {"parent": {"key": "PROJ-123"}}\n'
+                                '- Set priority: {"priority": {"name": "High"}}\n'
+                                '- Add labels: {"labels": ["label1", "label2"]}\n'
+                                '- Set due date: {"duedate": "2023-12-31"}\n'
+                                '- Custom fields: {"customfield_10XXX": "value"}',
                                 "default": "{}",
                             },
                         },
@@ -369,17 +386,25 @@ async def list_tools() -> list[Tool]:
                 ),
                 Tool(
                     name="jira_update_issue",
-                    description="Update an existing Jira issue",
+                    description="Update an existing Jira issue including changing status, adding Epic links, updating fields, etc.",
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "issue_key": {
                                 "type": "string",
-                                "description": "Jira issue key",
+                                "description": "Jira issue key (e.g., 'PROJ-123')",
                             },
                             "fields": {
                                 "type": "string",
-                                "description": 'A valid JSON object of fields to update. Use this to set the assignee with format: {"assignee": "user@email.com"} or {"assignee": null} to unassign',
+                                "description": "A valid JSON object of fields to update. Examples:\n"
+                                '- Add to Epic: {"parent": {"key": "PROJ-456"}}\n'
+                                '- Change assignee: {"assignee": "user@email.com"} or {"assignee": null} to unassign\n'
+                                '- Update summary: {"summary": "New title"}\n'
+                                '- Update description: {"description": "New description"}\n'
+                                "- Change status: requires transition IDs - use jira_get_issue first to see available statuses\n"
+                                '- Add labels: {"labels": ["label1", "label2"]}\n'
+                                '- Set priority: {"priority": {"name": "High"}}\n'
+                                '- Update custom fields: {"customfield_10XXX": "value"}',
                             },
                             "additional_fields": {
                                 "type": "string",
