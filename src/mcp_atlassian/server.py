@@ -325,7 +325,7 @@ async def list_tools() -> list[Tool]:
             [
                 Tool(
                     name="jira_get_issue",
-                    description="Get details of a specific Jira issue including its Epic links",
+                    description="Get details of a specific Jira issue including its Epic links and relationship information",
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -432,7 +432,7 @@ async def list_tools() -> list[Tool]:
                             "additional_fields": {
                                 "type": "string",
                                 "description": "Optional JSON string of additional fields to set. Examples:\n"
-                                '- Link to Epic: {"parent": {"key": "PROJ-123"}}\n'
+                                '- Link to Epic: {"parent": {"key": "PROJ-123"}} - Use this to create the issue under an Epic\n'
                                 '- Set priority: {"priority": {"name": "High"}} or {"priority": null} for no priority (common values: High, Medium, Low, None)\n'
                                 '- Add labels: {"labels": ["label1", "label2"]}\n'
                                 '- Set due date: {"duedate": "2023-12-31"}\n'
@@ -456,7 +456,7 @@ async def list_tools() -> list[Tool]:
                             "fields": {
                                 "type": "string",
                                 "description": "A valid JSON object of fields to update. Examples:\n"
-                                '- Add to Epic: {"parent": {"key": "PROJ-456"}}\n'
+                                '- Add to Epic: {"parent": {"key": "PROJ-456"}} - Use this to link issue to an Epic\n'
                                 '- Change assignee: {"assignee": "user@email.com"} or {"assignee": null} to unassign\n'
                                 '- Update summary: {"summary": "New title"}\n'
                                 '- Update description: {"description": "New description"}\n'
@@ -500,10 +500,49 @@ async def list_tools() -> list[Tool]:
                             },
                             "comment": {
                                 "type": "string",
-                                "description": "Comment text to add",
+                                "description": "Comment text in Markdown format",
                             },
                         },
                         "required": ["issue_key", "comment"],
+                    },
+                ),
+                Tool(
+                    name="jira_link_to_epic",
+                    description="Link an existing issue to an epic",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "issue_key": {
+                                "type": "string",
+                                "description": "The key of the issue to link (e.g., 'PROJ-123')",
+                            },
+                            "epic_key": {
+                                "type": "string",
+                                "description": "The key of the epic to link to (e.g., 'PROJ-456')",
+                            },
+                        },
+                        "required": ["issue_key", "epic_key"],
+                    },
+                ),
+                Tool(
+                    name="jira_get_epic_issues",
+                    description="Get all issues linked to a specific epic",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "epic_key": {
+                                "type": "string",
+                                "description": "The key of the epic (e.g., 'PROJ-123')",
+                            },
+                            "limit": {
+                                "type": "number",
+                                "description": "Maximum number of issues to return (1-50)",
+                                "default": 10,
+                                "minimum": 1,
+                                "maximum": 50,
+                            },
+                        },
+                        "required": ["epic_key"],
                     },
                 ),
             ]
@@ -701,6 +740,40 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
         elif name == "jira_add_comment":
             comment = jira_fetcher.add_comment(arguments["issue_key"], arguments["comment"])
             return [TextContent(type="text", text=json.dumps(comment, indent=2))]
+
+        elif name == "jira_link_to_epic":
+            issue_key = arguments["issue_key"]
+            epic_key = arguments["epic_key"]
+            linked_issue = jira_fetcher.link_issue_to_epic(issue_key, epic_key)
+            result = {
+                "message": f"Issue {issue_key} has been linked to epic {epic_key}.",
+                "issue": {
+                    "key": linked_issue.metadata["key"],
+                    "title": linked_issue.metadata["title"],
+                    "type": linked_issue.metadata["type"],
+                    "status": linked_issue.metadata["status"],
+                    "link": linked_issue.metadata["link"],
+                }
+            }
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        elif name == "jira_get_epic_issues":
+            epic_key = arguments["epic_key"]
+            limit = min(int(arguments.get("limit", 10)), 50)
+            documents = jira_fetcher.get_epic_issues(epic_key, limit=limit)
+            epic_issues = [
+                {
+                    "key": doc.metadata["key"],
+                    "title": doc.metadata["title"],
+                    "type": doc.metadata["type"],
+                    "status": doc.metadata["status"],
+                    "created_date": doc.metadata["created_date"],
+                    "priority": doc.metadata.get("priority", "None"),
+                    "link": doc.metadata["link"],
+                }
+                for doc in documents
+            ]
+            return [TextContent(type="text", text=json.dumps(epic_issues, indent=2))]
 
         raise ValueError(f"Unknown tool: {name}")
 
