@@ -196,6 +196,54 @@ class JiraFetcher:
             logger.error(f"Error updating issue {issue_key}: {str(e)}")
             raise
 
+    def link_issue_to_epic(self, issue_key: str, epic_key: str) -> Document:
+        """
+        Link an existing issue to an epic.
+        
+        Args:
+            issue_key: The key of the issue to link (e.g. 'PROJ-123')
+            epic_key: The key of the epic to link to (e.g. 'PROJ-456')
+            
+        Returns:
+            Document representing the updated issue
+        """
+        try:
+            # First, check if the epic exists and is an Epic type
+            epic = self.jira.issue(epic_key)
+            if epic["fields"]["issuetype"]["name"] != "Epic":
+                raise ValueError(f"Issue {epic_key} is not an Epic, it is a {epic['fields']['issuetype']['name']}")
+                
+            # Different Jira configurations use different field names for epic links
+            # Try the parent field first (most common)
+            try:
+                fields = {"parent": {"key": epic_key}}
+                self.jira.issue_update(issue_key, fields=fields)
+                return self.get_issue(issue_key)
+            except Exception as e:
+                logger.info(f"Couldn't link using parent field: {str(e)}. Trying custom fields...")
+            
+            # Try common custom fields for epic links
+            custom_field_attempts = [
+                {"customfield_10014": epic_key},  # Common in Jira Cloud
+                {"customfield_10000": epic_key},  # Common in Jira Server
+                {"epic_link": epic_key}           # Sometimes used 
+            ]
+            
+            for fields in custom_field_attempts:
+                try:
+                    self.jira.issue_update(issue_key, fields=fields)
+                    return self.get_issue(issue_key)
+                except Exception as e:
+                    logger.info(f"Couldn't link using fields {fields}: {str(e)}")
+                    continue
+                    
+            # If we get here, none of our attempts worked
+            raise ValueError(f"Could not link issue {issue_key} to epic {epic_key}. Your Jira instance might use a different field for epic links.")
+            
+        except Exception as e:
+            logger.error(f"Error linking issue {issue_key} to epic {epic_key}: {str(e)}")
+            raise
+
     def delete_issue(self, issue_key: str) -> bool:
         """
         Delete an existing issue.
@@ -261,13 +309,43 @@ class JiraFetcher:
             # Format created date using new parser
             created_date = self._parse_date(issue["fields"]["created"])
 
+            # Check for Epic information
+            epic_key = None
+            epic_name = None
+            
+            # Most Jira instances use the "parent" field for Epic relationships
+            if "parent" in issue["fields"] and issue["fields"]["parent"]:
+                epic_key = issue["fields"]["parent"]["key"]
+                epic_name = issue["fields"]["parent"]["fields"]["summary"]
+            
+            # Some Jira instances use custom fields for Epic links
+            # Common custom field names for Epic links
+            epic_field_names = ["customfield_10014", "customfield_10000", "epic_link"]
+            for field_name in epic_field_names:
+                if field_name in issue["fields"] and issue["fields"][field_name]:
+                    # If it's a string, assume it's the epic key
+                    if isinstance(issue["fields"][field_name], str):
+                        epic_key = issue["fields"][field_name]
+                    # If it's an object, extract the key
+                    elif isinstance(issue["fields"][field_name], dict) and "key" in issue["fields"][field_name]:
+                        epic_key = issue["fields"][field_name]["key"]
+            
             # Combine content in a more structured way
             content = f"""Issue: {issue_key}
 Title: {issue['fields'].get('summary', '')}
 Type: {issue['fields']['issuetype']['name']}
 Status: {issue['fields']['status']['name']}
 Created: {created_date}
-
+"""
+            
+            # Add Epic information if available
+            if epic_key:
+                content += f"Epic: {epic_key}"
+                if epic_name:
+                    content += f" - {epic_name}"
+                content += "\n"
+                
+            content += f"""
 Description:
 {description}
 """
@@ -286,6 +364,13 @@ Description:
                 "priority": issue["fields"].get("priority", {}).get("name", "None"),
                 "link": f"{self.config.url.rstrip('/')}/browse/{issue_key}",
             }
+            
+            # Add Epic information to metadata
+            if epic_key:
+                metadata["epic_key"] = epic_key
+                if epic_name:
+                    metadata["epic_name"] = epic_name
+                    
             if comments:
                 metadata["comments"] = comments
 
@@ -304,31 +389,98 @@ Description:
         expand: str | None = None,
     ) -> list[Document]:
         """
-        Search for issues using JQL.
+        Search for issues using JQL (Jira Query Language).
 
         Args:
             jql: JQL query string
-            fields: Comma-separated string of fields to return
+            fields: Fields to return (comma-separated string or "*all")
             start: Starting index
-            limit: Maximum results to return
-            expand: Fields to expand
+            limit: Maximum issues to return
+            expand: Optional items to expand (comma-separated)
 
         Returns:
-            List of Documents containing matching issues
+            List of Documents representing the search results
         """
         try:
-            results = self.jira.jql(jql, fields=fields, start=start, limit=limit, expand=expand)
-
+            issues = self.jira.jql(jql, fields=fields, start=start, limit=limit, expand=expand)
             documents = []
-            for issue in results["issues"]:
-                # Get full issue details
-                doc = self.get_issue(issue["key"], expand=expand)
-                documents.append(doc)
+
+            for issue in issues.get("issues", []):
+                issue_key = issue["key"]
+                summary = issue["fields"].get("summary", "")
+                issue_type = issue["fields"]["issuetype"]["name"]
+                status = issue["fields"]["status"]["name"]
+                desc = self._clean_text(issue["fields"].get("description", ""))
+                created_date = self._parse_date(issue["fields"]["created"])
+                priority = issue["fields"].get("priority", {}).get("name", "None")
+
+                # Add basic metadata
+                metadata = {
+                    "key": issue_key,
+                    "title": summary,
+                    "type": issue_type,
+                    "status": status,
+                    "created_date": created_date,
+                    "priority": priority,
+                    "link": f"{self.config.url.rstrip('/')}/browse/{issue_key}",
+                }
+
+                # Prepare content
+                content = desc if desc else f"{summary} [{status}]"
+
+                documents.append(Document(page_content=content, metadata=metadata))
 
             return documents
-
         except Exception as e:
-            logger.error(f"Error searching issues with JQL {jql}: {str(e)}")
+            logger.error(f"Error searching issues with JQL '{jql}': {str(e)}")
+            raise
+            
+    def get_epic_issues(self, epic_key: str, limit: int = 50) -> list[Document]:
+        """
+        Get all issues linked to a specific epic.
+        
+        Args:
+            epic_key: The key of the epic (e.g. 'PROJ-123')
+            limit: Maximum number of issues to return
+            
+        Returns:
+            List of Documents representing the issues linked to the epic
+        """
+        try:
+            # First, check if the issue is an Epic
+            epic = self.jira.issue(epic_key)
+            if epic["fields"]["issuetype"]["name"] != "Epic":
+                raise ValueError(f"Issue {epic_key} is not an Epic, it is a {epic['fields']['issuetype']['name']}")
+            
+            # Try different JQL queries that might work depending on the Jira configuration
+            jql_queries = [
+                f"parent = {epic_key}",                # Most common
+                f"'Epic Link' = {epic_key}",           # Some instances
+                f"'Epic' = {epic_key}",                # Some instances
+                f"issue in childIssuesOf('{epic_key}')" # Some instances
+            ]
+            
+            # Try each query until we get results or run out of options
+            documents = []
+            for jql in jql_queries:
+                try:
+                    logger.info(f"Trying to get epic issues with JQL: {jql}")
+                    documents = self.search_issues(jql, limit=limit)
+                    if documents:
+                        return documents
+                except Exception as e:
+                    logger.info(f"Failed to get epic issues with JQL '{jql}': {str(e)}")
+                    continue
+            
+            # If we've tried all queries and got no results, return an empty list
+            # but also log a warning that we might be missing the right field
+            if not documents:
+                logger.warning(f"Couldn't find issues linked to epic {epic_key}. Your Jira instance might use a different field for epic links.")
+                
+            return documents
+                
+        except Exception as e:
+            logger.error(f"Error getting issues for epic {epic_key}: {str(e)}")
             raise
 
     def get_project_issues(self, project_key: str, start: int = 0, limit: int = 50) -> list[Document]:
