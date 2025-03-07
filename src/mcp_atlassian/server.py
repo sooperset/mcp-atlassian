@@ -928,13 +928,19 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 summary = issue_data["fields"].get("summary", "")
                 issue_type = issue_data["fields"]["issuetype"]["name"]
                 
+                # Clean and process description text if available
+                description = ""
+                if issue_data["fields"].get("description"):
+                    description = jira_fetcher.preprocessor.clean_jira_text(issue_data["fields"]["description"])
+                
                 result = {
                     "message": f"Successfully transitioned issue {issue_key} to {status}",
                     "issue": {
                         "key": issue_key,
                         "title": summary,
                         "type": issue_type,
-                        "status": status
+                        "status": status,
+                        "description": description
                     }
                 }
                 
