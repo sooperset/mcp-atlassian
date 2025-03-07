@@ -9,6 +9,13 @@
 - Added specialized Epic field handling when creating Epic issues
 - Added proper Jira status transition support with workflow validation
 - New tools: jira_get_transitions and jira_transition_issue
+- Comprehensive Markdown to Jira markup conversion with support for:
+  - Headers (# h1, ## h2, etc.)
+  - Formatting (bold with ** or __, italic with * or _)
+  - Code blocks with language support (```language)
+  - Inline code with backticks
+  - Ordered and unordered lists
+  - Links, blockquotes, and horizontal rules
 
 ### Fixed
 - Jira comments now properly convert Markdown syntax to Jira markup format
@@ -18,6 +25,7 @@
 - Fixed literal display of formatting characters (e.g., asterisks) in issue descriptions
 - Improved error handling in transition_issue with detailed logging and better error messages
 - Implemented direct HTTP approach for issue transitions to ensure compatibility with various Jira configurations
+- Enhanced numbered list handling to properly render consecutive items (1., 2., 3., etc.)
 
 ## [0.1.14] - 2025-03-05
 
