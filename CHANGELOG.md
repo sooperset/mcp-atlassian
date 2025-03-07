@@ -14,6 +14,10 @@
 - Jira comments now properly convert Markdown syntax to Jira markup format
 - This ensures that formatted text (headers, lists, bold, italic, code blocks, etc.) appears correctly in Jira
 - Fixed status updates in Jira to respect workflow rules by using transitions
+- Added Markdown to Jira markup conversion for issue descriptions in create_issue and update_issue methods
+- Fixed literal display of formatting characters (e.g., asterisks) in issue descriptions
+- Improved error handling in transition_issue with detailed logging and better error messages
+- Implemented direct HTTP approach for issue transitions to ensure compatibility with various Jira configurations
 
 ## [0.1.14] - 2025-03-05
 
