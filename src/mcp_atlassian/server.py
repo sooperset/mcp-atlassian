@@ -841,7 +841,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             # Get Jira API credentials from environment/config
             jira_url = jira_fetcher.config.url.rstrip('/')
             username = jira_fetcher.config.username
-            api_token = jira_fetcher.config.password
+            api_token = jira_fetcher.config.api_token
             
             # Construct minimal transition payload
             payload = {
