@@ -204,6 +204,11 @@ class JiraFetcher:
         # Check if status update is requested
         if "status" in fields:
             requested_status = fields.pop("status")
+            if not isinstance(requested_status, str):
+                logger.warning(f"Status must be a string, got {type(requested_status)}: {requested_status}")
+                # Try to convert to string if possible
+                requested_status = str(requested_status)
+                
             logger.info(f"Status update requested to: {requested_status}")
             
             # Get available transitions
@@ -212,7 +217,8 @@ class JiraFetcher:
             # Find matching transition
             transition_id = None
             for transition in transitions:
-                if transition["to_status"].lower() == requested_status.lower():
+                to_status = transition.get("to_status", "")
+                if isinstance(to_status, str) and to_status.lower() == requested_status.lower():
                     transition_id = transition["id"]
                     break
                     
@@ -221,8 +227,9 @@ class JiraFetcher:
                 logger.info(f"Found transition ID {transition_id} for status {requested_status}")
                 return self.transition_issue(issue_key, transition_id, fields)
             else:
+                available_statuses = [t.get("to_status", "") for t in transitions]
                 logger.warning(f"No transition found for status '{requested_status}'. Available transitions: {transitions}")
-                raise ValueError(f"Cannot transition issue to status '{requested_status}'. Available status transitions: {[t['to_status'] for t in transitions]}")
+                raise ValueError(f"Cannot transition issue to status '{requested_status}'. Available status transitions: {available_statuses}")
 
         try:
             self.jira.issue_update(issue_key, fields=fields)
@@ -750,14 +757,42 @@ Description:
             List of available transitions with id, name, and to status details
         """
         try:
-            transitions = self.jira.get_issue_transitions(issue_key)
+            transitions_data = self.jira.get_issue_transitions(issue_key)
             result = []
             
-            for transition in transitions.get("transitions", []):
+            # Handle different response formats from the Jira API
+            transitions = []
+            if isinstance(transitions_data, dict) and "transitions" in transitions_data:
+                # Handle the case where the response is a dict with a "transitions" key
+                transitions = transitions_data.get("transitions", [])
+            elif isinstance(transitions_data, list):
+                # Handle the case where the response is a list of transitions directly
+                transitions = transitions_data
+            else:
+                logger.warning(f"Unexpected format for transitions data: {type(transitions_data)}")
+                return []
+            
+            for transition in transitions:
+                if not isinstance(transition, dict):
+                    continue
+                    
+                # Extract the transition information safely
+                transition_id = transition.get("id")
+                transition_name = transition.get("name")
+                
+                # Handle different formats for the "to" status
+                to_status = None
+                if "to" in transition and isinstance(transition["to"], dict):
+                    to_status = transition["to"].get("name")
+                elif "to_status" in transition:
+                    to_status = transition["to_status"]
+                elif "status" in transition:
+                    to_status = transition["status"]
+                
                 result.append({
-                    "id": transition.get("id"),
-                    "name": transition.get("name"),
-                    "to_status": transition.get("to", {}).get("name")
+                    "id": transition_id,
+                    "name": transition_name,
+                    "to_status": to_status
                 })
                 
             return result
