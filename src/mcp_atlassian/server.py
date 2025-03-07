@@ -823,6 +823,9 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
         elif name == "jira_transition_issue":
+            import httpx
+            import base64
+            
             issue_key = arguments["issue_key"]
             transition_id = arguments["transition_id"]
             
@@ -830,48 +833,115 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             if not isinstance(transition_id, str):
                 transition_id = str(transition_id)
                 
-            # Prepare a minimal transition data structure
-            transition_data = {
-                "transition": {"id": transition_id}
+            # Get Jira API credentials from environment/config
+            jira_url = jira_fetcher.config.url.rstrip('/')
+            username = jira_fetcher.config.username
+            api_token = jira_fetcher.config.password
+            
+            # Construct minimal transition payload
+            payload = {
+                "transition": {
+                    "id": transition_id
+                }
             }
             
-            # Process fields if provided
+            # Add fields if provided
             if "fields" in arguments:
                 try:
                     fields = json.loads(arguments.get("fields", "{}"))
                     if fields and isinstance(fields, dict):
-                        transition_data["fields"] = fields
+                        payload["fields"] = fields
                 except Exception as e:
                     return [TextContent(type="text", text=json.dumps({
                         "error": f"Invalid fields format: {str(e)}", 
                         "status": "error"
                     }, indent=2))]
             
-            # Process comment if provided
+            # Add comment if provided
             if "comment" in arguments and arguments["comment"]:
                 comment = arguments["comment"]
-                # Convert comment to a string if it's not already
                 if not isinstance(comment, str):
                     comment = str(comment)
                     
-                # Format the comment (use a simple approach without markdown conversion)
-                transition_data["update"] = {
+                payload["update"] = {
                     "comment": [{"add": {"body": comment}}]
                 }
             
+            # Create auth header
+            auth_str = f"{username}:{api_token}"
+            auth_bytes = auth_str.encode('ascii')
+            auth_b64 = base64.b64encode(auth_bytes).decode('ascii')
+            
+            # Prepare headers
+            headers = {
+                "Authorization": f"Basic {auth_b64}",
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
+            
+            # Log entire request for debugging
+            logger.info(f"Sending transition request to {jira_url}/rest/api/2/issue/{issue_key}/transitions")
+            logger.info(f"Headers: {headers}")
+            logger.info(f"Payload: {payload}")
+            
             try:
-                # Make the direct API call
-                jira_fetcher.jira.issue_transition(issue_key, transition_data)
+                # Make direct HTTP request
+                transition_url = f"{jira_url}/rest/api/2/issue/{issue_key}/transitions"
+                response = httpx.post(
+                    transition_url,
+                    json=payload,
+                    headers=headers,
+                    timeout=30.0
+                )
                 
-                # Fetch the updated issue
-                updated_issue = jira_fetcher.get_issue(issue_key)
-                result = {"content": updated_issue.page_content, "metadata": updated_issue.metadata}
+                # Check response
+                if response.status_code >= 400:
+                    return [TextContent(type="text", text=json.dumps({
+                        "error": f"Jira API error: {response.status_code} - {response.text}", 
+                        "status": "error"
+                    }, indent=2))]
+                
+                # Now fetch the updated issue - also using direct HTTP
+                issue_url = f"{jira_url}/rest/api/2/issue/{issue_key}"
+                issue_response = httpx.get(
+                    issue_url,
+                    headers=headers,
+                    timeout=30.0
+                )
+                
+                if issue_response.status_code >= 400:
+                    return [TextContent(type="text", text=json.dumps({
+                        "error": f"Failed to fetch updated issue: {issue_response.status_code} - {issue_response.text}", 
+                        "status": "error"
+                    }, indent=2))]
+                
+                # Parse and return issue data
+                issue_data = issue_response.json()
+                
+                # Extract essential issue information
+                status = issue_data["fields"]["status"]["name"]
+                summary = issue_data["fields"].get("summary", "")
+                issue_type = issue_data["fields"]["issuetype"]["name"]
+                
+                result = {
+                    "message": f"Successfully transitioned issue {issue_key} to {status}",
+                    "issue": {
+                        "key": issue_key,
+                        "title": summary,
+                        "type": issue_type,
+                        "status": status
+                    }
+                }
+                
                 return [TextContent(type="text", text=json.dumps(result, indent=2))]
+                
             except Exception as e:
                 error_message = str(e)
+                logger.error(f"Exception in direct transition API call: {error_message}")
                 return [TextContent(type="text", text=json.dumps({
-                    "error": f"Failed to transition issue: {error_message}", 
-                    "status": "error"
+                    "error": f"Network or API error: {error_message}", 
+                    "status": "error",
+                    "details": f"Full error: {repr(e)}"
                 }, indent=2))]
 
         raise ValueError(f"Unknown tool: {name}")
