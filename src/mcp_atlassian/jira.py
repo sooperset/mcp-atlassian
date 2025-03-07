@@ -135,7 +135,7 @@ class JiraFetcher:
             "project": {"key": project_key},
             "summary": summary,
             "issuetype": {"name": issue_type},
-            "description": description,
+            "description": self._markdown_to_jira(description),
         }
 
         # If we're creating an Epic, check for Epic-specific fields
@@ -171,6 +171,10 @@ class JiraFetcher:
         for key, value in kwargs.items():
             fields[key] = value
 
+        # Convert description to Jira format if present
+        if "description" in fields and fields["description"]:
+            fields["description"] = self._markdown_to_jira(fields["description"])
+
         try:
             created = self.jira.issue_create(fields=fields)
             issue_key = created.get("key")
@@ -200,6 +204,10 @@ class JiraFetcher:
         # Handle all kwargs
         for key, value in kwargs.items():
             fields[key] = value
+
+        # Convert description to Jira format if present
+        if "description" in fields and fields["description"]:
+            fields["description"] = self._markdown_to_jira(fields["description"])
 
         # Check if status update is requested
         if "status" in fields:
@@ -870,3 +878,51 @@ Description:
         except Exception as e:
             logger.error(f"Error transitioning issue {issue_key}: {str(e)}")
             raise
+
+    def _markdown_to_jira(self, markdown_text: str) -> str:
+        """
+        Convert Markdown syntax to Jira markup syntax.
+        
+        Args:
+            markdown_text: Text in Markdown format
+            
+        Returns:
+            Text in Jira markup format
+        """
+        if not markdown_text:
+            return ""
+            
+        # Basic Markdown to Jira markup conversions
+        # Headers
+        jira_text = re.sub(r'^# (.+)$', r'h1. \1', markdown_text, flags=re.MULTILINE)
+        jira_text = re.sub(r'^## (.+)$', r'h2. \1', jira_text, flags=re.MULTILINE)
+        jira_text = re.sub(r'^### (.+)$', r'h3. \1', jira_text, flags=re.MULTILINE)
+        jira_text = re.sub(r'^#### (.+)$', r'h4. \1', jira_text, flags=re.MULTILINE)
+        jira_text = re.sub(r'^##### (.+)$', r'h5. \1', jira_text, flags=re.MULTILINE)
+        jira_text = re.sub(r'^###### (.+)$', r'h6. \1', jira_text, flags=re.MULTILINE)
+        
+        # Bold and italic
+        jira_text = re.sub(r'\*\*(.+?)\*\*', r'*\1*', jira_text)  # Bold
+        jira_text = re.sub(r'__(.+?)__', r'*\1*', jira_text)      # Bold (alternate)
+        jira_text = re.sub(r'\*(.+?)\*', r'_\1_', jira_text)      # Italic
+        jira_text = re.sub(r'_(.+?)_', r'_\1_', jira_text)        # Italic (keep as is)
+        
+        # Code blocks
+        jira_text = re.sub(r'```(.+?)```', r'{code}\1{code}', jira_text, flags=re.DOTALL)
+        jira_text = re.sub(r'`(.+?)`', r'{{{\1}}}', jira_text)
+        
+        # Links
+        jira_text = re.sub(r'\[(.+?)\]\((.+?)\)', r'[\1|\2]', jira_text)
+        
+        # Lists - this is a simplification, as Jira uses * for unordered lists
+        jira_text = re.sub(r'^- (.+)$', r'* \1', jira_text, flags=re.MULTILINE)
+        jira_text = re.sub(r'^\* (.+)$', r'* \1', jira_text, flags=re.MULTILINE)  # Keep as is
+        jira_text = re.sub(r'^(\d+)\. (.+)$', r'# \2', jira_text, flags=re.MULTILINE)
+        
+        # Blockquotes
+        jira_text = re.sub(r'^> (.+)$', r'bq. \1', jira_text, flags=re.MULTILINE)
+        
+        # Horizontal rules
+        jira_text = re.sub(r'^---+$', r'----', jira_text, flags=re.MULTILINE)
+        
+        return jira_text
