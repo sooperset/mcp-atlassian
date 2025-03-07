@@ -545,6 +545,47 @@ async def list_tools() -> list[Tool]:
                         "required": ["epic_key"],
                     },
                 ),
+                Tool(
+                    name="jira_get_transitions",
+                    description="Get available status transitions for a Jira issue",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "issue_key": {
+                                "type": "string",
+                                "description": "Jira issue key (e.g., 'PROJ-123')",
+                            },
+                        },
+                        "required": ["issue_key"],
+                    },
+                ),
+                Tool(
+                    name="jira_transition_issue",
+                    description="Transition a Jira issue to a new status",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "issue_key": {
+                                "type": "string", 
+                                "description": "Jira issue key (e.g., 'PROJ-123')",
+                            },
+                            "transition_id": {
+                                "type": "string",
+                                "description": "ID of the transition to perform (get this from jira_get_transitions)"
+                            },
+                            "fields": {
+                                "type": "object",
+                                "description": "Additional fields to update during the transition (optional)",
+                                "default": {}
+                            },
+                            "comment": {
+                                "type": "string",
+                                "description": "Comment to add during the transition in Markdown format (optional)",
+                            },
+                        },
+                        "required": ["issue_key", "transition_id"],
+                    },
+                ),
             ]
         )
 
@@ -774,6 +815,21 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 for doc in documents
             ]
             return [TextContent(type="text", text=json.dumps(epic_issues, indent=2))]
+
+        elif name == "jira_get_transitions":
+            issue_key = arguments["issue_key"]
+            transitions = jira_fetcher.get_available_transitions(issue_key)
+            result = {"transitions": transitions}
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        elif name == "jira_transition_issue":
+            issue_key = arguments["issue_key"]
+            transition_id = arguments["transition_id"]
+            fields = json.loads(arguments.get("fields", "{}"))
+            comment = arguments.get("comment", "")
+            doc = jira_fetcher.transition_issue(issue_key, transition_id, fields, comment)
+            result = {"content": doc.page_content, "metadata": doc.metadata}
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
         raise ValueError(f"Unknown tool: {name}")
 

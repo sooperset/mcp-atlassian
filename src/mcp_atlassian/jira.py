@@ -2,6 +2,7 @@ import logging
 import os
 from datetime import datetime
 from typing import Any
+import re
 
 from atlassian import Jira
 
@@ -137,6 +138,24 @@ class JiraFetcher:
             "description": description,
         }
 
+        # If we're creating an Epic, check for Epic-specific fields
+        if issue_type.lower() == "epic":
+            # Get the dynamic field IDs
+            field_ids = self.get_jira_field_ids()
+            
+            # Set the Epic Name field if available (required in many Jira instances)
+            if "epic_name" in field_ids and "epic_name" not in kwargs:
+                # Use the summary as the epic name if not provided
+                fields[field_ids["epic_name"]] = summary
+            elif "customfield_10011" not in kwargs:  # Common default Epic Name field
+                # Fallback to common Epic Name field if not discovered
+                fields["customfield_10011"] = summary
+                
+            # Check for other Epic fields from kwargs
+            epic_color = kwargs.pop("epic_color", None) or kwargs.pop("epic_colour", None)
+            if epic_color and "epic_color" in field_ids:
+                fields[field_ids["epic_color"]] = epic_color
+
         # Add assignee if provided
         if assignee:
             account_id = self._get_account_id(assignee)
@@ -165,29 +184,45 @@ class JiraFetcher:
 
     def update_issue(self, issue_key: str, fields: dict[str, Any] = None, **kwargs: Any) -> Document:
         """
-        Update an existing issue.
+        Update an existing issue in Jira and return it as a Document.
 
         Args:
-            issue_key: The key of the issue (e.g. 'PROJ-123')
-            fields: Dictionary of fields to update
-            kwargs: Additional fields to update
+            issue_key: The key of the issue to update (e.g. 'PROJ-123')
+            fields: Fields to update
+            kwargs: Any other custom Jira fields
 
         Returns:
             Document representing the updated issue
         """
-        fields = fields or {}
+        if fields is None:
+            fields = {}
 
-        # Handle assignee if provided in fields
-        if "assignee" in fields:
-            assignee = fields.pop("assignee")  # Remove from fields to handle separately
-            if assignee:
-                account_id = self._get_account_id(assignee)
-                fields["assignee"] = {"accountId": account_id}
+        # Handle all kwargs
+        for key, value in kwargs.items():
+            fields[key] = value
+
+        # Check if status update is requested
+        if "status" in fields:
+            requested_status = fields.pop("status")
+            logger.info(f"Status update requested to: {requested_status}")
+            
+            # Get available transitions
+            transitions = self.get_available_transitions(issue_key)
+            
+            # Find matching transition
+            transition_id = None
+            for transition in transitions:
+                if transition["to_status"].lower() == requested_status.lower():
+                    transition_id = transition["id"]
+                    break
+                    
+            if transition_id:
+                # Use transition_issue method if we found a matching transition
+                logger.info(f"Found transition ID {transition_id} for status {requested_status}")
+                return self.transition_issue(issue_key, transition_id, fields)
             else:
-                fields["assignee"] = None  # Unassign the issue
-
-        for k, v in kwargs.items():
-            fields[k] = v
+                logger.warning(f"No transition found for status '{requested_status}'. Available transitions: {transitions}")
+                raise ValueError(f"Cannot transition issue to status '{requested_status}'. Available status transitions: {[t['to_status'] for t in transitions]}")
 
         try:
             self.jira.issue_update(issue_key, fields=fields)
@@ -195,6 +230,61 @@ class JiraFetcher:
         except Exception as e:
             logger.error(f"Error updating issue {issue_key}: {str(e)}")
             raise
+
+    def get_jira_field_ids(self) -> dict:
+        """
+        Dynamically discover Jira field IDs relevant to Epic linking.
+        
+        This method queries the Jira API to find the correct custom field IDs
+        for Epic-related fields, which can vary between different Jira instances.
+        
+        Returns:
+            Dictionary mapping field names to their IDs 
+            (e.g., {'epic_link': 'customfield_10014', 'epic_name': 'customfield_10011'})
+        """
+        try:
+            # Check if we've already cached the field IDs
+            if hasattr(self, '_field_ids_cache'):
+                return self._field_ids_cache
+                
+            # Fetch all fields from Jira API
+            fields = self.jira.fields()
+            field_ids = {}
+            
+            # Look for Epic-related fields
+            for field in fields:
+                field_name = field.get("name", "").lower()
+                
+                # Epic Link field - used to link issues to epics
+                if "epic link" in field_name or "epic-link" in field_name:
+                    field_ids["epic_link"] = field["id"]
+                
+                # Epic Name field - used when creating epics
+                elif "epic name" in field_name or "epic-name" in field_name:
+                    field_ids["epic_name"] = field["id"]
+                
+                # Parent field - sometimes used instead of Epic Link
+                elif field_name == "parent" or field_name == "parent link":
+                    field_ids["parent"] = field["id"]
+                
+                # Epic Status field
+                elif "epic status" in field_name:
+                    field_ids["epic_status"] = field["id"]
+                    
+                # Epic Color field
+                elif "epic colour" in field_name or "epic color" in field_name:
+                    field_ids["epic_color"] = field["id"]
+            
+            # Cache the results for future use
+            self._field_ids_cache = field_ids
+            
+            logger.info(f"Discovered Jira field IDs: {field_ids}")
+            return field_ids
+            
+        except Exception as e:
+            logger.error(f"Error discovering Jira field IDs: {str(e)}")
+            # Return an empty dict as fallback
+            return {}
 
     def link_issue_to_epic(self, issue_key: str, epic_key: str) -> Document:
         """
@@ -212,17 +302,29 @@ class JiraFetcher:
             epic = self.jira.issue(epic_key)
             if epic["fields"]["issuetype"]["name"] != "Epic":
                 raise ValueError(f"Issue {epic_key} is not an Epic, it is a {epic['fields']['issuetype']['name']}")
-                
-            # Different Jira configurations use different field names for epic links
-            # Try the parent field first (most common)
-            try:
-                fields = {"parent": {"key": epic_key}}
-                self.jira.issue_update(issue_key, fields=fields)
-                return self.get_issue(issue_key)
-            except Exception as e:
-                logger.info(f"Couldn't link using parent field: {str(e)}. Trying custom fields...")
             
-            # Try common custom fields for epic links
+            # Get the dynamic field IDs for this Jira instance
+            field_ids = self.get_jira_field_ids()
+            
+            # Try the parent field first (if discovered or natively supported)
+            if "parent" in field_ids or "parent" not in field_ids:
+                try:
+                    fields = {"parent": {"key": epic_key}}
+                    self.jira.issue_update(issue_key, fields=fields)
+                    return self.get_issue(issue_key)
+                except Exception as e:
+                    logger.info(f"Couldn't link using parent field: {str(e)}. Trying discovered fields...")
+            
+            # Try using the discovered Epic Link field
+            if "epic_link" in field_ids:
+                try:
+                    fields = {field_ids["epic_link"]: epic_key}
+                    self.jira.issue_update(issue_key, fields=fields)
+                    return self.get_issue(issue_key)
+                except Exception as e:
+                    logger.info(f"Couldn't link using discovered epic_link field: {str(e)}. Trying fallback methods...")
+            
+            # Fallback to common custom fields if dynamic discovery didn't work
             custom_field_attempts = [
                 {"customfield_10014": epic_key},  # Common in Jira Cloud
                 {"customfield_10000": epic_key},  # Common in Jira Server
@@ -452,13 +554,28 @@ Description:
             if epic["fields"]["issuetype"]["name"] != "Epic":
                 raise ValueError(f"Issue {epic_key} is not an Epic, it is a {epic['fields']['issuetype']['name']}")
             
-            # Try different JQL queries that might work depending on the Jira configuration
-            jql_queries = [
-                f"parent = {epic_key}",                # Most common
-                f"'Epic Link' = {epic_key}",           # Some instances
-                f"'Epic' = {epic_key}",                # Some instances
-                f"issue in childIssuesOf('{epic_key}')" # Some instances
-            ]
+            # Get the dynamic field IDs for this Jira instance
+            field_ids = self.get_jira_field_ids()
+            
+            # Build JQL queries based on discovered field IDs
+            jql_queries = []
+            
+            # Add queries based on discovered fields
+            if "parent" in field_ids:
+                jql_queries.append(f"parent = {epic_key}")
+            
+            if "epic_link" in field_ids:
+                field_name = field_ids["epic_link"]
+                jql_queries.append(f'"{field_name}" = {epic_key}')
+                jql_queries.append(f'"{field_name}" ~ {epic_key}')
+            
+            # Add standard fallback queries
+            jql_queries.extend([
+                f"parent = {epic_key}",                     # Common in most instances
+                f"'Epic Link' = {epic_key}",                # Some instances
+                f"'Epic' = {epic_key}",                     # Some instances
+                f"issue in childIssuesOf('{epic_key}')"     # Some instances
+            ])
             
             # Try each query until we get results or run out of options
             documents = []
@@ -554,13 +671,16 @@ Description:
 
         Args:
             issue_key: The issue key (e.g. 'PROJ-123')
-            comment: Comment text to add
+            comment: Comment text to add (in Markdown format)
 
         Returns:
             The created comment details
         """
         try:
-            result = self.jira.issue_add_comment(issue_key, comment)
+            # Convert Markdown to Jira's markup format
+            jira_formatted_comment = self._convert_markdown_to_jira(comment)
+            
+            result = self.jira.issue_add_comment(issue_key, jira_formatted_comment)
             return {
                 "id": result.get("id"),
                 "body": self._clean_text(result.get("body", "")),
@@ -569,4 +689,116 @@ Description:
             }
         except Exception as e:
             logger.error(f"Error adding comment to issue {issue_key}: {str(e)}")
+            raise
+            
+    def _convert_markdown_to_jira(self, markdown_text: str) -> str:
+        """
+        Convert Markdown syntax to Jira markup syntax.
+        
+        Args:
+            markdown_text: Text in Markdown format
+            
+        Returns:
+            Text in Jira markup format
+        """
+        if not markdown_text:
+            return ""
+            
+        # Basic Markdown to Jira markup conversions
+        # Headers
+        jira_text = re.sub(r'^# (.+)$', r'h1. \1', markdown_text, flags=re.MULTILINE)
+        jira_text = re.sub(r'^## (.+)$', r'h2. \1', jira_text, flags=re.MULTILINE)
+        jira_text = re.sub(r'^### (.+)$', r'h3. \1', jira_text, flags=re.MULTILINE)
+        jira_text = re.sub(r'^#### (.+)$', r'h4. \1', jira_text, flags=re.MULTILINE)
+        jira_text = re.sub(r'^##### (.+)$', r'h5. \1', jira_text, flags=re.MULTILINE)
+        jira_text = re.sub(r'^###### (.+)$', r'h6. \1', jira_text, flags=re.MULTILINE)
+        
+        # Bold and italic
+        jira_text = re.sub(r'\*\*(.+?)\*\*', r'*\1*', jira_text)  # Bold
+        jira_text = re.sub(r'__(.+?)__', r'*\1*', jira_text)      # Bold (alternate)
+        jira_text = re.sub(r'\*(.+?)\*', r'_\1_', jira_text)      # Italic
+        jira_text = re.sub(r'_(.+?)_', r'_\1_', jira_text)        # Italic (keep as is)
+        
+        # Code blocks
+        jira_text = re.sub(r'```(.+?)```', r'{code}\1{code}', jira_text, flags=re.DOTALL)
+        jira_text = re.sub(r'`(.+?)`', r'{{{\1}}}', jira_text)
+        
+        # Links
+        jira_text = re.sub(r'\[(.+?)\]\((.+?)\)', r'[\1|\2]', jira_text)
+        
+        # Lists - this is a simplification, as Jira uses * for unordered lists
+        jira_text = re.sub(r'^- (.+)$', r'* \1', jira_text, flags=re.MULTILINE)
+        jira_text = re.sub(r'^\* (.+)$', r'* \1', jira_text, flags=re.MULTILINE)  # Keep as is
+        jira_text = re.sub(r'^(\d+)\. (.+)$', r'# \2', jira_text, flags=re.MULTILINE)
+        
+        # Blockquotes
+        jira_text = re.sub(r'^> (.+)$', r'bq. \1', jira_text, flags=re.MULTILINE)
+        
+        # Horizontal rules
+        jira_text = re.sub(r'^---+$', r'----', jira_text, flags=re.MULTILINE)
+        
+        return jira_text
+
+    def get_available_transitions(self, issue_key: str) -> list[dict]:
+        """
+        Get the available status transitions for an issue.
+        
+        Args:
+            issue_key: The issue key (e.g. 'PROJ-123')
+            
+        Returns:
+            List of available transitions with id, name, and to status details
+        """
+        try:
+            transitions = self.jira.get_issue_transitions(issue_key)
+            result = []
+            
+            for transition in transitions.get("transitions", []):
+                result.append({
+                    "id": transition.get("id"),
+                    "name": transition.get("name"),
+                    "to_status": transition.get("to", {}).get("name")
+                })
+                
+            return result
+        except Exception as e:
+            logger.error(f"Error getting transitions for issue {issue_key}: {str(e)}")
+            raise
+
+    def transition_issue(self, issue_key: str, transition_id: str, fields: dict = None, comment: str = None) -> Document:
+        """
+        Transition an issue to a new status using the appropriate workflow transition.
+        
+        Args:
+            issue_key: The issue key (e.g. 'PROJ-123')
+            transition_id: The ID of the transition to perform (get this from get_available_transitions)
+            fields: Additional fields to update during the transition
+            comment: Optional comment to add during the transition
+            
+        Returns:
+            Document representing the updated issue
+        """
+        try:
+            transition_data = {
+                "transition": {"id": transition_id}
+            }
+            
+            # Add fields if provided
+            if fields:
+                transition_data["fields"] = fields
+                
+            # Add comment if provided
+            if comment:
+                jira_formatted_comment = self._convert_markdown_to_jira(comment)
+                transition_data["update"] = {
+                    "comment": [{"add": {"body": jira_formatted_comment}}]
+                }
+                
+            # Perform the transition
+            self.jira.issue_transition(issue_key, transition_data)
+            
+            # Return the updated issue
+            return self.get_issue(issue_key)
+        except Exception as e:
+            logger.error(f"Error transitioning issue {issue_key}: {str(e)}")
             raise
