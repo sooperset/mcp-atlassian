@@ -814,20 +814,53 @@ Description:
             Document representing the updated issue
         """
         try:
+            # Ensure transition_id is a string
+            if not isinstance(transition_id, str):
+                logger.warning(f"transition_id must be a string, got {type(transition_id)}: {transition_id}")
+                transition_id = str(transition_id)
+                
             transition_data = {
                 "transition": {"id": transition_id}
             }
             
             # Add fields if provided
             if fields:
-                transition_data["fields"] = fields
+                # Sanitize fields to ensure they're valid for the API
+                sanitized_fields = {}
+                for key, value in fields.items():
+                    # Skip None values
+                    if value is None:
+                        continue
+                        
+                    # Handle special case for assignee
+                    if key == "assignee" and isinstance(value, str):
+                        try:
+                            account_id = self._get_account_id(value)
+                            sanitized_fields[key] = {"accountId": account_id}
+                        except Exception as e:
+                            logger.warning(f"Could not resolve assignee {value}: {str(e)}")
+                            # Skip this field
+                            continue
+                    else:
+                        sanitized_fields[key] = value
+                
+                if sanitized_fields:
+                    transition_data["fields"] = sanitized_fields
                 
             # Add comment if provided
             if comment:
+                if not isinstance(comment, str):
+                    logger.warning(f"Comment must be a string, got {type(comment)}: {comment}")
+                    comment = str(comment)
+                    
                 jira_formatted_comment = self._convert_markdown_to_jira(comment)
                 transition_data["update"] = {
                     "comment": [{"add": {"body": jira_formatted_comment}}]
                 }
+                
+            # Log the transition request for debugging
+            logger.info(f"Transitioning issue {issue_key} with transition ID {transition_id}")
+            logger.debug(f"Transition data: {transition_data}")
                 
             # Perform the transition
             self.jira.issue_transition(issue_key, transition_data)
