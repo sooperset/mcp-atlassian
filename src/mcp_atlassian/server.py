@@ -13,7 +13,12 @@ from .jira import JiraFetcher
 from .preprocessing import markdown_to_confluence_storage
 
 # Configure logging
-logging.basicConfig(level=logging.WARNING)
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    filename='mcp_atlassian_debug.log',
+    filemode='a'
+)
 logger = logging.getLogger("mcp-atlassian")
 logging.getLogger("mcp.server.lowlevel.server").setLevel(logging.INFO)
 
