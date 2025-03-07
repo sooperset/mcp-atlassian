@@ -574,13 +574,13 @@ async def list_tools() -> list[Tool]:
                                 "description": "ID of the transition to perform (get this from jira_get_transitions)"
                             },
                             "fields": {
-                                "type": "object",
-                                "description": "Additional fields to update during the transition (optional)",
-                                "default": {}
+                                "type": "string",
+                                "description": "JSON string of fields to update during the transition (optional)",
+                                "default": "{}"
                             },
                             "comment": {
                                 "type": "string",
-                                "description": "Comment to add during the transition in Markdown format (optional)",
+                                "description": "Comment to add during the transition (optional)",
                             },
                         },
                         "required": ["issue_key", "transition_id"],
@@ -825,11 +825,54 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
         elif name == "jira_transition_issue":
             issue_key = arguments["issue_key"]
             transition_id = arguments["transition_id"]
-            fields = json.loads(arguments.get("fields", "{}"))
-            comment = arguments.get("comment", "")
-            doc = jira_fetcher.transition_issue(issue_key, transition_id, fields, comment)
-            result = {"content": doc.page_content, "metadata": doc.metadata}
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            
+            # Convert transition_id to string if it's not already
+            if not isinstance(transition_id, str):
+                transition_id = str(transition_id)
+                
+            # Prepare a minimal transition data structure
+            transition_data = {
+                "transition": {"id": transition_id}
+            }
+            
+            # Process fields if provided
+            if "fields" in arguments:
+                try:
+                    fields = json.loads(arguments.get("fields", "{}"))
+                    if fields and isinstance(fields, dict):
+                        transition_data["fields"] = fields
+                except Exception as e:
+                    return [TextContent(type="text", text=json.dumps({
+                        "error": f"Invalid fields format: {str(e)}", 
+                        "status": "error"
+                    }, indent=2))]
+            
+            # Process comment if provided
+            if "comment" in arguments and arguments["comment"]:
+                comment = arguments["comment"]
+                # Convert comment to a string if it's not already
+                if not isinstance(comment, str):
+                    comment = str(comment)
+                    
+                # Format the comment (use a simple approach without markdown conversion)
+                transition_data["update"] = {
+                    "comment": [{"add": {"body": comment}}]
+                }
+            
+            try:
+                # Make the direct API call
+                jira_fetcher.jira.issue_transition(issue_key, transition_data)
+                
+                # Fetch the updated issue
+                updated_issue = jira_fetcher.get_issue(issue_key)
+                result = {"content": updated_issue.page_content, "metadata": updated_issue.metadata}
+                return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            except Exception as e:
+                error_message = str(e)
+                return [TextContent(type="text", text=json.dumps({
+                    "error": f"Failed to transition issue: {error_message}", 
+                    "status": "error"
+                }, indent=2))]
 
         raise ValueError(f"Unknown tool: {name}")
 
