@@ -102,4 +102,4 @@
 - Fixed handling of nested structure in Confluence spaces response
 - Updated README.md with improved documentation
 
-## [0.1.0] - 2023-08-01
+## [0.1.0] - 2024-12-04
