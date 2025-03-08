@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from collections.abc import Sequence
-from typing import Any, Dict
+from typing import Any
 
 from mcp.server import Server
 from mcp.types import Resource, TextContent, Tool
@@ -601,6 +601,33 @@ async def list_tools() -> list[Tool]:
 async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
     """Handle tool calls for Confluence and Jira operations."""
     try:
+        # Helper functions for formatting results
+        def format_comment(comment):
+            return {
+                "id": comment.get("id"),
+                "author": comment.get("author", {}).get("displayName", "Unknown"),
+                "created": comment.get("created"),
+                "body": comment.get("body"),
+            }
+
+        def format_issue(doc):
+            return {
+                "key": doc.metadata["key"],
+                "title": doc.metadata["title"],
+                "type": doc.metadata["type"],
+                "status": doc.metadata["status"],
+                "created_date": doc.metadata["created_date"],
+                "priority": doc.metadata["priority"],
+                "link": doc.metadata["link"],
+            }
+
+        def format_transition(transition):
+            return {
+                "id": transition.get("id"),
+                "name": transition.get("name"),
+                "to_status": transition.get("to", {}).get("name"),
+            }
+
         # Confluence operations
         if name == "confluence_search":
             limit = min(int(arguments.get("limit", 10)), 50)
@@ -618,7 +645,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 for doc in documents
             ]
 
-            return [TextContent(type="text", text=json.dumps(search_results, indent=2))]
+            return [TextContent(type="text", text=json.dumps(search_results, indent=2, ensure_ascii=False))]
 
         elif name == "confluence_get_page":
             doc = confluence_fetcher.get_page_content(arguments["page_id"])
@@ -629,20 +656,13 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             else:
                 result = {"content": doc.page_content}
 
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
 
         elif name == "confluence_get_comments":
             comments = confluence_fetcher.get_page_comments(arguments["page_id"])
-            formatted_comments = [
-                {
-                    "author": comment.metadata["author_name"],
-                    "created": comment.metadata["last_modified"],
-                    "content": comment.page_content,
-                }
-                for comment in comments
-            ]
+            formatted_comments = [format_comment(comment) for comment in comments]
 
-            return [TextContent(type="text", text=json.dumps(formatted_comments, indent=2))]
+            return [TextContent(type="text", text=json.dumps(formatted_comments, indent=2, ensure_ascii=False))]
 
         elif name == "confluence_create_page":
             # Convert markdown content to HTML storage format
@@ -671,7 +691,11 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 "content": doc.page_content[:500] + "..." if len(doc.page_content) > 500 else doc.page_content,
             }
 
-            return [TextContent(type="text", text=f"Page created successfully:\n{json.dumps(result, indent=2)}")]
+            return [
+                TextContent(
+                    type="text", text=f"Page created successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}"
+                )
+            ]
 
         elif name == "confluence_update_page":
             page_id = arguments["page_id"]
@@ -700,7 +724,11 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 "content": doc.page_content[:500] + "..." if len(doc.page_content) > 500 else doc.page_content,
             }
 
-            return [TextContent(type="text", text=f"Page updated successfully:\n{json.dumps(result, indent=2)}")]
+            return [
+                TextContent(
+                    type="text", text=f"Page updated successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}"
+                )
+            ]
 
         # Jira operations
         elif name == "jira_get_issue":
@@ -708,43 +736,21 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 arguments["issue_key"], expand=arguments.get("expand"), comment_limit=arguments.get("comment_limit")
             )
             result = {"content": doc.page_content, "metadata": doc.metadata}
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
 
         elif name == "jira_search":
             limit = min(int(arguments.get("limit", 10)), 50)
             documents = jira_fetcher.search_issues(
                 arguments["jql"], fields=arguments.get("fields", "*all"), limit=limit
             )
-            search_results = [
-                {
-                    "key": doc.metadata["key"],
-                    "title": doc.metadata["title"],
-                    "type": doc.metadata["type"],
-                    "status": doc.metadata["status"],
-                    "created_date": doc.metadata["created_date"],
-                    "priority": doc.metadata["priority"],
-                    "link": doc.metadata["link"],
-                    "excerpt": doc.page_content[:500] + "..." if len(doc.page_content) > 500 else doc.page_content,
-                }
-                for doc in documents
-            ]
-            return [TextContent(type="text", text=json.dumps(search_results, indent=2))]
+            search_results = [format_issue(doc) for doc in documents]
+            return [TextContent(type="text", text=json.dumps(search_results, indent=2, ensure_ascii=False))]
 
         elif name == "jira_get_project_issues":
             limit = min(int(arguments.get("limit", 10)), 50)
             documents = jira_fetcher.get_project_issues(arguments["project_key"], limit=limit)
-            project_issues = [
-                {
-                    "key": doc.metadata["key"],
-                    "title": doc.metadata["title"],
-                    "type": doc.metadata["type"],
-                    "status": doc.metadata["status"],
-                    "created_date": doc.metadata["created_date"],
-                    "link": doc.metadata["link"],
-                }
-                for doc in documents
-            ]
-            return [TextContent(type="text", text=json.dumps(project_issues, indent=2))]
+            project_issues = [format_issue(doc) for doc in documents]
+            return [TextContent(type="text", text=json.dumps(project_issues, indent=2, ensure_ascii=False))]
 
         elif name == "jira_create_issue":
             additional_fields = json.loads(arguments.get("additional_fields", "{}"))
@@ -766,7 +772,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 assignee=arguments.get("assignee"),
                 **additional_fields,
             )
-            result = json.dumps({"content": doc.page_content, "metadata": doc.metadata}, indent=2)
+            result = json.dumps({"content": doc.page_content, "metadata": doc.metadata}, indent=2, ensure_ascii=False)
             return [TextContent(type="text", text=f"Issue created successfully:\n{result}")]
 
         elif name == "jira_update_issue":
@@ -774,18 +780,19 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             additional_fields = json.loads(arguments.get("additional_fields", "{}"))
 
             doc = jira_fetcher.update_issue(issue_key=arguments["issue_key"], fields=fields, **additional_fields)
-            result = json.dumps({"content": doc.page_content, "metadata": doc.metadata}, indent=2)
+            result = json.dumps({"content": doc.page_content, "metadata": doc.metadata}, indent=2, ensure_ascii=False)
             return [TextContent(type="text", text=f"Issue updated successfully:\n{result}")]
 
         elif name == "jira_delete_issue":
             issue_key = arguments["issue_key"]
             deleted = jira_fetcher.delete_issue(issue_key)
             result = {"message": f"Issue {issue_key} has been deleted successfully."}
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
 
         elif name == "jira_add_comment":
             comment = jira_fetcher.add_comment(arguments["issue_key"], arguments["comment"])
-            return [TextContent(type="text", text=json.dumps(comment, indent=2))]
+            result = {"message": "Comment added successfully", "comment": comment}
+            return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
 
         elif name == "jira_link_to_epic":
             issue_key = arguments["issue_key"]
@@ -801,31 +808,20 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                     "link": linked_issue.metadata["link"],
                 },
             }
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
 
         elif name == "jira_get_epic_issues":
             epic_key = arguments["epic_key"]
             limit = min(int(arguments.get("limit", 10)), 50)
             documents = jira_fetcher.get_epic_issues(epic_key, limit=limit)
-            epic_issues = [
-                {
-                    "key": doc.metadata["key"],
-                    "title": doc.metadata["title"],
-                    "type": doc.metadata["type"],
-                    "status": doc.metadata["status"],
-                    "created_date": doc.metadata["created_date"],
-                    "priority": doc.metadata.get("priority", "None"),
-                    "link": doc.metadata["link"],
-                }
-                for doc in documents
-            ]
-            return [TextContent(type="text", text=json.dumps(epic_issues, indent=2))]
+            epic_issues = [format_issue(doc) for doc in documents]
+            return [TextContent(type="text", text=json.dumps(epic_issues, indent=2, ensure_ascii=False))]
 
         elif name == "jira_get_transitions":
             issue_key = arguments["issue_key"]
             transitions = jira_fetcher.get_available_transitions(issue_key)
-            transitions_result: Dict[str, Any] = {"transitions": transitions}
-            return [TextContent(type="text", text=json.dumps(transitions_result, indent=2))]
+            transitions_result = [format_transition(transition) for transition in transitions]
+            return [TextContent(type="text", text=json.dumps(transitions_result, indent=2, ensure_ascii=False))]
 
         elif name == "jira_transition_issue":
             import base64
@@ -857,7 +853,11 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                     return [
                         TextContent(
                             type="text",
-                            text=json.dumps({"error": f"Invalid fields format: {str(e)}", "status": "error"}, indent=2),
+                            text=json.dumps(
+                                {"error": f"Invalid fields format: {str(e)}", "status": "error"},
+                                indent=2,
+                                ensure_ascii=False,
+                            ),
                         )
                     ]
 
@@ -902,6 +902,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                                     "status": "error",
                                 },
                                 indent=2,
+                                ensure_ascii=False,
                             ),
                         )
                     ]
@@ -920,6 +921,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                                     "status": "error",
                                 },
                                 indent=2,
+                                ensure_ascii=False,
                             ),
                         )
                     ]
@@ -948,7 +950,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                     },
                 }
 
-                return [TextContent(type="text", text=json.dumps(result, indent=2))]
+                return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
 
             except Exception as e:
                 error_message = str(e)
@@ -963,6 +965,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                                 "details": f"Full error: {repr(e)}",
                             },
                             indent=2,
+                            ensure_ascii=False,
                         ),
                     )
                 ]
