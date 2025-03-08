@@ -316,7 +316,9 @@ class TextPreprocessor:
         # Multi-level bulleted list
         output = re.sub(
             r"^(\s*)- (.*)$",
-            lambda match: "-" * (int(len(match.group(1)) / 4) + 2) + " " + match.group(2),
+            lambda match: "* " + match.group(2)
+            if not match.group(1)
+            else "  " * (len(match.group(1)) // 2) + "* " + match.group(2),
             output,
             flags=re.MULTILINE,
         )

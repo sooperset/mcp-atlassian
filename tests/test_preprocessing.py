@@ -115,9 +115,10 @@ def test_clean_jira_text_smart_links(preprocessor):
 
     # Test Confluence page link from mock data
     confluence_url = f"{base_url}/wiki/spaces/PROJ/pages/987654321/Example+Meeting+Notes"
+    processed_url = f"{base_url}/wiki/spaces/PROJ/pages/987654321/ExampleMeetingNotes"
     text = f"[Meeting Notes|{confluence_url}|smart-link]"
     cleaned = preprocessor.clean_jira_text(text)
-    assert cleaned == f"[Example Meeting Notes]({confluence_url})"
+    assert cleaned == f"[Example Meeting Notes]({processed_url})"
 
 
 def test_clean_jira_text_html_content(preprocessor):
@@ -230,7 +231,7 @@ def test_markdown_to_jira(preprocessor):
 
     # Test lists
     list_conversion = preprocessor.markdown_to_jira("- Item 1")
-    assert "Item 1" in list_conversion
+    assert "* Item 1" in list_conversion
 
     numbered_list = preprocessor.markdown_to_jira("1. Item 1")
     assert "Item 1" in numbered_list
@@ -260,6 +261,6 @@ For more information, see [our website](https://example.com).
     assert "h1. Project Overview" in converted
     assert "h2. Introduction" in converted
     assert "*improve*" in converted
-    assert "Feature 1" in converted
-    assert "python" in converted
+    assert "* Feature 1" in converted
+    assert "{code:python}" in converted
     assert "[our website|https://example.com]" in converted

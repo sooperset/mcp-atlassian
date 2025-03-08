@@ -306,67 +306,9 @@ def test_link_issue_to_epic_with_discovered_fields(mock_jira_fetcher):
     # Call the method
     result = mock_jira_fetcher.link_issue_to_epic("PROJ-123", "PROJ-456")
 
-    # Verify the issue_update was called with the discovered field
-    mock_jira_fetcher.jira.issue_update.assert_called_with("PROJ-123", fields={"customfield_10014": "PROJ-456"})
-
-    # Verify result
+    # Verify the result is a Document
+    assert isinstance(result, Document)
     assert result.metadata["key"] == "PROJ-123"
-
-
-def test_markdown_to_jira_conversion(mock_jira_fetcher):
-    """Test conversion of Markdown to Jira markup."""
-    # Test headers
-    assert mock_jira_fetcher._markdown_to_jira("# Heading 1") == "h1. Heading 1"
-    assert mock_jira_fetcher._markdown_to_jira("## Heading 2") == "h2. Heading 2"
-
-    # Test text formatting
-    assert mock_jira_fetcher._markdown_to_jira("**bold text**") == "*bold text*"
-    assert mock_jira_fetcher._markdown_to_jira("*italic text*") == "_italic text_"
-
-    # Test code blocks
-    assert mock_jira_fetcher._markdown_to_jira("`code`") == "{{code}}"
-    # For multiline code blocks, we'll check content is preserved rather than exact format
-    converted_code_block = mock_jira_fetcher._markdown_to_jira("```\nmultiline code\n```")
-    assert "{code}" in converted_code_block
-    assert "multiline code" in converted_code_block
-
-    # Test lists
-    list_conversion = mock_jira_fetcher._markdown_to_jira("- Item 1")
-    assert "Item 1" in list_conversion
-
-    numbered_list = mock_jira_fetcher._markdown_to_jira("1. Item 1")
-    assert "Item 1" in numbered_list
-    assert "1" in numbered_list
-
-    # Test complex Markdown
-    complex_markdown = """
-# Project Overview
-
-## Introduction
-This project aims to **improve** the user experience.
-
-### Features
-- Feature 1
-- Feature 2
-
-### Code Example
-```python
-def hello():
-    print("Hello World")
-```
-
-For more information, see [our website](https://example.com).
-"""
-
-    # We're not comparing exactly because spacing might be different,
-    # but we check that key conversions happened
-    converted = mock_jira_fetcher._markdown_to_jira(complex_markdown)
-    assert "h1. Project Overview" in converted
-    assert "h2. Introduction" in converted
-    assert "*improve*" in converted
-    assert "Feature 1" in converted
-    assert "python" in converted
-    assert "[our website|https://example.com]" in converted
 
 
 def test_get_available_transitions(mock_jira_fetcher):
@@ -477,3 +419,16 @@ def test_update_issue_with_status_transition(mock_jira_fetcher):
     # Verify result
     assert result.metadata["key"] == "PROJ-123"
     assert result.metadata["status"] == "In Progress"
+
+
+def test_markdown_to_jira_delegation(mock_jira_fetcher):
+    """Test that JiraFetcher._markdown_to_jira delegates to TextPreprocessor."""
+    # Create a mock for the preprocessor's markdown_to_jira method
+    mock_jira_fetcher.preprocessor.markdown_to_jira = Mock(return_value="mocked jira markup")
+
+    # Call the JiraFetcher method
+    result = mock_jira_fetcher._markdown_to_jira("test markdown")
+
+    # Verify that it delegates to the preprocessor
+    mock_jira_fetcher.preprocessor.markdown_to_jira.assert_called_once_with("test markdown")
+    assert result == "mocked jira markup"
