@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.1.16] - 2025-03-09
+
+### Fixed
+- Fixed authentication for Jira Server/Data Center deployments
+- Modified environment variable check to properly support Server/Data Center
+
 ## [0.1.15] - 2025-03-08
 
 ### Added
