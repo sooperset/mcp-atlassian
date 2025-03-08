@@ -32,7 +32,7 @@ def main(
 ) -> None:
     """MCP Atlassian Server - Jira and Confluence functionality for MCP"""
     # Configure logging based on verbosity
-    logging_level = logging.WARN
+    logging_level = logging.INFO
     if verbose == 1:
         logging_level = logging.INFO
     elif verbose >= 2:

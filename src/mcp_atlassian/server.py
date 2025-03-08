@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Dict
 
 from mcp.server import Server
 from mcp.types import Resource, TextContent, Tool
@@ -14,7 +14,7 @@ from .preprocessing import markdown_to_confluence_storage
 
 # Configure logging
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     filename="mcp_atlassian_debug.log",
     filemode="a",
@@ -824,7 +824,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
         elif name == "jira_get_transitions":
             issue_key = arguments["issue_key"]
             transitions = jira_fetcher.get_available_transitions(issue_key)
-            transitions_result: dict[str, Any] = {"transitions": transitions}
+            transitions_result: Dict[str, Any] = {"transitions": transitions}
             return [TextContent(type="text", text=json.dumps(transitions_result, indent=2))]
 
         elif name == "jira_transition_issue":
