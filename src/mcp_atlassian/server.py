@@ -33,7 +33,19 @@ def get_available_services():
         ]
     )
 
-    jira_vars = all([os.getenv("JIRA_URL"), os.getenv("JIRA_USERNAME"), os.getenv("JIRA_API_TOKEN")])
+    # Check for either cloud authentication (URL + username + API token)
+    # or server/data center authentication (URL + personal token)
+    jira_url = os.getenv("JIRA_URL")
+    if jira_url:
+        is_cloud = "atlassian.net" in jira_url
+        if is_cloud:
+            jira_vars = all([jira_url, os.getenv("JIRA_USERNAME"), os.getenv("JIRA_API_TOKEN")])
+            logger.info("Using Jira Cloud authentication method")
+        else:
+            jira_vars = all([jira_url, os.getenv("JIRA_PERSONAL_TOKEN")])
+            logger.info("Using Jira Server/Data Center authentication method")
+    else:
+        jira_vars = False
 
     return {"confluence": confluence_vars, "jira": jira_vars}
 

@@ -32,11 +32,14 @@ class JiraFetcher:
         # Check authentication method
         is_cloud = "atlassian.net" in url
 
-        if is_cloud and (not username or not token):
-            raise ValueError("Cloud authentication requires JIRA_USERNAME and JIRA_API_TOKEN")
-
-        if not is_cloud and not personal_token:
-            raise ValueError("Server/Data Center authentication requires JIRA_PERSONAL_TOKEN")
+        if is_cloud:
+            logger.info(f"Initializing Jira Cloud client for {url}")
+            if not username or not token:
+                raise ValueError("Cloud authentication requires JIRA_USERNAME and JIRA_API_TOKEN")
+        else:
+            logger.info(f"Initializing Jira Server/Data Center client for {url}")
+            if not personal_token:
+                raise ValueError("Server/Data Center authentication requires JIRA_PERSONAL_TOKEN")
 
         self.config = JiraConfig(
             url=url, username=username, api_token=token, personal_token=personal_token, verify_ssl=verify_ssl
