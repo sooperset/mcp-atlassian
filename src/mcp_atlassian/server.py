@@ -437,7 +437,7 @@ async def list_tools() -> list[Tool]:
                             "additional_fields": {
                                 "type": "string",
                                 "description": "Optional JSON string of additional fields to set. Examples:\n"
-                                '- Link to Epic: {"parent": {"key": "PROJ-123"}} - Use this to create the issue under an Epic\n'
+                                '- Link to Epic: {"parent": {"key": "PROJ-123"}} - For linking to an Epic after creation, prefer using the jira_link_to_epic tool instead\n'
                                 '- Set priority: {"priority": {"name": "High"}} or {"priority": null} for no priority (common values: High, Medium, Low, None)\n'
                                 '- Add labels: {"labels": ["label1", "label2"]}\n'
                                 '- Set due date: {"duedate": "2023-12-31"}\n'
@@ -461,11 +461,11 @@ async def list_tools() -> list[Tool]:
                             "fields": {
                                 "type": "string",
                                 "description": "A valid JSON object of fields to update. Examples:\n"
-                                '- Add to Epic: {"parent": {"key": "PROJ-456"}} - Use this to link issue to an Epic\n'
+                                '- Add to Epic: {"parent": {"key": "PROJ-456"}} - Prefer using the dedicated jira_link_to_epic tool instead\n'
                                 '- Change assignee: {"assignee": "user@email.com"} or {"assignee": null} to unassign\n'
                                 '- Update summary: {"summary": "New title"}\n'
                                 '- Update description: {"description": "New description"}\n'
-                                "- Change status: requires transition IDs - use jira_get_issue first to see available statuses\n"
+                                "- Change status: requires transition IDs - use jira_get_transitions and jira_transition_issue instead\n"
                                 '- Add labels: {"labels": ["label1", "label2"]}\n'
                                 '- Set priority: {"priority": {"name": "High"}} or {"priority": null} for no priority (common values: High, Medium, Low, None)\n'
                                 '- Update custom fields: {"customfield_10XXX": "value"}',
