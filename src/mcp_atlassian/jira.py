@@ -17,20 +17,50 @@ class JiraFetcher:
     """Handles fetching and parsing content from Jira."""
 
     def __init__(self):
+        """Initialize the Jira client."""
         url = os.getenv("JIRA_URL")
-        username = os.getenv("JIRA_USERNAME")
-        token = os.getenv("JIRA_API_TOKEN")
+        username = os.getenv("JIRA_USERNAME", "")
+        token = os.getenv("JIRA_API_TOKEN", "")
+        personal_token = os.getenv("JIRA_PERSONAL_TOKEN", "")
+        # For self-signed certificates in on-premise installations
+        verify_ssl = os.getenv("JIRA_SSL_VERIFY", "true").lower() != "false"
 
-        if not all([url, username, token]):
-            raise ValueError("Missing required Jira environment variables")
+        if not url:
+            raise ValueError("Missing required JIRA_URL environment variable")
 
-        self.config = JiraConfig(url=url, username=username, api_token=token)
-        self.jira = Jira(
-            url=self.config.url,
-            username=self.config.username,
-            password=self.config.api_token,  # API token is used as password
-            cloud=True,
+        # Check authentication method
+        is_cloud = "atlassian.net" in url
+
+        if is_cloud and not all([username, token]):
+            raise ValueError("Cloud authentication requires JIRA_USERNAME and JIRA_API_TOKEN")
+
+        if not is_cloud and not personal_token:
+            raise ValueError("Server/Data Center authentication requires JIRA_PERSONAL_TOKEN")
+
+        self.config = JiraConfig(
+            url=url, username=username, api_token=token, personal_token=personal_token, verify_ssl=verify_ssl
         )
+
+        # Initialize Jira client based on instance type
+        if self.config.is_cloud:
+            self.jira = Jira(
+                url=self.config.url,
+                username=self.config.username,
+                password=self.config.api_token,  # API token is used as password
+                cloud=True,
+                verify_ssl=self.config.verify_ssl,
+            )
+        else:
+            # For Server/Data Center, use token-based authentication
+            # Note: The token param is used for Bearer token authentication
+            # as per atlassian-python-api implementation
+            self.jira = Jira(
+                url=self.config.url,
+                token=self.config.personal_token,
+                cloud=False,
+                verify_ssl=self.config.verify_ssl,
+            )
+
         self.preprocessor = TextPreprocessor(self.config.url)
 
         # Field IDs cache

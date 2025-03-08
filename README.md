@@ -2,12 +2,22 @@
 
 [![smithery badge](https://smithery.ai/badge/mcp-atlassian)](https://smithery.ai/server/mcp-atlassian)
 
-Model Context Protocol (MCP) server for Atlassian Cloud products (Confluence and Jira). This integration is designed specifically for Atlassian Cloud instances and does not support Atlassian Server or Data Center deployments.
+Model Context Protocol (MCP) server for Atlassian products (Confluence and Jira). This integration supports both Atlassian Cloud and Jira Server/Data Center deployments.
 
 <a href="https://glama.ai/mcp/servers/kc33m1kh5m"><img width="380" height="200" src="https://glama.ai/mcp/servers/kc33m1kh5m/badge" alt="Atlassian MCP server" /></a>
 
 ### Feature Demo
 ![Demo](https://github.com/user-attachments/assets/995d96a8-4cf3-4a03-abe1-a9f6aea27ac0)
+
+### Server/Data Center Compatibility
+
+This MCP server supports:
+
+- **Atlassian Cloud**: Fully supported for both Confluence and Jira
+- **Jira Server/Data Center**: Supported for on-premise Jira installations (version 8.14+)
+- **Confluence Server/Data Center**: Not yet supported
+
+> **Note for On-Premise Users:** When using with Jira Server/Data Center, you'll need to generate a Personal Access Token instead of using username/API token authentication. See the [Authentication](#authentication) section for details.
 
 ### Resources
 
@@ -174,16 +184,38 @@ npx -y @smithery/cli install mcp-atlassian --client claude
 
 The MCP Atlassian integration supports using either Confluence, Jira, or both services. You only need to provide the environment variables for the service(s) you want to use.
 
-### Usage with Claude Desktop
+### Authentication
+
+#### For Atlassian Cloud
 
 1. Get API tokens from: https://id.atlassian.com/manage-profile/security/api-tokens
 
-2. Add to your `claude_desktop_config.json` using one of the following methods:
+#### For Jira Server/Data Center
+
+1. Generate a Personal Access Token in your Jira Server/Data Center (version 8.14 or later):
+   - Navigate to your profile by clicking on your avatar in the top right corner
+   - Select **Profile** → **Personal Access Tokens**
+     *(Alternative path in some versions: Account Settings → Security → Personal Access Tokens)*
+   - Click **Create token**
+   - Give your token a meaningful name (e.g., "MCP Integration")
+   - Set an expiry date (or choose "Never" if permitted by your organization)
+   - Copy the generated token immediately (you won't be able to see it again)
+
+   > **Important Notes:**
+   > - PATs inherit your existing Jira permissions - no separate permission configuration is needed during creation
+   > - Ensure your account has the necessary project access before creating the token
+   > - In Data Center, administrators can view/revoke all PATs via **System → Administering personal access tokens**
+   > - By default, users are limited to 10 active tokens
+   > - The implementation uses Bearer token authentication (`Authorization: Bearer <token>`)
+   > - Personal Access Tokens were introduced in Jira Server/Data Center 8.14
+
+### Usage with Claude Desktop
 
 > **Note:** For all configuration methods, include only the environment variables needed for your services:
-> - For Confluence only: Include `CONFLUENCE_URL`, `CONFLUENCE_USERNAME`, and `CONFLUENCE_API_TOKEN`
-> - For Jira only: Include `JIRA_URL`, `JIRA_USERNAME`, and `JIRA_API_TOKEN`
-> - For both services: Include all six variables
+> - For Confluence only (Cloud): Include `CONFLUENCE_URL`, `CONFLUENCE_USERNAME`, and `CONFLUENCE_API_TOKEN`
+> - For Jira Cloud: Include `JIRA_URL`, `JIRA_USERNAME`, and `JIRA_API_TOKEN`
+> - For Jira Server/Data Center: Include `JIRA_URL` and `JIRA_PERSONAL_TOKEN`
+> - For multiple services: Include the variables for each service you want to use
 
 <details>
 <summary>Using uvx</summary>
@@ -201,6 +233,26 @@ The MCP Atlassian integration supports using either Confluence, Jira, or both se
         "JIRA_URL": "https://your-domain.atlassian.net",
         "JIRA_USERNAME": "your.email@domain.com",
         "JIRA_API_TOKEN": "your_api_token"
+      }
+    }
+  }
+}
+```
+
+For Jira Server/Data Center:
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "uvx",
+      "args": ["mcp-atlassian"],
+      "env": {
+        "CONFLUENCE_URL": "https://your-domain.atlassian.net/wiki",
+        "CONFLUENCE_USERNAME": "your.email@domain.com",
+        "CONFLUENCE_API_TOKEN": "your_api_token",
+        "JIRA_URL": "https://jira.your-company.com",
+        "JIRA_PERSONAL_TOKEN": "your_personal_access_token"
       }
     }
   }

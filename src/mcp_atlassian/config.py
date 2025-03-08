@@ -20,8 +20,10 @@ class JiraConfig:
     """Jira API configuration."""
 
     url: str  # Base URL for Jira
-    username: str  # Email or username
-    api_token: str  # API token used as password
+    username: str = ""  # Email or username
+    api_token: str = ""  # API token used as password for cloud
+    personal_token: str = ""  # Personal Access Token used for Server/Data Center
+    verify_ssl: bool = True  # Whether to verify SSL certificates
 
     @property
     def is_cloud(self) -> bool:
