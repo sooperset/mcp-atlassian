@@ -1,8 +1,8 @@
 import logging
 import os
+import re
 from datetime import datetime
 from typing import Any
-import re
 
 from atlassian import Jira
 
@@ -33,6 +33,9 @@ class JiraFetcher:
             cloud=True,
         )
         self.preprocessor = TextPreprocessor(self.config.url)
+
+        # Field IDs cache
+        self._field_ids_cache: dict[str, str] = {}
 
     def _clean_text(self, text: str) -> str:
         """
@@ -142,7 +145,7 @@ class JiraFetcher:
         if issue_type.lower() == "epic":
             # Get the dynamic field IDs
             field_ids = self.get_jira_field_ids()
-            
+
             # Set the Epic Name field if available (required in many Jira instances)
             if "epic_name" in field_ids and "epic_name" not in kwargs:
                 # Use the summary as the epic name if not provided
@@ -150,7 +153,7 @@ class JiraFetcher:
             elif "customfield_10011" not in kwargs:  # Common default Epic Name field
                 # Fallback to common Epic Name field if not discovered
                 fields["customfield_10011"] = summary
-                
+
             # Check for other Epic fields from kwargs
             epic_color = kwargs.pop("epic_color", None) or kwargs.pop("epic_colour", None)
             if epic_color and "epic_color" in field_ids:
@@ -216,12 +219,12 @@ class JiraFetcher:
                 logger.warning(f"Status must be a string, got {type(requested_status)}: {requested_status}")
                 # Try to convert to string if possible
                 requested_status = str(requested_status)
-                
+
             logger.info(f"Status update requested to: {requested_status}")
-            
+
             # Get available transitions
             transitions = self.get_available_transitions(issue_key)
-            
+
             # Find matching transition
             transition_id = None
             for transition in transitions:
@@ -229,15 +232,19 @@ class JiraFetcher:
                 if isinstance(to_status, str) and to_status.lower() == requested_status.lower():
                     transition_id = transition["id"]
                     break
-                    
+
             if transition_id:
                 # Use transition_issue method if we found a matching transition
                 logger.info(f"Found transition ID {transition_id} for status {requested_status}")
                 return self.transition_issue(issue_key, transition_id, fields)
             else:
                 available_statuses = [t.get("to_status", "") for t in transitions]
-                logger.warning(f"No transition found for status '{requested_status}'. Available transitions: {transitions}")
-                raise ValueError(f"Cannot transition issue to status '{requested_status}'. Available status transitions: {available_statuses}")
+                logger.warning(
+                    f"No transition found for status '{requested_status}'. Available transitions: {transitions}"
+                )
+                raise ValueError(
+                    f"Cannot transition issue to status '{requested_status}'. Available status transitions: {available_statuses}"
+                )
 
         try:
             self.jira.issue_update(issue_key, fields=fields)
@@ -246,56 +253,56 @@ class JiraFetcher:
             logger.error(f"Error updating issue {issue_key}: {str(e)}")
             raise
 
-    def get_jira_field_ids(self) -> dict:
+    def get_jira_field_ids(self) -> dict[str, str]:
         """
         Dynamically discover Jira field IDs relevant to Epic linking.
-        
+
         This method queries the Jira API to find the correct custom field IDs
         for Epic-related fields, which can vary between different Jira instances.
-        
+
         Returns:
-            Dictionary mapping field names to their IDs 
+            Dictionary mapping field names to their IDs
             (e.g., {'epic_link': 'customfield_10014', 'epic_name': 'customfield_10011'})
         """
         try:
             # Check if we've already cached the field IDs
-            if hasattr(self, '_field_ids_cache'):
+            if hasattr(self, "_field_ids_cache"):
                 return self._field_ids_cache
-                
+
             # Fetch all fields from Jira API
             fields = self.jira.fields()
             field_ids = {}
-            
+
             # Look for Epic-related fields
             for field in fields:
                 field_name = field.get("name", "").lower()
-                
+
                 # Epic Link field - used to link issues to epics
                 if "epic link" in field_name or "epic-link" in field_name:
                     field_ids["epic_link"] = field["id"]
-                
+
                 # Epic Name field - used when creating epics
                 elif "epic name" in field_name or "epic-name" in field_name:
                     field_ids["epic_name"] = field["id"]
-                
+
                 # Parent field - sometimes used instead of Epic Link
                 elif field_name == "parent" or field_name == "parent link":
                     field_ids["parent"] = field["id"]
-                
+
                 # Epic Status field
                 elif "epic status" in field_name:
                     field_ids["epic_status"] = field["id"]
-                    
+
                 # Epic Color field
                 elif "epic colour" in field_name or "epic color" in field_name:
                     field_ids["epic_color"] = field["id"]
-            
+
             # Cache the results for future use
             self._field_ids_cache = field_ids
-            
+
             logger.info(f"Discovered Jira field IDs: {field_ids}")
             return field_ids
-            
+
         except Exception as e:
             logger.error(f"Error discovering Jira field IDs: {str(e)}")
             # Return an empty dict as fallback
@@ -304,11 +311,11 @@ class JiraFetcher:
     def link_issue_to_epic(self, issue_key: str, epic_key: str) -> Document:
         """
         Link an existing issue to an epic.
-        
+
         Args:
             issue_key: The key of the issue to link (e.g. 'PROJ-123')
             epic_key: The key of the epic to link to (e.g. 'PROJ-456')
-            
+
         Returns:
             Document representing the updated issue
         """
@@ -317,10 +324,10 @@ class JiraFetcher:
             epic = self.jira.issue(epic_key)
             if epic["fields"]["issuetype"]["name"] != "Epic":
                 raise ValueError(f"Issue {epic_key} is not an Epic, it is a {epic['fields']['issuetype']['name']}")
-            
+
             # Get the dynamic field IDs for this Jira instance
             field_ids = self.get_jira_field_ids()
-            
+
             # Try the parent field first (if discovered or natively supported)
             if "parent" in field_ids or "parent" not in field_ids:
                 try:
@@ -329,23 +336,23 @@ class JiraFetcher:
                     return self.get_issue(issue_key)
                 except Exception as e:
                     logger.info(f"Couldn't link using parent field: {str(e)}. Trying discovered fields...")
-            
+
             # Try using the discovered Epic Link field
             if "epic_link" in field_ids:
                 try:
-                    fields = {field_ids["epic_link"]: epic_key}
-                    self.jira.issue_update(issue_key, fields=fields)
+                    epic_link_fields: dict[str, str] = {field_ids["epic_link"]: epic_key}
+                    self.jira.issue_update(issue_key, fields=epic_link_fields)
                     return self.get_issue(issue_key)
                 except Exception as e:
                     logger.info(f"Couldn't link using discovered epic_link field: {str(e)}. Trying fallback methods...")
-            
+
             # Fallback to common custom fields if dynamic discovery didn't work
-            custom_field_attempts = [
+            custom_field_attempts: list[dict[str, str]] = [
                 {"customfield_10014": epic_key},  # Common in Jira Cloud
                 {"customfield_10000": epic_key},  # Common in Jira Server
-                {"epic_link": epic_key}           # Sometimes used 
+                {"epic_link": epic_key},  # Sometimes used
             ]
-            
+
             for fields in custom_field_attempts:
                 try:
                     self.jira.issue_update(issue_key, fields=fields)
@@ -353,10 +360,12 @@ class JiraFetcher:
                 except Exception as e:
                     logger.info(f"Couldn't link using fields {fields}: {str(e)}")
                     continue
-                    
+
             # If we get here, none of our attempts worked
-            raise ValueError(f"Could not link issue {issue_key} to epic {epic_key}. Your Jira instance might use a different field for epic links.")
-            
+            raise ValueError(
+                f"Could not link issue {issue_key} to epic {epic_key}. Your Jira instance might use a different field for epic links."
+            )
+
         except Exception as e:
             logger.error(f"Error linking issue {issue_key} to epic {epic_key}: {str(e)}")
             raise
@@ -429,12 +438,12 @@ class JiraFetcher:
             # Check for Epic information
             epic_key = None
             epic_name = None
-            
+
             # Most Jira instances use the "parent" field for Epic relationships
             if "parent" in issue["fields"] and issue["fields"]["parent"]:
                 epic_key = issue["fields"]["parent"]["key"]
                 epic_name = issue["fields"]["parent"]["fields"]["summary"]
-            
+
             # Some Jira instances use custom fields for Epic links
             # Common custom field names for Epic links
             epic_field_names = ["customfield_10014", "customfield_10000", "epic_link"]
@@ -446,7 +455,7 @@ class JiraFetcher:
                     # If it's an object, extract the key
                     elif isinstance(issue["fields"][field_name], dict) and "key" in issue["fields"][field_name]:
                         epic_key = issue["fields"][field_name]["key"]
-            
+
             # Combine content in a more structured way
             content = f"""Issue: {issue_key}
 Title: {issue['fields'].get('summary', '')}
@@ -454,14 +463,14 @@ Type: {issue['fields']['issuetype']['name']}
 Status: {issue['fields']['status']['name']}
 Created: {created_date}
 """
-            
+
             # Add Epic information if available
             if epic_key:
                 content += f"Epic: {epic_key}"
                 if epic_name:
                     content += f" - {epic_name}"
                 content += "\n"
-                
+
             content += f"""
 Description:
 {description}
@@ -481,13 +490,13 @@ Description:
                 "priority": issue["fields"].get("priority", {}).get("name", "None"),
                 "link": f"{self.config.url.rstrip('/')}/browse/{issue_key}",
             }
-            
+
             # Add Epic information to metadata
             if epic_key:
                 metadata["epic_key"] = epic_key
                 if epic_name:
                     metadata["epic_name"] = epic_name
-                    
+
             if comments:
                 metadata["comments"] = comments
 
@@ -551,15 +560,15 @@ Description:
         except Exception as e:
             logger.error(f"Error searching issues with JQL '{jql}': {str(e)}")
             raise
-            
+
     def get_epic_issues(self, epic_key: str, limit: int = 50) -> list[Document]:
         """
         Get all issues linked to a specific epic.
-        
+
         Args:
             epic_key: The key of the epic (e.g. 'PROJ-123')
             limit: Maximum number of issues to return
-            
+
         Returns:
             List of Documents representing the issues linked to the epic
         """
@@ -568,30 +577,32 @@ Description:
             epic = self.jira.issue(epic_key)
             if epic["fields"]["issuetype"]["name"] != "Epic":
                 raise ValueError(f"Issue {epic_key} is not an Epic, it is a {epic['fields']['issuetype']['name']}")
-            
+
             # Get the dynamic field IDs for this Jira instance
             field_ids = self.get_jira_field_ids()
-            
+
             # Build JQL queries based on discovered field IDs
             jql_queries = []
-            
+
             # Add queries based on discovered fields
             if "parent" in field_ids:
                 jql_queries.append(f"parent = {epic_key}")
-            
+
             if "epic_link" in field_ids:
                 field_name = field_ids["epic_link"]
                 jql_queries.append(f'"{field_name}" = {epic_key}')
                 jql_queries.append(f'"{field_name}" ~ {epic_key}')
-            
+
             # Add standard fallback queries
-            jql_queries.extend([
-                f"parent = {epic_key}",                     # Common in most instances
-                f"'Epic Link' = {epic_key}",                # Some instances
-                f"'Epic' = {epic_key}",                     # Some instances
-                f"issue in childIssuesOf('{epic_key}')"     # Some instances
-            ])
-            
+            jql_queries.extend(
+                [
+                    f"parent = {epic_key}",  # Common in most instances
+                    f"'Epic Link' = {epic_key}",  # Some instances
+                    f"'Epic' = {epic_key}",  # Some instances
+                    f"issue in childIssuesOf('{epic_key}')",  # Some instances
+                ]
+            )
+
             # Try each query until we get results or run out of options
             documents = []
             for jql in jql_queries:
@@ -603,14 +614,16 @@ Description:
                 except Exception as e:
                     logger.info(f"Failed to get epic issues with JQL '{jql}': {str(e)}")
                     continue
-            
+
             # If we've tried all queries and got no results, return an empty list
             # but also log a warning that we might be missing the right field
             if not documents:
-                logger.warning(f"Couldn't find issues linked to epic {epic_key}. Your Jira instance might use a different field for epic links.")
-                
+                logger.warning(
+                    f"Couldn't find issues linked to epic {epic_key}. Your Jira instance might use a different field for epic links."
+                )
+
             return documents
-                
+
         except Exception as e:
             logger.error(f"Error getting issues for epic {epic_key}: {str(e)}")
             raise
@@ -693,8 +706,8 @@ Description:
         """
         try:
             # Convert Markdown to Jira's markup format
-            jira_formatted_comment = self._convert_markdown_to_jira(comment)
-            
+            jira_formatted_comment = self._markdown_to_jira(comment)
+
             result = self.jira.issue_add_comment(issue_key, jira_formatted_comment)
             return {
                 "id": result.get("id"),
@@ -705,11 +718,11 @@ Description:
         except Exception as e:
             logger.error(f"Error adding comment to issue {issue_key}: {str(e)}")
             raise
-            
-    def _convert_markdown_to_jira(self, markdown_text: str) -> str:
+
+    def _markdown_to_jira(self, markdown_text: str) -> str:
         """
         Convert Markdown syntax to Jira markup syntax.
-        
+
         Supported Markdown syntax:
         - Headers: # Heading 1, ## Heading 2, etc.
         - Bold: **bold text** or __bold text__
@@ -721,92 +734,97 @@ Description:
         - Ordered lists: 1. item, 2. item, etc.
         - Blockquotes: > quoted text
         - Horizontal rules: --- or ****
-        
+
         Args:
             markdown_text: Text in Markdown format
-            
+
         Returns:
             Text in Jira markup format
         """
         if not markdown_text:
             return ""
-            
+
         # Basic Markdown to Jira markup conversions
         # Headers
-        jira_text = re.sub(r'^# (.+)$', r'h1. \1', markdown_text, flags=re.MULTILINE)
-        jira_text = re.sub(r'^## (.+)$', r'h2. \1', jira_text, flags=re.MULTILINE)
-        jira_text = re.sub(r'^### (.+)$', r'h3. \1', jira_text, flags=re.MULTILINE)
-        jira_text = re.sub(r'^#### (.+)$', r'h4. \1', jira_text, flags=re.MULTILINE)
-        jira_text = re.sub(r'^##### (.+)$', r'h5. \1', jira_text, flags=re.MULTILINE)
-        jira_text = re.sub(r'^###### (.+)$', r'h6. \1', jira_text, flags=re.MULTILINE)
-        
+        jira_text = re.sub(r"^# (.+)$", r"h1. \1", markdown_text, flags=re.MULTILINE)
+        jira_text = re.sub(r"^## (.+)$", r"h2. \1", jira_text, flags=re.MULTILINE)
+        jira_text = re.sub(r"^### (.+)$", r"h3. \1", jira_text, flags=re.MULTILINE)
+        jira_text = re.sub(r"^#### (.+)$", r"h4. \1", jira_text, flags=re.MULTILINE)
+        jira_text = re.sub(r"^##### (.+)$", r"h5. \1", jira_text, flags=re.MULTILINE)
+        jira_text = re.sub(r"^###### (.+)$", r"h6. \1", jira_text, flags=re.MULTILINE)
+
         # Bold and italic - handle both asterisks and underscores
         # Note: Order matters here - process bold first, then italic
-        jira_text = re.sub(r'\*\*(.+?)\*\*', r'*\1*', jira_text)  # Bold with **
-        jira_text = re.sub(r'__(.+?)__', r'*\1*', jira_text)      # Bold with __
-        
+        jira_text = re.sub(r"\*\*(.+?)\*\*", r"*\1*", jira_text)  # Bold with **
+        jira_text = re.sub(r"__(.+?)__", r"*\1*", jira_text)  # Bold with __
+
         # Be careful with italic conversion to avoid over-replacing
         # Look for single asterisks or underscores not preceded or followed by the same character
-        jira_text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'_\1_', jira_text)  # Italic with *
-        jira_text = re.sub(r'(?<!_)_(?!_)(.+?)(?<!_)_(?!_)', r'_\1_', jira_text)        # Italic with _ (keep as is)
-        
+        jira_text = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"_\1_", jira_text)  # Italic with *
+        jira_text = re.sub(r"(?<!_)_(?!_)(.+?)(?<!_)_(?!_)", r"_\1_", jira_text)  # Italic with _ (keep as is)
+
         # Code blocks with language support
         # Match ```language\ncode\n``` pattern
-        jira_text = re.sub(r'```(\w*)\n(.*?)\n```', lambda m: '{code:' + (m.group(1) or 'none') + '}\n' + m.group(2) + '\n{code}', jira_text, flags=re.DOTALL)
-        
+        jira_text = re.sub(
+            r"```(\w*)\n(.*?)\n```",
+            lambda m: "{code:" + (m.group(1) or "none") + "}\n" + m.group(2) + "\n{code}",
+            jira_text,
+            flags=re.DOTALL,
+        )
+
         # Simple code blocks without language
-        jira_text = re.sub(r'```(.*?)```', r'{code}\1{code}', jira_text, flags=re.DOTALL)
-        
+        jira_text = re.sub(r"```(.*?)```", r"{code}\1{code}", jira_text, flags=re.DOTALL)
+
         # Inline code
-        jira_text = re.sub(r'`(.+?)`', r'{{{\1}}}', jira_text)
-        
+        jira_text = re.sub(r"`(.+?)`", r"{{{\1}}}", jira_text)
+
         # Links
-        jira_text = re.sub(r'\[(.+?)\]\((.+?)\)', r'[\1|\2]', jira_text)
-        
+        jira_text = re.sub(r"\[(.+?)\]\((.+?)\)", r"[\1|\2]", jira_text)
+
         # Unordered lists
-        jira_text = re.sub(r'^- (.+)$', r'* \1', jira_text, flags=re.MULTILINE)
-        jira_text = re.sub(r'^\* (.+)$', r'* \1', jira_text, flags=re.MULTILINE)  # Keep as is
-        
+        jira_text = re.sub(r"^- (.+)$", r"* \1", jira_text, flags=re.MULTILINE)
+        jira_text = re.sub(r"^\* (.+)$", r"* \1", jira_text, flags=re.MULTILINE)  # Keep as is
+
         # Ordered lists - improved to handle multi-digit numbers
-        jira_text = re.sub(r'^(\d+)\. (.+)$', r'# \2', jira_text, flags=re.MULTILINE)
-        
+        jira_text = re.sub(r"^(\d+)\. (.+)$", r"# \2", jira_text, flags=re.MULTILINE)
+
         # Blockquotes
-        jira_text = re.sub(r'^> (.+)$', r'bq. \1', jira_text, flags=re.MULTILINE)
-        
+        jira_text = re.sub(r"^> (.+)$", r"bq. \1", jira_text, flags=re.MULTILINE)
+
         # Horizontal rules
-        jira_text = re.sub(r'^---+$', r'----', jira_text, flags=re.MULTILINE)
-        jira_text = re.sub(r'^\*\*\*+$', r'----', jira_text, flags=re.MULTILINE)
-        
+        jira_text = re.sub(r"^---+$", r"----", jira_text, flags=re.MULTILINE)
+        jira_text = re.sub(r"^\*\*\*+$", r"----", jira_text, flags=re.MULTILINE)
+
         # Handle consecutive ordered list items to ensure they render properly
-        lines = jira_text.split('\n')
+        lines = jira_text.split("\n")
         in_list = False
         for i in range(len(lines)):
-            if lines[i].startswith('# '):
+            if lines[i].startswith("# "):
                 if not in_list:
                     # First item in a list
                     in_list = True
                 # No need to modify subsequent items as Jira continues the numbering
             else:
                 in_list = False
-                
-        jira_text = '\n'.join(lines)
-        
+
+        jira_text = "\n".join(lines)
+
         return jira_text
 
     def get_available_transitions(self, issue_key: str) -> list[dict]:
         """
         Get the available status transitions for an issue.
-        
+
         Args:
             issue_key: The issue key (e.g. 'PROJ-123')
-            
+
         Returns:
             List of available transitions with id, name, and to status details
         """
         try:
             transitions_data = self.jira.get_issue_transitions(issue_key)
             result = []
-            
+
             # Handle different response formats from the Jira API
             transitions = []
             if isinstance(transitions_data, dict) and "transitions" in transitions_data:
@@ -818,15 +836,15 @@ Description:
             else:
                 logger.warning(f"Unexpected format for transitions data: {type(transitions_data)}")
                 return []
-            
+
             for transition in transitions:
                 if not isinstance(transition, dict):
                     continue
-                    
+
                 # Extract the transition information safely
                 transition_id = transition.get("id")
                 transition_name = transition.get("name")
-                
+
                 # Handle different formats for the "to" status
                 to_status = None
                 if "to" in transition and isinstance(transition["to"], dict):
@@ -835,28 +853,26 @@ Description:
                     to_status = transition["to_status"]
                 elif "status" in transition:
                     to_status = transition["status"]
-                
-                result.append({
-                    "id": transition_id,
-                    "name": transition_name,
-                    "to_status": to_status
-                })
-                
+
+                result.append({"id": transition_id, "name": transition_name, "to_status": to_status})
+
             return result
         except Exception as e:
             logger.error(f"Error getting transitions for issue {issue_key}: {str(e)}")
             raise
 
-    def transition_issue(self, issue_key: str, transition_id: str, fields: dict = None, comment: str = None) -> Document:
+    def transition_issue(
+        self, issue_key: str, transition_id: str, fields: dict = None, comment: str = None
+    ) -> Document:
         """
         Transition an issue to a new status using the appropriate workflow transition.
-        
+
         Args:
             issue_key: The issue key (e.g. 'PROJ-123')
             transition_id: The ID of the transition to perform (get this from get_available_transitions)
             fields: Additional fields to update during the transition
             comment: Optional comment to add during the transition
-            
+
         Returns:
             Document representing the updated issue
         """
@@ -865,11 +881,10 @@ Description:
             if not isinstance(transition_id, str):
                 logger.warning(f"transition_id must be a string, got {type(transition_id)}: {transition_id}")
                 transition_id = str(transition_id)
-                
-            transition_data = {
-                "transition": {"id": transition_id}
-            }
-            
+
+            # Initialize transition data dictionary with the right type
+            transition_data: dict[str, Any] = {"transition": {"id": transition_id}}
+
             # Add fields if provided
             if fields:
                 # Sanitize fields to ensure they're valid for the API
@@ -878,7 +893,7 @@ Description:
                     # Skip None values
                     if value is None:
                         continue
-                        
+
                     # Handle special case for assignee
                     if key == "assignee" and isinstance(value, str):
                         try:
@@ -890,117 +905,28 @@ Description:
                             continue
                     else:
                         sanitized_fields[key] = value
-                
+
                 if sanitized_fields:
                     transition_data["fields"] = sanitized_fields
-                
+
             # Add comment if provided
             if comment:
                 if not isinstance(comment, str):
                     logger.warning(f"Comment must be a string, got {type(comment)}: {comment}")
                     comment = str(comment)
-                    
-                jira_formatted_comment = self._convert_markdown_to_jira(comment)
-                transition_data["update"] = {
-                    "comment": [{"add": {"body": jira_formatted_comment}}]
-                }
-                
+
+                jira_formatted_comment = self._markdown_to_jira(comment)
+                transition_data["update"] = {"comment": [{"add": {"body": jira_formatted_comment}}]}
+
             # Log the transition request for debugging
             logger.info(f"Transitioning issue {issue_key} with transition ID {transition_id}")
             logger.debug(f"Transition data: {transition_data}")
-                
+
             # Perform the transition
             self.jira.issue_transition(issue_key, transition_data)
-            
+
             # Return the updated issue
             return self.get_issue(issue_key)
         except Exception as e:
             logger.error(f"Error transitioning issue {issue_key}: {str(e)}")
             raise
-
-    def _markdown_to_jira(self, markdown_text: str) -> str:
-        """
-        Convert Markdown syntax to Jira markup syntax.
-        
-        Supported Markdown syntax:
-        - Headers: # Heading 1, ## Heading 2, etc.
-        - Bold: **bold text** or __bold text__
-        - Italic: *italic text* or _italic text_
-        - Code blocks: ```code``` (triple backticks)
-        - Inline code: `code` (single backticks)
-        - Links: [link text](URL)
-        - Unordered lists: * item or - item
-        - Ordered lists: 1. item, 2. item, etc.
-        - Blockquotes: > quoted text
-        - Horizontal rules: --- or ****
-        
-        Args:
-            markdown_text: Text in Markdown format
-            
-        Returns:
-            Text in Jira markup format
-        """
-        if not markdown_text:
-            return ""
-            
-        # Basic Markdown to Jira markup conversions
-        # Headers
-        jira_text = re.sub(r'^# (.+)$', r'h1. \1', markdown_text, flags=re.MULTILINE)
-        jira_text = re.sub(r'^## (.+)$', r'h2. \1', jira_text, flags=re.MULTILINE)
-        jira_text = re.sub(r'^### (.+)$', r'h3. \1', jira_text, flags=re.MULTILINE)
-        jira_text = re.sub(r'^#### (.+)$', r'h4. \1', jira_text, flags=re.MULTILINE)
-        jira_text = re.sub(r'^##### (.+)$', r'h5. \1', jira_text, flags=re.MULTILINE)
-        jira_text = re.sub(r'^###### (.+)$', r'h6. \1', jira_text, flags=re.MULTILINE)
-        
-        # Bold and italic - handle both asterisks and underscores
-        # Note: Order matters here - process bold first, then italic
-        jira_text = re.sub(r'\*\*(.+?)\*\*', r'*\1*', jira_text)  # Bold with **
-        jira_text = re.sub(r'__(.+?)__', r'*\1*', jira_text)      # Bold with __
-        
-        # Be careful with italic conversion to avoid over-replacing
-        # Look for single asterisks or underscores not preceded or followed by the same character
-        jira_text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'_\1_', jira_text)  # Italic with *
-        jira_text = re.sub(r'(?<!_)_(?!_)(.+?)(?<!_)_(?!_)', r'_\1_', jira_text)        # Italic with _ (keep as is)
-        
-        # Code blocks with language support
-        # Match ```language\ncode\n``` pattern
-        jira_text = re.sub(r'```(\w*)\n(.*?)\n```', lambda m: '{code:' + (m.group(1) or 'none') + '}\n' + m.group(2) + '\n{code}', jira_text, flags=re.DOTALL)
-        
-        # Simple code blocks without language
-        jira_text = re.sub(r'```(.*?)```', r'{code}\1{code}', jira_text, flags=re.DOTALL)
-        
-        # Inline code
-        jira_text = re.sub(r'`(.+?)`', r'{{{\1}}}', jira_text)
-        
-        # Links
-        jira_text = re.sub(r'\[(.+?)\]\((.+?)\)', r'[\1|\2]', jira_text)
-        
-        # Unordered lists
-        jira_text = re.sub(r'^- (.+)$', r'* \1', jira_text, flags=re.MULTILINE)
-        jira_text = re.sub(r'^\* (.+)$', r'* \1', jira_text, flags=re.MULTILINE)  # Keep as is
-        
-        # Ordered lists - improved to handle multi-digit numbers
-        jira_text = re.sub(r'^(\d+)\. (.+)$', r'# \2', jira_text, flags=re.MULTILINE)
-        
-        # Blockquotes
-        jira_text = re.sub(r'^> (.+)$', r'bq. \1', jira_text, flags=re.MULTILINE)
-        
-        # Horizontal rules
-        jira_text = re.sub(r'^---+$', r'----', jira_text, flags=re.MULTILINE)
-        jira_text = re.sub(r'^\*\*\*+$', r'----', jira_text, flags=re.MULTILINE)
-        
-        # Handle consecutive ordered list items to ensure they render properly
-        lines = jira_text.split('\n')
-        in_list = False
-        for i in range(len(lines)):
-            if lines[i].startswith('# '):
-                if not in_list:
-                    # First item in a list
-                    in_list = True
-                # No need to modify subsequent items as Jira continues the numbering
-            else:
-                in_list = False
-                
-        jira_text = '\n'.join(lines)
-        
-        return jira_text

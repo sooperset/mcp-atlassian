@@ -1,7 +1,8 @@
 import os
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+from mcp_atlassian.document_types import Document
 from mcp_atlassian.jira import JiraFetcher
 
 from tests.fixtures.jira_mocks import MOCK_JIRA_ISSUE_RESPONSE, MOCK_JIRA_JQL_RESPONSE
@@ -248,25 +249,25 @@ def test_get_jira_field_ids(mock_jira_fetcher):
         {"id": "customfield_10011", "name": "Epic Name", "type": "any"},
         {"id": "customfield_10010", "name": "Epic Status", "type": "any"},
         {"id": "customfield_10013", "name": "Epic Colour", "type": "any"},
-        {"id": "parent", "name": "Parent", "type": "any"}
+        {"id": "parent", "name": "Parent", "type": "any"},
     ]
-    
+
     # Set up the mock
     mock_jira_fetcher.jira.fields.return_value = mock_fields
-    
+
     # Call the method
     field_ids = mock_jira_fetcher.get_jira_field_ids()
-    
+
     # Verify results
     assert field_ids["epic_link"] == "customfield_10014"
     assert field_ids["epic_name"] == "customfield_10011"
     assert field_ids["epic_status"] == "customfield_10010"
     assert field_ids["epic_color"] == "customfield_10013"
     assert field_ids["parent"] == "parent"
-    
+
     # Verify the fields method was called
     mock_jira_fetcher.jira.fields.assert_called_once()
-    
+
     # Test caching - should not call the API again
     mock_jira_fetcher.jira.fields.reset_mock()
     field_ids = mock_jira_fetcher.get_jira_field_ids()
@@ -276,47 +277,38 @@ def test_get_jira_field_ids(mock_jira_fetcher):
 def test_link_issue_to_epic_with_discovered_fields(mock_jira_fetcher):
     """Test linking an issue to an epic using discovered field IDs."""
     # Mock the issue response to verify it's an Epic
-    mock_epic = {
-        "fields": {
-            "issuetype": {
-                "name": "Epic"
-            }
-        }
-    }
-    
+    mock_epic = {"fields": {"issuetype": {"name": "Epic"}}}
+
     # Mock the field discovery response
-    mock_fields = [
-        {"id": "customfield_10014", "name": "Epic Link", "type": "any"}
-    ]
-    
+    mock_fields = [{"id": "customfield_10014", "name": "Epic Link", "type": "any"}]
+
     # Set up the mocks
     mock_jira_fetcher.jira.issue.return_value = mock_epic
     mock_jira_fetcher.jira.fields.return_value = mock_fields
-    
+
     # Mock the successful update
     mock_jira_fetcher.jira.issue_update.return_value = None
-    
+
     # Mock the get_issue response for the return value
-    mock_jira_fetcher._format_issue_as_document = MagicMock(return_value=Document(
-        page_content="Issue content",
-        metadata={
-            "key": "PROJ-123",
-            "title": "Test Issue",
-            "type": "Task",
-            "status": "Open",
-            "created_date": "2023-01-01"
-        }
-    ))
-    
+    mock_jira_fetcher._format_issue_as_document = MagicMock(
+        return_value=Document(
+            page_content="Issue content",
+            metadata={
+                "key": "PROJ-123",
+                "title": "Test Issue",
+                "type": "Task",
+                "status": "Open",
+                "created_date": "2023-01-01",
+            },
+        )
+    )
+
     # Call the method
     result = mock_jira_fetcher.link_issue_to_epic("PROJ-123", "PROJ-456")
-    
+
     # Verify the issue_update was called with the discovered field
-    mock_jira_fetcher.jira.issue_update.assert_called_with(
-        "PROJ-123", 
-        fields={"customfield_10014": "PROJ-456"}
-    )
-    
+    mock_jira_fetcher.jira.issue_update.assert_called_with("PROJ-123", fields={"customfield_10014": "PROJ-456"})
+
     # Verify result
     assert result.metadata["key"] == "PROJ-123"
 
@@ -324,24 +316,21 @@ def test_link_issue_to_epic_with_discovered_fields(mock_jira_fetcher):
 def test_markdown_to_jira_conversion(mock_jira_fetcher):
     """Test conversion of Markdown to Jira markup."""
     # Test headers
-    assert mock_jira_fetcher._convert_markdown_to_jira("# Heading 1") == "h1. Heading 1"
-    assert mock_jira_fetcher._convert_markdown_to_jira("## Heading 2") == "h2. Heading 2"
-    
+    assert mock_jira_fetcher._markdown_to_jira("# Heading 1") == "h1. Heading 1"
+    assert mock_jira_fetcher._markdown_to_jira("## Heading 2") == "h2. Heading 2"
+
     # Test text formatting
-    assert mock_jira_fetcher._convert_markdown_to_jira("**bold text**") == "*bold text*"
-    assert mock_jira_fetcher._convert_markdown_to_jira("*italic text*") == "_italic text_"
-    
+    assert mock_jira_fetcher._markdown_to_jira("**bold text**") == "*bold text*"
+    assert mock_jira_fetcher._markdown_to_jira("*italic text*") == "_italic text_"
+
     # Test code blocks
-    assert mock_jira_fetcher._convert_markdown_to_jira("`code`") == "{{{code}}}"
-    assert (
-        mock_jira_fetcher._convert_markdown_to_jira("```\nmultiline code\n```") == 
-        "{code}\nmultiline code\n{code}"
-    )
-    
+    assert mock_jira_fetcher._markdown_to_jira("`code`") == "{{{code}}}"
+    assert mock_jira_fetcher._markdown_to_jira("```\nmultiline code\n```") == "{code}\nmultiline code\n{code}"
+
     # Test lists
-    assert mock_jira_fetcher._convert_markdown_to_jira("- Item 1") == "* Item 1"
-    assert mock_jira_fetcher._convert_markdown_to_jira("1. Item 1") == "# Item 1"
-    
+    assert mock_jira_fetcher._markdown_to_jira("- Item 1") == "* Item 1"
+    assert mock_jira_fetcher._markdown_to_jira("1. Item 1") == "# Item 1"
+
     # Test complex Markdown
     complex_markdown = """
 # Project Overview
@@ -361,7 +350,7 @@ def hello():
 
 For more information, see [our website](https://example.com).
 """
-    
+
     expected_jira_markup = """
 h1. Project Overview
 
@@ -380,10 +369,10 @@ def hello():
 
 For more information, see [our website|https://example.com].
 """
-    
+
     # We're not comparing exactly because spacing might be different,
     # but we check that key conversions happened
-    converted = mock_jira_fetcher._convert_markdown_to_jira(complex_markdown)
+    converted = mock_jira_fetcher._markdown_to_jira(complex_markdown)
     assert "h1. Project Overview" in converted
     assert "h2. Introduction" in converted
     assert "*improve*" in converted
@@ -397,29 +386,17 @@ def test_get_available_transitions(mock_jira_fetcher):
     # Mock the transitions API response
     mock_transitions = {
         "transitions": [
-            {
-                "id": "11",
-                "name": "To Do",
-                "to": {"name": "To Do"}
-            },
-            {
-                "id": "21",
-                "name": "In Progress",
-                "to": {"name": "In Progress"}
-            },
-            {
-                "id": "31",
-                "name": "Done",
-                "to": {"name": "Done"}
-            }
+            {"id": "11", "name": "To Do", "to": {"name": "To Do"}},
+            {"id": "21", "name": "In Progress", "to": {"name": "In Progress"}},
+            {"id": "31", "name": "Done", "to": {"name": "Done"}},
         ]
     }
-    
+
     mock_jira_fetcher.jira.get_issue_transitions.return_value = mock_transitions
-    
+
     # Call the method
     transitions = mock_jira_fetcher.get_available_transitions("PROJ-123")
-    
+
     # Verify results
     assert len(transitions) == 3
     assert transitions[0]["id"] == "11"
@@ -427,7 +404,7 @@ def test_get_available_transitions(mock_jira_fetcher):
     assert transitions[0]["to_status"] == "To Do"
     assert transitions[1]["id"] == "21"
     assert transitions[1]["to_status"] == "In Progress"
-    
+
     # Verify the API was called correctly
     mock_jira_fetcher.jira.get_issue_transitions.assert_called_once_with("PROJ-123")
 
@@ -436,41 +413,35 @@ def test_transition_issue(mock_jira_fetcher):
     """Test transitioning an issue to a new status."""
     # Mock the transition API call
     mock_jira_fetcher.jira.issue_transition.return_value = None
-    
+
     # Mock the get_issue response for the return value
-    mock_jira_fetcher._format_issue_as_document = MagicMock(return_value=Document(
-        page_content="Issue content",
-        metadata={
-            "key": "PROJ-123",
-            "title": "Test Issue",
-            "type": "Task",
-            "status": "In Progress",  # New status after transition
-            "created_date": "2023-01-01"
-        }
-    ))
-    
+    mock_jira_fetcher._format_issue_as_document = MagicMock(
+        return_value=Document(
+            page_content="Issue content",
+            metadata={
+                "key": "PROJ-123",
+                "title": "Test Issue",
+                "type": "Task",
+                "status": "In Progress",  # New status after transition
+                "created_date": "2023-01-01",
+            },
+        )
+    )
+
     # Call the method with fields and comment
     result = mock_jira_fetcher.transition_issue(
-        "PROJ-123", 
-        "21", 
-        fields={"customfield_10001": "High"},
-        comment="Moving to **In Progress**"
+        "PROJ-123", "21", fields={"customfield_10001": "High"}, comment="Moving to **In Progress**"
     )
-    
+
     # Verify the API was called with the right parameters
     expected_transition_data = {
         "transition": {"id": "21"},
         "fields": {"customfield_10001": "High"},
-        "update": {
-            "comment": [{"add": {"body": "Moving to *In Progress*"}}]
-        }
+        "update": {"comment": [{"add": {"body": "Moving to *In Progress*"}}]},
     }
-    
-    mock_jira_fetcher.jira.issue_transition.assert_called_once_with(
-        "PROJ-123", 
-        expected_transition_data
-    )
-    
+
+    mock_jira_fetcher.jira.issue_transition.assert_called_once_with("PROJ-123", expected_transition_data)
+
     # Verify result
     assert result.metadata["key"] == "PROJ-123"
     assert result.metadata["status"] == "In Progress"
@@ -481,53 +452,40 @@ def test_update_issue_with_status_transition(mock_jira_fetcher):
     # Mock the transitions API response
     mock_transitions = {
         "transitions": [
-            {
-                "id": "11",
-                "name": "To Do",
-                "to": {"name": "To Do"}
-            },
-            {
-                "id": "21",
-                "name": "In Progress",
-                "to": {"name": "In Progress"}
-            }
+            {"id": "11", "name": "To Do", "to": {"name": "To Do"}},
+            {"id": "21", "name": "In Progress", "to": {"name": "In Progress"}},
         ]
     }
-    
+
     # Set up mock responses
     mock_jira_fetcher.jira.get_issue_transitions.return_value = mock_transitions
     mock_jira_fetcher.jira.issue_transition.return_value = None
-    
+
     # Mock the get_issue response for the return value
-    mock_jira_fetcher._format_issue_as_document = MagicMock(return_value=Document(
-        page_content="Issue content",
-        metadata={
-            "key": "PROJ-123",
-            "title": "Test Issue",
-            "type": "Task",
-            "status": "In Progress",
-            "created_date": "2023-01-01"
-        }
-    ))
-    
-    # Call update_issue with a status change
-    result = mock_jira_fetcher.update_issue(
-        "PROJ-123", 
-        fields={"status": "In Progress", "customfield_10001": "High"}
+    mock_jira_fetcher._format_issue_as_document = MagicMock(
+        return_value=Document(
+            page_content="Issue content",
+            metadata={
+                "key": "PROJ-123",
+                "title": "Test Issue",
+                "type": "Task",
+                "status": "In Progress",
+                "created_date": "2023-01-01",
+            },
+        )
     )
-    
+
+    # Call update_issue with a status change
+    result = mock_jira_fetcher.update_issue("PROJ-123", fields={"status": "In Progress", "customfield_10001": "High"})
+
     # Verify transitions were fetched
     mock_jira_fetcher.jira.get_issue_transitions.assert_called_once_with("PROJ-123")
-    
+
     # Verify transition was used for status update
     mock_jira_fetcher.jira.issue_transition.assert_called_once_with(
-        "PROJ-123", 
-        {
-            "transition": {"id": "21"},
-            "fields": {"customfield_10001": "High"}
-        }
+        "PROJ-123", {"transition": {"id": "21"}, "fields": {"customfield_10001": "High"}}
     )
-    
+
     # Verify result
     assert result.metadata["key"] == "PROJ-123"
     assert result.metadata["status"] == "In Progress"
