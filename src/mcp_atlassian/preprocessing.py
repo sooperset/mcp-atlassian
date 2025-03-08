@@ -63,7 +63,8 @@ class TextPreprocessor:
         """
         Clean Jira text content by:
         1. Processing user mentions and links
-        2. Converting HTML/wiki markup to markdown
+        2. Converting Jira markup to markdown
+        3. Converting HTML/wiki markup to markdown
         """
         if not text:
             return ""
@@ -75,7 +76,10 @@ class TextPreprocessor:
         # Process Jira smart links
         text = self._process_smart_links(text)
 
-        # Convert HTML to markdown if needed
+        # First convert any Jira markup to Markdown
+        text = self.jira_to_markdown(text)
+
+        # Then convert any remaining HTML to markdown
         text = self._convert_html_to_markdown(text)
 
         return text.strip()
@@ -135,6 +139,253 @@ class TextPreprocessor:
             except Exception as e:
                 logger.warning(f"Error converting HTML to markdown: {e}")
         return text
+
+    def jira_to_markdown(self, input_text: str) -> str:
+        """
+        Convert Jira markup to Markdown format.
+
+        Args:
+            input_text: Text in Jira markup format
+
+        Returns:
+            Text in Markdown format
+        """
+        if not input_text:
+            return ""
+
+        # Block quotes
+        output = re.sub(r"^bq\.(.*?)$", r"> \1\n", input_text, flags=re.MULTILINE)
+
+        # Text formatting (bold, italic)
+        output = re.sub(
+            r"([*_])(.*?)\1",
+            lambda match: ("**" if match.group(1) == "*" else "*")
+            + match.group(2)
+            + ("**" if match.group(1) == "*" else "*"),
+            output,
+        )
+
+        # Multi-level numbered list
+        output = re.sub(
+            r"^((?:#|-|\+|\*)+) (.*)$",
+            lambda match: self._convert_jira_list_to_markdown(match),
+            output,
+            flags=re.MULTILINE,
+        )
+
+        # Headers
+        output = re.sub(
+            r"^h([0-6])\.(.*)$", lambda match: "#" * int(match.group(1)) + match.group(2), output, flags=re.MULTILINE
+        )
+
+        # Inline code
+        output = re.sub(r"\{\{([^}]+)\}\}", r"`\1`", output)
+
+        # Citation
+        output = re.sub(r"\?\?((?:.[^?]|[^?].)+)\?\?", r"<cite>\1</cite>", output)
+
+        # Inserted text
+        output = re.sub(r"\+([^+]*)\+", r"<ins>\1</ins>", output)
+
+        # Superscript
+        output = re.sub(r"\^([^^]*)\^", r"<sup>\1</sup>", output)
+
+        # Subscript
+        output = re.sub(r"~([^~]*)~", r"<sub>\1</sub>", output)
+
+        # Strikethrough
+        output = re.sub(r"-([^-]*)-", r"-\1-", output)
+
+        # Code blocks with optional language specification
+        output = re.sub(r"\{code(?::([a-z]+))?\}([\s\S]*?)\{code\}", r"```\1\n\2\n```", output, flags=re.MULTILINE)
+
+        # No format
+        output = re.sub(r"\{noformat\}([\s\S]*?)\{noformat\}", r"```\n\1\n```", output)
+
+        # Quote blocks
+        output = re.sub(
+            r"\{quote\}([\s\S]*)\{quote\}",
+            lambda match: "\n".join([f"> {line}" for line in match.group(1).split("\n")]),
+            output,
+            flags=re.MULTILINE,
+        )
+
+        # Images with alt text
+        output = re.sub(r"!([^|\n\s]+)\|([^\n!]*)alt=([^\n!\,]+?)(,([^\n!]*))?!", r"![\3](\1)", output)
+
+        # Images with other parameters (ignore them)
+        output = re.sub(r"!([^|\n\s]+)\|([^\n!]*)!", r"![](\1)", output)
+
+        # Images without parameters
+        output = re.sub(r"!([^\n\s!]+)!", r"![](\1)", output)
+
+        # Links
+        output = re.sub(r"\[([^|]+)\|(.+?)\]", r"[\1](\2)", output)
+        output = re.sub(r"\[(.+?)\]([^\(]+)", r"<\1>\2", output)
+
+        # Colored text
+        output = re.sub(
+            r"\{color:([^}]+)\}([\s\S]*?)\{color\}", r"<span style=\"color:\1\">\2</span>", output, flags=re.MULTILINE
+        )
+
+        # Convert Jira table headers (||) to markdown table format
+        lines = output.split("\n")
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+
+            if "||" in line:
+                # Replace Jira table headers
+                lines[i] = lines[i].replace("||", "|")
+
+                # Add a separator line for markdown tables
+                header_cells = lines[i].count("|") - 1
+                if header_cells > 0:
+                    separator_line = "|" + "---|" * header_cells
+                    lines.insert(i + 1, separator_line)
+                    i += 1  # Skip the newly inserted line in next iteration
+
+            i += 1
+
+        # Rejoin the lines
+        output = "\n".join(lines)
+
+        return output
+
+    def markdown_to_jira(self, input_text: str) -> str:
+        """
+        Convert Markdown syntax to Jira markup syntax.
+
+        Args:
+            input_text: Text in Markdown format
+
+        Returns:
+            Text in Jira markup format
+        """
+        if not input_text:
+            return ""
+
+        # Save code blocks to prevent recursive processing
+        code_blocks = []
+        inline_codes = []
+
+        # Extract code blocks
+        def save_code_block(match):
+            syntax = match.group(1) or ""
+            content = match.group(2)
+            code = "{code"
+            if syntax:
+                code += ":" + syntax
+            code += "}" + content + "{code}"
+            code_blocks.append(code)
+            return code  # Return the actual code block instead of a placeholder
+
+        # Extract inline code
+        def save_inline_code(match):
+            content = match.group(1)
+            code = "{{" + content + "}}"
+            inline_codes.append(code)
+            return code  # Return the actual inline code instead of a placeholder
+
+        # Save code sections temporarily
+        output = re.sub(r"```(\w*)\n([\s\S]+?)```", save_code_block, input_text)
+        output = re.sub(r"`([^`]+)`", save_inline_code, output)
+
+        # Headers with = or - underlines
+        output = re.sub(
+            r"^(.*?)\n([=-])+$",
+            lambda match: f"h{1 if match.group(2)[0] == '=' else 2}. {match.group(1)}",
+            output,
+            flags=re.MULTILINE,
+        )
+
+        # Headers with # prefix
+        output = re.sub(
+            r"^([#]+)(.*?)$", lambda match: f"h{len(match.group(1))}." + match.group(2), output, flags=re.MULTILINE
+        )
+
+        # Bold and italic
+        output = re.sub(
+            r"([*_]+)(.*?)\1",
+            lambda match: ("_" if len(match.group(1)) == 1 else "*")
+            + match.group(2)
+            + ("_" if len(match.group(1)) == 1 else "*"),
+            output,
+        )
+
+        # Multi-level bulleted list
+        output = re.sub(
+            r"^(\s*)- (.*)$",
+            lambda match: "-" * (int(len(match.group(1)) / 4) + 2) + " " + match.group(2),
+            output,
+            flags=re.MULTILINE,
+        )
+
+        # Multi-level numbered list
+        output = re.sub(
+            r"^(\s+)1\. (.*)$",
+            lambda match: "#" * (int(len(match.group(1)) / 4) + 2) + " " + match.group(2),
+            output,
+            flags=re.MULTILINE,
+        )
+
+        # HTML formatting tags to Jira markup
+        tag_map = {"cite": "??", "del": "-", "ins": "+", "sup": "^", "sub": "~"}
+
+        for tag, replacement in tag_map.items():
+            output = re.sub(rf"<{tag}>(.*?)<\/{tag}>", rf"{replacement}\1{replacement}", output)
+
+        # Colored text
+        output = re.sub(
+            r"<span style=\"color:(#[^\"]+)\">([\s\S]*?)</span>", r"{color:\1}\2{color}", output, flags=re.MULTILINE
+        )
+
+        # Strikethrough
+        output = re.sub(r"~~(.*?)~~", r"-\1-", output)
+
+        # Images without alt text
+        output = re.sub(r"!\[\]\(([^)\n\s]+)\)", r"!\1!", output)
+
+        # Images with alt text
+        output = re.sub(r"!\[([^\]\n]+)\]\(([^)\n\s]+)\)", r"!\2|alt=\1!", output)
+
+        # Links
+        output = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"[\1|\2]", output)
+        output = re.sub(r"<([^>]+)>", r"[\1]", output)
+
+        # Convert markdown tables to Jira table format
+        lines = output.split("\n")
+        i = 0
+        while i < len(lines):
+            if i < len(lines) - 1 and re.match(r"\|[-\s|]+\|", lines[i + 1]):
+                # Convert header row to Jira format
+                lines[i] = lines[i].replace("|", "||")
+                # Remove the separator line
+                lines.pop(i + 1)
+            i += 1
+
+        # Rejoin the lines
+        output = "\n".join(lines)
+
+        return output
+
+    def _convert_jira_list_to_markdown(self, match) -> str:
+        """Helper method to convert Jira lists to Markdown format."""
+        jira_bullets = match.group(1)
+        content = match.group(2)
+
+        # Calculate indentation level based on number of symbols
+        indent_level = len(jira_bullets) - 1
+        indent = " " * (indent_level * 2)
+
+        # Determine the marker based on the last character
+        last_char = jira_bullets[-1]
+        if last_char == "#":
+            prefix = "1."
+        else:
+            prefix = "-"
+
+        return f"{indent}{prefix} {content}"
 
 
 def markdown_to_confluence_storage(markdown_content):

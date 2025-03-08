@@ -1,6 +1,5 @@
 import logging
 import os
-import re
 from datetime import datetime
 from typing import Any
 
@@ -723,17 +722,8 @@ Description:
         """
         Convert Markdown syntax to Jira markup syntax.
 
-        Supported Markdown syntax:
-        - Headers: # Heading 1, ## Heading 2, etc.
-        - Bold: **bold text** or __bold text__
-        - Italic: *italic text* or _italic text_
-        - Code blocks: ```code``` (triple backticks)
-        - Inline code: `code` (single backticks)
-        - Links: [link text](URL)
-        - Unordered lists: * item or - item
-        - Ordered lists: 1. item, 2. item, etc.
-        - Blockquotes: > quoted text
-        - Horizontal rules: --- or ****
+        This method uses the TextPreprocessor implementation for consistent
+        conversion between Markdown and Jira markup.
 
         Args:
             markdown_text: Text in Markdown format
@@ -744,72 +734,8 @@ Description:
         if not markdown_text:
             return ""
 
-        # Basic Markdown to Jira markup conversions
-        # Headers
-        jira_text = re.sub(r"^# (.+)$", r"h1. \1", markdown_text, flags=re.MULTILINE)
-        jira_text = re.sub(r"^## (.+)$", r"h2. \1", jira_text, flags=re.MULTILINE)
-        jira_text = re.sub(r"^### (.+)$", r"h3. \1", jira_text, flags=re.MULTILINE)
-        jira_text = re.sub(r"^#### (.+)$", r"h4. \1", jira_text, flags=re.MULTILINE)
-        jira_text = re.sub(r"^##### (.+)$", r"h5. \1", jira_text, flags=re.MULTILINE)
-        jira_text = re.sub(r"^###### (.+)$", r"h6. \1", jira_text, flags=re.MULTILINE)
-
-        # Bold and italic - handle both asterisks and underscores
-        # Note: Order matters here - process bold first, then italic
-        jira_text = re.sub(r"\*\*(.+?)\*\*", r"*\1*", jira_text)  # Bold with **
-        jira_text = re.sub(r"__(.+?)__", r"*\1*", jira_text)  # Bold with __
-
-        # Be careful with italic conversion to avoid over-replacing
-        # Look for single asterisks or underscores not preceded or followed by the same character
-        jira_text = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"_\1_", jira_text)  # Italic with *
-        jira_text = re.sub(r"(?<!_)_(?!_)(.+?)(?<!_)_(?!_)", r"_\1_", jira_text)  # Italic with _ (keep as is)
-
-        # Code blocks with language support
-        # Match ```language\ncode\n``` pattern
-        jira_text = re.sub(
-            r"```(\w*)\n(.*?)\n```",
-            lambda m: "{code:" + (m.group(1) or "none") + "}\n" + m.group(2) + "\n{code}",
-            jira_text,
-            flags=re.DOTALL,
-        )
-
-        # Simple code blocks without language
-        jira_text = re.sub(r"```(.*?)```", r"{code}\1{code}", jira_text, flags=re.DOTALL)
-
-        # Inline code
-        jira_text = re.sub(r"`(.+?)`", r"{{{\1}}}", jira_text)
-
-        # Links
-        jira_text = re.sub(r"\[(.+?)\]\((.+?)\)", r"[\1|\2]", jira_text)
-
-        # Unordered lists
-        jira_text = re.sub(r"^- (.+)$", r"* \1", jira_text, flags=re.MULTILINE)
-        jira_text = re.sub(r"^\* (.+)$", r"* \1", jira_text, flags=re.MULTILINE)  # Keep as is
-
-        # Ordered lists - improved to handle multi-digit numbers
-        jira_text = re.sub(r"^(\d+)\. (.+)$", r"# \2", jira_text, flags=re.MULTILINE)
-
-        # Blockquotes
-        jira_text = re.sub(r"^> (.+)$", r"bq. \1", jira_text, flags=re.MULTILINE)
-
-        # Horizontal rules
-        jira_text = re.sub(r"^---+$", r"----", jira_text, flags=re.MULTILINE)
-        jira_text = re.sub(r"^\*\*\*+$", r"----", jira_text, flags=re.MULTILINE)
-
-        # Handle consecutive ordered list items to ensure they render properly
-        lines = jira_text.split("\n")
-        in_list = False
-        for i in range(len(lines)):
-            if lines[i].startswith("# "):
-                if not in_list:
-                    # First item in a list
-                    in_list = True
-                # No need to modify subsequent items as Jira continues the numbering
-            else:
-                in_list = False
-
-        jira_text = "\n".join(lines)
-
-        return jira_text
+        # Use the existing preprocessor
+        return self.preprocessor.markdown_to_jira(markdown_text)
 
     def get_available_transitions(self, issue_key: str) -> list[dict]:
         """

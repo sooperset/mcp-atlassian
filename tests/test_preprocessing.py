@@ -157,3 +157,109 @@ def test_process_mentions_error_handling(preprocessor):
     text = "[~accountid:invalid]"
     processed = preprocessor._process_mentions(text, r"\[~accountid:(.*?)\]")
     assert "User:invalid" in processed
+
+
+def test_jira_to_markdown(preprocessor):
+    """Test conversion of Jira markup to Markdown."""
+    # Test headers
+    assert preprocessor.jira_to_markdown("h1. Heading 1") == "# Heading 1"
+    assert preprocessor.jira_to_markdown("h2. Heading 2") == "## Heading 2"
+
+    # Test text formatting
+    assert preprocessor.jira_to_markdown("*bold text*") == "**bold text**"
+    assert preprocessor.jira_to_markdown("_italic text_") == "*italic text*"
+
+    # Test code blocks
+    assert preprocessor.jira_to_markdown("{{code}}") == "`code`"
+
+    # For multiline code blocks, check content is preserved rather than exact format
+    converted_code_block = preprocessor.jira_to_markdown("{code}\nmultiline code\n{code}")
+    assert "```" in converted_code_block
+    assert "multiline code" in converted_code_block
+
+    # Test lists
+    assert preprocessor.jira_to_markdown("* Item 1") == "- Item 1"
+    assert preprocessor.jira_to_markdown("# Item 1") == "1. Item 1"
+
+    # Test complex Jira markup
+    complex_jira = """
+h1. Project Overview
+
+h2. Introduction
+This project aims to *improve* the user experience.
+
+h3. Features
+* Feature 1
+* Feature 2
+
+h3. Code Example
+{code:python}
+def hello():
+    print("Hello World")
+{code}
+
+For more information, see [our website|https://example.com].
+"""
+
+    converted = preprocessor.jira_to_markdown(complex_jira)
+    assert "# Project Overview" in converted
+    assert "## Introduction" in converted
+    assert "**improve**" in converted
+    assert "- Feature 1" in converted
+    assert "```python" in converted
+    assert "[our website](https://example.com)" in converted
+
+
+def test_markdown_to_jira(preprocessor):
+    """Test conversion of Markdown to Jira markup."""
+    # Test headers
+    assert preprocessor.markdown_to_jira("# Heading 1") == "h1. Heading 1"
+    assert preprocessor.markdown_to_jira("## Heading 2") == "h2. Heading 2"
+
+    # Test text formatting
+    assert preprocessor.markdown_to_jira("**bold text**") == "*bold text*"
+    assert preprocessor.markdown_to_jira("*italic text*") == "_italic text_"
+
+    # Test code blocks
+    assert preprocessor.markdown_to_jira("`code`") == "{{code}}"
+
+    # For multiline code blocks, check content is preserved rather than exact format
+    converted_code_block = preprocessor.markdown_to_jira("```\nmultiline code\n```")
+    assert "{code}" in converted_code_block
+    assert "multiline code" in converted_code_block
+
+    # Test lists
+    list_conversion = preprocessor.markdown_to_jira("- Item 1")
+    assert "Item 1" in list_conversion
+
+    numbered_list = preprocessor.markdown_to_jira("1. Item 1")
+    assert "Item 1" in numbered_list
+    assert "1" in numbered_list
+
+    # Test complex Markdown
+    complex_markdown = """
+# Project Overview
+
+## Introduction
+This project aims to **improve** the user experience.
+
+### Features
+- Feature 1
+- Feature 2
+
+### Code Example
+```python
+def hello():
+    print("Hello World")
+```
+
+For more information, see [our website](https://example.com).
+"""
+
+    converted = preprocessor.markdown_to_jira(complex_markdown)
+    assert "h1. Project Overview" in converted
+    assert "h2. Introduction" in converted
+    assert "*improve*" in converted
+    assert "Feature 1" in converted
+    assert "python" in converted
+    assert "[our website|https://example.com]" in converted
