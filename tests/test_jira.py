@@ -96,10 +96,71 @@ def test_jira_fetcher_initialization(mock_env_vars):
     assert fetcher.config.api_token == "test_token"
 
 
+def test_jira_fetcher_initialization_with_cloud_env():
+    """Test JiraFetcher explicit initialization with cloud environment variables."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://jira.example.atlassian.net",
+            "JIRA_USERNAME": "test_user",
+            "JIRA_API_TOKEN": "test_token",
+        },
+    ):
+        fetcher = JiraFetcher()
+        assert fetcher.config.url == "https://jira.example.atlassian.net"
+        assert fetcher.config.username == "test_user"
+        assert fetcher.config.api_token == "test_token"
+        assert fetcher.config.is_cloud is True
+
+
+def test_jira_fetcher_initialization_server_datacenter():
+    """Test JiraFetcher initialization with Server/Data Center environment variables."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://jira.example.com",
+            "JIRA_PERSONAL_TOKEN": "test_personal_token",
+        },
+    ):
+        fetcher = JiraFetcher()
+        assert fetcher.config.url == "https://jira.example.com"
+        assert fetcher.config.personal_token == "test_personal_token"
+        assert fetcher.config.is_cloud is False
+        # Check that the jira client was initialized with the correct parameters
+        assert fetcher.jira.url == "https://jira.example.com"
+
+
+def test_jira_fetcher_initialization_missing_cloud_credentials():
+    """Test error when cloud URL is provided but credentials are missing."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://example.atlassian.net",  # Using .atlassian.net domain to trigger cloud detection
+            # Missing username and token
+        },
+        clear=True,  # Clear existing env vars to ensure a clean test environment
+    ):
+        with pytest.raises(ValueError, match="Cloud authentication requires JIRA_USERNAME and JIRA_API_TOKEN"):
+            JiraFetcher()
+
+
+def test_jira_fetcher_initialization_missing_server_token():
+    """Test error when server URL is provided but personal token is missing."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://jira.example.com",
+            # Missing personal token
+        },
+    ):
+        with pytest.raises(ValueError, match="Server/Data Center authentication requires JIRA_PERSONAL_TOKEN"):
+            JiraFetcher()
+
+
 def test_jira_fetcher_initialization_missing_env_vars():
     """Test JiraFetcher initialization with missing environment variables."""
     with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(ValueError, match="Missing required Jira environment variables"):
+        with pytest.raises(ValueError, match="Missing required JIRA_URL environment variable"):
             JiraFetcher()
 
 
@@ -542,3 +603,41 @@ def test_markdown_to_jira_delegation(mock_jira_fetcher):
     # Verify that it delegates to the preprocessor
     mock_jira_fetcher.preprocessor.markdown_to_jira.assert_called_once_with("test markdown")
     assert result == "mocked jira markup"
+
+
+def test_jira_fetcher_initialization_ssl_verify():
+    """Test JiraFetcher initialization with SSL verification settings."""
+    # Test default (SSL verification enabled)
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://jira.example.com",
+            "JIRA_PERSONAL_TOKEN": "test_personal_token",
+        },
+    ):
+        fetcher = JiraFetcher()
+        assert fetcher.config.verify_ssl is True
+
+    # Test with SSL verification disabled
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://jira.example.com",
+            "JIRA_PERSONAL_TOKEN": "test_personal_token",
+            "JIRA_SSL_VERIFY": "false",
+        },
+    ):
+        fetcher = JiraFetcher()
+        assert fetcher.config.verify_ssl is False
+
+    # Test case-insensitive "False"
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://jira.example.com",
+            "JIRA_PERSONAL_TOKEN": "test_personal_token",
+            "JIRA_SSL_VERIFY": "FALSE",
+        },
+    ):
+        fetcher = JiraFetcher()
+        assert fetcher.config.verify_ssl is False

@@ -31,7 +31,7 @@ class JiraFetcher:
         # Check authentication method
         is_cloud = "atlassian.net" in url
 
-        if is_cloud and not all([username, token]):
+        if is_cloud and (not username or not token):
             raise ValueError("Cloud authentication requires JIRA_USERNAME and JIRA_API_TOKEN")
 
         if not is_cloud and not personal_token:
