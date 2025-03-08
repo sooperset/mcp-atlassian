@@ -862,7 +862,7 @@ Description:
             raise
 
     def transition_issue(
-        self, issue_key: str, transition_id: str, fields: dict = None, comment: str = None
+        self, issue_key: str, transition_id: str, fields: dict | None = None, comment: str | None = None
     ) -> Document:
         """
         Transition an issue to a new status using the appropriate workflow transition.
@@ -879,10 +879,11 @@ Description:
         try:
             # Ensure transition_id is a string
             if not isinstance(transition_id, str):
-                logger.warning(f"transition_id must be a string, got {type(transition_id)}: {transition_id}")
+                logger.warning(
+                    f"transition_id must be a string, converting from {type(transition_id)}: {transition_id}"
+                )
                 transition_id = str(transition_id)
 
-            # Initialize transition data dictionary with the right type
             transition_data: dict[str, Any] = {"transition": {"id": transition_id}}
 
             # Add fields if provided
@@ -900,7 +901,8 @@ Description:
                             account_id = self._get_account_id(value)
                             sanitized_fields[key] = {"accountId": account_id}
                         except Exception as e:
-                            logger.warning(f"Could not resolve assignee {value}: {str(e)}")
+                            error_msg = f"Could not resolve assignee '{value}': {str(e)}"
+                            logger.warning(error_msg)
                             # Skip this field
                             continue
                     else:
@@ -912,7 +914,7 @@ Description:
             # Add comment if provided
             if comment:
                 if not isinstance(comment, str):
-                    logger.warning(f"Comment must be a string, got {type(comment)}: {comment}")
+                    logger.warning(f"Comment must be a string, converting from {type(comment)}: {comment}")
                     comment = str(comment)
 
                 jira_formatted_comment = self._markdown_to_jira(comment)
@@ -928,5 +930,6 @@ Description:
             # Return the updated issue
             return self.get_issue(issue_key)
         except Exception as e:
-            logger.error(f"Error transitioning issue {issue_key}: {str(e)}")
-            raise
+            error_msg = f"Error transitioning issue {issue_key} with transition ID {transition_id}: {str(e)}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
