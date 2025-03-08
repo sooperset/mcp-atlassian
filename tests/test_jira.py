@@ -5,7 +5,11 @@ import pytest
 from mcp_atlassian.document_types import Document
 from mcp_atlassian.jira import JiraFetcher
 
-from tests.fixtures.jira_mocks import MOCK_JIRA_ISSUE_RESPONSE, MOCK_JIRA_JQL_RESPONSE
+from tests.fixtures.jira_mocks import (
+    MOCK_JIRA_COMMENTS_SIMPLIFIED,
+    MOCK_JIRA_ISSUE_RESPONSE_SIMPLIFIED,
+    MOCK_JIRA_JQL_RESPONSE_SIMPLIFIED,
+)
 
 
 @pytest.fixture
@@ -24,12 +28,60 @@ def mock_env_vars():
 
 @pytest.fixture
 def mock_jira_fetcher(mock_env_vars):
-    """Create a JiraFetcher instance with mocked Jira client."""
+    """Create a JiraFetcher instance with mocked Jira client.
+
+    This fixture uses simplified versions of Jira API responses that contain
+    only the essential fields needed for testing. This makes tests more readable,
+    maintainable, and focused on the functionality being tested.
+
+    The simplified mocks maintain the same structure as real Jira API responses
+    but with reduced nesting and fewer fields. This approach helps ensure tests
+    remain robust when the Jira API changes in ways that don't affect the
+    core functionality being tested.
+    """
     with patch("mcp_atlassian.jira.Jira") as mock_jira:
         # Configure the mock Jira client
         mock_jira_instance = Mock()
-        mock_jira_instance.issue.return_value = MOCK_JIRA_ISSUE_RESPONSE
-        mock_jira_instance.jql.return_value = MOCK_JIRA_JQL_RESPONSE
+
+        # Use simplified versions of the mock responses
+        mock_jira_instance.issue.return_value = dict(MOCK_JIRA_ISSUE_RESPONSE_SIMPLIFIED)
+        mock_jira_instance.jql.return_value = MOCK_JIRA_JQL_RESPONSE_SIMPLIFIED
+
+        # Mock comments API with simple test data by default
+        mock_jira_instance.issue_get_comments.return_value = {
+            "comments": [
+                {
+                    "author": {"displayName": "Comment User"},
+                    "body": "This is a test comment",
+                    "created": "2024-01-01T12:00:00.000+0000",
+                }
+            ]
+        }
+
+        # Create a method to change the comments mock for specific issue keys
+        def get_comments_side_effect(issue_key, **kwargs):
+            if issue_key == "EXAMPLE-123":
+                return MOCK_JIRA_COMMENTS_SIMPLIFIED
+            # Default response for other issue keys
+            return {
+                "comments": [
+                    {
+                        "author": {"displayName": "Comment User"},
+                        "body": "This is a test comment",
+                        "created": "2024-01-01T12:00:00.000+0000",
+                    }
+                ]
+            }
+
+        # Apply the side effect to return different results based on issue key
+        mock_jira_instance.issue_get_comments.side_effect = get_comments_side_effect
+
+        # Mock fields API for Epic Link discovery
+        mock_jira_instance.fields.return_value = [
+            {"id": "customfield_10014", "name": "Epic Link", "type": "any"},
+            {"id": "customfield_10011", "name": "Epic Name", "type": "any"},
+        ]
+
         mock_jira.return_value = mock_jira_instance
 
         fetcher = JiraFetcher()
@@ -96,6 +148,56 @@ def test_get_issue_with_comments(mock_jira_fetcher):
     assert "2024-01-01 - Comment User: This is a test comment" in document.page_content
 
 
+def test_get_issue_with_custom_mock(mock_jira_fetcher):
+    """Test getting an issue with custom mock comment data."""
+    # Create a custom mock issue response for this test
+    custom_mock_issue = {
+        "key": "EXAMPLE-123",
+        "fields": {
+            "summary": "Example Issue with Custom Comments",
+            "description": "This is an example issue with custom mock comment data",
+            "created": "2023-01-15T09:00:00.000+0000",
+            "updated": "2023-01-20T15:30:00.000+0000",
+            "issuetype": {"name": "Story"},
+            "status": {"name": "To Do"},
+            "priority": {"name": "Medium"},
+        },
+    }
+
+    # Configure the mock to return our custom response for this specific issue key
+    def get_issue_side_effect(issue_key, **kwargs):
+        if issue_key == "EXAMPLE-123":
+            return custom_mock_issue
+        return dict(MOCK_JIRA_ISSUE_RESPONSE_SIMPLIFIED)  # Return original for other keys
+
+    # Save original side effect if any
+    original_side_effect = getattr(mock_jira_fetcher.jira.issue, "side_effect", None)
+
+    try:
+        # Set the side effect for this test
+        mock_jira_fetcher.jira.issue.side_effect = get_issue_side_effect
+
+        # Get the issue with comments
+        document = mock_jira_fetcher.get_issue("EXAMPLE-123", comment_limit=3)
+
+        # Verify the document contains information from our custom mock
+        assert "EXAMPLE-123" in document.page_content
+        assert "Example Issue with Custom Comments" in document.page_content
+
+        # Verify comments are included (should be from our generic mock)
+        assert "John Smith" in document.page_content
+        assert "Jane Doe" in document.page_content
+        assert document.metadata["key"] == "EXAMPLE-123"
+
+        # Test that we're getting the right number of comments (limited to 3)
+        comments_section = document.page_content.split("Comments:")[1] if "Comments:" in document.page_content else ""
+        comment_lines = [line for line in comments_section.split("\n") if line.strip()]
+        assert len(comment_lines) == 3
+    finally:
+        # Restore the original behavior
+        mock_jira_fetcher.jira.issue.side_effect = original_side_effect
+
+
 def test_search_issues(mock_jira_fetcher):
     """Test searching for issues using JQL."""
     documents = mock_jira_fetcher.search_issues("project = PROJ")
@@ -159,7 +261,7 @@ def test_create_issue(mock_jira_fetcher):
     """Test creating a new issue."""
     # Mock the create_issue response
     mock_jira_fetcher.jira.issue_create.return_value = {"key": "PROJ-123"}
-    mock_jira_fetcher.jira.issue.return_value = MOCK_JIRA_ISSUE_RESPONSE
+    mock_jira_fetcher.jira.issue.return_value = MOCK_JIRA_ISSUE_RESPONSE_SIMPLIFIED
 
     # Create issue
     document = mock_jira_fetcher.create_issue(
@@ -197,7 +299,7 @@ def test_update_issue(mock_jira_fetcher):
     """Test updating an existing issue."""
     # Mock the update response
     mock_jira_fetcher.jira.issue_update.return_value = None
-    mock_jira_fetcher.jira.issue.return_value = MOCK_JIRA_ISSUE_RESPONSE
+    mock_jira_fetcher.jira.issue.return_value = MOCK_JIRA_ISSUE_RESPONSE_SIMPLIFIED
 
     # Test data
     fields = {"summary": "Updated Title", "description": "Updated Description"}
@@ -252,8 +354,12 @@ def test_get_jira_field_ids(mock_jira_fetcher):
         {"id": "parent", "name": "Parent", "type": "any"},
     ]
 
-    # Set up the mock
+    # Set up the mock with a new instance
     mock_jira_fetcher.jira.fields.return_value = mock_fields
+
+    # Clear any cached field IDs from previous tests
+    if hasattr(mock_jira_fetcher, "_field_ids_cache"):
+        delattr(mock_jira_fetcher, "_field_ids_cache")
 
     # Call the method
     field_ids = mock_jira_fetcher.get_jira_field_ids()
@@ -285,30 +391,34 @@ def test_link_issue_to_epic_with_discovered_fields(mock_jira_fetcher):
     # Set up the mocks
     mock_jira_fetcher.jira.issue.return_value = mock_epic
     mock_jira_fetcher.jira.fields.return_value = mock_fields
+    mock_jira_fetcher.jira.issue_update.return_value = {"key": "PROJ-123"}
 
-    # Mock the successful update
-    mock_jira_fetcher.jira.issue_update.return_value = None
-
-    # Mock the get_issue response for the return value
-    mock_jira_fetcher._format_issue_as_document = MagicMock(
-        return_value=Document(
-            page_content="Issue content",
-            metadata={
-                "key": "PROJ-123",
-                "title": "Test Issue",
-                "type": "Task",
-                "status": "Open",
-                "created_date": "2023-01-01",
-            },
-        )
+    # Create a mock document to be returned by get_issue
+    mock_document = Document(
+        page_content="Issue content",
+        metadata={
+            "key": "PROJ-123",
+            "title": "Test Issue",
+            "type": "Task",
+            "status": "Open",
+            "created_date": "2023-01-01",
+        },
     )
 
-    # Call the method
-    result = mock_jira_fetcher.link_issue_to_epic("PROJ-123", "PROJ-456")
+    # Mock the get_issue method
+    original_get_issue = mock_jira_fetcher.get_issue
+    mock_jira_fetcher.get_issue = MagicMock(return_value=mock_document)
 
-    # Verify the result is a Document
-    assert isinstance(result, Document)
-    assert result.metadata["key"] == "PROJ-123"
+    try:
+        # Call the method
+        result = mock_jira_fetcher.link_issue_to_epic("PROJ-123", "PROJ-456")
+
+        # Verify the result is a Document
+        assert isinstance(result, Document)
+        assert result.metadata["key"] == "PROJ-123"
+    finally:
+        # Restore original method
+        mock_jira_fetcher.get_issue = original_get_issue
 
 
 def test_get_available_transitions(mock_jira_fetcher):

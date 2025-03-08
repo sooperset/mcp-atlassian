@@ -275,13 +275,14 @@ class JiraFetcher:
             # Look for Epic-related fields
             for field in fields:
                 field_name = field.get("name", "").lower()
+                original_name = field.get("name", "")
 
                 # Epic Link field - used to link issues to epics
-                if "epic link" in field_name or "epic-link" in field_name:
+                if "epic link" in field_name or "epic-link" in field_name or original_name == "Epic Link":
                     field_ids["epic_link"] = field["id"]
 
                 # Epic Name field - used when creating epics
-                elif "epic name" in field_name or "epic-name" in field_name:
+                elif "epic name" in field_name or "epic-name" in field_name or original_name == "Epic Name":
                     field_ids["epic_name"] = field["id"]
 
                 # Parent field - sometimes used instead of Epic Link
@@ -408,14 +409,15 @@ class JiraFetcher:
             logger.warning(f"Error parsing date {date_str}: {e}")
             return date_str
 
-    def get_issue(self, issue_key: str, expand: str | None = None, comment_limit: int | None = None) -> Document:
+    def get_issue(self, issue_key: str, expand: str | None = None, comment_limit: int | str | None = 10) -> Document:
         """
         Get a single issue with all its details.
 
         Args:
             issue_key: The issue key (e.g. 'PROJ-123')
             expand: Optional fields to expand
-            comment_limit: Maximum number of comments to include (None for no comments)
+            comment_limit: Maximum number of comments to include (None for no comments, defaults to 10)
+                          Can be an integer or a string that can be converted to an integer.
 
         Returns:
             Document containing issue content and metadata
@@ -425,6 +427,14 @@ class JiraFetcher:
 
             # Process description and comments
             description = self._clean_text(issue["fields"].get("description", ""))
+
+            # Convert comment_limit to int if it's a string
+            if comment_limit is not None and isinstance(comment_limit, str):
+                try:
+                    comment_limit = int(comment_limit)
+                except ValueError:
+                    logger.warning(f"Invalid comment_limit value: {comment_limit}. Using default of 10.")
+                    comment_limit = 10
 
             # Get comments if limit is specified
             comments = []
