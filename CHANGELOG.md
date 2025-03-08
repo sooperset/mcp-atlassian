@@ -2,30 +2,30 @@
 
 ## [Unreleased]
 
+## [0.1.15] - 2025-03-08
+
 ### Added
-- Dynamic Jira field discovery for Epic-related fields
+- Added Jira Server/Data Center support with Personal Access Token authentication
+- Added new Jira worklog tools for time tracking and estimate management
+- Added tools for Jira status transitions: `jira_get_transitions` and `jira_transition_issue`
+- Added comprehensive Epic linking support with `jira_link_to_epic` and `jira_get_epic_issues` tools
+- Implemented dynamic Jira field discovery for Epic-related fields
+- Added SSL verification option for on-premise Jira installations
+- Added support for bidirectional Markdown-Jira markup conversion
+
+### Changed
 - Enhanced Epic linking with support for different Jira configurations
-- Improved Epic issue retrieval using discovered field IDs
-- Added specialized Epic field handling when creating Epic issues
-- Added proper Jira status transition support with workflow validation
-- New tools: jira_get_transitions and jira_transition_issue
-- Comprehensive Markdown to Jira markup conversion with support for:
-  - Headers (# h1, ## h2, etc.)
-  - Formatting (bold with ** or __, italic with * or _)
-  - Code blocks with language support (```language)
-  - Inline code with backticks
-  - Ordered and unordered lists
-  - Links, blockquotes, and horizontal rules
+- Improved JSON serialization and result formatting in Atlassian tool methods
+- Simplified Markdown to Jira conversion using TextPreprocessor
+- Standardized result formatting across different tool methods
 
 ### Fixed
-- Jira comments now properly convert Markdown syntax to Jira markup format
-- This ensures that formatted text (headers, lists, bold, italic, code blocks, etc.) appears correctly in Jira
-- Fixed status updates in Jira to respect workflow rules by using transitions
-- Added Markdown to Jira markup conversion for issue descriptions in create_issue and update_issue methods
-- Fixed literal display of formatting characters (e.g., asterisks) in issue descriptions
-- Improved error handling in transition_issue with detailed logging and better error messages
-- Implemented direct HTTP approach for issue transitions to ensure compatibility with various Jira configurations
-- Enhanced numbered list handling to properly render consecutive items (1., 2., 3., etc.)
+- Fixed Jira status updates to respect workflow rules by using transitions
+- Fixed Epic creation with dynamic field discovery across different Jira instances
+- Fixed Jira comments and issue descriptions to properly convert Markdown syntax
+- Improved error handling in transition_issue with detailed logging
+- Enhanced numbered list handling for proper rendering in Jira
+- Implemented direct HTTP approach for issue transitions for better compatibility
 
 ## [0.1.14] - 2025-03-05
 
