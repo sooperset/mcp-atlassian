@@ -139,35 +139,6 @@ Model Context Protocol (MCP) server for Atlassian Cloud products (Confluence and
       - `limit` (number, optional): Results limit (1-50, default: 10)
     - Returns: Array of issues linked to the Epic with metadata
 
-## Epic Linking Support
-
-This package includes robust support for working with Jira Epics, including:
-
-1. **Dynamic Field Discovery**: Automatically discovers the correct custom field IDs for Epic-related fields in your specific Jira instance
-2. **Link Issues to Epics**: Connect any issue to an Epic with the `jira_link_to_epic` tool
-3. **Get Epic Issues**: Retrieve all issues linked to an Epic with the `jira_get_epic_issues` tool
-4. **Create Epics**: Create new Epics with the right fields using the standard `jira_create_issue` tool
-
-The dynamic field discovery ensures compatibility with different Jira configurations, as Epic-related field IDs can vary between instances. This approach eliminates the need for instance-specific configuration.
-
-### Linking Issues to Epics
-
-```json
-{
-  "issue_key": "PROJ-123",
-  "epic_key": "PROJ-456"
-}
-```
-
-### Getting Issues Linked to an Epic
-
-```json
-{
-  "epic_key": "PROJ-456",
-  "limit": 20
-}
-```
-
 ## Installation
 
 ### Using uv (recommended)
