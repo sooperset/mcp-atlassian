@@ -110,6 +110,35 @@ Model Context Protocol (MCP) server for Atlassian Cloud products (Confluence and
      - `issue_key` (string): Jira issue key (e.g. PROJ-123)
    - Returns: Success confirmation message
 
+7. `jira_get_transitions`
+   - Get available status transitions for a Jira issue
+   - Inputs:
+     - `issue_key` (string): Jira issue key (e.g. 'PROJ-123')
+   - Returns: Array of available transitions with ID, name, and target status information
+
+8. `jira_transition_issue`
+   - Transition a Jira issue to a new status
+   - Inputs:
+     - `issue_key` (string): Jira issue key (e.g. 'PROJ-123')
+     - `transition_id` (string): ID of the transition to perform (get this from jira_get_transitions)
+     - `fields` (string, optional): JSON string of fields to update during the transition
+     - `comment` (string, optional): Comment to add during the transition
+   - Returns: Updated issue details including the new status
+
+9. `jira_link_to_epic`
+   - Link an issue to an Epic
+   - Inputs:
+     - `issue_key` (string): Jira issue key to link (e.g. 'PROJ-123')
+     - `epic_key` (string): Epic issue key to link to (e.g. 'PROJ-456')
+   - Returns: Linked issue details with confirmation message
+
+10. `jira_get_epic_issues`
+    - Get all issues linked to a specific Epic
+    - Inputs:
+      - `epic_key` (string): Epic issue key (e.g. 'PROJ-456')
+      - `limit` (number, optional): Results limit (1-50, default: 10)
+    - Returns: Array of issues linked to the Epic with metadata
+
 ## Epic Linking Support
 
 This package includes robust support for working with Jira Epics, including:
