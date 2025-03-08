@@ -17,9 +17,15 @@ logger = logging.getLogger("mcp-atlassian")
 @click.option("--confluence-url", help="Confluence URL (e.g., https://your-domain.atlassian.net/wiki)")
 @click.option("--confluence-username", help="Confluence username/email")
 @click.option("--confluence-token", help="Confluence API token")
-@click.option("--jira-url", help="Jira URL (e.g., https://your-domain.atlassian.net)")
-@click.option("--jira-username", help="Jira username/email")
-@click.option("--jira-token", help="Jira API token")
+@click.option("--jira-url", help="Jira URL (e.g., https://your-domain.atlassian.net or https://jira.your-company.com)")
+@click.option("--jira-username", help="Jira username/email (for Jira Cloud)")
+@click.option("--jira-token", help="Jira API token (for Jira Cloud)")
+@click.option("--jira-personal-token", help="Jira Personal Access Token (for Jira Server/Data Center)")
+@click.option(
+    "--jira-ssl-verify/--no-jira-ssl-verify",
+    default=True,
+    help="Verify SSL certificates for Jira Server/Data Center (default: verify)",
+)
 def main(
     verbose: bool,
     env_file: str | None,
@@ -29,8 +35,13 @@ def main(
     jira_url: str | None,
     jira_username: str | None,
     jira_token: str | None,
+    jira_personal_token: str | None,
+    jira_ssl_verify: bool,
 ) -> None:
-    """MCP Atlassian Server - Jira and Confluence functionality for MCP"""
+    """MCP Atlassian Server - Jira and Confluence functionality for MCP
+
+    Supports both Atlassian Cloud and Jira Server/Data Center deployments.
+    """
     # Configure logging based on verbosity
     logging_level = logging.INFO
     if verbose == 1:
@@ -61,6 +72,11 @@ def main(
         os.environ["JIRA_USERNAME"] = jira_username
     if jira_token:
         os.environ["JIRA_API_TOKEN"] = jira_token
+    if jira_personal_token:
+        os.environ["JIRA_PERSONAL_TOKEN"] = jira_personal_token
+
+    # Set SSL verification for Jira Server/Data Center
+    os.environ["JIRA_SSL_VERIFY"] = str(jira_ssl_verify).lower()
 
     from . import server
 
