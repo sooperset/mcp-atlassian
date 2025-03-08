@@ -128,20 +128,37 @@ Model Context Protocol (MCP) server for Atlassian products (Confluence and Jira)
 8. `jira_transition_issue`
    - Transition a Jira issue to a new status
    - Inputs:
-     - `issue_key` (string): Jira issue key (e.g. 'PROJ-123')
+     - `issue_key` (string): Jira issue key (e.g., 'PROJ-123')
      - `transition_id` (string): ID of the transition to perform (get this from jira_get_transitions)
      - `fields` (string, optional): JSON string of fields to update during the transition
      - `comment` (string, optional): Comment to add during the transition
    - Returns: Updated issue details including the new status
 
-9. `jira_link_to_epic`
-   - Link an issue to an Epic
+9. `jira_add_worklog`
+   - Add a worklog entry to a Jira issue
    - Inputs:
-     - `issue_key` (string): Jira issue key to link (e.g. 'PROJ-123')
-     - `epic_key` (string): Epic issue key to link to (e.g. 'PROJ-456')
-   - Returns: Linked issue details with confirmation message
+     - `issue_key` (string): Jira issue key (e.g., 'PROJ-123')
+     - `time_spent` (string): Time spent in Jira format (e.g., '1h 30m', '1d', '30m')
+     - `comment` (string, optional): Optional comment for the worklog in Markdown format
+     - `started` (string, optional): Optional start time in ISO format (e.g. '2023-08-01T12:00:00.000+0000')
+     - `original_estimate` (string, optional): Optional original estimate in Jira format (e.g., '1h 30m', '1d')
+     - `remaining_estimate` (string, optional): Optional remaining estimate in Jira format (e.g., '1h', '30m')
+   - Returns: Created worklog details with information about estimate updates
 
-10. `jira_get_epic_issues`
+10. `jira_get_worklog`
+    - Get worklog entries for a Jira issue
+    - Inputs:
+      - `issue_key` (string): Jira issue key (e.g., 'PROJ-123')
+    - Returns: Array of worklog entries with author, time spent, comments, and dates
+
+11. `jira_link_to_epic`
+    - Link an issue to an Epic
+    - Inputs:
+      - `issue_key` (string): Jira issue key to link (e.g. 'PROJ-123')
+      - `epic_key` (string): Epic issue key to link to (e.g. 'PROJ-456')
+    - Returns: Linked issue details with confirmation message
+
+12. `jira_get_epic_issues`
     - Get all issues linked to a specific Epic
     - Inputs:
       - `epic_key` (string): Epic issue key (e.g. 'PROJ-456')

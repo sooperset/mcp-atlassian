@@ -512,6 +512,54 @@ async def list_tools() -> list[Tool]:
                     },
                 ),
                 Tool(
+                    name="jira_add_worklog",
+                    description="Add a worklog entry to a Jira issue",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "issue_key": {
+                                "type": "string",
+                                "description": "Jira issue key (e.g., 'PROJ-123')",
+                            },
+                            "time_spent": {
+                                "type": "string",
+                                "description": "Time spent in Jira format (e.g., '1h 30m', '1d', '30m')",
+                            },
+                            "comment": {
+                                "type": "string",
+                                "description": "Optional comment for the worklog in Markdown format",
+                            },
+                            "started": {
+                                "type": "string",
+                                "description": "Optional start time in ISO format (e.g. '2023-08-01T12:00:00.000+0000'). If not provided, current time will be used.",
+                            },
+                            "original_estimate": {
+                                "type": "string",
+                                "description": "Optional original estimate in Jira format (e.g., '1h 30m', '1d'). This will update the original estimate for the issue.",
+                            },
+                            "remaining_estimate": {
+                                "type": "string",
+                                "description": "Optional remaining estimate in Jira format (e.g., '1h', '30m'). This will update the remaining estimate for the issue.",
+                            },
+                        },
+                        "required": ["issue_key", "time_spent"],
+                    },
+                ),
+                Tool(
+                    name="jira_get_worklog",
+                    description="Get worklog entries for a Jira issue",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "issue_key": {
+                                "type": "string",
+                                "description": "Jira issue key (e.g., 'PROJ-123')",
+                            },
+                        },
+                        "required": ["issue_key"],
+                    },
+                ),
+                Tool(
                     name="jira_link_to_epic",
                     description="Link an existing issue to an epic",
                     inputSchema={
@@ -831,6 +879,99 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             comment = jira_fetcher.add_comment(arguments["issue_key"], arguments["comment"])
             result = {"message": "Comment added successfully", "comment": comment}
             return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+
+        elif name == "jira_add_worklog":
+            issue_key = arguments["issue_key"]
+            time_spent = arguments["time_spent"]
+            comment = arguments.get("comment")
+            started = arguments.get("started")
+            original_estimate = arguments.get("original_estimate")
+            remaining_estimate = arguments.get("remaining_estimate")
+
+            if not time_spent:
+                raise ValueError("time_spent is required")
+
+            if not issue_key:
+                raise ValueError("issue_key is required")
+
+            if not jira_fetcher:
+                raise ValueError("Jira is not configured")
+
+            try:
+                worklog = jira_fetcher.add_worklog(
+                    issue_key=issue_key,
+                    time_spent=time_spent,
+                    comment=comment,
+                    started=started,
+                    original_estimate=original_estimate,
+                    remaining_estimate=remaining_estimate,
+                )
+
+                # Create a more detailed success message based on what was updated
+                success_message = "Worklog added successfully"
+                if worklog.get("original_estimate_updated"):
+                    success_message += f" (original estimate updated to {original_estimate})"
+                if worklog.get("remaining_estimate_updated"):
+                    success_message += f" (remaining estimate updated to {remaining_estimate})"
+
+                result = {"message": success_message, "worklog": worklog, "status": "success"}
+                return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+            except Exception as e:
+                error_msg = str(e)
+                logger.error(f"Error adding worklog: {error_msg}")
+
+                # Provide more context in the error message for better debugging
+                if "originalEstimate" in error_msg or "timetracking" in error_msg:
+                    error_detail = "There was an issue updating the original estimate. This may be due to permissions or invalid format."
+                elif "adjustEstimate" in error_msg or "newEstimate" in error_msg:
+                    error_detail = "There was an issue updating the remaining estimate. This may be due to permissions or invalid format."
+                else:
+                    error_detail = "There was an issue adding the worklog. Please check the issue exists and you have proper permissions."
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(
+                            {
+                                "error": f"Failed to add worklog: {error_msg}",
+                                "error_detail": error_detail,
+                                "status": "error",
+                            },
+                            indent=2,
+                            ensure_ascii=False,
+                        ),
+                    )
+                ]
+
+        elif name == "jira_get_worklog":
+            issue_key = arguments["issue_key"]
+
+            if not issue_key:
+                raise ValueError("issue_key is required")
+
+            if not jira_fetcher:
+                raise ValueError("Jira is not configured")
+
+            try:
+                worklogs = jira_fetcher.get_worklogs(issue_key)
+                result = {"worklogs": json.dumps(worklogs)}
+                return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+            except Exception as e:
+                error_msg = str(e)
+                logger.error(f"Error getting worklogs: {error_msg}")
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(
+                            {
+                                "error": f"Failed to get worklogs: {error_msg}",
+                                "status": "error",
+                            },
+                            indent=2,
+                            ensure_ascii=False,
+                        ),
+                    )
+                ]
 
         elif name == "jira_link_to_epic":
             issue_key = arguments["issue_key"]
