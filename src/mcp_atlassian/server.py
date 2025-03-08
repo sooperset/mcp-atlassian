@@ -764,16 +764,54 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                     else:
                         arguments["assignee"] = str(assignee_data)
 
-            doc = jira_fetcher.create_issue(
-                project_key=arguments["project_key"],
-                summary=arguments["summary"],
-                issue_type=arguments["issue_type"],
-                description=arguments.get("description", ""),
-                assignee=arguments.get("assignee"),
-                **additional_fields,
-            )
-            result = json.dumps({"content": doc.page_content, "metadata": doc.metadata}, indent=2, ensure_ascii=False)
-            return [TextContent(type="text", text=f"Issue created successfully:\n{result}")]
+            # Handle Epic-specific settings
+            issue_type = arguments["issue_type"]
+            if issue_type.lower() == "epic":
+                # If epic_name is directly specified, make sure it's passed along
+                if "epic_name" in arguments:
+                    additional_fields["epic_name"] = arguments.pop("epic_name")
+
+                # If epic_color is directly specified, make sure it's passed along
+                if "epic_color" in arguments or "epic_colour" in arguments:
+                    color = arguments.pop("epic_color", None) or arguments.pop("epic_colour", None)
+                    additional_fields["epic_color"] = color
+
+                # Pass any customfield_* parameters directly
+                for key, value in list(arguments.items()):
+                    if key.startswith("customfield_"):
+                        additional_fields[key] = arguments.pop(key)
+
+            try:
+                doc = jira_fetcher.create_issue(
+                    project_key=arguments["project_key"],
+                    summary=arguments["summary"],
+                    issue_type=issue_type,
+                    description=arguments.get("description", ""),
+                    assignee=arguments.get("assignee"),
+                    **additional_fields,
+                )
+                result = json.dumps(
+                    {"content": doc.page_content, "metadata": doc.metadata}, indent=2, ensure_ascii=False
+                )
+                return [TextContent(type="text", text=f"Issue created successfully:\n{result}")]
+            except Exception as e:
+                error_msg = str(e)
+                if "customfield_" in error_msg and issue_type.lower() == "epic":
+                    # Provide a more helpful error message for Epic field issues
+                    return [
+                        TextContent(
+                            type="text",
+                            text=(
+                                f"Error creating Epic: Your Jira instance has specific requirements for Epic creation. "
+                                f"You may need to provide the specific custom field ID for Epic Name. "
+                                f"Try using additional_fields with the correct customfield_* ID for your instance.\n\n"
+                                f"Original error: {error_msg}"
+                            ),
+                        )
+                    ]
+                else:
+                    # Re-raise the original exception for other errors
+                    raise
 
         elif name == "jira_update_issue":
             fields = json.loads(arguments["fields"])

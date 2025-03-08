@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from datetime import datetime
 from typing import Any
 
@@ -162,6 +163,9 @@ class JiraFetcher:
 
         Returns:
             Document representing the newly created issue
+
+        Raises:
+            ValueError: If required fields for the issue type cannot be determined
         """
         fields = {
             "project": {"key": project_key},
@@ -170,23 +174,43 @@ class JiraFetcher:
             "description": self._markdown_to_jira(description),
         }
 
-        # If we're creating an Epic, check for Epic-specific fields
+        # If we're creating an Epic, handle Epic-specific fields dynamically
         if issue_type.lower() == "epic":
-            # Get the dynamic field IDs
-            field_ids = self.get_jira_field_ids()
+            try:
+                # Get the dynamic field IDs
+                field_ids = self.get_jira_field_ids()
+                logger.info(f"Discovered Jira field IDs for Epic creation: {field_ids}")
 
-            # Set the Epic Name field if available (required in many Jira instances)
-            if "epic_name" in field_ids and "epic_name" not in kwargs:
-                # Use the summary as the epic name if not provided
-                fields[field_ids["epic_name"]] = summary
-            elif "customfield_10011" not in kwargs:  # Common default Epic Name field
-                # Fallback to common Epic Name field if not discovered
-                fields["customfield_10011"] = summary
+                # Handle Epic Name - might be required in some instances, not in others
+                # If Epic Name field was found during discovery, use it
+                if "epic_name" in field_ids:
+                    epic_name = kwargs.pop("epic_name", summary)  # Use summary as default if not provided
+                    fields[field_ids["epic_name"]] = epic_name
+                    logger.info(f"Setting Epic Name field {field_ids['epic_name']} to: {epic_name}")
 
-            # Check for other Epic fields from kwargs
-            epic_color = kwargs.pop("epic_color", None) or kwargs.pop("epic_colour", None)
-            if epic_color and "epic_color" in field_ids:
-                fields[field_ids["epic_color"]] = epic_color
+                # Handle Epic Color if the field was discovered
+                if "epic_color" in field_ids:
+                    epic_color = kwargs.pop("epic_color", None) or kwargs.pop("epic_colour", None) or "green"
+                    fields[field_ids["epic_color"]] = epic_color
+                    logger.info(f"Setting Epic Color field {field_ids['epic_color']} to: {epic_color}")
+
+                # Pass through any explicitly provided custom fields that might be instance-specific
+                # This allows callers who know their instance to directly specify field IDs
+                for field_key, field_value in kwargs.items():
+                    if field_key.startswith("customfield_"):
+                        fields[field_key] = field_value
+                        logger.info(f"Using explicitly provided custom field {field_key}: {field_value}")
+
+                # If epic_name field is required but wasn't discovered, warn the user
+                # Some Jira instances require it, others don't
+                if "epic_name" not in field_ids:
+                    logger.warning(
+                        "Epic Name field not found in Jira schema. "
+                        "If your Jira instance requires it, please provide the customfield_* ID directly."
+                    )
+            except Exception as e:
+                logger.error(f"Error preparing Epic-specific fields: {str(e)}")
+                # Continue with creation anyway, as some instances might not require special fields
 
         # Add assignee if provided
         if assignee:
@@ -208,14 +232,35 @@ class JiraFetcher:
             fields["description"] = self._markdown_to_jira(fields["description"])
 
         try:
-            created = self.jira.issue_create(fields=fields)
-            issue_key = created.get("key")
-            if not issue_key:
-                raise ValueError(f"Failed to create issue in project {project_key}")
-
+            response = self.jira.create_issue(fields=fields)
+            issue_key = response["key"]
+            logger.info(f"Created issue {issue_key}")
             return self.get_issue(issue_key)
         except Exception as e:
-            logger.error(f"Error creating issue in project {project_key}: {str(e)}")
+            error_msg = str(e)
+
+            # Provide more helpful error messages for common issues
+            if issue_type.lower() == "epic" and "customfield_" in error_msg:
+                # Handle the case where a specific Epic field is required but missing
+                missing_field_match = re.search(
+                    r"(?:Field '(customfield_\d+)'|'(customfield_\d+)' cannot be set)", error_msg
+                )
+                if missing_field_match:
+                    field_id = missing_field_match.group(1) or missing_field_match.group(2)
+                    logger.error(
+                        f"Failed to create Epic: Your Jira instance requires field '{field_id}'. "
+                        f"This is typically the Epic Name field. Try setting this field explicitly "
+                        f"using '{field_id}': 'Epic Name Value' in the additional_fields parameter."
+                    )
+                else:
+                    logger.error(
+                        f"Failed to create Epic: Your Jira instance has custom field requirements. "
+                        f"You may need to provide specific custom fields for Epics in your instance. "
+                        f"Original error: {error_msg}"
+                    )
+            else:
+                logger.error(f"Error creating issue: {error_msg}")
+
             raise
 
     def update_issue(self, issue_key: str, fields: dict[str, Any] = None, **kwargs: Any) -> Document:
@@ -302,41 +347,137 @@ class JiraFetcher:
             fields = self.jira.fields()
             field_ids = {}
 
-            # Look for Epic-related fields
+            # Log the complete list of fields for debugging
+            all_field_names = [f"{field.get('name', '')} ({field.get('id', '')})" for field in fields]
+            logger.debug(f"All available Jira fields: {all_field_names}")
+
+            # Look for Epic-related fields - use multiple strategies to identify them
             for field in fields:
                 field_name = field.get("name", "").lower()
                 original_name = field.get("name", "")
+                field_id = field.get("id", "")
+                field_schema = field.get("schema", {})
+                field_type = field_schema.get("type", "")
+                field_custom = field_schema.get("custom", "")
 
                 # Epic Link field - used to link issues to epics
-                if "epic link" in field_name or "epic-link" in field_name or original_name == "Epic Link":
-                    field_ids["epic_link"] = field["id"]
+                if (
+                    "epic link" in field_name
+                    or "epic-link" in field_name
+                    or original_name == "Epic Link"
+                    or field_custom == "com.pyxis.greenhopper.jira:gh-epic-link"
+                ):
+                    field_ids["epic_link"] = field_id
+                    logger.info(f"Found Epic Link field: {original_name} ({field_id})")
 
                 # Epic Name field - used when creating epics
-                elif "epic name" in field_name or "epic-name" in field_name or original_name == "Epic Name":
-                    field_ids["epic_name"] = field["id"]
+                elif (
+                    "epic name" in field_name
+                    or "epic-name" in field_name
+                    or original_name == "Epic Name"
+                    or field_custom == "com.pyxis.greenhopper.jira:gh-epic-label"
+                ):
+                    field_ids["epic_name"] = field_id
+                    logger.info(f"Found Epic Name field: {original_name} ({field_id})")
 
                 # Parent field - sometimes used instead of Epic Link
-                elif field_name == "parent" or field_name == "parent link":
-                    field_ids["parent"] = field["id"]
+                elif field_name == "parent" or field_name == "parent link" or original_name == "Parent Link":
+                    field_ids["parent"] = field_id
+                    logger.info(f"Found Parent field: {original_name} ({field_id})")
 
                 # Epic Status field
-                elif "epic status" in field_name:
-                    field_ids["epic_status"] = field["id"]
+                elif "epic status" in field_name or original_name == "Epic Status":
+                    field_ids["epic_status"] = field_id
+                    logger.info(f"Found Epic Status field: {original_name} ({field_id})")
 
                 # Epic Color field
-                elif "epic colour" in field_name or "epic color" in field_name:
-                    field_ids["epic_color"] = field["id"]
+                elif (
+                    "epic colour" in field_name
+                    or "epic color" in field_name
+                    or original_name == "Epic Colour"
+                    or original_name == "Epic Color"
+                    or field_custom == "com.pyxis.greenhopper.jira:gh-epic-color"
+                ):
+                    field_ids["epic_color"] = field_id
+                    logger.info(f"Found Epic Color field: {original_name} ({field_id})")
+
+                # Try to detect any other fields that might be related to Epics
+                elif ("epic" in field_name or "epic" in field_custom) and not any(
+                    k in field_ids.values() for k in [field_id]
+                ):
+                    key = f"epic_{field_name.replace(' ', '_')}"
+                    field_ids[key] = field_id
+                    logger.info(f"Found additional Epic-related field: {original_name} ({field_id})")
 
             # Cache the results for future use
             self._field_ids_cache = field_ids
 
-            logger.info(f"Discovered Jira field IDs: {field_ids}")
+            # If we couldn't find certain key fields, try alternative approaches
+            if "epic_name" not in field_ids or "epic_link" not in field_ids:
+                logger.warning(
+                    "Could not find all essential Epic fields through schema. "
+                    "This may cause issues with Epic operations."
+                )
+
+                # Try to find fields by looking at an existing Epic if possible
+                self._try_discover_fields_from_existing_epic(field_ids)
+
             return field_ids
 
         except Exception as e:
             logger.error(f"Error discovering Jira field IDs: {str(e)}")
             # Return an empty dict as fallback
             return {}
+
+    def _try_discover_fields_from_existing_epic(self, field_ids: dict) -> None:
+        """
+        Attempt to discover Epic fields by examining an existing Epic issue.
+        This is a fallback method when we can't find fields through the schema.
+
+        Args:
+            field_ids: Existing field_ids dictionary to update
+        """
+        try:
+            # Find an Epic in the system
+            epics_jql = "issuetype = Epic ORDER BY created DESC"
+            results = self.jira.jql(epics_jql, limit=1)
+
+            if not results.get("issues"):
+                logger.warning("No existing Epics found to analyze field structure")
+                return
+
+            epic = results["issues"][0]
+            epic_key = epic.get("key")
+
+            logger.info(f"Analyzing existing Epic {epic_key} to discover field structure")
+
+            # Examine the fields of this Epic
+            fields = epic.get("fields", {})
+            for field_id, field_value in fields.items():
+                if field_id.startswith("customfield_") and field_value is not None:
+                    # Look for fields with non-null values that might be Epic-related
+                    if (
+                        "epic_name" not in field_ids
+                        and isinstance(field_value, str)
+                        and field_id not in field_ids.values()
+                    ):
+                        logger.info(f"Potential Epic Name field discovered: {field_id} with value {field_value}")
+                        if len(field_value) < 100:  # Epic names are typically short
+                            field_ids["epic_name"] = field_id
+
+                    # Color values are often simple strings like "green", "blue", etc.
+                    if (
+                        "epic_color" not in field_ids
+                        and isinstance(field_value, str)
+                        and field_id not in field_ids.values()
+                    ):
+                        colors = ["green", "blue", "red", "yellow", "orange", "purple", "gray", "grey", "teal"]
+                        if field_value.lower() in colors:
+                            logger.info(f"Potential Epic Color field discovered: {field_id} with value {field_value}")
+                            field_ids["epic_color"] = field_id
+
+        except Exception as e:
+            logger.warning(f"Could not discover Epic fields from existing Epics: {str(e)}")
 
     def link_issue_to_epic(self, issue_key: str, epic_key: str) -> Document:
         """
