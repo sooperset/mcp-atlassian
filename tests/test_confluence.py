@@ -135,7 +135,7 @@ def test_search(fetcher, mock_confluence):
 
 def test_get_space_pages(fetcher, mock_confluence):
     space_key = "PROJ"
-    documents = fetcher.get_space_pages(space_key)
+    documents = fetcher.get_space_pages(space_key, convert_to_markdown=True)
 
     mock_confluence.get_all_pages_from_space.assert_called_once_with(
         space=space_key, start=0, limit=10, expand="body.storage"

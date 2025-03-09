@@ -154,9 +154,26 @@ class ConfluenceFetcher:
             return None
 
     def get_space_pages(
-        self, space_key: str, start: int = 0, limit: int = 10, clean_html: bool = True
+        self,
+        space_key: str,
+        start: int = 0,
+        limit: int = 10,
+        *,
+        convert_to_markdown: bool = True,
     ) -> list[Document]:
-        """Get all pages from a specific space."""
+        """
+        Get all pages from a specific space.
+
+        Args:
+            space_key: The key of the space to get pages from
+            start: The starting index for pagination
+            limit: Maximum number of pages to return
+            convert_to_markdown: When True, returns content in markdown format,
+                                 otherwise returns raw HTML
+
+        Returns:
+            List of Document objects containing page content and metadata
+        """
         pages = self.confluence.get_all_pages_from_space(
             space=space_key, start=start, limit=limit, expand="body.storage"
         )
@@ -178,7 +195,9 @@ class ConfluenceFetcher:
 
             documents.append(
                 Document(
-                    page_content=processed_markdown if clean_html else processed_html,
+                    page_content=processed_markdown
+                    if convert_to_markdown
+                    else processed_html,
                     metadata=metadata,
                 )
             )

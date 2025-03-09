@@ -21,30 +21,32 @@ class JiraFetcher:
     def __init__(self):
         """Initialize the Jira client."""
         url = os.getenv("JIRA_URL")
-        username = os.getenv("JIRA_USERNAME", "")
-        token = os.getenv("JIRA_API_TOKEN", "")
-        personal_token = os.getenv("JIRA_PERSONAL_TOKEN", "")
-        # For self-signed certificates in on-premise installations
-        verify_ssl = os.getenv("JIRA_SSL_VERIFY", "true").lower() != "false"
 
         if not url:
-            raise ValueError("Missing required JIRA_URL environment variable")
+            error_msg = "Missing required JIRA_URL environment variable"
+            raise ValueError(error_msg)
 
         # Check authentication method
-        is_cloud = "atlassian.net" in url
-
+        is_cloud = os.getenv("JIRA_CLOUD", "true").lower() == "true"
         if is_cloud:
-            logger.info(f"Initializing Jira Cloud client for {url}")
+            username = os.getenv("JIRA_USERNAME", "")
+            token = os.getenv("JIRA_API_TOKEN", "")
             if not username or not token:
-                raise ValueError(
+                error_msg = (
                     "Cloud authentication requires JIRA_USERNAME and JIRA_API_TOKEN"
                 )
+                raise ValueError(error_msg)
         else:
-            logger.info(f"Initializing Jira Server/Data Center client for {url}")
+            # Server/Data Center authentication uses a Personal Access Token
+            personal_token = os.getenv("JIRA_PERSONAL_TOKEN", "")
             if not personal_token:
-                raise ValueError(
+                error_msg = (
                     "Server/Data Center authentication requires JIRA_PERSONAL_TOKEN"
                 )
+                raise ValueError(error_msg)
+
+        # For self-signed certificates in on-premise installations
+        verify_ssl = os.getenv("JIRA_SSL_VERIFY", "true").lower() != "false"
 
         self.config = JiraConfig(
             url=url,
@@ -152,7 +154,7 @@ class JiraFetcher:
             account_id = users[0].get("accountId")
             if not account_id or not isinstance(account_id, str):
                 logger.warning(
-                    f"Found user '{assignee}' but no account ID was returned"
+                    f"Direct user lookup failed for '{assignee}': invalid string format in response"
                 )
                 raise ValueError(
                     f"Found user '{assignee}' but no account ID was returned"
@@ -162,7 +164,8 @@ class JiraFetcher:
             return str(account_id)  # Explicit str conversion
         except Exception as e:
             logger.error(f"Error finding user '{assignee}': {str(e)}")
-            raise ValueError(f"Could not resolve account ID for '{assignee}'") from e
+            error_msg = f"Could not resolve account ID for '{assignee}'"
+            raise ValueError(error_msg) from e
 
     def create_issue(
         self,
@@ -359,13 +362,11 @@ class JiraFetcher:
                 )
                 return self.transition_issue(issue_key, transition_id, fields)
             else:
-                available_statuses = [t.get("to_status", "") for t in transitions]
-                logger.warning(
-                    f"No transition found for status '{requested_status}'. Available transitions: {transitions}"
+                available_statuses = ", ".join(
+                    f"'{s['name']}' (id: {s['id']})" for s in transitions
                 )
-                raise ValueError(
-                    f"Cannot transition issue to status '{requested_status}'. Available status transitions: {available_statuses}"
-                )
+                error_msg = f"Cannot transition issue to status '{requested_status}'. Available status transitions: {available_statuses}"
+                raise ValueError(error_msg)
 
         try:
             self.jira.issue_update(issue_key, fields=fields)
@@ -567,9 +568,8 @@ class JiraFetcher:
             # First, check if the epic exists and is an Epic type
             epic = self.jira.issue(epic_key)
             if epic["fields"]["issuetype"]["name"] != "Epic":
-                raise ValueError(
-                    f"Issue {epic_key} is not an Epic, it is a {epic['fields']['issuetype']['name']}"
-                )
+                error_msg = f"Issue {epic_key} is not an Epic, it is a {epic['fields']['issuetype']['name']}"
+                raise ValueError(error_msg)
 
             # Get the dynamic field IDs for this Jira instance
             field_ids = self.get_jira_field_ids()
@@ -885,9 +885,8 @@ Description:
                 issue_type = issuetype_data.get("name", "")
 
             if issue_type != "Epic":
-                raise ValueError(
-                    f"Issue {epic_key} is not an Epic, it is a {issue_type or 'unknown type'}"
-                )
+                error_msg = f"Issue {epic_key} is not an Epic, it is a {issue_type or 'unknown type'}"
+                raise ValueError(error_msg)
 
             # Get the dynamic field IDs for this Jira instance
             field_ids = self.get_jira_field_ids()
@@ -967,11 +966,13 @@ Description:
             user = self.jira.myself()
             account_id = user.get("accountId")
             if not account_id:
-                raise ValueError("No account ID found in user profile")
+                error_msg = "No account ID found in user profile"
+                raise ValueError(error_msg)
             return str(account_id)  # Ensure we return a string
         except Exception as e:
             logger.error(f"Error getting current user account ID: {str(e)}")
-            raise ValueError(f"Failed to get current user account ID: {str(e)}") from e
+            error_msg = f"Failed to get current user account ID: {str(e)}"
+            raise ValueError(error_msg) from e
 
     def get_issue_comments(self, issue_key: str, limit: int = 50) -> list[dict]:
         """
@@ -1031,41 +1032,47 @@ Description:
 
     def _parse_time_spent(self, time_spent: str) -> int:
         """
-        Parse Jira time format string (e.g., '1h 30m', '1d', '30m') to seconds.
+        Convert a Jira time string (e.g., "1h 30m") to seconds.
 
         Args:
-            time_spent: Time string in Jira format
+            time_spent: String representing time in Jira format (e.g., "1h 30m", "2d")
 
         Returns:
             Time in seconds
         """
         if not time_spent:
-            raise ValueError("Time spent string cannot be empty")
+            error_msg = "Time spent string cannot be empty"
+            raise ValueError(error_msg)
 
         # Define time unit conversions to seconds
-        units = {
+        unit_to_seconds = {
             "w": 7 * 24 * 60 * 60,  # weeks
             "d": 24 * 60 * 60,  # days
             "h": 60 * 60,  # hours
             "m": 60,  # minutes
+            "s": 1,  # seconds
         }
 
-        # Extract all time components (e.g., '1h', '30m')
-        pattern = r"(\d+)([wdhm])"
+        # Regular expression to match time units
+        pattern = r"([\d.]+)([wdhms])"
         matches = re.findall(pattern, time_spent.lower())
 
         if not matches:
-            raise ValueError(
-                f"Invalid time format: {time_spent}. Expected format like '1h 30m', '1d', etc."
-            )
+            error_msg = f"Invalid time format: {time_spent}. Expected format like '1h 30m', '1d', etc."
+            raise ValueError(error_msg)
 
-        # Calculate total seconds
+        # Sum up the total seconds
         total_seconds = 0
         for value, unit in matches:
-            if unit in units:
-                total_seconds += int(value) * units[unit]
+            try:
+                # Convert to float first to handle decimals
+                time_value = float(value)
+                unit_seconds = unit_to_seconds.get(unit, 0)
+                total_seconds += time_value * unit_seconds
+            except (ValueError, TypeError):
+                continue
 
-        return total_seconds
+        return int(total_seconds)
 
     def add_worklog(
         self,

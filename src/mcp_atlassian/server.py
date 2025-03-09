@@ -9,6 +9,7 @@ from mcp.types import Resource, TextContent, Tool
 from pydantic import AnyUrl
 
 from .confluence import ConfluenceFetcher
+from .document_types import Document
 from .jira import JiraFetcher
 from .preprocessing import markdown_to_confluence_storage
 
@@ -140,9 +141,10 @@ async def read_resource(uri: AnyUrl) -> str:
     # Handle Confluence resources
     if uri_str.startswith("confluence://"):
         if not services["confluence"]:
-            raise ValueError(
+            error_msg = (
                 "Confluence is not configured. Please provide Confluence credentials."
             )
+            raise ValueError(error_msg)
         parts = uri_str.replace("confluence://", "").split("/")
 
         # Handle space listing
@@ -155,7 +157,9 @@ async def read_resource(uri: AnyUrl) -> str:
 
             if not documents:
                 # Fallback to regular space pages if no user-contributed pages found
-                documents = confluence_fetcher.get_space_pages(space_key, limit=10)
+                documents = confluence_fetcher.get_space_pages(
+                    space_key, limit=10, convert_to_markdown=True
+                )
 
             content = []
             for doc in documents:
@@ -173,14 +177,16 @@ async def read_resource(uri: AnyUrl) -> str:
             doc = confluence_fetcher.get_page_by_title(space_key, title)
 
             if not doc:
-                raise ValueError(f"Page not found: {title}")
+                error_msg = f"Page not found: {title}"
+                raise ValueError(error_msg)
 
             return doc.page_content
 
     # Handle Jira resources
     elif uri_str.startswith("jira://"):
         if not services["jira"]:
-            raise ValueError("Jira is not configured. Please provide Jira credentials.")
+            error_msg = "Jira is not configured. Please provide Jira credentials."
+            raise ValueError(error_msg)
         parts = uri_str.replace("jira://", "").split("/")
 
         # Handle project listing
@@ -201,7 +207,7 @@ async def read_resource(uri: AnyUrl) -> str:
             content = []
             for issue in issues:
                 key = issue.metadata.get("key", "")
-                title = issue.metadata.get("title", "Untitled")
+                title = issue.metadata.get("title", "")
                 url = issue.metadata.get("url", "")
                 status = issue.metadata.get("status", "")
 
@@ -217,7 +223,8 @@ async def read_resource(uri: AnyUrl) -> str:
             issue = jira_fetcher.get_issue(issue_key)
             return issue.page_content
 
-    raise ValueError(f"Invalid resource URI: {uri}")
+    error_msg = f"Invalid resource URI: {uri}"
+    raise ValueError(error_msg)
 
 
 @app.list_tools()
@@ -685,7 +692,16 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 "body": comment.get("body"),
             }
 
-        def format_issue(doc):
+        def format_issue(doc: Document) -> dict:
+            """
+            Format a Jira issue document for display.
+
+            Args:
+                doc: The Document object containing issue data
+
+            Returns:
+                Formatted issue dictionary with selected fields
+            """
             return {
                 "key": doc.metadata.get("key", ""),
                 "title": doc.metadata.get("title", ""),
@@ -696,7 +712,16 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 "link": doc.metadata.get("link", ""),
             }
 
-        def format_transition(transition):
+        def format_transition(transition: dict) -> dict:
+            """
+            Format a Jira transition for display.
+
+            Args:
+                transition: The raw transition dictionary from Jira
+
+            Returns:
+                Formatted transition dictionary with selected fields
+            """
             return {
                 "id": transition.get("id"),
                 "name": transition.get("name"),
@@ -969,13 +994,16 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             remaining_estimate = arguments.get("remaining_estimate")
 
             if not time_spent:
-                raise ValueError("time_spent is required")
+                error_msg = "time_spent is required"
+                raise ValueError(error_msg)
 
             if not issue_key:
-                raise ValueError("issue_key is required")
+                error_msg = "issue_key is required"
+                raise ValueError(error_msg)
 
             if not jira_fetcher:
-                raise ValueError("Jira is not configured")
+                error_msg = "Jira is not configured"
+                raise ValueError(error_msg)
 
             try:
                 worklog = jira_fetcher.add_worklog(
@@ -986,23 +1014,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                     original_estimate=original_estimate,
                     remaining_estimate=remaining_estimate,
                 )
-
-                # Create a more detailed success message based on what was updated
-                success_message = "Worklog added successfully"
-                if worklog.get("original_estimate_updated"):
-                    success_message += (
-                        f" (original estimate updated to {original_estimate})"
-                    )
-                if worklog.get("remaining_estimate_updated"):
-                    success_message += (
-                        f" (remaining estimate updated to {remaining_estimate})"
-                    )
-
-                result = {
-                    "message": success_message,
-                    "worklog": worklog,
-                    "status": "success",
-                }
+                result = {"success": "true", "worklog": worklog}
                 return [
                     TextContent(
                         type="text",
@@ -1010,24 +1022,14 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                     )
                 ]
             except Exception as e:
-                error_msg = str(e)
-                logger.error(f"Error adding worklog: {error_msg}")
-
-                # Provide more context in the error message for better debugging
-                if "originalEstimate" in error_msg or "timetracking" in error_msg:
-                    error_detail = "There was an issue updating the original estimate. This may be due to permissions or invalid format."
-                elif "adjustEstimate" in error_msg or "newEstimate" in error_msg:
-                    error_detail = "There was an issue updating the remaining estimate. This may be due to permissions or invalid format."
-                else:
-                    error_detail = "There was an issue adding the worklog. Please check the issue exists and you have proper permissions."
-
+                error_message = str(e)
+                logger.error(f"Exception in add_worklog: {error_message}")
                 return [
                     TextContent(
                         type="text",
                         text=json.dumps(
                             {
-                                "error": f"Failed to add worklog: {error_msg}",
-                                "error_detail": error_detail,
+                                "error": error_message,
                                 "status": "error",
                             },
                             indent=2,
@@ -1279,11 +1281,14 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                     )
                 ]
 
-        raise ValueError(f"Unknown tool: {name}")
+        # If we reached here, no tool matched
+        error_msg = f"Unknown tool: {name}"
+        raise ValueError(error_msg)
 
     except Exception as e:
         logger.error(f"Tool execution error: {str(e)}")
-        raise RuntimeError(f"Tool execution failed: {str(e)}") from e
+        error_msg = f"Tool execution failed: {str(e)}"
+        raise RuntimeError(error_msg) from e
 
 
 async def main() -> None:
@@ -1313,7 +1318,8 @@ async def main() -> None:
             )
     except Exception as err:
         logger.error(f"Error running server: {err}")
-        raise RuntimeError(f"Failed to run server: {err}") from err
+        error_msg = f"Failed to run server: {err}"
+        raise RuntimeError(error_msg) from err
 
 
 if __name__ == "__main__":

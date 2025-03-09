@@ -3,7 +3,9 @@ import re
 import tempfile
 import warnings
 from pathlib import Path
+from typing import Any
 
+import requests
 from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 from md2conf.converter import (
@@ -20,7 +22,14 @@ logger = logging.getLogger("mcp-atlassian")
 class TextPreprocessor:
     """Handles text preprocessing for Confluence and Jira content."""
 
-    def __init__(self, base_url: str, confluence_client=None):
+    def __init__(self, base_url: str, confluence_client: Any = None) -> None:
+        """
+        Initialize the text preprocessor.
+
+        Args:
+            base_url: The base URL of the Confluence or Jira instance
+            confluence_client: Optional Confluence client instance
+        """
         self.base_url = base_url.rstrip("/")
         self.confluence_client = confluence_client
 
@@ -49,9 +58,28 @@ class TextPreprocessor:
                         link_tag = user.find_parent("ac:link")
                         if link_tag:
                             link_tag.replace_with(f"@{display_name}")
-                    except Exception as e:
+                    except requests.RequestException as e:
+                        # Network error when fetching user info
                         logger.warning(
-                            f"Could not fetch user info for {account_id}: {e}"
+                            f"Network error fetching user info for {account_id}: {e}"
+                        )
+                        # Fallback: just use the account ID
+                        link_tag = user.find_parent("ac:link")
+                        if link_tag:
+                            link_tag.replace_with(f"@user_{account_id}")
+                    except KeyError as e:
+                        # Missing key in user info response
+                        logger.warning(
+                            f"Missing data in user info for {account_id}: {e}"
+                        )
+                        # Fallback: just use the account ID
+                        link_tag = user.find_parent("ac:link")
+                        if link_tag:
+                            link_tag.replace_with(f"@user_{account_id}")
+                    except Exception as e:
+                        # Other unexpected errors
+                        logger.warning(
+                            f"Unexpected error processing mention for {account_id}: {e}"
                         )
                         # Fallback: just use the account ID
                         link_tag = user.find_parent("ac:link")
@@ -146,8 +174,17 @@ class TextPreprocessor:
                     soup = BeautifulSoup(f"<div>{text}</div>", "html.parser")
                     html = str(soup.div.decode_contents()) if soup.div else text
                     text = md(html)
+            except (AttributeError, TypeError) as e:
+                # Handle parsing errors in BeautifulSoup
+                logger.warning(f"HTML parsing error during conversion to markdown: {e}")
+            except ImportError as e:
+                # Handle missing dependencies
+                logger.warning(
+                    f"Missing dependency for HTML to markdown conversion: {e}"
+                )
             except Exception as e:
-                logger.warning(f"Error converting HTML to markdown: {e}")
+                # Handle other unexpected errors
+                logger.warning(f"Unexpected error converting HTML to markdown: {e}")
         return text
 
     def jira_to_markdown(self, input_text: str) -> str:
@@ -297,7 +334,16 @@ class TextPreprocessor:
         inline_codes = []
 
         # Extract code blocks
-        def save_code_block(match):
+        def save_code_block(match: re.Match) -> str:
+            """
+            Process and save a code block.
+
+            Args:
+                match: Regex match object containing the code block
+
+            Returns:
+                Jira-formatted code block
+            """
             syntax = match.group(1) or ""
             content = match.group(2)
             code = "{code"
@@ -305,14 +351,23 @@ class TextPreprocessor:
                 code += ":" + syntax
             code += "}" + content + "{code}"
             code_blocks.append(code)
-            return code  # Return the actual code block instead of a placeholder
+            return str(code)  # Ensure we return a string
 
         # Extract inline code
-        def save_inline_code(match):
+        def save_inline_code(match: re.Match) -> str:
+            """
+            Process and save inline code.
+
+            Args:
+                match: Regex match object containing the inline code
+
+            Returns:
+                Jira-formatted inline code
+            """
             content = match.group(1)
             code = "{{" + content + "}}"
             inline_codes.append(code)
-            return code  # Return the actual inline code instead of a placeholder
+            return str(code)  # Ensure we return a string
 
         # Save code sections temporarily
         output = re.sub(r"```(\w*)\n([\s\S]+?)```", save_code_block, input_text)
@@ -408,8 +463,16 @@ class TextPreprocessor:
 
         return output
 
-    def _convert_jira_list_to_markdown(self, match) -> str:
-        """Helper method to convert Jira lists to Markdown format."""
+    def _convert_jira_list_to_markdown(self, match: re.Match) -> str:
+        """
+        Helper method to convert Jira lists to Markdown format.
+
+        Args:
+            match: Regex match object containing the Jira list markup
+
+        Returns:
+            Markdown-formatted list item
+        """
         jira_bullets = match.group(1)
         content = match.group(2)
 
@@ -427,23 +490,15 @@ class TextPreprocessor:
         return f"{indent}{prefix} {content}"
 
 
-def markdown_to_confluence_storage(markdown_content):
+def markdown_to_confluence_storage(markdown_content: str) -> str:
     """
     Convert Markdown content to Confluence storage format (XHTML)
 
-    This function uses the markdown-to-confluence library to properly convert
-    Markdown to Confluence storage format. The library handles proper formatting of:
-    - Headings with anchors
-    - Text formatting (bold, italic, etc.)
-    - Lists (ordered and unordered)
-    - Code blocks with syntax highlighting
-    - Tables and other Markdown elements
-
     Args:
-        markdown_content: The markdown content to convert
+        markdown_content: Markdown text to convert
 
     Returns:
-        String in Confluence storage format (XHTML with Confluence macros)
+        Confluence storage format (XHTML) string
     """
     try:
         # First convert markdown to HTML
@@ -475,7 +530,7 @@ def markdown_to_confluence_storage(markdown_content):
             # Convert the element tree back to a string
             storage_format = elements_to_string(root)
 
-            return storage_format
+            return str(storage_format)
         finally:
             # Clean up the temporary directory
             import shutil
@@ -493,4 +548,4 @@ def markdown_to_confluence_storage(markdown_content):
         # This creates a proper Confluence storage format document
         storage_format = f"""<p>{html_content}</p>"""
 
-        return storage_format
+        return str(storage_format)
