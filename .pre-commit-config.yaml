@@ -9,20 +9,6 @@ repos:
     -   id: check-toml
     -   id: debug-statements
 
-# IMPROVEMENT PLAN:
-# Phase 1: Start with basic checks (current) ✓
-# Phase 2: Enable F841 (unused variables) - easy win ✓
-# Phase 3: Enable B (bug-related checks) - add proper exception handling ✓
-# Phase 4: Enable EM (exception message formatting) [COMPLETED]
-# Phase 5: Enable BLE (blind exception catching) [COMPLETED]
-# Phase 6: Enable FBT (boolean function parameters) [COMPLETED]
-# Phase 7: Enable ANN (type annotations) [COMPLETED]
-# Phase 8: Enable stricter mypy checks [COMPLETED]
-# Phase 9: Enable additional Ruff checks [COMPLETED]
-# Phase 10: Next Steps [COMPLETED]
-# Phase 11: Additional Type Safety [COMPLETED]
-# Phase 12: Blind Exception Handling [COMPLETED]
-
 -   repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.9.7
     hooks:
@@ -34,19 +20,6 @@ repos:
     rev: v1.8.0
     hooks:
     -   id: mypy
-        args: [
-            "--ignore-missing-imports",
-            "--allow-untyped-defs",
-            "--allow-untyped-calls",
-            "--allow-incomplete-defs",
-            "--allow-untyped-decorators",
-            # Phase 8: Type checks that need more work (still disabled)
-            "--disable-error-code=valid-type",    # Check types are valid
-            "--disable-error-code=index",         # Check indexing operations
-            "--disable-error-code=unreachable",   # Check for unreachable code
-            "--disable-error-code=assignment",    # Check type compatibility in assignments
-            "--disable-error-code=union-attr",    # Check attribute access on union types
-        ]
         additional_dependencies: [
             'types-beautifulsoup4',
             'types-requests',
