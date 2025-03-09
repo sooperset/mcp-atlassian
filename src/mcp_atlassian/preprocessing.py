@@ -482,10 +482,7 @@ class TextPreprocessor:
 
         # Determine the marker based on the last character
         last_char = jira_bullets[-1]
-        if last_char == "#":
-            prefix = "1."
-        else:
-            prefix = "-"
+        prefix = "1." if last_char == "#" else "-"
 
         return f"{indent}{prefix} {content}"
 

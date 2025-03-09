@@ -58,11 +58,13 @@ def fetcher(mock_env_vars, mock_confluence):
 
 
 def test_init_missing_env_vars():
-    with patch.dict("os.environ", clear=True):
-        with pytest.raises(
+    with (
+        patch.dict("os.environ", clear=True),
+        pytest.raises(
             ValueError, match="Missing required Confluence environment variables"
-        ):
-            ConfluenceFetcher()
+        ),
+    ):
+        ConfluenceFetcher()
 
 
 def test_get_spaces(fetcher, mock_confluence):

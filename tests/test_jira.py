@@ -142,38 +142,42 @@ def test_jira_fetcher_initialization_missing_cloud_credentials():
                 # Missing username and token
             },
             clear=True,  # Clear existing env vars to ensure a clean test environment
-        )
-    ):
-        with pytest.raises(
+        ),
+        pytest.raises(
             ValueError,
             match="Cloud authentication requires JIRA_USERNAME and JIRA_API_TOKEN",
-        ):
-            JiraFetcher()
+        ),
+    ):
+        JiraFetcher()
 
 
 def test_jira_fetcher_initialization_missing_server_token():
     """Test error when server URL is provided but personal token is missing."""
-    with patch.dict(
-        os.environ,
-        {
-            "JIRA_URL": "https://jira.example.com",
-            # Missing personal token
-        },
-    ):
-        with pytest.raises(
+    with (
+        patch.dict(
+            os.environ,
+            {
+                "JIRA_URL": "https://jira.example.com",
+                # Missing personal token
+            },
+        ),
+        pytest.raises(
             ValueError,
             match="Server/Data Center authentication requires JIRA_PERSONAL_TOKEN",
-        ):
-            JiraFetcher()
+        ),
+    ):
+        JiraFetcher()
 
 
 def test_jira_fetcher_initialization_missing_env_vars():
     """Test JiraFetcher initialization with missing environment variables."""
-    with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(
+    with (
+        patch.dict(os.environ, {}, clear=True),
+        pytest.raises(
             ValueError, match="Missing required JIRA_URL environment variable"
-        ):
-            JiraFetcher()
+        ),
+    ):
+        JiraFetcher()
 
 
 def test_parse_date():

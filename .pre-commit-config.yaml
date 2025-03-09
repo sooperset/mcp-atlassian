@@ -39,6 +39,11 @@ repos:
 #     - call-arg: Check arguments in function calls
 #   - We've identified 16 issues with the stricter checks that would require more substantial code changes
 #   - Future PRs will address these more complex type issues
+# Phase 9: Enable additional Ruff checks [NEW]
+#   - Enable checks for unused imports (F401)
+#   - Enable checks for banned APIs (UP015)
+#   - Enable checks for string formatting (SIM)
+#   - Enable checks for print statements (T20)
 
 -   repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.3.0
@@ -55,6 +60,8 @@ repos:
             "--ignore=BLE",   # Blind exception catching - fix in future PRs
             "--ignore=EM",    # Exception message formatting - fix in future PRs
             "--ignore=S",     # Security issues (in tests)
+            # Phase 9: Enable additional rules
+            "--select=F,E,W,I,N,UP,SIM,T20", # F401: unused imports, UP015: banned APIs, SIM: string formatting, T20: print statements
             "--per-file-ignores=tests/*:S101",  # Allow assert in tests
             # Ignore certain B errors in tests
             "--per-file-ignores=tests/*:B017",  # Allow pytest.raises(Exception)
