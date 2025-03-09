@@ -26,8 +26,14 @@ class JiraFetcher:
             error_msg = "Missing required JIRA_URL environment variable"
             raise ValueError(error_msg)
 
-        # Check authentication method
-        is_cloud = os.getenv("JIRA_CLOUD", "true").lower() == "true"
+        # Initialize variables with default values
+        username = ""
+        token = ""
+        personal_token = ""
+
+        # Determine if this is a cloud or server installation based on URL
+        is_cloud = url.endswith(".atlassian.net")
+
         if is_cloud:
             username = os.getenv("JIRA_USERNAME", "")
             token = os.getenv("JIRA_API_TOKEN", "")
@@ -167,9 +173,12 @@ class JiraFetcher:
             logger.warning(
                 f"Direct user lookup failed for '{username}': network error: {str(e)}"
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
             logger.warning(
                 f"Direct user lookup failed for '{username}': unexpected error: {str(e)}"
+            )
+            logger.debug(
+                f"Full exception details for user lookup '{username}':", exc_info=True
             )
 
         return None
@@ -410,16 +419,71 @@ class JiraFetcher:
             # Combine any fields that might be in kwargs into our fields dict
             self._add_custom_fields(fields, kwargs)
 
-        # Update the issue
+        # Check if status is being updated
+        if "status" in fields:
+            return self._update_issue_with_status(issue_key, fields)
+
+        # Regular update (no status change)
         try:
             logger.info(f"Updating issue {issue_key} with fields {fields}")
-            self.jira.update_issue(issue_key, fields)
+            self.jira.issue_update(issue_key, fields=fields)
             # Return the updated issue
             return self.get_issue(issue_key)
         except Exception as e:
             error_msg = f"Error updating issue {issue_key}: {str(e)}"
             logger.error(error_msg)
-            raise ValueError(error_msg) from e
+            raise
+
+    def _update_issue_with_status(
+        self, issue_key: str, fields: dict[str, Any]
+    ) -> Document:
+        """
+        Update an issue that includes a status change, using transitions.
+
+        Args:
+            issue_key: The key of the issue to update
+            fields: Fields to update, including status
+
+        Returns:
+            Document with updated issue info
+        """
+        target_status = fields.pop("status")
+        logger.info(
+            f"Updating issue {issue_key} with status change to '{target_status}'"
+        )
+
+        # Get available transitions
+        transitions = self.jira.get_issue_transitions(issue_key)
+
+        # Find the transition that matches the target status
+        transition_id = None
+        for transition in transitions.get("transitions", []):
+            if (
+                transition.get("to", {}).get("name", "").lower()
+                == target_status.lower()
+            ):
+                transition_id = transition["id"]
+                break
+
+        if not transition_id:
+            error_msg = (
+                f"No transition found for status '{target_status}' on issue {issue_key}"
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        # Create transition data
+        transition_data = {"transition": {"id": transition_id}}
+
+        # Add remaining fields if any
+        if fields:
+            transition_data["fields"] = fields
+
+        # Execute the transition
+        self.jira.issue_transition(issue_key, transition_data)
+
+        # Return the updated issue
+        return self.get_issue(issue_key)
 
     def get_jira_field_ids(self) -> dict[str, str]:
         """
@@ -516,6 +580,8 @@ class JiraFetcher:
             or field_type == "any"
         ) and field_id:
             self.epic_link_field_id = field_id
+            field_ids["epic_link"] = field_id
+            logger.info(f"Found Epic Link field: {original_name} ({field_id})")
 
         # Epic Name field - used for the title of epics
         if (
@@ -703,25 +769,30 @@ class JiraFetcher:
             raise
 
     def _parse_date(self, date_str: str) -> str:
-        """Parse date string to handle various ISO formats."""
-        if not date_str:
-            return ""
+        """
+        Parse a date string into a consistent format (YYYY-MM-DD).
 
-        # Handle various timezone formats
-        if "+0000" in date_str:
-            date_str = date_str.replace("+0000", "+00:00")
-        elif "-0000" in date_str:
-            date_str = date_str.replace("-0000", "+00:00")
-        # Handle other timezone formats like +0900, -0500, etc.
-        elif len(date_str) >= 5 and date_str[-5] in "+-" and date_str[-4:].isdigit():
-            # Insert colon between hours and minutes of timezone
-            date_str = date_str[:-2] + ":" + date_str[-2:]
+        Args:
+            date_str: The date string to parse
 
+        Returns:
+            Formatted date string
+        """
+        # Handle various formats of date strings from Jira
         try:
             date = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
             return date.strftime("%Y-%m-%d")
+        except ValueError as e:
+            # This handles parsing errors in the date format
+            logger.warning(f"Invalid date format for {date_str}: {e}")
+            return date_str
+        except AttributeError as e:
+            # This handles cases where date_str isn't a string
+            logger.warning(f"Invalid date type {type(date_str)}: {e}")
+            return str(date_str)
         except Exception as e:
             logger.warning(f"Error parsing date {date_str}: {e}")
+            logger.debug("Full exception details for date parsing:", exc_info=True)
             return date_str
 
     def get_issue(

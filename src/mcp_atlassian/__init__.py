@@ -57,6 +57,18 @@ def main(
     """MCP Atlassian Server - Jira and Confluence functionality for MCP
 
     Supports both Atlassian Cloud and Jira Server/Data Center deployments.
+
+    Args:
+        verbose: Enable verbose logging output
+        env_file: Path to .env file for configuration
+        confluence_url: Confluence URL
+        confluence_username: Confluence username
+        confluence_token: Confluence API token
+        jira_url: Jira URL
+        jira_username: Jira username/email (for Jira Cloud)
+        jira_token: Jira API token (for Jira Cloud)
+        jira_personal_token: Jira personal access token (for Jira Server/Data Center)
+        jira_ssl_verify: Whether to verify SSL certificates for Jira connections
     """
     # Set up logging based on verbosity
     _setup_logging(verbose)
@@ -135,7 +147,7 @@ def _set_environment_from_args(
         jira_username: Jira username
         jira_token: Jira API token
         jira_personal_token: Jira personal access token
-        jira_ssl_verify: Whether to verify SSL certificates
+        jira_ssl_verify: Whether to verify SSL certificates for Jira connections
     """
     # Set environment variables from command line arguments if provided
     if confluence_url:

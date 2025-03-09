@@ -93,8 +93,15 @@ async def list_resources() -> list[Resource]:
                     for space in spaces.values()
                 ]
             )
-        except Exception as e:
-            logger.error(f"Error fetching Confluence spaces: {str(e)}")
+        except KeyError as e:
+            logger.error(f"Missing key in Confluence spaces data: {str(e)}")
+        except ValueError as e:
+            logger.error(f"Invalid value in Confluence spaces: {str(e)}")
+        except TypeError as e:
+            logger.error(f"Type error when processing Confluence spaces: {str(e)}")
+        except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
+            logger.error(f"Unexpected error fetching Confluence spaces: {str(e)}")
+            logger.debug("Full exception details for Confluence spaces:", exc_info=True)
 
     # Add Jira projects the user is involved with
     if jira_fetcher:
@@ -132,8 +139,15 @@ async def list_resources() -> list[Resource]:
                     for project in projects.values()
                 ]
             )
-        except Exception as e:
-            logger.error(f"Error fetching Jira projects: {str(e)}")
+        except KeyError as e:
+            logger.error(f"Missing key in Jira projects data: {str(e)}")
+        except ValueError as e:
+            logger.error(f"Invalid value in Jira projects: {str(e)}")
+        except TypeError as e:
+            logger.error(f"Type error when processing Jira projects: {str(e)}")
+        except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
+            logger.error(f"Unexpected error fetching Jira projects: {str(e)}")
+            logger.debug("Full exception details for Jira projects:", exc_info=True)
 
     return resources
 
@@ -854,9 +868,22 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Sequence[TextConten
             logger.error(error_msg)
             return [TextContent(type="error", text=error_msg)]
 
-    except Exception as e:
-        error_msg = f"Error executing tool {name}: {str(e)}"
+    except KeyError as e:
+        error_msg = f"Missing required parameter for tool {name}: {str(e)}"
         logger.error(error_msg)
+        return [TextContent(type="error", text=error_msg)]
+    except (ValueError, TypeError) as e:
+        error_msg = f"Invalid parameter value for tool {name}: {str(e)}"
+        logger.error(error_msg)
+        return [TextContent(type="error", text=error_msg)]
+    except AttributeError as e:
+        error_msg = f"Tool execution error for {name}: {str(e)}"
+        logger.error(error_msg)
+        return [TextContent(type="error", text=error_msg)]
+    except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
+        error_msg = f"Unexpected error executing tool {name}: {str(e)}"
+        logger.error(error_msg)
+        logger.debug(f"Full exception details for tool {name}:", exc_info=True)
         return [TextContent(type="error", text=error_msg)]
 
 
@@ -893,14 +920,19 @@ def handle_confluence_search(
     try:
         results = confluence_fetcher.search(query, limit=limit)
         return [TextContent(type="text", text=results)]
-    except Exception as e:
-        logger.error(f"Error searching Confluence: {str(e)}")
-        return [
-            TextContent(
-                text=f"Error searching Confluence: {str(e)}",
-                type="text",
-            )
-        ]
+    except KeyError as e:
+        error_msg = f"Missing key in search parameters or results: {str(e)}"
+        logger.error(error_msg)
+        return [TextContent(type="text", text=error_msg)]
+    except ValueError as e:
+        error_msg = f"Invalid search parameter: {str(e)}"
+        logger.error(error_msg)
+        return [TextContent(type="text", text=error_msg)]
+    except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
+        error_msg = f"Unexpected error searching Confluence: {str(e)}"
+        logger.error(error_msg)
+        logger.debug("Full exception details for Confluence search:", exc_info=True)
+        return [TextContent(type="text", text=error_msg)]
 
 
 def handle_confluence_get_page(
@@ -1114,14 +1146,21 @@ def handle_jira_get_issue(
             issue_key, expand=expand, comment_limit=comment_limit
         )
         return [TextContent(type="text", text=format_issue(doc))]
-    except Exception as e:
-        logger.error(f"Error getting Jira issue: {str(e)}")
-        return [
-            TextContent(
-                text=f"Error getting Jira issue: {str(e)}",
-                type="text",
-            )
-        ]
+    except KeyError as e:
+        error_msg = f"Missing key in Jira issue {issue_key}: {str(e)}"
+        logger.error(error_msg)
+        return [TextContent(type="text", text=error_msg)]
+    except ValueError as e:
+        error_msg = f"Invalid parameter for Jira issue {issue_key}: {str(e)}"
+        logger.error(error_msg)
+        return [TextContent(type="text", text=error_msg)]
+    except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
+        error_msg = f"Unexpected error getting Jira issue {issue_key}: {str(e)}"
+        logger.error(error_msg)
+        logger.debug(
+            f"Full exception details for Jira issue {issue_key}:", exc_info=True
+        )
+        return [TextContent(type="text", text=error_msg)]
 
 
 def handle_jira_search(
@@ -1411,14 +1450,21 @@ def handle_jira_add_worklog(
                 text=f"Worklog added successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}",
             )
         ]
-    except Exception as e:
-        logger.error(f"Error adding worklog: {str(e)}")
-        return [
-            TextContent(
-                text=f"Error adding worklog: {str(e)}",
-                type="text",
-            )
-        ]
+    except KeyError as e:
+        error_msg = f"Missing required field for worklog on {issue_key}: {str(e)}"
+        logger.error(error_msg)
+        return [TextContent(type="text", text=error_msg)]
+    except ValueError as e:
+        error_msg = f"Invalid value for worklog parameter on {issue_key}: {str(e)}"
+        logger.error(error_msg)
+        return [TextContent(type="text", text=error_msg)]
+    except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
+        error_msg = f"Unexpected error adding worklog to {issue_key}: {str(e)}"
+        logger.error(error_msg)
+        logger.debug(
+            f"Full exception details for worklog on {issue_key}:", exc_info=True
+        )
+        return [TextContent(type="text", text=error_msg)]
 
 
 def handle_jira_get_worklog(

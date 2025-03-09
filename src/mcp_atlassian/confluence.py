@@ -71,7 +71,7 @@ class ConfluenceFetcher:
         Args:
             page_id: The ID of the page to retrieve
             convert_to_markdown: When True, returns content in markdown format,
-                                 otherwise returns raw HTML
+                               otherwise returns raw HTML (keyword-only)
 
         Returns:
             Document containing the page content and metadata
@@ -111,7 +111,7 @@ class ConfluenceFetcher:
             space_key: The key of the space containing the page
             title: The title of the page to retrieve
             convert_to_markdown: When True, returns content in markdown format,
-                                 otherwise returns raw HTML
+                               otherwise returns raw HTML (keyword-only)
 
         Returns:
             Document containing the page content and metadata, or None if not found
@@ -170,8 +170,13 @@ class ConfluenceFetcher:
         except requests.RequestException as e:
             logger.error(f"Network error when fetching page: {str(e)}")
             return None
-        except Exception as e:
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error processing page data: {str(e)}")
+            return None
+        except Exception as e:  # noqa: BLE001 - Intentional fallback with full logging
             logger.error(f"Unexpected error fetching page: {str(e)}")
+            # Log the full traceback at debug level for troubleshooting
+            logger.debug("Full exception details:", exc_info=True)
             return None
 
     def get_space_pages(
@@ -190,7 +195,7 @@ class ConfluenceFetcher:
             start: The starting index for pagination
             limit: Maximum number of pages to return
             convert_to_markdown: When True, returns content in markdown format,
-                                 otherwise returns raw HTML
+                               otherwise returns raw HTML (keyword-only)
 
         Returns:
             List of Document objects containing page content and metadata
@@ -239,7 +244,7 @@ class ConfluenceFetcher:
         Args:
             page_id: The ID of the page to get comments from
             return_markdown: When True, returns content in markdown format,
-                            otherwise returns raw HTML
+                           otherwise returns raw HTML (keyword-only)
 
         Returns:
             List of Document objects containing comment content and metadata
@@ -284,7 +289,16 @@ class ConfluenceFetcher:
         return comment_documents
 
     def search(self, cql: str, limit: int = 10) -> list[Document]:
-        """Search content using Confluence Query Language (CQL)."""
+        """
+        Search content using Confluence Query Language (CQL).
+
+        Args:
+            cql: Confluence Query Language string
+            limit: Maximum number of results to return
+
+        Returns:
+            List of Document objects containing search results
+        """
         try:
             results = self.confluence.cql(cql=cql, limit=limit)
             documents = []
@@ -309,8 +323,18 @@ class ConfluenceFetcher:
                     )
 
             return documents
-        except Exception as e:
-            logger.error(f"Search failed with error: {str(e)}")
+        except KeyError as e:
+            logger.error(f"Missing key in search results: {str(e)}")
+            return []
+        except requests.RequestException as e:
+            logger.error(f"Network error during search: {str(e)}")
+            return []
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error processing search results: {str(e)}")
+            return []
+        except Exception as e:  # noqa: BLE001 - Intentional fallback with full logging
+            logger.error(f"Unexpected error during search: {str(e)}")
+            logger.debug("Full exception details for search:", exc_info=True)
             return []
 
     def create_page(
@@ -349,6 +373,7 @@ class ConfluenceFetcher:
         page_id: str,
         title: str,
         body: str,
+        *,
         is_minor_edit: bool = False,
         version_comment: str = "",
     ) -> Document:
@@ -359,8 +384,9 @@ class ConfluenceFetcher:
             page_id: ID of the page to update
             title: New page title
             body: New page content in Confluence storage format
-            is_minor_edit: Whether this update is a minor edit
-            version_comment: Optional comment for the version history
+            is_minor_edit: Whether this update is a minor edit that shouldn't
+                          notify watchers (keyword-only)
+            version_comment: Optional comment for the version history (keyword-only)
 
         Returns:
             Document representing the updated page
@@ -439,6 +465,18 @@ class ConfluenceFetcher:
                     }
 
             return spaces
-        except Exception as e:
-            logger.error(f"Error getting user contributed spaces: {str(e)}")
+        except KeyError as e:
+            logger.error(f"Missing key in contributed spaces data: {str(e)}")
+            return {}
+        except requests.RequestException as e:
+            logger.error(f"Network error when fetching contributed spaces: {str(e)}")
+            return {}
+        except (ValueError, TypeError, IndexError) as e:
+            logger.error(f"Error processing contributed spaces data: {str(e)}")
+            return {}
+        except Exception as e:  # noqa: BLE001 - Intentional fallback with full logging
+            logger.error(f"Unexpected error getting user contributed spaces: {str(e)}")
+            logger.debug(
+                "Full exception details for contributed spaces:", exc_info=True
+            )
             return {}

@@ -5,6 +5,7 @@ import warnings
 from pathlib import Path
 from typing import Any, Protocol
 
+import requests
 from bs4 import BeautifulSoup, Tag
 from markdownify import markdownify as md
 from md2conf.converter import (
@@ -79,11 +80,19 @@ class TextPreprocessor:
         Args:
             soup: BeautifulSoup object containing HTML
         """
-        # Find all ac:link elements with ac:link-body that are user mentions
-        user_mentions = soup.find_all("ac:link", attrs={"ac:schema-version": "1"})
+        # Find all ac:link elements that might contain user mentions
+        user_mentions = soup.find_all("ac:link")
 
         for user_element in user_mentions:
-            # Get the account ID from the ri:account-id attribute
+            user_ref = user_element.find("ri:user")
+            if user_ref and user_ref.get("ri:account-id"):
+                # Case 1: Direct user reference without link-body
+                account_id = user_ref.get("ri:account-id")
+                if isinstance(account_id, str):
+                    self._replace_user_mention(user_element, account_id)
+                    continue
+
+            # Case 2: User reference with link-body containing @
             link_body = user_element.find("ac:link-body")
             if link_body and "@" in link_body.get_text(strip=True):
                 user_ref = user_element.find("ri:user")
@@ -113,8 +122,20 @@ class TextPreprocessor:
                     return
             # If we don't have a confluence client or couldn't get user details, use fallback
             self._use_fallback_user_mention(user_element, account_id)
-        except Exception as e:
-            logger.warning(f"Error processing user mention: {str(e)}")
+        except KeyError as e:
+            logger.warning(f"Missing key in user details for {account_id}: {str(e)}")
+            self._use_fallback_user_mention(user_element, account_id)
+        except (AttributeError, TypeError) as e:
+            logger.warning(f"Error parsing user data for {account_id}: {str(e)}")
+            self._use_fallback_user_mention(user_element, account_id)
+        except requests.RequestException as e:
+            logger.warning(
+                f"Network error fetching user details for {account_id}: {str(e)}"
+            )
+            self._use_fallback_user_mention(user_element, account_id)
+        except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
+            logger.warning(f"Unexpected error processing user mention: {str(e)}")
+            logger.debug("Full exception details for user mention:", exc_info=True)
             self._use_fallback_user_mention(user_element, account_id)
 
     def _use_fallback_user_mention(self, user_element: Tag, account_id: str) -> None:
@@ -155,15 +176,35 @@ class TextPreprocessor:
         return text.strip()
 
     def _process_mentions(self, text: str, pattern: str) -> str:
-        """Process user mentions in text."""
+        """
+        Process user mentions in text.
+
+        Args:
+            text: The text containing mentions
+            pattern: Regular expression pattern to match mentions
+
+        Returns:
+            Text with mentions replaced with display names
+        """
         mentions = re.findall(pattern, text)
         for account_id in mentions:
             try:
                 # Note: This is a placeholder - actual user fetching should be injected
                 display_name = f"User:{account_id}"
                 text = text.replace(f"[~accountid:{account_id}]", display_name)
-            except Exception as e:
-                logger.error(f"Error getting user info for {account_id}: {str(e)}")
+            except (TypeError, ValueError) as e:
+                logger.error(f"Error formatting mention for {account_id}: {str(e)}")
+            except re.error as e:
+                logger.error(
+                    f"Regex error processing mention for {account_id}: {str(e)}"
+                )
+            except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
+                logger.error(
+                    f"Unexpected error processing mention for {account_id}: {str(e)}"
+                )
+                logger.debug(
+                    "Full exception details for mention processing:", exc_info=True
+                )
         return text
 
     def _process_smart_links(self, text: str) -> str:
@@ -216,9 +257,17 @@ class TextPreprocessor:
                 logger.warning(
                     f"Missing dependency for HTML to markdown conversion: {e}"
                 )
-            except Exception as e:
+            except (ValueError, NameError) as e:
+                # Handle value or name errors
+                logger.warning(
+                    f"Error in values during HTML to markdown conversion: {e}"
+                )
+            except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
                 # Handle other unexpected errors
                 logger.warning(f"Unexpected error converting HTML to markdown: {e}")
+                logger.debug(
+                    "Full exception details for HTML conversion:", exc_info=True
+                )
         return text
 
     def jira_to_markdown(self, input_text: str) -> str:

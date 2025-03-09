@@ -247,7 +247,7 @@ def test_update_page(fetcher, mock_confluence):
     body = "<p>Updated content</p>"
     minor_edit = True
 
-    document = fetcher.update_page(page_id, title, body, minor_edit)
+    document = fetcher.update_page(page_id, title, body, is_minor_edit=minor_edit)
 
     # First it should get the current page to get the version number
     # We don't check the exact parameters since they may include expand parameters
@@ -276,7 +276,9 @@ def test_update_page_with_version_comment(fetcher, mock_confluence):
     minor_edit = False
     version_comment = "Updated with new information"
 
-    document = fetcher.update_page(page_id, title, body, minor_edit, version_comment)
+    document = fetcher.update_page(
+        page_id, title, body, is_minor_edit=minor_edit, version_comment=version_comment
+    )
 
     # First it should get the current page
     assert mock_confluence.get_page_by_id.call_args[1]["page_id"] == page_id
