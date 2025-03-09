@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from mcp.server import Server
@@ -23,8 +23,13 @@ logging.basicConfig(
 logger = logging.getLogger("mcp-atlassian")
 logging.getLogger("mcp.server.lowlevel.server").setLevel(logging.INFO)
 
+# Type aliases for formatter functions
+CommentFormatter = Callable[[dict[str, Any]], dict[str, Any]]
+IssueFormatter = Callable[[Document], dict[str, Any]]
+TransitionFormatter = Callable[[dict[str, Any]], dict[str, Any]]
 
-def get_available_services():
+
+def get_available_services() -> dict[str, bool | None]:
     """Determine which services are available based on environment variables."""
     confluence_vars = all(
         [
@@ -140,91 +145,179 @@ async def read_resource(uri: AnyUrl) -> str:
 
     # Handle Confluence resources
     if uri_str.startswith("confluence://"):
-        if not services["confluence"]:
-            error_msg = (
-                "Confluence is not configured. Please provide Confluence credentials."
-            )
-            raise ValueError(error_msg)
-        parts = uri_str.replace("confluence://", "").split("/")
-
-        # Handle space listing
-        if len(parts) == 1:
-            space_key = parts[0]
-
-            # Use CQL to find recently updated pages in this space
-            cql = f'space = "{space_key}" AND contributor = currentUser() ORDER BY lastmodified DESC'
-            documents = confluence_fetcher.search(cql=cql, limit=20)
-
-            if not documents:
-                # Fallback to regular space pages if no user-contributed pages found
-                documents = confluence_fetcher.get_space_pages(
-                    space_key, limit=10, convert_to_markdown=True
-                )
-
-            content = []
-            for doc in documents:
-                title = doc.metadata.get("title", "Untitled")
-                url = doc.metadata.get("url", "")
-
-                content.append(f"# [{title}]({url})\n\n{doc.page_content}\n\n---")
-
-            return "\n\n".join(content)
-
-        # Handle specific page
-        elif len(parts) >= 3 and parts[1] == "pages":
-            space_key = parts[0]
-            title = parts[2]
-            doc = confluence_fetcher.get_page_by_title(space_key, title)
-
-            if not doc:
-                error_msg = f"Page not found: {title}"
-                raise ValueError(error_msg)
-
-            return doc.page_content
+        return _handle_confluence_resource(uri_str)
 
     # Handle Jira resources
     elif uri_str.startswith("jira://"):
-        if not services["jira"]:
-            error_msg = "Jira is not configured. Please provide Jira credentials."
-            raise ValueError(error_msg)
-        parts = uri_str.replace("jira://", "").split("/")
+        return _handle_jira_resource(uri_str)
 
-        # Handle project listing
-        if len(parts) == 1:
-            project_key = parts[0]
-
-            # Get current user's account ID
-            account_id = jira_fetcher.get_current_user_account_id()
-
-            # Use JQL to find issues in this project that the user is involved with
-            jql = f"project = {project_key} AND (assignee = {account_id} OR reporter = {account_id}) ORDER BY updated DESC"
-            issues = jira_fetcher.search_issues(jql=jql, limit=20)
-
-            if not issues:
-                # Fallback to recent issues if no user-related issues found
-                issues = jira_fetcher.get_project_issues(project_key, limit=10)
-
-            content = []
-            for issue in issues:
-                key = issue.metadata.get("key", "")
-                title = issue.metadata.get("title", "")
-                url = issue.metadata.get("url", "")
-                status = issue.metadata.get("status", "")
-
-                content.append(
-                    f"# [{key}: {title}]({url})\nStatus: {status}\n\n{issue.page_content}\n\n---"
-                )
-
-            return "\n\n".join(content)
-
-        # Handle specific issue
-        elif len(parts) >= 3 and parts[1] == "issues":
-            issue_key = parts[2]
-            issue = jira_fetcher.get_issue(issue_key)
-            return issue.page_content
-
+    # Invalid resource URI
     error_msg = f"Invalid resource URI: {uri}"
     raise ValueError(error_msg)
+
+
+def _handle_confluence_resource(uri_str: str) -> str:
+    """
+    Handle reading Confluence resources.
+
+    Args:
+        uri_str: The URI string for the Confluence resource
+
+    Returns:
+        The content of the resource
+
+    Raises:
+        ValueError: If Confluence is not configured or the resource is not found
+    """
+    if not services["confluence"]:
+        error_msg = (
+            "Confluence is not configured. Please provide Confluence credentials."
+        )
+        raise ValueError(error_msg)
+
+    parts = uri_str.replace("confluence://", "").split("/")
+
+    # Handle space listing
+    if len(parts) == 1:
+        return _handle_confluence_space(parts[0])
+
+    # Handle specific page
+    elif len(parts) >= 3 and parts[1] == "pages":
+        return _handle_confluence_page(parts[0], parts[2])
+
+    # Invalid Confluence resource
+    error_msg = f"Invalid Confluence resource URI: {uri_str}"
+    raise ValueError(error_msg)
+
+
+def _handle_confluence_space(space_key: str) -> str:
+    """
+    Handle reading a Confluence space.
+
+    Args:
+        space_key: The key of the space to read
+
+    Returns:
+        Formatted content of pages in the space
+    """
+    # Use CQL to find recently updated pages in this space
+    cql = f'space = "{space_key}" AND contributor = currentUser() ORDER BY lastmodified DESC'
+    documents = confluence_fetcher.search(cql=cql, limit=20)
+
+    if not documents:
+        # Fallback to regular space pages if no user-contributed pages found
+        documents = confluence_fetcher.get_space_pages(
+            space_key, limit=10, convert_to_markdown=True
+        )
+
+    content = []
+    for doc in documents:
+        title = doc.metadata.get("title", "Untitled")
+        url = doc.metadata.get("url", "")
+        content.append(f"# [{title}]({url})\n\n{doc.page_content}\n\n---")
+
+    return "\n\n".join(content)
+
+
+def _handle_confluence_page(space_key: str, title: str) -> str:
+    """
+    Handle reading a specific Confluence page.
+
+    Args:
+        space_key: The key of the space containing the page
+        title: The title of the page to read
+
+    Returns:
+        Content of the page
+
+    Raises:
+        ValueError: If the page is not found
+    """
+    doc = confluence_fetcher.get_page_by_title(space_key, title)
+    if not doc:
+        error_msg = f"Page not found: {title}"
+        raise ValueError(error_msg)
+    return doc.page_content
+
+
+def _handle_jira_resource(uri_str: str) -> str:
+    """
+    Handle reading Jira resources.
+
+    Args:
+        uri_str: The URI string for the Jira resource
+
+    Returns:
+        The content of the resource
+
+    Raises:
+        ValueError: If Jira is not configured or the resource is not found
+    """
+    if not services["jira"]:
+        error_msg = "Jira is not configured. Please provide Jira credentials."
+        raise ValueError(error_msg)
+
+    parts = uri_str.replace("jira://", "").split("/")
+
+    # Handle project listing
+    if len(parts) == 1:
+        return _handle_jira_project(parts[0])
+
+    # Handle specific issue
+    elif len(parts) >= 3 and parts[1] == "issues":
+        return _handle_jira_issue(parts[2])
+
+    # Invalid Jira resource
+    error_msg = f"Invalid Jira resource URI: {uri_str}"
+    raise ValueError(error_msg)
+
+
+def _handle_jira_project(project_key: str) -> str:
+    """
+    Handle reading a Jira project.
+
+    Args:
+        project_key: The key of the project to read
+
+    Returns:
+        Formatted content of issues in the project
+    """
+    # Get current user's account ID
+    account_id = jira_fetcher.get_current_user_account_id()
+
+    # Use JQL to find issues in this project that the user is involved with
+    jql = f"project = {project_key} AND (assignee = {account_id} OR reporter = {account_id}) ORDER BY updated DESC"
+    issues = jira_fetcher.search_issues(jql=jql, limit=20)
+
+    if not issues:
+        # Fallback to recent issues if no user-related issues found
+        issues = jira_fetcher.get_project_issues(project_key, limit=10)
+
+    content = []
+    for issue in issues:
+        key = issue.metadata.get("key", "")
+        title = issue.metadata.get("title", "")
+        url = issue.metadata.get("url", "")
+        status = issue.metadata.get("status", "")
+        content.append(
+            f"# [{key}: {title}]({url})\nStatus: {status}\n\n{issue.page_content}\n\n---"
+        )
+
+    return "\n\n".join(content)
+
+
+def _handle_jira_issue(issue_key: str) -> str:
+    """
+    Handle reading a specific Jira issue.
+
+    Args:
+        issue_key: The key of the issue to read
+
+    Returns:
+        Content of the issue
+    """
+    issue = jira_fetcher.get_issue(issue_key)
+    return issue.page_content
 
 
 @app.list_tools()
@@ -671,7 +764,7 @@ async def list_tools() -> list[Tool]:
 
 
 @app.call_tool()
-async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
+async def call_tool(name: str, arguments: dict[str, Any]) -> Sequence[TextContent]:
     """Handle tool calls for Confluence and Jira operations."""
     try:
         # Helper functions for formatting results
@@ -728,567 +821,771 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 "to_status": transition.get("to", {}).get("name"),
             }
 
-        # Confluence operations
-        if name == "confluence_search":
-            limit = min(int(arguments.get("limit", 10)), 50)
-            documents = confluence_fetcher.search(arguments["query"], limit)
-            search_results = [
-                {
-                    "page_id": doc.metadata["page_id"],
-                    "title": doc.metadata["title"],
-                    "space": doc.metadata["space"],
-                    "url": doc.metadata["url"],
-                    "last_modified": doc.metadata["last_modified"],
-                    "type": doc.metadata["type"],
-                    "excerpt": doc.page_content,
-                }
-                for doc in documents
-            ]
+        # Dispatch to the appropriate handler based on the tool name
+        tool_handlers = {
+            # Confluence tools
+            "confluence_search": handle_confluence_search,
+            "confluence_get_page": handle_confluence_get_page,
+            "confluence_get_comments": handle_confluence_get_comments,
+            "confluence_create_page": handle_confluence_create_page,
+            "confluence_update_page": handle_confluence_update_page,
+            # Jira tools
+            "jira_get_issue": handle_jira_get_issue,
+            "jira_search": handle_jira_search,
+            "jira_get_project_issues": handle_jira_get_project_issues,
+            "jira_create_issue": handle_jira_create_issue,
+            "jira_update_issue": handle_jira_update_issue,
+            "jira_delete_issue": handle_jira_delete_issue,
+            "jira_add_comment": handle_jira_add_comment,
+            "jira_add_worklog": handle_jira_add_worklog,
+            "jira_get_worklog": handle_jira_get_worklog,
+            "jira_get_transitions": handle_jira_get_transitions,
+            "jira_transition_issue": handle_jira_transition_issue,
+            "jira_link_to_epic": handle_jira_link_to_epic,
+            "jira_get_epic_issues": handle_jira_get_epic_issues,
+        }
 
-            return [
-                TextContent(
-                    type="text",
-                    text=json.dumps(search_results, indent=2, ensure_ascii=False),
-                )
-            ]
-
-        elif name == "confluence_get_page":
-            doc = confluence_fetcher.get_page_content(arguments["page_id"])
-            include_metadata = arguments.get("include_metadata", True)
-
-            if include_metadata:
-                result = {"content": doc.page_content, "metadata": doc.metadata}
-            else:
-                result = {"content": doc.page_content}
-
-            return [
-                TextContent(
-                    type="text", text=json.dumps(result, indent=2, ensure_ascii=False)
-                )
-            ]
-
-        elif name == "confluence_get_comments":
-            comments = confluence_fetcher.get_page_comments(arguments["page_id"])
-            formatted_comments = [format_comment(comment) for comment in comments]
-
-            return [
-                TextContent(
-                    type="text",
-                    text=json.dumps(formatted_comments, indent=2, ensure_ascii=False),
-                )
-            ]
-
-        elif name == "confluence_create_page":
-            # Convert markdown content to HTML storage format
-            space_key = arguments["space_key"]
-            title = arguments["title"]
-            content = arguments["content"]
-            parent_id = arguments.get("parent_id")
-
-            # Convert markdown to Confluence storage format
-            storage_format = markdown_to_confluence_storage(content)
-
-            # Create the page
-            doc = confluence_fetcher.create_page(
-                space_key=space_key,
-                title=title,
-                body=storage_format,  # Now using the converted storage format
-                parent_id=parent_id,
+        if name in tool_handlers:
+            return tool_handlers[name](
+                arguments, format_comment, format_issue, format_transition
             )
-
-            result = {
-                "page_id": doc.metadata["page_id"],
-                "title": doc.metadata["title"],
-                "space_key": doc.metadata["space_key"],
-                "url": doc.metadata["url"],
-                "version": doc.metadata["version"],
-                "content": doc.page_content[:500] + "..."
-                if len(doc.page_content) > 500
-                else doc.page_content,
-            }
-
-            return [
-                TextContent(
-                    type="text",
-                    text=f"Page created successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}",
-                )
-            ]
-
-        elif name == "confluence_update_page":
-            page_id = arguments["page_id"]
-            title = arguments["title"]
-            content = arguments["content"]
-            minor_edit = arguments.get("minor_edit", False)
-
-            # Convert markdown to Confluence storage format
-            storage_format = markdown_to_confluence_storage(content)
-
-            # Update the page
-            doc = confluence_fetcher.update_page(
-                page_id=page_id,
-                title=title,
-                body=storage_format,  # Now using the converted storage format
-                minor_edit=minor_edit,
-                version_comment=arguments.get("version_comment", ""),
-            )
-
-            result = {
-                "page_id": doc.metadata["page_id"],
-                "title": doc.metadata["title"],
-                "space_key": doc.metadata["space_key"],
-                "url": doc.metadata["url"],
-                "version": doc.metadata["version"],
-                "content": doc.page_content[:500] + "..."
-                if len(doc.page_content) > 500
-                else doc.page_content,
-            }
-
-            return [
-                TextContent(
-                    type="text",
-                    text=f"Page updated successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}",
-                )
-            ]
-
-        # Jira operations
-        elif name == "jira_get_issue":
-            doc = jira_fetcher.get_issue(
-                arguments["issue_key"],
-                expand=arguments.get("expand"),
-                comment_limit=arguments.get("comment_limit"),
-            )
-            result = {"content": doc.page_content, "metadata": doc.metadata}
-            return [
-                TextContent(
-                    type="text", text=json.dumps(result, indent=2, ensure_ascii=False)
-                )
-            ]
-
-        elif name == "jira_search":
-            limit = min(int(arguments.get("limit", 10)), 50)
-
-            # Get requested fields and ensure we include necessary fields for parsing
-            requested_fields = arguments.get("fields", "*all")
-            if requested_fields != "*all" and requested_fields != "*navigable":
-                # Parse comma-separated field list
-                field_list = [f.strip() for f in requested_fields.split(",")]
-
-                # Add required fields if they're not already included
-                required_fields = ["issuetype", "status", "created", "summary"]
-                for required in required_fields:
-                    if required not in field_list:
-                        field_list.append(required)
-
-                # Rebuild the fields string
-                requested_fields = ",".join(field_list)
-                logger.debug(f"Expanded requested fields to: {requested_fields}")
-
-            documents = jira_fetcher.search_issues(
-                arguments["jql"], fields=requested_fields, limit=limit
-            )
-            search_results = [format_issue(doc) for doc in documents]
-            return [
-                TextContent(
-                    type="text",
-                    text=json.dumps(search_results, indent=2, ensure_ascii=False),
-                )
-            ]
-
-        elif name == "jira_get_project_issues":
-            limit = min(int(arguments.get("limit", 10)), 50)
-            documents = jira_fetcher.get_project_issues(
-                arguments["project_key"], limit=limit
-            )
-            project_issues = [format_issue(doc) for doc in documents]
-            return [
-                TextContent(
-                    type="text",
-                    text=json.dumps(project_issues, indent=2, ensure_ascii=False),
-                )
-            ]
-
-        elif name == "jira_create_issue":
-            project_key = arguments["project_key"]
-            summary = arguments["summary"]
-            issue_type = arguments["issue_type"]
-            description = arguments.get("description", "")
-            assignee = arguments.get("assignee")
-
-            # Any additional fields come in as a dictionary
-            fields = {}
-            for key in arguments:
-                if key not in [
-                    "project_key",
-                    "summary",
-                    "issue_type",
-                    "description",
-                    "assignee",
-                ]:
-                    fields[key] = arguments[key]
-
-            issue = jira_fetcher.create_issue(
-                project_key=project_key,
-                summary=summary,
-                issue_type=issue_type,
-                description=description,
-                assignee=assignee,
-                **fields,
-            )
-            result = json.dumps(
-                {"content": issue.page_content, "metadata": issue.metadata},
-                indent=2,
-                ensure_ascii=False,
-            )
-            return [
-                TextContent(type="text", text=f"Issue created successfully:\n{result}")
-            ]
-
-        elif name == "jira_update_issue":
-            fields = json.loads(arguments["fields"])
-            additional_fields = json.loads(arguments.get("additional_fields", "{}"))
-
-            doc = jira_fetcher.update_issue(
-                issue_key=arguments["issue_key"], fields=fields, **additional_fields
-            )
-            result = json.dumps(
-                {"content": doc.page_content, "metadata": doc.metadata},
-                indent=2,
-                ensure_ascii=False,
-            )
-            return [
-                TextContent(type="text", text=f"Issue updated successfully:\n{result}")
-            ]
-
-        elif name == "jira_delete_issue":
-            issue_key = arguments["issue_key"]
-            deleted = jira_fetcher.delete_issue(issue_key)
-            result = {
-                "message": f"Issue {issue_key} has been deleted successfully.",
-                "success": str(
-                    deleted
-                ),  # Convert bool to string to maintain consistent types
-            }
-            return [
-                TextContent(
-                    type="text", text=json.dumps(result, indent=2, ensure_ascii=False)
-                )
-            ]
-
-        elif name == "jira_add_comment":
-            comment = jira_fetcher.add_comment(
-                arguments["issue_key"], arguments["comment"]
-            )
-            result = {"message": "Comment added successfully", "comment": comment}
-            return [
-                TextContent(
-                    type="text", text=json.dumps(result, indent=2, ensure_ascii=False)
-                )
-            ]
-
-        elif name == "jira_add_worklog":
-            issue_key = arguments["issue_key"]
-            time_spent = arguments["time_spent"]
-            comment = arguments.get("comment")
-            started = arguments.get("started")
-            original_estimate = arguments.get("original_estimate")
-            remaining_estimate = arguments.get("remaining_estimate")
-
-            if not time_spent:
-                error_msg = "time_spent is required"
-                raise ValueError(error_msg)
-
-            if not issue_key:
-                error_msg = "issue_key is required"
-                raise ValueError(error_msg)
-
-            if not jira_fetcher:
-                error_msg = "Jira is not configured"
-                raise ValueError(error_msg)
-
-            try:
-                worklog = jira_fetcher.add_worklog(
-                    issue_key=issue_key,
-                    time_spent=time_spent,
-                    comment=comment,
-                    started=started,
-                    original_estimate=original_estimate,
-                    remaining_estimate=remaining_estimate,
-                )
-                result = {"success": "true", "worklog": worklog}
-                return [
-                    TextContent(
-                        type="text",
-                        text=json.dumps(result, indent=2, ensure_ascii=False),
-                    )
-                ]
-            except Exception as e:
-                error_message = str(e)
-                logger.error(f"Exception in add_worklog: {error_message}")
-                return [
-                    TextContent(
-                        type="text",
-                        text=json.dumps(
-                            {
-                                "error": error_message,
-                                "status": "error",
-                            },
-                            indent=2,
-                            ensure_ascii=False,
-                        ),
-                    )
-                ]
-
-        elif name == "jira_get_worklog":
-            issue_key = arguments["issue_key"]
-
-            if not issue_key:
-                raise ValueError("issue_key is required")
-
-            if not jira_fetcher:
-                raise ValueError("Jira is not configured")
-
-            try:
-                worklogs = jira_fetcher.get_worklogs(issue_key)
-                result = {"worklogs": json.dumps(worklogs)}
-                return [
-                    TextContent(
-                        type="text",
-                        text=json.dumps(result, indent=2, ensure_ascii=False),
-                    )
-                ]
-            except Exception as e:
-                error_msg = str(e)
-                logger.error(f"Error getting worklogs: {error_msg}")
-                return [
-                    TextContent(
-                        type="text",
-                        text=json.dumps(
-                            {
-                                "error": f"Failed to get worklogs: {error_msg}",
-                                "status": "error",
-                            },
-                            indent=2,
-                            ensure_ascii=False,
-                        ),
-                    )
-                ]
-
-        elif name == "jira_link_to_epic":
-            issue_key = arguments["issue_key"]
-            epic_key = arguments["epic_key"]
-            linked_issue = jira_fetcher.link_issue_to_epic(issue_key, epic_key)
-            result = {
-                "message": f"Issue {issue_key} has been linked to epic {epic_key}.",
-                "issue": {
-                    "key": linked_issue.metadata["key"],
-                    "title": linked_issue.metadata["title"],
-                    "type": linked_issue.metadata["type"],
-                    "status": linked_issue.metadata["status"],
-                    "link": linked_issue.metadata["link"],
-                },
-            }
-            return [
-                TextContent(
-                    type="text", text=json.dumps(result, indent=2, ensure_ascii=False)
-                )
-            ]
-
-        elif name == "jira_get_epic_issues":
-            epic_key = arguments["epic_key"]
-            limit = min(int(arguments.get("limit", 10)), 50)
-            documents = jira_fetcher.get_epic_issues(epic_key, limit=limit)
-            epic_issues = [format_issue(doc) for doc in documents]
-            return [
-                TextContent(
-                    type="text",
-                    text=json.dumps(epic_issues, indent=2, ensure_ascii=False),
-                )
-            ]
-
-        elif name == "jira_get_transitions":
-            issue_key = arguments["issue_key"]
-            transitions = jira_fetcher.get_available_transitions(issue_key)
-            transitions_result = [
-                format_transition(transition) for transition in transitions
-            ]
-            return [
-                TextContent(
-                    type="text",
-                    text=json.dumps(transitions_result, indent=2, ensure_ascii=False),
-                )
-            ]
-
-        elif name == "jira_transition_issue":
-            import base64
-
-            import httpx
-
-            issue_key = arguments["issue_key"]
-            transition_id = arguments["transition_id"]
-
-            # Convert transition_id to string if it's not already
-            if not isinstance(transition_id, str):
-                transition_id = str(transition_id)
-
-            # Get Jira API credentials from environment/config
-            jira_url = jira_fetcher.config.url.rstrip("/")
-            username = jira_fetcher.config.username
-            api_token = jira_fetcher.config.api_token
-
-            # Construct minimal transition payload
-            payload = {"transition": {"id": transition_id}}
-
-            # Add fields if provided
-            if "fields" in arguments:
-                try:
-                    fields = json.loads(arguments.get("fields", "{}"))
-                    if fields and isinstance(fields, dict):
-                        payload["fields"] = fields
-                except Exception as e:
-                    return [
-                        TextContent(
-                            type="text",
-                            text=json.dumps(
-                                {
-                                    "error": f"Invalid fields format: {str(e)}",
-                                    "status": "error",
-                                },
-                                indent=2,
-                                ensure_ascii=False,
-                            ),
-                        )
-                    ]
-
-            # Add comment if provided
-            if "comment" in arguments and arguments["comment"]:
-                comment = arguments["comment"]
-                if not isinstance(comment, str):
-                    comment = str(comment)
-
-                payload["update"] = {"comment": [{"add": {"body": comment}}]}
-
-            # Create auth header
-            auth_str = f"{username}:{api_token}"
-            auth_bytes = auth_str.encode("ascii")
-            auth_b64 = base64.b64encode(auth_bytes).decode("ascii")
-
-            # Prepare headers
-            headers = {
-                "Authorization": f"Basic {auth_b64}",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            }
-
-            # Log entire request for debugging
-            logger.info(
-                f"Sending transition request to {jira_url}/rest/api/2/issue/{issue_key}/transitions"
-            )
-            logger.info(f"Headers: {headers}")
-            logger.info(f"Payload: {payload}")
-
-            try:
-                # Make direct HTTP request
-                transition_url = f"{jira_url}/rest/api/2/issue/{issue_key}/transitions"
-                response = httpx.post(
-                    transition_url, json=payload, headers=headers, timeout=30.0
-                )
-
-                # Check response
-                if response.status_code >= 400:
-                    return [
-                        TextContent(
-                            type="text",
-                            text=json.dumps(
-                                {
-                                    "error": f"Jira API error: {response.status_code} - {response.text}",
-                                    "status": "error",
-                                },
-                                indent=2,
-                                ensure_ascii=False,
-                            ),
-                        )
-                    ]
-
-                # Now fetch the updated issue - also using direct HTTP
-                issue_url = f"{jira_url}/rest/api/2/issue/{issue_key}"
-                issue_response = httpx.get(issue_url, headers=headers, timeout=30.0)
-
-                if issue_response.status_code >= 400:
-                    return [
-                        TextContent(
-                            type="text",
-                            text=json.dumps(
-                                {
-                                    "error": f"Failed to fetch updated issue: {issue_response.status_code} - {issue_response.text}",
-                                    "status": "error",
-                                },
-                                indent=2,
-                                ensure_ascii=False,
-                            ),
-                        )
-                    ]
-
-                # Parse and return issue data
-                issue_data = issue_response.json()
-
-                # Extract essential issue information
-                status = issue_data["fields"]["status"]["name"]
-                summary = issue_data["fields"].get("summary", "")
-                issue_type = issue_data["fields"]["issuetype"]["name"]
-
-                # Clean and process description text if available
-                description = ""
-                if issue_data["fields"].get("description"):
-                    description = jira_fetcher.preprocessor.clean_jira_text(
-                        issue_data["fields"]["description"]
-                    )
-
-                result = {
-                    "message": f"Successfully transitioned issue {issue_key} to {status}",
-                    "issue": {
-                        "key": issue_key,
-                        "title": summary,
-                        "type": issue_type,
-                        "status": status,
-                        "description": description,
-                    },
-                }
-
-                return [
-                    TextContent(
-                        type="text",
-                        text=json.dumps(result, indent=2, ensure_ascii=False),
-                    )
-                ]
-
-            except Exception as e:
-                error_message = str(e)
-                logger.error(
-                    f"Exception in direct transition API call: {error_message}"
-                )
-                return [
-                    TextContent(
-                        type="text",
-                        text=json.dumps(
-                            {
-                                "error": f"Network or API error: {error_message}",
-                                "status": "error",
-                                "details": f"Full error: {repr(e)}",
-                            },
-                            indent=2,
-                            ensure_ascii=False,
-                        ),
-                    )
-                ]
-
-        # If we reached here, no tool matched
-        error_msg = f"Unknown tool: {name}"
-        raise ValueError(error_msg)
+        else:
+            error_msg = f"Unsupported tool: {name}"
+            logger.error(error_msg)
+            return [TextContent(type="error", text=error_msg)]
 
     except Exception as e:
-        logger.error(f"Tool execution error: {str(e)}")
-        error_msg = f"Tool execution failed: {str(e)}"
-        raise RuntimeError(error_msg) from e
+        error_msg = f"Error executing tool {name}: {str(e)}"
+        logger.error(error_msg)
+        return [TextContent(type="error", text=error_msg)]
+
+
+def handle_confluence_search(
+    arguments: dict[str, Any],
+    format_comment: CommentFormatter,
+    format_issue: IssueFormatter,
+    format_transition: TransitionFormatter,
+) -> Sequence[TextContent]:
+    """
+    Handle confluence_search tool.
+
+    Args:
+        arguments: The tool arguments
+        format_comment: Helper function for formatting comments
+        format_issue: Helper function for formatting issues
+        format_transition: Helper function for formatting transitions
+
+    Returns:
+        Search results
+    """
+    # Ensure Confluence is configured
+    if confluence_fetcher is None:
+        return [
+            TextContent(
+                text="Confluence is not configured. Please set CONFLUENCE_URL, CONFLUENCE_USERNAME, and CONFLUENCE_API_TOKEN environment variables.",
+                type="text",
+            )
+        ]
+
+    query = arguments["query"]
+    limit = arguments.get("limit", 10)
+
+    try:
+        results = confluence_fetcher.search(query, limit=limit)
+        return [TextContent(type="text", text=results)]
+    except Exception as e:
+        logger.error(f"Error searching Confluence: {str(e)}")
+        return [
+            TextContent(
+                text=f"Error searching Confluence: {str(e)}",
+                type="text",
+            )
+        ]
+
+
+def handle_confluence_get_page(
+    arguments: dict[str, Any],
+    format_comment: CommentFormatter,
+    format_issue: IssueFormatter,
+    format_transition: TransitionFormatter,
+) -> Sequence[TextContent]:
+    """
+    Handle confluence_get_page tool.
+
+    Args:
+        arguments: The tool arguments
+        format_comment: Helper function for formatting comments
+        format_issue: Helper function for formatting issues
+        format_transition: Helper function for formatting transitions
+
+    Returns:
+        Formatted page content
+    """
+    doc = confluence_fetcher.get_page_content(arguments["page_id"])
+    include_metadata = arguments.get("include_metadata", True)
+
+    if include_metadata:
+        result = {"content": doc.page_content, "metadata": doc.metadata}
+    else:
+        result = {"content": doc.page_content}
+
+    return [
+        TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))
+    ]
+
+
+def handle_confluence_get_comments(
+    arguments: dict[str, Any],
+    format_comment: CommentFormatter,
+    format_issue: IssueFormatter,
+    format_transition: TransitionFormatter,
+) -> Sequence[TextContent]:
+    """
+    Handle confluence_get_comments tool.
+
+    Args:
+        arguments: The tool arguments
+        format_comment: Helper function for formatting comments
+        format_issue: Helper function for formatting issues
+        format_transition: Helper function for formatting transitions
+
+    Returns:
+        Formatted comments
+    """
+    comments = confluence_fetcher.get_page_comments(arguments["page_id"])
+    # Convert Document objects to dictionaries for the formatter
+    formatted_comments = [format_comment(doc.metadata) for doc in comments]
+
+    return [
+        TextContent(
+            type="text",
+            text=json.dumps(formatted_comments, indent=2, ensure_ascii=False),
+        )
+    ]
+
+
+def handle_confluence_create_page(
+    arguments: dict[str, Any],
+    format_comment: CommentFormatter,
+    format_issue: IssueFormatter,
+    format_transition: TransitionFormatter,
+) -> Sequence[TextContent]:
+    """
+    Handle confluence_create_page tool.
+
+    Args:
+        arguments: The tool arguments
+        format_comment: Helper function for formatting comments
+        format_issue: Helper function for formatting issues
+        format_transition: Helper function for formatting transitions
+
+    Returns:
+        Formatted page creation result
+    """
+    # Convert markdown content to HTML storage format
+    space_key = arguments["space_key"]
+    title = arguments["title"]
+    content = arguments["content"]
+    parent_id = arguments.get("parent_id")
+
+    # Convert markdown to Confluence storage format
+    storage_format = markdown_to_confluence_storage(content)
+
+    # Handle parent_id - convert to string if not None
+    parent_id_str: str | None = str(parent_id) if parent_id is not None else None
+
+    # Create the page
+    doc = confluence_fetcher.create_page(
+        space_key=space_key,
+        title=title,
+        body=storage_format,  # Now using the converted storage format
+        parent_id=parent_id_str,
+    )
+
+    result = {
+        "page_id": doc.metadata["page_id"],
+        "title": doc.metadata["title"],
+        "space_key": doc.metadata["space_key"],
+        "url": doc.metadata["url"],
+        "version": doc.metadata["version"],
+        "content": doc.page_content[:500] + "..."
+        if len(doc.page_content) > 500
+        else doc.page_content,
+    }
+
+    return [
+        TextContent(
+            type="text",
+            text=f"Page created successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}",
+        )
+    ]
+
+
+def handle_confluence_update_page(
+    arguments: dict[str, Any],
+    format_comment: CommentFormatter,
+    format_issue: IssueFormatter,
+    format_transition: TransitionFormatter,
+) -> Sequence[TextContent]:
+    """
+    Handle confluence_update_page tool.
+
+    Args:
+        arguments: The tool arguments
+        format_comment: Helper function for formatting comments
+        format_issue: Helper function for formatting issues
+        format_transition: Helper function for formatting transitions
+
+    Returns:
+        Formatted page update result
+    """
+    page_id = arguments["page_id"]
+    title = arguments["title"]
+    content = arguments["content"]
+    minor_edit = arguments.get("minor_edit", False)
+    version_comment = arguments.get("version_comment", "")
+
+    # Convert markdown to Confluence storage format
+    storage_format = markdown_to_confluence_storage(content)
+
+    # Update the page
+    doc = confluence_fetcher.update_page(
+        page_id=page_id,
+        title=title,
+        body=storage_format,
+        minor_edit=minor_edit,
+        version_comment=version_comment,
+    )
+
+    result = {
+        "page_id": doc.metadata["page_id"],
+        "title": doc.metadata["title"],
+        "space_key": doc.metadata["space_key"],
+        "url": doc.metadata["url"],
+        "version": doc.metadata["version"],
+        "content": doc.page_content[:500] + "..."
+        if len(doc.page_content) > 500
+        else doc.page_content,
+    }
+
+    return [
+        TextContent(
+            type="text",
+            text=f"Page updated successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}",
+        )
+    ]
+
+
+def handle_jira_get_issue(
+    arguments: dict[str, Any],
+    format_comment: CommentFormatter,
+    format_issue: IssueFormatter,
+    format_transition: TransitionFormatter,
+) -> Sequence[TextContent]:
+    """
+    Handle jira_get_issue tool.
+
+    Args:
+        arguments: The tool arguments
+        format_comment: Helper function for formatting comments
+        format_issue: Helper function for formatting issues
+        format_transition: Helper function for formatting transitions
+
+    Returns:
+        Issue details
+    """
+    # Ensure Jira is configured
+    if jira_fetcher is None:
+        return [
+            TextContent(
+                text="Jira is not configured. Please set JIRA_URL, JIRA_USERNAME, and JIRA_API_TOKEN environment variables.",
+                type="text",
+            )
+        ]
+
+    issue_key = arguments["issue_key"]
+    expand = arguments.get("expand")
+    comment_limit = arguments.get("comment_limit", 10)
+
+    try:
+        doc = jira_fetcher.get_issue(
+            issue_key, expand=expand, comment_limit=comment_limit
+        )
+        return [TextContent(type="text", text=format_issue(doc))]
+    except Exception as e:
+        logger.error(f"Error getting Jira issue: {str(e)}")
+        return [
+            TextContent(
+                text=f"Error getting Jira issue: {str(e)}",
+                type="text",
+            )
+        ]
+
+
+def handle_jira_search(
+    arguments: dict[str, Any],
+    format_comment: CommentFormatter,
+    format_issue: IssueFormatter,
+    format_transition: TransitionFormatter,
+) -> Sequence[TextContent]:
+    """
+    Handle jira_search tool.
+
+    Args:
+        arguments: The tool arguments
+        format_comment: Helper function for formatting comments
+        format_issue: Helper function for formatting issues
+        format_transition: Helper function for formatting transitions
+
+    Returns:
+        Formatted search results
+    """
+    jql = arguments["query"]
+    limit = min(int(arguments.get("limit", 10)), 50)
+    start = int(arguments.get("start", 0))
+
+    documents = jira_fetcher.search_issues(jql=jql, limit=limit, start=start)
+    results = [format_issue(doc) for doc in documents]
+
+    return [
+        TextContent(type="text", text=json.dumps(results, indent=2, ensure_ascii=False))
+    ]
+
+
+def handle_jira_get_project_issues(
+    arguments: dict[str, Any],
+    format_comment: CommentFormatter,
+    format_issue: IssueFormatter,
+    format_transition: TransitionFormatter,
+) -> Sequence[TextContent]:
+    """
+    Handle jira_get_project_issues tool.
+
+    Args:
+        arguments: The tool arguments
+        format_comment: Helper function for formatting comments
+        format_issue: Helper function for formatting issues
+        format_transition: Helper function for formatting transitions
+
+    Returns:
+        Formatted project issues
+    """
+    project_key = arguments["project_key"]
+    limit = min(int(arguments.get("limit", 10)), 50)
+    start = int(arguments.get("start", 0))
+
+    documents = jira_fetcher.get_project_issues(
+        project_key=project_key, limit=limit, start=start
+    )
+    results = [format_issue(doc) for doc in documents]
+
+    return [
+        TextContent(type="text", text=json.dumps(results, indent=2, ensure_ascii=False))
+    ]
+
+
+def handle_jira_create_issue(
+    arguments: dict[str, Any],
+    format_comment: CommentFormatter,
+    format_issue: IssueFormatter,
+    format_transition: TransitionFormatter,
+) -> Sequence[TextContent]:
+    """
+    Handle jira_create_issue tool.
+
+    Args:
+        arguments: The tool arguments
+        format_comment: Helper function for formatting comments
+        format_issue: Helper function for formatting issues
+        format_transition: Helper function for formatting transitions
+
+    Returns:
+        Formatted issue creation result
+    """
+    # Extract required arguments
+    project_key = arguments["project_key"]
+    summary = arguments["summary"]
+    issue_type = arguments["issue_type"]
+
+    # Extract optional arguments
+    description = arguments.get("description", "")
+    assignee = arguments.get("assignee")
+
+    # Create a shallow copy of arguments without the standard fields
+    # to pass any remaining ones as custom fields
+    custom_fields = arguments.copy()
+    for field in ["project_key", "summary", "issue_type", "description", "assignee"]:
+        custom_fields.pop(field, None)
+
+    # Create the issue
+    doc = jira_fetcher.create_issue(
+        project_key=project_key,
+        summary=summary,
+        issue_type=issue_type,
+        description=description,
+        assignee=assignee,
+        **custom_fields,
+    )
+
+    result = format_issue(doc)
+    result["description"] = doc.page_content
+
+    return [
+        TextContent(
+            type="text",
+            text=f"Issue created successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}",
+        )
+    ]
+
+
+def handle_jira_update_issue(
+    arguments: dict[str, Any],
+    format_comment: CommentFormatter,
+    format_issue: IssueFormatter,
+    format_transition: TransitionFormatter,
+) -> Sequence[TextContent]:
+    """
+    Handle jira_update_issue tool.
+
+    Args:
+        arguments: The tool arguments
+        format_comment: Helper function for formatting comments
+        format_issue: Helper function for formatting issues
+        format_transition: Helper function for formatting transitions
+
+    Returns:
+        Formatted issue update result
+    """
+    # Extract issue key
+    issue_key = arguments["issue_key"]
+
+    # Create a shallow copy of arguments without the issue_key
+    fields = arguments.copy()
+    fields.pop("issue_key", None)
+
+    # Update the issue
+    doc = jira_fetcher.update_issue(issue_key=issue_key, **fields)
+
+    result = format_issue(doc)
+    result["description"] = doc.page_content
+
+    return [
+        TextContent(
+            type="text",
+            text=f"Issue updated successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}",
+        )
+    ]
+
+
+def handle_jira_delete_issue(
+    arguments: dict[str, Any],
+    format_comment: CommentFormatter,
+    format_issue: IssueFormatter,
+    format_transition: TransitionFormatter,
+) -> Sequence[TextContent]:
+    """
+    Handle jira_delete_issue tool.
+
+    Args:
+        arguments: The tool arguments
+        format_comment: Helper function for formatting comments
+        format_issue: Helper function for formatting issues
+        format_transition: Helper function for formatting transitions
+
+    Returns:
+        Deletion confirmation
+    """
+    issue_key = arguments["issue_key"]
+    success = jira_fetcher.delete_issue(issue_key)
+
+    if success:
+        return [
+            TextContent(
+                type="text",
+                text=f"Issue {issue_key} deleted successfully.",
+            )
+        ]
+    else:
+        return [
+            TextContent(
+                type="error",
+                text=f"Failed to delete issue {issue_key}.",
+            )
+        ]
+
+
+def handle_jira_add_comment(
+    arguments: dict[str, Any],
+    format_comment: CommentFormatter,
+    format_issue: IssueFormatter,
+    format_transition: TransitionFormatter,
+) -> Sequence[TextContent]:
+    """
+    Handle jira_add_comment tool.
+
+    Args:
+        arguments: The tool arguments
+        format_comment: Helper function for formatting comments
+        format_issue: Helper function for formatting issues
+        format_transition: Helper function for formatting transitions
+
+    Returns:
+        Comment addition confirmation
+    """
+    issue_key = arguments["issue_key"]
+    comment_text = arguments["comment"]
+
+    result = jira_fetcher.add_comment(issue_key, comment_text)
+    formatted_result = format_comment(result)
+
+    return [
+        TextContent(
+            type="text",
+            text=f"Comment added successfully:\n{json.dumps(formatted_result, indent=2, ensure_ascii=False)}",
+        )
+    ]
+
+
+def handle_jira_add_worklog(
+    arguments: dict[str, Any],
+    format_comment: CommentFormatter,
+    format_issue: IssueFormatter,
+    format_transition: TransitionFormatter,
+) -> Sequence[TextContent]:
+    """
+    Handle jira_add_worklog tool.
+
+    Args:
+        arguments: The tool arguments
+        format_comment: Helper function for formatting comments
+        format_issue: Helper function for formatting issues
+        format_transition: Helper function for formatting transitions
+
+    Returns:
+        Worklog addition confirmation
+    """
+    # Ensure Jira is configured
+    if jira_fetcher is None:
+        return [
+            TextContent(
+                text="Jira is not configured. Please set JIRA_URL, JIRA_USERNAME, and JIRA_API_TOKEN environment variables.",
+                type="text",
+            )
+        ]
+
+    issue_key = arguments["issue_key"]
+    time_spent = arguments["time_spent"]
+
+    # Process optional parameters with proper type checking
+    comment = arguments.get("comment")
+    if comment is not None and not isinstance(comment, str):
+        comment = str(comment)
+
+    started = arguments.get("started")
+    if started is not None and not isinstance(started, str):
+        started = str(started)
+
+    original_estimate = arguments.get("original_estimate")
+    if original_estimate is not None and not isinstance(original_estimate, str):
+        original_estimate = str(original_estimate)
+
+    remaining_estimate = arguments.get("remaining_estimate")
+    if remaining_estimate is not None and not isinstance(remaining_estimate, str):
+        remaining_estimate = str(remaining_estimate)
+
+    try:
+        result = jira_fetcher.add_worklog(
+            issue_key=issue_key,
+            time_spent=time_spent,
+            comment=comment,
+            started=started,
+            original_estimate=original_estimate,
+            remaining_estimate=remaining_estimate,
+        )
+
+        return [
+            TextContent(
+                type="text",
+                text=f"Worklog added successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}",
+            )
+        ]
+    except Exception as e:
+        logger.error(f"Error adding worklog: {str(e)}")
+        return [
+            TextContent(
+                text=f"Error adding worklog: {str(e)}",
+                type="text",
+            )
+        ]
+
+
+def handle_jira_get_worklog(
+    arguments: dict[str, Any],
+    format_comment: CommentFormatter,
+    format_issue: IssueFormatter,
+    format_transition: TransitionFormatter,
+) -> Sequence[TextContent]:
+    """
+    Handle jira_get_worklog tool.
+
+    Args:
+        arguments: The tool arguments
+        format_comment: Helper function for formatting comments
+        format_issue: Helper function for formatting issues
+        format_transition: Helper function for formatting transitions
+
+    Returns:
+        Formatted worklog entries
+    """
+    issue_key = arguments["issue_key"]
+    worklogs = jira_fetcher.get_worklogs(issue_key)
+
+    return [
+        TextContent(
+            type="text",
+            text=json.dumps(worklogs, indent=2, ensure_ascii=False),
+        )
+    ]
+
+
+def handle_jira_get_transitions(
+    arguments: dict[str, Any],
+    format_comment: CommentFormatter,
+    format_issue: IssueFormatter,
+    format_transition: TransitionFormatter,
+) -> Sequence[TextContent]:
+    """
+    Handle jira_get_transitions tool.
+
+    Args:
+        arguments: The tool arguments
+        format_comment: Helper function for formatting comments
+        format_issue: Helper function for formatting issues
+        format_transition: Helper function for formatting transitions
+
+    Returns:
+        Formatted transition options
+    """
+    issue_key = arguments["issue_key"]
+    transitions = jira_fetcher.get_available_transitions(issue_key)
+    formatted_transitions = [format_transition(t) for t in transitions]
+
+    return [
+        TextContent(
+            type="text",
+            text=json.dumps(formatted_transitions, indent=2, ensure_ascii=False),
+        )
+    ]
+
+
+def handle_jira_transition_issue(
+    arguments: dict[str, Any],
+    format_comment: CommentFormatter,
+    format_issue: IssueFormatter,
+    format_transition: TransitionFormatter,
+) -> Sequence[TextContent]:
+    """
+    Handle jira_transition_issue tool.
+
+    Args:
+        arguments: The tool arguments
+        format_comment: Helper function for formatting comments
+        format_issue: Helper function for formatting issues
+        format_transition: Helper function for formatting transitions
+
+    Returns:
+        Transition confirmation
+    """
+    issue_key = arguments["issue_key"]
+    transition_id = arguments["transition_id"]
+
+    # Optional arguments
+    fields = arguments.get("fields")
+    comment = arguments.get("comment")
+
+    # Transition the issue
+    doc = jira_fetcher.transition_issue(
+        issue_key=issue_key,
+        transition_id=transition_id,
+        fields=fields,
+        comment=comment,
+    )
+
+    result = format_issue(doc)
+    result["description"] = doc.page_content
+
+    return [
+        TextContent(
+            type="text",
+            text=f"Issue transitioned successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}",
+        )
+    ]
+
+
+def handle_jira_link_to_epic(
+    arguments: dict[str, Any],
+    format_comment: CommentFormatter,
+    format_issue: IssueFormatter,
+    format_transition: TransitionFormatter,
+) -> Sequence[TextContent]:
+    """
+    Handle jira_link_to_epic tool.
+
+    Args:
+        arguments: The tool arguments
+        format_comment: Helper function for formatting comments
+        format_issue: Helper function for formatting issues
+        format_transition: Helper function for formatting transitions
+
+    Returns:
+        Link confirmation
+    """
+    issue_key = arguments["issue_key"]
+    epic_key = arguments["epic_key"]
+
+    doc = jira_fetcher.link_issue_to_epic(issue_key, epic_key)
+    result = format_issue(doc)
+    result["description"] = doc.page_content
+    result["epic_key"] = epic_key
+
+    return [
+        TextContent(
+            type="text",
+            text=f"Issue linked to epic successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}",
+        )
+    ]
+
+
+def handle_jira_get_epic_issues(
+    arguments: dict[str, Any],
+    format_comment: CommentFormatter,
+    format_issue: IssueFormatter,
+    format_transition: TransitionFormatter,
+) -> Sequence[TextContent]:
+    """
+    Handle jira_get_epic_issues tool.
+
+    Args:
+        arguments: The tool arguments
+        format_comment: Helper function for formatting comments
+        format_issue: Helper function for formatting issues
+        format_transition: Helper function for formatting transitions
+
+    Returns:
+        Formatted epic issues
+    """
+    epic_key = arguments["epic_key"]
+    limit = min(int(arguments.get("limit", 50)), 100)
+
+    documents = jira_fetcher.get_epic_issues(epic_key, limit)
+    results = [format_issue(doc) for doc in documents]
+
+    return [
+        TextContent(
+            type="text",
+            text=json.dumps(results, indent=2, ensure_ascii=False),
+        )
+    ]
 
 
 async def main() -> None:

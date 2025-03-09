@@ -58,7 +58,38 @@ def main(
 
     Supports both Atlassian Cloud and Jira Server/Data Center deployments.
     """
-    # Configure logging based on verbosity
+    # Set up logging based on verbosity
+    _setup_logging(verbose)
+
+    # Load environment variables
+    _load_environment_variables(env_file)
+
+    # Set environment variables from command line arguments
+    _set_environment_from_args(
+        confluence_url=confluence_url,
+        confluence_username=confluence_username,
+        confluence_token=confluence_token,
+        jira_url=jira_url,
+        jira_username=jira_username,
+        jira_token=jira_token,
+        jira_personal_token=jira_personal_token,
+        jira_ssl_verify=jira_ssl_verify,
+    )
+
+    # Import the server module after environment setup
+    from . import server
+
+    # Run the server
+    asyncio.run(server.main())
+
+
+def _setup_logging(verbose: int) -> None:
+    """
+    Configure logging based on verbosity level.
+
+    Args:
+        verbose: Verbosity level (0=INFO, 1=INFO, 2+=DEBUG)
+    """
     logging_level = logging.INFO
     if verbose == 1:
         logging_level = logging.INFO
@@ -67,7 +98,14 @@ def main(
 
     logging.basicConfig(level=logging_level, stream=sys.stderr)
 
-    # Load environment variables from file if specified, otherwise try default .env
+
+def _load_environment_variables(env_file: str | None) -> None:
+    """
+    Load environment variables from file.
+
+    Args:
+        env_file: Optional path to .env file
+    """
     if env_file:
         logger.debug(f"Loading environment from file: {env_file}")
         load_dotenv(env_file)
@@ -75,6 +113,30 @@ def main(
         logger.debug("Attempting to load environment from default .env file")
         load_dotenv()
 
+
+def _set_environment_from_args(
+    confluence_url: str | None,
+    confluence_username: str | None,
+    confluence_token: str | None,
+    jira_url: str | None,
+    jira_username: str | None,
+    jira_token: str | None,
+    jira_personal_token: str | None,
+    jira_ssl_verify: bool,
+) -> None:
+    """
+    Set environment variables from command line arguments.
+
+    Args:
+        confluence_url: Confluence URL
+        confluence_username: Confluence username
+        confluence_token: Confluence API token
+        jira_url: Jira URL
+        jira_username: Jira username
+        jira_token: Jira API token
+        jira_personal_token: Jira personal access token
+        jira_ssl_verify: Whether to verify SSL certificates
+    """
     # Set environment variables from command line arguments if provided
     if confluence_url:
         os.environ["CONFLUENCE_URL"] = confluence_url
@@ -93,11 +155,6 @@ def main(
 
     # Set SSL verification for Jira Server/Data Center
     os.environ["JIRA_SSL_VERIFY"] = str(jira_ssl_verify).lower()
-
-    from . import server
-
-    # Run the server
-    asyncio.run(server.main())
 
 
 __all__ = ["main", "server", "__version__"]

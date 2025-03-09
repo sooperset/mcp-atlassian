@@ -25,6 +25,11 @@ class ConfluenceFetcher:
             error_msg = "Missing required Confluence environment variables"
             raise ValueError(error_msg)
 
+        # Type assertions after null check
+        assert url is not None
+        assert username is not None
+        assert token is not None
+
         self.config = ConfluenceConfig(url=url, username=username, api_token=token)
         self.confluence = Confluence(
             url=self.config.url,
@@ -276,7 +281,7 @@ class ConfluenceFetcher:
             return []
 
     def create_page(
-        self, space_key: str, title: str, body: str, parent_id: str = None
+        self, space_key: str, title: str, body: str, parent_id: str | None = None
     ) -> Document:
         """
         Create a new page in a Confluence space.
@@ -288,7 +293,7 @@ class ConfluenceFetcher:
             parent_id: Optional parent page ID
 
         Returns:
-            Document representing the newly created page
+            Document with the created page content and metadata
         """
         try:
             # Create the page

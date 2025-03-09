@@ -18,7 +18,7 @@ logger = logging.getLogger("mcp-jira")
 class JiraFetcher:
     """Handles fetching and parsing content from Jira."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the Jira client."""
         url = os.getenv("JIRA_URL")
 
@@ -106,66 +106,101 @@ class JiraFetcher:
         if assignee and assignee.startswith("accountid:"):
             return assignee.replace("accountid:", "")
 
-        # First try direct user lookup
         try:
-            users = []
-            try:
-                users = self.jira.user(assignee)
-                if isinstance(users, dict):
-                    users = [users]
-                account_id = users[0].get("accountId") if users else None
-                if account_id:
-                    return str(account_id)  # Ensure we return a string
-                else:
-                    logger.warning(
-                        f"Direct user lookup failed for '{assignee}': user found but no account ID present"
-                    )
-            except IndexError:
-                logger.warning(
-                    f"Direct user lookup failed for '{assignee}': user result has unexpected format"
-                )
-            except KeyError:
-                logger.warning(
-                    f"Direct user lookup failed for '{assignee}': missing accountId in response"
-                )
-            except (ValueError, TypeError) as e:
-                logger.warning(
-                    f"Direct user lookup failed for '{assignee}': invalid data format: {str(e)}"
-                )
-            except requests.RequestException as e:
-                logger.warning(
-                    f"Direct user lookup failed for '{assignee}': network error: {str(e)}"
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Direct user lookup failed for '{assignee}': unexpected error: {str(e)}"
-                )
+            # First try direct user lookup
+            account_id = self._lookup_user_directly(assignee)
+            if account_id:
+                return account_id
 
             # Fall back to project permission based search
-            users = self.jira.get_users_with_browse_permission_to_a_project(
-                username=assignee
-            )
-            if not users:
-                logger.warning(f"No user found matching '{assignee}'")
-                error_msg = f"No user found matching '{assignee}'"
-                raise ValueError(error_msg)
+            account_id = self._lookup_user_by_permissions(assignee)
+            if account_id:
+                return account_id
 
-            # Return the first matching user's account ID
-            account_id = users[0].get("accountId")
-            if not account_id or not isinstance(account_id, str):
-                logger.warning(
-                    f"Direct user lookup failed for '{assignee}': invalid string format in response"
-                )
-                raise ValueError(
-                    f"Found user '{assignee}' but no account ID was returned"
-                )
+            # If we get here, we couldn't find a user
+            logger.warning(f"No user found matching '{assignee}'")
+            error_msg = f"No user found matching '{assignee}'"
+            raise ValueError(error_msg)
 
-            logger.info(f"Found account ID via browse permission lookup: {account_id}")
-            return str(account_id)  # Explicit str conversion
         except Exception as e:
             logger.error(f"Error finding user '{assignee}': {str(e)}")
             error_msg = f"Could not resolve account ID for '{assignee}'"
             raise ValueError(error_msg) from e
+
+    def _lookup_user_directly(self, username: str) -> str | None:
+        """
+        Look up a user directly by username or email.
+
+        Args:
+            username: The username or email to look up
+
+        Returns:
+            The account ID as a string if found, None otherwise
+        """
+        try:
+            users = self.jira.user(username)
+            if isinstance(users, dict):
+                users = [users]
+
+            account_id = users[0].get("accountId") if users else None
+            if account_id:
+                return str(account_id)  # Ensure we return a string
+            else:
+                logger.warning(
+                    f"Direct user lookup failed for '{username}': user found but no account ID present"
+                )
+                return None
+
+        except IndexError:
+            logger.warning(
+                f"Direct user lookup failed for '{username}': user result has unexpected format"
+            )
+        except KeyError:
+            logger.warning(
+                f"Direct user lookup failed for '{username}': missing accountId in response"
+            )
+        except (ValueError, TypeError) as e:
+            logger.warning(
+                f"Direct user lookup failed for '{username}': invalid data format: {str(e)}"
+            )
+        except requests.RequestException as e:
+            logger.warning(
+                f"Direct user lookup failed for '{username}': network error: {str(e)}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Direct user lookup failed for '{username}': unexpected error: {str(e)}"
+            )
+
+        return None
+
+    def _lookup_user_by_permissions(self, username: str) -> str | None:
+        """
+        Look up a user by checking project permissions.
+
+        Args:
+            username: The username or email to look up
+
+        Returns:
+            The account ID as a string if found, None otherwise
+        """
+        users = self.jira.get_users_with_browse_permission_to_a_project(
+            username=username
+        )
+
+        if not users:
+            return None
+
+        # Return the first matching user's account ID
+        account_id = users[0].get("accountId")
+        if not account_id or not isinstance(account_id, str):
+            logger.warning(
+                f"Permission-based user lookup failed for '{username}': invalid string format in response"
+            )
+            return None
+
+        logger.info(f"Found account ID via browse permission lookup: {account_id}")
+        return str(account_id)  # Explicit str conversion
 
     def create_issue(
         self,
@@ -174,7 +209,7 @@ class JiraFetcher:
         issue_type: str,
         description: str = "",
         assignee: str | None = None,
-        **kwargs: Any,
+        **kwargs: Any,  # noqa: ANN401 - Dynamic field types are necessary for Jira API
     ) -> Document:
         """
         Create a new issue in Jira and return it as a Document.
@@ -193,6 +228,7 @@ class JiraFetcher:
         Raises:
             ValueError: If required fields for the issue type cannot be determined
         """
+        # Prepare base fields
         fields = {
             "project": {"key": project_key},
             "summary": summary,
@@ -200,180 +236,190 @@ class JiraFetcher:
             "description": self._markdown_to_jira(description),
         }
 
-        # If we're creating an Epic, handle Epic-specific fields dynamically
+        # Handle epic-specific fields if needed
         if issue_type.lower() == "epic":
-            try:
-                # Get the dynamic field IDs
-                field_ids = self.get_jira_field_ids()
-                logger.info(f"Discovered Jira field IDs for Epic creation: {field_ids}")
-
-                # Handle Epic Name - might be required in some instances, not in others
-                # If Epic Name field was found during discovery, use it
-                if "epic_name" in field_ids:
-                    epic_name = kwargs.pop(
-                        "epic_name", summary
-                    )  # Use summary as default if not provided
-                    fields[field_ids["epic_name"]] = epic_name
-                    logger.info(
-                        f"Setting Epic Name field {field_ids['epic_name']} to: {epic_name}"
-                    )
-
-                # Handle Epic Color if the field was discovered
-                if "epic_color" in field_ids:
-                    epic_color = (
-                        kwargs.pop("epic_color", None)
-                        or kwargs.pop("epic_colour", None)
-                        or "green"
-                    )
-                    fields[field_ids["epic_color"]] = epic_color
-                    logger.info(
-                        f"Setting Epic Color field {field_ids['epic_color']} to: {epic_color}"
-                    )
-
-                # Pass through any explicitly provided custom fields that might be instance-specific
-                # This allows callers who know their instance to directly specify field IDs
-                for field_key, field_value in kwargs.items():
-                    if field_key.startswith("customfield_"):
-                        fields[field_key] = field_value
-                        logger.info(
-                            f"Using explicitly provided custom field {field_key}: {field_value}"
-                        )
-
-                # If epic_name field is required but wasn't discovered, warn the user
-                # Some Jira instances require it, others don't
-                if "epic_name" not in field_ids:
-                    logger.warning(
-                        "Epic Name field not found in Jira schema. "
-                        "If your Jira instance requires it, please provide the customfield_* ID directly."
-                    )
-            except Exception as e:
-                logger.error(f"Error preparing Epic-specific fields: {str(e)}")
-                # Continue with creation anyway, as some instances might not require special fields
+            self._prepare_epic_fields(fields, summary, kwargs)
 
         # Add assignee if provided
         if assignee:
-            account_id = self._get_account_id(assignee)
-            fields["assignee"] = {"accountId": account_id}
+            self._add_assignee_to_fields(fields, assignee)
 
-        # Remove assignee from additional_fields if present to avoid conflicts
-        if "assignee" in kwargs:
-            logger.warning(
-                "Assignee found in additional_fields - this will be ignored. Please use the assignee parameter instead."
-            )
-            kwargs.pop("assignee")
+        # Add any remaining custom fields
+        self._add_custom_fields(fields, kwargs)
 
-        for key, value in kwargs.items():
-            fields[key] = value
-
-        # Convert description to Jira format if present
-        if "description" in fields and fields["description"]:
-            fields["description"] = self._markdown_to_jira(fields["description"])
-
+        # Create the issue
         try:
             response = self.jira.create_issue(fields=fields)
             issue_key = response["key"]
             logger.info(f"Created issue {issue_key}")
             return self.get_issue(issue_key)
         except Exception as e:
-            error_msg = str(e)
-
-            # Provide more helpful error messages for common issues
-            if issue_type.lower() == "epic" and "customfield_" in error_msg:
-                # Handle the case where a specific Epic field is required but missing
-                missing_field_match = re.search(
-                    r"(?:Field '(customfield_\d+)'|'(customfield_\d+)' cannot be set)",
-                    error_msg,
-                )
-                if missing_field_match:
-                    field_id = missing_field_match.group(
-                        1
-                    ) or missing_field_match.group(2)
-                    logger.error(
-                        f"Failed to create Epic: Your Jira instance requires field '{field_id}'. "
-                        f"This is typically the Epic Name field. Try setting this field explicitly "
-                        f"using '{field_id}': 'Epic Name Value' in the additional_fields parameter."
-                    )
-                else:
-                    logger.error(
-                        f"Failed to create Epic: Your Jira instance has custom field requirements. "
-                        f"You may need to provide specific custom fields for Epics in your instance. "
-                        f"Original error: {error_msg}"
-                    )
-            else:
-                logger.error(f"Error creating issue: {error_msg}")
-
+            self._handle_create_issue_error(e, issue_type)
             raise
 
-    def update_issue(
-        self, issue_key: str, fields: dict[str, Any] = None, **kwargs: Any
-    ) -> Document:
+    def _prepare_epic_fields(
+        self, fields: dict[str, Any], summary: str, kwargs: dict[str, Any]
+    ) -> None:
         """
-        Update an existing issue in Jira and return it as a Document.
+        Prepare epic-specific fields for issue creation.
 
         Args:
-            issue_key: The key of the issue to update (e.g. 'PROJ-123')
-            fields: Fields to update
-            kwargs: Any other custom Jira fields
-
-        Returns:
-            Document representing the updated issue
+            fields: The fields dictionary being prepared for issue creation
+            summary: The issue summary that can be used as a default epic name
+            kwargs: Additional fields provided by the caller
         """
-        if fields is None:
-            fields = {}
+        try:
+            # Get the dynamic field IDs
+            field_ids = self.get_jira_field_ids()
+            logger.info(f"Discovered Jira field IDs for Epic creation: {field_ids}")
 
-        # Handle all kwargs
+            # Handle Epic Name - might be required in some instances, not in others
+            if "epic_name" in field_ids:
+                epic_name = kwargs.pop(
+                    "epic_name", summary
+                )  # Use summary as default if not provided
+                fields[field_ids["epic_name"]] = epic_name
+                logger.info(
+                    f"Setting Epic Name field {field_ids['epic_name']} to: {epic_name}"
+                )
+
+            # Handle Epic Color if the field was discovered
+            if "epic_color" in field_ids:
+                epic_color = (
+                    kwargs.pop("epic_color", None)
+                    or kwargs.pop("epic_colour", None)
+                    or "green"
+                )
+                fields[field_ids["epic_color"]] = epic_color
+                logger.info(
+                    f"Setting Epic Color field {field_ids['epic_color']} to: {epic_color}"
+                )
+
+            # Pass through any explicitly provided custom fields that might be instance-specific
+            for field_key, field_value in list(kwargs.items()):
+                if field_key.startswith("customfield_"):
+                    fields[field_key] = field_value
+                    kwargs.pop(field_key)
+                    logger.info(
+                        f"Using explicitly provided custom field {field_key}: {field_value}"
+                    )
+
+            # Warn if epic_name field is required but wasn't discovered
+            if "epic_name" not in field_ids:
+                logger.warning(
+                    "Epic Name field not found in Jira schema. "
+                    "If your Jira instance requires it, please provide the customfield_* ID directly."
+                )
+        except Exception as e:
+            logger.error(f"Error preparing Epic-specific fields: {str(e)}")
+            # Continue with creation anyway, as some instances might not require special fields
+
+    def _add_assignee_to_fields(self, fields: dict[str, Any], assignee: str) -> None:
+        """
+        Add assignee information to the fields dictionary.
+
+        Args:
+            fields: The fields dictionary being prepared for issue creation
+            assignee: The assignee value to process
+        """
+        account_id = self._get_account_id(assignee)
+        fields["assignee"] = {"accountId": account_id}
+
+    def _add_custom_fields(
+        self, fields: dict[str, Any], kwargs: dict[str, Any]
+    ) -> None:
+        """
+        Add any remaining custom fields to the fields dictionary.
+
+        Args:
+            fields: The fields dictionary being prepared for issue creation
+            kwargs: Additional fields provided by the caller
+        """
+        # Remove assignee from additional_fields if present to avoid conflicts
+        if "assignee" in kwargs:
+            logger.warning(
+                "Assignee found in additional_fields - this will be ignored. "
+                "Please use the assignee parameter instead."
+            )
+            kwargs.pop("assignee")
+
+        # Add remaining kwargs to fields
         for key, value in kwargs.items():
             fields[key] = value
 
-        # Convert description to Jira format if present
+        # Ensure description is in Jira format
         if "description" in fields and fields["description"]:
             fields["description"] = self._markdown_to_jira(fields["description"])
 
-        # Check if status update is requested
-        if "status" in fields:
-            requested_status = fields.pop("status")
-            if not isinstance(requested_status, str):
-                logger.warning(
-                    f"Status must be a string, got {type(requested_status)}: {requested_status}"
+    def _handle_create_issue_error(self, exception: Exception, issue_type: str) -> None:
+        """
+        Handle errors that occur during issue creation with better error messages.
+
+        Args:
+            exception: The exception that was raised
+            issue_type: The type of issue being created
+        """
+        error_msg = str(exception)
+
+        # Provide more helpful error messages for common issues
+        if issue_type.lower() == "epic" and "customfield_" in error_msg:
+            # Handle the case where a specific Epic field is required but missing
+            missing_field_match = re.search(
+                r"(?:Field '(customfield_\d+)'|'(customfield_\d+)' cannot be set)",
+                error_msg,
+            )
+            if missing_field_match:
+                field_id = missing_field_match.group(1) or missing_field_match.group(2)
+                logger.error(
+                    f"Failed to create Epic: Your Jira instance requires field '{field_id}'. "
+                    f"This is typically the Epic Name field. Try setting this field explicitly "
+                    f"using '{field_id}': 'Epic Name Value' in the additional_fields parameter."
                 )
-                # Try to convert to string if possible
-                requested_status = str(requested_status)
-
-            logger.info(f"Status update requested to: {requested_status}")
-
-            # Get available transitions
-            transitions = self.get_available_transitions(issue_key)
-
-            # Find matching transition
-            transition_id = None
-            for transition in transitions:
-                to_status = transition.get("to_status", "")
-                if (
-                    isinstance(to_status, str)
-                    and to_status.lower() == requested_status.lower()
-                ):
-                    transition_id = transition["id"]
-                    break
-
-            if transition_id:
-                # Use transition_issue method if we found a matching transition
-                logger.info(
-                    f"Found transition ID {transition_id} for status {requested_status}"
-                )
-                return self.transition_issue(issue_key, transition_id, fields)
             else:
-                available_statuses = ", ".join(
-                    f"'{s['name']}' (id: {s['id']})" for s in transitions
+                logger.error(
+                    f"Failed to create Epic: Your Jira instance has custom field requirements. "
+                    f"You may need to provide specific custom fields for Epics in your instance. "
+                    f"Original error: {error_msg}"
                 )
-                error_msg = f"Cannot transition issue to status '{requested_status}'. Available status transitions: {available_statuses}"
-                raise ValueError(error_msg)
+        else:
+            logger.error(f"Error creating issue: {error_msg}")
 
+    def update_issue(
+        self,
+        issue_key: str,
+        fields: dict[str, Any] | None = None,
+        **kwargs: Any,  # noqa: ANN401 - Dynamic field types are necessary for Jira API
+    ) -> Document:
+        """
+        Update an existing Jira issue.
+
+        Args:
+            issue_key: The key of the issue to update
+            fields: Fields to update in the Jira API format
+            **kwargs: Additional fields to update
+
+        Returns:
+            Document with updated issue info
+        """
+        # Ensure we have a fields dictionary
+        if fields is None:
+            fields = {}
+
+        # Process any custom fields passed via kwargs
+        if kwargs:
+            # Combine any fields that might be in kwargs into our fields dict
+            self._add_custom_fields(fields, kwargs)
+
+        # Update the issue
         try:
-            self.jira.issue_update(issue_key, fields=fields)
+            logger.info(f"Updating issue {issue_key} with fields {fields}")
+            self.jira.update_issue(issue_key, fields)
+            # Return the updated issue
             return self.get_issue(issue_key)
         except Exception as e:
-            logger.error(f"Error updating issue {issue_key}: {str(e)}")
-            raise
+            error_msg = f"Error updating issue {issue_key}: {str(e)}"
+            logger.error(error_msg)
+            raise ValueError(error_msg) from e
 
     def get_jira_field_ids(self) -> dict[str, str]:
         """
@@ -388,82 +434,20 @@ class JiraFetcher:
         """
         try:
             # Check if we've already cached the field IDs
-            if hasattr(self, "_field_ids_cache"):
-                return self._field_ids_cache
+            cached_fields = self._get_cached_field_ids()
+            if cached_fields:
+                return cached_fields
 
             # Fetch all fields from Jira API
             fields = self.jira.fields()
-            field_ids = {}
+            field_ids: dict[str, str] = {}
 
-            # Log the complete list of fields for debugging
-            all_field_names = [
-                f"{field.get('name', '')} ({field.get('id', '')})" for field in fields
-            ]
-            logger.debug(f"All available Jira fields: {all_field_names}")
+            # Log all fields for debugging
+            self._log_available_fields(fields)
 
-            # Look for Epic-related fields - use multiple strategies to identify them
+            # Process each field to identify Epic-related fields
             for field in fields:
-                field_name = field.get("name", "").lower()
-                original_name = field.get("name", "")
-                field_id = field.get("id", "")
-                field_schema = field.get("schema", {})
-                field_type = field_schema.get("type", "")
-                field_custom = field_schema.get("custom", "")
-
-                # Epic Link field - used to link issues to epics
-                if (
-                    "epic link" in field_name
-                    or field_custom == "com.pyxis.greenhopper.jira:gh-epic-link"
-                    or field_type == "any"
-                ) and field_id:
-                    self.epic_link_field_id = field_id
-
-                # Epic Name field - used for the title of epics
-                if (
-                    "epic name" in field_name
-                    or "epic-name" in field_name
-                    or original_name == "Epic Name"
-                    or field_custom == "com.pyxis.greenhopper.jira:gh-epic-label"
-                ):
-                    field_ids["epic_name"] = field_id
-                    logger.info(f"Found Epic Name field: {original_name} ({field_id})")
-
-                # Parent field - sometimes used instead of Epic Link
-                elif (
-                    field_name == "parent"
-                    or field_name == "parent link"
-                    or original_name == "Parent Link"
-                ):
-                    field_ids["parent"] = field_id
-                    logger.info(f"Found Parent field: {original_name} ({field_id})")
-
-                # Epic Status field
-                elif "epic status" in field_name or original_name == "Epic Status":
-                    field_ids["epic_status"] = field_id
-                    logger.info(
-                        f"Found Epic Status field: {original_name} ({field_id})"
-                    )
-
-                # Epic Color field
-                elif (
-                    "epic colour" in field_name
-                    or "epic color" in field_name
-                    or original_name == "Epic Colour"
-                    or original_name == "Epic Color"
-                    or field_custom == "com.pyxis.greenhopper.jira:gh-epic-color"
-                ):
-                    field_ids["epic_color"] = field_id
-                    logger.info(f"Found Epic Color field: {original_name} ({field_id})")
-
-                # Try to detect any other fields that might be related to Epics
-                elif ("epic" in field_name or "epic" in field_custom) and not any(
-                    k in field_ids.values() for k in [field_id]
-                ):
-                    key = f"epic_{field_name.replace(' ', '_')}"
-                    field_ids[key] = field_id
-                    logger.info(
-                        f"Found additional Epic-related field: {original_name} ({field_id})"
-                    )
+                self._process_field_for_epic_data(field, field_ids)
 
             # Cache the results for future use
             self._field_ids_cache = field_ids
@@ -484,6 +468,99 @@ class JiraFetcher:
             logger.error(f"Error discovering Jira field IDs: {str(e)}")
             # Return an empty dict as fallback
             return {}
+
+    def _get_cached_field_ids(self) -> dict[str, str]:
+        """
+        Retrieve cached field IDs if available.
+
+        Returns:
+            Dictionary of cached field IDs or empty dict if no cache exists
+        """
+        if hasattr(self, "_field_ids_cache"):
+            return self._field_ids_cache
+        return {}
+
+    def _log_available_fields(self, fields: list[dict]) -> None:
+        """
+        Log all available Jira fields for debugging purposes.
+
+        Args:
+            fields: List of field definitions from Jira API
+        """
+        all_field_names = [
+            f"{field.get('name', '')} ({field.get('id', '')})" for field in fields
+        ]
+        logger.debug(f"All available Jira fields: {all_field_names}")
+
+    def _process_field_for_epic_data(
+        self, field: dict, field_ids: dict[str, str]
+    ) -> None:
+        """
+        Process a single field to identify if it's an Epic-related field and add to field_ids.
+
+        Args:
+            field: Field definition from Jira API
+            field_ids: Dictionary to update with identified fields
+        """
+        field_name = field.get("name", "").lower()
+        original_name = field.get("name", "")
+        field_id = field.get("id", "")
+        field_schema = field.get("schema", {})
+        field_type = field_schema.get("type", "")
+        field_custom = field_schema.get("custom", "")
+
+        # Epic Link field - used to link issues to epics
+        if (
+            "epic link" in field_name
+            or field_custom == "com.pyxis.greenhopper.jira:gh-epic-link"
+            or field_type == "any"
+        ) and field_id:
+            self.epic_link_field_id = field_id
+
+        # Epic Name field - used for the title of epics
+        if (
+            "epic name" in field_name
+            or "epic-name" in field_name
+            or original_name == "Epic Name"
+            or field_custom == "com.pyxis.greenhopper.jira:gh-epic-label"
+        ):
+            field_ids["epic_name"] = field_id
+            logger.info(f"Found Epic Name field: {original_name} ({field_id})")
+
+        # Parent field - sometimes used instead of Epic Link
+        elif (
+            field_name == "parent"
+            or field_name == "parent link"
+            or original_name == "Parent Link"
+        ):
+            field_ids["parent"] = field_id
+            logger.info(f"Found Parent field: {original_name} ({field_id})")
+
+        # Epic Status field
+        elif "epic status" in field_name or original_name == "Epic Status":
+            field_ids["epic_status"] = field_id
+            logger.info(f"Found Epic Status field: {original_name} ({field_id})")
+
+        # Epic Color field
+        elif (
+            "epic colour" in field_name
+            or "epic color" in field_name
+            or original_name == "Epic Colour"
+            or original_name == "Epic Color"
+            or field_custom == "com.pyxis.greenhopper.jira:gh-epic-color"
+        ):
+            field_ids["epic_color"] = field_id
+            logger.info(f"Found Epic Color field: {original_name} ({field_id})")
+
+        # Try to detect any other fields that might be related to Epics
+        elif ("epic" in field_name or "epic" in field_custom) and not any(
+            k in field_ids.values() for k in [field_id]
+        ):
+            key = f"epic_{field_name.replace(' ', '_')}"
+            field_ids[key] = field_id
+            logger.info(
+                f"Found additional Epic-related field: {original_name} ({field_id})"
+            )
 
     def _try_discover_fields_from_existing_epic(self, field_ids: dict) -> None:
         """
@@ -555,74 +632,58 @@ class JiraFetcher:
 
     def link_issue_to_epic(self, issue_key: str, epic_key: str) -> Document:
         """
-        Link an existing issue to an epic.
+        Link an issue to an epic.
 
         Args:
-            issue_key: The key of the issue to link (e.g. 'PROJ-123')
-            epic_key: The key of the epic to link to (e.g. 'PROJ-456')
+            issue_key: The key of the issue to link
+            epic_key: The key of the epic to link to
 
         Returns:
-            Document representing the updated issue
+            Document with updated issue info
         """
-        try:
-            # First, check if the epic exists and is an Epic type
-            epic = self.jira.issue(epic_key)
-            if epic["fields"]["issuetype"]["name"] != "Epic":
-                error_msg = f"Issue {epic_key} is not an Epic, it is a {epic['fields']['issuetype']['name']}"
-                raise ValueError(error_msg)
+        # Try to get the field IDs - if we haven't initialized them yet
+        field_ids = self.get_jira_field_ids()
 
-            # Get the dynamic field IDs for this Jira instance
-            field_ids = self.get_jira_field_ids()
+        # Check if we've identified the epic link field
+        if not field_ids.get("Epic Link"):
+            logger.error("Cannot link issue to epic: Epic Link field not found")
+            # Try to discover the fields by examining an existing epic
+            self._try_discover_fields_from_existing_epic(field_ids)
 
-            # Try the parent field first (if discovered or natively supported)
-            if "parent" in field_ids or "parent" not in field_ids:
-                try:
-                    fields = {"parent": {"key": epic_key}}
-                    self.jira.issue_update(issue_key, fields=fields)
-                    return self.get_issue(issue_key)
-                except Exception as e:
-                    logger.info(
-                        f"Couldn't link using parent field: {str(e)}. Trying discovered fields..."
-                    )
+        # Multiple attempts to link the issue using different field names
+        attempts = [
+            # Standard Jira Software method
+            lambda: self.update_issue(
+                issue_key,
+                fields={
+                    k: epic_key for k in [field_ids.get("Epic Link")] if k is not None
+                },
+            ),
+            # Advanced Roadmaps method using Epic Name
+            lambda: self.update_issue(
+                issue_key,
+                fields={
+                    k: epic_key for k in [field_ids.get("Epic Name")] if k is not None
+                },
+            ),
+            # Using the custom field directly
+            lambda: self.update_issue(
+                issue_key, fields={"customfield_10014": epic_key}
+            ),
+        ]
 
-            # Try using the discovered Epic Link field
-            if "epic_link" in field_ids:
-                try:
-                    epic_link_fields: dict[str, str] = {
-                        field_ids["epic_link"]: epic_key
-                    }
-                    self.jira.issue_update(issue_key, fields=epic_link_fields)
-                    return self.get_issue(issue_key)
-                except Exception as e:
-                    logger.info(
-                        f"Couldn't link using discovered epic_link field: {str(e)}. Trying fallback methods..."
-                    )
+        # Try each method
+        for attempt_fn in attempts:
+            try:
+                return attempt_fn()
+            except Exception as e:
+                logger.error(
+                    f"Failed to link issue {issue_key} to epic {epic_key}: {str(e)}"
+                )
 
-            # Fallback to common custom fields if dynamic discovery didn't work
-            custom_field_attempts: list[dict[str, str]] = [
-                {"customfield_10014": epic_key},  # Common in Jira Cloud
-                {"customfield_10000": epic_key},  # Common in Jira Server
-                {"epic_link": epic_key},  # Sometimes used
-            ]
-
-            for fields in custom_field_attempts:
-                try:
-                    self.jira.issue_update(issue_key, fields=fields)
-                    return self.get_issue(issue_key)
-                except Exception as e:
-                    logger.info(f"Couldn't link using fields {fields}: {str(e)}")
-                    continue
-
-            # If we get here, none of our attempts worked
-            raise ValueError(
-                f"Could not link issue {issue_key} to epic {epic_key}. Your Jira instance might use a different field for epic links."
-            )
-
-        except Exception as e:
-            logger.error(
-                f"Error linking issue {issue_key} to epic {epic_key}: {str(e)}"
-            )
-            raise
+        # If we get here, none of our attempts worked
+        error_msg = f"Could not link issue {issue_key} to epic {epic_key}. Your Jira instance might use a different field for epic links."
+        raise ValueError(error_msg)
 
     def delete_issue(self, issue_key: str) -> bool:
         """
@@ -682,102 +743,200 @@ class JiraFetcher:
             Document containing issue content and metadata
         """
         try:
+            # Fetch the issue from Jira
             issue = self.jira.issue(issue_key, expand=expand)
 
-            # Process description and comments
+            # Process and normalize the comment limit
+            comment_limit = self._normalize_comment_limit(comment_limit)
+
+            # Get the issue description and comments
             description = self._clean_text(issue["fields"].get("description", ""))
+            comments = self._get_issue_comments_if_needed(issue_key, comment_limit)
 
-            # Convert comment_limit to int if it's a string
-            if comment_limit is not None and isinstance(comment_limit, str):
-                try:
-                    comment_limit = int(comment_limit)
-                except ValueError:
-                    logger.warning(
-                        f"Invalid comment_limit value: {comment_limit}. Using default of 10."
-                    )
-                    comment_limit = 10
+            # Get Epic information if applicable
+            epic_info = self._extract_epic_information(issue)
 
-            # Get comments if limit is specified
-            comments = []
-            if comment_limit is not None and comment_limit > 0:
-                comments = self.get_issue_comments(issue_key, limit=comment_limit)
-
-            # Format created date using new parser
+            # Format the created date properly
             created_date = self._parse_date(issue["fields"]["created"])
 
-            # Check for Epic information
-            epic_key = None
-            epic_name = None
+            # Generate the content for the document
+            content = self._format_issue_content(
+                issue_key, issue, description, comments, created_date, epic_info
+            )
 
-            # Most Jira instances use the "parent" field for Epic relationships
-            if "parent" in issue["fields"] and issue["fields"]["parent"]:
-                epic_key = issue["fields"]["parent"]["key"]
-                epic_name = issue["fields"]["parent"]["fields"]["summary"]
-
-            # Some Jira instances use custom fields for Epic links
-            # Common custom field names for Epic links
-            epic_field_names = ["customfield_10014", "customfield_10000", "epic_link"]
-            for field_name in epic_field_names:
-                if field_name in issue["fields"] and issue["fields"][field_name]:
-                    # If it's a string, assume it's the epic key
-                    if isinstance(issue["fields"][field_name], str):
-                        epic_key = issue["fields"][field_name]
-                    # If it's an object, extract the key
-                    elif (
-                        isinstance(issue["fields"][field_name], dict)
-                        and "key" in issue["fields"][field_name]
-                    ):
-                        epic_key = issue["fields"][field_name]["key"]
-
-            # Combine content in a more structured way
-            content = f"""Issue: {issue_key}
-Title: {issue['fields'].get('summary', '')}
-Type: {issue['fields']['issuetype']['name']}
-Status: {issue['fields']['status']['name']}
-Created: {created_date}
-"""
-
-            # Add Epic information if available
-            if epic_key:
-                content += f"Epic: {epic_key}"
-                if epic_name:
-                    content += f" - {epic_name}"
-                content += "\n"
-
-            content += f"""
-Description:
-{description}
-"""
-            if comments:
-                content += "\nComments:\n" + "\n".join(
-                    [f"{c['created']} - {c['author']}: {c['body']}" for c in comments]
-                )
-
-            # Streamlined metadata with only essential information
-            metadata = {
-                "key": issue_key,
-                "title": issue["fields"].get("summary", ""),
-                "type": issue["fields"]["issuetype"]["name"],
-                "status": issue["fields"]["status"]["name"],
-                "created_date": created_date,
-                "priority": issue["fields"].get("priority", {}).get("name", "None"),
-                "link": f"{self.config.url.rstrip('/')}/browse/{issue_key}",
-            }
-
-            # Add Epic information to metadata
-            if epic_key:
-                metadata["epic_key"] = epic_key
-                if epic_name:
-                    metadata["epic_name"] = epic_name
-
-            if comments:
-                metadata["comments"] = comments
+            # Create the metadata for the document
+            metadata = self._create_issue_metadata(
+                issue_key, issue, comments, created_date, epic_info
+            )
 
             return Document(page_content=content, metadata=metadata)
 
         except Exception as e:
             logger.error(f"Error fetching issue {issue_key}: {str(e)}")
             raise
+
+    def _normalize_comment_limit(self, comment_limit: int | str | None) -> int | None:
+        """
+        Convert comment_limit to int if it's a string.
+
+        Args:
+            comment_limit: The comment limit value to normalize
+
+        Returns:
+            Normalized comment limit as int or None
+        """
+        if comment_limit is not None and isinstance(comment_limit, str):
+            try:
+                return int(comment_limit)
+            except ValueError:
+                logger.warning(
+                    f"Invalid comment_limit value: {comment_limit}. Using default of 10."
+                )
+                return 10
+        return comment_limit
+
+    def _get_issue_comments_if_needed(
+        self, issue_key: str, comment_limit: int | None
+    ) -> list[dict]:
+        """
+        Get comments for an issue if a valid limit is specified.
+
+        Args:
+            issue_key: The issue key to get comments for
+            comment_limit: Maximum number of comments to get
+
+        Returns:
+            List of comment dictionaries or empty list if no comments needed
+        """
+        if comment_limit is not None and comment_limit > 0:
+            return self.get_issue_comments(issue_key, limit=comment_limit)
+        return []
+
+    def _extract_epic_information(self, issue: dict) -> dict[str, str | None]:
+        """
+        Extract epic information from issue data.
+
+        Args:
+            issue: Issue data from Jira API
+
+        Returns:
+            Dictionary with epic_key and epic_name
+        """
+        epic_info: dict[str, str | None] = {"epic_key": None, "epic_name": None}
+
+        # Try both "Epic Link" and "Parent"
+        if "customfield_10014" in issue["fields"]:
+            epic_info["epic_key"] = issue["fields"]["customfield_10014"]
+        elif (
+            "parent" in issue["fields"]
+            and issue["fields"]["parent"]["fields"]["issuetype"]["name"] == "Epic"
+        ):
+            epic_info["epic_key"] = issue["fields"]["parent"]["key"]
+            epic_info["epic_name"] = issue["fields"]["parent"]["fields"]["summary"]
+
+        # Look for Epic Name if we have an Epic Key but no name yet
+        if epic_info["epic_key"] and not epic_info["epic_name"]:
+            try:
+                epic = self.jira.issue(epic_info["epic_key"])
+                epic_info["epic_name"] = epic["fields"]["summary"]
+            except Exception as e:
+                logger.warning(f"Error fetching epic details: {str(e)}")
+
+        return epic_info
+
+    def _format_issue_content(
+        self,
+        issue_key: str,
+        issue: dict,
+        description: str,
+        comments: list[dict],
+        created_date: str,
+        epic_info: dict[str, str | None],
+    ) -> str:
+        """
+        Format the issue content for display.
+
+        Args:
+            issue_key: The issue key
+            issue: The issue data from Jira
+            description: Processed description text
+            comments: List of comment dictionaries
+            created_date: Formatted created date
+            epic_info: Dictionary with epic_key and epic_name
+
+        Returns:
+            Formatted content string
+        """
+        # Basic issue information
+        content = f"""Issue: {issue_key}
+Title: {issue["fields"].get("summary", "")}
+Type: {issue["fields"]["issuetype"]["name"]}
+Status: {issue["fields"]["status"]["name"]}
+Created: {created_date}
+"""
+
+        # Add Epic information if available
+        if epic_info["epic_key"]:
+            content += f"Epic: {epic_info['epic_key']}"
+            if epic_info["epic_name"]:
+                content += f" - {epic_info['epic_name']}"
+            content += "\n"
+
+        content += f"""
+Description:
+{description}
+"""
+        # Add comments if present
+        if comments:
+            content += "\nComments:\n" + "\n".join(
+                [f"{c['created']} - {c['author']}: {c['body']}" for c in comments]
+            )
+
+        return content
+
+    def _create_issue_metadata(
+        self,
+        issue_key: str,
+        issue: dict,
+        comments: list[dict],
+        created_date: str,
+        epic_info: dict[str, str | None],
+    ) -> dict[str, Any]:
+        """
+        Create metadata for the issue document.
+
+        Args:
+            issue_key: The issue key
+            issue: The issue data from Jira
+            comments: List of comment dictionaries
+            created_date: Formatted created date
+            epic_info: Dictionary with epic_key and epic_name
+
+        Returns:
+            Metadata dictionary
+        """
+        # Basic metadata
+        metadata = {
+            "key": issue_key,
+            "title": issue["fields"].get("summary", ""),
+            "type": issue["fields"]["issuetype"]["name"],
+            "status": issue["fields"]["status"]["name"],
+            "created_date": created_date,
+            "priority": issue["fields"].get("priority", {}).get("name", "None"),
+            "link": f"{self.config.url.rstrip('/')}/browse/{issue_key}",
+        }
+
+        # Add Epic information to metadata if available
+        if epic_info["epic_key"]:
+            metadata["epic_key"] = epic_info["epic_key"]
+            if epic_info["epic_name"]:
+                metadata["epic_name"] = epic_info["epic_name"]
+
+        # Add comments to metadata if present
+        if comments:
+            metadata["comments"] = comments
+
+        return metadata
 
     def search_issues(
         self,
@@ -1032,56 +1191,59 @@ Description:
 
     def _parse_time_spent(self, time_spent: str) -> int:
         """
-        Convert a Jira time string (e.g., "1h 30m") to seconds.
+        Parse time spent string into seconds.
 
         Args:
-            time_spent: String representing time in Jira format (e.g., "1h 30m", "2d")
+            time_spent: Time spent string (e.g. 1h 30m, 1d, etc.)
 
         Returns:
-            Time in seconds
+            Time spent in seconds
         """
-        if not time_spent:
-            error_msg = "Time spent string cannot be empty"
-            raise ValueError(error_msg)
+        # Base case for direct specification in seconds
+        if time_spent.endswith("s"):
+            try:
+                return int(time_spent[:-1])
+            except ValueError:
+                pass
 
-        # Define time unit conversions to seconds
-        unit_to_seconds = {
-            "w": 7 * 24 * 60 * 60,  # weeks
-            "d": 24 * 60 * 60,  # days
-            "h": 60 * 60,  # hours
-            "m": 60,  # minutes
-            "s": 1,  # seconds
+        total_seconds = 0
+        time_units = {
+            "w": 7 * 24 * 60 * 60,  # weeks to seconds
+            "d": 24 * 60 * 60,  # days to seconds
+            "h": 60 * 60,  # hours to seconds
+            "m": 60,  # minutes to seconds
         }
 
-        # Regular expression to match time units
-        pattern = r"([\d.]+)([wdhms])"
-        matches = re.findall(pattern, time_spent.lower())
+        # Regular expression to find time components like 1w, 2d, 3h, 4m
+        pattern = r"(\d+)([wdhm])"
+        matches = re.findall(pattern, time_spent)
 
-        if not matches:
-            error_msg = f"Invalid time format: {time_spent}. Expected format like '1h 30m', '1d', etc."
-            raise ValueError(error_msg)
-
-        # Sum up the total seconds
-        total_seconds = 0
         for value, unit in matches:
-            try:
-                # Convert to float first to handle decimals
-                time_value = float(value)
-                unit_seconds = unit_to_seconds.get(unit, 0)
-                total_seconds += time_value * unit_seconds
-            except (ValueError, TypeError):
-                continue
+            # Convert value to int and multiply by the unit in seconds
+            seconds = int(value) * time_units[unit]
+            total_seconds += seconds
 
-        return int(total_seconds)
+        if total_seconds == 0:
+            # If we couldn't parse anything, try using the raw value
+            try:
+                return int(float(time_spent))  # Convert to float first, then to int
+            except ValueError:
+                # If all else fails, default to 60 seconds (1 minute)
+                logger.warning(
+                    f"Could not parse time: {time_spent}, defaulting to 60 seconds"
+                )
+                return 60
+
+        return total_seconds
 
     def add_worklog(
         self,
         issue_key: str,
         time_spent: str,
-        comment: str = None,
-        started: str = None,
-        original_estimate: str = None,
-        remaining_estimate: str = None,
+        comment: str | None = None,
+        started: str | None = None,
+        original_estimate: str | None = None,
+        remaining_estimate: str | None = None,
     ) -> dict:
         """
         Add a worklog to an issue with optional estimate updates.
@@ -1293,53 +1455,20 @@ Description:
         """
         try:
             # Ensure transition_id is a string
-            if not isinstance(transition_id, str):
-                logger.warning(
-                    f"transition_id must be a string, converting from {type(transition_id)}: {transition_id}"
-                )
-                transition_id = str(transition_id)
+            transition_id = self._normalize_transition_id(transition_id)
 
-            transition_data: dict[str, Any] = {"transition": {"id": transition_id}}
+            # Prepare transition data
+            transition_data = {"transition": {"id": transition_id}}
 
             # Add fields if provided
             if fields:
-                # Sanitize fields to ensure they're valid for the API
-                sanitized_fields = {}
-                for key, value in fields.items():
-                    # Skip None values
-                    if value is None:
-                        continue
-
-                    # Handle special case for assignee
-                    if key == "assignee" and isinstance(value, str):
-                        try:
-                            account_id = self._get_account_id(value)
-                            sanitized_fields[key] = {"accountId": account_id}
-                        except Exception as e:
-                            error_msg = (
-                                f"Could not resolve assignee '{value}': {str(e)}"
-                            )
-                            logger.warning(error_msg)
-                            # Skip this field
-                            continue
-                    else:
-                        sanitized_fields[key] = value
-
+                sanitized_fields = self._sanitize_transition_fields(fields)
                 if sanitized_fields:
                     transition_data["fields"] = sanitized_fields
 
             # Add comment if provided
             if comment:
-                if not isinstance(comment, str):
-                    logger.warning(
-                        f"Comment must be a string, converting from {type(comment)}: {comment}"
-                    )
-                    comment = str(comment)
-
-                jira_formatted_comment = self._markdown_to_jira(comment)
-                transition_data["update"] = {
-                    "comment": [{"add": {"body": jira_formatted_comment}}]
-                }
+                self._add_comment_to_transition_data(transition_data, comment)
 
             # Log the transition request for debugging
             logger.info(
@@ -1356,3 +1485,69 @@ Description:
             error_msg = f"Error transitioning issue {issue_key} with transition ID {transition_id}: {str(e)}"
             logger.error(error_msg)
             raise ValueError(error_msg) from e
+
+    def _normalize_transition_id(self, transition_id: str | int) -> str:
+        """
+        Normalize transition ID to a string.
+
+        Args:
+            transition_id: Transition ID as string or int
+
+        Returns:
+            String representation of transition ID
+        """
+        return str(transition_id)
+
+    def _sanitize_transition_fields(self, fields: dict) -> dict:
+        """
+        Sanitize fields to ensure they're valid for the Jira API.
+
+        Args:
+            fields: Dictionary of fields to sanitize
+
+        Returns:
+            Dictionary of sanitized fields
+        """
+        sanitized_fields = {}
+        for key, value in fields.items():
+            # Skip None values
+            if value is None:
+                continue
+
+            # Handle special case for assignee
+            if key == "assignee" and isinstance(value, str):
+                try:
+                    account_id = self._get_account_id(value)
+                    sanitized_fields[key] = {"accountId": account_id}
+                except Exception as e:
+                    error_msg = f"Could not resolve assignee '{value}': {str(e)}"
+                    logger.warning(error_msg)
+                    # Skip this field
+                    continue
+            else:
+                sanitized_fields[key] = value
+
+        return sanitized_fields
+
+    def _add_comment_to_transition_data(
+        self, transition_data: dict[str, Any], comment: str | int
+    ) -> None:
+        """
+        Add comment to transition data.
+
+        Args:
+            transition_data: The transition data dictionary to update
+            comment: The comment to add
+        """
+        # Ensure comment is a string
+        if not isinstance(comment, str):
+            logger.warning(
+                f"Comment must be a string, converting from {type(comment)}: {comment}"
+            )
+            comment = str(comment)
+
+        # Convert markdown to Jira format and add to transition data
+        jira_formatted_comment = self._markdown_to_jira(comment)
+        transition_data["update"] = {
+            "comment": [{"add": {"body": jira_formatted_comment}}]
+        }

@@ -3,10 +3,9 @@ import re
 import tempfile
 import warnings
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
-import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 from markdownify import markdownify as md
 from md2conf.converter import (
     ConfluenceConverterOptions,
@@ -19,16 +18,26 @@ from md2conf.converter import (
 logger = logging.getLogger("mcp-atlassian")
 
 
+class ConfluenceClient(Protocol):
+    """Protocol for Confluence client."""
+
+    def get_user_details_by_accountid(self, account_id: str) -> dict[str, Any]:
+        """Get user details by account ID."""
+        ...
+
+
 class TextPreprocessor:
     """Handles text preprocessing for Confluence and Jira content."""
 
-    def __init__(self, base_url: str, confluence_client: Any = None) -> None:
+    def __init__(
+        self, base_url: str, confluence_client: ConfluenceClient | None = None
+    ) -> None:
         """
         Initialize the text preprocessor.
 
         Args:
-            base_url: The base URL of the Confluence or Jira instance
-            confluence_client: Optional Confluence client instance
+            base_url: Base URL for Confluence or Jira
+            confluence_client: Optional Confluence client for user lookups
         """
         self.base_url = base_url.rstrip("/")
         self.confluence_client = confluence_client
@@ -36,56 +45,24 @@ class TextPreprocessor:
     def process_html_content(
         self, html_content: str, space_key: str = ""
     ) -> tuple[str, str]:
-        """Process HTML content to replace user refs and page links."""
+        """
+        Process HTML content to replace user refs and page links.
+
+        Args:
+            html_content: The HTML content to process
+            space_key: Optional space key for context
+
+        Returns:
+            Tuple of (processed_html, processed_markdown)
+        """
         try:
+            # Parse the HTML content
             soup = BeautifulSoup(html_content, "html.parser")
 
             # Process user mentions
-            user_mentions = soup.find_all("ri:user")
-            for user in user_mentions:
-                account_id = user.get("ri:account-id")
-                if account_id and self.confluence_client:
-                    try:
-                        # Fetch user info using the Confluence API
-                        user_info = (
-                            self.confluence_client.get_user_details_by_accountid(
-                                account_id
-                            )
-                        )
-                        display_name = user_info.get("displayName", account_id)
+            self._process_user_mentions_in_soup(soup)
 
-                        # Replace the entire ac:link structure with @mention
-                        link_tag = user.find_parent("ac:link")
-                        if link_tag:
-                            link_tag.replace_with(f"@{display_name}")
-                    except requests.RequestException as e:
-                        # Network error when fetching user info
-                        logger.warning(
-                            f"Network error fetching user info for {account_id}: {e}"
-                        )
-                        # Fallback: just use the account ID
-                        link_tag = user.find_parent("ac:link")
-                        if link_tag:
-                            link_tag.replace_with(f"@user_{account_id}")
-                    except KeyError as e:
-                        # Missing key in user info response
-                        logger.warning(
-                            f"Missing data in user info for {account_id}: {e}"
-                        )
-                        # Fallback: just use the account ID
-                        link_tag = user.find_parent("ac:link")
-                        if link_tag:
-                            link_tag.replace_with(f"@user_{account_id}")
-                    except Exception as e:
-                        # Other unexpected errors
-                        logger.warning(
-                            f"Unexpected error processing mention for {account_id}: {e}"
-                        )
-                        # Fallback: just use the account ID
-                        link_tag = user.find_parent("ac:link")
-                        if link_tag:
-                            link_tag.replace_with(f"@user_{account_id}")
-
+            # Convert to string and markdown
             processed_html = str(soup)
             processed_markdown = md(processed_html)
 
@@ -94,6 +71,63 @@ class TextPreprocessor:
         except Exception as e:
             logger.error(f"Error in process_html_content: {str(e)}")
             raise
+
+    def _process_user_mentions_in_soup(self, soup: BeautifulSoup) -> None:
+        """
+        Process user mentions in BeautifulSoup object.
+
+        Args:
+            soup: BeautifulSoup object containing HTML
+        """
+        # Find all ac:link elements with ac:link-body that are user mentions
+        user_mentions = soup.find_all("ac:link", attrs={"ac:schema-version": "1"})
+
+        for user_element in user_mentions:
+            # Get the account ID from the ri:account-id attribute
+            link_body = user_element.find("ac:link-body")
+            if link_body and "@" in link_body.get_text(strip=True):
+                user_ref = user_element.find("ri:user")
+                if user_ref and user_ref.get("ri:account-id"):
+                    account_id = user_ref.get("ri:account-id")
+                    if isinstance(account_id, str):
+                        self._replace_user_mention(user_element, account_id)
+
+    def _replace_user_mention(self, user_element: Tag, account_id: str) -> None:
+        """
+        Replace a user mention with the user's display name.
+
+        Args:
+            user_element: The HTML element containing the user mention
+            account_id: The user's account ID
+        """
+        try:
+            # Only attempt to get user details if we have a valid confluence client
+            if self.confluence_client is not None:
+                user_details = self.confluence_client.get_user_details_by_accountid(
+                    account_id
+                )
+                display_name = user_details.get("displayName", "")
+                if display_name:
+                    new_text = f"@{display_name}"
+                    user_element.replace_with(new_text)
+                    return
+            # If we don't have a confluence client or couldn't get user details, use fallback
+            self._use_fallback_user_mention(user_element, account_id)
+        except Exception as e:
+            logger.warning(f"Error processing user mention: {str(e)}")
+            self._use_fallback_user_mention(user_element, account_id)
+
+    def _use_fallback_user_mention(self, user_element: Tag, account_id: str) -> None:
+        """
+        Replace user mention with a fallback when the API call fails.
+
+        Args:
+            user_element: The HTML element containing the user mention
+            account_id: The user's account ID
+        """
+        # Fallback: just use the account ID
+        new_text = f"@user_{account_id}"
+        user_element.replace_with(new_text)
 
     def clean_jira_text(self, text: str) -> str:
         """
