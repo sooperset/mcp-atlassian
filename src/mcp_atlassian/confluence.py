@@ -1,6 +1,7 @@
 import logging
 import os
 
+import requests
 from atlassian import Confluence
 
 from .config import ConfluenceConfig
@@ -41,48 +42,72 @@ class ConfluenceFetcher:
         """Get all available spaces."""
         return self.confluence.get_all_spaces(start=start, limit=limit)
 
-    def get_page_content(self, page_id: str, clean_html: bool = True) -> Document:
-        """Get content of a specific page."""
+    def get_page_content(
+        self, page_id: str, *, convert_to_markdown: bool = True
+    ) -> Document:
+        """
+        Get content of a specific page.
+
+        Args:
+            page_id: The ID of the page to retrieve
+            convert_to_markdown: When True, returns content in markdown format,
+                                 otherwise returns raw HTML
+
+        Returns:
+            Document containing the page content and metadata
+        """
         page = self.confluence.get_page_by_id(
             page_id=page_id, expand="body.storage,version,space"
         )
         space_key = page.get("space", {}).get("key", "")
-
         content = page["body"]["storage"]["value"]
         processed_html, processed_markdown = self._process_html_content(
             content, space_key
         )
 
-        # Get author information from version
-        version = page.get("version", {})
-        author = version.get("by", {})
-
         metadata = {
             "page_id": page_id,
-            "title": page["title"],
-            "version": version.get("number"),
-            "url": f"{self.config.url}/spaces/{space_key}/pages/{page_id}",
+            "title": page.get("title", ""),
+            "version": page.get("version", {}).get("number"),
             "space_key": space_key,
-            "author_name": author.get("displayName"),
-            "space_name": page.get("space", {}).get("name", ""),
-            "last_modified": version.get("when"),
+            "url": f"{self.config.url}/spaces/{space_key}/pages/{page_id}",
         }
 
         return Document(
-            page_content=processed_markdown if clean_html else processed_html,
+            page_content=processed_markdown if convert_to_markdown else processed_html,
             metadata=metadata,
         )
 
     def get_page_by_title(
-        self, space_key: str, title: str, clean_html: bool = True
+        self, space_key: str, title: str, *, convert_to_markdown: bool = True
     ) -> Document | None:
-        """Get page content by space key and title."""
+        """
+        Get a specific page by its title from a Confluence space.
+
+        Args:
+            space_key: The key of the space containing the page
+            title: The title of the page to retrieve
+            convert_to_markdown: When True, returns content in markdown format,
+                                 otherwise returns raw HTML
+
+        Returns:
+            Document containing the page content and metadata, or None if not found
+        """
         try:
+            # First check if the space exists
+            spaces = self.confluence.get_all_spaces(start=0, limit=500)
+            space_keys = [s["key"] for s in spaces]
+            if space_key not in space_keys:
+                logger.warning(f"Space {space_key} not found")
+                return None
+
+            # Then try to find the page by title
             page = self.confluence.get_page_by_title(
-                space=space_key, title=title, expand="body.storage,version"
+                space=space_key, title=title, expand="body.storage"
             )
 
             if not page:
+                logger.warning(f"Page '{title}' not found in space {space_key}")
                 return None
 
             content = page["body"]["storage"]["value"]
@@ -99,12 +124,20 @@ class ConfluenceFetcher:
             }
 
             return Document(
-                page_content=processed_markdown if clean_html else processed_html,
+                page_content=processed_markdown
+                if convert_to_markdown
+                else processed_html,
                 metadata=metadata,
             )
 
+        except KeyError as e:
+            logger.error(f"Missing key in page data: {str(e)}")
+            return None
+        except requests.RequestException as e:
+            logger.error(f"Network error when fetching page: {str(e)}")
+            return None
         except Exception as e:
-            logger.error(f"Error fetching page: {str(e)}")
+            logger.error(f"Unexpected error fetching page: {str(e)}")
             return None
 
     def get_space_pages(

@@ -13,13 +13,19 @@ repos:
 # Phase 1: Start with basic checks (current) ✓
 # Phase 2: Enable F841 (unused variables) - easy win ✓
 # Phase 3: Enable B (bug-related checks) - add proper exception handling ✓
-# Phase 4: Enable EM (exception message formatting) [ACTIVE]
+# Phase 4: Enable EM (exception message formatting) [Partially addressed]
 #   - We demonstrated the pattern for fixing EM101 and EM102
 #   - Due to the large number (27) of exceptions to fix, we'll keep this in the ignore list
 #   - but address them over time in future PRs
-# Phase 5: Enable BLE (blind exception catching)
-# Phase 6: Enable FBT (boolean function parameters)
-# Phase 7: Enable ANN (type annotations)
+# Phase 5: Enable BLE (blind exception catching) [Partially addressed]
+#   - We demonstrated the pattern for fixing blind exception catching in confluence.py and jira.py
+#   - Similar to EM, due to the large number (28) of cases, we'll address them incrementally
+#   - The fix pattern: Use specific exception types (requests.RequestException, KeyError, etc.)
+# Phase 6: Enable FBT (boolean function parameters) [Partially addressed]
+#   - We fixed 2 examples of boolean function parameters in confluence.py
+#   - Fix pattern: Use keyword-only arguments with descriptive names instead of boolean flags
+#   - Will address remaining instances (10) in future PRs
+# Phase 7: Enable ANN (type annotations) [NEXT]
 # Phase 8: Enable stricter mypy checks
 
 -   repo: https://github.com/astral-sh/ruff-pre-commit
@@ -33,8 +39,8 @@ repos:
             "--ignore=E501",  # Line too long - handled by ruff-format
             "--ignore=ERA",   # Found commented-out code
             "--ignore=ANN",   # Missing type annotations - will fix gradually
-            "--ignore=FBT",   # Boolean positional arg in function definition
-            "--ignore=BLE",   # Blind exception catching
+            "--ignore=FBT",   # Boolean function parameters - fix in future PRs
+            "--ignore=BLE",   # Blind exception catching - fix in future PRs
             "--ignore=EM",    # Exception message formatting - fix in future PRs
             "--ignore=S",     # Security issues (in tests)
             "--per-file-ignores=tests/*:S101",  # Allow assert in tests

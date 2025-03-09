@@ -4,6 +4,7 @@ import re
 from datetime import datetime
 from typing import Any
 
+import requests
 from atlassian import Jira
 
 from .config import JiraConfig
@@ -91,55 +92,52 @@ class JiraFetcher:
 
     def _get_account_id(self, assignee: str) -> str:
         """
-        Get account ID from email or full name.
+        Convert a username or display name to an account ID.
 
         Args:
-            assignee: Email, full name, or account ID of the user
+            assignee: Username, email, or display name
 
         Returns:
-            Account ID of the user
-
-        Raises:
-            ValueError: If user cannot be found
+            The account ID string
         """
-        # If it looks like an account ID (alphanumeric with hyphens), return as is
-        if assignee and assignee.replace("-", "").isalnum():
-            logger.info(f"Using '{assignee}' as account ID")
-            return assignee
+        # Handle direct account ID assignment
+        if assignee and assignee.startswith("accountid:"):
+            return assignee.replace("accountid:", "")
 
+        # First try direct user lookup
         try:
-            # First try direct user lookup
+            users = []
             try:
-                users = self.jira.user_find_by_user_string(query=assignee)
-                if users:
-                    if len(users) > 1:
-                        # Log all found users for debugging
-                        user_details = [
-                            f"{u.get('displayName')} ({u.get('emailAddress')})"
-                            for u in users
-                        ]
-                        logger.warning(
-                            f"Multiple users found for '{assignee}', using first match. "
-                            f"Found users: {', '.join(user_details)}"
-                        )
-
-                    user = users[0]
-                    account_id = user.get("accountId")
-                    if account_id and isinstance(account_id, str):
-                        logger.info(
-                            f"Found account ID via direct lookup: {account_id} "
-                            f"({user.get('displayName')} - {user.get('emailAddress')})"
-                        )
-                        return str(account_id)  # Explicit str conversion
+                users = self.jira.user(assignee)
+                if isinstance(users, dict):
+                    users = [users]
+                account_id = users[0].get("accountId") if users else None
+                if account_id:
+                    return str(account_id)  # Ensure we return a string
+                else:
                     logger.warning(
                         f"Direct user lookup failed for '{assignee}': user found but no account ID present"
                     )
-                else:
-                    logger.warning(
-                        f"Direct user lookup failed for '{assignee}': no users found"
-                    )
+            except IndexError:
+                logger.warning(
+                    f"Direct user lookup failed for '{assignee}': user result has unexpected format"
+                )
+            except KeyError:
+                logger.warning(
+                    f"Direct user lookup failed for '{assignee}': missing accountId in response"
+                )
+            except (ValueError, TypeError) as e:
+                logger.warning(
+                    f"Direct user lookup failed for '{assignee}': invalid data format: {str(e)}"
+                )
+            except requests.RequestException as e:
+                logger.warning(
+                    f"Direct user lookup failed for '{assignee}': network error: {str(e)}"
+                )
             except Exception as e:
-                logger.warning(f"Direct user lookup failed for '{assignee}': {str(e)}")
+                logger.warning(
+                    f"Direct user lookup failed for '{assignee}': unexpected error: {str(e)}"
+                )
 
             # Fall back to project permission based search
             users = self.jira.get_users_with_browse_permission_to_a_project(
