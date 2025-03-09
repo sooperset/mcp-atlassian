@@ -952,7 +952,9 @@ def handle_confluence_get_comments(
     Returns:
         Formatted comments
     """
-    comments = confluence_fetcher.get_page_comments(arguments["page_id"])
+    comments = confluence_fetcher.get_page_comments(
+        page_id=arguments["page_id"], return_markdown=True
+    )
     # Convert Document objects to dictionaries for the formatter
     formatted_comments = [format_comment(doc.metadata) for doc in comments]
 
@@ -1053,7 +1055,7 @@ def handle_confluence_update_page(
         page_id=page_id,
         title=title,
         body=storage_format,
-        minor_edit=minor_edit,
+        is_minor_edit=minor_edit,
         version_comment=version_comment,
     )
 

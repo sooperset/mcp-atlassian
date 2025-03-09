@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import cast
 
 import requests
 from atlassian import Confluence
@@ -46,7 +47,7 @@ class ConfluenceFetcher:
     ) -> tuple[str, str]:
         return self.preprocessor.process_html_content(html_content, space_key)
 
-    def get_spaces(self, start: int = 0, limit: int = 10) -> list[dict]:
+    def get_spaces(self, start: int = 0, limit: int = 10) -> dict[str, object]:
         """
         Get all available spaces.
 
@@ -55,10 +56,11 @@ class ConfluenceFetcher:
             limit: Maximum number of spaces to return
 
         Returns:
-            List of dictionaries with space information
+            Dictionary containing space information with results and metadata
         """
         spaces = self.confluence.get_all_spaces(start=start, limit=limit)
-        return spaces if isinstance(spaces, list) else []
+        # Cast the return value to the expected type
+        return cast(dict[str, object], spaces)
 
     def get_page_content(
         self, page_id: str, *, convert_to_markdown: bool = True
@@ -88,6 +90,9 @@ class ConfluenceFetcher:
             "title": page.get("title", ""),
             "version": page.get("version", {}).get("number"),
             "space_key": space_key,
+            "space_name": page.get("space", {}).get("name", ""),
+            "last_modified": page.get("version", {}).get("when"),
+            "author_name": page.get("version", {}).get("by", {}).get("displayName", ""),
             "url": f"{self.config.url}/spaces/{space_key}/pages/{page_id}",
         }
 
@@ -114,14 +119,20 @@ class ConfluenceFetcher:
         try:
             # First check if the space exists
             spaces = self.confluence.get_all_spaces(start=0, limit=500)
-            space_keys = [s["key"] for s in spaces]
+
+            # Handle case where spaces can be a dictionary with a "results" key
+            if isinstance(spaces, dict) and "results" in spaces:
+                space_keys = [s["key"] for s in spaces["results"]]
+            else:
+                space_keys = [s["key"] for s in spaces]
+
             if space_key not in space_keys:
                 logger.warning(f"Space {space_key} not found")
                 return None
 
             # Then try to find the page by title
             page = self.confluence.get_page_by_title(
-                space=space_key, title=title, expand="body.storage"
+                space=space_key, title=title, expand="body.storage,version"
             )
 
             if not page:
@@ -138,6 +149,11 @@ class ConfluenceFetcher:
                 "title": page["title"],
                 "version": page.get("version", {}).get("number"),
                 "space_key": space_key,
+                "space_name": page.get("space", {}).get("name", ""),
+                "last_modified": page.get("version", {}).get("when"),
+                "author_name": page.get("version", {})
+                .get("by", {})
+                .get("displayName", ""),
                 "url": f"{self.config.url}/spaces/{space_key}/pages/{page['id']}",
             }
 
@@ -194,7 +210,12 @@ class ConfluenceFetcher:
                 "page_id": page["id"],
                 "title": page["title"],
                 "space_key": space_key,
+                "space_name": page.get("space", {}).get("name", ""),
                 "version": page.get("version", {}).get("number"),
+                "last_modified": page.get("version", {}).get("when"),
+                "author_name": page.get("version", {})
+                .get("by", {})
+                .get("displayName", ""),
                 "url": f"{self.config.url}/spaces/{space_key}/pages/{page['id']}",
             }
 
@@ -210,9 +231,19 @@ class ConfluenceFetcher:
         return documents
 
     def get_page_comments(
-        self, page_id: str, clean_html: bool = True
+        self, page_id: str, *, return_markdown: bool = True
     ) -> list[Document]:
-        """Get all comments for a specific page."""
+        """
+        Get all comments for a specific page.
+
+        Args:
+            page_id: The ID of the page to get comments from
+            return_markdown: When True, returns content in markdown format,
+                            otherwise returns raw HTML
+
+        Returns:
+            List of Document objects containing comment content and metadata
+        """
         page = self.confluence.get_page_by_id(page_id=page_id, expand="space")
         space_key = page.get("space", {}).get("key", "")
         space_name = page.get("space", {}).get("name", "")
@@ -243,7 +274,9 @@ class ConfluenceFetcher:
 
             comment_documents.append(
                 Document(
-                    page_content=processed_markdown if clean_html else processed_html,
+                    page_content=processed_markdown
+                    if return_markdown
+                    else processed_html,
                     metadata=metadata,
                 )
             )
@@ -316,7 +349,7 @@ class ConfluenceFetcher:
         page_id: str,
         title: str,
         body: str,
-        minor_edit: bool = False,
+        is_minor_edit: bool = False,
         version_comment: str = "",
     ) -> Document:
         """
@@ -326,25 +359,23 @@ class ConfluenceFetcher:
             page_id: ID of the page to update
             title: New page title
             body: New page content in Confluence storage format
-            minor_edit: Whether this update is a minor edit
+            is_minor_edit: Whether this update is a minor edit
             version_comment: Optional comment for the version history
 
         Returns:
             Document representing the updated page
         """
         try:
-            # Get the current page to get its version number
-            current_page = self.confluence.get_page_by_id(page_id=page_id)
-            version = current_page.get("version", {}).get("number", 0) + 1
+            # Fetch the current page first to get the version number
+            _ = self.confluence.get_page_by_id(page_id=page_id, expand="version")
 
             # Update the page
             self.confluence.update_page(
                 page_id=page_id,
                 title=title,
                 body=body,
-                minor_edit=minor_edit,
+                minor_edit=is_minor_edit,
                 version_comment=version_comment,
-                version_number=version,
             )
 
             # Return the updated page as a Document
