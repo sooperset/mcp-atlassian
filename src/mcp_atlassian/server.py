@@ -39,7 +39,9 @@ def get_available_services():
     if jira_url:
         is_cloud = "atlassian.net" in jira_url
         if is_cloud:
-            jira_vars = all([jira_url, os.getenv("JIRA_USERNAME"), os.getenv("JIRA_API_TOKEN")])
+            jira_vars = all(
+                [jira_url, os.getenv("JIRA_USERNAME"), os.getenv("JIRA_API_TOKEN")]
+            )
             logger.info("Using Jira Cloud authentication method")
         else:
             jira_vars = all([jira_url, os.getenv("JIRA_PERSONAL_TOKEN")])
@@ -138,7 +140,9 @@ async def read_resource(uri: AnyUrl) -> str:
     # Handle Confluence resources
     if uri_str.startswith("confluence://"):
         if not services["confluence"]:
-            raise ValueError("Confluence is not configured. Please provide Confluence credentials.")
+            raise ValueError(
+                "Confluence is not configured. Please provide Confluence credentials."
+            )
         parts = uri_str.replace("confluence://", "").split("/")
 
         # Handle space listing
@@ -201,7 +205,9 @@ async def read_resource(uri: AnyUrl) -> str:
                 url = issue.metadata.get("url", "")
                 status = issue.metadata.get("status", "")
 
-                content.append(f"# [{key}: {title}]({url})\nStatus: {status}\n\n{issue.page_content}\n\n---")
+                content.append(
+                    f"# [{key}: {title}]({url})\nStatus: {status}\n\n{issue.page_content}\n\n---"
+                )
 
             return "\n\n".join(content)
 
@@ -705,7 +711,12 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 for doc in documents
             ]
 
-            return [TextContent(type="text", text=json.dumps(search_results, indent=2, ensure_ascii=False))]
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(search_results, indent=2, ensure_ascii=False),
+                )
+            ]
 
         elif name == "confluence_get_page":
             doc = confluence_fetcher.get_page_content(arguments["page_id"])
@@ -716,13 +727,22 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             else:
                 result = {"content": doc.page_content}
 
-            return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+            return [
+                TextContent(
+                    type="text", text=json.dumps(result, indent=2, ensure_ascii=False)
+                )
+            ]
 
         elif name == "confluence_get_comments":
             comments = confluence_fetcher.get_page_comments(arguments["page_id"])
             formatted_comments = [format_comment(comment) for comment in comments]
 
-            return [TextContent(type="text", text=json.dumps(formatted_comments, indent=2, ensure_ascii=False))]
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(formatted_comments, indent=2, ensure_ascii=False),
+                )
+            ]
 
         elif name == "confluence_create_page":
             # Convert markdown content to HTML storage format
@@ -748,12 +768,15 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 "space_key": doc.metadata["space_key"],
                 "url": doc.metadata["url"],
                 "version": doc.metadata["version"],
-                "content": doc.page_content[:500] + "..." if len(doc.page_content) > 500 else doc.page_content,
+                "content": doc.page_content[:500] + "..."
+                if len(doc.page_content) > 500
+                else doc.page_content,
             }
 
             return [
                 TextContent(
-                    type="text", text=f"Page created successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}"
+                    type="text",
+                    text=f"Page created successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}",
                 )
             ]
 
@@ -781,22 +804,31 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 "space_key": doc.metadata["space_key"],
                 "url": doc.metadata["url"],
                 "version": doc.metadata["version"],
-                "content": doc.page_content[:500] + "..." if len(doc.page_content) > 500 else doc.page_content,
+                "content": doc.page_content[:500] + "..."
+                if len(doc.page_content) > 500
+                else doc.page_content,
             }
 
             return [
                 TextContent(
-                    type="text", text=f"Page updated successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}"
+                    type="text",
+                    text=f"Page updated successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}",
                 )
             ]
 
         # Jira operations
         elif name == "jira_get_issue":
             doc = jira_fetcher.get_issue(
-                arguments["issue_key"], expand=arguments.get("expand"), comment_limit=arguments.get("comment_limit")
+                arguments["issue_key"],
+                expand=arguments.get("expand"),
+                comment_limit=arguments.get("comment_limit"),
             )
             result = {"content": doc.page_content, "metadata": doc.metadata}
-            return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+            return [
+                TextContent(
+                    type="text", text=json.dumps(result, indent=2, ensure_ascii=False)
+                )
+            ]
 
         elif name == "jira_search":
             limit = min(int(arguments.get("limit", 10)), 50)
@@ -817,95 +849,107 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 requested_fields = ",".join(field_list)
                 logger.debug(f"Expanded requested fields to: {requested_fields}")
 
-            documents = jira_fetcher.search_issues(arguments["jql"], fields=requested_fields, limit=limit)
+            documents = jira_fetcher.search_issues(
+                arguments["jql"], fields=requested_fields, limit=limit
+            )
             search_results = [format_issue(doc) for doc in documents]
-            return [TextContent(type="text", text=json.dumps(search_results, indent=2, ensure_ascii=False))]
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(search_results, indent=2, ensure_ascii=False),
+                )
+            ]
 
         elif name == "jira_get_project_issues":
             limit = min(int(arguments.get("limit", 10)), 50)
-            documents = jira_fetcher.get_project_issues(arguments["project_key"], limit=limit)
+            documents = jira_fetcher.get_project_issues(
+                arguments["project_key"], limit=limit
+            )
             project_issues = [format_issue(doc) for doc in documents]
-            return [TextContent(type="text", text=json.dumps(project_issues, indent=2, ensure_ascii=False))]
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(project_issues, indent=2, ensure_ascii=False),
+                )
+            ]
 
         elif name == "jira_create_issue":
-            additional_fields = json.loads(arguments.get("additional_fields", "{}"))
-
-            # If assignee is in additional_fields, move it to the main arguments
-            if "assignee" in additional_fields:
-                if not arguments.get("assignee"):  # Only if not already specified in main arguments
-                    assignee_data = additional_fields.pop("assignee")
-                    if isinstance(assignee_data, dict):
-                        arguments["assignee"] = assignee_data.get("id") or assignee_data.get("accountId")
-                    else:
-                        arguments["assignee"] = str(assignee_data)
-
-            # Handle Epic-specific settings
+            project_key = arguments["project_key"]
+            summary = arguments["summary"]
             issue_type = arguments["issue_type"]
-            if issue_type.lower() == "epic":
-                # If epic_name is directly specified, make sure it's passed along
-                if "epic_name" in arguments:
-                    additional_fields["epic_name"] = arguments.pop("epic_name")
+            description = arguments.get("description", "")
+            assignee = arguments.get("assignee")
 
-                # If epic_color is directly specified, make sure it's passed along
-                if "epic_color" in arguments or "epic_colour" in arguments:
-                    color = arguments.pop("epic_color", None) or arguments.pop("epic_colour", None)
-                    additional_fields["epic_color"] = color
+            # Any additional fields come in as a dictionary
+            fields = {}
+            for key in arguments:
+                if key not in [
+                    "project_key",
+                    "summary",
+                    "issue_type",
+                    "description",
+                    "assignee",
+                ]:
+                    fields[key] = arguments[key]
 
-                # Pass any customfield_* parameters directly
-                for key, value in list(arguments.items()):
-                    if key.startswith("customfield_"):
-                        additional_fields[key] = arguments.pop(key)
-
-            try:
-                doc = jira_fetcher.create_issue(
-                    project_key=arguments["project_key"],
-                    summary=arguments["summary"],
-                    issue_type=issue_type,
-                    description=arguments.get("description", ""),
-                    assignee=arguments.get("assignee"),
-                    **additional_fields,
-                )
-                result = json.dumps(
-                    {"content": doc.page_content, "metadata": doc.metadata}, indent=2, ensure_ascii=False
-                )
-                return [TextContent(type="text", text=f"Issue created successfully:\n{result}")]
-            except Exception as e:
-                error_msg = str(e)
-                if "customfield_" in error_msg and issue_type.lower() == "epic":
-                    # Provide a more helpful error message for Epic field issues
-                    return [
-                        TextContent(
-                            type="text",
-                            text=(
-                                f"Error creating Epic: Your Jira instance has specific requirements for Epic creation. "
-                                f"You may need to provide the specific custom field ID for Epic Name. "
-                                f"Try using additional_fields with the correct customfield_* ID for your instance.\n\n"
-                                f"Original error: {error_msg}"
-                            ),
-                        )
-                    ]
-                else:
-                    # Re-raise the original exception for other errors
-                    raise
+            issue = jira_fetcher.create_issue(
+                project_key=project_key,
+                summary=summary,
+                issue_type=issue_type,
+                description=description,
+                assignee=assignee,
+                **fields,
+            )
+            result = json.dumps(
+                {"content": issue.page_content, "metadata": issue.metadata},
+                indent=2,
+                ensure_ascii=False,
+            )
+            return [
+                TextContent(type="text", text=f"Issue created successfully:\n{result}")
+            ]
 
         elif name == "jira_update_issue":
             fields = json.loads(arguments["fields"])
             additional_fields = json.loads(arguments.get("additional_fields", "{}"))
 
-            doc = jira_fetcher.update_issue(issue_key=arguments["issue_key"], fields=fields, **additional_fields)
-            result = json.dumps({"content": doc.page_content, "metadata": doc.metadata}, indent=2, ensure_ascii=False)
-            return [TextContent(type="text", text=f"Issue updated successfully:\n{result}")]
+            doc = jira_fetcher.update_issue(
+                issue_key=arguments["issue_key"], fields=fields, **additional_fields
+            )
+            result = json.dumps(
+                {"content": doc.page_content, "metadata": doc.metadata},
+                indent=2,
+                ensure_ascii=False,
+            )
+            return [
+                TextContent(type="text", text=f"Issue updated successfully:\n{result}")
+            ]
 
         elif name == "jira_delete_issue":
             issue_key = arguments["issue_key"]
             deleted = jira_fetcher.delete_issue(issue_key)
-            result = {"message": f"Issue {issue_key} has been deleted successfully."}
-            return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+            result = {
+                "message": f"Issue {issue_key} has been deleted successfully.",
+                "success": str(
+                    deleted
+                ),  # Convert bool to string to maintain consistent types
+            }
+            return [
+                TextContent(
+                    type="text", text=json.dumps(result, indent=2, ensure_ascii=False)
+                )
+            ]
 
         elif name == "jira_add_comment":
-            comment = jira_fetcher.add_comment(arguments["issue_key"], arguments["comment"])
+            comment = jira_fetcher.add_comment(
+                arguments["issue_key"], arguments["comment"]
+            )
             result = {"message": "Comment added successfully", "comment": comment}
-            return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+            return [
+                TextContent(
+                    type="text", text=json.dumps(result, indent=2, ensure_ascii=False)
+                )
+            ]
 
         elif name == "jira_add_worklog":
             issue_key = arguments["issue_key"]
@@ -937,12 +981,25 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 # Create a more detailed success message based on what was updated
                 success_message = "Worklog added successfully"
                 if worklog.get("original_estimate_updated"):
-                    success_message += f" (original estimate updated to {original_estimate})"
+                    success_message += (
+                        f" (original estimate updated to {original_estimate})"
+                    )
                 if worklog.get("remaining_estimate_updated"):
-                    success_message += f" (remaining estimate updated to {remaining_estimate})"
+                    success_message += (
+                        f" (remaining estimate updated to {remaining_estimate})"
+                    )
 
-                result = {"message": success_message, "worklog": worklog, "status": "success"}
-                return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+                result = {
+                    "message": success_message,
+                    "worklog": worklog,
+                    "status": "success",
+                }
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(result, indent=2, ensure_ascii=False),
+                    )
+                ]
             except Exception as e:
                 error_msg = str(e)
                 logger.error(f"Error adding worklog: {error_msg}")
@@ -982,7 +1039,12 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             try:
                 worklogs = jira_fetcher.get_worklogs(issue_key)
                 result = {"worklogs": json.dumps(worklogs)}
-                return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(result, indent=2, ensure_ascii=False),
+                    )
+                ]
             except Exception as e:
                 error_msg = str(e)
                 logger.error(f"Error getting worklogs: {error_msg}")
@@ -1014,20 +1076,36 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                     "link": linked_issue.metadata["link"],
                 },
             }
-            return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+            return [
+                TextContent(
+                    type="text", text=json.dumps(result, indent=2, ensure_ascii=False)
+                )
+            ]
 
         elif name == "jira_get_epic_issues":
             epic_key = arguments["epic_key"]
             limit = min(int(arguments.get("limit", 10)), 50)
             documents = jira_fetcher.get_epic_issues(epic_key, limit=limit)
             epic_issues = [format_issue(doc) for doc in documents]
-            return [TextContent(type="text", text=json.dumps(epic_issues, indent=2, ensure_ascii=False))]
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(epic_issues, indent=2, ensure_ascii=False),
+                )
+            ]
 
         elif name == "jira_get_transitions":
             issue_key = arguments["issue_key"]
             transitions = jira_fetcher.get_available_transitions(issue_key)
-            transitions_result = [format_transition(transition) for transition in transitions]
-            return [TextContent(type="text", text=json.dumps(transitions_result, indent=2, ensure_ascii=False))]
+            transitions_result = [
+                format_transition(transition) for transition in transitions
+            ]
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(transitions_result, indent=2, ensure_ascii=False),
+                )
+            ]
 
         elif name == "jira_transition_issue":
             import base64
@@ -1060,7 +1138,10 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                         TextContent(
                             type="text",
                             text=json.dumps(
-                                {"error": f"Invalid fields format: {str(e)}", "status": "error"},
+                                {
+                                    "error": f"Invalid fields format: {str(e)}",
+                                    "status": "error",
+                                },
                                 indent=2,
                                 ensure_ascii=False,
                             ),
@@ -1088,14 +1169,18 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             }
 
             # Log entire request for debugging
-            logger.info(f"Sending transition request to {jira_url}/rest/api/2/issue/{issue_key}/transitions")
+            logger.info(
+                f"Sending transition request to {jira_url}/rest/api/2/issue/{issue_key}/transitions"
+            )
             logger.info(f"Headers: {headers}")
             logger.info(f"Payload: {payload}")
 
             try:
                 # Make direct HTTP request
                 transition_url = f"{jira_url}/rest/api/2/issue/{issue_key}/transitions"
-                response = httpx.post(transition_url, json=payload, headers=headers, timeout=30.0)
+                response = httpx.post(
+                    transition_url, json=payload, headers=headers, timeout=30.0
+                )
 
                 # Check response
                 if response.status_code >= 400:
@@ -1143,7 +1228,9 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 # Clean and process description text if available
                 description = ""
                 if issue_data["fields"].get("description"):
-                    description = jira_fetcher.preprocessor.clean_jira_text(issue_data["fields"]["description"])
+                    description = jira_fetcher.preprocessor.clean_jira_text(
+                        issue_data["fields"]["description"]
+                    )
 
                 result = {
                     "message": f"Successfully transitioned issue {issue_key} to {status}",
@@ -1156,11 +1243,18 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                     },
                 }
 
-                return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(result, indent=2, ensure_ascii=False),
+                    )
+                ]
 
             except Exception as e:
                 error_message = str(e)
-                logger.error(f"Exception in direct transition API call: {error_message}")
+                logger.error(
+                    f"Exception in direct transition API call: {error_message}"
+                )
                 return [
                     TextContent(
                         type="text",
@@ -1180,15 +1274,29 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
 
     except Exception as e:
         logger.error(f"Tool execution error: {str(e)}")
-        raise RuntimeError(f"Tool execution failed: {str(e)}")
+        raise RuntimeError(f"Tool execution failed: {str(e)}") from e
 
 
 async def main():
+    """Run the server."""
     # Import here to avoid issues with event loops
     from mcp.server.stdio import stdio_server
 
-    async with stdio_server() as (read_stream, write_stream):
-        await app.run(read_stream, write_stream, app.create_initialization_options())
+    try:
+        # Log the startup information
+        logger.info("Starting MCP Atlassian server")
+        if confluence_fetcher:
+            logger.info(f"Confluence URL: {confluence_fetcher.config.url}")
+        if jira_fetcher:
+            logger.info(f"Jira URL: {jira_fetcher.config.url}")
+
+        async with stdio_server() as (read_stream, write_stream):
+            await app.run(
+                read_stream, write_stream, app.create_initialization_options()
+            )
+    except Exception as err:
+        logger.error(f"Error running server: {err}")
+        raise RuntimeError(f"Failed to run server: {err}") from err
 
 
 if __name__ == "__main__":

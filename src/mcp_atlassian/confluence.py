@@ -20,7 +20,8 @@ class ConfluenceFetcher:
         token = os.getenv("CONFLUENCE_API_TOKEN")
 
         if not all([url, username, token]):
-            raise ValueError("Missing required Confluence environment variables")
+            error_msg = "Missing required Confluence environment variables"
+            raise ValueError(error_msg)
 
         self.config = ConfluenceConfig(url=url, username=username, api_token=token)
         self.confluence = Confluence(
@@ -31,7 +32,9 @@ class ConfluenceFetcher:
         )
         self.preprocessor = TextPreprocessor(self.config.url, self.confluence)
 
-    def _process_html_content(self, html_content: str, space_key: str) -> tuple[str, str]:
+    def _process_html_content(
+        self, html_content: str, space_key: str
+    ) -> tuple[str, str]:
         return self.preprocessor.process_html_content(html_content, space_key)
 
     def get_spaces(self, start: int = 0, limit: int = 10):
@@ -40,11 +43,15 @@ class ConfluenceFetcher:
 
     def get_page_content(self, page_id: str, clean_html: bool = True) -> Document:
         """Get content of a specific page."""
-        page = self.confluence.get_page_by_id(page_id=page_id, expand="body.storage,version,space")
+        page = self.confluence.get_page_by_id(
+            page_id=page_id, expand="body.storage,version,space"
+        )
         space_key = page.get("space", {}).get("key", "")
 
         content = page["body"]["storage"]["value"]
-        processed_html, processed_markdown = self._process_html_content(content, space_key)
+        processed_html, processed_markdown = self._process_html_content(
+            content, space_key
+        )
 
         # Get author information from version
         version = page.get("version", {})
@@ -66,16 +73,22 @@ class ConfluenceFetcher:
             metadata=metadata,
         )
 
-    def get_page_by_title(self, space_key: str, title: str, clean_html: bool = True) -> Document | None:
+    def get_page_by_title(
+        self, space_key: str, title: str, clean_html: bool = True
+    ) -> Document | None:
         """Get page content by space key and title."""
         try:
-            page = self.confluence.get_page_by_title(space=space_key, title=title, expand="body.storage,version")
+            page = self.confluence.get_page_by_title(
+                space=space_key, title=title, expand="body.storage,version"
+            )
 
             if not page:
                 return None
 
             content = page["body"]["storage"]["value"]
-            processed_html, processed_markdown = self._process_html_content(content, space_key)
+            processed_html, processed_markdown = self._process_html_content(
+                content, space_key
+            )
 
             metadata = {
                 "page_id": page["id"],
@@ -105,7 +118,9 @@ class ConfluenceFetcher:
         documents = []
         for page in pages:
             content = page["body"]["storage"]["value"]
-            processed_html, processed_markdown = self._process_html_content(content, space_key)
+            processed_html, processed_markdown = self._process_html_content(
+                content, space_key
+            )
 
             metadata = {
                 "page_id": page["id"],
@@ -124,20 +139,24 @@ class ConfluenceFetcher:
 
         return documents
 
-    def get_page_comments(self, page_id: str, clean_html: bool = True) -> list[Document]:
+    def get_page_comments(
+        self, page_id: str, clean_html: bool = True
+    ) -> list[Document]:
         """Get all comments for a specific page."""
         page = self.confluence.get_page_by_id(page_id=page_id, expand="space")
         space_key = page.get("space", {}).get("key", "")
         space_name = page.get("space", {}).get("name", "")
 
-        comments = self.confluence.get_page_comments(content_id=page_id, expand="body.view.value,version", depth="all")[
-            "results"
-        ]
+        comments = self.confluence.get_page_comments(
+            content_id=page_id, expand="body.view.value,version", depth="all"
+        )["results"]
 
         comment_documents = []
         for comment in comments:
             body = comment["body"]["view"]["value"]
-            processed_html, processed_markdown = self._process_html_content(body, space_key)
+            processed_html, processed_markdown = self._process_html_content(
+                body, space_key
+            )
 
             # Get author information from version.by instead of author
             author = comment.get("version", {}).get("by", {})
@@ -180,14 +199,20 @@ class ConfluenceFetcher:
                     }
 
                     # Use the excerpt as page_content since it's already a good summary
-                    documents.append(Document(page_content=result.get("excerpt", ""), metadata=metadata))
+                    documents.append(
+                        Document(
+                            page_content=result.get("excerpt", ""), metadata=metadata
+                        )
+                    )
 
             return documents
         except Exception as e:
             logger.error(f"Search failed with error: {str(e)}")
             return []
 
-    def create_page(self, space_key: str, title: str, body: str, parent_id: str = None) -> Document:
+    def create_page(
+        self, space_key: str, title: str, body: str, parent_id: str = None
+    ) -> Document:
         """
         Create a new page in a Confluence space.
 
@@ -203,7 +228,11 @@ class ConfluenceFetcher:
         try:
             # Create the page
             page = self.confluence.create_page(
-                space=space_key, title=title, body=body, parent_id=parent_id, representation="storage"
+                space=space_key,
+                title=title,
+                body=body,
+                parent_id=parent_id,
+                representation="storage",
             )
 
             # Return the created page as a Document
@@ -213,17 +242,22 @@ class ConfluenceFetcher:
             raise
 
     def update_page(
-        self, page_id: str, title: str, body: str, minor_edit: bool = False, version_comment: str = ""
+        self,
+        page_id: str,
+        title: str,
+        body: str,
+        minor_edit: bool = False,
+        version_comment: str = "",
     ) -> Document:
         """
         Update an existing Confluence page.
 
         Args:
-            page_id: The ID of the page to update
-            title: The new title of the page
-            body: The new content of the page in storage format (HTML)
-            minor_edit: Whether this is a minor edit
-            version_comment: Optional comment for this version
+            page_id: ID of the page to update
+            title: New page title
+            body: New page content in Confluence storage format
+            minor_edit: Whether this update is a minor edit
+            version_comment: Optional comment for the version history
 
         Returns:
             Document representing the updated page
@@ -231,10 +265,16 @@ class ConfluenceFetcher:
         try:
             # Get the current page to get its version number
             current_page = self.confluence.get_page_by_id(page_id=page_id)
+            version = current_page.get("version", {}).get("number", 0) + 1
 
             # Update the page
             self.confluence.update_page(
-                page_id=page_id, title=title, body=body, minor_edit=minor_edit, version_comment=version_comment
+                page_id=page_id,
+                title=title,
+                body=body,
+                minor_edit=minor_edit,
+                version_comment=version_comment,
+                version_number=version,
             )
 
             # Return the updated page as a Document
@@ -273,7 +313,11 @@ class ConfluenceFetcher:
                         space_key = display_url.split("/spaces/")[1].split("/")[0]
 
                 # Try to extract from content expandable
-                if not space_key and "content" in result and "_expandable" in result["content"]:
+                if (
+                    not space_key
+                    and "content" in result
+                    and "_expandable" in result["content"]
+                ):
                     expandable = result["content"].get("_expandable", {})
                     space_path = expandable.get("space", "")
                     if space_path and space_path.startswith("/rest/api/space/"):
@@ -287,7 +331,11 @@ class ConfluenceFetcher:
 
                 # If we found a space key, add it to our dictionary
                 if space_key and space_key not in spaces:
-                    spaces[space_key] = {"key": space_key, "name": space_name or space_key, "description": ""}
+                    spaces[space_key] = {
+                        "key": space_key,
+                        "name": space_name or space_key,
+                        "description": "",
+                    }
 
             return spaces
         except Exception as e:

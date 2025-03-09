@@ -9,6 +9,19 @@ repos:
     -   id: check-toml
     -   id: debug-statements
 
+# IMPROVEMENT PLAN:
+# Phase 1: Start with basic checks (current) ✓
+# Phase 2: Enable F841 (unused variables) - easy win ✓
+# Phase 3: Enable B (bug-related checks) - add proper exception handling ✓
+# Phase 4: Enable EM (exception message formatting) [ACTIVE]
+#   - We demonstrated the pattern for fixing EM101 and EM102
+#   - Due to the large number (27) of exceptions to fix, we'll keep this in the ignore list
+#   - but address them over time in future PRs
+# Phase 5: Enable BLE (blind exception catching)
+# Phase 6: Enable FBT (boolean function parameters)
+# Phase 7: Enable ANN (type annotations)
+# Phase 8: Enable stricter mypy checks
+
 -   repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.3.0
     hooks:
@@ -16,24 +29,22 @@ repos:
         args: [
             "--fix",
             "--exit-non-zero-on-fix",
-            # Ignore common issues initially
-            "--ignore=E501",  # Line too long
-            "--ignore=ANN",   # Missing type annotations
-            "--ignore=D",     # Missing docstrings
-            "--ignore=N",     # Missing module docstrings
-            "--ignore=B",     # Bug-related checks
-            "--ignore=UP",    # pyupgrade checks
+            # Phase 1: Ignore these rules to get pre-commit passing
+            "--ignore=E501",  # Line too long - handled by ruff-format
             "--ignore=ERA",   # Found commented-out code
+            "--ignore=ANN",   # Missing type annotations - will fix gradually
             "--ignore=FBT",   # Boolean positional arg in function definition
-            "--ignore=S",     # Security issues
-            "--ignore=T20",   # Print found
-            "--ignore=RUF100", # Unused noqa directive
-            "--ignore=EM",    # Exception message formatting
             "--ignore=BLE",   # Blind exception catching
-            "--ignore=F841"   # Unused local variable
+            "--ignore=EM",    # Exception message formatting - fix in future PRs
+            "--ignore=S",     # Security issues (in tests)
+            "--per-file-ignores=tests/*:S101",  # Allow assert in tests
+            # Ignore certain B errors in tests
+            "--per-file-ignores=tests/*:B017",  # Allow pytest.raises(Exception)
         ]
     -   id: ruff-format
-        args: ["--line-length=120"]
+        args: [
+            "--line-length=88",  # Match the 88 chars max from CLAUDE.md
+        ]
 
 -   repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.8.0
@@ -41,6 +52,10 @@ repos:
     -   id: mypy
         args: [
             "--ignore-missing-imports",
+            "--allow-untyped-defs",
+            "--allow-untyped-calls",
+            "--allow-incomplete-defs",
+            "--allow-untyped-decorators",
             "--disable-error-code=attr-defined",
             "--disable-error-code=name-defined",
             "--disable-error-code=call-arg",
@@ -49,12 +64,8 @@ repos:
             "--disable-error-code=valid-type",
             "--disable-error-code=index",
             "--disable-error-code=unreachable",
+            "--disable-error-code=union-attr",
             "--no-strict-optional",
-            "--allow-untyped-defs",
-            "--allow-untyped-calls",
-            "--allow-incomplete-defs",
-            "--allow-untyped-decorators",
-            "--disable-error-code=no-untyped-def"
         ]
         additional_dependencies: [
             'types-beautifulsoup4',

@@ -35,7 +35,9 @@ def test_init():
 def test_process_confluence_page_content(preprocessor_with_confluence):
     """Test processing Confluence page content using mock data."""
     html_content = MOCK_PAGE_RESPONSE["body"]["storage"]["value"]
-    processed_html, processed_markdown = preprocessor_with_confluence.process_html_content(html_content)
+    processed_html, processed_markdown = (
+        preprocessor_with_confluence.process_html_content(html_content)
+    )
 
     # Verify user mention is processed
     assert "@Test User user123" in processed_markdown
@@ -85,7 +87,9 @@ def test_process_html_content_with_user_mentions(preprocessor_with_confluence):
     </ac:link>
     <p>Some text</p>
     """
-    processed_html, processed_markdown = preprocessor_with_confluence.process_html_content(html)
+    processed_html, processed_markdown = (
+        preprocessor_with_confluence.process_html_content(html)
+    )
 
     assert "@Test User 123456" in processed_html
     assert "@Test User 123456" in processed_markdown
@@ -114,7 +118,9 @@ def test_clean_jira_text_smart_links(preprocessor):
     assert cleaned == f"[PROJ-123]({base_url}/browse/PROJ-123)"
 
     # Test Confluence page link from mock data
-    confluence_url = f"{base_url}/wiki/spaces/PROJ/pages/987654321/Example+Meeting+Notes"
+    confluence_url = (
+        f"{base_url}/wiki/spaces/PROJ/pages/987654321/Example+Meeting+Notes"
+    )
     processed_url = f"{base_url}/wiki/spaces/PROJ/pages/987654321/ExampleMeetingNotes"
     text = f"[Meeting Notes|{confluence_url}|smart-link]"
     cleaned = preprocessor.clean_jira_text(text)
@@ -174,7 +180,9 @@ def test_jira_to_markdown(preprocessor):
     assert preprocessor.jira_to_markdown("{{code}}") == "`code`"
 
     # For multiline code blocks, check content is preserved rather than exact format
-    converted_code_block = preprocessor.jira_to_markdown("{code}\nmultiline code\n{code}")
+    converted_code_block = preprocessor.jira_to_markdown(
+        "{code}\nmultiline code\n{code}"
+    )
     assert "```" in converted_code_block
     assert "multiline code" in converted_code_block
 

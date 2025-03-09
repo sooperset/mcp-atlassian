@@ -24,7 +24,9 @@ class TextPreprocessor:
         self.base_url = base_url.rstrip("/")
         self.confluence_client = confluence_client
 
-    def process_html_content(self, html_content: str, space_key: str = "") -> tuple[str, str]:
+    def process_html_content(
+        self, html_content: str, space_key: str = ""
+    ) -> tuple[str, str]:
         """Process HTML content to replace user refs and page links."""
         try:
             soup = BeautifulSoup(html_content, "html.parser")
@@ -36,7 +38,11 @@ class TextPreprocessor:
                 if account_id and self.confluence_client:
                     try:
                         # Fetch user info using the Confluence API
-                        user_info = self.confluence_client.get_user_details_by_accountid(account_id)
+                        user_info = (
+                            self.confluence_client.get_user_details_by_accountid(
+                                account_id
+                            )
+                        )
                         display_name = user_info.get("displayName", account_id)
 
                         # Replace the entire ac:link structure with @mention
@@ -44,7 +50,9 @@ class TextPreprocessor:
                         if link_tag:
                             link_tag.replace_with(f"@{display_name}")
                     except Exception as e:
-                        logger.warning(f"Could not fetch user info for {account_id}: {e}")
+                        logger.warning(
+                            f"Could not fetch user info for {account_id}: {e}"
+                        )
                         # Fallback: just use the account ID
                         link_tag = user.find_parent("ac:link")
                         if link_tag:
@@ -110,7 +118,9 @@ class TextPreprocessor:
             # Extract issue key if it's a Jira issue link
             issue_key_match = re.search(r"browse/([A-Z]+-\d+)", link_url)
             # Check if it's a Confluence wiki link
-            confluence_match = re.search(r"wiki/spaces/.+?/pages/\d+/(.+?)(?:\?|$)", link_url)
+            confluence_match = re.search(
+                r"wiki/spaces/.+?/pages/\d+/(.+?)(?:\?|$)", link_url
+            )
 
             if issue_key_match:
                 issue_key = issue_key_match.group(1)
@@ -175,7 +185,10 @@ class TextPreprocessor:
 
         # Headers
         output = re.sub(
-            r"^h([0-6])\.(.*)$", lambda match: "#" * int(match.group(1)) + match.group(2), output, flags=re.MULTILINE
+            r"^h([0-6])\.(.*)$",
+            lambda match: "#" * int(match.group(1)) + match.group(2),
+            output,
+            flags=re.MULTILINE,
         )
 
         # Inline code
@@ -197,7 +210,12 @@ class TextPreprocessor:
         output = re.sub(r"-([^-]*)-", r"-\1-", output)
 
         # Code blocks with optional language specification
-        output = re.sub(r"\{code(?::([a-z]+))?\}([\s\S]*?)\{code\}", r"```\1\n\2\n```", output, flags=re.MULTILINE)
+        output = re.sub(
+            r"\{code(?::([a-z]+))?\}([\s\S]*?)\{code\}",
+            r"```\1\n\2\n```",
+            output,
+            flags=re.MULTILINE,
+        )
 
         # No format
         output = re.sub(r"\{noformat\}([\s\S]*?)\{noformat\}", r"```\n\1\n```", output)
@@ -205,13 +223,19 @@ class TextPreprocessor:
         # Quote blocks
         output = re.sub(
             r"\{quote\}([\s\S]*)\{quote\}",
-            lambda match: "\n".join([f"> {line}" for line in match.group(1).split("\n")]),
+            lambda match: "\n".join(
+                [f"> {line}" for line in match.group(1).split("\n")]
+            ),
             output,
             flags=re.MULTILINE,
         )
 
         # Images with alt text
-        output = re.sub(r"!([^|\n\s]+)\|([^\n!]*)alt=([^\n!\,]+?)(,([^\n!]*))?!", r"![\3](\1)", output)
+        output = re.sub(
+            r"!([^|\n\s]+)\|([^\n!]*)alt=([^\n!\,]+?)(,([^\n!]*))?!",
+            r"![\3](\1)",
+            output,
+        )
 
         # Images with other parameters (ignore them)
         output = re.sub(r"!([^|\n\s]+)\|([^\n!]*)!", r"![](\1)", output)
@@ -225,7 +249,10 @@ class TextPreprocessor:
 
         # Colored text
         output = re.sub(
-            r"\{color:([^}]+)\}([\s\S]*?)\{color\}", r"<span style=\"color:\1\">\2</span>", output, flags=re.MULTILINE
+            r"\{color:([^}]+)\}([\s\S]*?)\{color\}",
+            r"<span style=\"color:\1\">\2</span>",
+            output,
+            flags=re.MULTILINE,
         )
 
         # Convert Jira table headers (||) to markdown table format
@@ -301,7 +328,10 @@ class TextPreprocessor:
 
         # Headers with # prefix
         output = re.sub(
-            r"^([#]+)(.*?)$", lambda match: f"h{len(match.group(1))}." + match.group(2), output, flags=re.MULTILINE
+            r"^([#]+)(.*?)$",
+            lambda match: f"h{len(match.group(1))}." + match.group(2),
+            output,
+            flags=re.MULTILINE,
         )
 
         # Bold and italic
@@ -326,7 +356,9 @@ class TextPreprocessor:
         # Multi-level numbered list
         output = re.sub(
             r"^(\s+)1\. (.*)$",
-            lambda match: "#" * (int(len(match.group(1)) / 4) + 2) + " " + match.group(2),
+            lambda match: "#" * (int(len(match.group(1)) / 4) + 2)
+            + " "
+            + match.group(2),
             output,
             flags=re.MULTILINE,
         )
@@ -335,11 +367,16 @@ class TextPreprocessor:
         tag_map = {"cite": "??", "del": "-", "ins": "+", "sup": "^", "sub": "~"}
 
         for tag, replacement in tag_map.items():
-            output = re.sub(rf"<{tag}>(.*?)<\/{tag}>", rf"{replacement}\1{replacement}", output)
+            output = re.sub(
+                rf"<{tag}>(.*?)<\/{tag}>", rf"{replacement}\1{replacement}", output
+            )
 
         # Colored text
         output = re.sub(
-            r"<span style=\"color:(#[^\"]+)\">([\s\S]*?)</span>", r"{color:\1}\2{color}", output, flags=re.MULTILINE
+            r"<span style=\"color:(#[^\"]+)\">([\s\S]*?)</span>",
+            r"{color:\1}\2{color}",
+            output,
+            flags=re.MULTILINE,
         )
 
         # Strikethrough
@@ -420,11 +457,16 @@ def markdown_to_confluence_storage(markdown_content):
             root = elements_from_string(html_content)
 
             # Create converter options
-            options = ConfluenceConverterOptions(ignore_invalid_url=True, heading_anchors=True, render_mermaid=False)
+            options = ConfluenceConverterOptions(
+                ignore_invalid_url=True, heading_anchors=True, render_mermaid=False
+            )
 
             # Create a converter
             converter = ConfluenceStorageFormatConverter(
-                options=options, path=Path(temp_dir) / "temp.md", root_dir=Path(temp_dir), page_metadata={}
+                options=options,
+                path=Path(temp_dir) / "temp.md",
+                root_dir=Path(temp_dir),
+                page_metadata={},
             )
 
             # Transform the HTML to Confluence storage format

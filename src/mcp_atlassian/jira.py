@@ -35,14 +35,22 @@ class JiraFetcher:
         if is_cloud:
             logger.info(f"Initializing Jira Cloud client for {url}")
             if not username or not token:
-                raise ValueError("Cloud authentication requires JIRA_USERNAME and JIRA_API_TOKEN")
+                raise ValueError(
+                    "Cloud authentication requires JIRA_USERNAME and JIRA_API_TOKEN"
+                )
         else:
             logger.info(f"Initializing Jira Server/Data Center client for {url}")
             if not personal_token:
-                raise ValueError("Server/Data Center authentication requires JIRA_PERSONAL_TOKEN")
+                raise ValueError(
+                    "Server/Data Center authentication requires JIRA_PERSONAL_TOKEN"
+                )
 
         self.config = JiraConfig(
-            url=url, username=username, api_token=token, personal_token=personal_token, verify_ssl=verify_ssl
+            url=url,
+            username=username,
+            api_token=token,
+            personal_token=personal_token,
+            verify_ssl=verify_ssl,
         )
 
         # Initialize Jira client based on instance type
@@ -106,7 +114,10 @@ class JiraFetcher:
                 if users:
                     if len(users) > 1:
                         # Log all found users for debugging
-                        user_details = [f"{u.get('displayName')} ({u.get('emailAddress')})" for u in users]
+                        user_details = [
+                            f"{u.get('displayName')} ({u.get('emailAddress')})"
+                            for u in users
+                        ]
                         logger.warning(
                             f"Multiple users found for '{assignee}', using first match. "
                             f"Found users: {', '.join(user_details)}"
@@ -120,23 +131,34 @@ class JiraFetcher:
                             f"({user.get('displayName')} - {user.get('emailAddress')})"
                         )
                         return str(account_id)  # Explicit str conversion
-                    logger.warning(f"Direct user lookup failed for '{assignee}': user found but no account ID present")
+                    logger.warning(
+                        f"Direct user lookup failed for '{assignee}': user found but no account ID present"
+                    )
                 else:
-                    logger.warning(f"Direct user lookup failed for '{assignee}': no users found")
+                    logger.warning(
+                        f"Direct user lookup failed for '{assignee}': no users found"
+                    )
             except Exception as e:
                 logger.warning(f"Direct user lookup failed for '{assignee}': {str(e)}")
 
             # Fall back to project permission based search
-            users = self.jira.get_users_with_browse_permission_to_a_project(username=assignee)
+            users = self.jira.get_users_with_browse_permission_to_a_project(
+                username=assignee
+            )
             if not users:
                 logger.warning(f"No user found matching '{assignee}'")
-                raise ValueError(f"No user found matching '{assignee}'")
+                error_msg = f"No user found matching '{assignee}'"
+                raise ValueError(error_msg)
 
             # Return the first matching user's account ID
             account_id = users[0].get("accountId")
             if not account_id or not isinstance(account_id, str):
-                logger.warning(f"Found user '{assignee}' but no account ID was returned")
-                raise ValueError(f"Found user '{assignee}' but no account ID was returned")
+                logger.warning(
+                    f"Found user '{assignee}' but no account ID was returned"
+                )
+                raise ValueError(
+                    f"Found user '{assignee}' but no account ID was returned"
+                )
 
             logger.info(f"Found account ID via browse permission lookup: {account_id}")
             return str(account_id)  # Explicit str conversion
@@ -187,22 +209,34 @@ class JiraFetcher:
                 # Handle Epic Name - might be required in some instances, not in others
                 # If Epic Name field was found during discovery, use it
                 if "epic_name" in field_ids:
-                    epic_name = kwargs.pop("epic_name", summary)  # Use summary as default if not provided
+                    epic_name = kwargs.pop(
+                        "epic_name", summary
+                    )  # Use summary as default if not provided
                     fields[field_ids["epic_name"]] = epic_name
-                    logger.info(f"Setting Epic Name field {field_ids['epic_name']} to: {epic_name}")
+                    logger.info(
+                        f"Setting Epic Name field {field_ids['epic_name']} to: {epic_name}"
+                    )
 
                 # Handle Epic Color if the field was discovered
                 if "epic_color" in field_ids:
-                    epic_color = kwargs.pop("epic_color", None) or kwargs.pop("epic_colour", None) or "green"
+                    epic_color = (
+                        kwargs.pop("epic_color", None)
+                        or kwargs.pop("epic_colour", None)
+                        or "green"
+                    )
                     fields[field_ids["epic_color"]] = epic_color
-                    logger.info(f"Setting Epic Color field {field_ids['epic_color']} to: {epic_color}")
+                    logger.info(
+                        f"Setting Epic Color field {field_ids['epic_color']} to: {epic_color}"
+                    )
 
                 # Pass through any explicitly provided custom fields that might be instance-specific
                 # This allows callers who know their instance to directly specify field IDs
                 for field_key, field_value in kwargs.items():
                     if field_key.startswith("customfield_"):
                         fields[field_key] = field_value
-                        logger.info(f"Using explicitly provided custom field {field_key}: {field_value}")
+                        logger.info(
+                            f"Using explicitly provided custom field {field_key}: {field_value}"
+                        )
 
                 # If epic_name field is required but wasn't discovered, warn the user
                 # Some Jira instances require it, others don't
@@ -246,10 +280,13 @@ class JiraFetcher:
             if issue_type.lower() == "epic" and "customfield_" in error_msg:
                 # Handle the case where a specific Epic field is required but missing
                 missing_field_match = re.search(
-                    r"(?:Field '(customfield_\d+)'|'(customfield_\d+)' cannot be set)", error_msg
+                    r"(?:Field '(customfield_\d+)'|'(customfield_\d+)' cannot be set)",
+                    error_msg,
                 )
                 if missing_field_match:
-                    field_id = missing_field_match.group(1) or missing_field_match.group(2)
+                    field_id = missing_field_match.group(
+                        1
+                    ) or missing_field_match.group(2)
                     logger.error(
                         f"Failed to create Epic: Your Jira instance requires field '{field_id}'. "
                         f"This is typically the Epic Name field. Try setting this field explicitly "
@@ -266,7 +303,9 @@ class JiraFetcher:
 
             raise
 
-    def update_issue(self, issue_key: str, fields: dict[str, Any] = None, **kwargs: Any) -> Document:
+    def update_issue(
+        self, issue_key: str, fields: dict[str, Any] = None, **kwargs: Any
+    ) -> Document:
         """
         Update an existing issue in Jira and return it as a Document.
 
@@ -293,7 +332,9 @@ class JiraFetcher:
         if "status" in fields:
             requested_status = fields.pop("status")
             if not isinstance(requested_status, str):
-                logger.warning(f"Status must be a string, got {type(requested_status)}: {requested_status}")
+                logger.warning(
+                    f"Status must be a string, got {type(requested_status)}: {requested_status}"
+                )
                 # Try to convert to string if possible
                 requested_status = str(requested_status)
 
@@ -306,13 +347,18 @@ class JiraFetcher:
             transition_id = None
             for transition in transitions:
                 to_status = transition.get("to_status", "")
-                if isinstance(to_status, str) and to_status.lower() == requested_status.lower():
+                if (
+                    isinstance(to_status, str)
+                    and to_status.lower() == requested_status.lower()
+                ):
                     transition_id = transition["id"]
                     break
 
             if transition_id:
                 # Use transition_issue method if we found a matching transition
-                logger.info(f"Found transition ID {transition_id} for status {requested_status}")
+                logger.info(
+                    f"Found transition ID {transition_id} for status {requested_status}"
+                )
                 return self.transition_issue(issue_key, transition_id, fields)
             else:
                 available_statuses = [t.get("to_status", "") for t in transitions]
@@ -351,7 +397,9 @@ class JiraFetcher:
             field_ids = {}
 
             # Log the complete list of fields for debugging
-            all_field_names = [f"{field.get('name', '')} ({field.get('id', '')})" for field in fields]
+            all_field_names = [
+                f"{field.get('name', '')} ({field.get('id', '')})" for field in fields
+            ]
             logger.debug(f"All available Jira fields: {all_field_names}")
 
             # Look for Epic-related fields - use multiple strategies to identify them
@@ -366,15 +414,13 @@ class JiraFetcher:
                 # Epic Link field - used to link issues to epics
                 if (
                     "epic link" in field_name
-                    or "epic-link" in field_name
-                    or original_name == "Epic Link"
                     or field_custom == "com.pyxis.greenhopper.jira:gh-epic-link"
-                ):
-                    field_ids["epic_link"] = field_id
-                    logger.info(f"Found Epic Link field: {original_name} ({field_id})")
+                    or field_type == "any"
+                ) and field_id:
+                    self.epic_link_field_id = field_id
 
-                # Epic Name field - used when creating epics
-                elif (
+                # Epic Name field - used for the title of epics
+                if (
                     "epic name" in field_name
                     or "epic-name" in field_name
                     or original_name == "Epic Name"
@@ -384,14 +430,20 @@ class JiraFetcher:
                     logger.info(f"Found Epic Name field: {original_name} ({field_id})")
 
                 # Parent field - sometimes used instead of Epic Link
-                elif field_name == "parent" or field_name == "parent link" or original_name == "Parent Link":
+                elif (
+                    field_name == "parent"
+                    or field_name == "parent link"
+                    or original_name == "Parent Link"
+                ):
                     field_ids["parent"] = field_id
                     logger.info(f"Found Parent field: {original_name} ({field_id})")
 
                 # Epic Status field
                 elif "epic status" in field_name or original_name == "Epic Status":
                     field_ids["epic_status"] = field_id
-                    logger.info(f"Found Epic Status field: {original_name} ({field_id})")
+                    logger.info(
+                        f"Found Epic Status field: {original_name} ({field_id})"
+                    )
 
                 # Epic Color field
                 elif (
@@ -410,7 +462,9 @@ class JiraFetcher:
                 ):
                     key = f"epic_{field_name.replace(' ', '_')}"
                     field_ids[key] = field_id
-                    logger.info(f"Found additional Epic-related field: {original_name} ({field_id})")
+                    logger.info(
+                        f"Found additional Epic-related field: {original_name} ({field_id})"
+                    )
 
             # Cache the results for future use
             self._field_ids_cache = field_ids
@@ -452,7 +506,9 @@ class JiraFetcher:
             epic = results["issues"][0]
             epic_key = epic.get("key")
 
-            logger.info(f"Analyzing existing Epic {epic_key} to discover field structure")
+            logger.info(
+                f"Analyzing existing Epic {epic_key} to discover field structure"
+            )
 
             # Examine the fields of this Epic
             fields = epic.get("fields", {})
@@ -464,7 +520,9 @@ class JiraFetcher:
                         and isinstance(field_value, str)
                         and field_id not in field_ids.values()
                     ):
-                        logger.info(f"Potential Epic Name field discovered: {field_id} with value {field_value}")
+                        logger.info(
+                            f"Potential Epic Name field discovered: {field_id} with value {field_value}"
+                        )
                         if len(field_value) < 100:  # Epic names are typically short
                             field_ids["epic_name"] = field_id
 
@@ -474,13 +532,27 @@ class JiraFetcher:
                         and isinstance(field_value, str)
                         and field_id not in field_ids.values()
                     ):
-                        colors = ["green", "blue", "red", "yellow", "orange", "purple", "gray", "grey", "teal"]
+                        colors = [
+                            "green",
+                            "blue",
+                            "red",
+                            "yellow",
+                            "orange",
+                            "purple",
+                            "gray",
+                            "grey",
+                            "teal",
+                        ]
                         if field_value.lower() in colors:
-                            logger.info(f"Potential Epic Color field discovered: {field_id} with value {field_value}")
+                            logger.info(
+                                f"Potential Epic Color field discovered: {field_id} with value {field_value}"
+                            )
                             field_ids["epic_color"] = field_id
 
         except Exception as e:
-            logger.warning(f"Could not discover Epic fields from existing Epics: {str(e)}")
+            logger.warning(
+                f"Could not discover Epic fields from existing Epics: {str(e)}"
+            )
 
     def link_issue_to_epic(self, issue_key: str, epic_key: str) -> Document:
         """
@@ -497,7 +569,9 @@ class JiraFetcher:
             # First, check if the epic exists and is an Epic type
             epic = self.jira.issue(epic_key)
             if epic["fields"]["issuetype"]["name"] != "Epic":
-                raise ValueError(f"Issue {epic_key} is not an Epic, it is a {epic['fields']['issuetype']['name']}")
+                raise ValueError(
+                    f"Issue {epic_key} is not an Epic, it is a {epic['fields']['issuetype']['name']}"
+                )
 
             # Get the dynamic field IDs for this Jira instance
             field_ids = self.get_jira_field_ids()
@@ -509,16 +583,22 @@ class JiraFetcher:
                     self.jira.issue_update(issue_key, fields=fields)
                     return self.get_issue(issue_key)
                 except Exception as e:
-                    logger.info(f"Couldn't link using parent field: {str(e)}. Trying discovered fields...")
+                    logger.info(
+                        f"Couldn't link using parent field: {str(e)}. Trying discovered fields..."
+                    )
 
             # Try using the discovered Epic Link field
             if "epic_link" in field_ids:
                 try:
-                    epic_link_fields: dict[str, str] = {field_ids["epic_link"]: epic_key}
+                    epic_link_fields: dict[str, str] = {
+                        field_ids["epic_link"]: epic_key
+                    }
                     self.jira.issue_update(issue_key, fields=epic_link_fields)
                     return self.get_issue(issue_key)
                 except Exception as e:
-                    logger.info(f"Couldn't link using discovered epic_link field: {str(e)}. Trying fallback methods...")
+                    logger.info(
+                        f"Couldn't link using discovered epic_link field: {str(e)}. Trying fallback methods..."
+                    )
 
             # Fallback to common custom fields if dynamic discovery didn't work
             custom_field_attempts: list[dict[str, str]] = [
@@ -541,7 +621,9 @@ class JiraFetcher:
             )
 
         except Exception as e:
-            logger.error(f"Error linking issue {issue_key} to epic {epic_key}: {str(e)}")
+            logger.error(
+                f"Error linking issue {issue_key} to epic {epic_key}: {str(e)}"
+            )
             raise
 
     def delete_issue(self, issue_key: str) -> bool:
@@ -583,7 +665,12 @@ class JiraFetcher:
             logger.warning(f"Error parsing date {date_str}: {e}")
             return date_str
 
-    def get_issue(self, issue_key: str, expand: str | None = None, comment_limit: int | str | None = 10) -> Document:
+    def get_issue(
+        self,
+        issue_key: str,
+        expand: str | None = None,
+        comment_limit: int | str | None = 10,
+    ) -> Document:
         """
         Get a single issue with all its details.
 
@@ -607,7 +694,9 @@ class JiraFetcher:
                 try:
                     comment_limit = int(comment_limit)
                 except ValueError:
-                    logger.warning(f"Invalid comment_limit value: {comment_limit}. Using default of 10.")
+                    logger.warning(
+                        f"Invalid comment_limit value: {comment_limit}. Using default of 10."
+                    )
                     comment_limit = 10
 
             # Get comments if limit is specified
@@ -636,7 +725,10 @@ class JiraFetcher:
                     if isinstance(issue["fields"][field_name], str):
                         epic_key = issue["fields"][field_name]
                     # If it's an object, extract the key
-                    elif isinstance(issue["fields"][field_name], dict) and "key" in issue["fields"][field_name]:
+                    elif (
+                        isinstance(issue["fields"][field_name], dict)
+                        and "key" in issue["fields"][field_name]
+                    ):
                         epic_key = issue["fields"][field_name]["key"]
 
             # Combine content in a more structured way
@@ -711,7 +803,9 @@ Description:
             List of Documents representing the search results
         """
         try:
-            issues = self.jira.jql(jql, fields=fields, start=start, limit=limit, expand=expand)
+            issues = self.jira.jql(
+                jql, fields=fields, start=start, limit=limit, expand=expand
+            )
             documents = []
 
             for issue in issues.get("issues", []):
@@ -793,7 +887,9 @@ Description:
                 issue_type = issuetype_data.get("name", "")
 
             if issue_type != "Epic":
-                raise ValueError(f"Issue {epic_key} is not an Epic, it is a {issue_type or 'unknown type'}")
+                raise ValueError(
+                    f"Issue {epic_key} is not an Epic, it is a {issue_type or 'unknown type'}"
+                )
 
             # Get the dynamic field IDs for this Jira instance
             field_ids = self.get_jira_field_ids()
@@ -845,7 +941,9 @@ Description:
             logger.error(f"Error getting issues for epic {epic_key}: {str(e)}")
             raise
 
-    def get_project_issues(self, project_key: str, start: int = 0, limit: int = 50) -> list[Document]:
+    def get_project_issues(
+        self, project_key: str, start: int = 0, limit: int = 50
+    ) -> list[Document]:
         """
         Get all issues for a project.
 
@@ -865,20 +963,17 @@ Description:
         Get the account ID of the current user.
 
         Returns:
-            The account ID string of the current user
-
-        Raises:
-            ValueError: If unable to get the current user's account ID
+            String with the account ID
         """
         try:
-            myself = self.jira.myself()
-            account_id: str | None = myself.get("accountId")
+            user = self.jira.myself()
+            account_id = user.get("accountId")
             if not account_id:
-                raise ValueError("Unable to get account ID from user profile")
-            return account_id
+                raise ValueError("No account ID found in user profile")
+            return str(account_id)  # Ensure we return a string
         except Exception as e:
             logger.error(f"Error getting current user account ID: {str(e)}")
-            raise ValueError(f"Failed to get current user account ID: {str(e)}")
+            raise ValueError(f"Failed to get current user account ID: {str(e)}") from e
 
     def get_issue_comments(self, issue_key: str, limit: int = 50) -> list[dict]:
         """
@@ -962,7 +1057,9 @@ Description:
         matches = re.findall(pattern, time_spent.lower())
 
         if not matches:
-            raise ValueError(f"Invalid time format: {time_spent}. Expected format like '1h 30m', '1d', etc.")
+            raise ValueError(
+                f"Invalid time format: {time_spent}. Expected format like '1h 30m', '1d', etc."
+            )
 
         # Calculate total seconds
         total_seconds = 0
@@ -1015,7 +1112,9 @@ Description:
                     original_estimate_updated = True
                     logger.info(f"Updated original estimate for issue {issue_key}")
                 except Exception as e:
-                    logger.error(f"Failed to update original estimate for issue {issue_key}: {str(e)}")
+                    logger.error(
+                        f"Failed to update original estimate for issue {issue_key}: {str(e)}"
+                    )
                     # Continue with worklog creation even if estimate update fails
 
             # Step 2: Prepare worklog data
@@ -1080,7 +1179,9 @@ Description:
                         "started": self._parse_date(worklog.get("started", "")),
                         "timeSpent": worklog.get("timeSpent", ""),
                         "timeSpentSeconds": worklog.get("timeSpentSeconds", 0),
-                        "author": worklog.get("author", {}).get("displayName", "Unknown"),
+                        "author": worklog.get("author", {}).get(
+                            "displayName", "Unknown"
+                        ),
                     }
                 )
 
@@ -1131,7 +1232,9 @@ Description:
                 # Handle the case where the response is a list of transitions directly
                 transitions = transitions_data
             else:
-                logger.warning(f"Unexpected format for transitions data: {type(transitions_data)}")
+                logger.warning(
+                    f"Unexpected format for transitions data: {type(transitions_data)}"
+                )
                 return []
 
             for transition in transitions:
@@ -1151,7 +1254,13 @@ Description:
                 elif "status" in transition:
                     to_status = transition["status"]
 
-                result.append({"id": transition_id, "name": transition_name, "to_status": to_status})
+                result.append(
+                    {
+                        "id": transition_id,
+                        "name": transition_name,
+                        "to_status": to_status,
+                    }
+                )
 
             return result
         except Exception as e:
@@ -1159,19 +1268,23 @@ Description:
             raise
 
     def transition_issue(
-        self, issue_key: str, transition_id: str, fields: dict | None = None, comment: str | None = None
+        self,
+        issue_key: str,
+        transition_id: str,
+        fields: dict | None = None,
+        comment: str | None = None,
     ) -> Document:
         """
-        Transition an issue to a new status using the appropriate workflow transition.
+        Transition a Jira issue to a new status.
 
         Args:
-            issue_key: The issue key (e.g. 'PROJ-123')
-            transition_id: The ID of the transition to perform (get this from get_available_transitions)
-            fields: Additional fields to update during the transition
+            issue_key: The key of the issue to transition
+            transition_id: The ID of the transition to perform
+            fields: Optional fields to set during the transition
             comment: Optional comment to add during the transition
 
         Returns:
-            Document representing the updated issue
+            Document representing the transitioned issue
         """
         try:
             # Ensure transition_id is a string
@@ -1198,7 +1311,9 @@ Description:
                             account_id = self._get_account_id(value)
                             sanitized_fields[key] = {"accountId": account_id}
                         except Exception as e:
-                            error_msg = f"Could not resolve assignee '{value}': {str(e)}"
+                            error_msg = (
+                                f"Could not resolve assignee '{value}': {str(e)}"
+                            )
                             logger.warning(error_msg)
                             # Skip this field
                             continue
@@ -1211,14 +1326,20 @@ Description:
             # Add comment if provided
             if comment:
                 if not isinstance(comment, str):
-                    logger.warning(f"Comment must be a string, converting from {type(comment)}: {comment}")
+                    logger.warning(
+                        f"Comment must be a string, converting from {type(comment)}: {comment}"
+                    )
                     comment = str(comment)
 
                 jira_formatted_comment = self._markdown_to_jira(comment)
-                transition_data["update"] = {"comment": [{"add": {"body": jira_formatted_comment}}]}
+                transition_data["update"] = {
+                    "comment": [{"add": {"body": jira_formatted_comment}}]
+                }
 
             # Log the transition request for debugging
-            logger.info(f"Transitioning issue {issue_key} with transition ID {transition_id}")
+            logger.info(
+                f"Transitioning issue {issue_key} with transition ID {transition_id}"
+            )
             logger.debug(f"Transition data: {transition_data}")
 
             # Perform the transition
@@ -1229,4 +1350,4 @@ Description:
         except Exception as e:
             error_msg = f"Error transitioning issue {issue_key} with transition ID {transition_id}: {str(e)}"
             logger.error(error_msg)
-            raise ValueError(error_msg)
+            raise ValueError(error_msg) from e

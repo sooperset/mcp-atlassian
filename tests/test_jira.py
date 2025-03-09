@@ -44,7 +44,9 @@ def mock_jira_fetcher(mock_env_vars):
         mock_jira_instance = Mock()
 
         # Use simplified versions of the mock responses
-        mock_jira_instance.issue.return_value = dict(MOCK_JIRA_ISSUE_RESPONSE_SIMPLIFIED)
+        mock_jira_instance.issue.return_value = dict(
+            MOCK_JIRA_ISSUE_RESPONSE_SIMPLIFIED
+        )
         mock_jira_instance.jql.return_value = MOCK_JIRA_JQL_RESPONSE_SIMPLIFIED
 
         # Mock comments API with simple test data by default
@@ -132,15 +134,20 @@ def test_jira_fetcher_initialization_server_datacenter():
 
 def test_jira_fetcher_initialization_missing_cloud_credentials():
     """Test error when cloud URL is provided but credentials are missing."""
-    with patch.dict(
-        os.environ,
-        {
-            "JIRA_URL": "https://example.atlassian.net",  # Using .atlassian.net domain to trigger cloud detection
-            # Missing username and token
-        },
-        clear=True,  # Clear existing env vars to ensure a clean test environment
+    with (
+        patch.dict(
+            os.environ,
+            {
+                "JIRA_URL": "https://example.atlassian.net",  # Using .atlassian.net domain to trigger cloud detection
+                # Missing username and token
+            },
+            clear=True,  # Clear existing env vars to ensure a clean test environment
+        )
     ):
-        with pytest.raises(ValueError, match="Cloud authentication requires JIRA_USERNAME and JIRA_API_TOKEN"):
+        with pytest.raises(
+            ValueError,
+            match="Cloud authentication requires JIRA_USERNAME and JIRA_API_TOKEN",
+        ):
             JiraFetcher()
 
 
@@ -153,14 +160,19 @@ def test_jira_fetcher_initialization_missing_server_token():
             # Missing personal token
         },
     ):
-        with pytest.raises(ValueError, match="Server/Data Center authentication requires JIRA_PERSONAL_TOKEN"):
+        with pytest.raises(
+            ValueError,
+            match="Server/Data Center authentication requires JIRA_PERSONAL_TOKEN",
+        ):
             JiraFetcher()
 
 
 def test_jira_fetcher_initialization_missing_env_vars():
     """Test JiraFetcher initialization with missing environment variables."""
     with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(ValueError, match="Missing required JIRA_URL environment variable"):
+        with pytest.raises(
+            ValueError, match="Missing required JIRA_URL environment variable"
+        ):
             JiraFetcher()
 
 
@@ -229,7 +241,9 @@ def test_get_issue_with_custom_mock(mock_jira_fetcher):
     def get_issue_side_effect(issue_key, **kwargs):
         if issue_key == "EXAMPLE-123":
             return custom_mock_issue
-        return dict(MOCK_JIRA_ISSUE_RESPONSE_SIMPLIFIED)  # Return original for other keys
+        return dict(
+            MOCK_JIRA_ISSUE_RESPONSE_SIMPLIFIED
+        )  # Return original for other keys
 
     # Save original side effect if any
     original_side_effect = getattr(mock_jira_fetcher.jira.issue, "side_effect", None)
@@ -251,7 +265,11 @@ def test_get_issue_with_custom_mock(mock_jira_fetcher):
         assert document.metadata["key"] == "EXAMPLE-123"
 
         # Test that we're getting the right number of comments (limited to 3)
-        comments_section = document.page_content.split("Comments:")[1] if "Comments:" in document.page_content else ""
+        comments_section = (
+            document.page_content.split("Comments:")[1]
+            if "Comments:" in document.page_content
+            else ""
+        )
         comment_lines = [line for line in comments_section.split("\n") if line.strip()]
         assert len(comment_lines) == 3
     finally:
@@ -271,7 +289,9 @@ def test_search_issues(mock_jira_fetcher):
     assert doc.metadata["title"] == "Test Issue Summary"
 
     # Verify JQL call parameters
-    mock_jira_fetcher.jira.jql.assert_called_once_with("project = PROJ", fields="*all", start=0, limit=50, expand=None)
+    mock_jira_fetcher.jira.jql.assert_called_once_with(
+        "project = PROJ", fields="*all", start=0, limit=50, expand=None
+    )
 
 
 def test_get_project_issues(mock_jira_fetcher):
@@ -353,7 +373,9 @@ def test_create_issue_error(mock_jira_fetcher):
     mock_jira_fetcher.jira.create_issue.side_effect = Exception("API Error")
 
     with pytest.raises(Exception, match="API Error"):
-        mock_jira_fetcher.create_issue(project_key="PROJ", summary="Test Issue", issue_type="Task")
+        mock_jira_fetcher.create_issue(
+            project_key="PROJ", summary="Test Issue", issue_type="Task"
+        )
 
 
 def test_update_issue(mock_jira_fetcher):
@@ -369,7 +391,9 @@ def test_update_issue(mock_jira_fetcher):
     document = mock_jira_fetcher.update_issue("PROJ-123", fields)
 
     # Verify update_issue was called with correct parameters
-    mock_jira_fetcher.jira.issue_update.assert_called_once_with("PROJ-123", fields=fields)
+    mock_jira_fetcher.jira.issue_update.assert_called_once_with(
+        "PROJ-123", fields=fields
+    )
 
     # Verify the returned document
     assert document.metadata["key"] == "PROJ-123"
@@ -531,7 +555,10 @@ def test_transition_issue(mock_jira_fetcher):
 
     # Call the method with fields and comment
     result = mock_jira_fetcher.transition_issue(
-        "PROJ-123", "21", fields={"customfield_10001": "High"}, comment="Moving to **In Progress**"
+        "PROJ-123",
+        "21",
+        fields={"customfield_10001": "High"},
+        comment="Moving to **In Progress**",
     )
 
     # Verify the API was called with the right parameters
@@ -541,7 +568,9 @@ def test_transition_issue(mock_jira_fetcher):
         "update": {"comment": [{"add": {"body": "Moving to *In Progress*"}}]},
     }
 
-    mock_jira_fetcher.jira.issue_transition.assert_called_once_with("PROJ-123", expected_transition_data)
+    mock_jira_fetcher.jira.issue_transition.assert_called_once_with(
+        "PROJ-123", expected_transition_data
+    )
 
     # Verify result
     assert result.metadata["key"] == "PROJ-123"
@@ -577,14 +606,17 @@ def test_update_issue_with_status_transition(mock_jira_fetcher):
     )
 
     # Call update_issue with a status change
-    result = mock_jira_fetcher.update_issue("PROJ-123", fields={"status": "In Progress", "customfield_10001": "High"})
+    result = mock_jira_fetcher.update_issue(
+        "PROJ-123", fields={"status": "In Progress", "customfield_10001": "High"}
+    )
 
     # Verify transitions were fetched
     mock_jira_fetcher.jira.get_issue_transitions.assert_called_once_with("PROJ-123")
 
     # Verify transition was used for status update
     mock_jira_fetcher.jira.issue_transition.assert_called_once_with(
-        "PROJ-123", {"transition": {"id": "21"}, "fields": {"customfield_10001": "High"}}
+        "PROJ-123",
+        {"transition": {"id": "21"}, "fields": {"customfield_10001": "High"}},
     )
 
     # Verify result
@@ -595,13 +627,17 @@ def test_update_issue_with_status_transition(mock_jira_fetcher):
 def test_markdown_to_jira_delegation(mock_jira_fetcher):
     """Test that JiraFetcher._markdown_to_jira delegates to TextPreprocessor."""
     # Create a mock for the preprocessor's markdown_to_jira method
-    mock_jira_fetcher.preprocessor.markdown_to_jira = Mock(return_value="mocked jira markup")
+    mock_jira_fetcher.preprocessor.markdown_to_jira = Mock(
+        return_value="mocked jira markup"
+    )
 
     # Call the JiraFetcher method
     result = mock_jira_fetcher._markdown_to_jira("test markdown")
 
     # Verify that it delegates to the preprocessor
-    mock_jira_fetcher.preprocessor.markdown_to_jira.assert_called_once_with("test markdown")
+    mock_jira_fetcher.preprocessor.markdown_to_jira.assert_called_once_with(
+        "test markdown"
+    )
     assert result == "mocked jira markup"
 
 

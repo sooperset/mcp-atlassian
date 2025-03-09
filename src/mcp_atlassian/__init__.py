@@ -12,15 +12,31 @@ logger = logging.getLogger("mcp-atlassian")
 
 
 @click.command()
-@click.option("-v", "--verbose", count=True, help="Increase verbosity (can be used multiple times)")
-@click.option("--env-file", type=click.Path(exists=True, dir_okay=False), help="Path to .env file")
-@click.option("--confluence-url", help="Confluence URL (e.g., https://your-domain.atlassian.net/wiki)")
+@click.option(
+    "-v",
+    "--verbose",
+    count=True,
+    help="Increase verbosity (can be used multiple times)",
+)
+@click.option(
+    "--env-file", type=click.Path(exists=True, dir_okay=False), help="Path to .env file"
+)
+@click.option(
+    "--confluence-url",
+    help="Confluence URL (e.g., https://your-domain.atlassian.net/wiki)",
+)
 @click.option("--confluence-username", help="Confluence username/email")
 @click.option("--confluence-token", help="Confluence API token")
-@click.option("--jira-url", help="Jira URL (e.g., https://your-domain.atlassian.net or https://jira.your-company.com)")
+@click.option(
+    "--jira-url",
+    help="Jira URL (e.g., https://your-domain.atlassian.net or https://jira.your-company.com)",
+)
 @click.option("--jira-username", help="Jira username/email (for Jira Cloud)")
 @click.option("--jira-token", help="Jira API token (for Jira Cloud)")
-@click.option("--jira-personal-token", help="Jira Personal Access Token (for Jira Server/Data Center)")
+@click.option(
+    "--jira-personal-token",
+    help="Jira Personal Access Token (for Jira Server/Data Center)",
+)
 @click.option(
     "--jira-ssl-verify/--no-jira-ssl-verify",
     default=True,

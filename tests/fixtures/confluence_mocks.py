@@ -106,7 +106,9 @@ MOCK_PAGE_RESPONSE = {
             "locale": "en_US",
             "accountStatus": "active",
             "_expandable": {"operations": "", "personalSpace": ""},
-            "_links": {"self": "https://example.atlassian.net/wiki/rest/api/user?accountId=user123"},
+            "_links": {
+                "self": "https://example.atlassian.net/wiki/rest/api/user?accountId=user123"
+            },
         },
         "when": "2024-01-01T09:00:00.000Z",
         "friendlyWhen": "Jan 01, 2024",
@@ -118,7 +120,9 @@ MOCK_PAGE_RESPONSE = {
         "confRev": "confluence$content$987654321.1",
         "contentTypeModified": False,
         "_expandable": {"collaborators": "", "content": "/rest/api/content/987654321"},
-        "_links": {"self": "https://example.atlassian.net/wiki/rest/api/content/987654321/version/1"},
+        "_links": {
+            "self": "https://example.atlassian.net/wiki/rest/api/content/987654321/version/1"
+        },
     },
     "body": {
         "storage": {
@@ -206,7 +210,9 @@ MOCK_COMMENTS_RESPONSE = {
                     "collaborators": "",
                     "content": "/rest/api/content/456789123",
                 },
-                "_links": {"self": "https://company.atlassian.net/wiki/rest/api/content/456789123/version/1"},
+                "_links": {
+                    "self": "https://company.atlassian.net/wiki/rest/api/content/456789123/version/1"
+                },
             },
             "macroRenderedOutput": {},
             "body": {
