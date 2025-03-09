@@ -716,12 +716,38 @@ Description:
 
             for issue in issues.get("issues", []):
                 issue_key = issue["key"]
-                summary = issue["fields"].get("summary", "")
-                issue_type = issue["fields"]["issuetype"]["name"]
-                status = issue["fields"]["status"]["name"]
-                desc = self._clean_text(issue["fields"].get("description", ""))
-                created_date = self._parse_date(issue["fields"]["created"])
-                priority = issue["fields"].get("priority", {}).get("name", "None")
+                fields_data = issue.get("fields", {})
+
+                # Safely handle fields that might not be included in the response
+                summary = fields_data.get("summary", "")
+
+                # Handle issuetype field with fallback to "Unknown" if missing
+                issue_type = "Unknown"
+                issuetype_data = fields_data.get("issuetype")
+                if issuetype_data is not None:
+                    issue_type = issuetype_data.get("name", "Unknown")
+
+                # Handle status field with fallback to "Unknown" if missing
+                status = "Unknown"
+                status_data = fields_data.get("status")
+                if status_data is not None:
+                    status = status_data.get("name", "Unknown")
+
+                # Process description field
+                description = fields_data.get("description")
+                desc = self._clean_text(description) if description is not None else ""
+
+                # Process created date field
+                created_date = ""
+                created = fields_data.get("created")
+                if created is not None:
+                    created_date = self._parse_date(created)
+
+                # Process priority field
+                priority = "None"
+                priority_data = fields_data.get("priority")
+                if priority_data is not None:
+                    priority = priority_data.get("name", "None")
 
                 # Add basic metadata
                 metadata = {
@@ -758,8 +784,16 @@ Description:
         try:
             # First, check if the issue is an Epic
             epic = self.jira.issue(epic_key)
-            if epic["fields"]["issuetype"]["name"] != "Epic":
-                raise ValueError(f"Issue {epic_key} is not an Epic, it is a {epic['fields']['issuetype']['name']}")
+            fields_data = epic.get("fields", {})
+
+            # Safely check if the issue is an Epic
+            issue_type = None
+            issuetype_data = fields_data.get("issuetype")
+            if issuetype_data is not None:
+                issue_type = issuetype_data.get("name", "")
+
+            if issue_type != "Epic":
+                raise ValueError(f"Issue {epic_key} is not an Epic, it is a {issue_type or 'unknown type'}")
 
             # Get the dynamic field IDs for this Jira instance
             field_ids = self.get_jira_field_ids()

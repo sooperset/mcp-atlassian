@@ -672,13 +672,13 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
 
         def format_issue(doc):
             return {
-                "key": doc.metadata["key"],
-                "title": doc.metadata["title"],
-                "type": doc.metadata["type"],
-                "status": doc.metadata["status"],
-                "created_date": doc.metadata["created_date"],
-                "priority": doc.metadata["priority"],
-                "link": doc.metadata["link"],
+                "key": doc.metadata.get("key", ""),
+                "title": doc.metadata.get("title", ""),
+                "type": doc.metadata.get("type", "Unknown"),
+                "status": doc.metadata.get("status", "Unknown"),
+                "created_date": doc.metadata.get("created_date", ""),
+                "priority": doc.metadata.get("priority", "None"),
+                "link": doc.metadata.get("link", ""),
             }
 
         def format_transition(transition):
@@ -800,9 +800,24 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
 
         elif name == "jira_search":
             limit = min(int(arguments.get("limit", 10)), 50)
-            documents = jira_fetcher.search_issues(
-                arguments["jql"], fields=arguments.get("fields", "*all"), limit=limit
-            )
+
+            # Get requested fields and ensure we include necessary fields for parsing
+            requested_fields = arguments.get("fields", "*all")
+            if requested_fields != "*all" and requested_fields != "*navigable":
+                # Parse comma-separated field list
+                field_list = [f.strip() for f in requested_fields.split(",")]
+
+                # Add required fields if they're not already included
+                required_fields = ["issuetype", "status", "created", "summary"]
+                for required in required_fields:
+                    if required not in field_list:
+                        field_list.append(required)
+
+                # Rebuild the fields string
+                requested_fields = ",".join(field_list)
+                logger.debug(f"Expanded requested fields to: {requested_fields}")
+
+            documents = jira_fetcher.search_issues(arguments["jql"], fields=requested_fields, limit=limit)
             search_results = [format_issue(doc) for doc in documents]
             return [TextContent(type="text", text=json.dumps(search_results, indent=2, ensure_ascii=False))]
 
