@@ -28,7 +28,7 @@ def mock_env_vars():
 
 @pytest.fixture
 def mock_confluence():
-    with patch("mcp_atlassian.confluence.Confluence") as mock:
+    with patch("mcp_atlassian.confluence.client.Confluence") as mock:
         confluence_instance = mock.return_value
 
         confluence_instance.get_all_spaces.return_value = MOCK_SPACES_RESPONSE
