@@ -668,7 +668,16 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
     """Handle tool calls for Confluence and Jira operations."""
     try:
         # Helper functions for formatting results
-        def format_comment(comment):
+        def format_comment(comment: dict) -> dict:
+            """
+            Format a Jira comment for display.
+
+            Args:
+                comment: The raw comment dictionary from Jira
+
+            Returns:
+                Formatted comment dictionary with selected fields
+            """
             return {
                 "id": comment.get("id"),
                 "author": comment.get("author", {}).get("displayName", "Unknown"),
@@ -1277,8 +1286,16 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
         raise RuntimeError(f"Tool execution failed: {str(e)}") from e
 
 
-async def main():
-    """Run the server."""
+async def main() -> None:
+    """
+    Run the MCP server in stdio mode.
+
+    This function creates and runs the MCP server using the stdio interface,
+    which enables communication with the MCP client through standard input/output.
+
+    Returns:
+        None
+    """
     # Import here to avoid issues with event loops
     from mcp.server.stdio import stdio_server
 

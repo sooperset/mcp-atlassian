@@ -25,8 +25,20 @@ repos:
 #   - We fixed 2 examples of boolean function parameters in confluence.py
 #   - Fix pattern: Use keyword-only arguments with descriptive names instead of boolean flags
 #   - Will address remaining instances (10) in future PRs
-# Phase 7: Enable ANN (type annotations) [NEXT]
-# Phase 8: Enable stricter mypy checks
+# Phase 7: Enable ANN (type annotations) [Partially addressed]
+#   - We fixed 4 examples of type annotation issues
+#   - Fix patterns:
+#     - For __init__ methods, use -> None
+#     - For public methods, add appropriate return type (list[dict], Document, etc.)
+#     - For private methods, add parameter and return types
+#   - Will address remaining instances (16) in future PRs
+# Phase 8: Enable stricter mypy checks [Partially addressed]
+#   - We've enabled stricter checks for:
+#     - attr-defined: Ensure attributes used exist on the object
+#     - name-defined: Ensure names are defined before use
+#     - call-arg: Check arguments in function calls
+#   - We've identified 16 issues with the stricter checks that would require more substantial code changes
+#   - Future PRs will address these more complex type issues
 
 -   repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.3.0
@@ -38,7 +50,7 @@ repos:
             # Phase 1: Ignore these rules to get pre-commit passing
             "--ignore=E501",  # Line too long - handled by ruff-format
             "--ignore=ERA",   # Found commented-out code
-            "--ignore=ANN",   # Missing type annotations - will fix gradually
+            "--ignore=ANN",   # Type annotations - fix in future PRs
             "--ignore=FBT",   # Boolean function parameters - fix in future PRs
             "--ignore=BLE",   # Blind exception catching - fix in future PRs
             "--ignore=EM",    # Exception message formatting - fix in future PRs
@@ -46,6 +58,8 @@ repos:
             "--per-file-ignores=tests/*:S101",  # Allow assert in tests
             # Ignore certain B errors in tests
             "--per-file-ignores=tests/*:B017",  # Allow pytest.raises(Exception)
+            # Ignore type annotations in tests for now
+            "--per-file-ignores=tests/*:ANN",
         ]
     -   id: ruff-format
         args: [
@@ -62,15 +76,17 @@ repos:
             "--allow-untyped-calls",
             "--allow-incomplete-defs",
             "--allow-untyped-decorators",
-            "--disable-error-code=attr-defined",
-            "--disable-error-code=name-defined",
-            "--disable-error-code=call-arg",
-            "--disable-error-code=arg-type",
-            "--disable-error-code=assignment",
-            "--disable-error-code=valid-type",
-            "--disable-error-code=index",
-            "--disable-error-code=unreachable",
-            "--disable-error-code=union-attr",
+            # Phase 8: Stricter type checking (enabled)
+            # "--disable-error-code=attr-defined",  # Check attribute exists
+            # "--disable-error-code=name-defined",  # Check name is defined before use
+            # "--disable-error-code=call-arg",      # Check function call arguments
+            # Phase 8: Type checks that need more work (still disabled)
+            "--disable-error-code=arg-type",      # Check argument types
+            "--disable-error-code=valid-type",    # Check types are valid
+            "--disable-error-code=index",         # Check indexing operations
+            "--disable-error-code=unreachable",   # Check for unreachable code
+            "--disable-error-code=assignment",    # Check type compatibility in assignments
+            "--disable-error-code=union-attr",    # Check attribute access on union types
             "--no-strict-optional",
         ]
         additional_dependencies: [

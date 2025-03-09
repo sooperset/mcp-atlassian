@@ -15,7 +15,8 @@ logger = logging.getLogger("mcp-atlassian")
 class ConfluenceFetcher:
     """Handles fetching and parsing content from Confluence."""
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialize the Confluence client with configuration from environment variables."""
         url = os.getenv("CONFLUENCE_URL")
         username = os.getenv("CONFLUENCE_USERNAME")
         token = os.getenv("CONFLUENCE_API_TOKEN")
@@ -31,16 +32,28 @@ class ConfluenceFetcher:
             password=self.config.api_token,  # API token is used as password
             cloud=True,
         )
-        self.preprocessor = TextPreprocessor(self.config.url, self.confluence)
+        self.preprocessor = TextPreprocessor(
+            base_url=self.config.url, confluence_client=self.confluence
+        )
 
     def _process_html_content(
         self, html_content: str, space_key: str
     ) -> tuple[str, str]:
         return self.preprocessor.process_html_content(html_content, space_key)
 
-    def get_spaces(self, start: int = 0, limit: int = 10):
-        """Get all available spaces."""
-        return self.confluence.get_all_spaces(start=start, limit=limit)
+    def get_spaces(self, start: int = 0, limit: int = 10) -> list[dict]:
+        """
+        Get all available spaces.
+
+        Args:
+            start: The starting index for pagination
+            limit: Maximum number of spaces to return
+
+        Returns:
+            List of dictionaries with space information
+        """
+        spaces = self.confluence.get_all_spaces(start=start, limit=limit)
+        return spaces if isinstance(spaces, list) else []
 
     def get_page_content(
         self, page_id: str, *, convert_to_markdown: bool = True
