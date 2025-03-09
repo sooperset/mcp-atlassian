@@ -830,61 +830,107 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Sequence[TextConten
                 Formatted transition dictionary with selected fields
             """
             return {
-                "id": transition.get("id"),
-                "name": transition.get("name"),
-                "to_status": transition.get("to", {}).get("name"),
+                "id": transition.get("id", ""),
+                "name": transition.get("name", ""),
+                "to_status": transition.get("to", {}).get("name", "Unknown"),
             }
 
-        # Dispatch to the appropriate handler based on the tool name
-        tool_handlers = {
-            # Confluence tools
-            "confluence_search": handle_confluence_search,
-            "confluence_get_page": handle_confluence_get_page,
-            "confluence_get_comments": handle_confluence_get_comments,
-            "confluence_create_page": handle_confluence_create_page,
-            "confluence_update_page": handle_confluence_update_page,
-            # Jira tools
-            "jira_get_issue": handle_jira_get_issue,
-            "jira_search": handle_jira_search,
-            "jira_get_project_issues": handle_jira_get_project_issues,
-            "jira_create_issue": handle_jira_create_issue,
-            "jira_update_issue": handle_jira_update_issue,
-            "jira_delete_issue": handle_jira_delete_issue,
-            "jira_add_comment": handle_jira_add_comment,
-            "jira_add_worklog": handle_jira_add_worklog,
-            "jira_get_worklog": handle_jira_get_worklog,
-            "jira_get_transitions": handle_jira_get_transitions,
-            "jira_transition_issue": handle_jira_transition_issue,
-            "jira_link_to_epic": handle_jira_link_to_epic,
-            "jira_get_epic_issues": handle_jira_get_epic_issues,
-        }
+        # Handle different tools
+        if name.startswith("jira"):
+            if jira_fetcher is None:
+                error_msg = "Jira is not configured. Please set JIRA_URL, JIRA_USERNAME, and JIRA_API_TOKEN environment variables."
+                logger.error(error_msg)
+                return [TextContent(type="text", text=error_msg)]
 
-        if name in tool_handlers:
-            return tool_handlers[name](
+        elif name.startswith("confluence"):
+            if confluence_fetcher is None:
+                error_msg = "Confluence is not configured. Please set CONFLUENCE_URL, CONFLUENCE_USERNAME, and CONFLUENCE_API_TOKEN environment variables."
+                logger.error(error_msg)
+                return [TextContent(type="text", text=error_msg)]
+
+        # Tool routing
+        if name == "jira_get_issue":
+            return handle_jira_get_issue(
+                arguments, format_comment, format_issue, format_transition
+            )
+        elif name == "jira_search":
+            return handle_jira_search(
+                arguments, format_comment, format_issue, format_transition
+            )
+        elif name == "jira_get_project_issues":
+            return handle_jira_get_project_issues(
+                arguments, format_comment, format_issue, format_transition
+            )
+        elif name == "jira_create_issue":
+            return handle_jira_create_issue(
+                arguments, format_comment, format_issue, format_transition
+            )
+        elif name == "jira_update_issue":
+            return handle_jira_update_issue(
+                arguments, format_comment, format_issue, format_transition
+            )
+        elif name == "jira_delete_issue":
+            return handle_jira_delete_issue(
+                arguments, format_comment, format_issue, format_transition
+            )
+        elif name == "jira_add_comment":
+            return handle_jira_add_comment(
+                arguments, format_comment, format_issue, format_transition
+            )
+        elif name == "jira_add_worklog":
+            return handle_jira_add_worklog(
+                arguments, format_comment, format_issue, format_transition
+            )
+        elif name == "jira_get_worklog":
+            return handle_jira_get_worklog(
+                arguments, format_comment, format_issue, format_transition
+            )
+        elif name == "jira_get_transitions":
+            return handle_jira_get_transitions(
+                arguments, format_comment, format_issue, format_transition
+            )
+        elif name == "jira_transition_issue":
+            return handle_jira_transition_issue(
+                arguments, format_comment, format_issue, format_transition
+            )
+        elif name == "jira_link_to_epic":
+            return handle_jira_link_to_epic(
+                arguments, format_comment, format_issue, format_transition
+            )
+        elif name == "jira_get_epic_issues":
+            return handle_jira_get_epic_issues(
+                arguments, format_comment, format_issue, format_transition
+            )
+        elif name == "confluence_search":
+            return handle_confluence_search(
+                arguments, format_comment, format_issue, format_transition
+            )
+        elif name == "confluence_get_page":
+            return handle_confluence_get_page(
+                arguments, format_comment, format_issue, format_transition
+            )
+        elif name == "confluence_get_comments":
+            return handle_confluence_get_comments(
+                arguments, format_comment, format_issue, format_transition
+            )
+        elif name == "confluence_create_page":
+            return handle_confluence_create_page(
+                arguments, format_comment, format_issue, format_transition
+            )
+        elif name == "confluence_update_page":
+            return handle_confluence_update_page(
                 arguments, format_comment, format_issue, format_transition
             )
         else:
-            error_msg = f"Unsupported tool: {name}"
+            error_msg = f"Unknown tool: {name}"
             logger.error(error_msg)
-            return [TextContent(type="error", text=error_msg)]
+            return [TextContent(type="text", text=error_msg)]
 
-    except KeyError as e:
-        error_msg = f"Missing required parameter for tool {name}: {str(e)}"
+    except Exception as e:
+        error_msg = f"Error handling tool call: {str(e)}"
         logger.error(error_msg)
-        return [TextContent(type="error", text=error_msg)]
-    except (ValueError, TypeError) as e:
-        error_msg = f"Invalid parameter value for tool {name}: {str(e)}"
-        logger.error(error_msg)
-        return [TextContent(type="error", text=error_msg)]
-    except AttributeError as e:
-        error_msg = f"Tool execution error for {name}: {str(e)}"
-        logger.error(error_msg)
-        return [TextContent(type="error", text=error_msg)]
-    except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
-        error_msg = f"Unexpected error executing tool {name}: {str(e)}"
-        logger.error(error_msg)
-        logger.debug(f"Full exception details for tool {name}:", exc_info=True)
-        return [TextContent(type="error", text=error_msg)]
+        logger.debug("Full exception details:", exc_info=True)
+        return [TextContent(type="text", text=error_msg)]
 
 
 def handle_confluence_search(
@@ -919,7 +965,25 @@ def handle_confluence_search(
 
     try:
         results = confluence_fetcher.search(query, limit=limit)
-        return [TextContent(type="text", text=results)]
+        # Convert results to a list of dictionaries for JSON serialization
+        formatted_results = []
+        for doc in results:
+            formatted_results.append(
+                {
+                    "title": doc.metadata.get("title", ""),
+                    "page_id": doc.metadata.get("page_id", ""),
+                    "space": doc.metadata.get("space", ""),
+                    "url": doc.metadata.get("url", ""),
+                    "last_modified": doc.metadata.get("last_modified", ""),
+                    "excerpt": doc.page_content,
+                }
+            )
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps(formatted_results, indent=2, ensure_ascii=False),
+            )
+        ]
     except KeyError as e:
         error_msg = f"Missing key in search parameters or results: {str(e)}"
         logger.error(error_msg)
@@ -1126,40 +1190,24 @@ def handle_jira_get_issue(
         format_transition: Helper function for formatting transitions
 
     Returns:
-        Issue details
+        Formatted issue content
     """
-    # Ensure Jira is configured
-    if jira_fetcher is None:
-        return [
-            TextContent(
-                text="Jira is not configured. Please set JIRA_URL, JIRA_USERNAME, and JIRA_API_TOKEN environment variables.",
-                type="text",
-            )
-        ]
-
-    issue_key = arguments["issue_key"]
-    expand = arguments.get("expand")
-    comment_limit = arguments.get("comment_limit", 10)
-
     try:
-        doc = jira_fetcher.get_issue(
-            issue_key, expand=expand, comment_limit=comment_limit
-        )
+        issue_key = arguments["issue_key"]
+        doc = jira_fetcher.get_issue(issue_key=issue_key)
         return [TextContent(type="text", text=format_issue(doc))]
     except KeyError as e:
-        error_msg = f"Missing key in Jira issue {issue_key}: {str(e)}"
+        error_msg = f"Missing required argument: {str(e)}"
         logger.error(error_msg)
         return [TextContent(type="text", text=error_msg)]
     except ValueError as e:
-        error_msg = f"Invalid parameter for Jira issue {issue_key}: {str(e)}"
+        error_msg = f"Invalid argument value: {str(e)}"
         logger.error(error_msg)
         return [TextContent(type="text", text=error_msg)]
     except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
-        error_msg = f"Unexpected error getting Jira issue {issue_key}: {str(e)}"
+        error_msg = f"Unexpected error getting Jira issue {arguments.get('issue_key')}: {str(e)}"
         logger.error(error_msg)
-        logger.debug(
-            f"Full exception details for Jira issue {issue_key}:", exc_info=True
-        )
+        logger.debug("Full exception details:", exc_info=True)
         return [TextContent(type="text", text=error_msg)]
 
 
@@ -1181,16 +1229,27 @@ def handle_jira_search(
     Returns:
         Formatted search results
     """
-    jql = arguments["query"]
-    limit = min(int(arguments.get("limit", 10)), 50)
-    start = int(arguments.get("start", 0))
+    try:
+        jql = arguments["query"]
+        limit = min(int(arguments.get("limit", 10)), 50)
+        start = int(arguments.get("start", 0))
 
-    documents = jira_fetcher.search_issues(jql=jql, limit=limit, start=start)
-    results = [format_issue(doc) for doc in documents]
+        documents = jira_fetcher.search_issues(jql=jql, limit=limit, start=start)
+        results = [format_issue(doc) for doc in documents]
 
-    return [
-        TextContent(type="text", text=json.dumps(results, indent=2, ensure_ascii=False))
-    ]
+        return [
+            TextContent(
+                type="text", text=json.dumps(results, indent=2, ensure_ascii=False)
+            )
+        ]
+    except KeyError as e:
+        error_msg = f"Missing required parameter: {str(e)}"
+        logger.error(error_msg)
+        return [TextContent(type="text", text=error_msg)]
+    except Exception as e:
+        error_msg = f"Error executing JQL search: {str(e)}"
+        logger.error(error_msg)
+        return [TextContent(type="text", text=error_msg)]
 
 
 def handle_jira_get_project_issues(
@@ -1243,40 +1302,55 @@ def handle_jira_create_issue(
     Returns:
         Formatted issue creation result
     """
-    # Extract required arguments
-    project_key = arguments["project_key"]
-    summary = arguments["summary"]
-    issue_type = arguments["issue_type"]
+    try:
+        # Extract required arguments
+        project_key = arguments["project_key"]
+        summary = arguments["summary"]
+        issue_type = arguments["issue_type"]
 
-    # Extract optional arguments
-    description = arguments.get("description", "")
-    assignee = arguments.get("assignee")
+        # Extract optional arguments
+        description = arguments.get("description", "")
+        assignee = arguments.get("assignee")
 
-    # Create a shallow copy of arguments without the standard fields
-    # to pass any remaining ones as custom fields
-    custom_fields = arguments.copy()
-    for field in ["project_key", "summary", "issue_type", "description", "assignee"]:
-        custom_fields.pop(field, None)
+        # Create a shallow copy of arguments without the standard fields
+        # to pass any remaining ones as custom fields
+        custom_fields = arguments.copy()
+        for field in [
+            "project_key",
+            "summary",
+            "issue_type",
+            "description",
+            "assignee",
+        ]:
+            custom_fields.pop(field, None)
 
-    # Create the issue
-    doc = jira_fetcher.create_issue(
-        project_key=project_key,
-        summary=summary,
-        issue_type=issue_type,
-        description=description,
-        assignee=assignee,
-        **custom_fields,
-    )
-
-    result = format_issue(doc)
-    result["description"] = doc.page_content
-
-    return [
-        TextContent(
-            type="text",
-            text=f"Issue created successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}",
+        # Create the issue
+        doc = jira_fetcher.create_issue(
+            project_key=project_key,
+            summary=summary,
+            issue_type=issue_type,
+            description=description,
+            assignee=assignee,
+            **custom_fields,
         )
-    ]
+
+        result = format_issue(doc)
+        result["description"] = doc.page_content
+
+        return [
+            TextContent(
+                type="text",
+                text=f"Issue created successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}",
+            )
+        ]
+    except KeyError as e:
+        error_msg = f"Missing required parameter: {str(e)}"
+        logger.error(error_msg)
+        return [TextContent(type="text", text=error_msg)]
+    except Exception as e:
+        error_msg = f"Error creating issue: {str(e)}"
+        logger.error(error_msg)
+        return [TextContent(type="text", text=error_msg)]
 
 
 def handle_jira_update_issue(
@@ -1297,25 +1371,34 @@ def handle_jira_update_issue(
     Returns:
         Formatted issue update result
     """
-    # Extract issue key
-    issue_key = arguments["issue_key"]
+    try:
+        # Extract issue key
+        issue_key = arguments["issue_key"]
 
-    # Create a shallow copy of arguments without the issue_key
-    fields = arguments.copy()
-    fields.pop("issue_key", None)
+        # Create a shallow copy of arguments without the issue_key
+        fields = arguments.copy()
+        fields.pop("issue_key", None)
 
-    # Update the issue
-    doc = jira_fetcher.update_issue(issue_key=issue_key, **fields)
+        # Update the issue
+        doc = jira_fetcher.update_issue(issue_key=issue_key, **fields)
 
-    result = format_issue(doc)
-    result["description"] = doc.page_content
+        result = format_issue(doc)
+        result["description"] = doc.page_content
 
-    return [
-        TextContent(
-            type="text",
-            text=f"Issue updated successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}",
-        )
-    ]
+        return [
+            TextContent(
+                type="text",
+                text=f"Issue updated successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}",
+            )
+        ]
+    except KeyError as e:
+        error_msg = f"Missing required parameter: {str(e)}"
+        logger.error(error_msg)
+        return [TextContent(type="text", text=error_msg)]
+    except Exception as e:
+        error_msg = f"Error updating issue: {str(e)}"
+        logger.error(error_msg)
+        return [TextContent(type="text", text=error_msg)]
 
 
 def handle_jira_delete_issue(
@@ -1349,7 +1432,7 @@ def handle_jira_delete_issue(
     else:
         return [
             TextContent(
-                type="error",
+                type="text",
                 text=f"Failed to delete issue {issue_key}.",
             )
         ]
@@ -1373,18 +1456,27 @@ def handle_jira_add_comment(
     Returns:
         Comment addition confirmation
     """
-    issue_key = arguments["issue_key"]
-    comment_text = arguments["comment"]
+    try:
+        issue_key = arguments["issue_key"]
+        comment_text = arguments["comment"]
 
-    result = jira_fetcher.add_comment(issue_key, comment_text)
-    formatted_result = format_comment(result)
+        result = jira_fetcher.add_comment(issue_key, comment_text)
+        formatted_result = format_comment(result)
 
-    return [
-        TextContent(
-            type="text",
-            text=f"Comment added successfully:\n{json.dumps(formatted_result, indent=2, ensure_ascii=False)}",
-        )
-    ]
+        return [
+            TextContent(
+                type="text",
+                text=f"Comment added successfully:\n{json.dumps(formatted_result, indent=2, ensure_ascii=False)}",
+            )
+        ]
+    except KeyError as e:
+        error_msg = f"Missing required parameter: {str(e)}"
+        logger.error(error_msg)
+        return [TextContent(type="text", text=error_msg)]
+    except Exception as e:
+        error_msg = f"Error adding comment: {str(e)}"
+        logger.error(error_msg)
+        return [TextContent(type="text", text=error_msg)]
 
 
 def handle_jira_add_worklog(

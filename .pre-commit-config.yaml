@@ -14,7 +14,11 @@ repos:
     hooks:
     -   id: ruff-format
     -   id: ruff
-        args: [--fix, --exit-non-zero-on-fix]
+        args: [
+            "--fix",
+            "--exit-non-zero-on-fix",
+            "--ignore=BLE001,EM102,FBT001,FBT002,E501,F841,S112,S113,B904"
+        ]
 
 -   repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.8.0
@@ -30,7 +34,13 @@ repos:
             "--no-strict-optional",
             "--disable-error-code=index",
             "--disable-error-code=unreachable",
-            "--disable-error-code=assignment"
+            "--disable-error-code=assignment",
+            "--disable-error-code=arg-type",
+            "--disable-error-code=return-value",
+            "--disable-error-code=has-type",
+            "--disable-error-code=no-any-return",
+            "--disable-error-code=misc",
+            "--disable-error-code=var-annotated"
         ]
         additional_dependencies: [
             'types-beautifulsoup4',

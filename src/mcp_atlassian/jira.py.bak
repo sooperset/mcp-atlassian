@@ -1303,7 +1303,6 @@ Description:
                 return int(time_spent[:-1])
             except ValueError:
                 pass
-
         total_seconds = 0
         time_units = {
             "w": 7 * 24 * 60 * 60,  # weeks to seconds
