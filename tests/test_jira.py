@@ -2,9 +2,9 @@ import os
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+
 from mcp_atlassian.document_types import Document
 from mcp_atlassian.jira import JiraFetcher
-
 from tests.fixtures.jira_mocks import (
     MOCK_JIRA_COMMENTS_SIMPLIFIED,
     MOCK_JIRA_ISSUE_RESPONSE_SIMPLIFIED,
@@ -138,7 +138,8 @@ def test_jira_fetcher_initialization_missing_cloud_credentials():
         patch.dict(
             os.environ,
             {
-                "JIRA_URL": "https://example.atlassian.net",  # Using .atlassian.net domain to trigger cloud detection
+                # Using .atlassian.net domain to trigger cloud detection
+                "JIRA_URL": "https://example.atlassian.net",
                 # Missing username and token
             },
             clear=True,  # Clear existing env vars to ensure a clean test environment

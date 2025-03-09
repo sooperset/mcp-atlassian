@@ -1,9 +1,9 @@
 from unittest.mock import patch
 
 import pytest
+
 from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.document_types import Document
-
 from tests.fixtures.confluence_mocks import (
     MOCK_COMMENTS_RESPONSE,
     MOCK_CQL_SEARCH_RESPONSE,
@@ -130,8 +130,8 @@ def test_search(fetcher, mock_confluence):
         == "https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/2024-01-01+Team+Progress+Meeting+01"
     )
     assert (
-        documents[0].page_content
-        == "📅 Date\n2024-01-01\n👥 Participants\nJohn Smith\nJane Doe\nBob Wilson\n!-@123456"
+        documents[0].page_content == "📅 Date\n2024-01-01\n👥 Participants\n"
+        "John Smith\nJane Doe\nBob Wilson\n!-@123456"
     )
 
 

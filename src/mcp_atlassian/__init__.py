@@ -43,16 +43,17 @@ logger = logging.getLogger("mcp-atlassian")
     help="Verify SSL certificates for Jira Server/Data Center (default: verify)",
 )
 def main(
-    verbose: bool,
-    env_file: str | None,
-    confluence_url: str | None,
-    confluence_username: str | None,
-    confluence_token: str | None,
-    jira_url: str | None,
-    jira_username: str | None,
-    jira_token: str | None,
-    jira_personal_token: str | None,
-    jira_ssl_verify: bool,
+    *,
+    verbose: bool = False,
+    env_file: str | None = None,
+    confluence_url: str | None = None,
+    confluence_username: str | None = None,
+    confluence_token: str | None = None,
+    jira_url: str | None = None,
+    jira_username: str | None = None,
+    jira_token: str | None = None,
+    jira_personal_token: str | None = None,
+    jira_ssl_verify: bool = True,
 ) -> None:
     """MCP Atlassian Server - Jira and Confluence functionality for MCP
 
@@ -71,10 +72,10 @@ def main(
         jira_ssl_verify: Whether to verify SSL certificates for Jira connections
     """
     # Set up logging based on verbosity
-    _setup_logging(verbose)
+    _setup_logging(verbose=verbose)
 
     # Load environment variables
-    _load_environment_variables(env_file)
+    _load_environment_variables(env_file=env_file)
 
     # Set environment variables from command line arguments
     _set_environment_from_args(
@@ -95,7 +96,7 @@ def main(
     asyncio.run(server.main())
 
 
-def _setup_logging(verbose: int) -> None:
+def _setup_logging(*, verbose: int) -> None:
     """
     Configure logging based on verbosity level.
 
@@ -111,7 +112,7 @@ def _setup_logging(verbose: int) -> None:
     logging.basicConfig(level=logging_level, stream=sys.stderr)
 
 
-def _load_environment_variables(env_file: str | None) -> None:
+def _load_environment_variables(*, env_file: str | None = None) -> None:
     """
     Load environment variables from file.
 
@@ -127,14 +128,15 @@ def _load_environment_variables(env_file: str | None) -> None:
 
 
 def _set_environment_from_args(
-    confluence_url: str | None,
-    confluence_username: str | None,
-    confluence_token: str | None,
-    jira_url: str | None,
-    jira_username: str | None,
-    jira_token: str | None,
-    jira_personal_token: str | None,
-    jira_ssl_verify: bool,
+    *,
+    confluence_url: str | None = None,
+    confluence_username: str | None = None,
+    confluence_token: str | None = None,
+    jira_url: str | None = None,
+    jira_username: str | None = None,
+    jira_token: str | None = None,
+    jira_personal_token: str | None = None,
+    jira_ssl_verify: bool = True,
 ) -> None:
     """
     Set environment variables from command line arguments.

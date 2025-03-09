@@ -1,6 +1,6 @@
 import pytest
-from mcp_atlassian.preprocessing import TextPreprocessor
 
+from mcp_atlassian.preprocessing import TextPreprocessor
 from tests.fixtures.confluence_mocks import MOCK_COMMENTS_RESPONSE, MOCK_PAGE_RESPONSE
 from tests.fixtures.jira_mocks import MOCK_JIRA_ISSUE_RESPONSE
 

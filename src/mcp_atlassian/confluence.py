@@ -17,19 +17,20 @@ class ConfluenceFetcher:
     """Handles fetching and parsing content from Confluence."""
 
     def __init__(self) -> None:
-        """Initialize the Confluence client with configuration from environment variables."""
+        """Initialize the Confluence client with configuration from environment
+        variables."""
         url = os.getenv("CONFLUENCE_URL")
         username = os.getenv("CONFLUENCE_USERNAME")
         token = os.getenv("CONFLUENCE_API_TOKEN")
-
         if not all([url, username, token]):
             error_msg = "Missing required Confluence environment variables"
             raise ValueError(error_msg)
 
-        # Type assertions after null check
-        assert url is not None
-        assert username is not None
-        assert token is not None
+        # These variables are guaranteed to be non-None after the check above
+        # The type checker might need help understanding this
+        url = url if url is not None else ""
+        username = username if username is not None else ""
+        token = token if token is not None else ""
 
         self.config = ConfluenceConfig(url=url, username=username, api_token=token)
         self.confluence = Confluence(

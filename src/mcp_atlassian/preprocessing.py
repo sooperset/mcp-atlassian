@@ -120,7 +120,8 @@ class TextPreprocessor:
                     new_text = f"@{display_name}"
                     user_element.replace_with(new_text)
                     return
-            # If we don't have a confluence client or couldn't get user details, use fallback
+            # If we don't have a confluence client or couldn't get user details,
+            # use fallback
             self._use_fallback_user_mention(user_element, account_id)
         except KeyError as e:
             logger.warning(f"Missing key in user details for {account_id}: {str(e)}")

@@ -33,7 +33,7 @@ target-version = "py310"
 [lint]
 # Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`)  codes by default.
 select = ["E", "F", "B", "W", "I", "N", "UP", "ANN", "S", "BLE", "FBT", "C4", "DTZ", "T10", "EM", "ISC", "ICN"]
-ignore = ["ANN101", "ANN102", "ANN401"]
+ignore = ["ANN401"]
 
 # Allow fix for all enabled rules (when `--fix`) is provided.
 fixable = ["ALL"]
@@ -41,6 +41,11 @@ unfixable = []
 
 # Allow unused variables when underscore-prefixed.
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[lint.per-file-ignores]
+"tests/**/*.py" = ["S", "ANN", "B017"]  # Ignore security assertions, annotations, and blind exception checks in tests
+"tests/fixtures/*.py" = ["E501"]  # Ignore line-too-long errors in test fixture mocks
+"src/mcp_atlassian/server.py" = ["E501"]  # Ignore line-too-long errors in servers
 
 [format]
 # Like Black, use double quotes for strings.

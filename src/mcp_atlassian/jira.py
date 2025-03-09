@@ -153,29 +153,34 @@ class JiraFetcher:
                 return str(account_id)  # Ensure we return a string
             else:
                 logger.warning(
-                    f"Direct user lookup failed for '{username}': user found but no account ID present"
+                    f"Direct user lookup failed for '{username}': "
+                    "user found but no account ID present"
                 )
                 return None
 
         except IndexError:
             logger.warning(
-                f"Direct user lookup failed for '{username}': user result has unexpected format"
+                f"Direct user lookup failed for '{username}': "
+                "user result has unexpected format"
             )
         except KeyError:
             logger.warning(
-                f"Direct user lookup failed for '{username}': missing accountId in response"
+                f"Direct user lookup failed for '{username}': "
+                "missing accountId in response"
             )
         except (ValueError, TypeError) as e:
             logger.warning(
-                f"Direct user lookup failed for '{username}': invalid data format: {str(e)}"
+                f"Direct user lookup failed for '{username}': "
+                f"invalid data format: {str(e)}"
             )
         except requests.RequestException as e:
             logger.warning(
-                f"Direct user lookup failed for '{username}': network error: {str(e)}"
+                f"Direct user lookup failed for '{username}': API error: {str(e)}"
             )
         except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
             logger.warning(
-                f"Direct user lookup failed for '{username}': unexpected error: {str(e)}"
+                f"Direct user lookup failed for '{username}': "
+                f"unexpected error: {str(e)}"
             )
             logger.debug(
                 f"Full exception details for user lookup '{username}':", exc_info=True
@@ -204,7 +209,8 @@ class JiraFetcher:
         account_id = users[0].get("accountId")
         if not account_id or not isinstance(account_id, str):
             logger.warning(
-                f"Permission-based user lookup failed for '{username}': invalid string format in response"
+                f"Permission-based user lookup failed for '{username}': "
+                "invalid string format in response"
             )
             return None
 
@@ -301,27 +307,32 @@ class JiraFetcher:
                 )
                 fields[field_ids["epic_color"]] = epic_color
                 logger.info(
-                    f"Setting Epic Color field {field_ids['epic_color']} to: {epic_color}"
+                    f"Setting Epic Color field {field_ids['epic_color']} "
+                    f"to: {epic_color}"
                 )
 
-            # Pass through any explicitly provided custom fields that might be instance-specific
+            # Pass through any explicitly provided custom fields
+            # that might be instance-specific
             for field_key, field_value in list(kwargs.items()):
                 if field_key.startswith("customfield_"):
                     fields[field_key] = field_value
                     kwargs.pop(field_key)
                     logger.info(
-                        f"Using explicitly provided custom field {field_key}: {field_value}"
+                        f"Using explicitly provided custom field {field_key}: "
+                        f"{field_value}"
                     )
 
             # Warn if epic_name field is required but wasn't discovered
             if "epic_name" not in field_ids:
                 logger.warning(
                     "Epic Name field not found in Jira schema. "
-                    "If your Jira instance requires it, please provide the customfield_* ID directly."
+                    "If your Jira instance requires it, please provide "
+                    "the customfield_* ID directly."
                 )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
             logger.error(f"Error preparing Epic-specific fields: {str(e)}")
-            # Continue with creation anyway, as some instances might not require special fields
+            # Continue with creation anyway, as some instances might not
+            # require special fields
 
     def _add_assignee_to_fields(self, fields: dict[str, Any], assignee: str) -> None:
         """
@@ -380,15 +391,18 @@ class JiraFetcher:
             if missing_field_match:
                 field_id = missing_field_match.group(1) or missing_field_match.group(2)
                 logger.error(
-                    f"Failed to create Epic: Your Jira instance requires field '{field_id}'. "
-                    f"This is typically the Epic Name field. Try setting this field explicitly "
-                    f"using '{field_id}': 'Epic Name Value' in the additional_fields parameter."
+                    f"Failed to create Epic: Your Jira instance requires field "
+                    f"'{field_id}'. "
+                    "This is typically the Epic Name field. Try setting this field "
+                    "explicitly using "
+                    f"'{field_id}': 'Epic Name Value' in the "
+                    "additional_fields parameter."
                 )
             else:
                 logger.error(
-                    f"Failed to create Epic: Your Jira instance has custom field requirements. "
-                    f"You may need to provide specific custom fields for Epics in your instance. "
-                    f"Original error: {error_msg}"
+                    "Failed to create Epic: Your Jira instance has custom field "
+                    "requirements. You may need to provide specific custom fields "
+                    f"for Epics in your instance. Original error: {error_msg}"
                 )
         else:
             logger.error(f"Error creating issue: {error_msg}")
@@ -528,7 +542,7 @@ class JiraFetcher:
 
             return field_ids
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
             logger.error(f"Error discovering Jira field IDs: {str(e)}")
             # Return an empty dict as fallback
             return {}
@@ -560,7 +574,8 @@ class JiraFetcher:
         self, field: dict, field_ids: dict[str, str]
     ) -> None:
         """
-        Process a single field to identify if it's an Epic-related field and add to field_ids.
+        Process a single field to identify if it's an Epic-related field
+        and add to field_ids.
 
         Args:
             field: Field definition from Jira API
@@ -663,7 +678,8 @@ class JiraFetcher:
                         and field_id not in field_ids.values()
                     ):
                         logger.info(
-                            f"Potential Epic Name field discovered: {field_id} with value {field_value}"
+                            f"Potential Epic Name field discovered: {field_id} "
+                            f"with value {field_value}"
                         )
                         if len(field_value) < 100:  # Epic names are typically short
                             field_ids["epic_name"] = field_id
@@ -687,11 +703,12 @@ class JiraFetcher:
                         ]
                         if field_value.lower() in colors:
                             logger.info(
-                                f"Potential Epic Color field discovered: {field_id} with value {field_value}"
+                                f"Potential Epic Color field discovered: {field_id} "
+                                f"with value {field_value}"
                             )
                             field_ids["epic_color"] = field_id
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
             logger.warning(
                 f"Could not discover Epic fields from existing Epics: {str(e)}"
             )
@@ -742,13 +759,16 @@ class JiraFetcher:
         for attempt_fn in attempts:
             try:
                 return attempt_fn()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
                 logger.error(
                     f"Failed to link issue {issue_key} to epic {epic_key}: {str(e)}"
                 )
 
         # If we get here, none of our attempts worked
-        error_msg = f"Could not link issue {issue_key} to epic {epic_key}. Your Jira instance might use a different field for epic links."
+        error_msg = (
+            f"Couldn't link issue {issue_key} to epic {epic_key}. "
+            "Your Jira instance might use a different field for epic links."
+        )
         raise ValueError(error_msg)
 
     def delete_issue(self, issue_key: str) -> bool:
@@ -790,7 +810,7 @@ class JiraFetcher:
             # This handles cases where date_str isn't a string
             logger.warning(f"Invalid date type {type(date_str)}: {e}")
             return str(date_str)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
             logger.warning(f"Error parsing date {date_str}: {e}")
             logger.debug("Full exception details for date parsing:", exc_info=True)
             return date_str
@@ -807,8 +827,10 @@ class JiraFetcher:
         Args:
             issue_key: The issue key (e.g. 'PROJ-123')
             expand: Optional fields to expand
-            comment_limit: Maximum number of comments to include (None for no comments, defaults to 10)
-                          Can be an integer or a string that can be converted to an integer.
+            comment_limit: Maximum number of comments to include
+                          (None for no comments, defaults to 10)
+                          Can be an integer or a string that can be converted
+                          to an integer.
 
         Returns:
             Document containing issue content and metadata
@@ -861,7 +883,8 @@ class JiraFetcher:
                 return int(comment_limit)
             except ValueError:
                 logger.warning(
-                    f"Invalid comment_limit value: {comment_limit}. Using default of 10."
+                    f"Invalid comment_limit value: {comment_limit}. "
+                    "Using default of 10."
                 )
                 return 10
         return comment_limit
@@ -910,7 +933,7 @@ class JiraFetcher:
             try:
                 epic = self.jira.issue(epic_info["epic_key"])
                 epic_info["epic_name"] = epic["fields"]["summary"]
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
                 logger.warning(f"Error fetching epic details: {str(e)}")
 
         return epic_info
@@ -1115,7 +1138,10 @@ Description:
                 issue_type = issuetype_data.get("name", "")
 
             if issue_type != "Epic":
-                error_msg = f"Issue {epic_key} is not an Epic, it is a {issue_type or 'unknown type'}"
+                error_msg = (
+                    f"Issue {epic_key} is not an Epic, it is a "
+                    f"{issue_type or 'unknown type'}"
+                )
                 raise ValueError(error_msg)
 
             # Get the dynamic field IDs for this Jira instance
@@ -1151,7 +1177,7 @@ Description:
                     documents = self.search_issues(jql, limit=limit)
                     if documents:
                         return documents
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
                     logger.info(f"Failed to get epic issues with JQL '{jql}': {str(e)}")
                     continue
 
@@ -1159,7 +1185,8 @@ Description:
             # but also log a warning that we might be missing the right field
             if not documents:
                 logger.warning(
-                    f"Couldn't find issues linked to epic {epic_key}. Your Jira instance might use a different field for epic links."
+                    f"Couldn't find issues linked to epic {epic_key}. "
+                    "Your Jira instance might use a different field for epic links."
                 )
 
             return documents
@@ -1323,11 +1350,14 @@ Description:
             issue_key: The issue key (e.g. 'PROJ-123')
             time_spent: Time spent in Jira format (e.g., '1h 30m', '1d', '30m')
             comment: Optional comment for the worklog (in Markdown format)
-            started: Optional start time in ISO format (e.g. '2023-08-01T12:00:00.000+0000').
-                     If not provided, current time will be used.
-            original_estimate: Optional original estimate in Jira format (e.g., '1h 30m', '1d')
+            started: Optional start time in ISO format
+                    (e.g. '2023-08-01T12:00:00.000+0000').
+                    If not provided, current time will be used.
+            original_estimate: Optional original estimate in Jira format
+                              (e.g., '1h 30m', '1d')
                               This will update the original estimate for the issue.
-            remaining_estimate: Optional remaining estimate in Jira format (e.g., '1h', '30m')
+            remaining_estimate: Optional remaining estimate in Jira format
+                               (e.g., '1h', '30m')
                                This will update the remaining estimate for the issue.
 
         Returns:
@@ -1349,9 +1379,10 @@ Description:
                     self.jira.edit_issue(issue_id_or_key=issue_key, fields=fields)
                     original_estimate_updated = True
                     logger.info(f"Updated original estimate for issue {issue_key}")
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
                     logger.error(
-                        f"Failed to update original estimate for issue {issue_key}: {str(e)}"
+                        f"Failed to update original estimate for issue {issue_key}: "
+                        f"{str(e)}"
                     )
                     # Continue with worklog creation even if estimate update fails
 
@@ -1553,7 +1584,10 @@ Description:
             # Return the updated issue
             return self.get_issue(issue_key)
         except Exception as e:
-            error_msg = f"Error transitioning issue {issue_key} with transition ID {transition_id}: {str(e)}"
+            error_msg = (
+                f"Error transitioning issue {issue_key} with transition ID "
+                f"{transition_id}: {str(e)}"
+            )
             logger.error(error_msg)
             raise ValueError(error_msg) from e
 
@@ -1590,7 +1624,7 @@ Description:
                 try:
                     account_id = self._get_account_id(value)
                     sanitized_fields[key] = {"accountId": account_id}
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
                     error_msg = f"Could not resolve assignee '{value}': {str(e)}"
                     logger.warning(error_msg)
                     # Skip this field

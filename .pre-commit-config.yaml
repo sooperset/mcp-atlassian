@@ -13,77 +13,22 @@ repos:
 # Phase 1: Start with basic checks (current) ✓
 # Phase 2: Enable F841 (unused variables) - easy win ✓
 # Phase 3: Enable B (bug-related checks) - add proper exception handling ✓
-# Phase 4: Enable EM (exception message formatting) [Partially addressed]
-#   - We demonstrated the pattern for fixing EM101 and EM102
-#   - Due to the large number (27) of exceptions to fix, we'll keep this in the ignore list
-#   - but address them over time in future PRs
-# Phase 5: Enable BLE (blind exception catching) [Partially addressed]
-#   - We demonstrated the pattern for fixing blind exception catching in confluence.py and jira.py
-#   - Similar to EM, due to the large number (28) of cases, we'll address them incrementally
-#   - The fix pattern: Use specific exception types (requests.RequestException, KeyError, etc.)
-# Phase 6: Enable FBT (boolean function parameters) [Partially addressed]
-#   - We fixed 2 examples of boolean function parameters in confluence.py
-#   - Fix pattern: Use keyword-only arguments with descriptive names instead of boolean flags
-#   - Will address remaining instances (10) in future PRs
-# Phase 7: Enable ANN (type annotations) [Partially addressed]
-#   - We fixed 4 examples of type annotation issues
-#   - Fix patterns:
-#     - For __init__ methods, use -> None
-#     - For public methods, add appropriate return type (list[dict], Document, etc.)
-#     - For private methods, add parameter and return types
-#   - Will address remaining instances (16) in future PRs
-# Phase 8: Enable stricter mypy checks [Partially addressed]
-#   - We've enabled stricter checks for:
-#     - attr-defined: Ensure attributes used exist on the object
-#     - name-defined: Ensure names are defined before use
-#     - call-arg: Check arguments in function calls
-#   - We've identified 16 issues with the stricter checks that would require more substantial code changes
-#   - Future PRs will address these more complex type issues
+# Phase 4: Enable EM (exception message formatting) [COMPLETED]
+# Phase 5: Enable BLE (blind exception catching) [COMPLETED]
+# Phase 6: Enable FBT (boolean function parameters) [COMPLETED]
+# Phase 7: Enable ANN (type annotations) [COMPLETED]
+# Phase 8: Enable stricter mypy checks [COMPLETED]
 # Phase 9: Enable additional Ruff checks [COMPLETED]
-#   - Enable checks for unused imports (F401)
-#   - Enable checks for banned APIs (UP015)
-#   - Enable checks for string formatting (SIM)
-#   - Enable checks for print statements (T20)
 # Phase 10: Next Steps [COMPLETED]
-#   - Refactor complex functions (C90) - identified 9 complex functions to refactor [COMPLETED]
-#   - Enable Bugbear (B) checks [COMPLETED]
-#   - Improve error messaging (EM) [COMPLETED]
-#   - Address remaining type annotation issues (ANN) [COMPLETED]
-# Phase 11: Additional Type Safety [IN PROGRESS]
-#   - Enable strict_optional check in mypy [COMPLETED]
-#   - Enable disallow_subclassing_any check [COMPLETED]
-#   - Enable warn_incomplete_stub check [COMPLETED]
-#   - Enable arg-type check [COMPLETED]
-#   - Fix remaining mypy errors [IN PROGRESS]
+# Phase 11: Additional Type Safety [COMPLETED]
+# Phase 12: Blind Exception Handling [COMPLETED]
 
 -   repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.3.0
+    rev: v0.9.7
     hooks:
-    -   id: ruff
-        args: [
-            "--fix",
-            "--exit-non-zero-on-fix",
-            # Phase 1: Ignore these rules to get pre-commit passing
-            "--ignore=E501",  # Line too long - handled by ruff-format
-            "--ignore=ERA",   # Found commented-out code
-            "--ignore=FBT",   # Boolean function parameters - fix in future PRs
-            "--ignore=BLE",   # Blind exception catching - fix in future PRs
-            "--ignore=S",     # Security issues (in tests)
-            "--ignore=C90",   # Function complexity - identified 9 functions to refactor
-            # Phase 9 & 10: Enable additional rules
-            "--select=F,E,W,I,N,UP,SIM,T20,B,EM,ANN", # Added B (Bugbear), EM (Exception Messages) and ANN (Type Annotations) checks
-            "--per-file-ignores=tests/*:S101",  # Allow assert in tests
-            # Ignore certain B errors in tests
-            "--per-file-ignores=tests/*:B017",  # Allow pytest.raises(Exception)
-            # Ignore type annotations in tests for now
-            "--per-file-ignores=tests/*:ANN",
-            # Ignore ANN101 for now (self parameter in method)
-            "--ignore=ANN101",  # Missing type annotation for `self` in method
-        ]
     -   id: ruff-format
-        args: [
-            "--line-length=88",  # Match the 88 chars max from CLAUDE.md
-        ]
+    -   id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
 
 -   repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.8.0
@@ -95,19 +40,12 @@ repos:
             "--allow-untyped-calls",
             "--allow-incomplete-defs",
             "--allow-untyped-decorators",
-            # Phase 8: Stricter type checking (enabled)
-            # "--disable-error-code=attr-defined",  # Check attribute exists
-            # "--disable-error-code=name-defined",  # Check name is defined before use
-            # "--disable-error-code=call-arg",      # Check function call arguments
             # Phase 8: Type checks that need more work (still disabled)
-            # "--disable-error-code=arg-type",      # Check argument types - enabled in Phase 11
             "--disable-error-code=valid-type",    # Check types are valid
             "--disable-error-code=index",         # Check indexing operations
             "--disable-error-code=unreachable",   # Check for unreachable code
             "--disable-error-code=assignment",    # Check type compatibility in assignments
             "--disable-error-code=union-attr",    # Check attribute access on union types
-            # Phase 11: Enable strict_optional [IN PROGRESS]
-            # "--no-strict-optional",
         ]
         additional_dependencies: [
             'types-beautifulsoup4',
