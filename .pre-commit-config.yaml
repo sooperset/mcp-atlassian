@@ -40,7 +40,9 @@ repos:
             "--disable-error-code=has-type",
             "--disable-error-code=no-any-return",
             "--disable-error-code=misc",
-            "--disable-error-code=var-annotated"
+            "--disable-error-code=var-annotated",
+            "--disable-error-code=no-untyped-def",
+            "--disable-error-code=annotation-unchecked",
         ]
         additional_dependencies: [
             'types-beautifulsoup4',

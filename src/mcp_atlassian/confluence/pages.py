@@ -4,7 +4,7 @@ import logging
 
 import requests
 
-from ..document_types import Document
+from ..models.confluence import ConfluencePage
 from .client import ConfluenceClient
 
 logger = logging.getLogger("mcp-atlassian")
@@ -15,7 +15,7 @@ class PagesMixin(ConfluenceClient):
 
     def get_page_content(
         self, page_id: str, *, convert_to_markdown: bool = True
-    ) -> Document:
+    ) -> ConfluencePage:
         """
         Get content of a specific page.
 
@@ -25,36 +25,33 @@ class PagesMixin(ConfluenceClient):
                                otherwise returns raw HTML (keyword-only)
 
         Returns:
-            Document containing the page content and metadata
+            ConfluencePage model containing the page content and metadata
         """
         page = self.confluence.get_page_by_id(
             page_id=page_id, expand="body.storage,version,space"
         )
         space_key = page.get("space", {}).get("key", "")
         content = page["body"]["storage"]["value"]
-        processed_html, processed_markdown = self._process_html_content(
-            content, space_key
+        processed_html, processed_markdown = self.preprocessor.process_html_content(
+            content, space_key=space_key
         )
 
-        metadata = {
-            "page_id": page_id,
-            "title": page.get("title", ""),
-            "version": page.get("version", {}).get("number"),
-            "space_key": space_key,
-            "space_name": page.get("space", {}).get("name", ""),
-            "last_modified": page.get("version", {}).get("when"),
-            "author_name": page.get("version", {}).get("by", {}).get("displayName", ""),
-            "url": f"{self.config.url}/spaces/{space_key}/pages/{page_id}",
-        }
+        # Use the appropriate content format based on the convert_to_markdown flag
+        page_content = processed_markdown if convert_to_markdown else processed_html
 
-        return Document(
-            page_content=processed_markdown if convert_to_markdown else processed_html,
-            metadata=metadata,
+        # Create and return the ConfluencePage model
+        return ConfluencePage.from_api_response(
+            page,
+            base_url=self.config.url,
+            include_body=True,
+            # Override content with our processed version
+            content_override=page_content,
+            content_format="storage" if not convert_to_markdown else "markdown",
         )
 
     def get_page_by_title(
         self, space_key: str, title: str, *, convert_to_markdown: bool = True
-    ) -> Document | None:
+    ) -> ConfluencePage | None:
         """
         Get a specific page by its title from a Confluence space.
 
@@ -65,7 +62,7 @@ class PagesMixin(ConfluenceClient):
                                otherwise returns raw HTML (keyword-only)
 
         Returns:
-            Document containing the page content and metadata, or None if not found
+            ConfluencePage model containing the page content and metadata, or None if not found
         """
         try:
             # First check if the space exists
@@ -91,28 +88,21 @@ class PagesMixin(ConfluenceClient):
                 return None
 
             content = page["body"]["storage"]["value"]
-            processed_html, processed_markdown = self._process_html_content(
-                content, space_key
+            processed_html, processed_markdown = self.preprocessor.process_html_content(
+                content, space_key=space_key
             )
 
-            metadata = {
-                "page_id": page["id"],
-                "title": page["title"],
-                "version": page.get("version", {}).get("number"),
-                "space_key": space_key,
-                "space_name": page.get("space", {}).get("name", ""),
-                "last_modified": page.get("version", {}).get("when"),
-                "author_name": page.get("version", {})
-                .get("by", {})
-                .get("displayName", ""),
-                "url": f"{self.config.url}/spaces/{space_key}/pages/{page['id']}",
-            }
+            # Use the appropriate content format based on the convert_to_markdown flag
+            page_content = processed_markdown if convert_to_markdown else processed_html
 
-            return Document(
-                page_content=processed_markdown
-                if convert_to_markdown
-                else processed_html,
-                metadata=metadata,
+            # Create and return the ConfluencePage model
+            return ConfluencePage.from_api_response(
+                page,
+                base_url=self.config.url,
+                include_body=True,
+                # Override content with our processed version
+                content_override=page_content,
+                content_format="storage" if not convert_to_markdown else "markdown",
             )
 
         except KeyError as e:
@@ -137,7 +127,7 @@ class PagesMixin(ConfluenceClient):
         limit: int = 10,
         *,
         convert_to_markdown: bool = True,
-    ) -> list[Document]:
+    ) -> list[ConfluencePage]:
         """
         Get all pages from a specific space.
 
@@ -149,64 +139,64 @@ class PagesMixin(ConfluenceClient):
                                otherwise returns raw HTML (keyword-only)
 
         Returns:
-            List of Document objects containing page content and metadata
+            List of ConfluencePage models containing page content and metadata
         """
         pages = self.confluence.get_all_pages_from_space(
             space=space_key, start=start, limit=limit, expand="body.storage"
         )
 
-        documents = []
+        page_models = []
         for page in pages:
             content = page["body"]["storage"]["value"]
-            processed_html, processed_markdown = self._process_html_content(
-                content, space_key
+            processed_html, processed_markdown = self.preprocessor.process_html_content(
+                content, space_key=space_key
             )
 
-            metadata = {
-                "page_id": page["id"],
-                "title": page["title"],
-                "space_key": space_key,
-                "space_name": page.get("space", {}).get("name", ""),
-                "version": page.get("version", {}).get("number"),
-                "last_modified": page.get("version", {}).get("when"),
-                "author_name": page.get("version", {})
-                .get("by", {})
-                .get("displayName", ""),
-                "url": f"{self.config.url}/spaces/{space_key}/pages/{page['id']}",
-            }
+            # Use the appropriate content format based on the convert_to_markdown flag
+            page_content = processed_markdown if convert_to_markdown else processed_html
 
-            documents.append(
-                Document(
-                    page_content=processed_markdown
-                    if convert_to_markdown
-                    else processed_html,
-                    metadata=metadata,
-                )
+            # Ensure space information is included
+            if "space" not in page:
+                page["space"] = {
+                    "key": space_key,
+                    "name": space_key,  # Use space_key as name if not available
+                }
+
+            # Create the ConfluencePage model
+            page_model = ConfluencePage.from_api_response(
+                page,
+                base_url=self.config.url,
+                include_body=True,
+                # Override content with our processed version
+                content_override=page_content,
+                content_format="storage" if not convert_to_markdown else "markdown",
             )
 
-        return documents
+            page_models.append(page_model)
+
+        return page_models
 
     def create_page(
         self, space_key: str, title: str, body: str, parent_id: str | None = None
-    ) -> Document:
+    ) -> ConfluencePage:
         """
         Create a new page in a Confluence space.
 
         Args:
-            space_key: The key of the space
-            title: The title of the page
-            body: The content of the page in storage format (HTML)
-            parent_id: Optional parent page ID
+            space_key: The key of the space to create the page in
+            title: The title of the new page
+            body: The HTML content of the page in storage format
+            parent_id: Optional ID of a parent page
 
         Returns:
-            Document with the created page content and metadata
+            ConfluencePage model containing the new page's data
 
         Raises:
             Exception: If there is an error creating the page
         """
         try:
             # Create the page
-            page = self.confluence.create_page(
+            result = self.confluence.create_page(
                 space=space_key,
                 title=title,
                 body=body,
@@ -214,11 +204,19 @@ class PagesMixin(ConfluenceClient):
                 representation="storage",
             )
 
-            # Return the created page as a Document
-            return self.get_page_content(page["id"])
+            # Get the new page content
+            page_id = result.get("id")
+            if not page_id:
+                raise ValueError("Create page response did not contain an ID")
+
+            return self.get_page_content(page_id)
         except Exception as e:
-            logger.error(f"Error creating page in space {space_key}: {str(e)}")
-            raise
+            logger.error(
+                f"Error creating page '{title}' in space {space_key}: {str(e)}"
+            )
+            raise Exception(
+                f"Failed to create page '{title}' in space {space_key}: {str(e)}"
+            ) from e
 
     def update_page(
         self,
@@ -228,29 +226,28 @@ class PagesMixin(ConfluenceClient):
         *,
         is_minor_edit: bool = False,
         version_comment: str = "",
-    ) -> Document:
+    ) -> ConfluencePage:
         """
         Update an existing page in Confluence.
 
         Args:
             page_id: The ID of the page to update
             title: The new title of the page
-            body: The new content of the page in storage format (HTML)
-            is_minor_edit: Whether this is a minor edit (affects notifications,
-                keyword-only)
+            body: The new HTML content of the page in storage format
+            is_minor_edit: Whether this is a minor edit (keyword-only)
             version_comment: Optional comment for this version (keyword-only)
 
         Returns:
-            Document with the updated page content and metadata
+            ConfluencePage model containing the updated page's data
 
         Raises:
             Exception: If there is an error updating the page
         """
         try:
-            # Get the current page first for consistency with the original
-            # implementation
-            # This is needed for the test_update_page_with_error test
-            self.confluence.get_page_by_id(page_id=page_id)
+            # Get the current version of the page
+            # Note: In testing, this get_page_by_id call is replaced by the mocked document
+            current_page = self.get_page_content(page_id)
+            current_version = current_page.version.number if current_page.version else 1
 
             # Update the page
             self.confluence.update_page(
@@ -259,10 +256,12 @@ class PagesMixin(ConfluenceClient):
                 body=body,
                 minor_edit=is_minor_edit,
                 version_comment=version_comment,
+                version=current_version + 1,
+                representation="storage",
             )
 
-            # Return the updated page as a Document
+            # Get the updated page
             return self.get_page_content(page_id)
         except Exception as e:
             logger.error(f"Error updating page {page_id}: {str(e)}")
-            raise
+            raise Exception(f"Failed to update page {page_id}: {str(e)}") from e

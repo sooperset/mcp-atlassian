@@ -4,8 +4,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from mcp_atlassian.document_types import Document
 from mcp_atlassian.jira.transitions import TransitionsMixin
+from mcp_atlassian.models.jira import (
+    JiraIssue,
+    JiraStatus,
+    JiraStatusCategory,
+    JiraTransition,
+)
 
 
 class TestTransitionsMixin:
@@ -17,12 +22,32 @@ class TestTransitionsMixin:
         mixin = TransitionsMixin(config=jira_client.config)
         mixin.jira = jira_client.jira
 
-        # Create a get_issue method to allow returning Document
+        # Create a get_issue method to allow returning JiraIssue
         mixin.get_issue = MagicMock(
-            return_value=Document(
-                page_content="Issue content", metadata={"key": "TEST-123"}
+            return_value=JiraIssue(
+                id="12345",
+                key="TEST-123",
+                summary="Test Issue",
+                description="Issue content",
+                status=JiraStatus(
+                    id="1",
+                    name="Open",
+                    category=JiraStatusCategory(
+                        id=1, key="open", name="To Do", color_name="blue-gray"
+                    ),
+                ),
             )
         )
+
+        # Set up mock for get_transitions_models
+        mock_transitions = [
+            JiraTransition(
+                id="10",
+                name="Start Progress",
+                to_status=JiraStatus(id="2", name="In Progress"),
+            )
+        ]
+        mixin.get_transitions_models = MagicMock(return_value=mock_transitions)
 
         return mixin
 
@@ -141,8 +166,10 @@ class TestTransitionsMixin:
             "TEST-123", expected_transition_data
         )
         transitions_mixin.get_issue.assert_called_once_with("TEST-123")
-        assert isinstance(result, Document)
-        assert result.metadata["key"] == "TEST-123"
+        assert isinstance(result, JiraIssue)
+        assert result.key == "TEST-123"
+        assert result.summary == "Test Issue"
+        assert result.description == "Issue content"
 
     def test_transition_issue_with_int_id(self, transitions_mixin):
         """Test transition_issue with int transition ID."""
@@ -211,9 +238,10 @@ class TestTransitionsMixin:
         result = transitions_mixin.transition_issue("TEST-123", "10")
 
         # Verify fallback behavior
-        assert isinstance(result, Document)
-        assert result.metadata["key"] == "TEST-123"
-        assert result.page_content == ""
+        assert isinstance(result, JiraIssue)
+        assert result.key == "TEST-123"
+        assert result.summary == "Test Issue"
+        assert result.description == "Issue content"
 
     def test_transition_issue_with_error(self, transitions_mixin):
         """Test transition_issue error handling."""

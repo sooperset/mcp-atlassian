@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from mcp_atlassian.confluence.pages import PagesMixin
-from mcp_atlassian.document_types import Document
+from mcp_atlassian.models.confluence import ConfluencePage
 
 
 class TestPagesMixin:
@@ -41,52 +41,79 @@ class TestPagesMixin:
         )
 
         # Verify result structure
-        assert isinstance(result, Document)
-        assert result.page_content == "Processed Markdown"  # from mock_preprocessor
-        assert result.metadata["page_id"] == page_id
-        assert result.metadata["title"] == "Example Meeting Notes"
-        assert result.metadata["space_key"] == "PROJ"
-        assert (
-            result.metadata["url"]
-            == "https://example.atlassian.net/wiki/spaces/PROJ/pages/987654321"
-        )
+        assert isinstance(result, ConfluencePage)
+        assert result.id == "987654321"
+        assert result.title == "Example Meeting Notes"
+
+        # Test space information
+        assert result.space is not None
+        assert result.space.key == "PROJ"
+
+        # Use direct attributes instead of backward compatibility
+        assert result.content == "Processed Markdown"
+        assert result.id == page_id
+        assert result.title == "Example Meeting Notes"
+        assert result.space.key == "PROJ"
+        assert result.url is not None
+
+        # Test version information
+        assert result.version is not None
+        assert result.version.number == 1
 
     def test_get_page_content_html(self, pages_mixin):
         """Test getting page content in HTML format."""
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        # Mock the preprocessor to return HTML
+        pages_mixin.preprocessor.process_html_content.return_value = (
+            "<p>Processed HTML</p>",
+            "Processed Markdown",
+        )
+
         # Act
         result = pages_mixin.get_page_content("987654321", convert_to_markdown=False)
 
-        # Assert
-        assert result.page_content == "<p>Processed HTML</p>"  # from mock_preprocessor
+        # Assert HTML processing was used
+        assert result.content == "<p>Processed HTML</p>"
 
     def test_get_page_by_title_success(self, pages_mixin):
-        """Test getting a page by title."""
-        # Arrange
-        space_key = "PROJ"
+        """Test getting a page by title when it exists."""
+        # Setup
+        space_key = "DEMO"
         title = "Example Page"
-        pages_mixin.config.url = "https://example.atlassian.net/wiki"
 
-        # Mock spaces list
+        # Mock getting all spaces
         pages_mixin.confluence.get_all_spaces.return_value = {
-            "results": [{"key": "PROJ"}, {"key": "TEST"}]
+            "results": [{"key": space_key, "name": "Demo Space"}]
         }
 
-        # Act
+        # Mock getting the page by title
+        pages_mixin.confluence.get_page_by_title.return_value = {
+            "id": "987654321",
+            "title": title,
+            "space": {"key": space_key},
+            "body": {"storage": {"value": "<p>Example content</p>"}},
+            "version": {"number": 1},
+        }
+
+        # Mock the HTML processing
+        pages_mixin.preprocessor.process_html_content.return_value = (
+            "<p>Processed HTML</p>",
+            "Processed Markdown",
+        )
+
+        # Call the method
         result = pages_mixin.get_page_by_title(space_key, title)
 
-        # Assert
-        pages_mixin.confluence.get_all_spaces.assert_called_once_with(
-            start=0, limit=500
-        )
+        # Verify API calls
         pages_mixin.confluence.get_page_by_title.assert_called_once_with(
             space=space_key, title=title, expand="body.storage,version"
         )
 
         # Verify result
-        assert isinstance(result, Document)
-        assert result.metadata["page_id"] == "987654321"
-        assert result.metadata["title"] == "Example Meeting Notes"
-        assert result.metadata["space_key"] == space_key
+        assert result.id == "987654321"
+        assert result.title == title
+        assert result.content == "Processed Markdown"
 
     def test_get_page_by_title_space_not_found(self, pages_mixin):
         """Test getting a page when the space doesn't exist."""
@@ -100,6 +127,8 @@ class TestPagesMixin:
 
         # Assert
         assert result is None
+        pages_mixin.confluence.get_all_spaces.assert_called_once()
+        pages_mixin.confluence.get_page_by_title.assert_not_called()
 
     def test_get_page_by_title_page_not_found(self, pages_mixin):
         """Test getting a page that doesn't exist."""
@@ -133,31 +162,35 @@ class TestPagesMixin:
         """Test getting all pages from a space."""
         # Arrange
         space_key = "PROJ"
-        start = 5
-        limit = 15
         pages_mixin.config.url = "https://example.atlassian.net/wiki"
 
         # Act
         results = pages_mixin.get_space_pages(
-            space_key, start=start, limit=limit, convert_to_markdown=True
+            space_key, start=0, limit=10, convert_to_markdown=True
         )
 
         # Assert
         pages_mixin.confluence.get_all_pages_from_space.assert_called_once_with(
-            space=space_key, start=start, limit=limit, expand="body.storage"
+            space=space_key, start=0, limit=10, expand="body.storage"
         )
 
         # Verify results
-        assert isinstance(results, list)
-        assert len(results) > 0
-        assert all(isinstance(doc, Document) for doc in results)
+        assert len(results) == 2  # Mock has 2 pages
 
-        # Check first document
-        doc = results[0]
-        assert doc.page_content == "Processed Markdown"  # from mock_preprocessor
-        assert doc.metadata["space_key"] == space_key
-        assert "page_id" in doc.metadata
-        assert "title" in doc.metadata
+        # Verify each result is a ConfluencePage
+        for result in results:
+            assert isinstance(result, ConfluencePage)
+            assert result.content == "Processed Markdown"
+            assert result.space is not None
+            assert result.space.key == "PROJ"
+
+        # Verify individual pages
+        assert results[0].id == "123456789"  # First page ID from mock
+        assert results[0].title == "Sample Research Paper Title"
+
+        # Verify the second page
+        assert results[1].id == "987654321"  # Second page ID from mock
+        assert results[1].title == "Example Meeting Notes"
 
     def test_create_page_success(self, pages_mixin):
         """Test creating a new page."""
@@ -167,13 +200,15 @@ class TestPagesMixin:
         body = "<p>Test content</p>"
         parent_id = "987654321"
 
-        # Mock get_page_content to return a document
+        # Mock get_page_content to return a ConfluencePage
         with patch.object(
             pages_mixin,
             "get_page_content",
-            return_value=Document(
-                page_content="Page content",
-                metadata={"page_id": "123456789", "title": title},
+            return_value=ConfluencePage(
+                id="123456789",
+                title=title,
+                content="Page content",
+                space={"key": space_key, "name": "Project"},
             ),
         ):
             # Act
@@ -188,11 +223,11 @@ class TestPagesMixin:
                 representation="storage",
             )
 
-            # Verify result
-            assert isinstance(result, Document)
-            assert result.page_content == "Page content"
-            assert result.metadata["page_id"] == "123456789"
-            assert result.metadata["title"] == title
+            # Verify result is a ConfluencePage
+            assert isinstance(result, ConfluencePage)
+            assert result.id == "123456789"
+            assert result.title == title
+            assert result.content == "Page content"
 
     def test_create_page_error(self, pages_mixin):
         """Test error handling when creating a page."""
@@ -213,9 +248,12 @@ class TestPagesMixin:
         version_comment = "Updated test"
 
         # Mock get_page_content to return a document
-        mock_document = Document(
-            page_content="Updated content",
-            metadata={"page_id": page_id, "title": title},
+        mock_document = ConfluencePage(
+            id=page_id,
+            title=title,
+            content="Updated content",
+            space={"key": "PROJ", "name": "Project"},
+            version={"number": 1},  # Add version information
         )
         with patch.object(pages_mixin, "get_page_content", return_value=mock_document):
             # Act
@@ -228,20 +266,20 @@ class TestPagesMixin:
             )
 
             # Assert
-            # Should first get the page
-            pages_mixin.confluence.get_page_by_id.assert_called_once()
-
-            # Then update it
+            # Verify update_page was called with the correct arguments
             pages_mixin.confluence.update_page.assert_called_once_with(
                 page_id=page_id,
                 title=title,
                 body=body,
                 minor_edit=is_minor_edit,
                 version_comment=version_comment,
+                version=2,  # Version number + 1
+                representation="storage",
             )
 
-            # Verify result
-            assert result is mock_document
+            # Verify get_page_content was called twice: once to get the current version,
+            # and once to get the updated page
+            assert pages_mixin.get_page_content.call_count == 2
 
     def test_update_page_error(self, pages_mixin):
         """Test error handling when updating a page."""
@@ -251,3 +289,40 @@ class TestPagesMixin:
         # Act/Assert
         with pytest.raises(Exception, match="API Error"):
             pages_mixin.update_page("987654321", "Test", "<p>Content</p>")
+
+    def test_get_page_success(self, pages_mixin):
+        """Test successful page retrieval."""
+        # Setup
+        page_id = "12345"
+        page_data = {
+            "id": page_id,
+            "title": "Test Page",
+            "body": {"storage": {"value": "<p>Test content</p>"}},
+            "version": {"number": 1},
+            "space": {"key": "TEST", "name": "Test Space"},
+        }
+        pages_mixin.confluence.get_page_by_id.return_value = page_data
+
+        # Mock the preprocessor
+        pages_mixin.preprocessor.process_html_content.return_value = (
+            "<p>Processed HTML</p>",
+            "Processed content",
+        )
+
+        # Call the method
+        result = pages_mixin.get_page_content(page_id)
+
+        # Verify the API call
+        pages_mixin.confluence.get_page_by_id.assert_called_once_with(
+            page_id=page_id, expand="body.storage,version,space"
+        )
+
+        # Verify the result
+        assert result.id == page_id
+        assert result.title == "Test Page"
+        assert result.content == "Processed content"
+        assert (
+            result.version.number == 1
+        )  # Compare version number instead of the whole object
+        assert result.space.key == "TEST"
+        assert result.space.name == "Test Space"

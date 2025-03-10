@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from ..document_types import Document
+from ..models.jira import JiraIssue
 from .users import UsersMixin
 
 logger = logging.getLogger("mcp-jira")
@@ -18,7 +18,7 @@ class IssuesMixin(UsersMixin):
         issue_key: str,
         expand: str | None = None,
         comment_limit: int | str | None = 10,
-    ) -> Document:
+    ) -> JiraIssue:
         """
         Get a Jira issue by key.
 
@@ -28,7 +28,7 @@ class IssuesMixin(UsersMixin):
             comment_limit: Maximum number of comments to include, or "all"
 
         Returns:
-            Document with issue content and metadata
+            JiraIssue model with issue data and metadata
 
         Raises:
             Exception: If there is an error retrieving the issue
@@ -47,68 +47,49 @@ class IssuesMixin(UsersMixin):
             # Extract fields data, safely handling None
             fields = issue.get("fields", {}) or {}
 
-            # Extract basic information
-            summary = fields.get("summary", "")
-            description = fields.get("description")
-            desc = self._clean_text(description) if description is not None else ""
+            # Get comments if needed
+            comment_limit_int = self._normalize_comment_limit(comment_limit)
+            comments = []
+            if comment_limit_int is not None:
+                comments = self._get_issue_comments_if_needed(
+                    issue_key, comment_limit_int
+                )
 
-            # Handle status safely
-            status = "Unknown"
-            status_data = fields.get("status")
-            if status_data is not None and isinstance(status_data, dict):
-                status = status_data.get("name", "Unknown")
+            # Add comments to the issue data for processing by the model
+            if comments:
+                if "comment" not in fields:
+                    fields["comment"] = {}
+                fields["comment"]["comments"] = comments
 
-            # Handle issue type safely
-            issue_type = "Unknown"
-            issuetype_data = fields.get("issuetype")
-            if issuetype_data is not None and isinstance(issuetype_data, dict):
-                issue_type = issuetype_data.get("name", "Unknown")
+            # Extract epic information
+            epic_info = self._extract_epic_information(issue)
 
-            # Handle priority safely
-            priority = "None"
-            priority_data = fields.get("priority")
-            if priority_data is not None and isinstance(priority_data, dict):
-                priority = priority_data.get("name", "None")
+            # If this is linked to an epic, add the epic information to the fields
+            if epic_info.get("epic_key"):
+                # Get field IDs for epic fields
+                field_ids = self.get_jira_field_ids()
 
-            # Handle created date
-            created_date = ""
-            created = fields.get("created")
-            if created is not None:
-                created_date = self._parse_date(created)
+                # Add epic link field if it doesn't exist
+                if "epic_link" in field_ids and field_ids["epic_link"] not in fields:
+                    fields[field_ids["epic_link"]] = epic_info["epic_key"]
 
-            # Build metadata
-            metadata = {
-                "key": issue_key,
-                "title": summary,
-                "type": issue_type,
-                "status": status,
-                "created_date": created_date,
-                "priority": priority,
-                "link": f"{self.config.url.rstrip('/')}/browse/{issue_key}",
-            }
+                # Add epic name field if it doesn't exist
+                if (
+                    epic_info.get("epic_name")
+                    and "epic_name" in field_ids
+                    and field_ids["epic_name"] not in fields
+                ):
+                    fields[field_ids["epic_name"]] = epic_info["epic_name"]
 
-            # Get comments if available
-            if "comment" in expand_param if expand_param else False:
-                comments_data = fields.get("comment", {})
-                if comments_data and isinstance(comments_data, dict):
-                    comments = comments_data.get("comments", [])
-                    metadata["comments"] = [
-                        {
-                            "id": comment.get("id"),
-                            "author": comment.get("author", {}).get(
-                                "displayName", "Unknown"
-                            ),
-                            "body": self._clean_text(comment.get("body", "")),
-                            "created": comment.get("created", ""),
-                        }
-                        for comment in comments
-                    ]
+            # Update the issue data with the fields
+            issue["fields"] = fields
 
-            return Document(page_content=desc, metadata=metadata)
-
+            # Create and return the JiraIssue model
+            return JiraIssue.from_api_response(issue, base_url=self.config.url)
         except Exception as e:
-            logger.error(f"Error retrieving issue {issue_key}: {str(e)}")
-            raise Exception(f"Error retrieving issue {issue_key}: {str(e)}") from e
+            error_msg = str(e)
+            logger.error(f"Error retrieving issue {issue_key}: {error_msg}")
+            raise Exception(f"Error retrieving issue {issue_key}: {error_msg}") from e
 
     def _normalize_comment_limit(self, comment_limit: int | str | None) -> int | None:
         """
@@ -183,31 +164,47 @@ class IssuesMixin(UsersMixin):
             "is_epic": False,
         }
 
-        fields = issue.get("fields", {})
-        issue_type = fields.get("issuetype", {}).get("name", "").lower()
+        try:
+            fields = issue.get("fields", {}) or {}
+            issue_type = fields.get("issuetype", {}).get("name", "").lower()
 
-        # Check if this is an epic
-        if issue_type == "epic":
-            epic_info["is_epic"] = True
-            epic_info["epic_name"] = fields.get(
-                "customfield_10011", ""
-            )  # Epic Name field
+            # Get field IDs for epic fields
+            field_ids = self.get_jira_field_ids()
 
-        # If not an epic, check for epic link
-        elif (
-            "customfield_10014" in fields and fields["customfield_10014"]
-        ):  # Epic Link field
-            epic_key = fields["customfield_10014"]
-            epic_info["epic_key"] = epic_key
+            # Check if this is an epic
+            if issue_type == "epic":
+                epic_info["is_epic"] = True
 
-            # Try to get epic details
-            try:
-                epic = self.jira.get_issue(epic_key)
-                epic_fields = epic.get("fields", {})
-                epic_info["epic_name"] = epic_fields.get("customfield_10011", "")
-                epic_info["epic_summary"] = epic_fields.get("summary", "")
-            except Exception as e:
-                logger.warning(f"Error getting epic details for {epic_key}: {str(e)}")
+                # Use the discovered field ID for epic name
+                if "epic_name" in field_ids and field_ids["epic_name"] in fields:
+                    epic_info["epic_name"] = fields.get(field_ids["epic_name"], "")
+
+            # If not an epic, check for epic link
+            elif "epic_link" in field_ids:
+                epic_link_field = field_ids["epic_link"]
+
+                if epic_link_field in fields and fields[epic_link_field]:
+                    epic_key = fields[epic_link_field]
+                    epic_info["epic_key"] = epic_key
+
+                    # Try to get epic details
+                    try:
+                        epic = self.jira.issue(epic_key)
+                        epic_fields = epic.get("fields", {}) or {}
+
+                        # Get epic name using the discovered field ID
+                        if "epic_name" in field_ids:
+                            epic_info["epic_name"] = epic_fields.get(
+                                field_ids["epic_name"], ""
+                            )
+
+                        epic_info["epic_summary"] = epic_fields.get("summary", "")
+                    except Exception as e:
+                        logger.warning(
+                            f"Error getting epic details for {epic_key}: {str(e)}"
+                        )
+        except Exception as e:
+            logger.warning(f"Error extracting epic information: {str(e)}")
 
         return epic_info
 
@@ -372,7 +369,7 @@ class IssuesMixin(UsersMixin):
         description: str = "",
         assignee: str | None = None,
         **kwargs: Any,  # noqa: ANN401 - Dynamic field types are necessary for Jira API
-    ) -> Document:
+    ) -> JiraIssue:
         """
         Create a new Jira issue.
 
@@ -385,12 +382,20 @@ class IssuesMixin(UsersMixin):
             **kwargs: Additional fields to set on the issue
 
         Returns:
-            Document with the created issue
+            JiraIssue model representing the created issue
 
         Raises:
             Exception: If there is an error creating the issue
         """
         try:
+            # Validate required fields
+            if not project_key:
+                raise ValueError("Project key is required")
+            if not summary:
+                raise ValueError("Summary is required")
+            if not issue_type:
+                raise ValueError("Issue type is required")
+
             # Prepare fields
             fields: dict[str, Any] = {
                 "project": {"key": project_key},
@@ -426,8 +431,9 @@ class IssuesMixin(UsersMixin):
                 error_msg = "No issue key in response"
                 raise ValueError(error_msg)
 
-            # Return the newly created issue
-            return self.get_issue(issue_key)
+            # Get the full issue data and convert to JiraIssue model
+            issue_data = self.jira.issue(issue_key)
+            return JiraIssue.from_api_response(issue_data)
 
         except Exception as e:
             self._handle_create_issue_error(e, issue_type)
@@ -524,7 +530,7 @@ class IssuesMixin(UsersMixin):
         issue_key: str,
         fields: dict[str, Any] | None = None,
         **kwargs: Any,  # noqa: ANN401 - Dynamic field types are necessary for Jira API
-    ) -> Document:
+    ) -> JiraIssue:
         """
         Update a Jira issue.
 
@@ -534,12 +540,16 @@ class IssuesMixin(UsersMixin):
             **kwargs: Additional fields to update
 
         Returns:
-            Document with the updated issue
+            JiraIssue model representing the updated issue
 
         Raises:
             Exception: If there is an error updating the issue
         """
         try:
+            # Validate required fields
+            if not issue_key:
+                raise ValueError("Issue key is required")
+
             update_fields = fields or {}
 
             # Process kwargs
@@ -568,18 +578,21 @@ class IssuesMixin(UsersMixin):
                         update_fields[key] = value
 
             # Update the issue
-            self.jira.update_issue(issue_key, fields=update_fields)
+            if update_fields:
+                self.jira.update_issue(issue_id=issue_key, fields=update_fields)
 
-            # Return the updated issue
-            return self.get_issue(issue_key)
+            # Get the updated issue data and convert to JiraIssue model
+            issue_data = self.jira.issue(issue_key)
+            return JiraIssue.from_api_response(issue_data)
 
         except Exception as e:
-            logger.error(f"Error updating issue {issue_key}: {str(e)}")
-            raise Exception(f"Error updating issue {issue_key}: {str(e)}") from e
+            error_msg = str(e)
+            logger.error(f"Error updating issue {issue_key}: {error_msg}")
+            raise ValueError(f"Failed to update issue {issue_key}: {error_msg}") from e
 
     def _update_issue_with_status(
         self, issue_key: str, fields: dict[str, Any]
-    ) -> Document:
+    ) -> JiraIssue:
         """
         Update an issue with a status change.
 
@@ -588,38 +601,54 @@ class IssuesMixin(UsersMixin):
             fields: Dictionary of fields to update
 
         Returns:
-            Document with the updated issue
+            JiraIssue model representing the updated issue
 
         Raises:
             Exception: If there is an error updating the issue
         """
+        # Extract status from fields and remove it for the standard update
+        status = fields.pop("status", None)
+
         # First update any fields if needed
         if fields:
-            self.jira.update_issue(issue_key, fields=fields)
+            self.jira.update_issue(issue_id=issue_key, fields=fields)
 
-        # Get the status from fields
-        status = fields.get("status")
+        # If no status change is requested, return the issue
         if not status:
-            return self.get_issue(issue_key)
+            issue_data = self.jira.issue(issue_key)
+            return JiraIssue.from_api_response(issue_data)
 
         # Get available transitions
         transitions = self.get_available_transitions(issue_key)
 
-        # Find the right transition
+        # Find the appropriate transition
         transition_id = None
         for transition in transitions:
-            if transition.get("name", "").lower() == status.lower():
+            to_status = transition.get("to", {})
+            if (
+                to_status.get("name", "").lower() == status.lower()
+                or to_status.get("id") == status
+            ):
                 transition_id = transition.get("id")
                 break
 
         if not transition_id:
-            error_msg = (
-                f"Could not find transition to status '{status}' for issue {issue_key}"
+            available_statuses = ", ".join(
+                [t.get("to", {}).get("name", "") for t in transitions]
             )
+            error_msg = (
+                f"Could not find transition to status '{status}'. "
+                f"Available statuses: {available_statuses}"
+            )
+            logger.error(error_msg)
             raise ValueError(error_msg)
 
         # Perform the transition
-        return self.transition_issue(issue_key, transition_id)
+        self.jira.issue_transition(issue_key, {"transition": {"id": transition_id}})
+
+        # Get the updated issue data
+        issue_data = self.jira.issue(issue_key)
+        return JiraIssue.from_api_response(issue_data)
 
     def delete_issue(self, issue_key: str) -> bool:
         """
@@ -688,7 +717,7 @@ class IssuesMixin(UsersMixin):
             for field in fields:
                 self._process_field_for_epic_data(field, field_ids)
 
-            # Try to discover fields from existing epics
+            # Call the method from EpicsMixin through inheritance
             self._try_discover_fields_from_existing_epic(field_ids)
 
             # Cache the results
@@ -719,18 +748,30 @@ class IssuesMixin(UsersMixin):
         Process a field for epic-related data.
 
         Args:
-            field: The field definition
+            field: The field data to process
             field_ids: Dictionary of field IDs to update
         """
-        name = field.get("name", "").lower()
-        field_id = field.get("id")
+        try:
+            field_id = field.get("id")
+            if not field_id:
+                return
 
-        # Check for epic-related fields
-        if "epic" in name and field_id:
-            if "link" in name:
-                field_ids["Epic Link"] = field_id
-            elif "name" in name:
-                field_ids["Epic Name"] = field_id
+            # Skip non-custom fields
+            if not field_id.startswith("customfield_"):
+                return
+
+            name = field.get("name", "").lower()
+
+            # Look for field names related to epics
+            if "epic" in name:
+                if "link" in name:
+                    field_ids["epic_link"] = field_id
+                    field_ids["Epic Link"] = field_id
+                elif "name" in name:
+                    field_ids["epic_name"] = field_id
+                    field_ids["Epic Name"] = field_id
+        except Exception as e:
+            logger.warning(f"Error processing field for epic data: {str(e)}")
 
     def _try_discover_fields_from_existing_epic(
         self, field_ids: dict[str, str]
@@ -790,7 +831,7 @@ class IssuesMixin(UsersMixin):
         except Exception as e:
             logger.debug(f"Error discovering epic fields: {str(e)}")
 
-    def link_issue_to_epic(self, issue_key: str, epic_key: str) -> Document:
+    def link_issue_to_epic(self, issue_key: str, epic_key: str) -> JiraIssue:
         """
         Link an issue to an epic.
 
@@ -799,7 +840,7 @@ class IssuesMixin(UsersMixin):
             epic_key: The key of the epic to link to
 
         Returns:
-            Document with the updated issue
+            JiraIssue model with the updated issue data
 
         Raises:
             Exception: If there is an error linking the issue
@@ -814,7 +855,7 @@ class IssuesMixin(UsersMixin):
             issue_type = fields.get("issuetype", {}).get("name", "").lower()
 
             if issue_type != "epic":
-                error_msg = f"{epic_key} is not an Epic"
+                error_msg = f"Error linking issue to epic: {epic_key} is not an Epic"
                 raise ValueError(error_msg)
 
             # Get the epic link field ID
@@ -834,7 +875,7 @@ class IssuesMixin(UsersMixin):
 
         except Exception as e:
             logger.error(f"Error linking {issue_key} to epic {epic_key}: {str(e)}")
-            raise Exception(f"Error linking issue to epic: {str(e)}") from e
+            raise
 
     def get_available_transitions(self, issue_key: str) -> list[dict]:
         """
@@ -860,7 +901,7 @@ class IssuesMixin(UsersMixin):
                 f"Error getting transitions for issue {issue_key}: {str(e)}"
             ) from e
 
-    def transition_issue(self, issue_key: str, transition_id: str) -> Document:
+    def transition_issue(self, issue_key: str, transition_id: str) -> JiraIssue:
         """
         Transition an issue to a new status.
 
@@ -869,7 +910,7 @@ class IssuesMixin(UsersMixin):
             transition_id: The ID of the transition to perform
 
         Returns:
-            Document with the updated issue
+            JiraIssue model with the updated issue data
 
         Raises:
             Exception: If there is an error transitioning the issue
@@ -879,4 +920,4 @@ class IssuesMixin(UsersMixin):
             return self.get_issue(issue_key)
         except Exception as e:
             logger.error(f"Error transitioning issue {issue_key}: {str(e)}")
-            raise Exception(f"Error transitioning issue {issue_key}: {str(e)}") from e
+            raise

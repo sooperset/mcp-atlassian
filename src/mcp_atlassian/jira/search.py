@@ -2,7 +2,7 @@
 
 import logging
 
-from ..document_types import Document
+from ..models.jira import JiraIssue, JiraSearchResult
 from .client import JiraClient
 
 logger = logging.getLogger("mcp-jira")
@@ -18,7 +18,7 @@ class SearchMixin(JiraClient):
         start: int = 0,
         limit: int = 50,
         expand: str | None = None,
-    ) -> list[Document]:
+    ) -> list[JiraIssue]:
         """
         Search for issues using JQL (Jira Query Language).
 
@@ -30,76 +30,30 @@ class SearchMixin(JiraClient):
             expand: Optional items to expand (comma-separated)
 
         Returns:
-            List of Documents representing the search results
+            List of JiraIssue models representing the search results
 
         Raises:
             Exception: If there is an error searching for issues
         """
         try:
-            issues = self.jira.jql(
+            response = self.jira.jql(
                 jql, fields=fields, start=start, limit=limit, expand=expand
             )
-            documents = []
 
-            for issue in issues.get("issues", []):
-                issue_key = issue["key"]
-                fields_data = issue.get("fields", {})
+            # Convert the response to a search result model
+            search_result = JiraSearchResult.from_api_response(
+                response, base_url=self.config.url
+            )
 
-                # Safely handle fields that might not be included in the response
-                summary = fields_data.get("summary", "")
-
-                # Handle issuetype field with fallback to "Unknown" if missing
-                issue_type = "Unknown"
-                issuetype_data = fields_data.get("issuetype")
-                if issuetype_data is not None:
-                    issue_type = issuetype_data.get("name", "Unknown")
-
-                # Handle status field with fallback to "Unknown" if missing
-                status = "Unknown"
-                status_data = fields_data.get("status")
-                if status_data is not None:
-                    status = status_data.get("name", "Unknown")
-
-                # Process description field
-                description = fields_data.get("description")
-                desc = self._clean_text(description) if description is not None else ""
-
-                # Process created date field
-                created_date = ""
-                created = fields_data.get("created")
-                if created is not None:
-                    created_date = self._parse_date(created)
-
-                # Process priority field
-                priority = "None"
-                priority_data = fields_data.get("priority")
-                if priority_data is not None:
-                    priority = priority_data.get("name", "None")
-
-                # Add basic metadata
-                metadata = {
-                    "key": issue_key,
-                    "title": summary,
-                    "type": issue_type,
-                    "status": status,
-                    "created_date": created_date,
-                    "priority": priority,
-                    "link": f"{self.config.url.rstrip('/')}/browse/{issue_key}",
-                }
-
-                # Prepare content
-                content = desc if desc else f"{summary} [{status}]"
-
-                documents.append(Document(page_content=content, metadata=metadata))
-
-            return documents
+            # Return the list of issues
+            return search_result.issues
         except Exception as e:
             logger.error(f"Error searching issues with JQL '{jql}': {str(e)}")
             raise Exception(f"Error searching issues: {str(e)}") from e
 
     def get_project_issues(
         self, project_key: str, start: int = 0, limit: int = 50
-    ) -> list[Document]:
+    ) -> list[JiraIssue]:
         """
         Get all issues for a project.
 
@@ -109,7 +63,7 @@ class SearchMixin(JiraClient):
             limit: Maximum results to return
 
         Returns:
-            List of Documents containing project issues
+            List of JiraIssue models containing project issues
 
         Raises:
             Exception: If there is an error getting project issues
@@ -117,7 +71,7 @@ class SearchMixin(JiraClient):
         jql = f"project = {project_key} ORDER BY created DESC"
         return self.search_issues(jql, start=start, limit=limit)
 
-    def get_epic_issues(self, epic_key: str, limit: int = 50) -> list[Document]:
+    def get_epic_issues(self, epic_key: str, limit: int = 50) -> list[JiraIssue]:
         """
         Get all issues linked to a specific epic.
 
@@ -126,7 +80,7 @@ class SearchMixin(JiraClient):
             limit: Maximum number of issues to return
 
         Returns:
-            List of Documents representing the issues linked to the epic
+            List of JiraIssue models representing the issues linked to the epic
 
         Raises:
             ValueError: If the issue is not an Epic
@@ -150,61 +104,23 @@ class SearchMixin(JiraClient):
                 )
                 raise ValueError(error_msg)
 
-            # Get the dynamic field IDs for this Jira instance
-            if hasattr(self, "get_jira_field_ids"):
-                field_ids = self.get_jira_field_ids()
-            else:
-                # Fallback for when we're not using IssuesMixin
-                field_ids = {}
-
-            # Build JQL queries based on discovered field IDs
-            jql_queries = []
-
-            # Add queries based on discovered fields
-            if "parent" in field_ids:
-                jql_queries.append(f"parent = {epic_key}")
-
-            if "epic_link" in field_ids:
-                field_name = field_ids["epic_link"]
-                jql_queries.append(f'"{field_name}" = {epic_key}')
-                jql_queries.append(f'"{field_name}" ~ {epic_key}')
-
-            # Add standard fallback queries
-            jql_queries.extend(
-                [
-                    f"parent = {epic_key}",  # Common in most instances
-                    f"'Epic Link' = {epic_key}",  # Some instances
-                    f"'Epic' = {epic_key}",  # Some instances
-                    f"issue in childIssuesOf('{epic_key}')",  # Some instances
-                ]
-            )
-
-            # Try each query until we get results or run out of options
-            documents = []
-            for jql in jql_queries:
-                try:
-                    logger.info(f"Trying to get epic issues with JQL: {jql}")
-                    documents = self.search_issues(jql, limit=limit)
-                    if documents:
-                        return documents
-                except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
-                    logger.info(f"Failed to get epic issues with JQL '{jql}': {str(e)}")
-                    continue
-
-            # If we've tried all queries and got no results, return an empty list
-            # but also log a warning that we might be missing the right field
-            if not documents:
+            # Try with 'issueFunction in issuesScopedToEpic'
+            try:
+                jql = f'issueFunction in issuesScopedToEpic("{epic_key}")'
+                return self.search_issues(jql, limit=limit)
+            except Exception as e:
+                # Log exception but continue with fallback
                 logger.warning(
-                    f"Couldn't find issues linked to epic {epic_key}. "
-                    "Your Jira instance might use a different field for epic links."
+                    f"Error searching epic issues with issueFunction: {str(e)}"
                 )
 
-            return documents
+            # Fallback to 'Epic Link' field
+            jql = f"'Epic Link' = {epic_key}"
+            return self.search_issues(jql, limit=limit)
 
         except ValueError:
             # Re-raise ValueError for non-epic issues
             raise
-
         except Exception as e:
             logger.error(f"Error getting issues for epic {epic_key}: {str(e)}")
             raise Exception(f"Error getting epic issues: {str(e)}") from e

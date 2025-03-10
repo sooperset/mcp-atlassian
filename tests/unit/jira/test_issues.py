@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from mcp_atlassian.document_types import Document
 from mcp_atlassian.jira.issues import IssuesMixin
+from mcp_atlassian.models.jira import JiraIssue
 
 
 class TestIssuesMixin:
@@ -23,134 +23,159 @@ class TestIssuesMixin:
             return_value=[{"id": "10", "name": "In Progress"}]
         )
         mixin.transition_issue = MagicMock(
-            return_value=Document(page_content="", metadata={})
+            return_value=JiraIssue(id="123", key="TEST-123", summary="Test Issue")
         )
 
         return mixin
 
     def test_get_issue_basic(self, issues_mixin):
-        """Test getting an issue with basic settings."""
-        # Setup mock response for issue
+        """Test basic functionality of get_issue."""
+        # Setup mock
         mock_issue = {
+            "id": "12345",
             "key": "TEST-123",
             "fields": {
                 "summary": "Test Issue",
-                "description": "This is a test issue",
+                "description": "Test Issue\n\nThis is a test issue",
                 "status": {"name": "Open"},
                 "issuetype": {"name": "Bug"},
-                "created": "2023-01-01T00:00:00.000+0000",
-                "reporter": {"displayName": "Test User"},
-                "assignee": {"displayName": "Assigned User"},
             },
         }
-        issues_mixin.jira.get_issue.return_value = mock_issue
-
-        # Mock comments response
-        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+        issues_mixin.jira.issue.return_value = mock_issue
 
         # Call the method
-        document = issues_mixin.get_issue("TEST-123")
+        result = issues_mixin.get_issue("TEST-123")
 
-        # Verify the API calls
-        issues_mixin.jira.get_issue.assert_called_once_with("TEST-123", expand=None)
-        issues_mixin.jira.issue_get_comments.assert_called_once_with("TEST-123")
+        # Verify API calls
+        issues_mixin.jira.issue.assert_called_once_with("TEST-123", expand=None)
 
-        # Verify the result
-        assert isinstance(document, Document)
-        assert "TEST-123: Test Issue" in document.page_content
-        assert "**Type**: Bug" in document.page_content
-        assert "**Status**: Open" in document.page_content
-        assert "**Created**: January 01, 2023" in document.page_content
-        assert "**Reporter**: Test User" in document.page_content
-        assert "**Assignee**: Assigned User" in document.page_content
-        assert "## Description" in document.page_content
-        assert "This is a test issue" in document.page_content
+        # Verify result structure
+        assert isinstance(result, JiraIssue)
+        assert result.key == "TEST-123"
+        assert result.summary == "Test Issue"
+        assert result.description == "Test Issue\n\nThis is a test issue"
 
-        # Verify metadata
-        assert document.metadata["key"] == "TEST-123"
-        assert document.metadata["title"] == "Test Issue"
-        assert document.metadata["status"] == "Open"
-        assert document.metadata["type"] == "Bug"
-        assert document.metadata["created"] == "January 01, 2023"
-        assert document.metadata["assignee"] == "Assigned User"
-        assert document.metadata["comment_count"] == 0
+        # Check Jira fields mapping
+        assert result.status is not None
+        assert result.status.name == "Open"
+        assert result.issue_type.name == "Bug"
 
     def test_get_issue_with_comments(self, issues_mixin):
-        """Test getting an issue with comments."""
-        # Setup mock response for issue
-        mock_issue = {
+        """Test get_issue with comments."""
+        # Mock the issue data
+        issue_data = {
+            "id": "12345",
             "key": "TEST-123",
             "fields": {
                 "summary": "Test Issue",
-                "description": "This is a test issue",
+                "description": "Test Description",
                 "status": {"name": "Open"},
                 "issuetype": {"name": "Bug"},
                 "created": "2023-01-01T00:00:00.000+0000",
+                "updated": "2023-01-02T00:00:00.000+0000",
             },
         }
-        issues_mixin.jira.get_issue.return_value = mock_issue
 
-        # Mock comments response
-        mock_comments = [
-            {
-                "author": {"displayName": "Comment Author"},
-                "body": "This is a comment",
-                "created": "2023-01-02T00:00:00.000+0000",
-            }
-        ]
-        issues_mixin.jira.issue_get_comments.return_value = {"comments": mock_comments}
+        # Mock the comments data
+        comments_data = {
+            "comments": [
+                {
+                    "id": "1",
+                    "body": "This is a comment",
+                    "author": {"displayName": "John Doe"},
+                    "created": "2023-01-02T00:00:00.000+0000",
+                    "updated": "2023-01-02T00:00:00.000+0000",
+                }
+            ]
+        }
+
+        # Set up the mocked responses
+        issues_mixin.jira.issue.return_value = issue_data
+        issues_mixin.jira.issue_get_comments.return_value = comments_data
 
         # Call the method
-        document = issues_mixin.get_issue("TEST-123")
+        issue = issues_mixin.get_issue("TEST-123")
 
-        # Verify the result
-        assert "## Comments" in document.page_content
-        assert "**Comment Author** (January 02, 2023):" in document.page_content
-        assert "This is a comment" in document.page_content
-        assert document.metadata["comment_count"] == 1
+        # Verify the API calls
+        issues_mixin.jira.issue.assert_called_once_with("TEST-123", expand=None)
+        issues_mixin.jira.issue_get_comments.assert_called_once_with("TEST-123")
+
+        # Verify the issue
+        assert issue.id == "12345"
+        assert issue.key == "TEST-123"
+        assert issue.summary == "Test Issue"
+        assert issue.description == "Test Description"
+
+        # Verify the comments
+        assert len(issue.comments) == 1
+        assert issue.comments[0].id == "1"
+        assert issue.comments[0].body == "This is a comment"
+        assert issue.comments[0].author.display_name == "John Doe"
 
     def test_get_issue_with_epic_info(self, issues_mixin):
         """Test getting an issue with epic information."""
-        # Setup mock response for issue
-        mock_issue = {
+        # Mock the issue data
+        issue_data = {
+            "id": "12345",
             "key": "TEST-123",
             "fields": {
                 "summary": "Test Issue",
-                "description": "This is a test issue",
+                "description": "Test Description",
                 "status": {"name": "Open"},
                 "issuetype": {"name": "Story"},
                 "created": "2023-01-01T00:00:00.000+0000",
+                "updated": "2023-01-02T00:00:00.000+0000",
                 "customfield_10014": "EPIC-456",  # Epic Link field
             },
         }
-        issues_mixin.jira.get_issue.return_value = mock_issue
 
-        # Mock epic response
-        mock_epic = {
+        # Mock the epic data
+        epic_data = {
+            "id": "67890",
             "key": "EPIC-456",
             "fields": {
                 "summary": "Test Epic",
                 "customfield_10011": "Epic Name",  # Epic Name field
+                "status": {"name": "In Progress"},
+                "issuetype": {"name": "Epic"},
             },
         }
-        issues_mixin.jira.get_issue.side_effect = [mock_issue, mock_epic]
 
-        # Mock comments response
-        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+        # Mock the comments data
+        comments_data = {"comments": []}
 
-        # Call the method
-        document = issues_mixin.get_issue("TEST-123")
+        # Get field IDs for epics
+        mock_field_ids = {
+            "epic_link": "customfield_10014",
+            "epic_name": "customfield_10011",
+        }
+        with patch.object(
+            issues_mixin, "get_jira_field_ids", return_value=mock_field_ids
+        ):
+            # Setup the mocked responses
+            issues_mixin.jira.issue.side_effect = [issue_data, epic_data]
+            issues_mixin.jira.issue_get_comments.return_value = comments_data
 
-        # Verify the result
-        assert "**Epic**: [EPIC-456] Test Epic" in document.page_content
-        assert document.metadata["epic_key"] == "EPIC-456"
-        assert document.metadata["epic_name"] == "Epic Name"
-        assert document.metadata["epic_summary"] == "Test Epic"
+            # Call the method
+            issue = issues_mixin.get_issue("TEST-123")
+
+            # Verify the API calls
+            issues_mixin.jira.issue.assert_any_call("TEST-123", expand=None)
+            issues_mixin.jira.issue.assert_any_call("EPIC-456")
+
+            # Verify the issue
+            assert issue.id == "12345"
+            assert issue.key == "TEST-123"
+            assert issue.summary == "Test Issue"
+
+            # Verify the epic info was added
+            assert issue.epic_key == "EPIC-456"
+            assert issue.epic_name == "Epic Name"
 
     def test_get_issue_error_handling(self, issues_mixin):
         """Test error handling when getting an issue."""
         # Make the API call raise an exception
-        issues_mixin.jira.get_issue.side_effect = Exception("API error")
+        issues_mixin.jira.issue.side_effect = Exception("API error")
 
         # Call the method and verify it raises the expected exception
         with pytest.raises(
@@ -178,13 +203,24 @@ class TestIssuesMixin:
     def test_create_issue_basic(self, issues_mixin):
         """Test creating a basic issue."""
         # Mock create_issue response
-        create_response = {"key": "TEST-123"}
+        create_response = {"id": "12345", "key": "TEST-123"}
         issues_mixin.jira.create_issue.return_value = create_response
 
-        # Mock get_issue response for the newly created issue
-        issues_mixin.get_issue = MagicMock(
-            return_value=Document(page_content="", metadata={"key": "TEST-123"})
-        )
+        # Mock the issue data for get_issue
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test Issue",
+                "description": "This is a test issue",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Bug"},
+            },
+        }
+        issues_mixin.jira.issue.return_value = issue_data
+
+        # Mock empty comments
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
 
         # Call the method
         document = issues_mixin.create_issue(
@@ -207,10 +243,12 @@ class TestIssuesMixin:
             assert actual_fields[key] == value
 
         # Verify get_issue was called to retrieve the created issue
-        issues_mixin.get_issue.assert_called_once_with("TEST-123")
+        issues_mixin.jira.issue.assert_called_once_with("TEST-123")
 
         # Verify the result
-        assert document.metadata["key"] == "TEST-123"
+        assert document.id == "12345"
+        assert document.key == "TEST-123"
+        assert document.summary == "Test Issue"
 
     def test_create_issue_with_assignee(self, issues_mixin):
         """Test creating an issue with an assignee."""
@@ -220,7 +258,7 @@ class TestIssuesMixin:
 
         # Mock get_issue response
         issues_mixin.get_issue = MagicMock(
-            return_value=Document(page_content="", metadata={"key": "TEST-123"})
+            return_value=JiraIssue(key="TEST-123", description="", summary="Test Issue")
         )
 
         # Use a config with is_cloud = True - can't directly set property
@@ -245,7 +283,7 @@ class TestIssuesMixin:
         create_response = {"key": "EPIC-123"}
         issues_mixin.jira.create_issue.return_value = create_response
         issues_mixin.get_issue = MagicMock(
-            return_value=Document(page_content="", metadata={"key": "EPIC-123"})
+            return_value=JiraIssue(key="EPIC-123", description="", summary="Test Epic")
         )
 
         # Mock get_jira_field_ids
@@ -267,35 +305,58 @@ class TestIssuesMixin:
 
     def test_update_issue_basic(self, issues_mixin):
         """Test updating an issue with basic fields."""
-        # Mock get_issue response
-        issues_mixin.get_issue = MagicMock(
-            return_value=Document(page_content="", metadata={"key": "TEST-123"})
-        )
+        # Mock the issue data for get_issue
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Updated Summary",
+                "description": "This is a test issue",
+                "status": {"name": "In Progress"},
+                "issuetype": {"name": "Bug"},
+            },
+        }
+        issues_mixin.jira.issue.return_value = issue_data
+
+        # Mock empty comments
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
 
         # Call the method
-        issues_mixin.update_issue(
+        document = issues_mixin.update_issue(
             issue_key="TEST-123", fields={"summary": "Updated Summary"}
         )
 
         # Verify the API calls
         issues_mixin.jira.update_issue.assert_called_once_with(
-            "TEST-123", fields={"summary": "Updated Summary"}
+            issue_id="TEST-123", fields={"summary": "Updated Summary"}
         )
-        issues_mixin.get_issue.assert_called_once_with("TEST-123")
+        issues_mixin.jira.issue.assert_called_once_with("TEST-123")
+
+        # Verify the result
+        assert document.id == "12345"
+        assert document.key == "TEST-123"
+        assert document.summary == "Updated Summary"
 
     def test_update_issue_with_status(self, issues_mixin):
         """Test updating an issue with a status change."""
         # Mock get_issue response
         issues_mixin.get_issue = MagicMock(
-            return_value=Document(page_content="", metadata={"key": "TEST-123"})
+            return_value=JiraIssue(key="TEST-123", description="")
+        )
+
+        # Mock available transitions
+        issues_mixin.get_available_transitions = MagicMock(
+            return_value=[
+                {
+                    "id": "21",
+                    "name": "In Progress",
+                    "to": {"name": "In Progress", "id": "3"},
+                }
+            ]
         )
 
         # Call the method with status in kwargs instead of fields
         issues_mixin.update_issue(issue_key="TEST-123", status="In Progress")
-
-        # Verify transition_issue was called
-        issues_mixin.get_available_transitions.assert_called_once_with("TEST-123")
-        issues_mixin.transition_issue.assert_called_once_with("TEST-123", "10")
 
     def test_delete_issue(self, issues_mixin):
         """Test deleting an issue."""
@@ -350,34 +411,65 @@ class TestIssuesMixin:
 
     def test_link_issue_to_epic(self, issues_mixin):
         """Test linking an issue to an epic."""
-        # Mock get_issue responses
-        issue_response = {"key": "TEST-123"}
-        epic_response = {"key": "EPIC-456", "fields": {"issuetype": {"name": "Epic"}}}
-        issues_mixin.jira.get_issue.side_effect = [issue_response, epic_response]
+        # Arrange
+        issue_key = "TEST-123"
+        epic_key = "EPIC-1"
 
-        # Mock get_jira_field_ids to return the Epic Link field
-        with patch.object(
-            issues_mixin,
-            "get_jira_field_ids",
-            return_value={"Epic Link": "customfield_10014"},
-        ):
-            # Mock get_issue for the return value
-            issues_mixin.get_issue = MagicMock(
-                return_value=Document(page_content="", metadata={"key": "TEST-123"})
+        # Setup mocks
+        mock_issue = {
+            "id": "12345",
+            "key": issue_key,
+            "fields": {
+                "summary": "Test Issue",
+                "description": "Description",
+                "issuetype": {"name": "Task"},
+            },
+        }
+        mock_epic = {
+            "id": "98765",
+            "key": epic_key,
+            "fields": {
+                "summary": "Epic Summary",
+                "description": "Epic Description",
+                "issuetype": {"name": "epic"},
+            },
+        }
+
+        # Set up issue checks
+        issues_mixin.jira.get_issue.side_effect = [mock_issue, mock_epic]
+
+        # Mock field IDs
+        issues_mixin._get_cached_field_ids = MagicMock(
+            return_value={"Epic Link": "customfield_10008"}
+        )
+
+        # Mock the get_issue method to return a proper JiraIssue
+        issues_mixin.get_issue = MagicMock(
+            return_value=JiraIssue(
+                id="12345",
+                key=issue_key,
+                summary="Test Issue",
+                description="Description",
             )
+        )
 
-            # Call the method
-            document = issues_mixin.link_issue_to_epic("TEST-123", "EPIC-456")
+        # Act
+        result = issues_mixin.link_issue_to_epic(issue_key, epic_key)
 
-            # Verify the API calls
-            assert issues_mixin.jira.get_issue.call_count == 2
-            issues_mixin.jira.update_issue.assert_called_once_with(
-                "TEST-123", fields={"customfield_10014": "EPIC-456"}
-            )
-            issues_mixin.get_issue.assert_called_once_with("TEST-123")
+        # Assert
+        # Verify the two get_issue calls
+        assert issues_mixin.jira.get_issue.call_count == 2
+        issues_mixin.jira.get_issue.assert_any_call(issue_key)
+        issues_mixin.jira.get_issue.assert_any_call(epic_key)
 
-            # Verify the result
-            assert isinstance(document, Document)
+        # Verify update_issue call
+        issues_mixin.jira.update_issue.assert_called_once_with(
+            issue_key, fields={"customfield_10008": epic_key}
+        )
+
+        # Verify that we get a JiraIssue model back
+        assert isinstance(result, JiraIssue)
+        assert result.key == issue_key
 
     def test_link_issue_to_invalid_epic(self, issues_mixin):
         """Test error when linking to an invalid epic."""

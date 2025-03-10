@@ -3,7 +3,7 @@
 import logging
 from typing import Any
 
-from ..document_types import Document
+from ..models import JiraIssue, JiraProject, JiraSearchResult
 from .client import JiraClient
 
 logger = logging.getLogger("mcp-jira")
@@ -40,21 +40,36 @@ class ProjectsMixin(JiraClient):
 
     def get_project(self, project_key: str) -> dict[str, Any] | None:
         """
-        Get detailed information about a specific project.
+        Get project information by key.
 
         Args:
-            project_key: The project key (e.g., 'PROJ')
+            project_key: The project key (e.g. 'PROJ')
 
         Returns:
-            Project data dictionary if found, None otherwise
+            Project data or None if not found
         """
         try:
-            project = self.jira.project(key=project_key)
-            return project
-
+            project_data = self.jira.project(project_key)
+            return project_data
         except Exception as e:
-            logger.error(f"Error getting project {project_key}: {str(e)}")
+            logger.warning(f"Error getting project {project_key}: {e}")
             return None
+
+    def get_project_model(self, project_key: str) -> JiraProject | None:
+        """
+        Get project information as a JiraProject model.
+
+        Args:
+            project_key: The project key (e.g. 'PROJ')
+
+        Returns:
+            JiraProject model or None if not found
+        """
+        project_data = self.get_project(project_key)
+        if not project_data:
+            return None
+
+        return JiraProject.from_api_response(project_data)
 
     def project_exists(self, project_key: str) -> bool:
         """
@@ -262,7 +277,7 @@ class ProjectsMixin(JiraClient):
 
     def get_project_issues(
         self, project_key: str, start: int = 0, limit: int = 50
-    ) -> list[Document]:
+    ) -> list[JiraIssue]:
         """
         Get issues for a specific project.
 
@@ -272,7 +287,7 @@ class ProjectsMixin(JiraClient):
             limit: Maximum number of issues to return
 
         Returns:
-            List of Document objects representing the issues
+            List of JiraIssue models representing the issues
         """
         try:
             # Use JQL to get issues in the project
@@ -280,32 +295,19 @@ class ProjectsMixin(JiraClient):
 
             # Use search_issues if available (delegate to SearchMixin)
             if hasattr(self, "search_issues") and callable(self.search_issues):
+                # This assumes search_issues returns JiraIssue objects already
                 return self.search_issues(jql, start=start, limit=limit)
 
             # Fallback implementation if search_issues is not available
             result = self.jira.jql(jql=jql, fields="*all", start=start, limit=limit)
 
-            documents = []
+            issues = []
             if isinstance(result, dict) and "issues" in result:
-                for issue in result.get("issues", []):
-                    key = issue.get("key", "")
-                    fields = issue.get("fields", {})
-                    summary = fields.get("summary", "")
-                    description = fields.get("description", "")
+                # Create a JiraSearchResult and extract the issues
+                search_result = JiraSearchResult.from_api_response(result)
+                issues = search_result.issues
 
-                    # Create a Document for each issue
-                    document = Document(
-                        page_content=description or summary,
-                        metadata={
-                            "key": key,
-                            "summary": summary,
-                            "type": "issue",
-                            "project": project_key,
-                        },
-                    )
-                    documents.append(document)
-
-            return documents
+            return issues
 
         except Exception as e:
             logger.error(f"Error getting issues for project {project_key}: {str(e)}")

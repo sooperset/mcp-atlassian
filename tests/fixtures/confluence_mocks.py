@@ -353,7 +353,7 @@ MOCK_PAGES_FROM_SPACE_RESPONSE = [
                 "anonymous_export_view": "",
             },
         },
-        "extensions": {"position": 12345},
+        "extensions": {"position": 123456789},
         "_expandable": {
             "container": "/rest/api/space/PROJ",
             "metadata": "",
@@ -376,5 +376,41 @@ MOCK_PAGES_FROM_SPACE_RESPONSE = [
             "webui": "/spaces/PROJ/pages/123456789/Sample+Research+Paper+Title",
             "edituiv2": "/spaces/PROJ/pages/edit-v2/123456789",
         },
-    }
+    },
+    {
+        "id": "987654321",
+        "type": "page",
+        "status": "current",
+        "title": "Example Meeting Notes",
+        "space": {
+            "key": "PROJ",
+            "name": "Project Space",
+            "type": "global",
+            "status": "current",
+        },
+        "macroRenderedOutput": {},
+        "body": {
+            "storage": {
+                "value": "<h2>Meeting Agenda</h2><p>Example content</p>",
+                "representation": "storage",
+                "embeddedContent": [],
+                "_expandable": {"content": "/rest/api/content/987654321"},
+            },
+            "_expandable": {
+                "editor": "",
+                "atlas_doc_format": "",
+                "view": "",
+                "export_view": "",
+                "styled_view": "",
+                "dynamic": "",
+                "editor2": "",
+                "anonymous_export_view": "",
+            },
+        },
+        "extensions": {"position": 987654321},
+        "_links": {
+            "webui": "/spaces/PROJ/pages/987654321/Example+Meeting+Notes",
+            "self": "https://example.atlassian.net/wiki/rest/api/content/987654321",
+        },
+    },
 ]

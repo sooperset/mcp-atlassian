@@ -4,7 +4,7 @@ import logging
 
 import requests
 
-from ..document_types import Document
+from ..models.confluence import ConfluenceComment
 from .client import ConfluenceClient
 
 logger = logging.getLogger("mcp-atlassian")
@@ -15,7 +15,7 @@ class CommentsMixin(ConfluenceClient):
 
     def get_page_comments(
         self, page_id: str, *, return_markdown: bool = True
-    ) -> list[Document]:
+    ) -> list[ConfluenceComment]:
         """
         Get all comments for a specific page.
 
@@ -25,49 +25,50 @@ class CommentsMixin(ConfluenceClient):
                            otherwise returns raw HTML (keyword-only)
 
         Returns:
-            List of Document objects containing comment content and metadata
+            List of ConfluenceComment models containing comment content and metadata
         """
         try:
             # Get page info to extract space details
             page = self.confluence.get_page_by_id(page_id=page_id, expand="space")
             space_key = page.get("space", {}).get("key", "")
-            space_name = page.get("space", {}).get("name", "")
 
             # Get comments with expanded content
-            comments = self.confluence.get_page_comments(
+            comments_response = self.confluence.get_page_comments(
                 content_id=page_id, expand="body.view.value,version", depth="all"
-            )["results"]
+            )
 
-            comment_documents = []
-            for comment in comments:
-                body = comment["body"]["view"]["value"]
-                processed_html, processed_markdown = self._process_html_content(
-                    body, space_key
+            # Process each comment
+            comment_models = []
+            for comment_data in comments_response.get("results", []):
+                # Get the content based on format
+                body = comment_data["body"]["view"]["value"]
+                processed_html, processed_markdown = (
+                    self.preprocessor.process_html_content(body, space_key=space_key)
                 )
 
-                # Get author information from version.by instead of author
-                author = comment.get("version", {}).get("by", {})
+                # Create a copy of the comment data to modify
+                modified_comment_data = comment_data.copy()
 
-                metadata = {
-                    "page_id": page_id,
-                    "comment_id": comment["id"],
-                    "last_modified": comment.get("version", {}).get("when"),
-                    "type": "comment",
-                    "author_name": author.get("displayName"),
-                    "space_key": space_key,
-                    "space_name": space_name,
-                }
+                # Modify the body value based on the return format
+                if "body" not in modified_comment_data:
+                    modified_comment_data["body"] = {}
+                if "view" not in modified_comment_data["body"]:
+                    modified_comment_data["body"]["view"] = {}
 
-                comment_documents.append(
-                    Document(
-                        page_content=processed_markdown
-                        if return_markdown
-                        else processed_html,
-                        metadata=metadata,
-                    )
+                # Set the appropriate content based on return format
+                modified_comment_data["body"]["view"]["value"] = (
+                    processed_markdown if return_markdown else processed_html
                 )
 
-            return comment_documents
+                # Create the model with the processed content
+                comment_model = ConfluenceComment.from_api_response(
+                    modified_comment_data,
+                    base_url=self.config.url,
+                )
+
+                comment_models.append(comment_model)
+
+            return comment_models
 
         except KeyError as e:
             logger.error(f"Missing key in comment data: {str(e)}")

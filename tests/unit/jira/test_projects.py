@@ -124,7 +124,7 @@ def test_get_project(projects_mixin, mock_projects):
 
     result = projects_mixin.get_project("PROJ1")
     assert result == project
-    projects_mixin.jira.project.assert_called_once_with(key="PROJ1")
+    projects_mixin.jira.project.assert_called_once_with("PROJ1")
 
 
 def test_get_project_exception(projects_mixin):
@@ -144,7 +144,7 @@ def test_project_exists(projects_mixin, mock_projects):
 
     result = projects_mixin.project_exists("PROJ1")
     assert result is True
-    projects_mixin.jira.project.assert_called_once_with(key="PROJ1")
+    projects_mixin.jira.project.assert_called_once_with("PROJ1")
 
     # Test with non-existing project
     projects_mixin.jira.project.reset_mock()
@@ -452,9 +452,8 @@ def test_get_project_issues_without_search_mixin(projects_mixin):
 
     # Check the result
     assert len(result) == 2
-    assert result[0].metadata["key"] == "PROJ1-1"
-    assert result[0].page_content == "Description 1"
-    assert result[1].metadata["key"] == "PROJ1-2"
+    assert result[0].key == "PROJ1-1"
+    assert result[0].description == "Description 1"
 
     projects_mixin.jira.jql.assert_called_once_with(
         jql="project = PROJ1", fields="*all", start=10, limit=20

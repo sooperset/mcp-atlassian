@@ -4,7 +4,7 @@ import logging
 
 import requests
 
-from ..document_types import Document
+from ..models.confluence import ConfluencePage, ConfluenceSearchResult
 from .client import ConfluenceClient
 
 logger = logging.getLogger("mcp-atlassian")
@@ -13,7 +13,7 @@ logger = logging.getLogger("mcp-atlassian")
 class SearchMixin(ConfluenceClient):
     """Mixin for Confluence search operations."""
 
-    def search(self, cql: str, limit: int = 10) -> list[Document]:
+    def search(self, cql: str, limit: int = 10) -> list[ConfluencePage]:
         """
         Search content using Confluence Query Language (CQL).
 
@@ -22,32 +22,40 @@ class SearchMixin(ConfluenceClient):
             limit: Maximum number of results to return
 
         Returns:
-            List of Document objects containing search results
+            List of ConfluencePage models containing search results
         """
         try:
+            # Execute the CQL search query
             results = self.confluence.cql(cql=cql, limit=limit)
-            documents = []
 
-            for result in results.get("results", []):
-                content = result.get("content", {})
-                if content.get("type") == "page":
-                    metadata = {
-                        "page_id": content["id"],
-                        "title": result["title"],
-                        "space": result.get("resultGlobalContainer", {}).get("title"),
-                        "url": f"{self.config.url}{result['url']}",
-                        "last_modified": result.get("lastModified"),
-                        "type": content["type"],
-                    }
+            # Convert the response to a search result model
+            search_result = ConfluenceSearchResult.from_api_response(
+                results, base_url=self.config.url, cql_query=cql
+            )
 
-                    # Use the excerpt as page_content since it's already a good summary
-                    documents.append(
-                        Document(
-                            page_content=result.get("excerpt", ""), metadata=metadata
-                        )
-                    )
+            # Process result excerpts as content
+            processed_pages = []
+            for page in search_result.results:
+                # Get the excerpt from the original search results
+                for result_item in results.get("results", []):
+                    if result_item.get("content", {}).get("id") == page.id:
+                        excerpt = result_item.get("excerpt", "")
+                        if excerpt:
+                            # Process the excerpt as HTML content
+                            space_key = page.space.key if page.space else ""
+                            processed_html, processed_markdown = (
+                                self.preprocessor.process_html_content(
+                                    excerpt, space_key=space_key
+                                )
+                            )
+                            # Create a new page with processed content
+                            page.content = processed_markdown
+                        break
 
-            return documents
+                processed_pages.append(page)
+
+            # Return the list of result pages with processed content
+            return processed_pages
         except KeyError as e:
             logger.error(f"Missing key in search results: {str(e)}")
             return []

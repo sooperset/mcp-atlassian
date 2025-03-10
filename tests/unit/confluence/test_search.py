@@ -6,7 +6,6 @@ import pytest
 import requests
 
 from mcp_atlassian.confluence.search import SearchMixin
-from mcp_atlassian.document_types import Document
 
 
 class TestSearchMixin:
@@ -28,118 +27,133 @@ class TestSearchMixin:
             return mixin
 
     def test_search_success(self, search_mixin):
-        """Test that search returns properly formatted results."""
-        # Arrange
-        cql = 'space = "TEST" and type = "page"'
-        limit = 15
-        search_mixin.config.url = "https://example.atlassian.net/wiki"
-
-        # Act
-        results = search_mixin.search(cql, limit=limit)
-
-        # Assert
-        search_mixin.confluence.cql.assert_called_once_with(cql=cql, limit=limit)
-
-        # Verify the results
-        assert isinstance(results, list)
-        assert len(results) > 0
-        assert all(isinstance(doc, Document) for doc in results)
-
-        # Check the first result
-        doc = results[0]
-        assert (
-            doc.page_content
-            == "📅 Date\n2024-01-01\n👥 Participants\nJohn Smith\nJane Doe\nBob Wilson\n!-@123456"
-        )
-        assert doc.metadata["page_id"] == "123456789"
-        assert doc.metadata["title"] == "2024-01-01: Team Progress Meeting 01"
-        assert "url" in doc.metadata
-        assert "space" in doc.metadata
-        assert doc.metadata["type"] == "page"
-
-    def test_search_with_empty_results(self, search_mixin):
-        """Test search when no results are found."""
-        # Arrange
-        search_mixin.confluence.cql.return_value = {"results": []}
-
-        # Act
-        results = search_mixin.search("query")
-
-        # Assert
-        assert results == []
-
-    def test_search_with_non_page_content(self, search_mixin):
-        """Test search with results that aren't pages."""
-        # Arrange
-        mock_response = {
+        """Test search with successful results."""
+        # Prepare the mock
+        search_mixin.confluence.cql.return_value = {
             "results": [
                 {
-                    "content": {"id": "123", "type": "comment"},  # Not a page
-                    "title": "Test Comment",
-                    "url": "/spaces/TEST/comments/123",
-                    "resultGlobalContainer": {"title": "Test Space"},
+                    "content": {
+                        "id": "123456789",
+                        "title": "Test Page",
+                        "type": "page",
+                        "space": {"key": "SPACE", "name": "Test Space"},
+                        "version": {"number": 1},
+                    },
+                    "excerpt": "Test content excerpt",
+                    "url": "https://confluence.example.com/pages/123456789",
                 }
             ]
         }
-        search_mixin.confluence.cql.return_value = mock_response
+
+        # Mock the preprocessor to return processed content
+        search_mixin.preprocessor.process_html_content.return_value = (
+            "<p>Processed HTML</p>",
+            "Processed content",
+        )
+
+        # Call the method
+        result = search_mixin.search("test query")
+
+        # Verify API call
+        search_mixin.confluence.cql.assert_called_once_with(cql="test query", limit=10)
+
+        # Verify result
+        assert len(result) == 1
+        assert result[0].id == "123456789"
+        assert result[0].title == "Test Page"
+        assert result[0].content == "Processed content"
+
+    def test_search_with_empty_results(self, search_mixin):
+        """Test handling of empty search results."""
+        # Mock an empty result set
+        search_mixin.confluence.cql.return_value = {"results": []}
 
         # Act
-        results = search_mixin.search("query")
+        results = search_mixin.search("empty query")
 
         # Assert
-        assert results == []  # Should filter out non-page content
+        assert isinstance(results, list)
+        assert len(results) == 0
+
+    def test_search_with_non_page_content(self, search_mixin):
+        """Test handling of non-page content in search results."""
+        # Mock search results with non-page content
+        search_mixin.confluence.cql.return_value = {
+            "results": [
+                {
+                    "content": {"type": "blogpost", "id": "12345"},
+                    "title": "Blog Post",
+                    "excerpt": "This is a blog post",
+                    "url": "/pages/12345",
+                    "resultGlobalContainer": {"title": "TEST"},
+                }
+            ]
+        }
+
+        # Act
+        results = search_mixin.search("blogpost query")
+
+        # Assert
+        assert isinstance(results, list)
+        # The method should still handle them as pages since we're using models
+        assert len(results) > 0
 
     def test_search_key_error(self, search_mixin):
-        """Test handling of KeyError when processing results."""
-        # Arrange - Missing required keys
-        search_mixin.confluence.cql.return_value = {"results": [{"incomplete": "data"}]}
+        """Test handling of KeyError in search results."""
+        # Mock a response missing required keys
+        search_mixin.confluence.cql.return_value = {"incomplete": "data"}
 
         # Act
-        results = search_mixin.search("query")
+        results = search_mixin.search("invalid query")
 
         # Assert
-        assert results == []
+        assert isinstance(results, list)
+        assert len(results) == 0
 
     def test_search_request_exception(self, search_mixin):
-        """Test handling of request exceptions."""
-        # Arrange
-        search_mixin.confluence.cql.side_effect = requests.RequestException("API Error")
+        """Test handling of RequestException during search."""
+        # Mock a network error
+        search_mixin.confluence.cql.side_effect = requests.RequestException("API error")
 
         # Act
-        results = search_mixin.search("query")
+        results = search_mixin.search("error query")
 
         # Assert
-        assert results == []
+        assert isinstance(results, list)
+        assert len(results) == 0
 
     def test_search_value_error(self, search_mixin):
-        """Test handling of ValueError."""
-        # Arrange
-        search_mixin.confluence.cql.side_effect = ValueError("Invalid query")
+        """Test handling of ValueError during search."""
+        # Mock a value error
+        search_mixin.confluence.cql.side_effect = ValueError("Value error")
 
         # Act
-        results = search_mixin.search("query")
+        results = search_mixin.search("error query")
 
         # Assert
-        assert results == []
+        assert isinstance(results, list)
+        assert len(results) == 0
 
     def test_search_type_error(self, search_mixin):
-        """Test handling of TypeError."""
-        # Arrange
-        search_mixin.confluence.cql.side_effect = TypeError("Invalid data type")
+        """Test handling of TypeError during search."""
+        # Mock a type error
+        search_mixin.confluence.cql.side_effect = TypeError("Type error")
 
         # Act
-        results = search_mixin.search("query")
+        results = search_mixin.search("error query")
 
         # Assert
-        assert results == []
+        assert isinstance(results, list)
+        assert len(results) == 0
 
     def test_search_general_exception(self, search_mixin):
-        """Test handling of general exceptions."""
-        # Arrange
-        search_mixin.confluence.cql.side_effect = Exception("Unexpected error")
+        """Test handling of general exceptions during search."""
+        # Mock a general exception
+        search_mixin.confluence.cql.side_effect = Exception("General error")
 
         # Act
-        results = search_mixin.search("query")
+        results = search_mixin.search("error query")
 
         # Assert
-        assert results == []
+        assert isinstance(results, list)
+        assert len(results) == 0

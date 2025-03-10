@@ -4,6 +4,7 @@ import logging
 import re
 from typing import Any
 
+from ..models import JiraWorklog
 from .client import JiraClient
 
 logger = logging.getLogger("mcp-jira")
@@ -69,27 +70,21 @@ class WorklogMixin(JiraClient):
         remaining_estimate: str | None = None,
     ) -> dict[str, Any]:
         """
-        Add a worklog to an issue with optional estimate updates.
+        Add a worklog entry to a Jira issue.
 
         Args:
             issue_key: The issue key (e.g. 'PROJ-123')
-            time_spent: Time spent in Jira format (e.g., '1h 30m', '1d', '30m')
-            comment: Optional comment for the worklog (in Markdown format)
-            started: Optional start time in ISO format
-                    (e.g. '2023-08-01T12:00:00.000+0000').
-                    If not provided, current time will be used.
-            original_estimate: Optional original estimate in Jira format
-                              (e.g., '1h 30m', '1d')
-                              This will update the original estimate for the issue.
-            remaining_estimate: Optional remaining estimate in Jira format
-                               (e.g., '1h', '30m')
-                               This will update the remaining estimate for the issue.
+            time_spent: Time spent (e.g. '1h 30m', '3h', '1d')
+            comment: Optional comment for the worklog
+            started: Optional ISO8601 date time string for when work began
+            original_estimate: Optional new value for the original estimate
+            remaining_estimate: Optional new value for the remaining estimate
 
         Returns:
-            The created worklog details
+            Response data if successful
 
         Raises:
-            Exception: If there is an error adding the worklog
+            Exception: If there's an error adding the worklog
         """
         try:
             # Convert time_spent string to seconds
@@ -153,9 +148,45 @@ class WorklogMixin(JiraClient):
             logger.error(f"Error adding worklog to issue {issue_key}: {str(e)}")
             raise Exception(f"Error adding worklog: {str(e)}") from e
 
+    def get_worklog(self, issue_key: str) -> dict[str, Any]:
+        """
+        Get the worklog data for an issue.
+
+        Args:
+            issue_key: The issue key (e.g. 'PROJ-123')
+
+        Returns:
+            Raw worklog data from the API
+        """
+        try:
+            return self.jira.worklog(issue_key)
+        except Exception as e:
+            logger.warning(f"Error getting worklog for {issue_key}: {e}")
+            return {"worklogs": []}
+
+    def get_worklog_models(self, issue_key: str) -> list[JiraWorklog]:
+        """
+        Get all worklog entries for an issue as JiraWorklog models.
+
+        Args:
+            issue_key: The issue key (e.g. 'PROJ-123')
+
+        Returns:
+            List of JiraWorklog models
+        """
+        worklog_data = self.get_worklog(issue_key)
+        result: list[JiraWorklog] = []
+
+        if "worklogs" in worklog_data and worklog_data["worklogs"]:
+            for log_data in worklog_data["worklogs"]:
+                worklog = JiraWorklog.from_api_response(log_data)
+                result.append(worklog)
+
+        return result
+
     def get_worklogs(self, issue_key: str) -> list[dict[str, Any]]:
         """
-        Get worklogs for an issue.
+        Get all worklog entries for an issue.
 
         Args:
             issue_key: The issue key (e.g. 'PROJ-123')
@@ -164,7 +195,7 @@ class WorklogMixin(JiraClient):
             List of worklog entries
 
         Raises:
-            Exception: If there is an error getting worklogs
+            Exception: If there's an error getting the worklogs
         """
         try:
             result = self.jira.issue_get_worklog(issue_key)

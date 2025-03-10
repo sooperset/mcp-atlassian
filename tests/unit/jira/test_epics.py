@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from mcp_atlassian.document_types import Document
 from mcp_atlassian.jira.epics import EpicsMixin
+from mcp_atlassian.models.jira import JiraIssue
 
 
 class TestEpicsMixin:
@@ -17,18 +17,21 @@ class TestEpicsMixin:
         mixin = EpicsMixin(config=jira_client.config)
         mixin.jira = jira_client.jira
 
-        # Add a mock for get_issue to use when returning documents
+        # Add a mock for get_issue to use when returning models
         mixin.get_issue = MagicMock(
-            return_value=Document(
-                page_content="Issue content", metadata={"key": "TEST-123"}
+            return_value=JiraIssue(
+                id="12345",
+                key="TEST-123",
+                summary="Test Issue",
+                description="Issue content",
             )
         )
 
         # Add a mock for search_issues to use for get_epic_issues
         mixin.search_issues = MagicMock(
             return_value=[
-                Document(page_content="Issue 1", metadata={"key": "TEST-456"}),
-                Document(page_content="Issue 2", metadata={"key": "TEST-789"}),
+                JiraIssue(key="TEST-456", summary="Issue 1"),
+                JiraIssue(key="TEST-789", summary="Issue 2"),
             ]
         )
 
@@ -320,8 +323,8 @@ class TestEpicsMixin:
         epics_mixin.get_issue.assert_called_once_with("TEST-123")
 
         # Verify result
-        assert isinstance(result, Document)
-        assert result.metadata["key"] == "TEST-123"
+        assert isinstance(result, JiraIssue)
+        assert result.key == "TEST-123"
 
     def test_link_issue_to_epic_not_epic(self, epics_mixin):
         """Test link_issue_to_epic when the target is not an epic."""
@@ -401,9 +404,7 @@ class TestEpicsMixin:
         # Verify search_issues was called with the right JQL
         epics_mixin.search_issues.assert_called_once()
         call_args = epics_mixin.search_issues.call_args[0]
-        assert (
-            '"customfield_10014" = EPIC-123' in call_args[0]
-        )  # First query that succeeds
+        assert 'issueFunction in issuesScopedToEpic("EPIC-123")' in call_args[0]
 
         # Verify keyword arguments for limit
         call_kwargs = epics_mixin.search_issues.call_args[1]
@@ -411,8 +412,8 @@ class TestEpicsMixin:
 
         # Verify result
         assert len(result) == 2
-        assert result[0].metadata["key"] == "TEST-456"
-        assert result[1].metadata["key"] == "TEST-789"
+        assert result[0].key == "TEST-456"
+        assert result[1].key == "TEST-789"
 
     def test_get_epic_issues_not_epic(self, epics_mixin):
         """Test get_epic_issues when the issue is not an epic."""
@@ -462,15 +463,15 @@ class TestEpicsMixin:
             return_value={"epic_link": "customfield_10014", "parent": "parent"}
         )
 
-        # Make the first search fail, but second one succeed
-        def search_side_effect(jql, limit=None):
-            if "customfield_10014" in jql:
-                return []  # No results
-            elif "parent" in jql:
-                # Return some results for the parent query
+        # Mock search_issues to return empty results for issueFunction but results for epic_link
+        def search_side_effect(jql, **kwargs):
+            if "issueFunction" in jql:
+                return []  # No results for issueFunction
+            elif "customfield_10014" in jql:
+                # Return results for customfield query
                 return [
-                    Document(page_content="Child 1", metadata={"key": "CHILD-1"}),
-                    Document(page_content="Child 2", metadata={"key": "CHILD-2"}),
+                    JiraIssue(key="CHILD-1", summary="Child 1"),
+                    JiraIssue(key="CHILD-2", summary="Child 2"),
                 ]
             return []
 
@@ -481,8 +482,8 @@ class TestEpicsMixin:
 
         # Verify we got results from the second query
         assert len(result) == 2
-        assert result[0].metadata["key"] == "CHILD-1"
-        assert result[1].metadata["key"] == "CHILD-2"
+        assert result[0].key == "CHILD-1"
+        assert result[1].key == "CHILD-2"
 
     def test_get_epic_issues_no_search_issues(self, epics_mixin):
         """Test get_epic_issues when search_issues method is not available."""
@@ -511,10 +512,10 @@ class TestEpicsMixin:
 
         # Verify the result contains documents created from jql results
         assert len(result) == 2
-        assert result[0].metadata["key"] == "TEST-456"
-        assert result[0].page_content == "Issue 1"
-        assert result[1].metadata["key"] == "TEST-789"
-        assert result[1].page_content == "Issue 2"
+        assert result[0].key == "TEST-456"
+        assert result[0].summary == "Issue 1"
+        assert result[1].key == "TEST-789"
+        assert result[1].summary == "Issue 2"
 
     def test_get_epic_issues_api_error(self, epics_mixin):
         """Test get_epic_issues with API error."""

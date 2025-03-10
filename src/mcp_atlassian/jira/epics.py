@@ -3,14 +3,102 @@
 import logging
 from typing import Any
 
-from ..document_types import Document
-from .client import JiraClient
+from ..models.jira import JiraIssue
+from .users import UsersMixin
 
 logger = logging.getLogger("mcp-jira")
 
 
-class EpicsMixin(JiraClient):
+class EpicsMixin(UsersMixin):
     """Mixin for Jira epic operations."""
+
+    def get_issue(
+        self,
+        issue_key: str,
+        expand: str | None = None,
+        comment_limit: int | str | None = 10,
+    ) -> JiraIssue:
+        """
+        Get a Jira issue by key.
+
+        Args:
+            issue_key: The issue key (e.g., PROJECT-123)
+            expand: Fields to expand in the response
+            comment_limit: Maximum number of comments to include, or "all"
+
+        Returns:
+            JiraIssue model with issue data and metadata
+
+        Raises:
+            Exception: If there is an error retrieving the issue
+        """
+        try:
+            # Build expand parameter if provided
+            expand_param = None
+            if expand:
+                expand_param = expand
+
+            # Get the issue data
+            issue = self.jira.issue(issue_key, expand=expand_param)
+            if not issue:
+                raise ValueError(f"Issue {issue_key} not found")
+
+            # Extract fields data, safely handling None
+            fields = issue.get("fields", {}) or {}
+
+            # Process comments if needed
+            comment_limit_int = None
+            if comment_limit == "all":
+                comment_limit_int = None  # No limit
+            elif comment_limit is not None:
+                try:
+                    comment_limit_int = int(comment_limit)
+                except (ValueError, TypeError):
+                    comment_limit_int = 10  # Default to 10 comments
+
+            # Get comments if needed
+            comments = []
+            if comment_limit_int is not None:
+                try:
+                    comments_data = self.jira.comments(
+                        issue_key, limit=comment_limit_int
+                    )
+                    comments = comments_data.get("comments", [])
+                except Exception:
+                    # Failed to get comments - continue without them
+                    comments = []
+
+            # Add comments to the issue data for processing by the model
+            if comments:
+                if "comment" not in fields:
+                    fields["comment"] = {}
+                fields["comment"]["comments"] = comments
+
+            # Get epic information
+            epic_info = {}
+            field_ids = self.get_jira_field_ids()
+
+            # Check if this issue is linked to an epic
+            epic_link_field = field_ids.get("epic_link") or field_ids.get("Epic Link")
+            if (
+                epic_link_field
+                and epic_link_field in fields
+                and fields[epic_link_field]
+            ):
+                epic_info["epic_key"] = fields[epic_link_field]
+
+            # Update the issue data with the fields
+            issue["fields"] = fields
+
+            # Create and return the JiraIssue model
+            return JiraIssue.from_api_response(issue, base_url=self.config.url)
+        except Exception as e:
+            error_msg = str(e)
+            if "Issue does not exist" in error_msg:
+                raise ValueError(f"Issue {issue_key} not found") from e
+            else:
+                logger.error(f"Error getting issue {issue_key}: {error_msg}")
+                raise Exception(f"Error getting issue {issue_key}: {error_msg}") from e
 
     def get_jira_field_ids(self) -> dict[str, str]:
         """
@@ -176,19 +264,22 @@ class EpicsMixin(JiraClient):
         Attempt to discover Epic fields by examining an existing Epic issue.
 
         This is a fallback method that attempts to find Epic fields by looking
-        at actual Epic issues already in the system.
+        at actual Epic issues already in the system. This is the definitive
+        implementation that should be used across the codebase.
 
         Args:
             field_ids: Dictionary of field IDs to update
         """
         # If we already have both epic fields, no need to search
-        if "epic_link" in field_ids and "epic_name" in field_ids:
+        if ("epic_link" in field_ids and "epic_name" in field_ids) or (
+            "Epic Link" in field_ids and "Epic Name" in field_ids
+        ):
             return
 
         try:
             # Find an Epic in the system
             epics_jql = "issuetype = Epic ORDER BY created DESC"
-            results = self.jira.jql(epics_jql, limit=1)
+            results = self.jira.jql(epics_jql, fields="*all", limit=1)
 
             # If no epics found, we can't use this method
             if not results or not results.get("issues"):
@@ -204,14 +295,20 @@ class EpicsMixin(JiraClient):
                     continue
 
                 # If it's a string value for a customfield, it might be the Epic Name
-                if "epic_name" not in field_ids and isinstance(value, str) and value:
+                if (
+                    ("epic_name" not in field_ids and "Epic Name" not in field_ids)
+                    and isinstance(value, str)
+                    and value
+                ):
+                    # Store with both key formats for compatibility
                     field_ids["epic_name"] = field_id
+                    field_ids["Epic Name"] = field_id
                     logger.info(
                         f"Discovered Epic Name field from existing epic: {field_id}"
                     )
 
             # Now try to find issues linked to this Epic to discover the Epic Link field
-            if "epic_link" not in field_ids:
+            if "epic_link" not in field_ids and "Epic Link" not in field_ids:
                 epic_key = epic.get("key")
                 if not epic_key:
                     return
@@ -225,7 +322,7 @@ class EpicsMixin(JiraClient):
 
                 for query in link_queries:
                     try:
-                        link_results = self.jira.jql(query, limit=1)
+                        link_results = self.jira.jql(query, fields="*all", limit=1)
                         if link_results and link_results.get("issues"):
                             # Found an issue linked to our epic, now inspect its fields
                             linked_issue = link_results["issues"][0]
@@ -238,17 +335,53 @@ class EpicsMixin(JiraClient):
                                     and isinstance(value, str)
                                     and value == epic_key
                                 ):
+                                    # Store with both key formats for compatibility
                                     field_ids["epic_link"] = field_id
+                                    field_ids["Epic Link"] = field_id
                                     logger.info(
                                         f"Discovered Epic Link field from linked issue: {field_id}"
                                     )
                                     break
 
                             # If we found the epic link field, we can stop
-                            if "epic_link" in field_ids:
+                            if "epic_link" in field_ids or "Epic Link" in field_ids:
                                 break
                     except Exception:  # noqa: BLE001 - Intentional fallback with logging
                         continue
+
+                # If we still haven't found Epic Link, try a broader search
+                if "epic_link" not in field_ids and "Epic Link" not in field_ids:
+                    try:
+                        # Search for issues that might be linked to epics
+                        results = self.jira.jql(
+                            "project is not empty", fields="*all", limit=10
+                        )
+                        issues = results.get("issues", [])
+
+                        for issue in issues:
+                            fields = issue.get("fields", {})
+
+                            # Check each field for a potential epic link
+                            for field_id, value in fields.items():
+                                if (
+                                    field_id.startswith("customfield_")
+                                    and value
+                                    and isinstance(value, str)
+                                ):
+                                    # If it looks like a key (e.g., PRJ-123), it might be an epic link
+                                    if "-" in value and any(c.isdigit() for c in value):
+                                        field_ids["epic_link"] = field_id
+                                        field_ids["Epic Link"] = field_id
+                                        logger.info(
+                                            f"Discovered Epic Link field from potential issue: {field_id}"
+                                        )
+                                        break
+                            if "epic_link" in field_ids or "Epic Link" in field_ids:
+                                break
+                    except Exception as e:
+                        logger.warning(
+                            f"Error in broader search for Epic Link: {str(e)}"
+                        )
 
         except Exception as e:
             logger.warning(f"Error discovering fields from existing Epics: {str(e)}")
@@ -314,7 +447,7 @@ class EpicsMixin(JiraClient):
         except Exception as e:
             logger.error(f"Error preparing Epic-specific fields: {str(e)}")
 
-    def link_issue_to_epic(self, issue_key: str, epic_key: str) -> Document:
+    def link_issue_to_epic(self, issue_key: str, epic_key: str) -> JiraIssue:
         """
         Link an issue to an epic.
 
@@ -323,7 +456,7 @@ class EpicsMixin(JiraClient):
             epic_key: The key of the epic to link to
 
         Returns:
-            Document with the updated issue
+            JiraIssue model with the updated issue data
 
         Raises:
             Exception: If there is an error linking the issue
@@ -338,7 +471,7 @@ class EpicsMixin(JiraClient):
             issue_type = fields.get("issuetype", {}).get("name", "").lower()
 
             if issue_type != "epic":
-                error_msg = f"{epic_key} is not an Epic"
+                error_msg = f"Error linking issue to epic: {epic_key} is not an Epic"
                 raise ValueError(error_msg)
 
             # Get the epic link field ID
@@ -346,7 +479,9 @@ class EpicsMixin(JiraClient):
             epic_link_field = field_ids.get("epic_link")
 
             if not epic_link_field:
-                error_msg = "Could not determine Epic Link field"
+                error_msg = (
+                    "Error linking issue to epic: Could not determine Epic Link field"
+                )
                 raise ValueError(error_msg)
 
             # Update the issue to link it to the epic
@@ -354,20 +489,13 @@ class EpicsMixin(JiraClient):
             self.jira.update_issue(issue_key, fields=update_fields)
 
             # Return the updated issue
-            if hasattr(self, "get_issue") and callable(self.get_issue):
-                return self.get_issue(issue_key)
-            else:
-                # Fallback if get_issue is not available
-                logger.warning(
-                    "get_issue method not available, returning empty Document"
-                )
-                return Document(page_content="", metadata={"key": issue_key})
+            return self.get_issue(issue_key)
 
         except Exception as e:
             logger.error(f"Error linking {issue_key} to epic {epic_key}: {str(e)}")
             raise Exception(f"Error linking issue to epic: {str(e)}") from e
 
-    def get_epic_issues(self, epic_key: str, limit: int = 50) -> list[Document]:
+    def get_epic_issues(self, epic_key: str, limit: int = 50) -> list[JiraIssue]:
         """
         Get all issues linked to a specific epic.
 
@@ -376,7 +504,7 @@ class EpicsMixin(JiraClient):
             limit: Maximum number of issues to return
 
         Returns:
-            List of Documents representing the issues linked to the epic
+            List of JiraIssue models representing the issues linked to the epic
 
         Raises:
             ValueError: If the issue is not an Epic
@@ -400,72 +528,62 @@ class EpicsMixin(JiraClient):
                 )
                 raise ValueError(error_msg)
 
-            # Get the dynamic field IDs for this Jira instance
+            # Find the Epic Link field
             field_ids = self.get_jira_field_ids()
+            epic_link_field = field_ids.get("epic_link")
 
-            # Build JQL queries based on discovered field IDs
-            jql_queries = []
+            if not epic_link_field:
+                error_msg = "Could not determine Epic Link field"
+                raise ValueError(error_msg)
 
-            # Add queries based on discovered fields
-            if "parent" in field_ids:
-                jql_queries.append(f"parent = {epic_key}")
+            # Try first with 'issueFunction in issuesScopedToEpic'
+            try:
+                jql = f'issueFunction in issuesScopedToEpic("{epic_key}")'
+                issues = []
 
-            if "epic_link" in field_ids:
-                field_name = field_ids["epic_link"]
-                jql_queries.append(f'"{field_name}" = {epic_key}')
-                jql_queries.append(f'"{field_name}" ~ {epic_key}')
-
-            # Add standard fallback queries
-            jql_queries.extend(
-                [
-                    f"parent = {epic_key}",  # Common in most instances
-                    f"'Epic Link' = {epic_key}",  # Some instances
-                    f"'Epic' = {epic_key}",  # Some instances
-                    f"issue in childIssuesOf('{epic_key}')",  # Some instances
-                ]
-            )
-
-            # Try each query until we get results or run out of options
-            documents = []
-            for jql in jql_queries:
-                try:
-                    logger.info(f"Trying to get epic issues with JQL: {jql}")
-                    if hasattr(self, "search_issues") and callable(self.search_issues):
-                        documents = self.search_issues(jql, limit=limit)
-                    else:
-                        # Fallback if search_issues is not available
-                        results = self.jira.jql(jql, limit=limit)
-                        documents = []
-                        for issue in results.get("issues", []):
-                            key = issue.get("key", "")
-                            summary = issue.get("fields", {}).get("summary", "")
-                            documents.append(
-                                Document(
-                                    page_content=summary,
-                                    metadata={"key": key, "type": "issue"},
-                                )
-                            )
-
-                    if documents:
-                        return documents
-                except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
-                    logger.info(f"Failed to get epic issues with JQL '{jql}': {str(e)}")
-                    continue
-
-            # If we've tried all queries and got no results, return an empty list
-            # but also log a warning that we might be missing the right field
-            if not documents:
+                # If we have search_issues method available, use it
+                if hasattr(self, "search_issues") and callable(self.search_issues):
+                    issues = self.search_issues(jql, limit=limit)
+                    if issues:
+                        return issues
+            except Exception as e:
+                # Log exception but continue with fallback
                 logger.warning(
-                    f"Couldn't find issues linked to epic {epic_key}. "
-                    "Your Jira instance might use a different field for epic links."
+                    f"Error searching epic issues with issueFunction: {str(e)}"
                 )
 
-            return documents
+            # Fallback to epic link field
+            jql = f'"{epic_link_field}" = "{epic_key}"'
 
-        except ValueError:
-            # Re-raise ValueError for non-epic issues
+            # Try to use search_issues if available
+            if hasattr(self, "search_issues") and callable(self.search_issues):
+                issues = self.search_issues(jql, limit=limit)
+                if not issues:
+                    logger.warning(f"No issues found for epic {epic_key}")
+
+                return issues
+            else:
+                # Fallback if search_issues is not available
+                issues_data = self.jira.jql(jql, limit=limit)
+                issues = []
+
+                # Create JiraIssue models from raw data
+                if "issues" in issues_data:
+                    for issue_data in issues_data["issues"]:
+                        issue = JiraIssue.from_api_response(
+                            issue_data,
+                            base_url=self.config.url
+                            if hasattr(self, "config")
+                            else None,
+                        )
+                        issues.append(issue)
+
+                return issues
+
+        except ValueError as e:
+            # Re-raise ValueError (like "not an Epic") as is
             raise
-
         except Exception as e:
+            # Wrap other exceptions
             logger.error(f"Error getting issues for epic {epic_key}: {str(e)}")
             raise Exception(f"Error getting epic issues: {str(e)}") from e
