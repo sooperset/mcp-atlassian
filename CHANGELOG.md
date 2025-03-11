@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2025-03-12
+
+### Changed
+- Major refactoring of Atlassian integration components into modular mixin classes
+- Added Pydantic models for type-safe API responses
+- Enhanced unit tests with better mocks and fixtures
+- Added support for testing with real API data
+
+### Fixed
+- Fixed Jira transition API type handling errors
+- Improved handling of different status formats in update methods
+- Added robust handling for missing fields in Jira search responses
+- Enhanced field parsing and automatic field expansion
+
 ## [0.1.16] - 2025-03-09
 
 ### Fixed
