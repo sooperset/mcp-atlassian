@@ -1,6 +1,6 @@
 """Tests for the Jira Epics mixin."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 
@@ -83,84 +83,89 @@ class TestEpicsMixin:
         assert "epic_name" in field_ids
         assert field_ids["epic_name"] == "customfield_10011"
 
-    def test_process_field_for_epic_data_epic_link(self, epics_mixin):
-        """Test _process_field_for_epic_data identifies Epic Link field."""
-        # Setup the field and field_ids
-        field = {
-            "id": "customfield_10014",
-            "name": "Epic Link",
-            "schema": {"custom": "com.pyxis.greenhopper.jira:gh-epic-link"},
-        }
-        field_ids = {}
+    def test_get_jira_field_ids_discovers_epic_link(self, epics_mixin):
+        """Test get_jira_field_ids identifies Epic Link field."""
+        # Setup mock field data
+        epics_mixin.jira.get_all_fields.return_value = [
+            {
+                "id": "customfield_10014",
+                "name": "Epic Link",
+                "schema": {"custom": "com.pyxis.greenhopper.jira:gh-epic-link"},
+            }
+        ]
 
         # Call the method
-        epics_mixin._process_field_for_epic_data(field, field_ids)
+        field_ids = epics_mixin.get_jira_field_ids()
 
         # Verify the field was identified
         assert "epic_link" in field_ids
         assert field_ids["epic_link"] == "customfield_10014"
 
-    def test_process_field_for_epic_data_epic_name(self, epics_mixin):
-        """Test _process_field_for_epic_data identifies Epic Name field."""
-        # Setup the field and field_ids
-        field = {
-            "id": "customfield_10011",
-            "name": "Epic Name",
-            "schema": {"custom": "com.pyxis.greenhopper.jira:gh-epic-label"},
-        }
-        field_ids = {}
+    def test_get_jira_field_ids_discovers_epic_name(self, epics_mixin):
+        """Test get_jira_field_ids identifies Epic Name field."""
+        # Setup mock field data
+        epics_mixin.jira.get_all_fields.return_value = [
+            {
+                "id": "customfield_10011",
+                "name": "Epic Name",
+                "schema": {"custom": "com.pyxis.greenhopper.jira:gh-epic-label"},
+            }
+        ]
 
         # Call the method
-        epics_mixin._process_field_for_epic_data(field, field_ids)
+        field_ids = epics_mixin.get_jira_field_ids()
 
         # Verify the field was identified
         assert "epic_name" in field_ids
         assert field_ids["epic_name"] == "customfield_10011"
 
-    def test_process_field_for_epic_data_parent(self, epics_mixin):
-        """Test _process_field_for_epic_data identifies Parent field."""
-        # Setup the field and field_ids
-        field = {"id": "parent", "name": "Parent", "schema": {"type": "issuelink"}}
-        field_ids = {}
+    def test_get_jira_field_ids_discovers_parent(self, epics_mixin):
+        """Test get_jira_field_ids identifies Parent field."""
+        # Setup mock field data
+        epics_mixin.jira.get_all_fields.return_value = [
+            {"id": "parent", "name": "Parent", "schema": {"type": "issuelink"}}
+        ]
 
         # Call the method
-        epics_mixin._process_field_for_epic_data(field, field_ids)
+        field_ids = epics_mixin.get_jira_field_ids()
 
         # Verify the field was identified
         assert "parent" in field_ids
         assert field_ids["parent"] == "parent"
 
-    def test_process_field_for_epic_data_epic_color(self, epics_mixin):
-        """Test _process_field_for_epic_data identifies Epic Color field."""
-        # Setup the field and field_ids
-        field = {
-            "id": "customfield_10010",
-            "name": "Epic Color",
-            "schema": {"custom": "com.pyxis.greenhopper.jira:gh-epic-color"},
-        }
-        field_ids = {}
+    def test_get_jira_field_ids_discovers_epic_color(self, epics_mixin):
+        """Test get_jira_field_ids identifies Epic Color field."""
+        # Setup mock field data
+        epics_mixin.jira.get_all_fields.return_value = [
+            {
+                "id": "customfield_10010",
+                "name": "Epic Color",
+                "schema": {"custom": "com.pyxis.greenhopper.jira:gh-epic-color"},
+            }
+        ]
 
         # Call the method
-        epics_mixin._process_field_for_epic_data(field, field_ids)
+        field_ids = epics_mixin.get_jira_field_ids()
 
         # Verify the field was identified
         assert "epic_color" in field_ids
         assert field_ids["epic_color"] == "customfield_10010"
 
-    def test_process_field_for_epic_data_other_epic_field(self, epics_mixin):
-        """Test _process_field_for_epic_data identifies other Epic fields."""
-        # Setup the field and field_ids
-        field = {
-            "id": "customfield_10012",
-            "name": "Epic Team",
-            "schema": {"type": "string"},
-        }
-        field_ids = {}
+    def test_get_jira_field_ids_discovers_other_epic_fields(self, epics_mixin):
+        """Test get_jira_field_ids identifies other Epic-related fields."""
+        # Setup mock field data
+        epics_mixin.jira.get_all_fields.return_value = [
+            {
+                "id": "customfield_10012",
+                "name": "Epic Team",
+                "schema": {"type": "string"},
+            }
+        ]
 
         # Call the method
-        epics_mixin._process_field_for_epic_data(field, field_ids)
+        field_ids = epics_mixin.get_jira_field_ids()
 
-        # Verify the field was identified with a generic epic_ prefix
+        # Verify the field was identified
         assert "epic_epic_team" in field_ids
         assert field_ids["epic_epic_team"] == "customfield_10012"
 
@@ -308,19 +313,72 @@ class TestEpicsMixin:
             },
         ]
 
+        # Mock get_issue to return a valid JiraIssue
+        epics_mixin.get_issue = MagicMock(
+            return_value=JiraIssue(key="TEST-123", id="123456")
+        )
+
         # - epic link field discovered
         epics_mixin.get_jira_field_ids = MagicMock(
             return_value={"epic_link": "customfield_10014"}
         )
 
+        # - Parent field fails, then epic_link succeeds
+        epics_mixin.jira.update_issue.side_effect = [
+            Exception("Parent field error"),  # First attempt fails
+            None,  # Second attempt succeeds
+        ]
+
         # Call the method
         result = epics_mixin.link_issue_to_epic("TEST-123", "EPIC-456")
 
-        # Verify API calls
-        epics_mixin.jira.update_issue.assert_called_once_with(
+        # Verify API calls - should have two calls, one for parent and one for epic_link
+        assert epics_mixin.jira.update_issue.call_count == 2
+        # First call should be with parent
+        assert epics_mixin.jira.update_issue.call_args_list[0] == call(
+            issue_key="TEST-123", update={"fields": {"parent": {"key": "EPIC-456"}}}
+        )
+        # Second call should be with epic_link field
+        assert epics_mixin.jira.update_issue.call_args_list[1] == call(
             issue_key="TEST-123", update={"fields": {"customfield_10014": "EPIC-456"}}
         )
+
+        # Verify get_issue was called to return the result
         epics_mixin.get_issue.assert_called_once_with("TEST-123")
+
+        # Verify result
+        assert isinstance(result, JiraIssue)
+        assert result.key == "TEST-123"
+
+    def test_link_issue_to_epic_parent_field_success(self, epics_mixin):
+        """Test link_issue_to_epic succeeding with parent field."""
+        # Setup mocks
+        epics_mixin.jira.get_issue.side_effect = [
+            {"key": "TEST-123"},  # issue
+            {  # epic
+                "key": "EPIC-456",
+                "fields": {"issuetype": {"name": "Epic"}},
+            },
+        ]
+
+        # Mock get_issue to return a valid JiraIssue
+        epics_mixin.get_issue = MagicMock(
+            return_value=JiraIssue(key="TEST-123", id="123456")
+        )
+
+        # - No epic_link field (forces parent usage)
+        epics_mixin.get_jira_field_ids = MagicMock(return_value={})
+
+        # Parent field update succeeds
+        epics_mixin.jira.update_issue.return_value = None
+
+        # Call the method
+        result = epics_mixin.link_issue_to_epic("TEST-123", "EPIC-456")
+
+        # Verify only one API call with parent field
+        epics_mixin.jira.update_issue.assert_called_once_with(
+            issue_key="TEST-123", update={"fields": {"parent": {"key": "EPIC-456"}}}
+        )
 
         # Verify result
         assert isinstance(result, JiraIssue)
@@ -339,12 +397,12 @@ class TestEpicsMixin:
 
         # Call the method and expect an error
         with pytest.raises(
-            Exception, match="Error linking issue to epic: TEST-456 is not an Epic"
+            ValueError, match="Error linking issue to epic: TEST-456 is not an Epic"
         ):
             epics_mixin.link_issue_to_epic("TEST-123", "TEST-456")
 
-    def test_link_issue_to_epic_no_field_id(self, epics_mixin):
-        """Test link_issue_to_epic when the epic link field can't be found."""
+    def test_link_issue_to_epic_all_methods_fail(self, epics_mixin):
+        """Test link_issue_to_epic when all linking methods fail."""
         # Setup mocks
         epics_mixin.jira.get_issue.side_effect = [
             {"key": "TEST-123"},  # issue
@@ -354,35 +412,29 @@ class TestEpicsMixin:
             },
         ]
 
-        # Empty field IDs - epic_link not found
+        # No epic link fields found
         epics_mixin.get_jira_field_ids = MagicMock(return_value={})
 
-        # Call the method and expect an error
+        # All update attempts fail
+        epics_mixin.jira.update_issue.side_effect = Exception("Update failed")
+        epics_mixin.jira.create_issue_link.side_effect = Exception("Link failed")
+
+        # Call the method and expect a ValueError
         with pytest.raises(
-            Exception,
-            match="Error linking issue to epic: Could not determine Epic Link field",
+            ValueError,
+            match="Could not link issue TEST-123 to epic EPIC-456.",
         ):
             epics_mixin.link_issue_to_epic("TEST-123", "EPIC-456")
 
     def test_link_issue_to_epic_api_error(self, epics_mixin):
-        """Test link_issue_to_epic with API error."""
-        # Setup mocks
+        """Test link_issue_to_epic with API error in the epic retrieval."""
+        # Setup mocks to fail at epic retrieval
         epics_mixin.jira.get_issue.side_effect = [
             {"key": "TEST-123"},  # issue
-            {  # epic
-                "key": "EPIC-456",
-                "fields": {"issuetype": {"name": "Epic"}},
-            },
+            Exception("API error"),  # epic retrieval fails
         ]
 
-        epics_mixin.get_jira_field_ids = MagicMock(
-            return_value={"epic_link": "customfield_10014"}
-        )
-
-        # Simulate API error
-        epics_mixin.jira.update_issue.side_effect = Exception("API error")
-
-        # Call the method and expect an error
+        # Call the method and expect the API error to be propagated
         with pytest.raises(Exception, match="Error linking issue to epic: API error"):
             epics_mixin.link_issue_to_epic("TEST-123", "EPIC-456")
 
