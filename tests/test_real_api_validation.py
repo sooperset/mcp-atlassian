@@ -13,8 +13,8 @@ To run these tests:
 Required environment variables:
     - JIRA_URL, JIRA_USERNAME, JIRA_API_TOKEN
     - CONFLUENCE_URL, CONFLUENCE_USERNAME, CONFLUENCE_API_TOKEN
-    - JIRA_TEST_ISSUE_KEY (optional, defaults to issue key from your Jira instance)
-    - CONFLUENCE_PAGE_ID (optional, defaults to a page ID from your Confluence instance)
+    - JIRA_TEST_ISSUE_KEY, JIRA_TEST_EPIC_KEY
+    - CONFLUENCE_TEST_PAGE_ID, JIRA_TEST_PROJECT_KEY, CONFLUENCE_TEST_SPACE_KEY, CONFLUENCE_TEST_SPACE_KEY
 """
 
 import datetime
@@ -136,31 +136,46 @@ def confluence_client(confluence_config: ConfluenceConfig) -> ConfluenceFetcher:
 @pytest.fixture
 def test_issue_key() -> str:
     """Get test issue key from environment."""
-    return os.environ.get("JIRA_TEST_ISSUE_KEY", "TES-26")
+    issue_key = os.environ.get("JIRA_TEST_ISSUE_KEY")
+    if not issue_key:
+        raise ValueError("JIRA_TEST_ISSUE_KEY environment variable must be set")
+    return issue_key
 
 
 @pytest.fixture
 def test_epic_key() -> str:
     """Get test epic key from environment."""
-    return os.environ.get("JIRA_TEST_EPIC_KEY", "TES-25")
+    epic_key = os.environ.get("JIRA_TEST_EPIC_KEY")
+    if not epic_key:
+        raise ValueError("JIRA_TEST_EPIC_KEY environment variable must be set")
+    return epic_key
 
 
 @pytest.fixture
 def test_page_id() -> str:
     """Get test Confluence page ID from environment."""
-    return os.environ.get("CONFLUENCE_TEST_PAGE_ID", "3823370492")
+    page_id = os.environ.get("CONFLUENCE_TEST_PAGE_ID")
+    if not page_id:
+        raise ValueError("CONFLUENCE_TEST_PAGE_ID environment variable must be set")
+    return page_id
 
 
 @pytest.fixture
 def test_project_key() -> str:
     """Get test Jira project key from environment."""
-    return os.environ.get("JIRA_TEST_PROJECT_KEY", "TES")
+    project_key = os.environ.get("JIRA_TEST_PROJECT_KEY")
+    if not project_key:
+        raise ValueError("JIRA_TEST_PROJECT_KEY environment variable must be set")
+    return project_key
 
 
 @pytest.fixture
 def test_space_key() -> str:
     """Get test Confluence space key from environment."""
-    return os.environ.get("CONFLUENCE_TEST_SPACE_KEY", "TESTWIKI")
+    space_key = os.environ.get("CONFLUENCE_TEST_SPACE_KEY")
+    if not space_key:
+        raise ValueError("CONFLUENCE_TEST_SPACE_KEY environment variable must be set")
+    return space_key
 
 
 @pytest.fixture

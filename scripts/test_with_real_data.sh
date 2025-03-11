@@ -124,13 +124,12 @@ run_api_tests() {
 
         # Run the write operation tests
         uv run pytest tests/test_real_api_validation.py::test_jira_create_issue tests/test_real_api_validation.py::test_jira_add_comment tests/test_real_api_validation.py::test_confluence_create_page $VERBOSITY
-
         # Optionally run the skipped tests if explicitly requested
         if [[ "$RUN_WRITE_TESTS" == "true" ]]; then
             echo ""
             echo "===== API Advanced Write Tests ====="
             # These are still skipped by default, so we need to use -k to enable them
-            uv run pytest tests/test_real_api_validation.py::test_jira_transition_issue tests/test_real_api_validation.py::test_confluence_update_page -v --no-skip
+            uv run pytest tests/test_real_api_validation.py::test_jira_transition_issue tests/test_real_api_validation.py::test_confluence_update_page -v
         fi
     fi
 }

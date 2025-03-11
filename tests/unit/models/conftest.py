@@ -95,11 +95,13 @@ def default_confluence_page_id() -> str:
     """
     Provides a default Confluence page ID to use for tests.
 
-    Checks for a CONFLUENCE_PAGE_ID environment variable,
-    or falls back to a default test value.
+    Raises:
+        ValueError: If CONFLUENCE_PAGE_ID environment variable is not set
     """
-    # Try to get from environment, or use default test value
-    return os.environ.get("CONFLUENCE_PAGE_ID", "3819638214")
+    page_id = os.environ.get("CONFLUENCE_PAGE_ID")
+    if not page_id:
+        raise ValueError("CONFLUENCE_PAGE_ID environment variable must be set")
+    return page_id
 
 
 @pytest.fixture
@@ -107,8 +109,10 @@ def default_jira_issue_key() -> str:
     """
     Provides a default Jira issue key to use for tests.
 
-    Checks for a JIRA_ISSUE_KEY environment variable,
-    or falls back to a default test value.
+    Raises:
+        ValueError: If JIRA_TEST_ISSUE_KEY environment variable is not set
     """
-    # Try to get from environment, or use default test value
-    return os.environ.get("JIRA_ISSUE_KEY", "TES-8")
+    issue_key = os.environ.get("JIRA_TEST_ISSUE_KEY")
+    if not issue_key:
+        raise ValueError("JIRA_TEST_ISSUE_KEY environment variable must be set")
+    return issue_key
