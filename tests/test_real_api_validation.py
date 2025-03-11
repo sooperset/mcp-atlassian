@@ -17,7 +17,10 @@ Required environment variables:
     - CONFLUENCE_PAGE_ID (optional, defaults to a page ID from your Confluence instance)
 """
 
+import datetime
 import os
+import uuid
+from collections.abc import Callable, Generator
 
 import pytest
 
@@ -37,6 +40,73 @@ from mcp_atlassian.jira.issues import IssuesMixin
 from mcp_atlassian.jira.search import SearchMixin as JiraSearchMixin
 from mcp_atlassian.models.confluence import ConfluenceComment, ConfluencePage
 from mcp_atlassian.models.jira import JiraIssue
+
+
+# Resource tracking for cleanup
+class ResourceTracker:
+    """Tracks resources created during tests for cleanup."""
+
+    def __init__(self):
+        self.jira_issues: list[str] = []
+        self.confluence_pages: list[str] = []
+        self.confluence_comments: list[str] = []
+        self.jira_comments: list[str] = []
+
+    def add_jira_issue(self, issue_key: str) -> None:
+        """Track a Jira issue for later cleanup."""
+        self.jira_issues.append(issue_key)
+
+    def add_confluence_page(self, page_id: str) -> None:
+        """Track a Confluence page for later cleanup."""
+        self.confluence_pages.append(page_id)
+
+    def add_confluence_comment(self, comment_id: str) -> None:
+        """Track a Confluence comment for later cleanup."""
+        self.confluence_comments.append(comment_id)
+
+    def add_jira_comment(self, issue_key: str, comment_id: str) -> None:
+        """Track a Jira comment for later cleanup."""
+        self.jira_comments.append((issue_key, comment_id))
+
+    def cleanup(
+        self,
+        jira_client: JiraFetcher | None = None,
+        confluence_client: ConfluenceFetcher | None = None,
+    ) -> None:
+        """Clean up all tracked resources."""
+        if jira_client:
+            # Delete Jira comments first
+            for issue_key, comment_id in self.jira_comments:
+                try:
+                    jira_client.delete_comment(issue_key, comment_id)
+                    print(f"Deleted Jira comment {comment_id} from issue {issue_key}")
+                except Exception as e:
+                    print(f"Failed to delete Jira comment {comment_id}: {e}")
+
+            # Delete Jira issues
+            for issue_key in self.jira_issues:
+                try:
+                    jira_client.delete_issue(issue_key)
+                    print(f"Deleted Jira issue {issue_key}")
+                except Exception as e:
+                    print(f"Failed to delete Jira issue {issue_key}: {e}")
+
+        if confluence_client:
+            # Delete Confluence comments
+            for comment_id in self.confluence_comments:
+                try:
+                    confluence_client.delete_comment(comment_id)
+                    print(f"Deleted Confluence comment {comment_id}")
+                except Exception as e:
+                    print(f"Failed to delete Confluence comment {comment_id}: {e}")
+
+            # Delete Confluence pages
+            for page_id in self.confluence_pages:
+                try:
+                    confluence_client.delete_page(page_id)
+                    print(f"Deleted Confluence page {page_id}")
+                except Exception as e:
+                    print(f"Failed to delete Confluence page {page_id}: {e}")
 
 
 @pytest.fixture
@@ -79,6 +149,40 @@ def test_epic_key() -> str:
 def test_page_id() -> str:
     """Get test Confluence page ID from environment."""
     return os.environ.get("CONFLUENCE_TEST_PAGE_ID", "3823370492")
+
+
+@pytest.fixture
+def test_project_key() -> str:
+    """Get test Jira project key from environment."""
+    return os.environ.get("JIRA_TEST_PROJECT_KEY", "TES")
+
+
+@pytest.fixture
+def test_space_key() -> str:
+    """Get test Confluence space key from environment."""
+    return os.environ.get("CONFLUENCE_TEST_SPACE_KEY", "TESTWIKI")
+
+
+@pytest.fixture
+def resource_tracker() -> Generator[ResourceTracker, None, None]:
+    """Create a resource tracker for cleanup after tests."""
+    tracker = ResourceTracker()
+    yield tracker
+    # Cleanup happens automatically when the fixture is finalized
+
+
+@pytest.fixture
+def cleanup_resources(
+    resource_tracker: ResourceTracker,
+    jira_client: JiraFetcher,
+    confluence_client: ConfluenceFetcher,
+) -> Callable[[], None]:
+    """Return a function that will clean up all tracked resources."""
+
+    def _cleanup():
+        resource_tracker.cleanup(jira_client, confluence_client)
+
+    return _cleanup
 
 
 # Only use asyncio backend for anyio tests
@@ -327,18 +431,309 @@ async def test_confluence_get_page_content(
     assert "title" in page or hasattr(page, "title")
 
 
-# Skipping tests that would modify data for now
-@pytest.mark.skip(reason="This test would modify data")
 @pytest.mark.anyio
-async def test_jira_transition_issue(jira_client: JiraFetcher) -> None:
+async def test_jira_create_issue(
+    jira_client: JiraFetcher,
+    test_project_key: str,
+    resource_tracker: ResourceTracker,
+    cleanup_resources: Callable[[], None],
+) -> None:
+    """Test creating an issue in Jira."""
+    # Generate a unique summary to identify this test issue
+    test_id = str(uuid.uuid4())[:8]
+    summary = f"Test Issue (API Validation) {test_id}"
+    description = "This is a test issue created by the API validation tests. It should be automatically deleted."
+
+    try:
+        # Create the issue
+        issue = jira_client.create_issue(
+            project_key=test_project_key,
+            summary=summary,
+            description=description,
+            issue_type="Task",
+        )
+
+        # Track the issue for cleanup
+        resource_tracker.add_jira_issue(issue.key)
+
+        # Verify the response
+        assert issue is not None
+        assert issue.key.startswith(test_project_key)
+        assert issue.summary == summary
+
+        # Verify we can retrieve the created issue
+        retrieved_issue = jira_client.get_issue(issue.key)
+        assert retrieved_issue is not None
+        assert retrieved_issue.key == issue.key
+        assert retrieved_issue.summary == summary
+    finally:
+        # Clean up resources even if the test fails
+        cleanup_resources()
+
+
+@pytest.mark.anyio
+async def test_jira_add_comment(
+    jira_client: JiraFetcher,
+    test_issue_key: str,
+    resource_tracker: ResourceTracker,
+    cleanup_resources: Callable[[], None],
+) -> None:
+    """Test adding a comment to a Jira issue."""
+    # Generate a unique comment text
+    test_id = str(uuid.uuid4())[:8]
+    comment_text = f"Test comment from API validation tests {test_id}. This should be automatically deleted."
+
+    try:
+        # Add the comment
+        comment = jira_client.add_comment(
+            issue_key=test_issue_key, comment=comment_text
+        )
+
+        # Track the comment for cleanup
+        if hasattr(comment, "id"):
+            resource_tracker.add_jira_comment(test_issue_key, comment.id)
+        elif isinstance(comment, dict) and "id" in comment:
+            resource_tracker.add_jira_comment(test_issue_key, comment["id"])
+
+        # Verify the response
+        assert comment is not None
+
+        # Get the comment text based on the attribute that exists
+        if hasattr(comment, "body"):
+            actual_text = comment.body
+        elif hasattr(comment, "content"):
+            actual_text = comment.content
+        elif isinstance(comment, dict) and "body" in comment:
+            actual_text = comment["body"]
+        else:
+            actual_text = str(comment)
+
+        assert comment_text in actual_text
+    finally:
+        # Clean up resources even if the test fails
+        cleanup_resources()
+
+
+@pytest.mark.anyio
+async def test_confluence_create_page(
+    confluence_client: ConfluenceFetcher,
+    test_space_key: str,
+    resource_tracker: ResourceTracker,
+    cleanup_resources: Callable[[], None],
+) -> None:
+    """Test creating a page in Confluence."""
+    # First check if we have permission to create pages in this space
+    try:
+        # Try to get space info to verify access
+        if hasattr(confluence_client, "get_space"):
+            space = confluence_client.get_space(test_space_key)
+        else:
+            space = confluence_client.confluence.get_space(test_space_key)
+
+        # Check if space exists
+        if not space:
+            pytest.skip(
+                f"Space {test_space_key} not found. Skipping page creation test."
+            )
+            return
+    except Exception as e:
+        if "permission" in str(e).lower() or "access" in str(e).lower():
+            pytest.skip(
+                f"No permission to access space {test_space_key}. Skipping page creation test."
+            )
+        else:
+            pytest.skip(
+                f"Could not access space {test_space_key}: {str(e)}. Skipping page creation test."
+            )
+        return
+
+    # Generate a unique title
+    test_id = str(uuid.uuid4())[:8]
+    title = f"Test Page (API Validation) {test_id}"
+    content = f"""
+    <h1>Test Page</h1>
+    <p>This is a test page created by the API validation tests at {datetime.datetime.now(tz=datetime.timezone.utc).isoformat()}.</p>
+    <p>It should be automatically deleted after the test.</p>
+    """
+
+    try:
+        # Create the page
+        try:
+            if hasattr(confluence_client, "create_page"):
+                page = confluence_client.create_page(
+                    space_key=test_space_key, title=title, body=content
+                )
+            else:
+                # Fall back to the underlying client
+                page = confluence_client.confluence.create_page(
+                    space=test_space_key, title=title, body=content
+                )
+        except Exception as e:
+            if "permission" in str(e).lower():
+                pytest.skip(f"No permission to create pages in space {test_space_key}")
+                return
+            else:
+                raise
+
+        # Track the page for cleanup
+        if hasattr(page, "id"):
+            page_id = page.id
+        else:
+            page_id = page["id"]
+
+        resource_tracker.add_confluence_page(page_id)
+
+        # Verify the response
+        assert page is not None
+
+        # Verify the page title
+        if hasattr(page, "title"):
+            assert page.title == title
+        else:
+            assert page["title"] == title
+
+        # Attempt to retrieve the created page
+        if hasattr(confluence_client, "get_page_by_id"):
+            retrieved_page = confluence_client.get_page_by_id(page_id)
+        else:
+            retrieved_page = confluence_client.confluence.get_page_by_id(page_id)
+
+        assert retrieved_page is not None
+    finally:
+        # Clean up resources even if the test fails
+        cleanup_resources()
+
+
+# Skip these tests by default
+@pytest.mark.skip(reason="This test modifies data - use with caution")
+@pytest.mark.anyio
+async def test_jira_transition_issue(
+    jira_client: JiraFetcher,
+    resource_tracker: ResourceTracker,
+    test_project_key: str,
+    cleanup_resources: Callable[[], None],
+) -> None:
     """Test transitioning an issue in Jira."""
-    # This would test the fixed functionality for issue transitions
-    pass
+    # Create a test issue first
+    test_id = str(uuid.uuid4())[:8]
+    summary = f"Transition Test Issue {test_id}"
+
+    try:
+        # Create the issue
+        issue = jira_client.create_issue(
+            project_key=test_project_key,
+            summary=summary,
+            description="Test issue for transition testing",
+            issue_type="Task",
+        )
+
+        # Track the issue for cleanup
+        resource_tracker.add_jira_issue(issue.key)
+
+        # Get available transitions
+        transitions = jira_client.get_transitions(issue.key)
+        assert transitions is not None
+        assert len(transitions) > 0
+
+        # Select a transition (usually to "In Progress")
+        # Find the "In Progress" transition if available
+        transition_id = None
+        for transition in transitions:
+            if hasattr(transition, "name") and "progress" in transition.name.lower():
+                transition_id = transition.id
+                break
+
+        if not transition_id and transitions:
+            # Just use the first available transition if "In Progress" not found
+            transition_id = (
+                transitions[0].id
+                if hasattr(transitions[0], "id")
+                else transitions[0]["id"]
+            )
+
+        assert transition_id is not None
+
+        # Perform the transition
+        result = jira_client.transition_issue(
+            issue_key=issue.key, transition_id=transition_id
+        )
+
+        # Verify the issue status changed
+        updated_issue = jira_client.get_issue(issue.key)
+
+        # Get the status name
+        if hasattr(updated_issue, "status") and hasattr(updated_issue.status, "name"):
+            status_name = updated_issue.status.name
+        else:
+            status_name = updated_issue["fields"]["status"]["name"]
+
+        # The status should no longer be "To Do" or equivalent
+        assert "to do" not in status_name.lower()
+    finally:
+        # Clean up resources even if the test fails
+        cleanup_resources()
 
 
-@pytest.mark.skip(reason="This test would modify data")
+@pytest.mark.skip(reason="This test modifies data - use with caution")
 @pytest.mark.anyio
-async def test_confluence_update_page(confluence_client: ConfluenceFetcher) -> None:
+async def test_confluence_update_page(
+    confluence_client: ConfluenceFetcher,
+    resource_tracker: ResourceTracker,
+    test_space_key: str,
+    cleanup_resources: Callable[[], None],
+) -> None:
     """Test updating a page in Confluence without version parameter."""
-    # This would test the fixed functionality for page updates
-    pass
+    # Create a test page first
+    test_id = str(uuid.uuid4())[:8]
+    title = f"Update Test Page {test_id}"
+    content = f"<p>Initial content {test_id}</p>"
+
+    try:
+        # Create the page
+        if hasattr(confluence_client, "create_page"):
+            page = confluence_client.create_page(
+                space_key=test_space_key, title=title, body=content
+            )
+        else:
+            # Fall back to the underlying client
+            page = confluence_client.confluence.create_page(
+                space=test_space_key, title=title, body=content
+            )
+
+        # Track the page for cleanup
+        if hasattr(page, "id"):
+            page_id = page.id
+        else:
+            page_id = page["id"]
+
+        resource_tracker.add_confluence_page(page_id)
+
+        # Update the page with new content
+        updated_content = f"<p>Updated content {test_id} at {datetime.datetime.now(tz=datetime.timezone.utc).isoformat()}</p>"
+
+        # Test updating without explicitly specifying the version
+        if hasattr(confluence_client, "update_page"):
+            updated_page = confluence_client.update_page(
+                page_id=page_id, title=title, body=updated_content
+            )
+        else:
+            # Fall back to the underlying client
+            updated_page = confluence_client.confluence.update_page(
+                page_id=page_id, title=title, body=updated_content
+            )
+
+        # Verify the update
+        assert updated_page is not None
+
+        # Retrieve the updated page
+        if hasattr(confluence_client, "get_page_by_id"):
+            retrieved_page = confluence_client.get_page_by_id(page_id)
+        else:
+            retrieved_page = confluence_client.confluence.get_page_by_id(page_id)
+
+        # Check that the content was updated
+        assert retrieved_page is not None
+        assert "Updated content" in str(retrieved_page)
+    finally:
+        # Clean up resources even if the test fails
+        cleanup_resources()

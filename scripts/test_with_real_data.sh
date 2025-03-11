@@ -30,15 +30,20 @@ while [[ $# -gt 0 ]]; do
       VERBOSITY="-vv"
       shift
       ;;
+    --with-write-tests)
+      RUN_WRITE_TESTS=true
+      shift
+      ;;
     --help)
       echo "Usage: $0 [options]"
       echo "Options:"
-      echo "  --models-only   Test only Pydantic models"
-      echo "  --api-only      Test only API integration"
-      echo "  --all           Test both models and API (default)"
-      echo "  --quiet         Minimal output"
-      echo "  --verbose       More detailed output"
-      echo "  --help          Show this help message"
+      echo "  --models-only      Test only Pydantic models"
+      echo "  --api-only         Test only API integration"
+      echo "  --all              Test both models and API (default)"
+      echo "  --quiet            Minimal output"
+      echo "  --verbose          More detailed output"
+      echo "  --with-write-tests Include tests that modify data (use with caution!)"
+      echo "  --help             Show this help message"
       exit 0
       ;;
     *)
@@ -65,6 +70,8 @@ source .env
 export JIRA_TEST_ISSUE_KEY="TES-26"
 export JIRA_TEST_EPIC_KEY="TES-25"
 export CONFLUENCE_TEST_PAGE_ID="3823370492"
+export JIRA_TEST_PROJECT_KEY="TES"
+export CONFLUENCE_TEST_SPACE_KEY="TestMCP"
 
 # Ensure required environment variables are set
 required_vars=(
@@ -103,8 +110,29 @@ run_model_tests() {
 # Function to run API tests
 run_api_tests() {
     echo ""
-    echo "===== API Validation Tests ====="
+    echo "===== API Read-Only Tests ====="
+
+    # Run the read-only tests
     uv run pytest tests/test_real_api_validation.py::test_jira_get_issue tests/test_real_api_validation.py::test_jira_get_epic_issues tests/test_real_api_validation.py::test_confluence_get_page_content $VERBOSITY
+
+    if [[ "$RUN_WRITE_TESTS" == "true" ]]; then
+        echo ""
+        echo "===== API Write Operation Tests ====="
+        echo "WARNING: These tests will create and modify data in your Atlassian instance."
+        echo "Press Ctrl+C now to cancel, or wait 5 seconds to continue..."
+        sleep 5
+
+        # Run the write operation tests
+        uv run pytest tests/test_real_api_validation.py::test_jira_create_issue tests/test_real_api_validation.py::test_jira_add_comment tests/test_real_api_validation.py::test_confluence_create_page $VERBOSITY
+
+        # Optionally run the skipped tests if explicitly requested
+        if [[ "$RUN_WRITE_TESTS" == "true" ]]; then
+            echo ""
+            echo "===== API Advanced Write Tests ====="
+            # These are still skipped by default, so we need to use -k to enable them
+            uv run pytest tests/test_real_api_validation.py::test_jira_transition_issue tests/test_real_api_validation.py::test_confluence_update_page -v --no-skip
+        fi
+    fi
 }
 
 # Run the appropriate tests based on the selected type
