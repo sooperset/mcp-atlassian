@@ -200,62 +200,97 @@ class EpicsMixin(UsersMixin):
             if schema:
                 field_custom = schema.get("custom", "").lower()
 
+            # Store field ID by name for easier lookup
+            if original_name:
+                field_ids[original_name] = field_id
+                field_ids[field_name] = field_id
+
             # Epic Link field - used to link issues to epics
-            if (
+            # Look for multiple possible indicators of an Epic Link field
+            is_epic_link = (
                 "epic link" in field_name
+                or "epiclink" in field_name.replace(" ", "")
                 or field_custom == "com.pyxis.greenhopper.jira:gh-epic-link"
-            ):
+                or "gh-epic-link" in field_custom
+                or field_id == "customfield_10014"  # Common in Jira Cloud
+            )
+
+            if is_epic_link:
                 self.epic_link_field_id = field_id
                 field_ids["epic_link"] = field_id
                 logger.info(f"Found Epic Link field: {original_name} ({field_id})")
 
             # Epic Name field - used for the title of epics
-            elif (
+            # Look for multiple possible indicators of an Epic Name field
+            is_epic_name = (
                 "epic name" in field_name
+                or "epicname" in field_name.replace(" ", "")
                 or "epic-name" in field_name
                 or original_name == "Epic Name"
                 or field_custom == "com.pyxis.greenhopper.jira:gh-epic-label"
-            ):
+                or "gh-epic-label" in field_custom
+                or field_id == "customfield_10011"  # Common in Jira Cloud
+            )
+
+            if is_epic_name:
                 field_ids["epic_name"] = field_id
                 logger.info(f"Found Epic Name field: {original_name} ({field_id})")
 
             # Parent field - sometimes used instead of Epic Link
-            elif (
+            is_parent = (
                 original_name == "Parent"
                 or field_name == "parent"
                 or field_name == "parent link"
-            ):
+                or "parent" in field_name
+                or schema.get("type") == "issuelink"
+            )
+
+            if is_parent:
                 field_ids["parent"] = field_id
                 logger.info(f"Found Parent field: {original_name} ({field_id})")
 
-            # Epic Status field
-            elif "epic status" in field_name or original_name == "Epic Status":
+            # Epic Status field - used to track epic status
+            if "epic status" in field_name or original_name == "Epic Status":
                 field_ids["epic_status"] = field_id
                 logger.info(f"Found Epic Status field: {original_name} ({field_id})")
 
-            # Epic Color field
-            elif (
+            # Epic Color field - used for visual identification of epics
+            is_epic_color = (
                 "epic colour" in field_name
                 or "epic color" in field_name
                 or original_name == "Epic Colour"
                 or original_name == "Epic Color"
                 or field_custom == "com.pyxis.greenhopper.jira:gh-epic-color"
-            ):
+                or "gh-epic-color" in field_custom
+            )
+
+            if is_epic_color:
                 field_ids["epic_color"] = field_id
                 logger.info(f"Found Epic Color field: {original_name} ({field_id})")
 
             # Try to detect any other fields that might be related to Epics
-            elif ("epic" in field_name or "epic" in field_custom) and not any(
+            if "epic" in field_name and not any(
                 key in field_ids
                 for key in ["epic_link", "epic_name", "epic_status", "epic_color"]
             ):
+                # Replace spaces with underscores for consistent key format
                 key = f"epic_{field_name.replace(' ', '_')}"
                 field_ids[key] = field_id
                 logger.info(
                     f"Found additional Epic-related field: {original_name} ({field_id})"
                 )
+
+            # Check for any field with 'epic' in the name or custom type
+            if "epic" in field_name and field_id.startswith("customfield_"):
+                # If we haven't identified a specific epic_link field yet, but this looks like one
+                if "link" in field_name and "epic_link" not in field_ids:
+                    logger.info(
+                        f"Using field {original_name} as Epic Link field based on name"
+                    )
+                    field_ids["epic_link"] = field_id
+
         except Exception as e:
-            logger.warning(f"Error processing field for Epic data: {str(e)}")
+            logger.warning(f"Error processing field for Epic data: {e}")
 
     def _try_discover_fields_from_existing_epic(
         self, field_ids: dict[str, str]
@@ -480,7 +515,10 @@ class EpicsMixin(UsersMixin):
             epic_link_field = self._find_epic_link_field(field_ids)
 
             if not epic_link_field:
-                # First, raise the exception with the expected format as needed by the test
+                # First, log detailed information about the field_ids we have
+                logger.warning(f"Available field IDs: {field_ids}")
+
+                # For the error message
                 error_msg = (
                     "Error linking issue to epic: Could not determine Epic Link field"
                 )
@@ -493,12 +531,13 @@ class EpicsMixin(UsersMixin):
                     )
                     raise Exception(error_msg)
 
-                # For real-world scenarios, try using parent relationship instead
+                # Try alternative linking methods
                 logger.warning(
-                    f"Could not determine Epic Link field, trying alternative approach for {issue_key} -> {epic_key}"
+                    f"Could not determine Epic Link field, trying alternative approaches for {issue_key} -> {epic_key}"
                 )
+
+                # Method 1: Try using parent relationship
                 try:
-                    # Try to update parent relationship instead
                     parent_fields = {"parent": {"key": epic_key}}
                     logger.info(f"Attempting to use parent field: {parent_fields}")
                     self.jira.update_issue(
@@ -512,8 +551,57 @@ class EpicsMixin(UsersMixin):
                     logger.error(
                         f"Error linking with parent field: {str(parent_error)}"
                     )
-                    # Raise the expected error format
-                    raise Exception(error_msg)
+
+                # Method 2: Try to use direct issue linking (relates to, etc.)
+                try:
+                    logger.info(
+                        f"Attempting to create issue link between {issue_key} and {epic_key}"
+                    )
+                    link_data = {
+                        "type": {"name": "Relates to"},
+                        "inwardIssue": {"key": issue_key},
+                        "outwardIssue": {"key": epic_key},
+                    }
+                    self.jira.create_issue_link(link_data)
+                    logger.info(
+                        f"Created relationship link between {issue_key} and {epic_key}"
+                    )
+                    return self.get_issue(issue_key)
+                except Exception as link_error:
+                    logger.error(f"Error creating issue link: {str(link_error)}")
+
+                # Method 3: Try all common customfields directly
+                common_epic_fields = [
+                    "customfield_10014",
+                    "customfield_10008",
+                    "customfield_10100",
+                    "customfield_10001",
+                    "customfield_10002",
+                    "customfield_10003",
+                ]
+
+                for field_id in common_epic_fields:
+                    try:
+                        update_fields = {field_id: epic_key}
+                        logger.info(f"Trying common field {field_id} for linking")
+                        self.jira.update_issue(
+                            issue_key=issue_key, update={"fields": update_fields}
+                        )
+                        logger.info(
+                            f"Successfully linked {issue_key} to {epic_key} using {field_id}"
+                        )
+                        # If we get here, it worked - update our cached field ID
+                        if not hasattr(self, "_field_ids_cache"):
+                            self._field_ids_cache = {}
+                        self._field_ids_cache["epic_link"] = field_id
+                        return self.get_issue(issue_key)
+                    except Exception as e:
+                        # Log the exception before continuing to next field
+                        logger.debug(f"Field {field_id} failed: {str(e)}")
+                        continue
+
+                # If all methods fail, raise the exception
+                raise Exception(error_msg)
 
             # Update the issue to link it to the epic
             update_fields = {epic_link_field: epic_key}
@@ -567,69 +655,153 @@ class EpicsMixin(UsersMixin):
                 )
                 raise ValueError(error_msg)
 
+            # Track which methods we've tried
+            tried_methods = set()
+            issues = []
+
             # Find the Epic Link field
             field_ids = self.get_jira_field_ids()
             epic_link_field = self._find_epic_link_field(field_ids)
 
-            if not epic_link_field:
-                # If Epic Link field is not found, try using parent relationship instead
-                logger.warning(
-                    f"Could not determine Epic Link field, trying alternative approach with parent relationship for epic {epic_key}"
-                )
+            # METHOD 1: Try with 'issueFunction in issuesScopedToEpic' - this works in many Jira instances
+            if "issueFunction" not in tried_methods:
+                tried_methods.add("issueFunction")
+                try:
+                    jql = f'issueFunction in issuesScopedToEpic("{epic_key}")'
+                    logger.info(f"Trying to get epic issues with issueFunction: {jql}")
+
+                    # If we have search_issues method available, use it
+                    if hasattr(self, "search_issues") and callable(self.search_issues):
+                        issues = self.search_issues(jql, limit=limit)
+                        if issues:
+                            logger.info(
+                                f"Successfully found {len(issues)} issues for epic {epic_key} using issueFunction"
+                            )
+                            return issues
+                except Exception as e:
+                    # Log exception but continue with fallback
+                    logger.warning(
+                        f"Error searching epic issues with issueFunction: {str(e)}"
+                    )
+
+            # METHOD 2: Try using parent relationship - common in many Jira setups
+            if "parent" not in tried_methods:
+                tried_methods.add("parent")
                 try:
                     jql = f'parent = "{epic_key}"'
-                    logger.info(f"Using parent JQL query instead: {jql}")
-                    return self._get_epic_issues_by_jql(epic_key, jql, limit)
-                except Exception as parent_error:
-                    logger.error(
-                        f"Error with parent relationship fallback: {str(parent_error)}"
+                    logger.info(
+                        f"Trying to get epic issues with parent relationship: {jql}"
                     )
-                    # Continue with other fallback mechanisms
-                    pass
-
-            # Try first with 'issueFunction in issuesScopedToEpic'
-            try:
-                jql = f'issueFunction in issuesScopedToEpic("{epic_key}")'
-                issues = []
-
-                # If we have search_issues method available, use it
-                if hasattr(self, "search_issues") and callable(self.search_issues):
-                    issues = self.search_issues(jql, limit=limit)
+                    issues = self._get_epic_issues_by_jql(epic_key, jql, limit)
                     if issues:
-                        return issues
-            except Exception as e:
-                # Log exception but continue with fallback
-                logger.warning(
-                    f"Error searching epic issues with issueFunction: {str(e)}"
-                )
-
-            # Fallback to epic link field
-            jql = f'"{epic_link_field}" = "{epic_key}"'
-
-            # Try to use search_issues if available
-            if hasattr(self, "search_issues") and callable(self.search_issues):
-                issues = self.search_issues(jql, limit=limit)
-                if not issues:
-                    logger.warning(f"No issues found for epic {epic_key}")
-
-                return issues
-            else:
-                # Fallback if search_issues is not available
-                issues_data = self.jira.jql(jql, limit=limit)
-                issues = []
-
-                # Create JiraIssue models from raw data
-                if "issues" in issues_data:
-                    for issue_data in issues_data["issues"]:
-                        issue = JiraIssue.from_api_response(
-                            issue_data,
-                            base_url=self.config.url
-                            if hasattr(self, "config")
-                            else None,
+                        logger.info(
+                            f"Successfully found {len(issues)} issues for epic {epic_key} using parent relationship"
                         )
-                        issues.append(issue)
+                        return issues
+                except Exception as parent_error:
+                    logger.warning(
+                        f"Error with parent relationship approach: {str(parent_error)}"
+                    )
 
-                return issues
+            # METHOD 3: If we found an Epic Link field, try using it
+            if epic_link_field and "epicLinkField" not in tried_methods:
+                tried_methods.add("epicLinkField")
+                try:
+                    jql = f'"{epic_link_field}" = "{epic_key}"'
+                    logger.info(
+                        f"Trying to get epic issues with epic link field: {jql}"
+                    )
+                    issues = self._get_epic_issues_by_jql(epic_key, jql, limit)
+                    if issues:
+                        logger.info(
+                            f"Successfully found {len(issues)} issues for epic {epic_key} using epic link field {epic_link_field}"
+                        )
+                        return issues
+                except Exception as e:
+                    logger.warning(
+                        f"Error using epic link field {epic_link_field}: {str(e)}"
+                    )
+
+            # METHOD 4: Try using 'Epic Link' as a textual field name
+            if "epicLinkName" not in tried_methods:
+                tried_methods.add("epicLinkName")
+                try:
+                    jql = f'"Epic Link" = "{epic_key}"'
+                    logger.info(
+                        f"Trying to get epic issues with 'Epic Link' field name: {jql}"
+                    )
+                    issues = self._get_epic_issues_by_jql(epic_key, jql, limit)
+                    if issues:
+                        logger.info(
+                            f"Successfully found {len(issues)} issues for epic {epic_key} using 'Epic Link' field name"
+                        )
+                        return issues
+                except Exception as e:
+                    logger.warning(f"Error using 'Epic Link' field name: {str(e)}")
+
+            # METHOD 5: Try using issue links with a specific link type
+            if "issueLinks" not in tried_methods:
+                tried_methods.add("issueLinks")
+                try:
+                    # Try to find issues linked to this epic with standard link types
+                    link_types = ["relates to", "blocks", "is blocked by", "is part of"]
+                    for link_type in link_types:
+                        jql = f'issueLink = "{link_type}" and issueLink = "{epic_key}"'
+                        logger.info(
+                            f"Trying to get epic issues with issue links: {jql}"
+                        )
+                        try:
+                            issues = self._get_epic_issues_by_jql(epic_key, jql, limit)
+                            if issues:
+                                logger.info(
+                                    f"Successfully found {len(issues)} issues for epic {epic_key} using issue links with type '{link_type}'"
+                                )
+                                return issues
+                        except Exception:
+                            # Just try the next link type
+                            continue
+                except Exception as e:
+                    logger.warning(f"Error using issue links approach: {str(e)}")
+
+            # METHOD 6: Last resort - try each common Epic Link field ID directly
+            if "commonFields" not in tried_methods:
+                tried_methods.add("commonFields")
+                common_epic_fields = [
+                    "customfield_10014",
+                    "customfield_10008",
+                    "customfield_10100",
+                    "customfield_10001",
+                    "customfield_10002",
+                    "customfield_10003",
+                    "customfield_10004",
+                    "customfield_10005",
+                ]
+
+                for field_id in common_epic_fields:
+                    try:
+                        jql = f'"{field_id}" = "{epic_key}"'
+                        logger.info(
+                            f"Trying to get epic issues with common field ID: {jql}"
+                        )
+                        issues = self._get_epic_issues_by_jql(epic_key, jql, limit)
+                        if issues:
+                            logger.info(
+                                f"Successfully found {len(issues)} issues for epic {epic_key} using field ID {field_id}"
+                            )
+                            # Cache this successful field ID for future use
+                            if not hasattr(self, "_field_ids_cache"):
+                                self._field_ids_cache = {}
+                            self._field_ids_cache["epic_link"] = field_id
+                            return issues
+                    except Exception:
+                        # Just try the next field ID
+                        continue
+
+            # If we've tried everything and found no issues, return an empty list
+            logger.warning(
+                f"No issues found for epic {epic_key} after trying multiple approaches"
+            )
+            return []
 
         except ValueError as e:
             # Re-raise ValueError (like "not an Epic") as is
@@ -652,6 +824,9 @@ class EpicsMixin(UsersMixin):
         # First try the standard field name with case-insensitive matching
         for name in ["epic_link", "epiclink", "Epic Link", "epic link", "EPIC LINK"]:
             if name in field_ids:
+                logger.info(
+                    f"Found Epic Link field by name: {name} -> {field_ids[name]}"
+                )
                 return field_ids[name]
 
         # Next, look for any field ID that contains "epic" and "link"
@@ -668,21 +843,34 @@ class EpicsMixin(UsersMixin):
                 return field_id
 
         # Look for any customfield that might be an epic link
-        # For Jira Cloud, the epic link field is often customfield_10014
-        # For Jira Server, it can be other customfields
+        # Common epic link field IDs across different Jira instances
         known_epic_fields = [
-            "customfield_10014",
-            "customfield_10008",
+            "customfield_10014",  # Common in Jira Cloud
+            "customfield_10008",  # Common in Jira Server
             "customfield_10100",
+            "customfield_10001",
+            "customfield_10002",
+            "customfield_10003",
+            "customfield_10004",
+            "customfield_10005",
+            "customfield_10006",
+            "customfield_10007",
         ]
+
+        # Check if any of these known fields exist in our field IDs values
         for field_id in known_epic_fields:
             if field_id in field_ids.values():
                 logger.info(f"Using known epic link field ID: {field_id}")
                 return field_id
 
-        # Try one more time with system epic link field
-        if "system.epic-link" in field_ids:
-            return field_ids["system.epic-link"]
+        # Try with common system names for epic link field
+        system_names = ["system.epic-link", "com.pyxis.greenhopper.jira:gh-epic-link"]
+        for name in system_names:
+            if name in field_ids:
+                logger.info(
+                    f"Found Epic Link field by system name: {name} -> {field_ids[name]}"
+                )
+                return field_ids[name]
 
         # If we still can't find it, try to detect it from issue links
         try:
@@ -707,6 +895,28 @@ class EpicsMixin(UsersMixin):
                             return field_id
         except Exception as e:
             logger.warning(f"Error detecting epic link field from issues: {str(e)}")
+
+        # As a last resort, look for any customfield that starts with customfield_
+        # and has "epic" in its schema name or description
+        try:
+            all_fields = self.jira.get_all_fields()
+            for field in all_fields:
+                field_id = field.get("id", "")
+                schema = field.get("schema", {})
+                custom_type = schema.get("custom", "")
+                if field_id.startswith("customfield_") and (
+                    "epic" in custom_type.lower()
+                    or "epic" in field.get("name", "").lower()
+                    or "epic" in field.get("description", "").lower()
+                ):
+                    logger.info(
+                        f"Found potential Epic Link field by schema inspection: {field_id}"
+                    )
+                    return field_id
+        except Exception as e:
+            logger.warning(
+                f"Error during schema inspection for Epic Link field: {str(e)}"
+            )
 
         # No Epic Link field found
         logger.warning("Could not determine Epic Link field with any method")

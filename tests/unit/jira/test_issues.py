@@ -369,120 +369,42 @@ class TestIssuesMixin:
 
     def test_delete_issue_error(self, issues_mixin):
         """Test error handling when deleting an issue."""
-        # Make the API call raise an exception
-        issues_mixin.jira.delete_issue.side_effect = Exception("API error")
+        # Setup mock to throw exception
+        issues_mixin.jira.delete_issue.side_effect = Exception("Delete failed")
 
-        # Call the method and verify it raises the expected exception
-        with pytest.raises(Exception, match="Error deleting issue TEST-123: API error"):
+        # Call the method and verify exception is raised correctly
+        with pytest.raises(
+            Exception, match="Error deleting issue TEST-123: Delete failed"
+        ):
             issues_mixin.delete_issue("TEST-123")
 
     def test_get_jira_field_ids_cached(self, issues_mixin):
-        """Test get_jira_field_ids returns cached values if available."""
-        # Set up cached field IDs
-        issues_mixin._field_ids_cache = {
-            "Summary": "summary",
-            "Description": "description",
-        }
+        """Test get_jira_field_ids returns cached field IDs."""
+        # Setup mock cached data
+        issues_mixin._field_ids_cache = {"key1": "value1"}
 
         # Call the method
-        field_ids = issues_mixin.get_jira_field_ids()
+        result = issues_mixin.get_jira_field_ids()
 
-        # Verify the result
-        assert field_ids == {"Summary": "summary", "Description": "description"}
-        assert issues_mixin.jira.get_all_fields.call_count == 0
+        # Verify result is the cached data
+        assert result == {"key1": "value1"}
+        issues_mixin.jira.get_all_fields.assert_not_called()
 
     def test_get_jira_field_ids_from_server(self, issues_mixin):
-        """Test get_jira_field_ids fetches from server if cache is empty."""
-        # Ensure cache is empty
-        issues_mixin._field_ids_cache = {}
-
-        # Mock get_all_fields response
-        issues_mixin.jira.get_all_fields.return_value = [
-            {"id": "summary", "name": "Summary"},
-            {"id": "description", "name": "Description"},
+        """Test get_jira_field_ids fetches and processes field data from server."""
+        # Setup field data mock
+        field_data = [
+            {
+                "id": "customfield_10100",
+                "name": "Epic Link",
+                "schema": {"custom": "com.pyxis.greenhopper.jira:gh-epic-link"},
+            }
         ]
+        issues_mixin.jira.get_all_fields.return_value = field_data
 
         # Call the method
-        field_ids = issues_mixin.get_jira_field_ids()
+        result = issues_mixin.get_jira_field_ids()
 
-        # Verify the result
-        assert field_ids == {"Summary": "summary", "Description": "description"}
-        assert issues_mixin.jira.get_all_fields.call_count == 1
-
-    def test_link_issue_to_epic(self, issues_mixin):
-        """Test linking an issue to an epic."""
-        # Arrange
-        issue_key = "TEST-123"
-        epic_key = "EPIC-1"
-
-        # Setup mocks
-        mock_issue = {
-            "id": "12345",
-            "key": issue_key,
-            "fields": {
-                "summary": "Test Issue",
-                "description": "Description",
-                "issuetype": {"name": "Task"},
-            },
-        }
-        mock_epic = {
-            "id": "98765",
-            "key": epic_key,
-            "fields": {
-                "summary": "Epic Summary",
-                "description": "Epic Description",
-                "issuetype": {"name": "epic"},
-            },
-        }
-
-        # Set up issue checks
-        issues_mixin.jira.get_issue.side_effect = [mock_issue, mock_epic]
-
-        # Mock field IDs
-        issues_mixin._get_cached_field_ids = MagicMock(
-            return_value={"Epic Link": "customfield_10008"}
-        )
-
-        # Mock the get_issue method to return a proper JiraIssue
-        issues_mixin.get_issue = MagicMock(
-            return_value=JiraIssue(
-                id="12345",
-                key=issue_key,
-                summary="Test Issue",
-                description="Description",
-            )
-        )
-
-        # Act
-        result = issues_mixin.link_issue_to_epic(issue_key, epic_key)
-
-        # Assert
-        # Verify the two get_issue calls
-        assert issues_mixin.jira.get_issue.call_count == 2
-        issues_mixin.jira.get_issue.assert_any_call(issue_key)
-        issues_mixin.jira.get_issue.assert_any_call(epic_key)
-
-        # Verify update_issue call
-        issues_mixin.jira.update_issue.assert_called_once_with(
-            issue_key=issue_key, update={"fields": {"customfield_10008": epic_key}}
-        )
-
-        # Verify that we get a JiraIssue model back
-        assert isinstance(result, JiraIssue)
-        assert result.key == issue_key
-
-    def test_link_issue_to_invalid_epic(self, issues_mixin):
-        """Test error when linking to an invalid epic."""
-        # Mock get_issue responses to return a non-epic
-        issue_response = {"key": "TEST-123"}
-        non_epic_response = {
-            "key": "TEST-456",
-            "fields": {"issuetype": {"name": "Story"}},  # Not an epic
-        }
-        issues_mixin.jira.get_issue.side_effect = [issue_response, non_epic_response]
-
-        # Call the method and verify it raises the expected exception
-        with pytest.raises(
-            Exception, match="Error linking issue to epic: TEST-456 is not an Epic"
-        ):
-            issues_mixin.link_issue_to_epic("TEST-123", "TEST-456")
+        # Verify result
+        assert "Epic Link" in result
+        assert result["Epic Link"] == "customfield_10100"

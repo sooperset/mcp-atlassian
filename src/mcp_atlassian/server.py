@@ -381,7 +381,7 @@ async def list_tools() -> list[Tool]:
                                 "type": "string",
                                 "description": "The new content of the page in Markdown format",
                             },
-                            "minor_edit": {
+                            "is_minor_edit": {
                                 "type": "boolean",
                                 "description": "Whether this is a minor edit",
                                 "default": False,
@@ -812,7 +812,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             page_id = arguments.get("page_id")
             title = arguments.get("title")
             content = arguments.get("content")
-            minor_edit = arguments.get("minor_edit", False)
+            is_minor_edit = arguments.get("is_minor_edit", False)
             version_comment = arguments.get("version_comment", "")
 
             # Convert markdown to Confluence storage format
@@ -823,7 +823,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 page_id=page_id,
                 title=title,
                 body=storage_format,
-                is_minor_edit=minor_edit,
+                is_minor_edit=is_minor_edit,
                 version_comment=version_comment,
             )
 

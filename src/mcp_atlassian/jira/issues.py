@@ -781,111 +781,57 @@ class IssuesMixin(UsersMixin):
         self, field_ids: dict[str, str]
     ) -> None:
         """
-        Try to discover field IDs from an existing epic.
+        Try to discover epic fields by analyzing existing epics and linked issues.
 
         Args:
             field_ids: Dictionary of field IDs to update
         """
-        # If we already have both epic fields, no need to search
-        if "Epic Link" in field_ids and "Epic Name" in field_ids:
-            return
-
         try:
-            # Search for an epic
-            results = self.jira.jql("issuetype = Epic", fields="*all", limit=1)
-            issues = results.get("issues", [])
+            # Try to find an epic using JQL search
+            jql = "issuetype = Epic ORDER BY created DESC"
+            results = self.jira.jql(jql, limit=1)
 
-            if not issues:
+            if not results or not results.get("issues"):
                 return
 
             # Get the first epic
-            epic = issues[0]
-            fields = epic.get("fields", {})
+            epic = results["issues"][0]
+            epic_key = epic.get("key")
 
-            # Check each field for epic-related data
-            for field_id, value in fields.items():
-                if field_id.startswith("customfield_"):
-                    field_name = field_id.lower()
+            if not epic_key:
+                return
 
-                    # Check for Epic Name field
-                    if "Epic Name" not in field_ids and isinstance(value, str):
-                        field_ids["Epic Name"] = field_id
+            # Try to find issues linked to this epic using JQL
+            linked_jql = f'issue in linkedIssues("{epic_key}") ORDER BY created DESC'
+            results = self.jira.jql(linked_jql, limit=10)
 
-            # Also try to find Epic Link by searching for issues linked to an epic
-            if "Epic Link" not in field_ids:
-                # Search for issues that might be linked to epics
-                results = self.jira.jql("project is not empty", fields="*all", limit=10)
-                issues = results.get("issues", [])
+            if not results or not results.get("issues"):
+                return
 
-                for issue in issues:
-                    fields = issue.get("fields", {})
+            # Check issues for potential epic link fields
+            issues = results.get("issues", [])
 
-                    # Check each field for a potential epic link
-                    for field_id, value in fields.items():
-                        if (
-                            field_id.startswith("customfield_")
-                            and value
-                            and isinstance(value, str)
-                        ):
-                            # If it looks like a key (e.g., PRJ-123), it might be an epic link
-                            if "-" in value and any(c.isdigit() for c in value):
-                                field_ids["Epic Link"] = field_id
-                                break
+            for issue in issues:
+                fields = issue.get("fields", {})
+
+                # Check each field for a potential epic link
+                for field_id, value in fields.items():
+                    if (
+                        field_id.startswith("customfield_")
+                        and value
+                        and isinstance(value, str)
+                    ):
+                        # If it looks like a key (e.g., PRJ-123), it might be an epic link
+                        if "-" in value and any(c.isdigit() for c in value):
+                            field_ids["Epic Link"] = field_id
+                            break
 
         except Exception as e:
             logger.debug(f"Error discovering epic fields: {str(e)}")
 
-    def link_issue_to_epic(self, issue_key: str, epic_key: str) -> JiraIssue:
-        """
-        Link an issue to an epic.
-
-        Args:
-            issue_key: The key of the issue to link
-            epic_key: The key of the epic to link to
-
-        Returns:
-            JiraIssue model with the updated issue data
-
-        Raises:
-            Exception: If there is an error linking the issue
-        """
-        try:
-            # Verify both keys exist
-            self.jira.get_issue(issue_key)
-            epic = self.jira.get_issue(epic_key)
-
-            # Verify epic_key is actually an epic
-            fields = epic.get("fields", {})
-            issue_type = fields.get("issuetype", {}).get("name", "").lower()
-
-            if issue_type != "epic":
-                error_msg = f"Error linking issue to epic: {epic_key} is not an Epic"
-                raise ValueError(error_msg)
-
-            # Get the epic link field ID
-            field_ids = self.get_jira_field_ids()
-            epic_link_field = field_ids.get("Epic Link")
-
-            if not epic_link_field:
-                error_msg = "Could not determine Epic Link field"
-                raise ValueError(error_msg)
-
-            # Update the issue to link it to the epic
-            update_fields = {epic_link_field: epic_key}
-            self.jira.update_issue(
-                issue_key=issue_key, update={"fields": update_fields}
-            )
-
-            # Return the updated issue
-            return self.get_issue(issue_key)
-
-        except Exception as e:
-            logger.error(f"Error linking {issue_key} to epic {epic_key}: {str(e)}")
-            raise
-
     def get_available_transitions(self, issue_key: str) -> list[dict]:
         """
-        Get available transitions for an issue.
+        Get all available transitions for an issue.
 
         Args:
             issue_key: The key of the issue

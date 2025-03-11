@@ -267,19 +267,21 @@ class TestPagesMixin:
 
             # Assert
             # Verify update_page was called with the correct arguments
-            # Note: The version parameter is not included as the underlying API handles versioning internally
+            # We now include type='page' and always_update=True parameters
             pages_mixin.confluence.update_page.assert_called_once_with(
                 page_id=page_id,
                 title=title,
                 body=body,
+                type="page",
+                representation="storage",
                 minor_edit=is_minor_edit,
                 version_comment=version_comment,
-                representation="storage",
+                always_update=True,
             )
 
-            # Verify get_page_content was called twice: once to get the current version,
-            # and once to get the updated page
-            assert pages_mixin.get_page_content.call_count == 2
+            # Verify get_page_content was called once to get the updated page
+            # (we no longer get the current version before updating)
+            assert pages_mixin.get_page_content.call_count == 1
 
     def test_update_page_error(self, pages_mixin):
         """Test error handling when updating a page."""

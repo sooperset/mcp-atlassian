@@ -244,21 +244,23 @@ class PagesMixin(ConfluenceClient):
             Exception: If there is an error updating the page
         """
         try:
-            # Get the current version of the page
-            _ = self.get_page_content(page_id)
-
-            # The underlying Confluence API handles versioning internally
+            # We'll let the underlying Confluence API handle this operation completely
+            # as it has internal logic for versioning and updating
             logger.debug(f"Updating page {page_id} with title '{title}'")
-            self.confluence.update_page(
+
+            # Simply pass through all parameters, making sure to match parameter names
+            response = self.confluence.update_page(
                 page_id=page_id,
                 title=title,
                 body=body,
-                minor_edit=is_minor_edit,
-                version_comment=version_comment,
+                type="page",
                 representation="storage",
+                minor_edit=is_minor_edit,  # This matches the parameter name in the API
+                version_comment=version_comment,
+                always_update=True,  # Force update to avoid content comparison issues
             )
 
-            # Get the updated page
+            # After update, refresh the page data
             return self.get_page_content(page_id)
         except Exception as e:
             logger.error(f"Error updating page {page_id}: {str(e)}")
