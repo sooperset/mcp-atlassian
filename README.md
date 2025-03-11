@@ -37,14 +37,6 @@ Alternatively you can install mcp-atlassian via pip:
 pip install mcp-atlassian
 ```
 
-### Installing via Smithery
-
-To install Atlassian Integration for Claude Desktop automatically via [Smithery](https://smithery.ai/server/mcp-atlassian):
-
-```bash
-npx -y @smithery/cli install mcp-atlassian --client claude
-```
-
 ## Configuration
 
 The MCP Atlassian integration supports using either Confluence, Jira, or both services. You only need to provide the environment variables for the service(s) you want to use.
@@ -53,18 +45,17 @@ The MCP Atlassian integration supports using either Confluence, Jira, or both se
 
 #### For Atlassian Cloud (Confluence and Jira Cloud)
 
-1. Get API tokens from: https://id.atlassian.com/manage-profile/security/api-tokens
+Generate an API token for Atlassian Cloud:
+- Go to https://id.atlassian.com/manage-profile/security/api-tokens
+- Click **Create API token**, name it
+- Copy the token immediately (it won't be shown again)
 
 #### For Jira Server/Data Center
 
-1. Generate a Personal Access Token in your Jira Server/Data Center (version 8.14 or later):
-   - Navigate to your profile by clicking on your avatar in the top right corner
-   - Select **Profile** → **Personal Access Tokens**
-     *(Alternative path in some versions: Account Settings → Security → Personal Access Tokens)*
-   - Click **Create token**
-   - Give your token a meaningful name (e.g., "MCP Integration")
-   - Set an expiry date (or choose "Never" if permitted by your organization)
-   - Copy the generated token immediately (you won't be able to see it again)
+Generate a Personal Access Token in Jira Server/Data Center (v8.14+):
+- Go to your profile (avatar) → **Profile** → **Personal Access Tokens**
+- Click **Create token**, name it, set expiry
+- Copy the token immediately after generation (it won't be shown again)
 
 ### Usage with Claude Desktop
 
@@ -188,12 +179,20 @@ There are two ways to configure the Docker environment:
 
 The .env file should contain:
 ```env
-CONFLUENCE_URL=https://your-domain.atlassian.net/wiki
-CONFLUENCE_USERNAME=your.email@domain.com
-CONFLUENCE_API_TOKEN=your_api_token
-JIRA_URL=https://your-domain.atlassian.net
-JIRA_USERNAME=your.email@domain.com
-JIRA_API_TOKEN=your_api_token
+# Confluence
+CONFLUENCE_URL=https://your-domain.atlassian.net/wiki  # Your Confluence cloud URL
+CONFLUENCE_USERNAME=your.email@domain.com              # Your Atlassian account email
+CONFLUENCE_API_TOKEN=your_api_token                    # API token for Confluence
+#
+# Jira Cloud
+JIRA_URL=https://your-domain.atlassian.net            # Your Jira cloud URL
+JIRA_USERNAME=your.email@domain.com                   # Your Atlassian account email
+JIRA_API_TOKEN=your_api_token                         # API token for Jira Cloud
+
+# Jira Server/Data Center (alternative to JIRA_USERNAME and JIRA_API_TOKEN)
+# JIRA_URL=https://jira.your-company.com              # Your Jira Server/Data Center URL
+# JIRA_PERSONAL_TOKEN=your_personal_access_token      # Personal Access Token for Jira Server/Data Center
+# JIRA_SSL_VERIFY=true                                # Set to 'false' for self-signed certificates
 ```
 
 </details>
