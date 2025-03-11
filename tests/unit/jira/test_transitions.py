@@ -162,7 +162,7 @@ class TestTransitionsMixin:
 
         # Verify
         transitions_mixin.jira.set_issue_status.assert_called_once_with(
-            issue_key="TEST-123", status_name=10, fields=None, update=None
+            issue_key="TEST-123", status_name="In Progress", fields=None, update=None
         )
         transitions_mixin.get_issue.assert_called_once_with("TEST-123")
         assert isinstance(result, JiraIssue)
@@ -175,9 +175,9 @@ class TestTransitionsMixin:
         # Call the method with int ID
         transitions_mixin.transition_issue("TEST-123", 10)
 
-        # Verify ID was passed as integer
+        # Verify status name is used instead of ID
         transitions_mixin.jira.set_issue_status.assert_called_once_with(
-            issue_key="TEST-123", status_name=10, fields=None, update=None
+            issue_key="TEST-123", status_name="In Progress", fields=None, update=None
         )
 
     def test_transition_issue_with_fields(self, transitions_mixin):
@@ -194,7 +194,7 @@ class TestTransitionsMixin:
         # Verify fields were passed correctly
         transitions_mixin.jira.set_issue_status.assert_called_once_with(
             issue_key="TEST-123",
-            status_name=10,
+            status_name="In Progress",
             fields={"summary": "Updated"},
             update=None,
         )
@@ -210,7 +210,7 @@ class TestTransitionsMixin:
 
         # Verify fields were passed as None
         transitions_mixin.jira.set_issue_status.assert_called_once_with(
-            issue_key="TEST-123", status_name=10, fields=None, update=None
+            issue_key="TEST-123", status_name="In Progress", fields=None, update=None
         )
 
     def test_transition_issue_with_comment(self, transitions_mixin):
@@ -236,7 +236,7 @@ class TestTransitionsMixin:
         # Verify set_issue_status was called with the right parameters
         transitions_mixin.jira.set_issue_status.assert_called_once_with(
             issue_key="TEST-123",
-            status_name=10,
+            status_name="In Progress",
             fields=None,
             update={"comment": [{"add": {"body": comment}}]},
         )
@@ -251,7 +251,7 @@ class TestTransitionsMixin:
 
         # Verify
         transitions_mixin.jira.set_issue_status.assert_called_once_with(
-            issue_key="TEST-123", status_name=10, fields=None, update=None
+            issue_key="TEST-123", status_name="In Progress", fields=None, update=None
         )
         assert isinstance(result, JiraIssue)
         assert result.key == "TEST-123"
@@ -269,6 +269,38 @@ class TestTransitionsMixin:
             match="Error transitioning issue TEST-123 with transition ID 10: Transition error",
         ):
             transitions_mixin.transition_issue("TEST-123", "10")
+
+    def test_transition_issue_without_status_name(self, transitions_mixin):
+        """Test transition_issue when status name is not available."""
+        # Setup - create a transition without to_status
+        mock_transitions = [
+            JiraTransition(
+                id="10",
+                name="Start Progress",
+                to_status=None,
+            )
+        ]
+        transitions_mixin.get_transitions_models = MagicMock(
+            return_value=mock_transitions
+        )
+
+        # Add mock for set_issue_status_by_transition_id
+        transitions_mixin.jira.set_issue_status_by_transition_id = MagicMock()
+
+        # Call the method
+        result = transitions_mixin.transition_issue("TEST-123", "10")
+
+        # Verify direct transition ID was used
+        transitions_mixin.jira.set_issue_status_by_transition_id.assert_called_once_with(
+            issue_key="TEST-123", transition_id=10
+        )
+
+        # Verify standard status call was not made
+        transitions_mixin.jira.set_issue_status.assert_not_called()
+
+        # Verify result
+        transitions_mixin.get_issue.assert_called_once_with("TEST-123")
+        assert isinstance(result, JiraIssue)
 
     def test_normalize_transition_id(self, transitions_mixin):
         """Test _normalize_transition_id with various input types."""
