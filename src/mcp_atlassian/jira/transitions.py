@@ -226,6 +226,26 @@ class TransitionsMixin(JiraClient):
         Returns:
             String representation of transition ID
         """
+        logger.debug(
+            f"Normalizing transition_id: {transition_id}, type: {type(transition_id)}"
+        )
+        if isinstance(transition_id, dict):
+            # Handle the case where transition_id is a dict
+            logger.warning(
+                f"Received dict for transition_id when string expected: {transition_id}"
+            )
+            if "id" in transition_id:
+                return str(transition_id["id"])
+            else:
+                # Fall back to first value if no id key
+                for key, value in transition_id.items():
+                    if value and isinstance(value, str | int):
+                        logger.warning(
+                            f"Using {key}={value} as transition ID from dict"
+                        )
+                        return str(value)
+                # Last resort
+                return str(list(transition_id.values())[0]) if transition_id else "0"
         return str(transition_id)
 
     def _sanitize_transition_fields(self, fields: dict[str, Any]) -> dict[str, Any]:

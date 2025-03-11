@@ -328,7 +328,7 @@ class TestIssuesMixin:
 
         # Verify the API calls
         issues_mixin.jira.update_issue.assert_called_once_with(
-            issue_id="TEST-123", fields={"summary": "Updated Summary"}
+            issue_key="TEST-123", fields={"summary": "Updated Summary"}
         )
         issues_mixin.jira.issue.assert_called_once_with("TEST-123")
 
@@ -464,7 +464,7 @@ class TestIssuesMixin:
 
         # Verify update_issue call
         issues_mixin.jira.update_issue.assert_called_once_with(
-            issue_key, fields={"customfield_10008": epic_key}
+            issue_key=issue_key, fields={"customfield_10008": epic_key}
         )
 
         # Verify that we get a JiraIssue model back

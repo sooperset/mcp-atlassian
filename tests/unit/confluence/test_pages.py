@@ -267,13 +267,13 @@ class TestPagesMixin:
 
             # Assert
             # Verify update_page was called with the correct arguments
+            # Note: The version parameter is not included as the underlying API handles versioning internally
             pages_mixin.confluence.update_page.assert_called_once_with(
                 page_id=page_id,
                 title=title,
                 body=body,
                 minor_edit=is_minor_edit,
                 version_comment=version_comment,
-                version=2,  # Version number + 1
                 representation="storage",
             )
 

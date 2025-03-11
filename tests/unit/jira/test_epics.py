@@ -318,7 +318,7 @@ class TestEpicsMixin:
 
         # Verify API calls
         epics_mixin.jira.update_issue.assert_called_once_with(
-            "TEST-123", fields={"customfield_10014": "EPIC-456"}
+            issue_key="TEST-123", fields={"customfield_10014": "EPIC-456"}
         )
         epics_mixin.get_issue.assert_called_once_with("TEST-123")
 

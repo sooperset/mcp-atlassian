@@ -245,18 +245,16 @@ class PagesMixin(ConfluenceClient):
         """
         try:
             # Get the current version of the page
-            # Note: In testing, this get_page_by_id call is replaced by the mocked document
-            current_page = self.get_page_content(page_id)
-            current_version = current_page.version.number if current_page.version else 1
+            _ = self.get_page_content(page_id)
 
-            # Update the page
+            # The underlying Confluence API handles versioning internally
+            logger.debug(f"Updating page {page_id} with title '{title}'")
             self.confluence.update_page(
                 page_id=page_id,
                 title=title,
                 body=body,
                 minor_edit=is_minor_edit,
                 version_comment=version_comment,
-                version=current_version + 1,
                 representation="storage",
             )
 

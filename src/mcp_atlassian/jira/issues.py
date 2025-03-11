@@ -579,7 +579,7 @@ class IssuesMixin(UsersMixin):
 
             # Update the issue
             if update_fields:
-                self.jira.update_issue(issue_id=issue_key, fields=update_fields)
+                self.jira.update_issue(issue_key=issue_key, fields=update_fields)
 
             # Get the updated issue data and convert to JiraIssue model
             issue_data = self.jira.issue(issue_key)
@@ -611,7 +611,7 @@ class IssuesMixin(UsersMixin):
 
         # First update any fields if needed
         if fields:
-            self.jira.update_issue(issue_id=issue_key, fields=fields)
+            self.jira.update_issue(issue_key=issue_key, fields=fields)
 
         # If no status change is requested, return the issue
         if not status:
@@ -868,7 +868,7 @@ class IssuesMixin(UsersMixin):
 
             # Update the issue to link it to the epic
             update_fields = {epic_link_field: epic_key}
-            self.jira.update_issue(issue_key, fields=update_fields)
+            self.jira.update_issue(issue_key=issue_key, fields=update_fields)
 
             # Return the updated issue
             return self.get_issue(issue_key)
