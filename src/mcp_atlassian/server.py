@@ -960,19 +960,28 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 except json.JSONDecodeError:
                     raise ValueError("Invalid JSON in additional_fields")
 
-            # Update the issue
-            issue = ctx.jira.update_issue(
-                issue_key=issue_key, fields=fields, **additional_fields
-            )
-
-            result = issue.to_simplified_dict()
-
-            return [
-                TextContent(
-                    type="text",
-                    text=f"Issue updated successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}",
+            try:
+                # Update the issue - directly pass fields to JiraFetcher.update_issue
+                # instead of using fields as a parameter name
+                issue = ctx.jira.update_issue(
+                    issue_key=issue_key, **fields, **additional_fields
                 )
-            ]
+
+                result = issue.to_simplified_dict()
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=f"Issue updated successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}",
+                    )
+                ]
+            except Exception as e:
+                return [
+                    TextContent(
+                        type="text",
+                        text=f"Error updating issue {issue_key}: {str(e)}",
+                    )
+                ]
 
         elif name == "jira_delete_issue":
             if not ctx or not ctx.jira:
@@ -1129,6 +1138,12 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             transition_id = arguments.get("transition_id")
             comment = arguments.get("comment")
 
+            # Validate required parameters
+            if not issue_key:
+                raise ValueError("issue_key is required")
+            if not transition_id:
+                raise ValueError("transition_id is required")
+
             # Parse fields JSON
             fields = {}
             if arguments.get("fields"):
@@ -1137,24 +1152,35 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 except json.JSONDecodeError:
                     raise ValueError("Invalid JSON in fields")
 
-            # Transition the issue
-            issue = ctx.jira.transition_issue(
-                issue_key=issue_key,
-                transition_id=transition_id,
-                fields=fields,
-                comment=comment,
-            )
-
-            result = {
-                "message": f"Issue {issue_key} transitioned successfully",
-                "issue": issue.to_simplified_dict() if issue else None,
-            }
-
-            return [
-                TextContent(
-                    type="text", text=json.dumps(result, indent=2, ensure_ascii=False)
+            try:
+                # Transition the issue
+                issue = ctx.jira.transition_issue(
+                    issue_key=issue_key,
+                    transition_id=transition_id,
+                    fields=fields,
+                    comment=comment,
                 )
-            ]
+
+                result = {
+                    "message": f"Issue {issue_key} transitioned successfully",
+                    "issue": issue.to_simplified_dict() if issue else None,
+                }
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(result, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error transitioning issue {issue_key} with transition ID {transition_id}: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
 
         raise ValueError(f"Unknown tool: {name}")
 

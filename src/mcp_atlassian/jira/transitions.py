@@ -146,27 +146,34 @@ class TransitionsMixin(JiraClient):
                 )
                 # Continue anyway as Jira will validate
 
-            # Prepare transition data
-            transition_data: dict[str, Any] = {"transition": {"id": transition_id_str}}
-
-            # Add fields if provided
+            # Sanitize fields if provided
+            fields_for_api = None
             if fields:
                 sanitized_fields = self._sanitize_transition_fields(fields)
                 if sanitized_fields:
-                    transition_data["fields"] = sanitized_fields
+                    fields_for_api = sanitized_fields
 
-            # Add comment if provided
+            # Prepare update data for comments if provided
+            update_for_api = None
             if comment:
-                self._add_comment_to_transition_data(transition_data, comment)
+                # Create a temporary dict to hold the transition data
+                temp_transition_data = {}
+                self._add_comment_to_transition_data(temp_transition_data, comment)
+                update_for_api = temp_transition_data.get("update")
 
             # Log the transition request for debugging
             logger.info(
                 f"Transitioning issue {issue_key} with transition ID {transition_id_str}"
             )
-            logger.debug(f"Transition data: {transition_data}")
+            logger.debug(f"Fields: {fields_for_api}, Update: {update_for_api}")
 
-            # Perform the transition
-            self.jira.issue_transition(issue_key, transition_data)
+            # Perform the transition using set_issue_status
+            self.jira.set_issue_status(
+                issue_key=issue_key,
+                status_name=transition_id_str,
+                fields=fields_for_api,
+                update=update_for_api,
+            )
 
             # Return the updated issue
             # Using get_issue from the base class or IssuesMixin if available
@@ -216,12 +223,12 @@ class TransitionsMixin(JiraClient):
             logger.error(error_msg)
             raise ValueError(error_msg) from e
 
-    def _normalize_transition_id(self, transition_id: str | int) -> str:
+    def _normalize_transition_id(self, transition_id: str | int | dict) -> str:
         """
         Normalize transition ID to a string.
 
         Args:
-            transition_id: Transition ID as string or int
+            transition_id: Transition ID as string, int, or dict
 
         Returns:
             String representation of transition ID
@@ -229,24 +236,56 @@ class TransitionsMixin(JiraClient):
         logger.debug(
             f"Normalizing transition_id: {transition_id}, type: {type(transition_id)}"
         )
+
+        # Handle empty or None values
+        if transition_id is None:
+            logger.warning("Received None for transition_id, using default '0'")
+            return "0"
+        # Handle int or string values directly
+        if isinstance(transition_id, int | str):
+            return str(transition_id)
+
+        # Handle dictionary case
         if isinstance(transition_id, dict):
-            # Handle the case where transition_id is a dict
             logger.warning(
                 f"Received dict for transition_id when string expected: {transition_id}"
             )
-            if "id" in transition_id:
-                return str(transition_id["id"])
-            else:
-                # Fall back to first value if no id key
-                for key, value in transition_id.items():
-                    if value and isinstance(value, str | int):
-                        logger.warning(
-                            f"Using {key}={value} as transition ID from dict"
-                        )
+
+            # Try to extract ID from standard formats
+            for key in ["id", "ID", "transitionId", "transition_id"]:
+                if key in transition_id and transition_id[key] is not None:
+                    value = transition_id[key]
+                    if isinstance(value, str | int):
+                        logger.warning(f"Using {key}={value} as transition ID")
                         return str(value)
-                # Last resort
-                return str(list(transition_id.values())[0]) if transition_id else "0"
-        return str(transition_id)
+
+            # If no standard key found, try to use any string or int value
+            for key, value in transition_id.items():
+                if value is not None and isinstance(value, str | int):
+                    logger.warning(f"Using {key}={value} as transition ID from dict")
+                    return str(value)
+
+            # Last resort: try to use the first value
+            try:
+                first_value = next(iter(transition_id.values()))
+                if first_value is not None:
+                    return str(first_value)
+            except (StopIteration, AttributeError):
+                pass
+
+            # Nothing worked, return a default
+            logger.error(f"Could not extract valid transition ID from: {transition_id}")
+            return "0"
+
+        # For any other type, convert to string with warning
+        logger.warning(
+            f"Unexpected type for transition_id: {type(transition_id)}, trying string conversion"
+        )
+        try:
+            return str(transition_id)
+        except Exception as e:
+            logger.error(f"Failed to convert transition_id to string: {str(e)}")
+            return "0"
 
     def _sanitize_transition_fields(self, fields: dict[str, Any]) -> dict[str, Any]:
         """

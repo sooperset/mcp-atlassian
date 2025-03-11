@@ -579,7 +579,9 @@ class IssuesMixin(UsersMixin):
 
             # Update the issue
             if update_fields:
-                self.jira.update_issue(issue_key=issue_key, fields=update_fields)
+                self.jira.update_issue(
+                    issue_key=issue_key, update={"fields": update_fields}
+                )
 
             # Get the updated issue data and convert to JiraIssue model
             issue_data = self.jira.issue(issue_key)
@@ -644,7 +646,9 @@ class IssuesMixin(UsersMixin):
             raise ValueError(error_msg)
 
         # Perform the transition
-        self.jira.issue_transition(issue_key, {"transition": {"id": transition_id}})
+        self.jira.set_issue_status(
+            issue_key=issue_key, status_name=transition_id, fields=None, update=None
+        )
 
         # Get the updated issue data
         issue_data = self.jira.issue(issue_key)
@@ -868,7 +872,9 @@ class IssuesMixin(UsersMixin):
 
             # Update the issue to link it to the epic
             update_fields = {epic_link_field: epic_key}
-            self.jira.update_issue(issue_key=issue_key, fields=update_fields)
+            self.jira.update_issue(
+                issue_key=issue_key, update={"fields": update_fields}
+            )
 
             # Return the updated issue
             return self.get_issue(issue_key)
@@ -916,7 +922,9 @@ class IssuesMixin(UsersMixin):
             Exception: If there is an error transitioning the issue
         """
         try:
-            self.jira.issue_transition(issue_key, transition_id)
+            self.jira.set_issue_status(
+                issue_key=issue_key, status_name=transition_id, fields=None, update=None
+            )
             return self.get_issue(issue_key)
         except Exception as e:
             logger.error(f"Error transitioning issue {issue_key}: {str(e)}")

@@ -156,14 +156,13 @@ class TestTransitionsMixin:
             transitions_mixin.get_available_transitions("TEST-123")
 
     def test_transition_issue_basic(self, transitions_mixin):
-        """Test basic functionality of transition_issue."""
+        """Test transition_issue with basic parameters."""
         # Call the method
         result = transitions_mixin.transition_issue("TEST-123", "10")
 
         # Verify
-        expected_transition_data = {"transition": {"id": "10"}}
-        transitions_mixin.jira.issue_transition.assert_called_once_with(
-            "TEST-123", expected_transition_data
+        transitions_mixin.jira.set_issue_status.assert_called_once_with(
+            issue_key="TEST-123", status_name="10", fields=None, update=None
         )
         transitions_mixin.get_issue.assert_called_once_with("TEST-123")
         assert isinstance(result, JiraIssue)
@@ -177,9 +176,8 @@ class TestTransitionsMixin:
         transitions_mixin.transition_issue("TEST-123", 10)
 
         # Verify ID was converted to string
-        expected_transition_data = {"transition": {"id": "10"}}
-        transitions_mixin.jira.issue_transition.assert_called_once_with(
-            "TEST-123", expected_transition_data
+        transitions_mixin.jira.set_issue_status.assert_called_once_with(
+            issue_key="TEST-123", status_name="10", fields=None, update=None
         )
 
     def test_transition_issue_with_fields(self, transitions_mixin):
@@ -193,9 +191,8 @@ class TestTransitionsMixin:
 
         # Verify
         transitions_mixin._sanitize_transition_fields.assert_called_once_with(fields)
-        expected_transition_data = {"transition": {"id": "10"}, "fields": fields}
-        transitions_mixin.jira.issue_transition.assert_called_once_with(
-            "TEST-123", expected_transition_data
+        transitions_mixin.jira.set_issue_status.assert_called_once_with(
+            issue_key="TEST-123", status_name="10", fields=fields, update=None
         )
 
     def test_transition_issue_with_empty_sanitized_fields(self, transitions_mixin):
@@ -210,24 +207,35 @@ class TestTransitionsMixin:
         # Verify
         transitions_mixin._sanitize_transition_fields.assert_called_once_with(fields)
         # Fields should not be in transition data if sanitized fields is empty
-        expected_transition_data = {"transition": {"id": "10"}}
-        transitions_mixin.jira.issue_transition.assert_called_once_with(
-            "TEST-123", expected_transition_data
+        transitions_mixin.jira.set_issue_status.assert_called_once_with(
+            issue_key="TEST-123", status_name="10", fields=None, update=None
         )
 
     def test_transition_issue_with_comment(self, transitions_mixin):
         """Test transition_issue with comment."""
         # Setup mock for _add_comment_to_transition_data
-        orig_add_comment = transitions_mixin._add_comment_to_transition_data
-        transitions_mixin._add_comment_to_transition_data = MagicMock()
+        comment = "Test comment"
+
+        # Mock the method to properly add update data with comments
+        def add_comment_side_effect(transition_data, comment_text):
+            transition_data["update"] = {"comment": [{"add": {"body": comment_text}}]}
+
+        transitions_mixin._add_comment_to_transition_data = MagicMock(
+            side_effect=add_comment_side_effect
+        )
 
         # Call the method
-        transitions_mixin.transition_issue("TEST-123", "10", comment="Test comment")
+        transitions_mixin.transition_issue("TEST-123", "10", comment=comment)
 
-        # Verify
+        # Verify the comment was processed and added to the update field
         transitions_mixin._add_comment_to_transition_data.assert_called_once()
-        # Restore original method for other tests
-        transitions_mixin._add_comment_to_transition_data = orig_add_comment
+
+        # Verify set_issue_status was called with the right parameters
+        # The update parameter should contain the comment data
+        update_param = {"comment": [{"add": {"body": comment}}]}
+        transitions_mixin.jira.set_issue_status.assert_called_once_with(
+            issue_key="TEST-123", status_name="10", fields=None, update=update_param
+        )
 
     def test_transition_issue_without_get_issue(self, transitions_mixin):
         """Test transition_issue without get_issue method."""
@@ -236,6 +244,11 @@ class TestTransitionsMixin:
 
         # Call the method
         result = transitions_mixin.transition_issue("TEST-123", "10")
+
+        # Verify the transition call was made correctly
+        transitions_mixin.jira.set_issue_status.assert_called_once_with(
+            issue_key="TEST-123", status_name="10", fields=None, update=None
+        )
 
         # Verify fallback behavior
         assert isinstance(result, JiraIssue)
@@ -246,7 +259,7 @@ class TestTransitionsMixin:
     def test_transition_issue_with_error(self, transitions_mixin):
         """Test transition_issue error handling."""
         # Setup mock to raise exception
-        transitions_mixin.jira.issue_transition.side_effect = Exception(
+        transitions_mixin.jira.set_issue_status.side_effect = Exception(
             "Transition error"
         )
 
