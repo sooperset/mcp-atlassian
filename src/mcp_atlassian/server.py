@@ -291,7 +291,17 @@ async def list_tools() -> list[Tool]:
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "CQL query string (e.g. 'type=page AND space=DEV')",
+                                "description": "CQL query string (Confluence Query Language). Examples:\n"
+                                "- Basic search: 'type=page AND space=DEV'\n"
+                                "- Search by title: 'title~\"Meeting Notes\"'\n"
+                                "- Recent content: 'created >= \"2023-01-01\"'\n"
+                                "- Content with specific label: 'label=documentation'\n"
+                                "- Recently modified content: 'lastModified > startOfMonth(\"-1M\")'\n"
+                                "- Content modified this year: 'creator = currentUser() AND lastModified > startOfYear()'\n"
+                                "- Content you contributed to recently: 'contributor = currentUser() AND lastModified > startOfWeek()'\n"
+                                "- Content watched by user: 'watcher = \"user@domain.com\" AND type = page'\n"
+                                '- Exact phrase in content: \'text ~ "\\"Urgent Review Required\\"" AND label = "pending-approval"\'\n'
+                                '- Title wildcards: \'title ~ "Minutes*" AND (space = "HR" OR space = "Marketing")\'\n',
                             },
                             "limit": {
                                 "type": "number",
@@ -312,11 +322,13 @@ async def list_tools() -> list[Tool]:
                         "properties": {
                             "page_id": {
                                 "type": "string",
-                                "description": "Confluence page ID (numeric ID, can be parsed from URL, e.g. from 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title' -> '123456789')",
+                                "description": "Confluence page ID (numeric ID, can be found in the page URL). "
+                                "For example, in the URL 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', "
+                                "the page ID is '123456789'",
                             },
                             "include_metadata": {
                                 "type": "boolean",
-                                "description": "Whether to include page metadata",
+                                "description": "Whether to include page metadata such as creation date, last update, version, and labels",
                                 "default": True,
                             },
                         },
@@ -331,7 +343,9 @@ async def list_tools() -> list[Tool]:
                         "properties": {
                             "page_id": {
                                 "type": "string",
-                                "description": "Confluence page ID (numeric ID, can be parsed from URL, e.g. from 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title' -> '123456789')",
+                                "description": "Confluence page ID (numeric ID, can be parsed from URL, "
+                                "e.g. from 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title' "
+                                "-> '123456789')",
                             }
                         },
                         "required": ["page_id"],
@@ -345,7 +359,8 @@ async def list_tools() -> list[Tool]:
                         "properties": {
                             "space_key": {
                                 "type": "string",
-                                "description": "The key of the space to create the page in",
+                                "description": "The key of the space to create the page in "
+                                "(usually a short uppercase code like 'DEV', 'TEAM', or 'DOC')",
                             },
                             "title": {
                                 "type": "string",
@@ -353,11 +368,14 @@ async def list_tools() -> list[Tool]:
                             },
                             "content": {
                                 "type": "string",
-                                "description": "The content of the page in Markdown format",
+                                "description": "The content of the page in Markdown format. "
+                                "Supports headings, lists, tables, code blocks, and other "
+                                "Markdown syntax",
                             },
                             "parent_id": {
                                 "type": "string",
-                                "description": "Optional parent page ID",
+                                "description": "Optional parent page ID. If provided, this page "
+                                "will be created as a child of the specified page",
                             },
                         },
                         "required": ["space_key", "title", "content"],
@@ -404,7 +422,10 @@ async def list_tools() -> list[Tool]:
             [
                 Tool(
                     name="jira_get_issue",
-                    description="Get details of a specific Jira issue including its Epic links and relationship information",
+                    description=(
+                        "Get details of a specific Jira issue including its Epic links "
+                        "and relationship information"
+                    ),
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -414,12 +435,19 @@ async def list_tools() -> list[Tool]:
                             },
                             "expand": {
                                 "type": "string",
-                                "description": "Optional fields to expand. Examples: 'renderedFields' (for rendered content), 'transitions' (for available status transitions), 'changelog' (for history)",
+                                "description": (
+                                    "Optional fields to expand. Examples: 'renderedFields' "
+                                    "(for rendered content), 'transitions' (for available "
+                                    "status transitions), 'changelog' (for history)"
+                                ),
                                 "default": None,
                             },
                             "comment_limit": {
                                 "type": "integer",
-                                "description": "Maximum number of comments to include (0 or null for no comments)",
+                                "description": (
+                                    "Maximum number of comments to include "
+                                    "(0 or null for no comments)"
+                                ),
                                 "minimum": 0,
                                 "maximum": 100,
                                 "default": None,
@@ -436,17 +464,22 @@ async def list_tools() -> list[Tool]:
                         "properties": {
                             "jql": {
                                 "type": "string",
-                                "description": "JQL query string. Examples:\n"
+                                "description": "JQL query string (Jira Query Language). Examples:\n"
                                 '- Find Epics: "issuetype = Epic AND project = PROJ"\n'
                                 '- Find issues in Epic: "parent = PROJ-123"\n'
                                 "- Find by status: \"status = 'In Progress' AND project = PROJ\"\n"
                                 '- Find by assignee: "assignee = currentUser()"\n'
                                 '- Find recently updated: "updated >= -7d AND project = PROJ"\n'
-                                '- Find by label: "labels = frontend AND project = PROJ"',
+                                '- Find by label: "labels = frontend AND project = PROJ"\n'
+                                '- Find by priority: "priority = High AND project = PROJ"',
                             },
                             "fields": {
                                 "type": "string",
-                                "description": "Comma-separated fields to return",
+                                "description": (
+                                    "Comma-separated fields to return in the results. "
+                                    "Use '*all' for all fields, or specify individual "
+                                    "fields like 'summary,status,assignee,priority'"
+                                ),
                                 "default": "*all",
                             },
                             "limit": {
@@ -489,7 +522,9 @@ async def list_tools() -> list[Tool]:
                         "properties": {
                             "project_key": {
                                 "type": "string",
-                                "description": "The JIRA project key (e.g. 'PROJ'). Never assume what it might be, always ask the user.",
+                                "description": "The JIRA project key (e.g. 'PROJ', 'DEV', 'SUPPORT'). "
+                                "This is the prefix of issue keys in your project. "
+                                "Never assume what it might be, always ask the user.",
                             },
                             "summary": {
                                 "type": "string",
@@ -497,7 +532,10 @@ async def list_tools() -> list[Tool]:
                             },
                             "issue_type": {
                                 "type": "string",
-                                "description": "Issue type (e.g. 'Task', 'Bug', 'Story')",
+                                "description": (
+                                    "Issue type (e.g. 'Task', 'Bug', 'Story', 'Epic'). "
+                                    "The available types depend on your project configuration."
+                                ),
                             },
                             "assignee": {
                                 "type": "string",
@@ -510,7 +548,9 @@ async def list_tools() -> list[Tool]:
                             },
                             "additional_fields": {
                                 "type": "string",
-                                "description": "Optional JSON string of additional fields to set",
+                                "description": "Optional JSON string of additional fields to set. "
+                                'Example: \'{"priority": {"name": "High"}, "labels": ["frontend", "urgent"], '
+                                '"components": [{"name": "UI"}]}\'',
                                 "default": "{}",
                             },
                         },
@@ -529,11 +569,13 @@ async def list_tools() -> list[Tool]:
                             },
                             "fields": {
                                 "type": "string",
-                                "description": "A valid JSON object of fields to update as a string",
+                                "description": "A valid JSON object of fields to update as a string. "
+                                'Example: \'{"summary": "New title", "description": "Updated description", '
+                                '"priority": {"name": "High"}, "assignee": {"name": "john.doe"}}\'',
                             },
                             "additional_fields": {
                                 "type": "string",
-                                "description": "Optional JSON string of additional fields to update",
+                                "description": "Optional JSON string of additional fields to update. Use this for custom fields or more complex updates.",
                                 "default": "{}",
                             },
                         },
@@ -584,7 +626,12 @@ async def list_tools() -> list[Tool]:
                             },
                             "time_spent": {
                                 "type": "string",
-                                "description": "Time spent in Jira format (e.g., '1h 30m', '1d', '30m')",
+                                "description": (
+                                    "Time spent in Jira format. Examples: "
+                                    "'1h 30m' (1 hour and 30 minutes), "
+                                    "'1d' (1 day), '30m' (30 minutes), "
+                                    "'4h' (4 hours)"
+                                ),
                             },
                             "comment": {
                                 "type": "string",
@@ -592,7 +639,11 @@ async def list_tools() -> list[Tool]:
                             },
                             "started": {
                                 "type": "string",
-                                "description": "Optional start time in ISO format (e.g. '2023-08-01T12:00:00.000+0000')",
+                                "description": (
+                                    "Optional start time in ISO format. "
+                                    "If not provided, the current time will be used. "
+                                    "Example: '2023-08-01T12:00:00.000+0000'"
+                                ),
                             },
                         },
                         "required": ["issue_key", "time_spent"],
@@ -677,16 +728,27 @@ async def list_tools() -> list[Tool]:
                             },
                             "transition_id": {
                                 "type": "string",
-                                "description": "ID of the transition to perform (get this from jira_get_transitions)",
+                                "description": (
+                                    "ID of the transition to perform. Use the jira_get_transitions tool first "
+                                    "to get the available transition IDs for the issue. "
+                                    "Example values: '11', '21', '31'"
+                                ),
                             },
                             "fields": {
                                 "type": "string",
-                                "description": "JSON string of fields to update during the transition (optional)",
+                                "description": (
+                                    "JSON string of fields to update during the transition. "
+                                    "Some transitions require specific fields to be set. "
+                                    'Example: \'{"resolution": {"name": "Fixed"}}\''
+                                ),
                                 "default": "{}",
                             },
                             "comment": {
                                 "type": "string",
-                                "description": "Comment to add during the transition (optional)",
+                                "description": (
+                                    "Comment to add during the transition (optional). "
+                                    "This will be visible in the issue history."
+                                ),
                             },
                         },
                         "required": ["issue_key", "transition_id"],
