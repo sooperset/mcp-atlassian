@@ -623,15 +623,72 @@ class IssuesMixin(UsersMixin):
         # Get available transitions
         transitions = self.get_available_transitions(issue_key)
 
+        # Extract status name or ID depending on what we received
+        status_name = None
+        status_id = None
+
+        # Handle different input formats for status
+        if isinstance(status, dict):
+            # Dictionary format: {"name": "In Progress"} or {"id": "123"}
+            status_name = status.get("name")
+            status_id = status.get("id")
+        elif isinstance(status, str):
+            # String format: could be a name or an ID
+            if status.isdigit():
+                status_id = status
+            else:
+                status_name = status
+        elif isinstance(status, int):
+            # Integer format: must be an ID
+            status_id = str(status)
+        else:
+            # Unknown format
+            logger.warning(
+                f"Unrecognized status format: {status} (type: {type(status)})"
+            )
+            status_name = str(status)
+
+        # Log what we're searching for
+        if status_name:
+            logger.info(f"Looking for transition to status name: '{status_name}'")
+        if status_id:
+            logger.info(f"Looking for transition with ID: '{status_id}'")
+
         # Find the appropriate transition
         transition_id = None
         for transition in transitions:
             to_status = transition.get("to", {})
+            transition_status_name = to_status.get("name", "")
+            transition_status_id = to_status.get("id")
+
+            # Match by name (case-insensitive)
             if (
-                to_status.get("name", "").lower() == status.lower()
-                or to_status.get("id") == status
+                status_name
+                and transition_status_name
+                and transition_status_name.lower() == status_name.lower()
             ):
                 transition_id = transition.get("id")
+                logger.info(
+                    f"Found transition ID {transition_id} matching status name '{status_name}'"
+                )
+                break
+
+            # Match by ID
+            if (
+                status_id
+                and transition_status_id
+                and str(transition_status_id) == str(status_id)
+            ):
+                transition_id = transition.get("id")
+                logger.info(
+                    f"Found transition ID {transition_id} matching status ID '{status_id}'"
+                )
+                break
+
+            # Direct transition ID match (if status is actually a transition ID)
+            if status_id and str(transition.get("id", "")) == str(status_id):
+                transition_id = transition.get("id")
+                logger.info(f"Using direct transition ID {transition_id}")
                 break
 
         if not transition_id:
@@ -646,8 +703,12 @@ class IssuesMixin(UsersMixin):
             raise ValueError(error_msg)
 
         # Perform the transition
-        self.jira.set_issue_status(
-            issue_key=issue_key, status_name=transition_id, fields=None, update=None
+        logger.info(f"Performing transition with ID {transition_id}")
+        self.jira.set_issue_status_by_transition_id(
+            issue_key=issue_key,
+            transition_id=int(transition_id)
+            if isinstance(transition_id, str) and transition_id.isdigit()
+            else transition_id,
         )
 
         # Get the updated issue data

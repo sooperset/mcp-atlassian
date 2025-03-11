@@ -157,6 +157,14 @@ class TransitionsMixin(JiraClient):
                 )
                 # Continue anyway as Jira will validate
 
+            # Find the target status name corresponding to the transition ID
+            target_status_name = None
+            for transition in valid_transitions:
+                if str(transition.id) == str(normalized_transition_id):
+                    if transition.to_status and transition.to_status.name:
+                        target_status_name = transition.to_status.name
+                        break
+
             # Sanitize fields if provided
             fields_for_api = None
             if fields:
@@ -178,13 +186,43 @@ class TransitionsMixin(JiraClient):
             )
             logger.debug(f"Fields: {fields_for_api}, Update: {update_for_api}")
 
-            # Perform the transition using set_issue_status
-            self.jira.set_issue_status(
-                issue_key=issue_key,
-                status_name=normalized_transition_id,
-                fields=fields_for_api,
-                update=update_for_api,
-            )
+            # Attempt to transition the issue using the appropriate method
+            if target_status_name:
+                # If we have a status name, use set_issue_status
+                logger.info(f"Using status name '{target_status_name}' for transition")
+                self.jira.set_issue_status(
+                    issue_key=issue_key,
+                    status_name=target_status_name,
+                    fields=fields_for_api,
+                    update=update_for_api,
+                )
+            else:
+                # If no status name is found, try direct transition ID method
+                logger.info(f"Using direct transition ID {normalized_transition_id}")
+                # Convert to integer if it's a string that looks like an integer
+                if (
+                    isinstance(normalized_transition_id, str)
+                    and normalized_transition_id.isdigit()
+                ):
+                    normalized_transition_id = int(normalized_transition_id)
+
+                # Use set_issue_status_by_transition_id for direct ID transition
+                self.jira.set_issue_status_by_transition_id(
+                    issue_key=issue_key, transition_id=normalized_transition_id
+                )
+
+                # Apply fields and comments separately if needed
+                if fields_for_api or update_for_api:
+                    payload = {}
+                    if fields_for_api:
+                        payload["fields"] = fields_for_api
+                    if update_for_api:
+                        payload["update"] = update_for_api
+
+                    if payload:
+                        base_url = self.jira.resource_url("issue")
+                        url = f"{base_url}/{issue_key}"
+                        self.jira.put(url, data=payload)
 
             # Return the updated issue
             # Using get_issue from the base class or IssuesMixin if available
