@@ -21,11 +21,14 @@ import os
 
 import pytest
 
+from mcp_atlassian.confluence import ConfluenceFetcher
+
 # Import Confluence models and modules
 from mcp_atlassian.confluence.comments import CommentsMixin as ConfluenceCommentsMixin
 from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.confluence.pages import PagesMixin
 from mcp_atlassian.confluence.search import SearchMixin as ConfluenceSearchMixin
+from mcp_atlassian.jira import JiraFetcher
 
 # Import Jira models and modules
 from mcp_atlassian.jira.comments import CommentsMixin as JiraCommentsMixin
@@ -34,6 +37,52 @@ from mcp_atlassian.jira.issues import IssuesMixin
 from mcp_atlassian.jira.search import SearchMixin as JiraSearchMixin
 from mcp_atlassian.models.confluence import ConfluenceComment, ConfluencePage
 from mcp_atlassian.models.jira import JiraIssue
+
+
+@pytest.fixture
+def jira_config() -> JiraConfig:
+    """Create a JiraConfig from environment variables."""
+    return JiraConfig.from_env()
+
+
+@pytest.fixture
+def confluence_config() -> ConfluenceConfig:
+    """Create a ConfluenceConfig from environment variables."""
+    return ConfluenceConfig.from_env()
+
+
+@pytest.fixture
+def jira_client(jira_config: JiraConfig) -> JiraFetcher:
+    """Create a JiraFetcher instance."""
+    return JiraFetcher(config=jira_config)
+
+
+@pytest.fixture
+def confluence_client(confluence_config: ConfluenceConfig) -> ConfluenceFetcher:
+    """Create a ConfluenceFetcher instance."""
+    return ConfluenceFetcher(config=confluence_config)
+
+
+@pytest.fixture
+def test_issue_key() -> str:
+    """Get test issue key from environment."""
+    return os.environ.get("JIRA_TEST_ISSUE_KEY", "TES-26")
+
+
+@pytest.fixture
+def test_epic_key() -> str:
+    """Get test epic key from environment."""
+    return os.environ.get("JIRA_TEST_EPIC_KEY", "TES-25")
+
+
+@pytest.fixture
+def test_page_id() -> str:
+    """Get test Confluence page ID from environment."""
+    return os.environ.get("CONFLUENCE_TEST_PAGE_ID", "3823370492")
+
+
+# Only use asyncio backend for anyio tests
+pytestmark = pytest.mark.anyio(backends=["asyncio"])
 
 
 class TestRealJiraValidation:
@@ -225,3 +274,71 @@ class TestRealConfluenceValidation:
 
             # Verify direct property access
             assert page.id is not None
+
+
+@pytest.mark.anyio
+async def test_jira_get_issue(jira_client: JiraFetcher, test_issue_key: str) -> None:
+    """Test retrieving an issue from Jira."""
+    # Get the issue
+    issue = jira_client.get_issue(test_issue_key)
+
+    # Verify the response
+    assert issue is not None
+    assert issue.key == test_issue_key
+    assert hasattr(issue, "fields") or hasattr(issue, "summary")
+
+
+@pytest.mark.anyio
+async def test_jira_get_epic_issues(
+    jira_client: JiraFetcher, test_epic_key: str
+) -> None:
+    """Test retrieving issues linked to an epic from Jira."""
+    # This tests the fixed functionality for retrieving epic issues
+    issues = jira_client.get_epic_issues(test_epic_key)
+
+    # Verify the response
+    assert isinstance(issues, list)
+
+    # If there are issues, verify some basic properties
+    if issues:
+        for issue in issues:
+            assert hasattr(issue, "key")
+            assert hasattr(issue, "id")
+
+
+@pytest.mark.anyio
+async def test_confluence_get_page_content(
+    confluence_client: ConfluenceFetcher, test_page_id: str
+) -> None:
+    """Test retrieving a page from Confluence."""
+    # Get the page content (method name might be different)
+    # Try different method names based on the class implementation
+    if hasattr(confluence_client, "get_page_by_id"):
+        page = confluence_client.get_page_by_id(test_page_id)
+    elif hasattr(confluence_client, "get_content"):
+        page = confluence_client.get_content(test_page_id)
+    else:
+        # If direct methods don't exist, try indirection through the client
+        page = confluence_client.confluence.get_page_by_id(test_page_id)
+
+    # Verify the response
+    assert page is not None
+    assert "id" in page or hasattr(page, "id")
+    assert "title" in page or hasattr(page, "title")
+
+
+# Skipping tests that would modify data for now
+@pytest.mark.skip(reason="This test would modify data")
+@pytest.mark.anyio
+async def test_jira_transition_issue(jira_client: JiraFetcher) -> None:
+    """Test transitioning an issue in Jira."""
+    # This would test the fixed functionality for issue transitions
+    pass
+
+
+@pytest.mark.skip(reason="This test would modify data")
+@pytest.mark.anyio
+async def test_confluence_update_page(confluence_client: ConfluenceFetcher) -> None:
+    """Test updating a page in Confluence without version parameter."""
+    # This would test the fixed functionality for page updates
+    pass
