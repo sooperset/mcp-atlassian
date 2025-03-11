@@ -1144,6 +1144,14 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             if not transition_id:
                 raise ValueError("transition_id is required")
 
+            # Convert transition_id to integer if it's a numeric string
+            # This ensures compatibility with the Jira API which expects integers
+            if isinstance(transition_id, str) and transition_id.isdigit():
+                transition_id = int(transition_id)
+                logger.debug(
+                    f"Converted string transition_id to integer: {transition_id}"
+                )
+
             # Parse fields JSON
             fields = {}
             if arguments.get("fields"):
@@ -1173,7 +1181,17 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                     )
                 ]
             except Exception as e:
-                error_msg = f"Error transitioning issue {issue_key} with transition ID {transition_id}: {str(e)}"
+                # Provide a clear error message, especially for transition ID type issues
+                error_msg = str(e)
+                if "'transition' identifier must be an integer" in error_msg:
+                    error_msg = (
+                        f"Error transitioning issue {issue_key}: The Jira API requires transition IDs to be integers. "
+                        f"Received transition ID '{transition_id}' of type {type(transition_id).__name__}. "
+                        f"Please use the numeric ID value from jira_get_transitions."
+                    )
+                else:
+                    error_msg = f"Error transitioning issue {issue_key} with transition ID {transition_id}: {error_msg}"
+
                 logger.error(error_msg)
                 return [
                     TextContent(

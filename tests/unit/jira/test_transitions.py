@@ -162,7 +162,7 @@ class TestTransitionsMixin:
 
         # Verify
         transitions_mixin.jira.set_issue_status.assert_called_once_with(
-            issue_key="TEST-123", status_name="10", fields=None, update=None
+            issue_key="TEST-123", status_name=10, fields=None, update=None
         )
         transitions_mixin.get_issue.assert_called_once_with("TEST-123")
         assert isinstance(result, JiraIssue)
@@ -175,86 +175,86 @@ class TestTransitionsMixin:
         # Call the method with int ID
         transitions_mixin.transition_issue("TEST-123", 10)
 
-        # Verify ID was converted to string
+        # Verify ID was passed as integer
         transitions_mixin.jira.set_issue_status.assert_called_once_with(
-            issue_key="TEST-123", status_name="10", fields=None, update=None
+            issue_key="TEST-123", status_name=10, fields=None, update=None
         )
 
     def test_transition_issue_with_fields(self, transitions_mixin):
         """Test transition_issue with fields."""
-        # Setup mock for _sanitize_transition_fields
-        fields = {"resolution": {"name": "Fixed"}}
-        transitions_mixin._sanitize_transition_fields = MagicMock(return_value=fields)
+        # Mock _sanitize_transition_fields to return the fields
+        transitions_mixin._sanitize_transition_fields = MagicMock(
+            return_value={"summary": "Updated"}
+        )
 
-        # Call the method
+        # Call the method with fields
+        fields = {"summary": "Updated"}
         transitions_mixin.transition_issue("TEST-123", "10", fields=fields)
 
-        # Verify
-        transitions_mixin._sanitize_transition_fields.assert_called_once_with(fields)
+        # Verify fields were passed correctly
         transitions_mixin.jira.set_issue_status.assert_called_once_with(
-            issue_key="TEST-123", status_name="10", fields=fields, update=None
+            issue_key="TEST-123",
+            status_name=10,
+            fields={"summary": "Updated"},
+            update=None,
         )
 
     def test_transition_issue_with_empty_sanitized_fields(self, transitions_mixin):
         """Test transition_issue with empty sanitized fields."""
-        # Setup mock for _sanitize_transition_fields to return empty dict
-        fields = {"assignee": "someone"}
+        # Mock _sanitize_transition_fields to return empty dict
         transitions_mixin._sanitize_transition_fields = MagicMock(return_value={})
 
-        # Call the method
+        # Call the method with fields that will be sanitized to empty
+        fields = {"invalid": "field"}
         transitions_mixin.transition_issue("TEST-123", "10", fields=fields)
 
-        # Verify
-        transitions_mixin._sanitize_transition_fields.assert_called_once_with(fields)
-        # Fields should not be in transition data if sanitized fields is empty
+        # Verify fields were passed as None
         transitions_mixin.jira.set_issue_status.assert_called_once_with(
-            issue_key="TEST-123", status_name="10", fields=None, update=None
+            issue_key="TEST-123", status_name=10, fields=None, update=None
         )
 
     def test_transition_issue_with_comment(self, transitions_mixin):
         """Test transition_issue with comment."""
-        # Setup mock for _add_comment_to_transition_data
+        # Setup
         comment = "Test comment"
 
-        # Mock the method to properly add update data with comments
+        # Define a side effect to record what's passed to _add_comment_to_transition_data
         def add_comment_side_effect(transition_data, comment_text):
             transition_data["update"] = {"comment": [{"add": {"body": comment_text}}]}
 
+        # Mock _add_comment_to_transition_data
         transitions_mixin._add_comment_to_transition_data = MagicMock(
             side_effect=add_comment_side_effect
         )
 
-        # Call the method
+        # Call the method with comment
         transitions_mixin.transition_issue("TEST-123", "10", comment=comment)
 
-        # Verify the comment was processed and added to the update field
+        # Verify _add_comment_to_transition_data was called
         transitions_mixin._add_comment_to_transition_data.assert_called_once()
 
         # Verify set_issue_status was called with the right parameters
-        # The update parameter should contain the comment data
-        update_param = {"comment": [{"add": {"body": comment}}]}
         transitions_mixin.jira.set_issue_status.assert_called_once_with(
-            issue_key="TEST-123", status_name="10", fields=None, update=update_param
+            issue_key="TEST-123",
+            status_name=10,
+            fields=None,
+            update={"comment": [{"add": {"body": comment}}]},
         )
 
     def test_transition_issue_without_get_issue(self, transitions_mixin):
         """Test transition_issue without get_issue method."""
-        # Remove get_issue method
+        # Setup - remove get_issue method
         transitions_mixin.get_issue = None
 
         # Call the method
         result = transitions_mixin.transition_issue("TEST-123", "10")
 
-        # Verify the transition call was made correctly
+        # Verify
         transitions_mixin.jira.set_issue_status.assert_called_once_with(
-            issue_key="TEST-123", status_name="10", fields=None, update=None
+            issue_key="TEST-123", status_name=10, fields=None, update=None
         )
-
-        # Verify fallback behavior
         assert isinstance(result, JiraIssue)
         assert result.key == "TEST-123"
-        assert result.summary == "Test Issue"
-        assert result.description == "Issue content"
 
     def test_transition_issue_with_error(self, transitions_mixin):
         """Test transition_issue error handling."""
@@ -271,12 +271,24 @@ class TestTransitionsMixin:
             transitions_mixin.transition_issue("TEST-123", "10")
 
     def test_normalize_transition_id(self, transitions_mixin):
-        """Test _normalize_transition_id method."""
+        """Test _normalize_transition_id with various input types."""
         # Test with string
-        assert transitions_mixin._normalize_transition_id("10") == "10"
+        assert transitions_mixin._normalize_transition_id("10") == 10
+
+        # Test with non-digit string
+        assert transitions_mixin._normalize_transition_id("workflow") == "workflow"
 
         # Test with int
-        assert transitions_mixin._normalize_transition_id(10) == "10"
+        assert transitions_mixin._normalize_transition_id(10) == 10
+
+        # Test with dict containing id
+        assert transitions_mixin._normalize_transition_id({"id": "10"}) == 10
+
+        # Test with dict containing int id
+        assert transitions_mixin._normalize_transition_id({"id": 10}) == 10
+
+        # Test with None
+        assert transitions_mixin._normalize_transition_id(None) == 0
 
     def test_sanitize_transition_fields_basic(self, transitions_mixin):
         """Test _sanitize_transition_fields with basic fields."""
