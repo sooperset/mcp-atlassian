@@ -56,24 +56,24 @@ done
 
 # Check if .env file exists
 if [ ! -f ".env" ]; then
-    echo "Error: .env file not found. Please create it with your Atlassian credentials."
-    exit 1
+    echo "Warning: .env file not found. Tests will be skipped if environment variables are not set."
+else
+    # Load environment variables from .env
+    source .env
 fi
 
 # Set environment variable to enable real data testing
 export USE_REAL_DATA=true
 
-# Load environment variables from .env
-source .env
-
 # Set specific test IDs for API validation tests
-export JIRA_TEST_ISSUE_KEY="TES-26"
-export JIRA_TEST_EPIC_KEY="TES-25"
-export CONFLUENCE_TEST_PAGE_ID="3823370492"
-export JIRA_TEST_PROJECT_KEY="TES"
-export CONFLUENCE_TEST_SPACE_KEY="TestMCP"
+# These will be used if they're set, otherwise tests will be skipped
+export JIRA_TEST_ISSUE_KEY="${JIRA_TEST_ISSUE_KEY:-}"
+export JIRA_TEST_EPIC_KEY="${JIRA_TEST_EPIC_KEY:-}"
+export CONFLUENCE_TEST_PAGE_ID="${CONFLUENCE_TEST_PAGE_ID:-}"
+export JIRA_TEST_PROJECT_KEY="${JIRA_TEST_PROJECT_KEY:-}"
+export CONFLUENCE_TEST_SPACE_KEY="${CONFLUENCE_TEST_SPACE_KEY:-}"
 
-# Ensure required environment variables are set
+# Check required environment variables and warn if any are missing
 required_vars=(
     "JIRA_URL"
     "JIRA_USERNAME"
@@ -83,12 +83,18 @@ required_vars=(
     "CONFLUENCE_API_TOKEN"
 )
 
+missing_vars=0
 for var in "${required_vars[@]}"; do
     if [ -z "${!var}" ]; then
-        echo "Error: Required environment variable $var is not set in .env file."
-        exit 1
+        echo "Warning: Environment variable $var is not set. Some tests will be skipped."
+        missing_vars=$((missing_vars+1))
     fi
 done
+
+if [ $missing_vars -gt 0 ]; then
+    echo "Found $missing_vars missing required variables. Tests requiring these variables will be skipped."
+    echo "You can set these in your .env file to run all tests."
+fi
 
 # Function to run model tests
 run_model_tests() {
@@ -149,4 +155,4 @@ case $TEST_TYPE in
 esac
 
 echo ""
-echo "Testing completed. Check the output for any failures."
+echo "Testing completed. Check the output for any failures or skipped tests."

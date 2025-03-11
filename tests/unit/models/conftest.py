@@ -95,12 +95,11 @@ def default_confluence_page_id() -> str:
     """
     Provides a default Confluence page ID to use for tests.
 
-    Raises:
-        ValueError: If CONFLUENCE_PAGE_ID environment variable is not set
+    Skips the test if CONFLUENCE_TEST_PAGE_ID environment variable is not set.
     """
-    page_id = os.environ.get("CONFLUENCE_PAGE_ID")
+    page_id = os.environ.get("CONFLUENCE_TEST_PAGE_ID")
     if not page_id:
-        raise ValueError("CONFLUENCE_PAGE_ID environment variable must be set")
+        pytest.skip("CONFLUENCE_TEST_PAGE_ID environment variable not set")
     return page_id
 
 
@@ -109,10 +108,9 @@ def default_jira_issue_key() -> str:
     """
     Provides a default Jira issue key to use for tests.
 
-    Raises:
-        ValueError: If JIRA_TEST_ISSUE_KEY environment variable is not set
+    Skips the test if JIRA_TEST_ISSUE_KEY environment variable is not set.
     """
     issue_key = os.environ.get("JIRA_TEST_ISSUE_KEY")
     if not issue_key:
-        raise ValueError("JIRA_TEST_ISSUE_KEY environment variable must be set")
+        pytest.skip("JIRA_TEST_ISSUE_KEY environment variable not set")
     return issue_key

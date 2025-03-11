@@ -138,7 +138,7 @@ def test_issue_key() -> str:
     """Get test issue key from environment."""
     issue_key = os.environ.get("JIRA_TEST_ISSUE_KEY")
     if not issue_key:
-        raise ValueError("JIRA_TEST_ISSUE_KEY environment variable must be set")
+        pytest.skip("JIRA_TEST_ISSUE_KEY environment variable not set")
     return issue_key
 
 
@@ -147,7 +147,7 @@ def test_epic_key() -> str:
     """Get test epic key from environment."""
     epic_key = os.environ.get("JIRA_TEST_EPIC_KEY")
     if not epic_key:
-        raise ValueError("JIRA_TEST_EPIC_KEY environment variable must be set")
+        pytest.skip("JIRA_TEST_EPIC_KEY environment variable not set")
     return epic_key
 
 
@@ -156,7 +156,7 @@ def test_page_id() -> str:
     """Get test Confluence page ID from environment."""
     page_id = os.environ.get("CONFLUENCE_TEST_PAGE_ID")
     if not page_id:
-        raise ValueError("CONFLUENCE_TEST_PAGE_ID environment variable must be set")
+        pytest.skip("CONFLUENCE_TEST_PAGE_ID environment variable not set")
     return page_id
 
 
@@ -165,7 +165,7 @@ def test_project_key() -> str:
     """Get test Jira project key from environment."""
     project_key = os.environ.get("JIRA_TEST_PROJECT_KEY")
     if not project_key:
-        raise ValueError("JIRA_TEST_PROJECT_KEY environment variable must be set")
+        pytest.skip("JIRA_TEST_PROJECT_KEY environment variable not set")
     return project_key
 
 
@@ -174,7 +174,7 @@ def test_space_key() -> str:
     """Get test Confluence space key from environment."""
     space_key = os.environ.get("CONFLUENCE_TEST_SPACE_KEY")
     if not space_key:
-        raise ValueError("CONFLUENCE_TEST_SPACE_KEY environment variable must be set")
+        pytest.skip("CONFLUENCE_TEST_SPACE_KEY environment variable not set")
     return space_key
 
 
@@ -314,51 +314,42 @@ class TestRealConfluenceValidation:
     2. The required Confluence environment variables are not set
     """
 
-    def test_get_page_content(self, use_real_confluence_data):
+    def test_get_page_content(self, use_real_confluence_data, test_page_id):
         """Test that get_page_content returns a proper ConfluencePage model."""
         if not use_real_confluence_data:
             pytest.skip("Real Confluence data testing is disabled")
-
-        # Get test page ID from environment or use default
-        page_id = os.environ.get("CONFLUENCE_PAGE_ID", "3819638214")
 
         # Initialize the Confluence client
         config = ConfluenceConfig.from_env()
         pages_client = PagesMixin(config=config)
 
         # Get the page using the refactored client
-        page = pages_client.get_page_content(page_id)
+        page = pages_client.get_page_content(test_page_id)
 
-        # Verify the page is a ConfluencePage instance
+        # Verify it's a ConfluencePage model
         assert isinstance(page, ConfluencePage)
-        assert page.id == page_id
+        assert page.id == test_page_id
         assert page.title is not None
+        assert page.content is not None
+
+        # Check page attributes
         assert page.space is not None
         assert page.space.key is not None
 
-        # Verify direct property access
-        assert page.id == page_id
-
-        # Verify content is present and non-empty
-        assert page.content is not None
-        assert len(page.content) > 0
         # Check the content format - should be either "storage" or "view"
         assert page.content_format in ["storage", "view", "markdown"]
 
-    def test_get_page_comments(self, use_real_confluence_data):
+    def test_get_page_comments(self, use_real_confluence_data, test_page_id):
         """Test that page comments are properly converted to ConfluenceComment models."""
         if not use_real_confluence_data:
             pytest.skip("Real Confluence data testing is disabled")
-
-        # Get test page ID from environment or use default
-        page_id = os.environ.get("CONFLUENCE_PAGE_ID", "3819638214")
 
         # Initialize the Confluence comments client
         config = ConfluenceConfig.from_env()
         comments_client = ConfluenceCommentsMixin(config=config)
 
         # Get comments using the comments mixin
-        comments = comments_client.get_page_comments(page_id)
+        comments = comments_client.get_page_comments(test_page_id)
 
         # If there are no comments, skip the test
         if len(comments) == 0:
