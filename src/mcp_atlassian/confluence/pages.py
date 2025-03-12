@@ -281,10 +281,28 @@ class PagesMixin(ConfluenceClient):
         """
         try:
             logger.debug(f"Deleting page {page_id}")
-            result = self.confluence.remove_page(page_id=page_id)
+            response = self.confluence.remove_page(page_id=page_id)
 
-            # The API should return True on success, but let's ensure we return a boolean
-            return bool(result)
+            # The Atlassian library's remove_page returns the raw response from
+            # the REST API call. For a successful deletion, we should get a
+            # response object, but it might be empty (HTTP 204 No Content).
+            # For REST DELETE operations, a success typically returns 204 or 200
+
+            # Check if we got a response object
+            if isinstance(response, requests.Response):
+                # Check if status code indicates success (2xx)
+                success = 200 <= response.status_code < 300
+                logger.debug(
+                    f"Delete page {page_id} returned status code {response.status_code}"
+                )
+                return success
+            # If it's not a response object but truthy (like True), consider it a success
+            elif response:
+                return True
+            # Default to true since no exception was raised
+            # This is safer than returning false when we don't know what happened
+            return True
+
         except Exception as e:
             logger.error(f"Error deleting page {page_id}: {str(e)}")
             raise Exception(f"Failed to delete page {page_id}: {str(e)}") from e

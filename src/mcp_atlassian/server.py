@@ -934,11 +934,47 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             if not page_id:
                 raise ValueError("Missing required parameter: page_id is required.")
 
-            # Delete the page
-            result = ctx.confluence.delete_page(page_id=page_id)
+            try:
+                # Delete the page
+                result = ctx.confluence.delete_page(page_id=page_id)
 
-            # Format results
-            return [TextContent(text=json.dumps({"success": result}))]
+                # Format results - our fixed implementation now correctly returns True on success
+                if result:
+                    response = {
+                        "success": True,
+                        "message": f"Page {page_id} deleted successfully",
+                    }
+                else:
+                    # This branch should rarely be hit with our updated implementation
+                    # but we keep it for safety
+                    response = {
+                        "success": False,
+                        "message": f"Unable to delete page {page_id}. The API request completed but deletion was unsuccessful.",
+                    }
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(response, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                # API call failed with an exception
+                logger.error(f"Error deleting Confluence page {page_id}: {str(e)}")
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(
+                            {
+                                "success": False,
+                                "message": f"Error deleting page {page_id}",
+                                "error": str(e),
+                            },
+                            indent=2,
+                            ensure_ascii=False,
+                        ),
+                    )
+                ]
 
         # Jira operations
         elif name == "jira_get_issue":
