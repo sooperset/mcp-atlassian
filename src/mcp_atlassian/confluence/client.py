@@ -25,7 +25,7 @@ class ConfluenceClient:
         """
         self.config = config or ConfluenceConfig.from_env()
 
-        #Initialize the Confluence client based on auth type
+        # Initialize the Confluence client based on auth type
         if self.config.auth_type == "token":
             self.confluence = Confluence(
                 url=self.config.url,

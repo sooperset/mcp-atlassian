@@ -42,7 +42,7 @@ class ConfluenceConfig:
         """
         url = os.getenv("CONFLUENCE_URL")
         if not url:
-            error_msg = "Missing required Confluence environment variable"
+            error_msg = "Missing required CONFLUENCE_URL environment variable"
             raise ValueError(error_msg)
 
         # Determine authentication type based on available environment variables
