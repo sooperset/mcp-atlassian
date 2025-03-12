@@ -816,12 +816,14 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             page = ctx.confluence.get_page_content(page_id)
 
             if include_metadata:
+                # The to_simplified_dict method already includes the content,
+                # so we don't need to include it separately at the root level
                 result = {
-                    "content": page.page_content,
                     "metadata": page.to_simplified_dict(),
                 }
             else:
-                result = {"content": page.page_content}
+                # For backward compatibility, keep returning content directly
+                result = {"content": page.content}
 
             return [
                 TextContent(
