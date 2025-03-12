@@ -62,24 +62,34 @@ class IssuesMixin(UsersMixin):
                 fields["comment"]["comments"] = comments
 
             # Extract epic information
-            epic_info = self._extract_epic_information(issue)
+            try:
+                epic_info = self._extract_epic_information(issue)
+            except Exception as e:
+                logger.warning(f"Error extracting epic information: {str(e)}")
+                epic_info = {"epic_key": None, "epic_name": None}
 
             # If this is linked to an epic, add the epic information to the fields
             if epic_info.get("epic_key"):
-                # Get field IDs for epic fields
-                field_ids = self.get_jira_field_ids()
+                try:
+                    # Get field IDs for epic fields
+                    field_ids = self.get_jira_field_ids()
 
-                # Add epic link field if it doesn't exist
-                if "epic_link" in field_ids and field_ids["epic_link"] not in fields:
-                    fields[field_ids["epic_link"]] = epic_info["epic_key"]
+                    # Add epic link field if it doesn't exist
+                    if (
+                        "epic_link" in field_ids
+                        and field_ids["epic_link"] not in fields
+                    ):
+                        fields[field_ids["epic_link"]] = epic_info["epic_key"]
 
-                # Add epic name field if it doesn't exist
-                if (
-                    epic_info.get("epic_name")
-                    and "epic_name" in field_ids
-                    and field_ids["epic_name"] not in fields
-                ):
-                    fields[field_ids["epic_name"]] = epic_info["epic_name"]
+                    # Add epic name field if it doesn't exist
+                    if (
+                        epic_info.get("epic_name")
+                        and "epic_name" in field_ids
+                        and field_ids["epic_name"] not in fields
+                    ):
+                        fields[field_ids["epic_name"]] = epic_info["epic_name"]
+                except Exception as e:
+                    logger.warning(f"Error setting epic fields: {str(e)}")
 
             # Update the issue data with the fields
             issue["fields"] = fields
@@ -169,7 +179,11 @@ class IssuesMixin(UsersMixin):
             issue_type = fields.get("issuetype", {}).get("name", "").lower()
 
             # Get field IDs for epic fields
-            field_ids = self.get_jira_field_ids()
+            try:
+                field_ids = self.get_jira_field_ids()
+            except Exception as e:
+                logger.warning(f"Error getting Jira fields: {str(e)}")
+                field_ids = {}
 
             # Check if this is an epic
             if issue_type == "epic":
@@ -766,6 +780,11 @@ class IssuesMixin(UsersMixin):
 
         # Fetch field IDs from server
         try:
+            # Check if get_all_fields method exists before calling it
+            if not hasattr(self.jira, "get_all_fields"):
+                logger.warning("Jira object does not have 'get_all_fields' method")
+                return {}
+
             fields = self.jira.get_all_fields()
             field_ids = {}
 
@@ -850,7 +869,12 @@ class IssuesMixin(UsersMixin):
         try:
             # Try to find an epic using JQL search
             jql = "issuetype = Epic ORDER BY created DESC"
-            results = self.jira.jql(jql, limit=1)
+            try:
+                results = self.jira.jql(jql, limit=1)
+            except AttributeError:
+                # If jql method doesn't exist, try another approach or skip
+                logger.debug("JQL method not available on this Jira instance")
+                return
 
             if not results or not results.get("issues"):
                 return
@@ -864,7 +888,11 @@ class IssuesMixin(UsersMixin):
 
             # Try to find issues linked to this epic using JQL
             linked_jql = f'issue in linkedIssues("{epic_key}") ORDER BY created DESC'
-            results = self.jira.jql(linked_jql, limit=10)
+            try:
+                results = self.jira.jql(linked_jql, limit=10)
+            except Exception as e:
+                logger.debug(f"Error querying linked issues: {str(e)}")
+                return
 
             if not results or not results.get("issues"):
                 return
@@ -874,6 +902,8 @@ class IssuesMixin(UsersMixin):
 
             for issue in issues:
                 fields = issue.get("fields", {})
+                if not fields or not isinstance(fields, dict):
+                    continue
 
                 # Check each field for a potential epic link
                 for field_id, value in fields.items():
@@ -889,6 +919,7 @@ class IssuesMixin(UsersMixin):
 
         except Exception as e:
             logger.debug(f"Error discovering epic fields: {str(e)}")
+            # Continue with existing field_ids
 
     def get_available_transitions(self, issue_key: str) -> list[dict]:
         """
