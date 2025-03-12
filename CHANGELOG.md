@@ -1,7 +1,19 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.2.1] - 2025-03-13
+
+### Added
 - Added Confluence Server/Data Center support with Personal Access Token authentication
+- Added Confluence page delete tool
+
+### Fixed
+- Fixed error with confluence_delete_page function
+- Fixed handling of 'fields' attribute error in Jira fetcher
+- Removed duplicate content field in Confluence page metadata
+- Improved Confluence search functionality
+- Added Docker installation instructions
 
 ## [0.2.0] - 2025-03-12
 
