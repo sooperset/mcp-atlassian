@@ -37,6 +37,15 @@ Alternatively you can install mcp-atlassian via pip:
 pip install mcp-atlassian
 ```
 
+### Using Docker
+
+Clone this repository and build the Docker image:
+```bash
+git clone https://github.com/sooperset/mcp-atlassian.git
+cd mcp-atlassian
+docker build -t mcp/atlassian .
+```
+
 ## Configuration
 
 The MCP Atlassian integration supports using either Confluence, Jira, or both services. You only need to provide the environment variables for the service(s) you want to use.
@@ -213,6 +222,7 @@ Configure the server:
   type: command
   command: uvx mcp-atlassian --confluence-url=https://your-domain.atlassian.net/wiki --confluence-username=your.email@domain.com --confluence-token=your_api_token --jira-url=https://your-domain.atlassian.net --jira-username=your.email@domain.com --jira-token=your_api_token
   ```
+- After configuring, ensure you're in Agent mode in the Composer to use MCP tools
 
 ### Using a Local Development Version
 
@@ -285,12 +295,6 @@ npx @modelcontextprotocol/inspector uv run mcp-atlassian
 View logs with:
 ```bash
 tail -n 20 -f ~/Library/Logs/Claude/mcp*.log
-```
-## Build
-
-Docker build:
-```bash
-docker build -t mcp/atlassian .
 ```
 
 ## Security
