@@ -285,13 +285,13 @@ async def list_tools() -> list[Tool]:
             [
                 Tool(
                     name="confluence_search",
-                    description="Search Confluence content using CQL",
+                    description="Search Confluence content using simple terms or CQL",
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "CQL query string (Confluence Query Language). Examples:\n"
+                                "description": "Search query - can be either a simple text (e.g. 'project documentation') or a CQL query string. Examples of CQL:\n"
                                 "- Basic search: 'type=page AND space=DEV'\n"
                                 "- Search by title: 'title~\"Meeting Notes\"'\n"
                                 "- Recent content: 'created >= \"2023-01-01\"'\n"
@@ -783,6 +783,17 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
 
             query = arguments.get("query", "")
             limit = min(int(arguments.get("limit", 10)), 50)
+
+            # Check if the query is a simple search term or already a CQL query
+            if query and not any(
+                x in query
+                for x in ["=", "~", ">", "<", " AND ", " OR ", "currentUser()"]
+            ):
+                # Convert simple search term to CQL text search
+                # This will search in all content (title, body, etc.)
+                query = f'text ~ "{query}"'
+                logger.info(f"Converting simple search term to CQL: {query}")
+
             pages = ctx.confluence.search(query, limit=limit)
 
             # Format results using the to_simplified_dict method
