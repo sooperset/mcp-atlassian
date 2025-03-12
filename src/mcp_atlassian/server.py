@@ -416,7 +416,8 @@ async def list_tools() -> list[Tool]:
                 Tool(
                     name="confluence_delete_page",
                     description="Delete an existing Confluence page",
-                    parameters={
+                    inputSchema={
+                        "type": "object",
                         "properties": {
                             "page_id": {
                                 "type": "string",
