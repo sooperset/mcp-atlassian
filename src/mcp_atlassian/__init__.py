@@ -28,6 +28,15 @@ logger = logging.getLogger("mcp-atlassian")
 @click.option("--confluence-username", help="Confluence username/email")
 @click.option("--confluence-token", help="Confluence API token")
 @click.option(
+    "--confluence-personal-token",
+    help="Confluence Personal Access Token (for Confluence Server/Data Center)",
+)
+@click.option(
+    "--confluence-ssl-verify/--no-confluence-ssl-verify",
+    default=True,
+    help="Verify SSL certificates for Confluence Server/Data Center (default: verify)",
+)
+@click.option(
     "--jira-url",
     help="Jira URL (e.g., https://your-domain.atlassian.net or https://jira.your-company.com)",
 )
@@ -48,6 +57,8 @@ def main(
     confluence_url: str | None,
     confluence_username: str | None,
     confluence_token: str | None,
+    confluence_personal_token: str | None,
+    confluence_ssl_verify: bool,
     jira_url: str | None,
     jira_username: str | None,
     jira_token: str | None,
@@ -82,6 +93,8 @@ def main(
         os.environ["CONFLUENCE_USERNAME"] = confluence_username
     if confluence_token:
         os.environ["CONFLUENCE_API_TOKEN"] = confluence_token
+    if confluence_personal_token:
+        os.environ["CONFLUENCE_PERSONAL_TOKEN"] = confluence_personal_token
     if jira_url:
         os.environ["JIRA_URL"] = jira_url
     if jira_username:
@@ -90,6 +103,9 @@ def main(
         os.environ["JIRA_API_TOKEN"] = jira_token
     if jira_personal_token:
         os.environ["JIRA_PERSONAL_TOKEN"] = jira_personal_token
+
+    # Set SSL verification for Confluence Server/Data Center
+    os.environ["CONFLUENCE_SSL_VERIFY"] = str(confluence_ssl_verify).lower()
 
     # Set SSL verification for Jira Server/Data Center
     os.environ["JIRA_SSL_VERIFY"] = str(jira_ssl_verify).lower()

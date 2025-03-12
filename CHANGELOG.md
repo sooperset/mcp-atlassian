@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+- Added Confluence Server/Data Center support with Personal Access Token authentication
 
 ## [0.2.0] - 2025-03-12
 

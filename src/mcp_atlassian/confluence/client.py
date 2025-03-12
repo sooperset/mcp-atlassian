@@ -24,12 +24,22 @@ class ConfluenceClient:
             ValueError: If configuration is invalid or environment variables are missing
         """
         self.config = config or ConfluenceConfig.from_env()
-        self.confluence = Confluence(
-            url=self.config.url,
-            username=self.config.username,
-            password=self.config.api_token,  # API token is used as password
-            cloud=True,
-        )
+
+        #Initialize the Confluence client based on auth type
+        if self.config.auth_type == "token":
+            self.confluence = Confluence(
+                url=self.config.url,
+                token=self.config.personal_token,
+                cloud=self.config.is_cloud,
+                verify_ssl=self.config.ssl_verify,
+            )
+        else:  # basic auth
+            self.confluence = Confluence(
+                url=self.config.url,
+                username=self.config.username,
+                password=self.config.api_token,  # API token is used as password
+                cloud=self.config.is_cloud,
+            )
         # Import here to avoid circular imports
         from ..preprocessing import TextPreprocessor
 

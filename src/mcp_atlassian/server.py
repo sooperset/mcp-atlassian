@@ -28,13 +28,22 @@ class AppContext:
 
 def get_available_services() -> dict[str, bool | None]:
     """Determine which services are available based on environment variables."""
-    confluence_vars = all(
-        [
-            os.getenv("CONFLUENCE_URL"),
-            os.getenv("CONFLUENCE_USERNAME"),
-            os.getenv("CONFLUENCE_API_TOKEN"),
-        ]
-    )
+
+    # Check for either cloud authentication (URL + username + API token)
+    # or server/data center authentication (URL + personal token)
+    confluence_url = os.getenv("CONFLUENCE_URL")
+    if confluence_url:
+        is_cloud = "atlassian.net" in confluence_url
+        if is_cloud:
+            confluence_vars = all(
+                [confluence_url, os.getenv("CONFLUENCE_USERNAME"), os.getenv("CONFLUENCE_API_TOKEN")]
+            )
+            logger.info("Using Confluence Cloud authentication method")
+        else:
+            confluence_vars = all([confluence_url, os.getenv("CONFLUENCE_PERSONAL_TOKEN")])
+            logger.info("Using Confluence Server/Data Center authentication method")
+    else:
+        confluence_vars = False
 
     # Check for either cloud authentication (URL + username + API token)
     # or server/data center authentication (URL + personal token)

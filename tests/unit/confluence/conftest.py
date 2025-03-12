@@ -40,6 +40,7 @@ def mock_config():
     """Return a mock ConfluenceConfig instance."""
     return ConfluenceConfig(
         url="https://example.atlassian.net/wiki",
+        auth_type="basic",
         username="test_user",
         api_token="test_token",
     )

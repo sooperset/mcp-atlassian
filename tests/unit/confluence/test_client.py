@@ -6,11 +6,12 @@ from mcp_atlassian.confluence.client import ConfluenceClient
 from mcp_atlassian.confluence.config import ConfluenceConfig
 
 
-def test_init_with_config():
-    """Test initializing the client with a provided config."""
+def test_init_with_basic_auth():
+    """Test initializing the client with basic auth configuration."""
     # Arrange
     config = ConfluenceConfig(
         url="https://test.atlassian.net/wiki",
+        auth_type="basic",
         username="test_user",
         api_token="test_token",
     )
@@ -34,6 +35,34 @@ def test_init_with_config():
         assert client.confluence == mock_confluence.return_value
         assert client.preprocessor == mock_preprocessor.return_value
 
+def test_init_with_token_auth():
+    """Test initializing the client with token auth configuration."""
+    # Arrange
+    config = ConfluenceConfig(
+        url="https://confluence.example.com",
+        auth_type="token",
+        personal_token="test_personal_token",
+        ssl_verify=False,
+    )
+
+    # Mock the Confluence class and TextPreprocessor
+    with (
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+        patch("mcp_atlassian.preprocessing.TextPreprocessor") as mock_preprocessor,
+    ):
+        # Act
+        client = ConfluenceClient(config=config)
+
+        # Assert
+        mock_confluence.assert_called_once_with(
+            url="https://confluence.example.com",
+            token="test_personal_token",
+            cloud=False,
+            verify_ssl=False,
+        )
+        assert client.config == config
+        assert client.confluence == mock_confluence.return_value
+        assert client.preprocessor == mock_preprocessor.return_value
 
 def test_init_from_env():
     """Test initializing the client from environment variables."""

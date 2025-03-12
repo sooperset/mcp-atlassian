@@ -7,11 +7,11 @@ Model Context Protocol (MCP) server for Atlassian products (Confluence and Jira)
 
 ### Compatibility
 
-| Product | Deployment Type | Support Status |
-|---------|----------------|----------------|
-| **Confluence** | Cloud | ✅ Fully supported |
-| **Confluence** | Server/Data Center | ❌ Not yet supported |
-| **Jira** | Cloud | ✅ Fully supported |
+| Product | Deployment Type | Support Status              |
+|---------|----------------|-----------------------------|
+| **Confluence** | Cloud | ✅ Fully supported           |
+| **Confluence** | Server/Data Center | ✅ Supported (version 7.9+)  |
+| **Jira** | Cloud | ✅ Fully supported           |
 | **Jira** | Server/Data Center | ✅ Supported (version 8.14+) |
 
 ## Installation
@@ -59,7 +59,7 @@ Generate an API token for Atlassian Cloud:
 - Click **Create API token**, name it
 - Copy the token immediately (it won't be shown again)
 
-#### For Jira Server/Data Center
+#### For Confluence and Jira Server/Data Center
 
 Generate a Personal Access Token in Jira Server/Data Center (v8.14+):
 - Go to your profile (avatar) → **Profile** → **Personal Access Tokens**
@@ -96,7 +96,7 @@ Generate a Personal Access Token in Jira Server/Data Center (v8.14+):
 }
 ```
 
-For Jira Server/Data Center:
+For Confluence/Jira Server/Data Center:
 
 ```json
 {
@@ -105,9 +105,8 @@ For Jira Server/Data Center:
       "command": "uvx",
       "args": ["mcp-atlassian"],
       "env": {
-        "CONFLUENCE_URL": "https://your-domain.atlassian.net/wiki",
-        "CONFLUENCE_USERNAME": "your.email@domain.com",
-        "CONFLUENCE_API_TOKEN": "your_api_token",
+        "CONFLUENCE_URL": "https://confluence.your-company.com",
+        "CONFLUENCE_PERSONAL_TOKEN": "your_personal_access_token",
         "JIRA_URL": "https://jira.your-company.com",
         "JIRA_PERSONAL_TOKEN": "your_personal_access_token"
       }
@@ -188,10 +187,16 @@ There are two ways to configure the Docker environment:
 
 The .env file should contain:
 ```env
-# Confluence
+# Confluence Cloud
 CONFLUENCE_URL=https://your-domain.atlassian.net/wiki  # Your Confluence cloud URL
 CONFLUENCE_USERNAME=your.email@domain.com              # Your Atlassian account email
 CONFLUENCE_API_TOKEN=your_api_token                    # API token for Confluence
+
+# Confluence Server/Data Center (alternative to CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN)
+# CONFLUENCE_URL=https://confluence.your-company.com        # Your Confluence Server/Data Center URL
+# CONFLUENCE_PERSONAL_TOKEN=your_personal_access_token      # Personal Access Token for Confluence Server/Data Center
+# CONFLUENCE_SSL_VERIFY=true                                # Set to 'false' for self-signed certificates
+
 #
 # Jira Cloud
 JIRA_URL=https://your-domain.atlassian.net            # Your Jira cloud URL
