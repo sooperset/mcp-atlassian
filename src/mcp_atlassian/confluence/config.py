@@ -11,7 +11,7 @@ class ConfluenceConfig:
 
     url: str  # Base URL for Confluence
     auth_type: Literal["basic", "token"]  # Authentication type
-    username: str | None = None # Email or username
+    username: str | None = None  # Email or username
     api_token: str | None = None  # API token used as password
     personal_token: str | None = None  # Personal access token (Server/DC)
     ssl_verify: bool = True  # Whether to verify SSL certificates
@@ -56,9 +56,7 @@ class ConfluenceConfig:
             if username and api_token:
                 auth_type = "basic"
             else:
-                error_msg = (
-                    "Cloud authentication requires CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN"
-                )
+                error_msg = "Cloud authentication requires CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN"
                 raise ValueError(error_msg)
         else:  # Server/Data Center
             if personal_token:
@@ -67,9 +65,7 @@ class ConfluenceConfig:
                 # Allow basic auth for Server/DC too
                 auth_type = "basic"
             else:
-                error_msg = (
-                    "Server/Data Center authentication requires CONFLUENCE_PERSONAL_TOKEN"
-                )
+                error_msg = "Server/Data Center authentication requires CONFLUENCE_PERSONAL_TOKEN"
                 raise ValueError(error_msg)
 
         # SSL verification (for Server/DC)

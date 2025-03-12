@@ -35,6 +35,7 @@ def test_init_with_basic_auth():
         assert client.confluence == mock_confluence.return_value
         assert client.preprocessor == mock_preprocessor.return_value
 
+
 def test_init_with_token_auth():
     """Test initializing the client with token auth configuration."""
     # Arrange
@@ -63,6 +64,7 @@ def test_init_with_token_auth():
         assert client.config == config
         assert client.confluence == mock_confluence.return_value
         assert client.preprocessor == mock_preprocessor.return_value
+
 
 def test_init_from_env():
     """Test initializing the client from environment variables."""

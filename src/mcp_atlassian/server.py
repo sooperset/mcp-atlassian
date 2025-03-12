@@ -36,11 +36,17 @@ def get_available_services() -> dict[str, bool | None]:
         is_cloud = "atlassian.net" in confluence_url
         if is_cloud:
             confluence_vars = all(
-                [confluence_url, os.getenv("CONFLUENCE_USERNAME"), os.getenv("CONFLUENCE_API_TOKEN")]
+                [
+                    confluence_url,
+                    os.getenv("CONFLUENCE_USERNAME"),
+                    os.getenv("CONFLUENCE_API_TOKEN"),
+                ]
             )
             logger.info("Using Confluence Cloud authentication method")
         else:
-            confluence_vars = all([confluence_url, os.getenv("CONFLUENCE_PERSONAL_TOKEN")])
+            confluence_vars = all(
+                [confluence_url, os.getenv("CONFLUENCE_PERSONAL_TOKEN")]
+            )
             logger.info("Using Confluence Server/Data Center authentication method")
     else:
         confluence_vars = False
