@@ -413,6 +413,19 @@ async def list_tools() -> list[Tool]:
                         "required": ["page_id", "title", "content"],
                     },
                 ),
+                Tool(
+                    name="confluence_delete_page",
+                    description="Delete an existing Confluence page",
+                    parameters={
+                        "properties": {
+                            "page_id": {
+                                "type": "string",
+                                "description": "The ID of the page to delete",
+                            },
+                        },
+                        "required": ["page_id"],
+                    },
+                ),
             ]
         )
 
@@ -883,34 +896,48 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             if not ctx or not ctx.confluence:
                 raise ValueError("Confluence is not configured.")
 
-            # Extract arguments
             page_id = arguments.get("page_id")
             title = arguments.get("title")
             content = arguments.get("content")
             is_minor_edit = arguments.get("is_minor_edit", False)
             version_comment = arguments.get("version_comment", "")
 
+            if not page_id or not title or not content:
+                raise ValueError(
+                    "Missing required parameters: page_id, title, and content are required."
+                )
+
             # Convert markdown to Confluence storage format
-            storage_format = markdown_to_confluence_storage(content)
+            html_content = markdown_to_confluence_storage(content)
 
             # Update the page
-            page = ctx.confluence.update_page(
+            updated_page = ctx.confluence.update_page(
                 page_id=page_id,
                 title=title,
-                body=storage_format,
+                body=html_content,
                 is_minor_edit=is_minor_edit,
                 version_comment=version_comment,
             )
 
-            # Format the result
-            result = page.to_simplified_dict()
+            # Format results
+            page_data = updated_page.to_simplified_dict()
 
-            return [
-                TextContent(
-                    type="text",
-                    text=f"Page updated successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}",
-                )
-            ]
+            return [TextContent(text=json.dumps({"page": page_data}))]
+
+        elif name == "confluence_delete_page":
+            if not ctx or not ctx.confluence:
+                raise ValueError("Confluence is not configured.")
+
+            page_id = arguments.get("page_id")
+
+            if not page_id:
+                raise ValueError("Missing required parameter: page_id is required.")
+
+            # Delete the page
+            result = ctx.confluence.delete_page(page_id=page_id)
+
+            # Format results
+            return [TextContent(text=json.dumps({"success": result}))]
 
         # Jira operations
         elif name == "jira_get_issue":

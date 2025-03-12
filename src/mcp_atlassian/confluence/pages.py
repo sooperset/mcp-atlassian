@@ -265,3 +265,26 @@ class PagesMixin(ConfluenceClient):
         except Exception as e:
             logger.error(f"Error updating page {page_id}: {str(e)}")
             raise Exception(f"Failed to update page {page_id}: {str(e)}") from e
+
+    def delete_page(self, page_id: str) -> bool:
+        """
+        Delete a Confluence page by its ID.
+
+        Args:
+            page_id: The ID of the page to delete
+
+        Returns:
+            Boolean indicating success (True) or failure (False)
+
+        Raises:
+            Exception: If there is an error deleting the page
+        """
+        try:
+            logger.debug(f"Deleting page {page_id}")
+            result = self.confluence.remove_page(page_id=page_id)
+
+            # The API should return True on success, but let's ensure we return a boolean
+            return bool(result)
+        except Exception as e:
+            logger.error(f"Error deleting page {page_id}: {str(e)}")
+            raise Exception(f"Failed to delete page {page_id}: {str(e)}") from e
