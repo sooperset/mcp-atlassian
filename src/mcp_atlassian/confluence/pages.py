@@ -266,6 +266,80 @@ class PagesMixin(ConfluenceClient):
             logger.error(f"Error updating page {page_id}: {str(e)}")
             raise Exception(f"Failed to update page {page_id}: {str(e)}") from e
 
+    def get_page_children(
+        self,
+        page_id: str,
+        start: int = 0,
+        limit: int = 25,
+        expand: str = "version",
+        *,
+        convert_to_markdown: bool = True,
+    ) -> list[ConfluencePage]:
+        """
+        Get child pages of a specific Confluence page.
+
+        Args:
+            page_id: The ID of the parent page
+            start: The starting index for pagination
+            limit: Maximum number of child pages to return
+            expand: Fields to expand in the response
+            convert_to_markdown: When True, returns content in markdown format,
+                               otherwise returns raw HTML (keyword-only)
+
+        Returns:
+            List of ConfluencePage models containing the child pages
+        """
+        try:
+            # Use the Atlassian Python API's get_page_child_by_type method
+            results = self.confluence.get_page_child_by_type(
+                page_id=page_id, type="page", start=start, limit=limit, expand=expand
+            )
+
+            # Process results
+            page_models = []
+
+            # Handle both pagination modes
+            if isinstance(results, dict) and "results" in results:
+                child_pages = results.get("results", [])
+            else:
+                child_pages = results or []
+
+            space_key = ""
+
+            # Get space key from the first result if available
+            if child_pages and "space" in child_pages[0]:
+                space_key = child_pages[0].get("space", {}).get("key", "")
+
+            # Process each child page
+            for page in child_pages:
+                # Only process content if we have "body" expanded
+                content_override = None
+                if "body" in page and convert_to_markdown:
+                    content = page.get("body", {}).get("storage", {}).get("value", "")
+                    if content:
+                        _, processed_markdown = self.preprocessor.process_html_content(
+                            content, space_key=space_key
+                        )
+                        content_override = processed_markdown
+
+                # Create the page model
+                page_model = ConfluencePage.from_api_response(
+                    page,
+                    base_url=self.config.url,
+                    include_body=True,
+                    content_override=content_override,
+                    content_format="markdown" if convert_to_markdown else "storage",
+                )
+
+                page_models.append(page_model)
+
+            return page_models
+
+        except Exception as e:
+            logger.error(f"Error fetching child pages for page {page_id}: {str(e)}")
+            logger.debug("Full exception details:", exc_info=True)
+            return []
+
     def delete_page(self, page_id: str) -> bool:
         """
         Delete a Confluence page by its ID.

@@ -351,6 +351,37 @@ async def list_tools() -> list[Tool]:
                     },
                 ),
                 Tool(
+                    name="confluence_get_page_children",
+                    description="Get child pages of a specific Confluence page",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "parent_id": {
+                                "type": "string",
+                                "description": "The ID of the parent page whose children you want to retrieve",
+                            },
+                            "expand": {
+                                "type": "string",
+                                "description": "Fields to expand in the response (e.g., 'version', 'body.storage')",
+                                "default": "version",
+                            },
+                            "limit": {
+                                "type": "number",
+                                "description": "Maximum number of child pages to return (1-50)",
+                                "default": 25,
+                                "minimum": 1,
+                                "maximum": 50,
+                            },
+                            "include_content": {
+                                "type": "boolean",
+                                "description": "Whether to include the page content in the response",
+                                "default": False,
+                            },
+                        },
+                        "required": ["parent_id"],
+                    },
+                ),
+                Tool(
                     name="confluence_get_comments",
                     description="Get comments for a specific Confluence page",
                     inputSchema={
@@ -857,6 +888,44 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             return [
                 TextContent(
                     type="text", text=json.dumps(result, indent=2, ensure_ascii=False)
+                )
+            ]
+
+        elif name == "confluence_get_page_children":
+            if not ctx or not ctx.confluence:
+                raise ValueError("Confluence is not configured.")
+
+            parent_id = arguments.get("parent_id")
+            expand = arguments.get("expand", "version")
+            limit = min(int(arguments.get("limit", 25)), 50)
+            include_content = arguments.get("include_content", False)
+
+            # Add body.storage to expand if content is requested
+            if include_content and "body" not in expand:
+                expand = f"{expand},body.storage"
+
+            # Get the child pages
+            pages = ctx.confluence.get_page_children(
+                page_id=parent_id, expand=expand, limit=limit, convert_to_markdown=True
+            )
+
+            # Format results using the to_simplified_dict method
+            child_pages = [page.to_simplified_dict() for page in pages]
+
+            # Return the formatted results
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {
+                            "parent_id": parent_id,
+                            "total": len(child_pages),
+                            "limit": limit,
+                            "results": child_pages,
+                        },
+                        indent=2,
+                        ensure_ascii=False,
+                    ),
                 )
             ]
 

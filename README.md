@@ -268,6 +268,7 @@ Configure in Claude Desktop:
 |------|-------------|
 | `confluence_search` | Search Confluence content using CQL |
 | `confluence_get_page` | Get content of a specific Confluence page |
+| `confluence_get_page_children` | Get child pages of a specific Confluence page |
 | `confluence_get_comments` | Get comments for a specific Confluence page |
 | `confluence_create_page` | Create a new Confluence page |
 | `confluence_update_page` | Update an existing Confluence page |

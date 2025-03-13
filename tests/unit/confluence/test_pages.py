@@ -315,6 +315,117 @@ class TestPagesMixin:
         with pytest.raises(Exception, match="Failed to delete page"):
             pages_mixin.delete_page(page_id)
 
+    def test_get_page_children_success(self, pages_mixin):
+        """Test successfully getting child pages."""
+        # Arrange
+        parent_id = "123456"
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        # Mock the response from get_page_child_by_type
+        child_pages_data = {
+            "results": [
+                {
+                    "id": "789012",
+                    "title": "Child Page 1",
+                    "space": {"key": "DEMO"},
+                    "version": {"number": 1},
+                },
+                {
+                    "id": "345678",
+                    "title": "Child Page 2",
+                    "space": {"key": "DEMO"},
+                    "version": {"number": 3},
+                },
+            ]
+        }
+        pages_mixin.confluence.get_page_child_by_type.return_value = child_pages_data
+
+        # Act
+        results = pages_mixin.get_page_children(
+            page_id=parent_id, limit=10, expand="version"
+        )
+
+        # Assert
+        pages_mixin.confluence.get_page_child_by_type.assert_called_once_with(
+            page_id=parent_id, type="page", start=0, limit=10, expand="version"
+        )
+
+        # Verify the results
+        assert len(results) == 2
+        assert isinstance(results[0], ConfluencePage)
+        assert results[0].id == "789012"
+        assert results[0].title == "Child Page 1"
+        assert results[1].id == "345678"
+        assert results[1].title == "Child Page 2"
+
+    def test_get_page_children_with_content(self, pages_mixin):
+        """Test getting child pages with content."""
+        # Arrange
+        parent_id = "123456"
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        # Mock the response with body content
+        child_pages_data = {
+            "results": [
+                {
+                    "id": "789012",
+                    "title": "Child Page With Content",
+                    "space": {"key": "DEMO"},
+                    "version": {"number": 1},
+                    "body": {"storage": {"value": "<p>This is some content</p>"}},
+                }
+            ]
+        }
+        pages_mixin.confluence.get_page_child_by_type.return_value = child_pages_data
+
+        # Mock the preprocessor
+        pages_mixin.preprocessor.process_html_content.return_value = (
+            "<p>Processed HTML</p>",
+            "Processed Markdown",
+        )
+
+        # Act
+        results = pages_mixin.get_page_children(
+            page_id=parent_id, expand="body.storage", convert_to_markdown=True
+        )
+
+        # Assert
+        assert len(results) == 1
+        assert results[0].content == "Processed Markdown"
+        pages_mixin.preprocessor.process_html_content.assert_called_once_with(
+            "<p>This is some content</p>", space_key="DEMO"
+        )
+
+    def test_get_page_children_empty(self, pages_mixin):
+        """Test getting child pages when there are none."""
+        # Arrange
+        parent_id = "123456"
+
+        # Mock empty response
+        pages_mixin.confluence.get_page_child_by_type.return_value = {"results": []}
+
+        # Act
+        results = pages_mixin.get_page_children(page_id=parent_id)
+
+        # Assert
+        assert len(results) == 0
+
+    def test_get_page_children_error(self, pages_mixin):
+        """Test error handling when getting child pages."""
+        # Arrange
+        parent_id = "123456"
+
+        # Mock an exception
+        pages_mixin.confluence.get_page_child_by_type.side_effect = Exception(
+            "API Error"
+        )
+
+        # Act
+        results = pages_mixin.get_page_children(page_id=parent_id)
+
+        # Assert - should return empty list on error, not raise exception
+        assert len(results) == 0
+
     def test_get_page_success(self, pages_mixin):
         """Test successful page retrieval."""
         # Setup
