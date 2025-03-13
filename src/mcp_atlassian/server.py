@@ -1007,7 +1007,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             # Format results
             page_data = updated_page.to_simplified_dict()
 
-            return [TextContent(text=json.dumps({"page": page_data}))]
+            return [TextContent(type="text", text=json.dumps({"page": page_data}))]
 
         elif name == "confluence_delete_page":
             if not ctx or not ctx.confluence:

@@ -6,6 +6,7 @@
 # Default settings
 TEST_TYPE="all"  # Can be "all", "models", or "api"
 VERBOSITY="-v"   # Verbosity level
+RUN_WRITE_TESTS=false
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -37,13 +38,13 @@ while [[ $# -gt 0 ]]; do
     --help)
       echo "Usage: $0 [options]"
       echo "Options:"
-      echo "  --models-only      Test only Pydantic models"
-      echo "  --api-only         Test only API integration"
-      echo "  --all              Test both models and API (default)"
-      echo "  --quiet            Minimal output"
-      echo "  --verbose          More detailed output"
-      echo "  --with-write-tests Include tests that modify data (use with caution!)"
-      echo "  --help             Show this help message"
+      echo "  --models-only          Test only Pydantic models"
+      echo "  --api-only             Test only API integration"
+      echo "  --all                  Test both models and API (default)"
+      echo "  --quiet                Minimal output"
+      echo "  --verbose              More detailed output"
+      echo "  --with-write-tests     Include tests that modify data (including TextContent validation)"
+      echo "  --help                 Show this help message"
       exit 0
       ;;
     *)
@@ -129,14 +130,13 @@ run_api_tests() {
         sleep 5
 
         # Run the write operation tests
-        uv run pytest tests/test_real_api_validation.py::test_jira_create_issue tests/test_real_api_validation.py::test_jira_add_comment tests/test_real_api_validation.py::test_confluence_create_page $VERBOSITY
-        # Optionally run the skipped tests if explicitly requested
-        if [[ "$RUN_WRITE_TESTS" == "true" ]]; then
-            echo ""
-            echo "===== API Advanced Write Tests ====="
-            # These are still skipped by default, so we need to use -k to enable them
-            uv run pytest tests/test_real_api_validation.py::test_jira_transition_issue tests/test_real_api_validation.py::test_confluence_update_page -v
-        fi
+        uv run pytest tests/test_real_api_validation.py::test_jira_create_issue tests/test_real_api_validation.py::test_jira_add_comment tests/test_real_api_validation.py::test_confluence_create_page tests/test_real_api_validation.py::test_confluence_update_page $VERBOSITY
+
+        # Run the skipped transition test if explicitly requested write tests
+        echo ""
+        echo "===== API Advanced Write Tests ====="
+        echo "Running tests for status transitions"
+        uv run pytest tests/test_real_api_validation.py::test_jira_transition_issue -v -k "test_jira_transition_issue"
     fi
 }
 

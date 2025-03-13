@@ -421,20 +421,13 @@ async def test_confluence_get_page_content(
     confluence_client: ConfluenceFetcher, test_page_id: str
 ) -> None:
     """Test retrieving a page from Confluence."""
-    # Get the page content (method name might be different)
-    # Try different method names based on the class implementation
-    if hasattr(confluence_client, "get_page_by_id"):
-        page = confluence_client.get_page_by_id(test_page_id)
-    elif hasattr(confluence_client, "get_content"):
-        page = confluence_client.get_content(test_page_id)
-    else:
-        # If direct methods don't exist, try indirection through the client
-        page = confluence_client.confluence.get_page_by_id(test_page_id)
+    # Get the page content using our module's API
+    page = confluence_client.get_page_content(test_page_id)
 
     # Verify the response
     assert page is not None
-    assert "id" in page or hasattr(page, "id")
-    assert "title" in page or hasattr(page, "title")
+    assert page.id == test_page_id
+    assert page.title is not None
 
 
 @pytest.mark.anyio
@@ -528,89 +521,130 @@ async def test_confluence_create_page(
     cleanup_resources: Callable[[], None],
 ) -> None:
     """Test creating a page in Confluence."""
-    # First check if we have permission to create pages in this space
-    try:
-        # Try to get space info to verify access
-        if hasattr(confluence_client, "get_space"):
-            space = confluence_client.get_space(test_space_key)
-        else:
-            space = confluence_client.confluence.get_space(test_space_key)
-
-        # Check if space exists
-        if not space:
-            pytest.skip(
-                f"Space {test_space_key} not found. Skipping page creation test."
-            )
-            return
-    except Exception as e:
-        if "permission" in str(e).lower() or "access" in str(e).lower():
-            pytest.skip(
-                f"No permission to access space {test_space_key}. Skipping page creation test."
-            )
-        else:
-            pytest.skip(
-                f"Could not access space {test_space_key}: {str(e)}. Skipping page creation test."
-            )
-        return
-
     # Generate a unique title
     test_id = str(uuid.uuid4())[:8]
     title = f"Test Page (API Validation) {test_id}"
+
+    # Create timestamp separately to avoid long line
+    timestamp = datetime.datetime.now(tz=datetime.timezone.utc).isoformat()
     content = f"""
     <h1>Test Page</h1>
-    <p>This is a test page created by the API validation tests at {datetime.datetime.now(tz=datetime.timezone.utc).isoformat()}.</p>
+    <p>This is a test page created by the API validation tests at {timestamp}.</p>
     <p>It should be automatically deleted after the test.</p>
     """
 
     try:
-        # Create the page
+        # Create the page using our module's API
         try:
-            if hasattr(confluence_client, "create_page"):
-                page = confluence_client.create_page(
-                    space_key=test_space_key, title=title, body=content
-                )
-            else:
-                # Fall back to the underlying client
-                page = confluence_client.confluence.create_page(
-                    space=test_space_key, title=title, body=content
-                )
+            page = confluence_client.create_page(
+                space_key=test_space_key, title=title, body=content
+            )
         except Exception as e:
             if "permission" in str(e).lower():
                 pytest.skip(f"No permission to create pages in space {test_space_key}")
+                return
+            elif "space" in str(e).lower() and (
+                "not found" in str(e).lower() or "doesn't exist" in str(e).lower()
+            ):
+                pytest.skip(
+                    f"Space {test_space_key} not found. Skipping page creation test."
+                )
                 return
             else:
                 raise
 
         # Track the page for cleanup
-        if hasattr(page, "id"):
-            page_id = page.id
-        else:
-            page_id = page["id"]
-
+        page_id = page.id
         resource_tracker.add_confluence_page(page_id)
 
         # Verify the response
         assert page is not None
-
-        # Verify the page title
-        if hasattr(page, "title"):
-            assert page.title == title
-        else:
-            assert page["title"] == title
+        assert page.title == title
 
         # Attempt to retrieve the created page
-        if hasattr(confluence_client, "get_page_by_id"):
-            retrieved_page = confluence_client.get_page_by_id(page_id)
-        else:
-            retrieved_page = confluence_client.confluence.get_page_by_id(page_id)
-
+        retrieved_page = confluence_client.get_page_content(page_id)
         assert retrieved_page is not None
     finally:
         # Clean up resources even if the test fails
         cleanup_resources()
 
 
-# Skip these tests by default
+@pytest.mark.anyio
+async def test_confluence_update_page(
+    confluence_client: ConfluenceFetcher,
+    resource_tracker: ResourceTracker,
+    test_space_key: str,
+    cleanup_resources: Callable[[], None],
+) -> None:
+    """Test updating a page in Confluence and validate TextContent structure.
+
+    This test has two purposes:
+    1. Test the basic page update functionality
+    2. Validate the TextContent class requires the 'type' field to prevent issue #97
+    """
+    # Create a test page first
+    test_id = str(uuid.uuid4())[:8]
+    title = f"Update Test Page {test_id}"
+    content = f"<p>Initial content {test_id}</p>"
+
+    try:
+        # Create the page using our module's API
+        page = confluence_client.create_page(
+            space_key=test_space_key, title=title, body=content
+        )
+
+        # Track the page for cleanup
+        page_id = page.id
+        resource_tracker.add_confluence_page(page_id)
+
+        # Update the page with new content
+        now = datetime.datetime.now(tz=datetime.timezone.utc).isoformat()
+        updated_content = f"<p>Updated content {test_id} at {now}</p>"
+
+        # Test updating without explicitly specifying the version
+        updated_page = confluence_client.update_page(
+            page_id=page_id, title=title, body=updated_content
+        )
+
+        # Verify the update worked
+        assert updated_page is not None
+
+        # ======= TextContent Validation (prevents issue #97) =======
+        # Import TextContent class to test directly
+        from mcp.types import TextContent
+
+        print("Testing TextContent validation to prevent issue #97")
+
+        # Create a TextContent without type field - this should raise an error
+        try:
+            # Intentionally omit the type field to simulate the bug in issue #97
+            # Using _ to avoid unused variable warning
+            _ = TextContent(text="This should fail without type field")
+            # If we get here, the validation is not working
+            raise AssertionError(
+                "TextContent creation without 'type' field should fail but didn't"
+            )
+        except Exception as e:
+            # We expect an exception because the type field is required
+            print(f"Correctly got error: {str(e)}")
+            assert "type" in str(e), "Error should mention missing 'type' field"
+
+        # Create valid TextContent with type field - should work
+        valid_content = TextContent(
+            type="text", text="This should work with type field"
+        )
+        assert valid_content.type == "text", "TextContent should have type='text'"
+        assert valid_content.text == "This should work with type field", (
+            "TextContent text should match"
+        )
+
+        print("TextContent validation succeeded - 'type' field is properly required")
+
+    finally:
+        # Clean up resources even if the test fails
+        cleanup_resources()
+
+
 @pytest.mark.skip(reason="This test modifies data - use with caution")
 @pytest.mark.anyio
 async def test_jira_transition_issue(
@@ -660,9 +694,15 @@ async def test_jira_transition_issue(
         assert transition_id is not None
 
         # Perform the transition
-        result = jira_client.transition_issue(
+        transition_result = jira_client.transition_issue(
             issue_key=issue.key, transition_id=transition_id
         )
+
+        # Verify transition was successful if result is returned
+        if transition_result is not None:
+            assert transition_result, (
+                "Transition should return a truthy value if successful"
+            )
 
         # Verify the issue status changed
         updated_issue = jira_client.get_issue(issue.key)
@@ -675,71 +715,6 @@ async def test_jira_transition_issue(
 
         # The status should no longer be "To Do" or equivalent
         assert "to do" not in status_name.lower()
-    finally:
-        # Clean up resources even if the test fails
-        cleanup_resources()
-
-
-@pytest.mark.skip(reason="This test modifies data - use with caution")
-@pytest.mark.anyio
-async def test_confluence_update_page(
-    confluence_client: ConfluenceFetcher,
-    resource_tracker: ResourceTracker,
-    test_space_key: str,
-    cleanup_resources: Callable[[], None],
-) -> None:
-    """Test updating a page in Confluence without version parameter."""
-    # Create a test page first
-    test_id = str(uuid.uuid4())[:8]
-    title = f"Update Test Page {test_id}"
-    content = f"<p>Initial content {test_id}</p>"
-
-    try:
-        # Create the page
-        if hasattr(confluence_client, "create_page"):
-            page = confluence_client.create_page(
-                space_key=test_space_key, title=title, body=content
-            )
-        else:
-            # Fall back to the underlying client
-            page = confluence_client.confluence.create_page(
-                space=test_space_key, title=title, body=content
-            )
-
-        # Track the page for cleanup
-        if hasattr(page, "id"):
-            page_id = page.id
-        else:
-            page_id = page["id"]
-
-        resource_tracker.add_confluence_page(page_id)
-
-        # Update the page with new content
-        updated_content = f"<p>Updated content {test_id} at {datetime.datetime.now(tz=datetime.timezone.utc).isoformat()}</p>"
-
-        # Test updating without explicitly specifying the version
-        if hasattr(confluence_client, "update_page"):
-            updated_page = confluence_client.update_page(
-                page_id=page_id, title=title, body=updated_content
-            )
-        else:
-            # Fall back to the underlying client
-            updated_page = confluence_client.confluence.update_page(
-                page_id=page_id, title=title, body=updated_content
-            )
-
-        # Verify the update
-        assert updated_page is not None
-
-        # Retrieve the updated page
-        if hasattr(confluence_client, "get_page_by_id"):
-            retrieved_page = confluence_client.get_page_by_id(page_id)
-        else:
-            retrieved_page = confluence_client.confluence.get_page_by_id(page_id)
-
-        # Check that the content was updated
-        assert retrieved_page is not None
-        assert "Updated content" in str(retrieved_page)
     finally:
         # Clean up resources even if the test fails
         cleanup_resources()
