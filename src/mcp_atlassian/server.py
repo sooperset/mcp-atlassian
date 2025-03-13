@@ -12,7 +12,7 @@ from mcp.types import Resource, TextContent, Tool
 
 from .confluence import ConfluenceFetcher
 from .jira import JiraFetcher
-from .preprocessing import markdown_to_confluence_storage
+from .preprocessing.utils import markdown_to_confluence_storage
 
 # Configure logging
 logger = logging.getLogger("mcp-atlassian")

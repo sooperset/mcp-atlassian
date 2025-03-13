@@ -6,6 +6,7 @@ from typing import Any
 
 from ..models import JiraWorklog
 from .client import JiraClient
+from .utils import parse_date_ymd
 
 logger = logging.getLogger("mcp-jira")
 
@@ -227,32 +228,11 @@ class WorklogMixin(JiraClient):
         """
         Parse a date string from ISO format to a more readable format.
 
-        This method is included for independence from other mixins,
-        but will use the implementation from other mixins if available.
-
         Args:
             date_str: Date string in ISO format or None
 
         Returns:
             Formatted date string or empty string if date_str is None
         """
-        # If the date string is None, return empty string
-        if date_str is None:
-            return ""
-
-        # If another mixin has implemented this method, use that implementation
-        if (
-            hasattr(self, "_parse_date")
-            and self.__class__._parse_date is not WorklogMixin._parse_date
-        ):
-            # This avoids infinite recursion by checking that the method is different
-            return super()._parse_date(date_str)
-
-        # Fallback implementation
-        try:
-            from datetime import datetime
-
-            date_obj = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-            return date_obj.strftime("%Y-%m-%d")
-        except (ValueError, TypeError):
-            return date_str
+        # Use the common utility function for consistent formatting
+        return parse_date_ymd(date_str)

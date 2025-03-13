@@ -22,7 +22,7 @@ class JiraClient:
         Raises:
             ValueError: If configuration is invalid or required credentials are missing
         """
-        from mcp_atlassian.preprocessing import TextPreprocessor
+        from mcp_atlassian.preprocessing import JiraPreprocessor
 
         # Load configuration from environment variables if not provided
         self.config = config or JiraConfig.from_env()
@@ -45,7 +45,7 @@ class JiraClient:
             )
 
         # Initialize the text preprocessor for text processing capabilities
-        self.preprocessor = TextPreprocessor(self.config.url)
+        self.preprocessor = JiraPreprocessor(base_url=self.config.url)
 
         # Cache for frequently used data
         self._field_ids: dict[str, str] | None = None

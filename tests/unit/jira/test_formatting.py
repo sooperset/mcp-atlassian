@@ -5,14 +5,19 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from mcp_atlassian.jira.formatting import FormattingMixin
+from mcp_atlassian.preprocessing import JiraPreprocessor
 
 
 @pytest.fixture
 def formatting_mixin():
     """Fixture to create a FormattingMixin instance for testing."""
-    mixin = FormattingMixin()
+    # Create the mixin without calling its __init__ to avoid config dependencies
+    with patch.object(FormattingMixin, "__init__", return_value=None):
+        mixin = FormattingMixin()
+
+    # Set up necessary mocks
     mixin.jira = MagicMock()
-    mixin.preprocessor = MagicMock()
+    mixin.preprocessor = MagicMock(spec=JiraPreprocessor)
     return mixin
 
 

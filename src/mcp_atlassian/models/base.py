@@ -74,7 +74,20 @@ class TimestampMixin:
 
         try:
             # Parse ISO 8601 format like "2024-01-01T10:00:00.000+0000"
-            dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            # Convert Z format to +00:00 for compatibility with fromisoformat
+            ts = timestamp.replace("Z", "+00:00")
+
+            # Handle timezone format without colon (+0000 -> +00:00)
+            if "+" in ts and ":" not in ts[-5:]:
+                tz_pos = ts.rfind("+")
+                if tz_pos != -1 and len(ts) >= tz_pos + 5:
+                    ts = ts[: tz_pos + 3] + ":" + ts[tz_pos + 3 :]
+            elif "-" in ts and ":" not in ts[-5:]:
+                tz_pos = ts.rfind("-")
+                if tz_pos != -1 and len(ts) >= tz_pos + 5:
+                    ts = ts[: tz_pos + 3] + ":" + ts[tz_pos + 3 :]
+
+            dt = datetime.fromisoformat(ts)
             return dt.strftime("%Y-%m-%d %H:%M:%S")
         except (ValueError, TypeError):
             return timestamp or EMPTY_STRING
@@ -94,7 +107,20 @@ class TimestampMixin:
             return False
 
         try:
-            datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            # Convert Z format to +00:00 for compatibility with fromisoformat
+            ts = timestamp.replace("Z", "+00:00")
+
+            # Handle timezone format without colon (+0000 -> +00:00)
+            if "+" in ts and ":" not in ts[-5:]:
+                tz_pos = ts.rfind("+")
+                if tz_pos != -1 and len(ts) >= tz_pos + 5:
+                    ts = ts[: tz_pos + 3] + ":" + ts[tz_pos + 3 :]
+            elif "-" in ts and ":" not in ts[-5:]:
+                tz_pos = ts.rfind("-")
+                if tz_pos != -1 and len(ts) >= tz_pos + 5:
+                    ts = ts[: tz_pos + 3] + ":" + ts[tz_pos + 3 :]
+
+            datetime.fromisoformat(ts)
             return True
         except (ValueError, TypeError):
             return False

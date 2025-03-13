@@ -355,12 +355,15 @@ class TestWorklogMixin:
         assert result["original_estimate_updated"] is False
 
     def test_parse_date(self, worklog_mixin):
-        """Test date parsing."""
+        """Test the actual implementation of _parse_date."""
         # Test ISO format
-        assert worklog_mixin._parse_date("2024-01-01T10:00:00.000+0000") == "2024-01-01"
+        result = worklog_mixin._parse_date("2024-01-01T10:00:00.000+0000")
+        assert result == "2024-01-01", f"Expected '2024-01-01' but got '{result}'"
 
         # Test invalid format
-        assert worklog_mixin._parse_date("invalid date") == "invalid date"
+        result = worklog_mixin._parse_date("invalid date")
+        assert result == "invalid date", f"Expected 'invalid date' but got '{result}'"
 
         # Test None value
-        assert worklog_mixin._parse_date(None) == ""
+        result = worklog_mixin._parse_date(None)
+        assert result == "", f"Expected empty string but got '{result}'"

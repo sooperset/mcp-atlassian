@@ -1,11 +1,11 @@
 """Module for Jira issue operations."""
 
 import logging
-from datetime import datetime
 from typing import Any
 
 from ..models.jira import JiraIssue
 from .users import UsersMixin
+from .utils import parse_date_human_readable
 
 logger = logging.getLogger("mcp-jira")
 
@@ -232,13 +232,8 @@ class IssuesMixin(UsersMixin):
         Returns:
             Formatted date string
         """
-        try:
-            # Parse ISO 8601 format
-            date_obj = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-            # Format: January 1, 2023
-            return date_obj.strftime("%B %d, %Y")
-        except (ValueError, TypeError):
-            return date_str
+        # Use the common utility function for consistent formatting
+        return parse_date_human_readable(date_str)
 
     def _format_issue_content(
         self,
@@ -720,9 +715,11 @@ class IssuesMixin(UsersMixin):
         logger.info(f"Performing transition with ID {transition_id}")
         self.jira.set_issue_status_by_transition_id(
             issue_key=issue_key,
-            transition_id=int(transition_id)
-            if isinstance(transition_id, str) and transition_id.isdigit()
-            else transition_id,
+            transition_id=(
+                int(transition_id)
+                if isinstance(transition_id, str) and transition_id.isdigit()
+                else transition_id
+            ),
         )
 
         # Get the updated issue data

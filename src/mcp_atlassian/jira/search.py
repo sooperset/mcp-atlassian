@@ -4,6 +4,7 @@ import logging
 
 from ..models.jira import JiraIssue, JiraSearchResult
 from .client import JiraClient
+from .utils import parse_date_ymd
 
 logger = logging.getLogger("mcp-jira")
 
@@ -129,28 +130,11 @@ class SearchMixin(JiraClient):
         """
         Parse a date string from ISO format to a more readable format.
 
-        This method is included in the SearchMixin for independence from other mixins,
-        but will use the implementation from IssuesMixin if available.
-
         Args:
             date_str: Date string in ISO format
 
         Returns:
             Formatted date string
         """
-        # If we're also using IssuesMixin, use its implementation
-        if (
-            hasattr(self, "_parse_date")
-            and self.__class__._parse_date is not SearchMixin._parse_date
-        ):
-            # This avoids infinite recursion by checking that the method is different
-            return super()._parse_date(date_str)
-
-        # Fallback implementation
-        try:
-            from datetime import datetime
-
-            date_obj = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-            return date_obj.strftime("%Y-%m-%d")
-        except (ValueError, TypeError):
-            return date_str
+        # Use the common utility function for consistent formatting
+        return parse_date_ymd(date_str)

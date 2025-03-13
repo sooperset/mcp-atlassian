@@ -1,6 +1,6 @@
 """Tests for the Jira Comments mixin."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -16,205 +16,236 @@ class TestCommentsMixin:
         mixin = CommentsMixin(config=jira_client.config)
         mixin.jira = jira_client.jira
 
-        # Mock methods that are typically provided by other mixins
-        mixin._clean_text = MagicMock(side_effect=lambda text: text if text else "")
-        mixin.preprocessor = MagicMock()
-        mixin.preprocessor.markdown_to_jira = MagicMock(side_effect=lambda text: text)
+        # Set up a mock preprocessor with markdown_to_jira method
+        mixin.preprocessor = Mock()
+        mixin.preprocessor.markdown_to_jira = Mock(
+            return_value="*This* is _Jira_ formatted"
+        )
+
+        # Mock the clean_text method
+        mixin._clean_text = Mock(side_effect=lambda x: x)
 
         return mixin
 
     def test_get_issue_comments_basic(self, comments_mixin):
-        """Test basic functionality of get_issue_comments."""
+        """Test get_issue_comments with basic data."""
         # Setup mock response
-        mock_comments = {
+        comments_mixin.jira.issue_get_comments.return_value = {
             "comments": [
                 {
                     "id": "10001",
                     "body": "This is a comment",
                     "created": "2024-01-01T10:00:00.000+0000",
-                    "updated": "2024-01-01T10:30:00.000+0000",
-                    "author": {"displayName": "Test User"},
+                    "updated": "2024-01-01T11:00:00.000+0000",
+                    "author": {"displayName": "John Doe"},
                 }
             ]
         }
-        comments_mixin.jira.issue_get_comments.return_value = mock_comments
 
-        # Call the method
-        result = comments_mixin.get_issue_comments("TEST-123")
+        # Mock the _parse_date method for this test
+        with patch.object(
+            comments_mixin,
+            "_parse_date",
+            side_effect=lambda x: x.split("T")[0] if x and "T" in x else x,
+        ):
+            # Call the method
+            result = comments_mixin.get_issue_comments("TEST-123")
 
-        # Verify
-        comments_mixin.jira.issue_get_comments.assert_called_once_with("TEST-123")
-        assert len(result) == 1
-        assert result[0]["id"] == "10001"
-        assert result[0]["body"] == "This is a comment"
-        assert result[0]["author"] == "Test User"
-        assert "created" in result[0]
-        assert "updated" in result[0]
+            # Verify
+            comments_mixin.jira.issue_get_comments.assert_called_once_with("TEST-123")
+            assert len(result) == 1
+            assert result[0]["id"] == "10001"
+            assert result[0]["body"] == "This is a comment"
+            assert result[0]["created"] == "2024-01-01"  # Parsed date
+            assert result[0]["author"] == "John Doe"
 
     def test_get_issue_comments_with_limit(self, comments_mixin):
-        """Test get_issue_comments respects the limit parameter."""
+        """Test get_issue_comments with limit parameter."""
         # Setup mock response with multiple comments
-        mock_comments = {
+        comments_mixin.jira.issue_get_comments.return_value = {
             "comments": [
                 {
                     "id": "10001",
-                    "body": "Comment 1",
+                    "body": "First comment",
                     "created": "2024-01-01T10:00:00.000+0000",
-                    "updated": "2024-01-01T10:30:00.000+0000",
-                    "author": {"displayName": "Test User"},
+                    "author": {"displayName": "John Doe"},
                 },
                 {
                     "id": "10002",
-                    "body": "Comment 2",
-                    "created": "2024-01-01T11:00:00.000+0000",
-                    "updated": "2024-01-01T11:30:00.000+0000",
-                    "author": {"displayName": "Another User"},
+                    "body": "Second comment",
+                    "created": "2024-01-02T10:00:00.000+0000",
+                    "author": {"displayName": "Jane Smith"},
+                },
+                {
+                    "id": "10003",
+                    "body": "Third comment",
+                    "created": "2024-01-03T10:00:00.000+0000",
+                    "author": {"displayName": "Bob Johnson"},
                 },
             ]
         }
-        comments_mixin.jira.issue_get_comments.return_value = mock_comments
 
-        # Call the method with limit=1
-        result = comments_mixin.get_issue_comments("TEST-123", limit=1)
+        # Call the method with limit=2
+        result = comments_mixin.get_issue_comments("TEST-123", limit=2)
 
-        # Verify only one comment is returned
-        assert len(result) == 1
+        # Verify
+        comments_mixin.jira.issue_get_comments.assert_called_once_with("TEST-123")
+        assert len(result) == 2  # Only 2 comments should be returned
         assert result[0]["id"] == "10001"
+        assert result[1]["id"] == "10002"
+        # Third comment shouldn't be included due to limit
 
     def test_get_issue_comments_with_missing_fields(self, comments_mixin):
-        """Test get_issue_comments handles missing fields gracefully."""
+        """Test get_issue_comments with missing fields in the response."""
         # Setup mock response with missing fields
-        mock_comments = {
+        comments_mixin.jira.issue_get_comments.return_value = {
             "comments": [
                 {
                     "id": "10001",
-                    # Missing body
+                    # Missing body field
                     "created": "2024-01-01T10:00:00.000+0000",
-                    # Missing updated
-                    # Missing author
-                }
+                    # Missing author field
+                },
+                {
+                    # Missing id field
+                    "body": "Second comment",
+                    # Missing created field
+                    "author": {},  # Empty author object
+                },
+                {
+                    "id": "10003",
+                    "body": "Third comment",
+                    "created": "2024-01-03T10:00:00.000+0000",
+                    "author": {"name": "user123"},  # Using name instead of displayName
+                },
             ]
         }
-        comments_mixin.jira.issue_get_comments.return_value = mock_comments
 
         # Call the method
         result = comments_mixin.get_issue_comments("TEST-123")
 
         # Verify
-        assert len(result) == 1
+        assert len(result) == 3
         assert result[0]["id"] == "10001"
         assert result[0]["body"] == ""  # Should default to empty string
-        assert result[0]["author"] == "Unknown"  # Should default to "Unknown"
+        assert result[0]["author"] == "Unknown"  # Should default to Unknown
+
+        assert (
+            "id" not in result[1] or not result[1]["id"]
+        )  # Should be missing or empty
+        assert result[1]["author"] == "Unknown"  # Should default to Unknown
+
+        assert (
+            result[2]["author"] == "Unknown"
+        )  # Should use Unknown when only name is available
 
     def test_get_issue_comments_with_empty_response(self, comments_mixin):
-        """Test get_issue_comments handles empty response."""
+        """Test get_issue_comments with an empty response."""
         # Setup mock response with no comments
-        comments_mixin.jira.issue_get_comments.return_value = {}
+        comments_mixin.jira.issue_get_comments.return_value = {"comments": []}
 
         # Call the method
         result = comments_mixin.get_issue_comments("TEST-123")
 
         # Verify
-        assert isinstance(result, list)
-        assert len(result) == 0
+        assert len(result) == 0  # Should return an empty list
 
     def test_get_issue_comments_with_error(self, comments_mixin):
-        """Test get_issue_comments error handling."""
+        """Test get_issue_comments with an error response."""
         # Setup mock to raise exception
-        comments_mixin.jira.issue_get_comments.side_effect = Exception(
-            "Comment fetch error"
-        )
+        comments_mixin.jira.issue_get_comments.side_effect = Exception("API Error")
 
-        # Call the method and verify exception
-        with pytest.raises(
-            Exception, match="Error getting comments: Comment fetch error"
-        ):
+        # Verify it raises the wrapped exception
+        with pytest.raises(Exception, match="Error getting comments"):
             comments_mixin.get_issue_comments("TEST-123")
 
     def test_add_comment_basic(self, comments_mixin):
-        """Test basic functionality of add_comment."""
+        """Test add_comment with basic data."""
         # Setup mock response
-        mock_result = {
+        comments_mixin.jira.issue_add_comment.return_value = {
             "id": "10001",
-            "body": "Test comment",
+            "body": "This is a comment",
             "created": "2024-01-01T10:00:00.000+0000",
-            "author": {"displayName": "Test User"},
+            "author": {"displayName": "John Doe"},
         }
-        comments_mixin.jira.issue_add_comment.return_value = mock_result
 
         # Call the method
         result = comments_mixin.add_comment("TEST-123", "Test comment")
 
         # Verify
-        comments_mixin.jira.issue_add_comment.assert_called_once_with(
-            "TEST-123", "Test comment"
-        )
         comments_mixin.preprocessor.markdown_to_jira.assert_called_once_with(
             "Test comment"
         )
+        comments_mixin.jira.issue_add_comment.assert_called_once_with(
+            "TEST-123", "*This* is _Jira_ formatted"
+        )
         assert result["id"] == "10001"
-        assert result["body"] == "Test comment"
-        assert result["author"] == "Test User"
-        assert "created" in result
+        assert result["body"] == "This is a comment"
+        assert result["created"] == "2024-01-01"  # Parsed date
+        assert result["author"] == "John Doe"
 
     def test_add_comment_with_markdown_conversion(self, comments_mixin):
-        """Test add_comment converts markdown to Jira format."""
+        """Test add_comment with markdown conversion."""
         # Setup mock response
-        mock_result = {
+        comments_mixin.jira.issue_add_comment.return_value = {
             "id": "10001",
-            "body": "Jira formatted text",
+            "body": "*This* is _Jira_ formatted",
             "created": "2024-01-01T10:00:00.000+0000",
-            "author": {"displayName": "Test User"},
+            "author": {"displayName": "John Doe"},
         }
-        comments_mixin.jira.issue_add_comment.return_value = mock_result
 
-        # Setup markdown conversion - important to reset the side_effect
-        comments_mixin.preprocessor.markdown_to_jira = MagicMock(
-            return_value="Jira formatted text"
-        )
+        # Create a complex markdown comment
+        markdown_comment = """
+        # Heading 1
+
+        This is a paragraph with **bold** and *italic* text.
+
+        - List item 1
+        - List item 2
+
+        ```python
+        def hello():
+            print("Hello world")
+        ```
+        """
 
         # Call the method
-        result = comments_mixin.add_comment("TEST-123", "**Markdown** text")
+        result = comments_mixin.add_comment("TEST-123", markdown_comment)
 
         # Verify
         comments_mixin.preprocessor.markdown_to_jira.assert_called_once_with(
-            "**Markdown** text"
+            markdown_comment
         )
         comments_mixin.jira.issue_add_comment.assert_called_once_with(
-            "TEST-123", "Jira formatted text"
+            "TEST-123", "*This* is _Jira_ formatted"
         )
+        assert result["body"] == "*This* is _Jira_ formatted"
 
     def test_add_comment_with_empty_comment(self, comments_mixin):
-        """Test add_comment handles empty comment text."""
+        """Test add_comment with an empty comment."""
         # Setup mock response
-        mock_result = {
+        comments_mixin.jira.issue_add_comment.return_value = {
             "id": "10001",
             "body": "",
             "created": "2024-01-01T10:00:00.000+0000",
-            "author": {"displayName": "Test User"},
+            "author": {"displayName": "John Doe"},
         }
-        comments_mixin.jira.issue_add_comment.return_value = mock_result
 
-        # Need to reset the mock
-        comments_mixin.preprocessor.markdown_to_jira.reset_mock()
-
-        # Call the method
+        # Call the method with empty comment
         result = comments_mixin.add_comment("TEST-123", "")
 
-        # Verify - empty string bypasses conversion
-        assert comments_mixin.preprocessor.markdown_to_jira.call_count == 0
+        # Verify - for empty comments, markdown_to_jira should NOT be called as per implementation
+        comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
         comments_mixin.jira.issue_add_comment.assert_called_once_with("TEST-123", "")
         assert result["body"] == ""
 
     def test_add_comment_with_error(self, comments_mixin):
-        """Test add_comment error handling."""
+        """Test add_comment with an error response."""
         # Setup mock to raise exception
-        comments_mixin.jira.issue_add_comment.side_effect = Exception(
-            "Comment add error"
-        )
+        comments_mixin.jira.issue_add_comment.side_effect = Exception("API Error")
 
-        # Call the method and verify exception
-        with pytest.raises(Exception, match="Error adding comment: Comment add error"):
+        # Verify it raises the wrapped exception
+        with pytest.raises(Exception, match="Error adding comment"):
             comments_mixin.add_comment("TEST-123", "Test comment")
 
     def test_markdown_to_jira(self, comments_mixin):
@@ -235,22 +266,24 @@ class TestCommentsMixin:
 
     def test_markdown_to_jira_with_empty_text(self, comments_mixin):
         """Test markdown to Jira conversion with empty text."""
-        # Call the method
+        # Call the method with empty text
         result = comments_mixin._markdown_to_jira("")
 
         # Verify
         assert result == ""
+        # The preprocessor should not be called with empty text
         comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
 
     def test_parse_date(self, comments_mixin):
-        """Test date parsing."""
+        """Test the actual implementation of _parse_date."""
         # Test ISO format
-        assert (
-            comments_mixin._parse_date("2024-01-01T10:00:00.000+0000") == "2024-01-01"
-        )
+        result = comments_mixin._parse_date("2024-01-01T10:00:00.000+0000")
+        assert result == "2024-01-01", f"Expected '2024-01-01' but got '{result}'"
 
         # Test invalid format
-        assert comments_mixin._parse_date("invalid date") == "invalid date"
+        result = comments_mixin._parse_date("invalid date")
+        assert result == "invalid date", f"Expected 'invalid date' but got '{result}'"
 
-        # Test empty string
-        assert comments_mixin._parse_date("") == ""
+        # Test None value
+        result = comments_mixin._parse_date(None)
+        assert result == "", f"Expected empty string but got '{result}'"

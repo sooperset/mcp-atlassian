@@ -41,9 +41,9 @@ class ConfluenceClient:
                 cloud=self.config.is_cloud,
             )
         # Import here to avoid circular imports
-        from ..preprocessing import TextPreprocessor
+        from ..preprocessing.confluence import ConfluencePreprocessor
 
-        self.preprocessor = TextPreprocessor(
+        self.preprocessor = ConfluencePreprocessor(
             base_url=self.config.url, confluence_client=self.confluence
         )
 

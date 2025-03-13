@@ -6,7 +6,9 @@ import re
 from datetime import datetime
 from typing import Any
 
+from ..preprocessing.jira import JiraPreprocessor
 from .client import JiraClient
+from .utils import parse_date_human_readable
 
 logger = logging.getLogger("mcp-jira")
 
@@ -17,6 +19,21 @@ class FormattingMixin(JiraClient):
     This mixin provides utilities for converting between different formats,
     formatting issue content for display, parsing dates, and sanitizing content.
     """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize the FormattingMixin.
+
+        Args:
+            *args: Positional arguments for the JiraClient
+            **kwargs: Keyword arguments for the JiraClient
+        """
+        super().__init__(*args, **kwargs)
+
+        # Use the JiraPreprocessor with the base URL from the client
+        base_url = ""
+        if hasattr(self, "config") and hasattr(self.config, "url"):
+            base_url = self.config.url
+        self.preprocessor = JiraPreprocessor(base_url=base_url)
 
     def markdown_to_jira(self, markdown_text: str) -> str:
         """
@@ -366,3 +383,19 @@ Description:
         }
 
         return transition_data
+
+    def _parse_date(self, date_str: str) -> str:
+        """
+        Parse a date string to a formatted date.
+
+        Args:
+            date_str: The date string to parse
+
+        Returns:
+            Formatted date string
+        """
+        if not date_str:
+            return ""
+
+        # Use the common utility function for consistent formatting with human-readable format
+        return parse_date_human_readable(date_str)

@@ -285,9 +285,15 @@ class TestSearchMixin:
             search_mixin.get_epic_issues("EPIC-1")
 
     def test_parse_date(self, search_mixin):
-        """Test _parse_date method."""
-        # Test with various date formats
-        assert search_mixin._parse_date("2024-01-01T12:34:56.789+0000") == "2024-01-01"
-        assert (
-            search_mixin._parse_date("invalid date") == "invalid date"
-        )  # Doesn't crash
+        """Test the actual implementation of _parse_date."""
+        # Test ISO format
+        result = search_mixin._parse_date("2024-01-01T12:34:56.789+0000")
+        assert result == "2024-01-01", f"Expected '2024-01-01' but got '{result}'"
+
+        # Test invalid format
+        result = search_mixin._parse_date("invalid date")
+        assert result == "invalid date", f"Expected 'invalid date' but got '{result}'"
+
+        # Test None value
+        result = search_mixin._parse_date(None)
+        assert result == "", f"Expected empty string but got '{result}'"
