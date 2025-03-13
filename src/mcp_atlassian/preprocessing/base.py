@@ -22,7 +22,9 @@ class ConfluenceClient(Protocol):
 class BasePreprocessor:
     """Base class for text preprocessing operations."""
 
-    def __init__(self, base_url: str = "", confluence_client: ConfluenceClient | None = None) -> None:
+    def __init__(
+        self, base_url: str = "", confluence_client: ConfluenceClient | None = None
+    ) -> None:
         """
         Initialize the base text preprocessor.
 
@@ -33,7 +35,9 @@ class BasePreprocessor:
         self.base_url = base_url.rstrip("/") if base_url else ""
         self.confluence_client = confluence_client
 
-    def process_html_content(self, html_content: str, space_key: str = "") -> tuple[str, str]:
+    def process_html_content(
+        self, html_content: str, space_key: str = ""
+    ) -> tuple[str, str]:
         """
         Process HTML content to replace user refs and page links.
 
@@ -100,7 +104,9 @@ class BasePreprocessor:
         try:
             # Only attempt to get user details if we have a valid confluence client
             if self.confluence_client is not None:
-                user_details = self.confluence_client.get_user_details_by_accountid(account_id)
+                user_details = self.confluence_client.get_user_details_by_accountid(
+                    account_id
+                )
                 display_name = user_details.get("displayName", "")
                 if display_name:
                     new_text = f"@{display_name}"

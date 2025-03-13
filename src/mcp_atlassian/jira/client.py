@@ -4,6 +4,8 @@ import logging
 
 from atlassian import Jira
 
+from mcp_atlassian.preprocessing import JiraPreprocessor
+
 from .config import JiraConfig
 
 # Configure logging
@@ -22,8 +24,6 @@ class JiraClient:
         Raises:
             ValueError: If configuration is invalid or required credentials are missing
         """
-        from mcp_atlassian.preprocessing import JiraPreprocessor
-
         # Load configuration from environment variables if not provided
         self.config = config or JiraConfig.from_env()
 

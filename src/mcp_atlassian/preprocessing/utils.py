@@ -38,7 +38,9 @@ def markdown_to_confluence_storage(markdown_content: str) -> str:
             root = elements_from_string(html_content)
 
             # Create converter options
-            options = ConfluenceConverterOptions(ignore_invalid_url=True, heading_anchors=True, render_mermaid=False)
+            options = ConfluenceConverterOptions(
+                ignore_invalid_url=True, heading_anchors=True, render_mermaid=False
+            )
 
             # Create a converter
             converter = ConfluenceStorageFormatConverter(
