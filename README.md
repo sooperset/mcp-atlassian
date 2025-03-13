@@ -230,6 +230,9 @@ Configure the server:
   ```
 - After configuring, ensure you're in Agent mode in the Composer to use MCP tools
 
+![image](https://github.com/user-attachments/assets/13c7ba94-d96b-4e40-a00d-13d3bbffe944)
+
+
 ### Using a Local Development Version
 
 If you've cloned the repository and want to run a local version of `mcp-atlassian`:
