@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.2.2] - 2025-03-13
+
+### Added
+- Added Confluence get-children-page tool (#98)
+
+### Changed
+- Separated Jira and Confluence preprocessing logic for better maintainability (#99)
+- Updated README.md with Composer and Agent mode screencaptures (#95, #101)
+- Updated README.md with new demo GIF (#93)
+
+### Fixed
+- Fixed Confluence update page textcontent issue (#100)
+
 ## [0.2.1] - 2025-03-13
 
 ### Added
