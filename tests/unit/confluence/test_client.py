@@ -118,3 +118,49 @@ def test_process_html_content():
         )
         assert html == "<p>HTML</p>"
         assert markdown == "Markdown"
+
+
+def test_get_user_details_by_accountid():
+    """Test the get_user_details_by_accountid method."""
+    # Arrange
+    with (
+        patch("mcp_atlassian.confluence.client.ConfluenceConfig.from_env"),
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence_class,
+        patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+    ):
+        mock_confluence = mock_confluence_class.return_value
+        mock_confluence.get_user_details_by_accountid.return_value = {
+            "displayName": "Test User",
+            "accountId": "123456",
+            "emailAddress": "test@example.com",
+            "active": True,
+        }
+
+        client = ConfluenceClient()
+
+        # Act
+        user_details = client.get_user_details_by_accountid("123456")
+
+        # Assert
+        mock_confluence.get_user_details_by_accountid.assert_called_once_with(
+            "123456", None
+        )
+        assert user_details["displayName"] == "Test User"
+        assert user_details["accountId"] == "123456"
+        assert user_details["emailAddress"] == "test@example.com"
+        assert user_details["active"] is True
+
+        # Test with expand parameter
+        mock_confluence.get_user_details_by_accountid.reset_mock()
+        mock_confluence.get_user_details_by_accountid.return_value = {
+            "displayName": "Test User",
+            "accountId": "123456",
+            "status": "active",
+        }
+
+        user_details = client.get_user_details_by_accountid("123456", expand="status")
+
+        mock_confluence.get_user_details_by_accountid.assert_called_once_with(
+            "123456", "status"
+        )
+        assert user_details["status"] == "active"

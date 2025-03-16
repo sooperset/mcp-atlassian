@@ -1,6 +1,7 @@
 """Base client module for Confluence API interactions."""
 
 import logging
+from typing import Any
 
 from atlassian import Confluence
 
@@ -46,6 +47,25 @@ class ConfluenceClient:
         self.preprocessor = ConfluencePreprocessor(
             base_url=self.config.url, confluence_client=self.confluence
         )
+
+    def get_user_details_by_accountid(
+        self, account_id: str, expand: str = None
+    ) -> dict[str, Any]:
+        """Get user details by account ID.
+
+        Args:
+            account_id: The account ID of the user
+            expand: OPTIONAL expand for get status of user.
+                Possible param is "status". Results are "Active, Deactivated"
+
+        Returns:
+            User details as a dictionary
+
+        Raises:
+            Various exceptions from the Atlassian API if user doesn't exist or
+            if there are permission issues
+        """
+        return self.confluence.get_user_details_by_accountid(account_id, expand)
 
     def _process_html_content(
         self, html_content: str, space_key: str
