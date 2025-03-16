@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.2.3] - 2025-03-16
+
+### Added
+- Added user details retrieval by account ID in ConfluenceClient to support proper user mention handling
+- Added Confluence page ancestors functionality for more reliable parent-child relationship tracking
+- Added SSE transport support for improved performance and reliability
+
+### Changed
+- Refactored markdown conversion to ConfluencePreprocessor class
+- Moved markdown_to_confluence_storage function from utils to ConfluencePreprocessor
+- Updated documentation with SSE configuration guidance
+
 ## [0.2.2] - 2025-03-13
 
 ### Added
