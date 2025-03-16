@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.2.4] - 2025-03-17
+
+### Added
+- Added support for Jira subtask creation with proper parent relationship handling
+- Added method to prepare parent fields for subtasks
+- Updated API documentation to include subtask creation guidance
+
 ## [0.2.3] - 2025-03-16
 
 ### Added
