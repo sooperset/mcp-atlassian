@@ -22,6 +22,17 @@ logger = logging.getLogger("mcp-atlassian")
     "--env-file", type=click.Path(exists=True, dir_okay=False), help="Path to .env file"
 )
 @click.option(
+    "--transport",
+    type=click.Choice(["stdio", "sse"]),
+    default="stdio",
+    help="Transport type (stdio or sse)",
+)
+@click.option(
+    "--port",
+    default=8000,
+    help="Port to listen on for SSE transport",
+)
+@click.option(
     "--confluence-url",
     help="Confluence URL (e.g., https://your-domain.atlassian.net/wiki)",
 )
@@ -54,6 +65,8 @@ logger = logging.getLogger("mcp-atlassian")
 def main(
     verbose: bool,
     env_file: str | None,
+    transport: str,
+    port: int,
     confluence_url: str | None,
     confluence_username: str | None,
     confluence_token: str | None,
@@ -112,8 +125,8 @@ def main(
 
     from . import server
 
-    # Run the server
-    asyncio.run(server.main())
+    # Run the server with specified transport
+    asyncio.run(server.run_server(transport=transport, port=port))
 
 
 __all__ = ["main", "server", "__version__"]

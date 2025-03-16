@@ -1430,16 +1430,39 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
         return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
-async def main() -> None:
-    """Run the MCP Atlassian server."""
-    # Import here to avoid issues with event loops
-    from mcp.server.stdio import stdio_server
+async def run_server(transport: str = "stdio", port: int = 8000) -> None:
+    """Run the MCP Atlassian server with the specified transport."""
+    if transport == "sse":
+        from mcp.server.sse import SseServerTransport
+        from starlette.applications import Starlette
+        from starlette.requests import Request
+        from starlette.routing import Mount, Route
 
-    async with stdio_server() as (read_stream, write_stream):
-        await app.run(read_stream, write_stream, app.create_initialization_options())
+        sse = SseServerTransport("/messages/")
 
+        async def handle_sse(request: Request) -> None:
+            async with sse.connect_sse(
+                request.scope, request.receive, request._send
+            ) as streams:
+                await app.run(
+                    streams[0], streams[1], app.create_initialization_options()
+                )
 
-if __name__ == "__main__":
-    import asyncio
+        starlette_app = Starlette(
+            debug=True,
+            routes=[
+                Route("/sse", endpoint=handle_sse),
+                Mount("/messages/", app=sse.handle_post_message),
+            ],
+        )
 
-    asyncio.run(main())
+        import uvicorn
+
+        uvicorn.run(starlette_app, host="0.0.0.0", port=port)  # noqa: S104
+    else:
+        from mcp.server.stdio import stdio_server
+
+        async with stdio_server() as (read_stream, write_stream):
+            await app.run(
+                read_stream, write_stream, app.create_initialization_options()
+            )
