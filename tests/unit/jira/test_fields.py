@@ -58,7 +58,7 @@ class TestFieldsMixin:
 
         # Verify cache was used
         assert result == mock_fields
-        fields_mixin.jira.fields.assert_not_called()
+        fields_mixin.jira.get_all_fields.assert_not_called()
 
     def test_get_fields_refresh(self, fields_mixin, mock_fields):
         """Test get_fields refreshes data when requested."""
@@ -66,13 +66,13 @@ class TestFieldsMixin:
         fields_mixin._fields_cache = ["old data"]
 
         # Mock the API response
-        fields_mixin.jira.fields.return_value = mock_fields
+        fields_mixin.jira.get_all_fields.return_value = mock_fields
 
         # Call the method with refresh=True
         result = fields_mixin.get_fields(refresh=True)
 
         # Verify API was called
-        fields_mixin.jira.fields.assert_called_once()
+        fields_mixin.jira.get_all_fields.assert_called_once()
         assert result == mock_fields
         # Verify cache was updated
         assert fields_mixin._fields_cache == mock_fields
@@ -84,13 +84,13 @@ class TestFieldsMixin:
             delattr(fields_mixin, "_fields_cache")
 
         # Mock the API response
-        fields_mixin.jira.fields.return_value = mock_fields
+        fields_mixin.jira.get_all_fields.return_value = mock_fields
 
         # Call the method
         result = fields_mixin.get_fields()
 
         # Verify API was called
-        fields_mixin.jira.fields.assert_called_once()
+        fields_mixin.jira.get_all_fields.assert_called_once()
         assert result == mock_fields
         # Verify cache was created
         assert fields_mixin._fields_cache == mock_fields
@@ -102,7 +102,7 @@ class TestFieldsMixin:
             delattr(fields_mixin, "_fields_cache")
 
         # Mock API error
-        fields_mixin.jira.fields.side_effect = Exception("API error")
+        fields_mixin.jira.get_all_fields.side_effect = Exception("API error")
 
         # Call the method
         result = fields_mixin.get_fields()

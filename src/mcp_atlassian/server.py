@@ -589,7 +589,7 @@ async def list_tools() -> list[Tool]:
                 ),
                 Tool(
                     name="jira_create_issue",
-                    description="Create a new Jira issue with optional Epic link",
+                    description="Create a new Jira issue with optional Epic link or parent for subtasks",
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -606,8 +606,9 @@ async def list_tools() -> list[Tool]:
                             "issue_type": {
                                 "type": "string",
                                 "description": (
-                                    "Issue type (e.g. 'Task', 'Bug', 'Story', 'Epic'). "
-                                    "The available types depend on your project configuration."
+                                    "Issue type (e.g. 'Task', 'Bug', 'Story', 'Epic', 'Subtask'). "
+                                    "The available types depend on your project configuration. "
+                                    "For subtasks, use 'Subtask' (not 'Sub-task') and include parent in additional_fields."
                                 ),
                             },
                             "assignee": {
@@ -622,8 +623,12 @@ async def list_tools() -> list[Tool]:
                             "additional_fields": {
                                 "type": "string",
                                 "description": "Optional JSON string of additional fields to set. "
-                                'Example: \'{"priority": {"name": "High"}, "labels": ["frontend", "urgent"], '
-                                '"components": [{"name": "UI"}]}\'',
+                                "Examples:\n"
+                                '- Set priority: {"priority": {"name": "High"}}\n'
+                                '- Add labels: {"labels": ["frontend", "urgent"]}\n'
+                                '- Add components: {"components": [{"name": "UI"}]}\n'
+                                '- Link to parent (for subtasks): {"parent": "PROJ-123"}\n'
+                                '- Custom fields: {"customfield_10010": "value"}',
                                 "default": "{}",
                             },
                         },

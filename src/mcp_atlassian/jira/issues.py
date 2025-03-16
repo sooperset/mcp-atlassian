@@ -428,6 +428,10 @@ class IssuesMixin(UsersMixin):
             if issue_type.lower() == "epic":
                 self._prepare_epic_fields(fields, summary, kwargs)
 
+            # Prepare parent field if this is a subtask
+            if issue_type.lower() == "subtask" or issue_type.lower() == "sub-task":
+                self._prepare_parent_fields(fields, kwargs)
+
             # Add custom fields
             self._add_custom_fields(fields, kwargs)
 
@@ -471,6 +475,30 @@ class IssuesMixin(UsersMixin):
         if "epic_name" in kwargs and epic_name_field:
             fields[epic_name_field] = kwargs["epic_name"]
 
+    def _prepare_parent_fields(
+        self, fields: dict[str, Any], kwargs: dict[str, Any]
+    ) -> None:
+        """
+        Prepare fields for subtask creation.
+
+        Args:
+            fields: The fields dictionary to update
+            kwargs: Additional fields from the user
+
+        Raises:
+            ValueError: If parent issue key is not specified for a subtask
+        """
+        if "parent" in kwargs:
+            parent_key = kwargs.get("parent")
+            if parent_key:
+                fields["parent"] = {"key": parent_key}
+            # Remove parent from kwargs to avoid double processing
+            kwargs.pop("parent", None)
+        else:
+            raise ValueError(
+                "Issue type is a sub-task but parent issue key or id not specified. Please provide a 'parent' parameter with the parent issue key."
+            )
+
     def _add_assignee_to_fields(self, fields: dict[str, Any], assignee: str) -> None:
         """
         Add assignee to issue fields.
@@ -500,7 +528,7 @@ class IssuesMixin(UsersMixin):
 
         # Process each kwarg
         for key, value in kwargs.items():
-            if key in ("epic_name", "epic_link"):
+            if key in ("epic_name", "epic_link", "parent"):
                 continue  # Handled separately
 
             # Check if this is a known field

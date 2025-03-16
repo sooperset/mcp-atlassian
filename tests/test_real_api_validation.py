@@ -471,6 +471,71 @@ async def test_jira_create_issue(
 
 
 @pytest.mark.anyio
+async def test_jira_create_subtask(
+    jira_client: JiraFetcher,
+    test_project_key: str,
+    test_issue_key: str,
+    test_epic_key: str,
+    resource_tracker: ResourceTracker,
+    cleanup_resources: Callable[[], None],
+) -> None:
+    """Test creating a subtask in Jira linked to a specified parent and epic."""
+    # Generate unique identifiers for this test
+    test_id = str(uuid.uuid4())[:8]
+    subtask_summary = f"Subtask Test Issue {test_id}"
+
+    try:
+        # Use the existing issue as parent instead of creating one
+        parent_issue_key = test_issue_key
+
+        # Create a subtask linked to both the parent and epic
+        subtask_issue = jira_client.create_issue(
+            project_key=test_project_key,
+            summary=subtask_summary,
+            description=f"This is a test subtask linked to parent {parent_issue_key} and epic {test_epic_key}",
+            issue_type="Subtask",
+            parent=parent_issue_key,  # Link to parent
+            epic_link=test_epic_key,  # Link to epic
+        )
+
+        # Track the subtask for cleanup
+        resource_tracker.add_jira_issue(subtask_issue.key)
+
+        # Verify the subtask response
+        assert subtask_issue is not None
+        assert subtask_issue.key.startswith(test_project_key)
+        assert subtask_issue.summary == subtask_summary
+
+        # Verify we can retrieve the created subtask
+        retrieved_subtask = jira_client.get_issue(subtask_issue.key)
+        assert retrieved_subtask is not None
+        assert retrieved_subtask.key == subtask_issue.key
+
+        # Verify parent relationship if the fields are accessible
+        # This might vary depending on how the Jira instance returns data
+        if hasattr(retrieved_subtask, "fields"):
+            if hasattr(retrieved_subtask.fields, "parent"):
+                assert retrieved_subtask.fields.parent.key == parent_issue_key
+
+            # Check epic relationship if available
+            # The exact field name might vary based on Jira configuration
+            field_ids = jira_client.get_jira_field_ids()
+            epic_link_field = field_ids.get("epic_link") or field_ids.get("Epic Link")
+
+            if epic_link_field and hasattr(retrieved_subtask.fields, epic_link_field):
+                epic_key = getattr(retrieved_subtask.fields, epic_link_field)
+                assert epic_key == test_epic_key
+
+        print(
+            f"\nCreated subtask {subtask_issue.key} under parent {parent_issue_key} and epic {test_epic_key}"
+        )
+
+    finally:
+        # Clean up resources even if the test fails
+        cleanup_resources()
+
+
+@pytest.mark.anyio
 async def test_jira_add_comment(
     jira_client: JiraFetcher,
     test_issue_key: str,
