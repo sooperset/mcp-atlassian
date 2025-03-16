@@ -60,6 +60,78 @@ class TestPagesMixin:
         assert result.version is not None
         assert result.version.number == 1
 
+    def test_get_page_ancestors(self, pages_mixin):
+        """Test getting page ancestors (parent pages)."""
+        # Arrange
+        page_id = "987654321"
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        # Mock the ancestors API response
+        ancestors_data = [
+            {
+                "id": "123456789",
+                "title": "Parent Page",
+                "type": "page",
+                "status": "current",
+                "space": {"key": "PROJ", "name": "Project Space"},
+            },
+            {
+                "id": "111222333",
+                "title": "Grandparent Page",
+                "type": "page",
+                "status": "current",
+                "space": {"key": "PROJ", "name": "Project Space"},
+            },
+        ]
+        pages_mixin.confluence.get_page_ancestors.return_value = ancestors_data
+
+        # Act
+        result = pages_mixin.get_page_ancestors(page_id)
+
+        # Assert
+        pages_mixin.confluence.get_page_ancestors.assert_called_once_with(page_id)
+
+        # Verify result structure
+        assert isinstance(result, list)
+        assert len(result) == 2
+
+        # Test first ancestor (parent)
+        assert isinstance(result[0], ConfluencePage)
+        assert result[0].id == "123456789"
+        assert result[0].title == "Parent Page"
+        assert result[0].space.key == "PROJ"
+
+        # Test second ancestor (grandparent)
+        assert isinstance(result[1], ConfluencePage)
+        assert result[1].id == "111222333"
+        assert result[1].title == "Grandparent Page"
+
+    def test_get_page_ancestors_empty(self, pages_mixin):
+        """Test getting ancestors when there are none (top-level page)."""
+        # Arrange
+        page_id = "987654321"
+        pages_mixin.confluence.get_page_ancestors.return_value = []
+
+        # Act
+        result = pages_mixin.get_page_ancestors(page_id)
+
+        # Assert
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+    def test_get_page_ancestors_error(self, pages_mixin):
+        """Test error handling when getting ancestors."""
+        # Arrange
+        page_id = "987654321"
+        pages_mixin.confluence.get_page_ancestors.side_effect = Exception("API Error")
+
+        # Act
+        result = pages_mixin.get_page_ancestors(page_id)
+
+        # Assert - should return empty list on error, not raise exception
+        assert isinstance(result, list)
+        assert len(result) == 0
+
     def test_get_page_content_html(self, pages_mixin):
         """Test getting page content in HTML format."""
         pages_mixin.config.url = "https://example.atlassian.net/wiki"

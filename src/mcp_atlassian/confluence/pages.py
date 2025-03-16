@@ -49,6 +49,38 @@ class PagesMixin(ConfluenceClient):
             content_format="storage" if not convert_to_markdown else "markdown",
         )
 
+    def get_page_ancestors(self, page_id: str) -> list[ConfluencePage]:
+        """
+        Get ancestors (parent pages) of a specific page.
+
+        Args:
+            page_id: The ID of the page to get ancestors for
+
+        Returns:
+            List of ConfluencePage models representing the ancestors in hierarchical order
+                (immediate parent first, root ancestor last)
+        """
+        try:
+            # Use the Atlassian Python API to get ancestors
+            ancestors = self.confluence.get_page_ancestors(page_id)
+
+            # Process each ancestor
+            ancestor_models = []
+            for ancestor in ancestors:
+                # Create the page model without fetching content
+                page_model = ConfluencePage.from_api_response(
+                    ancestor,
+                    base_url=self.config.url,
+                    include_body=False,
+                )
+                ancestor_models.append(page_model)
+
+            return ancestor_models
+        except Exception as e:
+            logger.error(f"Error fetching ancestors for page {page_id}: {str(e)}")
+            logger.debug("Full exception details:", exc_info=True)
+            return []
+
     def get_page_by_title(
         self, space_key: str, title: str, *, convert_to_markdown: bool = True
     ) -> ConfluencePage | None:

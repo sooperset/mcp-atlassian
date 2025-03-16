@@ -382,6 +382,20 @@ async def list_tools() -> list[Tool]:
                     },
                 ),
                 Tool(
+                    name="confluence_get_page_ancestors",
+                    description="Get ancestor (parent) pages of a specific Confluence page",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "page_id": {
+                                "type": "string",
+                                "description": "The ID of the page whose ancestors you want to retrieve",
+                            },
+                        },
+                        "required": ["page_id"],
+                    },
+                ),
+                Tool(
                     name="confluence_get_comments",
                     description="Get comments for a specific Confluence page",
                     inputSchema={
@@ -926,6 +940,25 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                         indent=2,
                         ensure_ascii=False,
                     ),
+                )
+            ]
+
+        elif name == "confluence_get_page_ancestors":
+            if not ctx or not ctx.confluence:
+                raise ValueError("Confluence is not configured.")
+
+            page_id = arguments.get("page_id")
+
+            # Get the ancestor pages
+            ancestors = ctx.confluence.get_page_ancestors(page_id)
+
+            # Format results
+            ancestor_pages = [page.to_simplified_dict() for page in ancestors]
+
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(ancestor_pages, indent=2, ensure_ascii=False),
                 )
             ]
 
