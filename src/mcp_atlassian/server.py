@@ -1458,7 +1458,11 @@ async def run_server(transport: str = "stdio", port: int = 8000) -> None:
 
         import uvicorn
 
-        uvicorn.run(starlette_app, host="0.0.0.0", port=port)  # noqa: S104
+        # Set up uvicorn config
+        config = uvicorn.Config(starlette_app, host="0.0.0.0", port=port)  # noqa: S104
+        server = uvicorn.Server(config)
+        # Use server.serve() instead of run() to stay in the same event loop
+        await server.serve()
     else:
         from mcp.server.stdio import stdio_server
 
