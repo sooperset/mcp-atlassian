@@ -282,3 +282,29 @@ For more information, see [our website](https://example.com).
     assert "* Feature 1" in converted
     assert "{code:python}" in converted
     assert "[our website|https://example.com]" in converted
+
+
+def test_markdown_to_confluence_storage(preprocessor_with_confluence):
+    """Test conversion of Markdown to Confluence storage format."""
+    markdown = """# Heading 1
+
+This is some **bold** and *italic* text.
+
+- List item 1
+- List item 2
+
+[Link text](https://example.com)
+"""
+
+    # Convert markdown to storage format
+    storage_format = preprocessor_with_confluence.markdown_to_confluence_storage(
+        markdown
+    )
+
+    # Verify basic structure (we don't need to test the exact conversion, as that's handled by md2conf)
+    assert "<h1>" in storage_format
+    assert "Heading 1" in storage_format
+    assert "<strong>" in storage_format or "<b>" in storage_format  # Bold
+    assert "<em>" in storage_format or "<i>" in storage_format  # Italic
+    assert "<a href=" in storage_format.lower()  # Link
+    assert "example.com" in storage_format

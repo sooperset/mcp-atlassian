@@ -209,7 +209,13 @@ class PagesMixin(ConfluenceClient):
         return page_models
 
     def create_page(
-        self, space_key: str, title: str, body: str, parent_id: str | None = None
+        self,
+        space_key: str,
+        title: str,
+        body: str,
+        parent_id: str | None = None,
+        *,
+        is_markdown: bool = True,
     ) -> ConfluencePage:
         """
         Create a new page in a Confluence space.
@@ -217,8 +223,9 @@ class PagesMixin(ConfluenceClient):
         Args:
             space_key: The key of the space to create the page in
             title: The title of the new page
-            body: The HTML content of the page in storage format
+            body: The content of the page (markdown or storage format)
             parent_id: Optional ID of a parent page
+            is_markdown: Whether the body content is in markdown format (default: True, keyword-only)
 
         Returns:
             ConfluencePage model containing the new page's data
@@ -227,11 +234,18 @@ class PagesMixin(ConfluenceClient):
             Exception: If there is an error creating the page
         """
         try:
+            # Convert markdown to Confluence storage format if needed
+            storage_body = (
+                self.preprocessor.markdown_to_confluence_storage(body)
+                if is_markdown
+                else body
+            )
+
             # Create the page
             result = self.confluence.create_page(
                 space=space_key,
                 title=title,
-                body=body,
+                body=storage_body,
                 parent_id=parent_id,
                 representation="storage",
             )
@@ -258,6 +272,7 @@ class PagesMixin(ConfluenceClient):
         *,
         is_minor_edit: bool = False,
         version_comment: str = "",
+        is_markdown: bool = True,
     ) -> ConfluencePage:
         """
         Update an existing page in Confluence.
@@ -265,9 +280,10 @@ class PagesMixin(ConfluenceClient):
         Args:
             page_id: The ID of the page to update
             title: The new title of the page
-            body: The new HTML content of the page in storage format
+            body: The new content of the page (markdown or storage format)
             is_minor_edit: Whether this is a minor edit (keyword-only)
             version_comment: Optional comment for this version (keyword-only)
+            is_markdown: Whether the body content is in markdown format (default: True, keyword-only)
 
         Returns:
             ConfluencePage model containing the updated page's data
@@ -276,6 +292,13 @@ class PagesMixin(ConfluenceClient):
             Exception: If there is an error updating the page
         """
         try:
+            # Convert markdown to Confluence storage format if needed
+            storage_body = (
+                self.preprocessor.markdown_to_confluence_storage(body)
+                if is_markdown
+                else body
+            )
+
             # We'll let the underlying Confluence API handle this operation completely
             # as it has internal logic for versioning and updating
             logger.debug(f"Updating page {page_id} with title '{title}'")
@@ -284,7 +307,7 @@ class PagesMixin(ConfluenceClient):
             response = self.confluence.update_page(
                 page_id=page_id,
                 title=title,
-                body=body,
+                body=storage_body,
                 type="page",
                 representation="storage",
                 minor_edit=is_minor_edit,  # This matches the parameter name in the API

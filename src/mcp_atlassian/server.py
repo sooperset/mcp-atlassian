@@ -12,7 +12,6 @@ from mcp.types import Resource, TextContent, Tool
 
 from .confluence import ConfluenceFetcher
 from .jira import JiraFetcher
-from .preprocessing.utils import markdown_to_confluence_storage
 
 # Configure logging
 logger = logging.getLogger("mcp-atlassian")
@@ -989,15 +988,13 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             content = arguments.get("content")
             parent_id = arguments.get("parent_id")
 
-            # Convert markdown to Confluence storage format
-            storage_format = markdown_to_confluence_storage(content)
-
-            # Create the page
+            # Create the page (with automatic markdown conversion)
             page = ctx.confluence.create_page(
                 space_key=space_key,
                 title=title,
-                body=storage_format,
+                body=content,
                 parent_id=parent_id,
+                is_markdown=True,
             )
 
             # Format the result
@@ -1025,16 +1022,14 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                     "Missing required parameters: page_id, title, and content are required."
                 )
 
-            # Convert markdown to Confluence storage format
-            html_content = markdown_to_confluence_storage(content)
-
-            # Update the page
+            # Update the page (with automatic markdown conversion)
             updated_page = ctx.confluence.update_page(
                 page_id=page_id,
                 title=title,
-                body=html_content,
+                body=content,
                 is_minor_edit=is_minor_edit,
                 version_comment=version_comment,
+                is_markdown=True,
             )
 
             # Format results

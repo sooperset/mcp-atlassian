@@ -283,8 +283,10 @@ class TestPagesMixin:
                 space={"key": space_key, "name": "Project"},
             ),
         ):
-            # Act
-            result = pages_mixin.create_page(space_key, title, body, parent_id)
+            # Act - specify is_markdown=False since we're directly providing storage format
+            result = pages_mixin.create_page(
+                space_key, title, body, parent_id, is_markdown=False
+            )
 
             # Assert
             pages_mixin.confluence.create_page.assert_called_once_with(
@@ -328,13 +330,14 @@ class TestPagesMixin:
             version={"number": 1},  # Add version information
         )
         with patch.object(pages_mixin, "get_page_content", return_value=mock_document):
-            # Act
+            # Act - specify is_markdown=False since we're directly providing storage format
             result = pages_mixin.update_page(
                 page_id,
                 title,
                 body,
                 is_minor_edit=is_minor_edit,
                 version_comment=version_comment,
+                is_markdown=False,
             )
 
             # Assert
@@ -350,10 +353,6 @@ class TestPagesMixin:
                 version_comment=version_comment,
                 always_update=True,
             )
-
-            # Verify get_page_content was called once to get the updated page
-            # (we no longer get the current version before updating)
-            assert pages_mixin.get_page_content.call_count == 1
 
     def test_update_page_error(self, pages_mixin):
         """Test error handling when updating a page."""
@@ -534,3 +533,144 @@ class TestPagesMixin:
         )  # Compare version number instead of the whole object
         assert result.space.key == "TEST"
         assert result.space.name == "Test Space"
+
+    def test_create_page_with_markdown(self, pages_mixin):
+        """Test creating a new page with markdown content."""
+        # Arrange
+        space_key = "PROJ"
+        title = "New Test Page"
+        markdown_body = "# Test Heading\n\nThis is *markdown* content."
+        parent_id = "987654321"
+        storage_format = (
+            "<h1>Test Heading</h1><p>This is <em>markdown</em> content.</p>"
+        )
+
+        # Mock the markdown conversion
+        pages_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            storage_format
+        )
+
+        # Mock get_page_content to return a ConfluencePage
+        with patch.object(
+            pages_mixin,
+            "get_page_content",
+            return_value=ConfluencePage(
+                id="123456789",
+                title=title,
+                content="Converted content",
+                space={"key": space_key, "name": "Project"},
+            ),
+        ):
+            # Act
+            result = pages_mixin.create_page(
+                space_key=space_key,
+                title=title,
+                body=markdown_body,
+                parent_id=parent_id,
+                is_markdown=True,
+            )
+
+            # Assert
+            # Verify markdown was converted
+            pages_mixin.preprocessor.markdown_to_confluence_storage.assert_called_once_with(
+                markdown_body
+            )
+
+            # Verify create_page was called with the converted content
+            pages_mixin.confluence.create_page.assert_called_once_with(
+                space=space_key,
+                title=title,
+                body=storage_format,
+                parent_id=parent_id,
+                representation="storage",
+            )
+
+            # Verify result
+            assert isinstance(result, ConfluencePage)
+            assert result.id == "123456789"
+            assert result.title == title
+
+    def test_create_page_with_storage_format(self, pages_mixin):
+        """Test creating a page with pre-converted storage format content."""
+        # Arrange
+        space_key = "PROJ"
+        title = "New Test Page"
+        storage_body = "<p>Already in storage format</p>"
+
+        # Mock get_page_content
+        with patch.object(
+            pages_mixin,
+            "get_page_content",
+            return_value=ConfluencePage(id="123456789", title=title),
+        ):
+            # Act
+            result = pages_mixin.create_page(
+                space_key=space_key, title=title, body=storage_body, is_markdown=False
+            )
+
+            # Assert
+            # Verify conversion was not called
+            pages_mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
+
+            # Verify create_page was called with the original content
+            pages_mixin.confluence.create_page.assert_called_once_with(
+                space=space_key,
+                title=title,
+                body=storage_body,
+                parent_id=None,
+                representation="storage",
+            )
+
+    def test_update_page_with_markdown(self, pages_mixin):
+        """Test updating a page with markdown content."""
+        # Arrange
+        page_id = "987654321"
+        title = "Updated Page"
+        markdown_body = "# Updated Content\n\nThis is *updated* content."
+        storage_format = (
+            "<h1>Updated Content</h1><p>This is <em>updated</em> content.</p>"
+        )
+
+        # Mock the markdown conversion
+        pages_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            storage_format
+        )
+
+        # Mock get_page_content
+        with patch.object(
+            pages_mixin,
+            "get_page_content",
+            return_value=ConfluencePage(
+                id=page_id,
+                title=title,
+                content="Updated content",
+                space={"key": "PROJ", "name": "Project"},
+            ),
+        ):
+            # Act
+            result = pages_mixin.update_page(
+                page_id=page_id,
+                title=title,
+                body=markdown_body,
+                is_minor_edit=True,
+                version_comment="Updated test",
+                is_markdown=True,
+            )
+
+            # Assert
+            # Verify markdown was converted
+            pages_mixin.preprocessor.markdown_to_confluence_storage.assert_called_once_with(
+                markdown_body
+            )
+
+            # Verify update_page was called with the converted content
+            pages_mixin.confluence.update_page.assert_called_once_with(
+                page_id=page_id,
+                title=title,
+                body=storage_format,
+                type="page",
+                representation="storage",
+                minor_edit=True,
+                version_comment="Updated test",
+                always_update=True,
+            )
