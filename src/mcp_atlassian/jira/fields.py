@@ -32,7 +32,7 @@ class FieldsMixin(JiraClient):
                 return self._fields_cache
 
             # Fetch fields from Jira API
-            fields = self.jira.fields()
+            fields = self.jira.get_all_fields()
 
             # Cache the fields
             self._fields_cache = fields
