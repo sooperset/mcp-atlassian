@@ -407,39 +407,41 @@ class JiraIssue(ApiModel, TimestampMixin):
         return self.description
 
     @staticmethod
-    def _find_custom_field_by_name(fields: dict[str, Any], name_patterns: list[str]) -> Any:
+    def _find_custom_field_by_name(
+        fields: dict[str, Any], name_patterns: list[str]
+    ) -> Any:
         """
         Find a custom field value by searching through field names.
-        
+
         Since Jira instances can have different custom field IDs for the same
         field, this method dynamically discovers fields by their names using
         two simple but effective strategies:
-        
+
         1. Search in field metadata (schema) by name - most accurate when available
         2. Search using the fields' names() method (if available) - most flexible
-        
+
         This approach is advantageous over hardcoded custom field IDs because:
         - It adapts to different Jira instances with varying field configurations
         - It works even when custom field IDs change in Jira updates
         - It doesn't require manual configuration or updates when field IDs change
-        
+
         Args:
             fields: The fields dictionary from Jira API response
             name_patterns: List of name patterns to match against field names
-            
+
         Returns:
             The value of the first matching field, or None if not found
         """
         if not fields or not isinstance(fields, dict):
             return None
-            
+
         # STRATEGY 1: Try to find a matching name in field metadata
         meta_fields = fields.get("schema", {}).get("fields", {})
         if isinstance(meta_fields, dict):
             for field_id, field_meta in meta_fields.items():
                 if not isinstance(field_meta, dict):
                     continue
-                    
+
                 field_name = field_meta.get("name", "").lower()
                 for pattern in name_patterns:
                     pattern_lower = pattern.lower()
@@ -451,7 +453,7 @@ class JiraIssue(ApiModel, TimestampMixin):
                     normalized_field_name = field_name.replace(" ", "").replace("-", "")
                     if normalized_pattern in normalized_field_name:
                         return fields.get(field_id)
-        
+
         # STRATEGY 2: Try to get field names from the fields collection if available
         if hasattr(fields, "names") and callable(getattr(fields, "names", None)):
             try:
@@ -466,14 +468,19 @@ class JiraIssue(ApiModel, TimestampMixin):
                                 if pattern_lower in field_name_lower:
                                     return fields[field_id]
                                 # Try normalized match
-                                normalized_pattern = pattern_lower.replace(" ", "").replace("-", "")
-                                normalized_field_name = field_name_lower.replace(" ", "").replace("-", "")
+                                normalized_pattern = pattern_lower.replace(
+                                    " ", ""
+                                ).replace("-", "")
+                                normalized_field_name = field_name_lower.replace(
+                                    " ", ""
+                                ).replace("-", "")
                                 if normalized_pattern in normalized_field_name:
                                     return fields[field_id]
             except Exception:
                 # Ignore any errors from names() method
+                logger.debug("Error accessing field names method")
                 pass
-                    
+
         return None
 
     @classmethod
@@ -596,9 +603,13 @@ class JiraIssue(ApiModel, TimestampMixin):
             labels = [str(label) for label in labels_data if label is not None]
 
         # Extract epic information dynamically
-        epic_key = cls._find_custom_field_by_name(fields, ["Epic Link", "epic-link", "epiclink"])
-        epic_name = cls._find_custom_field_by_name(fields, ["Epic Name", "epic-name", "epicname"])
-        
+        epic_key = cls._find_custom_field_by_name(
+            fields, ["Epic Link", "epic-link", "epiclink"]
+        )
+        epic_name = cls._find_custom_field_by_name(
+            fields, ["Epic Name", "epic-name", "epicname"]
+        )
+
         return cls(
             id=issue_id,
             key=key,

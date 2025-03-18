@@ -126,6 +126,12 @@ class TestIssuesMixin:
                 "created": "2023-01-01T00:00:00.000+0000",
                 "updated": "2023-01-02T00:00:00.000+0000",
                 "customfield_10014": "EPIC-456",  # Epic Link field
+                "schema": {
+                    "fields": {
+                        "customfield_10014": {"name": "Epic Link", "type": "string"},
+                        "customfield_10011": {"name": "Epic Name", "type": "string"},
+                    }
+                },
             },
         }
 
@@ -138,6 +144,11 @@ class TestIssuesMixin:
                 "customfield_10011": "Epic Name",  # Epic Name field
                 "status": {"name": "In Progress"},
                 "issuetype": {"name": "Epic"},
+                "schema": {
+                    "fields": {
+                        "customfield_10011": {"name": "Epic Name", "type": "string"}
+                    }
+                },
             },
         }
 
