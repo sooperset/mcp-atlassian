@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
+import requests
 from mcp.server import Server
 from mcp.types import Resource, TextContent, Tool
 
@@ -83,7 +84,35 @@ async def server_lifespan(server: Server) -> AsyncIterator[AppContext]:
         # Log the startup information
         logger.info("Starting MCP Atlassian server")
         if confluence:
-            logger.info(f"Confluence URL: {confluence.config.url}")
+            confluence_url = confluence.config.url
+            logger.info(f"Confluence URL: {confluence_url}")
+            if not confluence.config.ssl_verify:
+                logger.warning(
+                    "SSL verifiaction is disabled for Confluence. This may be insecure."
+                )
+
+                original_merge_settings = requests.Session.merge_environment_settings
+
+                def disable_ssl_verify_for_confluence(  # noqa: ANN202
+                    self,  # noqa: ANN001
+                    url,  # noqa: ANN001
+                    proxies,  # noqa: ANN001
+                    stream,  # noqa: ANN001
+                    verify,  # noqa: ANN001
+                    cert,  # noqa: ANN001
+                ):
+                    # Only disable SSL verification for Confluence urls
+                    settings = original_merge_settings(
+                        self, url, proxies, stream, verify, cert
+                    )
+                    if confluence_url not in url:
+                        return settings
+                    settings["verify"] = False
+                    return settings
+
+                requests.Session.merge_environment_settings = (
+                    disable_ssl_verify_for_confluence
+                )
         if jira:
             logger.info(f"Jira URL: {jira.config.url}")
 
