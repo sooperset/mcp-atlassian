@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+import requests
+
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -75,6 +77,11 @@ async def server_lifespan(server: Server) -> AsyncIterator[AppContext]:
     # Get available services
     services = get_available_services()
 
+    def merge_environment_settings(self, url, proxies, stream, verify, cert):
+        settings = old_merge_enviornment_settings(self, url, proxies, stream, verify, cert)
+        settings['verify'] = False
+        return settings
+
     try:
         # Initialize services
         confluence = ConfluenceFetcher() if services["confluence"] else None
@@ -84,6 +91,12 @@ async def server_lifespan(server: Server) -> AsyncIterator[AppContext]:
         logger.info("Starting MCP Atlassian server")
         if confluence:
             logger.info(f"Confluence URL: {confluence.config.url}")
+            if not confluence.config.ssl_verify:
+                old_merge_enviornment_settings = requests.Session.merge_environment_settings
+                logger.warning(
+                    "SSL verifiaction is disabled for Confluence. This may be insecure."
+                )
+                requests.Session.merge_environment_settings = merge_environment_settings
         if jira:
             logger.info(f"Jira URL: {jira.config.url}")
 
