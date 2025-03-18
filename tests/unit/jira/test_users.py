@@ -56,6 +56,53 @@ class TestUsersMixin:
         ):
             users_mixin.get_current_user_account_id()
 
+    def test_get_current_user_account_id_jira_data_center_key(self, users_mixin):
+        """Test that get_current_user_account_id falls back to 'key' for Jira Data Center."""
+        # Ensure no cached value
+        users_mixin._current_user_account_id = None
+        # Mock Jira Data Center response that has 'key' but no 'accountId'
+        users_mixin.jira.myself.return_value = {
+            "key": "jira-data-center-key",
+            "name": "Test User",
+        }
+
+        # Call the method
+        account_id = users_mixin.get_current_user_account_id()
+
+        # Verify result
+        assert account_id == "jira-data-center-key"
+        # Verify the API was called
+        users_mixin.jira.myself.assert_called_once()
+
+    def test_get_current_user_account_id_jira_data_center_name(self, users_mixin):
+        """Test that get_current_user_account_id falls back to 'name' when no 'key' or 'accountId'."""
+        # Ensure no cached value
+        users_mixin._current_user_account_id = None
+        # Mock Jira Data Center response that has only 'name'
+        users_mixin.jira.myself.return_value = {"name": "jira-data-center-name"}
+
+        # Call the method
+        account_id = users_mixin.get_current_user_account_id()
+
+        # Verify result
+        assert account_id == "jira-data-center-name"
+        # Verify the API was called
+        users_mixin.jira.myself.assert_called_once()
+
+    def test_get_current_user_account_id_no_identifiers(self, users_mixin):
+        """Test that get_current_user_account_id raises error when no identifiers are found."""
+        # Ensure no cached value
+        users_mixin._current_user_account_id = None
+        # Mock response with no identifiers
+        users_mixin.jira.myself.return_value = {"someField": "someValue"}
+
+        # Call the method and verify it raises the expected exception
+        with pytest.raises(
+            Exception,
+            match="Unable to get current user account ID: Could not find accountId, key, or name in user data",
+        ):
+            users_mixin.get_current_user_account_id()
+
     def test_get_account_id_already_account_id(self, users_mixin):
         """Test that _get_account_id returns the input if it looks like an account ID."""
         # Call the method with a string that looks like an account ID
@@ -154,6 +201,48 @@ class TestUsersMixin:
         # Verify result
         assert account_id is None
 
+    def test_lookup_user_directly_jira_data_center_key(self, users_mixin):
+        """Test _lookup_user_directly when only 'key' is available (Data Center)."""
+        # Mock the API response for Jira Data Center (has key but no accountId)
+        users_mixin.jira.user_find_by_user_string.return_value = [
+            {
+                "key": "data-center-key",
+                "displayName": "Test User",
+                "emailAddress": "test@example.com",
+            }
+        ]
+
+        # Call the method
+        account_id = users_mixin._lookup_user_directly("Test User")
+
+        # Verify result
+        assert account_id == "data-center-key"
+        # Verify API call
+        users_mixin.jira.user_find_by_user_string.assert_called_once_with(
+            query="Test User", start=0, limit=1
+        )
+
+    def test_lookup_user_directly_jira_data_center_name(self, users_mixin):
+        """Test _lookup_user_directly when only 'name' is available (Data Center)."""
+        # Mock the API response for Jira Data Center (has name but no accountId or key)
+        users_mixin.jira.user_find_by_user_string.return_value = [
+            {
+                "name": "data-center-name",
+                "displayName": "Test User",
+                "emailAddress": "test@example.com",
+            }
+        ]
+
+        # Call the method
+        account_id = users_mixin._lookup_user_directly("Test User")
+
+        # Verify result
+        assert account_id == "data-center-name"
+        # Verify API call
+        users_mixin.jira.user_find_by_user_string.assert_called_once_with(
+            query="Test User", start=0, limit=1
+        )
+
     def test_lookup_user_directly_error(self, users_mixin):
         """Test _lookup_user_directly when API call fails."""
         # Mock API call to raise exception
@@ -203,6 +292,54 @@ class TestUsersMixin:
 
             # Verify result
             assert account_id is None
+
+    def test_lookup_user_by_permissions_jira_data_center_key(self, users_mixin):
+        """Test _lookup_user_by_permissions when only 'key' is available (Data Center)."""
+        # Mock requests.get
+        with patch("requests.get") as mock_get:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {
+                "users": [{"key": "data-center-permissions-key"}]
+            }
+            mock_get.return_value = mock_response
+
+            # Call the method
+            account_id = users_mixin._lookup_user_by_permissions("username")
+
+            # Verify result
+            assert account_id == "data-center-permissions-key"
+            # Verify API call
+            mock_get.assert_called_once()
+            assert mock_get.call_args[0][0].endswith("/user/permission/search")
+            assert mock_get.call_args[1]["params"] == {
+                "query": "username",
+                "permissions": "BROWSE",
+            }
+
+    def test_lookup_user_by_permissions_jira_data_center_name(self, users_mixin):
+        """Test _lookup_user_by_permissions when only 'name' is available (Data Center)."""
+        # Mock requests.get
+        with patch("requests.get") as mock_get:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {
+                "users": [{"name": "data-center-permissions-name"}]
+            }
+            mock_get.return_value = mock_response
+
+            # Call the method
+            account_id = users_mixin._lookup_user_by_permissions("username")
+
+            # Verify result
+            assert account_id == "data-center-permissions-name"
+            # Verify API call
+            mock_get.assert_called_once()
+            assert mock_get.call_args[0][0].endswith("/user/permission/search")
+            assert mock_get.call_args[1]["params"] == {
+                "query": "username",
+                "permissions": "BROWSE",
+            }
 
     def test_lookup_user_by_permissions_error(self, users_mixin):
         """Test _lookup_user_by_permissions when API call fails."""

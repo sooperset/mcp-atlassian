@@ -30,7 +30,22 @@ class UsersMixin(JiraClient):
                 self._current_user_account_id = myself["accountId"]
                 return self._current_user_account_id
 
-            error_msg = "Could not find accountId in user data"
+            # Handle Jira Data Center/Server which may not have accountId
+            # but has "key" or "name" instead
+            if "key" in myself:
+                logger.info(
+                    "Using 'key' instead of 'accountId' for Jira Data Center/Server"
+                )
+                self._current_user_account_id = myself["key"]
+                return self._current_user_account_id
+            elif "name" in myself:
+                logger.info(
+                    "Using 'name' instead of 'accountId' for Jira Data Center/Server"
+                )
+                self._current_user_account_id = myself["name"]
+                return self._current_user_account_id
+
+            error_msg = "Could not find accountId, key, or name in user data"
             raise ValueError(error_msg)
         except Exception as e:
             logger.error(f"Error getting current user account ID: {str(e)}")
@@ -84,12 +99,27 @@ class UsersMixin(JiraClient):
                 return None
 
             for user in response:
-                if "accountId" in user and (
+                # Check if user matches criteria
+                if (
                     user.get("displayName", "").lower() == username.lower()
                     or user.get("name", "").lower() == username.lower()
                     or user.get("emailAddress", "").lower() == username.lower()
                 ):
-                    return user["accountId"]
+                    # Jira Cloud uses accountId
+                    if "accountId" in user:
+                        return user["accountId"]
+                    # Jira Data Center/Server might use key
+                    elif "key" in user:
+                        logger.info(
+                            "Using 'key' instead of 'accountId' for Jira Data Center/Server"
+                        )
+                        return user["key"]
+                    # Last resort fallback to name
+                    elif "name" in user:
+                        logger.info(
+                            "Using 'name' instead of 'accountId' for Jira Data Center/Server"
+                        )
+                        return user["name"]
             return None
         except Exception as e:
             logger.info(f"Error looking up user directly: {str(e)}")
@@ -130,8 +160,21 @@ class UsersMixin(JiraClient):
             if response.status_code == 200:
                 data = response.json()
                 for user in data.get("users", []):
+                    # Jira Cloud uses accountId
                     if "accountId" in user:
                         return user["accountId"]
+                    # Jira Data Center/Server might use key
+                    elif "key" in user:
+                        logger.info(
+                            "Using 'key' instead of 'accountId' for Jira Data Center/Server"
+                        )
+                        return user["key"]
+                    # Last resort fallback to name
+                    elif "name" in user:
+                        logger.info(
+                            "Using 'name' instead of 'accountId' for Jira Data Center/Server"
+                        )
+                        return user["name"]
             return None
         except Exception as e:
             logger.info(f"Error looking up user by permissions: {str(e)}")
