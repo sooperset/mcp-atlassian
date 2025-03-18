@@ -88,7 +88,7 @@ async def server_lifespan(server: Server) -> AsyncIterator[AppContext]:
             logger.info(f"Confluence URL: {confluence_url}")
             if not confluence.config.ssl_verify:
                 logger.warning(
-                    "SSL verifiaction is disabled for Confluence. This may be insecure."
+                    "SSL verification is disabled for Confluence. This may be insecure."
                 )
 
                 original_merge_settings = requests.Session.merge_environment_settings
