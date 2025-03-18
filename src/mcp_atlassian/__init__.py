@@ -6,7 +6,7 @@ import sys
 import click
 from dotenv import load_dotenv
 
-__version__ = "0.2.4"
+__version__ = "0.2.5"
 
 logger = logging.getLogger("mcp-atlassian")
 

@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.2.5] - 2025-03-18
+
+### Added
+- Added dynamic custom field retrieval in JiraIssue with pattern matching support
+
+### Fixed
+- Fixed to allow parent field for all issue types, not just subtasks
+- Fixed user identification for Jira Data Center/Server instances with fallback mechanisms
+- Fixed pre-commit errors and updated unit tests
+
 ## [0.2.4] - 2025-03-17
 
 ### Added
