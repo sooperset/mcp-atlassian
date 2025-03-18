@@ -419,37 +419,37 @@ class TestJiraIssue:
                     "customfield_10011": {"name": "Epic Name", "type": "string"},
                     "customfield_10000": {"name": "Custom Field", "type": "string"},
                 }
-            }
+            },
         }
-        
+
         # Check we can find Epic Link field by name
         result = JiraIssue._find_custom_field_by_name(fields, ["Epic Link"])
         assert result == "EPIC-123"
-        
+
         # Check we can find Epic Name field by name
         result = JiraIssue._find_custom_field_by_name(fields, ["Epic Name"])
         assert result == "Epic Name Test"
-        
+
         # Check case insensitivity
         result = JiraIssue._find_custom_field_by_name(fields, ["epic link"])
         assert result == "EPIC-123"
-        
+
         # Check pattern matching
         result = JiraIssue._find_custom_field_by_name(fields, ["epic-link", "epiclink"])
         assert result == "EPIC-123"
-        
+
         # Check non-existent field
         result = JiraIssue._find_custom_field_by_name(fields, ["Non Existent Field"])
         assert result is None
-        
+
         # Test with empty fields dictionary
         result = JiraIssue._find_custom_field_by_name({}, ["Epic Link"])
         assert result is None
-        
+
         # Test with None fields
         result = JiraIssue._find_custom_field_by_name(None, ["Epic Link"])
         assert result is None
-        
+
     def test_epic_field_extraction_different_field_ids(self):
         """Test finding epic fields with different customfield IDs."""
         # Create a test issue with different field IDs than the common ones
@@ -465,16 +465,16 @@ class TestJiraIssue:
                         "customfield_20100": {"name": "Epic Link", "type": "string"},
                         "customfield_20200": {"name": "Epic Name", "type": "string"},
                     }
-                }
-            }
+                },
+            },
         }
-        
+
         issue = JiraIssue.from_api_response(test_data)
-        
+
         # The class should find the fields by name
         assert issue.epic_key == "EPIC-456"
         assert issue.epic_name == "My Epic Name"
-        
+
     def test_epic_field_extraction_fallback(self):
         """Test using common field names without relying on metadata."""
         # Create test data without schema information
@@ -484,32 +484,41 @@ class TestJiraIssue:
             "fields": {
                 "summary": "Test Issue",
                 "customfield_10014": "EPIC-456",  # Common Epic Link ID
-                "customfield_10011": "My Epic Name"  # Common Epic Name ID
-            }
+                "customfield_10011": "My Epic Name",  # Common Epic Name ID
+            },
         }
-        
+
         # Monkeypatch the _find_custom_field_by_name method to return values for these fields
         # This simulates finding these fields without using schema or names method
         original_method = JiraIssue._find_custom_field_by_name
         try:
+
             def mocked_find_field(fields, name_patterns):
-                if "Epic Link" in name_patterns or "epic-link" in name_patterns or "epiclink" in name_patterns:
+                if (
+                    "Epic Link" in name_patterns
+                    or "epic-link" in name_patterns
+                    or "epiclink" in name_patterns
+                ):
                     return "EPIC-456"
-                if "Epic Name" in name_patterns or "epic-name" in name_patterns or "epicname" in name_patterns:
+                if (
+                    "Epic Name" in name_patterns
+                    or "epic-name" in name_patterns
+                    or "epicname" in name_patterns
+                ):
                     return "My Epic Name"
                 return None
-            
+
             JiraIssue._find_custom_field_by_name = staticmethod(mocked_find_field)
-            
+
             issue = JiraIssue.from_api_response(test_data)
-            
+
             # The class should use the mocked method
             assert issue.epic_key == "EPIC-456"
             assert issue.epic_name == "My Epic Name"
         finally:
             # Restore the original method
             JiraIssue._find_custom_field_by_name = staticmethod(original_method)
-        
+
     def test_epic_field_extraction_advanced_patterns(self):
         """Test finding epic fields using various naming patterns."""
         # Create test data with different field naming patterns
@@ -522,49 +531,48 @@ class TestJiraIssue:
                 "customfield_67890": "Epic Name Value",
                 "schema": {
                     "fields": {
-                        "customfield_12345": {"name": "Epic-Link Field", "type": "string"},
+                        "customfield_12345": {
+                            "name": "Epic-Link Field",
+                            "type": "string",
+                        },
                         "customfield_67890": {"name": "EpicName", "type": "string"},
                     }
-                }
-            }
+                },
+            },
         }
-        
+
         issue = JiraIssue.from_api_response(test_data)
-        
+
         # The class should match the fields using pattern matching
         assert issue.epic_key == "EPIC-456"
         assert issue.epic_name == "Epic Name Value"
-        
+
     def test_fields_with_names_method(self):
         """Test using the names() method to find fields."""
+
         # Create mock fields object that has a names() method
         class MockFields(dict):
             def names(self):
                 return {
                     "customfield_55555": "Epic Link",
-                    "customfield_66666": "Epic Name"
+                    "customfield_66666": "Epic Name",
                 }
-                
-        fields = MockFields({
-            "customfield_55555": "EPIC-789",
-            "customfield_66666": "Special Epic Name"
-        })
-        
+
+        fields = MockFields(
+            {"customfield_55555": "EPIC-789", "customfield_66666": "Special Epic Name"}
+        )
+
         # Test direct method call
         result = JiraIssue._find_custom_field_by_name(fields, ["Epic Link"])
         assert result == "EPIC-789"
-        
+
         # Now test through from_api_response
-        test_data = {
-            "id": "12345",
-            "key": "PROJ-123",
-            "fields": fields
-        }
-        
+        test_data = {"id": "12345", "key": "PROJ-123", "fields": fields}
+
         issue = JiraIssue.from_api_response(test_data)
         assert issue.epic_key == "EPIC-789"
         assert issue.epic_name == "Special Epic Name"
-        
+
     def test_to_simplified_dict(self, jira_issue_data):
         """Test converting a JiraIssue to a simplified dictionary."""
         issue = JiraIssue.from_api_response(jira_issue_data)
