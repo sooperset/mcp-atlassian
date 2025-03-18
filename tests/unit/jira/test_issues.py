@@ -419,3 +419,56 @@ class TestIssuesMixin:
         # Verify result
         assert "Epic Link" in result
         assert result["Epic Link"] == "customfield_10100"
+
+    def test_create_issue_with_parent_for_task(self, issues_mixin):
+        """Test creating a regular task issue with a parent field."""
+        # Setup mock response for create_issue
+        create_response = {
+            "id": "12345",
+            "key": "TEST-456",
+            "self": "https://jira.example.com/rest/api/2/issue/12345",
+        }
+        issues_mixin.jira.create_issue.return_value = create_response
+
+        # Setup mock response for issue retrieval
+        issue_response = {
+            "id": "12345",
+            "key": "TEST-456",
+            "fields": {
+                "summary": "Test Task with Parent",
+                "description": "This is a test",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Task"},
+                "parent": {"key": "TEST-123"},
+            },
+        }
+        issues_mixin.jira.issue.return_value = issue_response
+
+        issues_mixin._get_account_id = MagicMock(return_value="user123")
+
+        # Execute - create a Task with parent field
+        result = issues_mixin.create_issue(
+            project_key="TEST",
+            summary="Test Task with Parent",
+            issue_type="Task",
+            description="This is a test",
+            assignee="jdoe",
+            parent="TEST-123",  # Adding parent for a non-subtask
+        )
+
+        # Verify
+        issues_mixin.jira.create_issue.assert_called_once()
+        call_kwargs = issues_mixin.jira.create_issue.call_args[1]
+        assert "fields" in call_kwargs
+        fields = call_kwargs["fields"]
+
+        # Verify parent field was included
+        assert "parent" in fields
+        assert fields["parent"] == {"key": "TEST-123"}
+
+        # Verify issue method was called after creation
+        issues_mixin.jira.issue.assert_called_once_with("TEST-456")
+
+        # Verify the issue was created successfully
+        assert result is not None
+        assert result.key == "TEST-456"

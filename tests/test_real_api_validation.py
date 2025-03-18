@@ -783,3 +783,66 @@ async def test_jira_transition_issue(
     finally:
         # Clean up resources even if the test fails
         cleanup_resources()
+
+
+@pytest.mark.anyio
+async def test_jira_create_task_with_parent(
+    jira_client: JiraFetcher,
+    test_project_key: str,
+    test_epic_key: str,
+    resource_tracker: ResourceTracker,
+    cleanup_resources: Callable[[], None],
+) -> None:
+    """Test creating a task in Jira with a parent issue (non-subtask)."""
+    # Generate unique identifiers for this test
+    test_id = str(uuid.uuid4())[:8]
+    task_summary = f"Task with Parent Test {test_id}"
+
+    try:
+        # Use the epic as parent instead of a regular issue
+        parent_issue_key = test_epic_key
+
+        try:
+            # Create a task linked to a parent issue
+            task_issue = jira_client.create_issue(
+                project_key=test_project_key,
+                summary=task_summary,
+                description=f"This is a test task linked to parent {parent_issue_key}",
+                issue_type="Task",  # Not a subtask
+                parent=parent_issue_key,  # Link to parent
+            )
+
+            # Track the task for cleanup
+            resource_tracker.add_jira_issue(task_issue.key)
+
+            # Verify the task response
+            assert task_issue is not None
+            assert task_issue.key.startswith(test_project_key)
+            assert task_issue.summary == task_summary
+
+            # Verify we can retrieve the created task
+            retrieved_task = jira_client.get_issue(task_issue.key)
+            assert retrieved_task is not None
+            assert retrieved_task.key == task_issue.key
+
+            # Verify parent relationship if the fields are accessible
+            # This might vary depending on how the Jira instance returns data
+            if hasattr(retrieved_task, "fields"):
+                if hasattr(retrieved_task.fields, "parent"):
+                    assert retrieved_task.fields.parent.key == parent_issue_key
+
+            print(f"\nCreated task {task_issue.key} with parent {parent_issue_key}")
+
+        except Exception as e:
+            # If we get a hierarchy error, it means the feature works but is limited by Jira config
+            if "hierarchy" in str(e).lower():
+                pytest.skip(
+                    f"Parent-child relationship not allowed by Jira configuration: {str(e)}"
+                )
+            else:
+                # Re-raise if it's not a hierarchy issue
+                raise
+
+    finally:
+        # Clean up resources even if the test fails
+        cleanup_resources()

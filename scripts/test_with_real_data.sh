@@ -130,7 +130,7 @@ run_api_tests() {
         sleep 5
 
         # Run the write operation tests
-        uv run pytest tests/test_real_api_validation.py::test_jira_create_issue tests/test_real_api_validation.py::test_jira_create_subtask tests/test_real_api_validation.py::test_jira_add_comment tests/test_real_api_validation.py::test_confluence_create_page tests/test_real_api_validation.py::test_confluence_update_page $VERBOSITY
+        uv run pytest tests/test_real_api_validation.py::test_jira_create_issue tests/test_real_api_validation.py::test_jira_create_subtask tests/test_real_api_validation.py::test_jira_create_task_with_parent tests/test_real_api_validation.py::test_jira_add_comment tests/test_real_api_validation.py::test_confluence_create_page tests/test_real_api_validation.py::test_confluence_update_page $VERBOSITY
 
         # Run the skipped transition test if explicitly requested write tests
         echo ""

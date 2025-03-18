@@ -627,7 +627,7 @@ async def list_tools() -> list[Tool]:
                                 '- Set priority: {"priority": {"name": "High"}}\n'
                                 '- Add labels: {"labels": ["frontend", "urgent"]}\n'
                                 '- Add components: {"components": [{"name": "UI"}]}\n'
-                                '- Link to parent (for subtasks): {"parent": "PROJ-123"}\n'
+                                '- Link to parent (for any issue type): {"parent": "PROJ-123"}\n'
                                 '- Custom fields: {"customfield_10010": "value"}',
                                 "default": "{}",
                             },

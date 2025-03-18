@@ -431,6 +431,9 @@ class IssuesMixin(UsersMixin):
             # Prepare parent field if this is a subtask
             if issue_type.lower() == "subtask" or issue_type.lower() == "sub-task":
                 self._prepare_parent_fields(fields, kwargs)
+            # Allow parent field for all issue types when explicitly provided
+            elif "parent" in kwargs:
+                self._prepare_parent_fields(fields, kwargs)
 
             # Add custom fields
             self._add_custom_fields(fields, kwargs)
@@ -479,7 +482,7 @@ class IssuesMixin(UsersMixin):
         self, fields: dict[str, Any], kwargs: dict[str, Any]
     ) -> None:
         """
-        Prepare fields for subtask creation.
+        Prepare fields for parent relationship.
 
         Args:
             fields: The fields dictionary to update
@@ -494,7 +497,11 @@ class IssuesMixin(UsersMixin):
                 fields["parent"] = {"key": parent_key}
             # Remove parent from kwargs to avoid double processing
             kwargs.pop("parent", None)
-        else:
+        elif "issuetype" in fields and fields["issuetype"]["name"].lower() in (
+            "subtask",
+            "sub-task",
+        ):
+            # Only raise error if issue type is subtask and parent is missing
             raise ValueError(
                 "Issue type is a sub-task but parent issue key or id not specified. Please provide a 'parent' parameter with the parent issue key."
             )
