@@ -8,7 +8,12 @@ from mcp_atlassian.jira.config import JiraConfig
 
 def test_init_with_basic_auth():
     """Test initializing the client with basic auth configuration."""
-    with patch("mcp_atlassian.jira.client.Jira") as mock_jira:
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch(
+            "mcp_atlassian.jira.client.configure_ssl_verification"
+        ) as mock_configure_ssl,
+    ):
         config = JiraConfig(
             url="https://test.atlassian.net",
             auth_type="basic",
@@ -27,6 +32,14 @@ def test_init_with_basic_auth():
             verify_ssl=True,
         )
 
+        # Verify SSL verification was configured
+        mock_configure_ssl.assert_called_once_with(
+            service_name="Jira",
+            url="https://test.atlassian.net",
+            session=mock_jira.return_value._session,
+            ssl_verify=True,
+        )
+
         assert client.config == config
         assert client._field_ids is None
         assert client._current_user_account_id is None
@@ -34,7 +47,12 @@ def test_init_with_basic_auth():
 
 def test_init_with_token_auth():
     """Test initializing the client with token auth configuration."""
-    with patch("mcp_atlassian.jira.client.Jira") as mock_jira:
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch(
+            "mcp_atlassian.jira.client.configure_ssl_verification"
+        ) as mock_configure_ssl,
+    ):
         config = JiraConfig(
             url="https://jira.example.com",
             auth_type="token",
@@ -52,6 +70,14 @@ def test_init_with_token_auth():
             verify_ssl=False,
         )
 
+        # Verify SSL verification was configured with ssl_verify=False
+        mock_configure_ssl.assert_called_once_with(
+            service_name="Jira",
+            url="https://jira.example.com",
+            session=mock_jira.return_value._session,
+            ssl_verify=False,
+        )
+
         assert client.config == config
 
 
@@ -60,6 +86,7 @@ def test_init_from_env():
     with (
         patch("mcp_atlassian.jira.config.JiraConfig.from_env") as mock_from_env,
         patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
     ):
         mock_config = MagicMock()
         mock_config.auth_type = "basic"  # needed for the if condition
@@ -73,7 +100,10 @@ def test_init_from_env():
 
 def test_clean_text():
     """Test the _clean_text method."""
-    with patch("mcp_atlassian.jira.client.Jira"):
+    with (
+        patch("mcp_atlassian.jira.client.Jira"),
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
         client = JiraClient(
             config=JiraConfig(
                 url="https://test.atlassian.net",

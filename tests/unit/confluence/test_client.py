@@ -16,12 +16,15 @@ def test_init_with_basic_auth():
         api_token="test_token",
     )
 
-    # Mock the Confluence class and ConfluencePreprocessor
+    # Mock the Confluence class, ConfluencePreprocessor, and configure_ssl_verification
     with (
         patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
         patch(
             "mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"
         ) as mock_preprocessor,
+        patch(
+            "mcp_atlassian.confluence.client.configure_ssl_verification"
+        ) as mock_configure_ssl,
     ):
         # Act
         client = ConfluenceClient(config=config)
@@ -37,6 +40,14 @@ def test_init_with_basic_auth():
         assert client.confluence == mock_confluence.return_value
         assert client.preprocessor == mock_preprocessor.return_value
 
+        # Verify SSL verification was configured
+        mock_configure_ssl.assert_called_once_with(
+            service_name="Confluence",
+            url="https://test.atlassian.net/wiki",
+            session=mock_confluence.return_value._session,
+            ssl_verify=True,
+        )
+
 
 def test_init_with_token_auth():
     """Test initializing the client with token auth configuration."""
@@ -48,12 +59,15 @@ def test_init_with_token_auth():
         ssl_verify=False,
     )
 
-    # Mock the Confluence class and ConfluencePreprocessor
+    # Mock the Confluence class, ConfluencePreprocessor, and configure_ssl_verification
     with (
         patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
         patch(
             "mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"
         ) as mock_preprocessor,
+        patch(
+            "mcp_atlassian.confluence.client.configure_ssl_verification"
+        ) as mock_configure_ssl,
     ):
         # Act
         client = ConfluenceClient(config=config)
@@ -69,6 +83,14 @@ def test_init_with_token_auth():
         assert client.confluence == mock_confluence.return_value
         assert client.preprocessor == mock_preprocessor.return_value
 
+        # Verify SSL verification was configured with ssl_verify=False
+        mock_configure_ssl.assert_called_once_with(
+            service_name="Confluence",
+            url="https://confluence.example.com",
+            session=mock_confluence.return_value._session,
+            ssl_verify=False,
+        )
+
 
 def test_init_from_env():
     """Test initializing the client from environment variables."""
@@ -79,6 +101,7 @@ def test_init_from_env():
         ) as mock_from_env,
         patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
         patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
     ):
         mock_config = MagicMock()
         mock_from_env.return_value = mock_config
@@ -100,6 +123,7 @@ def test_process_html_content():
         patch(
             "mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"
         ) as mock_preprocessor_class,
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
     ):
         mock_preprocessor = mock_preprocessor_class.return_value
         mock_preprocessor.process_html_content.return_value = (
@@ -127,6 +151,7 @@ def test_get_user_details_by_accountid():
         patch("mcp_atlassian.confluence.client.ConfluenceConfig.from_env"),
         patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence_class,
         patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
     ):
         mock_confluence = mock_confluence_class.return_value
         mock_confluence.get_user_details_by_accountid.return_value = {

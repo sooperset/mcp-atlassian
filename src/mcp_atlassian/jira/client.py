@@ -5,6 +5,7 @@ import logging
 from atlassian import Jira
 
 from mcp_atlassian.preprocessing import JiraPreprocessor
+from mcp_atlassian.utils import configure_ssl_verification
 
 from .config import JiraConfig
 
@@ -43,6 +44,14 @@ class JiraClient:
                 cloud=self.config.is_cloud,
                 verify_ssl=self.config.ssl_verify,
             )
+
+        # Configure SSL verification using the shared utility
+        configure_ssl_verification(
+            service_name="Jira",
+            url=self.config.url,
+            session=self.jira._session,
+            ssl_verify=self.config.ssl_verify,
+        )
 
         # Initialize the text preprocessor for text processing capabilities
         self.preprocessor = JiraPreprocessor(base_url=self.config.url)

@@ -5,6 +5,7 @@ from typing import Any
 
 from atlassian import Confluence
 
+from ..utils import configure_ssl_verification
 from .config import ConfluenceConfig
 
 # Configure logging
@@ -41,6 +42,15 @@ class ConfluenceClient:
                 password=self.config.api_token,  # API token is used as password
                 cloud=self.config.is_cloud,
             )
+
+        # Configure SSL verification using the shared utility
+        configure_ssl_verification(
+            service_name="Confluence",
+            url=self.config.url,
+            session=self.confluence._session,
+            ssl_verify=self.config.ssl_verify,
+        )
+
         # Import here to avoid circular imports
         from ..preprocessing.confluence import ConfluencePreprocessor
 
