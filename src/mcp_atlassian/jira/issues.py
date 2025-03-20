@@ -398,32 +398,32 @@ class IssuesMixin(UsersMixin):
         """
         try:
             all_fields = fields.copy() if fields else {}
-            
+
             # Set required fields
             all_fields["project"] = {"key": project_key}
             all_fields["summary"] = summary
             all_fields["issuetype"] = {"name": issue_type}
-            
+
             # Set optional fields
             if description:
                 all_fields["description"] = self._markdown_to_jira(description)
-                
+
             # Set parent for subtasks
             if parent_key and issue_type.lower() == "sub-task":
                 all_fields["parent"] = {"key": parent_key}
-                
+
             # Create the issue
             response = self.jira.create_issue(fields=all_fields)
             issue_key = response.get("key")
-            
+
             if not issue_key:
                 raise ValueError("No issue key returned from Jira API")
-                
+
             # Invalidate cache for this project
             self.invalidate_cache_by_prefix(f"jira_project_{project_key}")
-            
+
             return issue_key
-            
+
         except Exception as e:
             logger.error(f"Error creating issue: {str(e)}")
             raise ValueError(f"Failed to create issue: {str(e)}") from e
@@ -565,12 +565,12 @@ class IssuesMixin(UsersMixin):
                 fields=fields,
                 notify_users=notify_users,
             )
-            
+
             # Invalidate cache for this issue
             self.invalidate_cache_by_prefix(f"jira_issue_{issue_key}")
-            
+
             return True
-            
+
         except Exception as e:
             logger.error(f"Error updating issue {issue_key}: {str(e)}")
             return False

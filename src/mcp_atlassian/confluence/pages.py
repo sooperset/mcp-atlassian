@@ -234,8 +234,8 @@ class PagesMixin(ConfluenceClient):
             # Convert markdown content to storage format if needed
             is_markdown = not body.strip().startswith("<")
             if is_markdown:
-                body = self.preprocessor.markdown_to_storage(body)
-            
+                body = self.preprocessor.markdown_to_confluence_storage(body)
+
             # Convert HTML content to storage format if needed
             elif not body.strip().startswith("<ac:"):  # Not already in storage format
                 body = self.preprocessor.html_to_storage(body)
@@ -258,10 +258,10 @@ class PagesMixin(ConfluenceClient):
                     type=content_type,
                     representation="storage",
                 )
-                
+
             # Invalidate cache for this space
             self.invalidate_cache_by_prefix(f"confluence_space_{space_key}")
-            
+
             return page_data
 
         except Exception as e:
@@ -292,31 +292,36 @@ class PagesMixin(ConfluenceClient):
         try:
             # Get the current page data to preserve existing values if needed
             current_page = self.confluence.get_page_by_id(page_id)
-            
+
             if not current_page:
                 raise ValueError(f"Page with ID {page_id} not found")
-                
+
             page_space_key = current_page.get("space", {}).get("key")
-            
+
             # Use the current title if a new one is not provided
             if title is None:
                 title = current_page.get("title", "")
-                
+
             # If body is None, keep the existing content
             if body is None:
                 # Get current body content
-                body = self.confluence.get_page_by_id(
-                    page_id, expand="body.storage"
-                ).get("body", {}).get("storage", {}).get("value", "")
+                body = (
+                    self.confluence.get_page_by_id(page_id, expand="body.storage")
+                    .get("body", {})
+                    .get("storage", {})
+                    .get("value", "")
+                )
             else:
                 # Convert markdown content to storage format if needed
                 is_markdown = not body.strip().startswith("<")
                 if is_markdown:
-                    body = self.preprocessor.markdown_to_storage(body)
+                    body = self.preprocessor.markdown_to_confluence_storage(body)
                 # Convert HTML content to storage format if needed
-                elif not body.strip().startswith("<ac:"):  # Not already in storage format
+                elif not body.strip().startswith(
+                    "<ac:"
+                ):  # Not already in storage format
                     body = self.preprocessor.html_to_storage(body)
-            
+
             # Update the page
             page_data = self.confluence.update_page(
                 page_id=page_id,
@@ -326,14 +331,14 @@ class PagesMixin(ConfluenceClient):
                 version_comment=version_comment,
                 minor_edit=minor_edit,
             )
-            
+
             # Invalidate caches
             self.invalidate_cache_by_prefix(f"confluence_page_{page_id}")
             if page_space_key:
                 self.invalidate_cache_by_prefix(f"confluence_space_{page_space_key}")
-                
+
             return page_data
-            
+
         except Exception as e:
             logger.error(f"Error updating page {page_id}: {e}")
             raise ValueError(f"Failed to update page: {e}") from e

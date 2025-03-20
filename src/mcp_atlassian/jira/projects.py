@@ -1,11 +1,11 @@
 """Module for Jira project operations."""
 
-import logging
 import asyncio
-from typing import Any, Dict, List
+import logging
+from typing import Any
 
 from ..models import JiraIssue, JiraProject, JiraSearchResult
-from ..utils import cached, run_async
+from ..utils import cached
 from .client import JiraClient
 
 logger = logging.getLogger("mcp-jira")
@@ -415,7 +415,7 @@ class ProjectsMixin(JiraClient):
             )
             return []
 
-    def get_projects_parallel(self, project_keys: List[str]) -> Dict[str, JiraProject]:
+    def get_projects_parallel(self, project_keys: list[str]) -> dict[str, JiraProject]:
         """
         Get multiple projects in parallel.
 
@@ -426,13 +426,11 @@ class ProjectsMixin(JiraClient):
             Dictionary mapping project keys to JiraProject models or None if not found
         """
         # Prepare data for parallel requests
-        request_data = [
-            (self.get_project, [key], {}) for key in project_keys
-        ]
-        
+        request_data = [(self.get_project, [key], {}) for key in project_keys]
+
         # Execute requests in parallel
         results = self.parallel_requests(request_data)
-        
+
         # Build the result dictionary
         projects_dict = {}
         for i, project_key in enumerate(project_keys):
@@ -441,10 +439,12 @@ class ProjectsMixin(JiraClient):
                 projects_dict[project_key] = JiraProject.from_api_response(project_data)
             else:
                 projects_dict[project_key] = None
-                
+
         return projects_dict
-        
-    async def get_projects_async(self, project_keys: List[str]) -> Dict[str, JiraProject]:
+
+    async def get_projects_async(
+        self, project_keys: list[str]
+    ) -> dict[str, JiraProject]:
         """
         Get multiple projects asynchronously.
 
@@ -458,10 +458,10 @@ class ProjectsMixin(JiraClient):
         tasks = []
         for key in project_keys:
             tasks.append(self.async_request(self.get_project, key))
-            
+
         # Execute all tasks concurrently
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         # Build the result dictionary
         projects_dict = {}
         for i, project_key in enumerate(project_keys):
@@ -473,10 +473,12 @@ class ProjectsMixin(JiraClient):
                 projects_dict[project_key] = JiraProject.from_api_response(result)
             else:
                 projects_dict[project_key] = None
-                
+
         return projects_dict
-        
-    def get_projects_components_parallel(self, project_keys: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+
+    def get_projects_components_parallel(
+        self, project_keys: list[str]
+    ) -> dict[str, list[dict[str, Any]]]:
         """
         Get components for multiple projects in parallel.
 
@@ -490,13 +492,13 @@ class ProjectsMixin(JiraClient):
         request_data = [
             (self.get_project_components, [key], {}) for key in project_keys
         ]
-        
+
         # Execute requests in parallel
         results = self.parallel_requests(request_data)
-        
+
         # Build the result dictionary
         components_dict = {}
         for i, project_key in enumerate(project_keys):
             components_dict[project_key] = results[i]
-                
+
         return components_dict

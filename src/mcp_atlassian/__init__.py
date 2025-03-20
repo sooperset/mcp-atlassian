@@ -1,18 +1,26 @@
 import asyncio
-import logging
 import os
-import sys
 
 import click
 from dotenv import load_dotenv
 
 __version__ = "0.2.5"
 
-# Importa o sistema de logging avançado
-from .logging_config import setup_logger, log_operation
+# Import the advanced logging system
+from .logging_config import log_operation, setup_logger
 
-# Configura o logger principal com o novo sistema
-logger = setup_logger("mcp-atlassian")
+# Set up the advanced logger
+logger = setup_logger()
+
+# Set up loggers for main components
+jira_logger = setup_logger("mcp-atlassian.jira")
+confluence_logger = setup_logger("mcp-atlassian.confluence")
+
+# Start the logging context for the application
+with log_operation(logger, "initialization"):
+    logger.info(f"Initializing MCP Atlassian SDK {__version__}")
+
+# Set metrics configuration
 
 
 @click.command()
@@ -115,7 +123,7 @@ def main(
         name="mcp-atlassian",
         level=logging_level,
         log_to_file=log_to_file,
-        log_dir=log_dir
+        log_dir=log_dir,
     )
 
     # Configura loggers para componentes principais
@@ -158,14 +166,14 @@ def main(
 
         # Set SSL verification for Jira Server/Data Center
         os.environ["JIRA_SSL_VERIFY"] = str(jira_ssl_verify).lower()
-        
+
         # Define configuração de métricas
         os.environ["METRICS_ENABLED"] = str(metrics).lower()
 
         from . import server
 
         logger.info(f"Starting MCP Atlassian v{__version__} with {transport} transport")
-        
+
         # Run the server with specified transport
         asyncio.run(server.run_server(transport=transport, port=port))
 

@@ -1,7 +1,7 @@
 """Configuration module for Jira API interactions."""
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 
@@ -16,11 +16,11 @@ class JiraConfig:
     username: str = ""
     api_token: str = ""
     personal_token: str = ""
-    
+
     # Cache configuration
     cache_enabled: bool = True
     cache_ttl_seconds: int = 300  # Default TTL: 5 minutes
-    
+
     # Async configuration
     default_timeout_seconds: int = 30  # Default timeout: 30 seconds
     max_concurrent_requests: int = 5  # Default concurrency: 5 requests
@@ -61,9 +61,11 @@ class JiraConfig:
         personal_token = os.environ.get("JIRA_PERSONAL_TOKEN", "")
 
         # Cache configuration
-        cache_enabled = str(os.environ.get("JIRA_CACHE_ENABLED", "true")).lower() == "true"
+        cache_enabled = (
+            str(os.environ.get("JIRA_CACHE_ENABLED", "true")).lower() == "true"
+        )
         cache_ttl_seconds = int(os.environ.get("JIRA_CACHE_TTL", "300"))
-        
+
         # Async configuration
         default_timeout_seconds = int(os.environ.get("JIRA_TIMEOUT", "30"))
         max_concurrent_requests = int(os.environ.get("JIRA_MAX_CONCURRENT", "5"))

@@ -1,7 +1,8 @@
 """Module for Confluence search operations."""
 
 import logging
-from typing import Any, Callable, Iterator, List, Optional, Tuple
+from collections.abc import Iterator
+from typing import Any
 
 import requests
 
@@ -74,11 +75,7 @@ class SearchMixin(ConfluenceClient):
 
     @cached("confluence_cql_search", 300)  # Cache for 5 minutes
     def cql_search(
-        self, 
-        cql: str, 
-        start: int = 0, 
-        limit: int = 25, 
-        expand: str | None = None
+        self, cql: str, start: int = 0, limit: int = 25, expand: str | None = None
     ) -> dict[str, Any]:
         """
         Search Confluence using CQL (Confluence Query Language).
@@ -94,10 +91,7 @@ class SearchMixin(ConfluenceClient):
         """
         try:
             results = self.confluence.cql(
-                cql=cql,
-                start=start,
-                limit=limit,
-                expand=expand
+                cql=cql, start=start, limit=limit, expand=expand
             )
             return results if isinstance(results, dict) else {}
         except Exception as e:
@@ -130,12 +124,9 @@ class SearchMixin(ConfluenceClient):
                 query = f'"{text}" AND space = "{space_key}"'
             else:
                 query = f'"{text}"'
-                
+
             results = self.confluence.search(
-                query, 
-                start=start, 
-                limit=limit, 
-                expand="body.view,history"
+                query, start=start, limit=limit, expand="body.view,history"
             )
             return results if isinstance(results, dict) else {}
         except Exception as e:
@@ -143,12 +134,12 @@ class SearchMixin(ConfluenceClient):
             return {}
 
     def cql_search_iter(
-        self, 
-        cql: str, 
-        start: int = 0, 
+        self,
+        cql: str,
+        start: int = 0,
         max_results: int = 1000,
-        page_size: int = 25, 
-        expand: str | None = None
+        page_size: int = 25,
+        expand: str | None = None,
     ) -> Iterator[ConfluencePage]:
         """
         Search Confluence using CQL and iterate through all results.
@@ -164,60 +155,61 @@ class SearchMixin(ConfluenceClient):
         Yields:
             ConfluencePage objects one at a time
         """
-        def fetch_page(page_start: int, page_limit: int) -> Tuple[List[ConfluencePage], int]:
+
+        def fetch_page(
+            page_start: int, page_limit: int
+        ) -> tuple[list[ConfluencePage], int]:
             """Internal function to fetch a page of results."""
             results = self.cql_search(
-                cql=cql,
-                start=page_start,
-                limit=page_limit,
-                expand=expand
+                cql=cql, start=page_start, limit=page_limit, expand=expand
             )
-            
+
             pages = []
             search_results = results.get("results", [])
-            
+
             for result in search_results:
                 try:
                     # Extract content from result
                     content = result.get("content", {})
-                    
+
                     # Skip if we don't have valid content
                     if not content or not isinstance(content, dict):
                         continue
-                    
+
                     # Create ConfluencePage object
                     page = ConfluencePage.from_api_response(
-                        content, 
-                        base_url=self.config.url
+                        content, base_url=self.config.url
                     )
-                    
+
                     # Try to extract excerpt if available
                     if "excerpt" in result:
                         excerpt = result.get("excerpt", "")
                         if excerpt:
                             # Process excerpt as HTML content
                             space_key = page.space.key if page.space else ""
-                            _, processed_markdown = self.preprocessor.process_html_content(
-                                excerpt, space_key=space_key
+                            _, processed_markdown = (
+                                self.preprocessor.process_html_content(
+                                    excerpt, space_key=space_key
+                                )
                             )
                             # Add excerpt as content
                             page.content = processed_markdown
-                    
+
                     pages.append(page)
-                    
+
                 except Exception as e:
                     logger.warning(f"Error processing search result: {e}")
                     continue
-                    
-            # Get the total size if available 
+
+            # Get the total size if available
             total = results.get("size", len(pages))
-            
+
             return pages, total
-        
+
         # Use the paginated iterator
         return paginated_iterator(
             fetch_function=fetch_page,
             start_at=start,
             max_per_page=page_size,
-            max_total=max_results
+            max_total=max_results,
         )

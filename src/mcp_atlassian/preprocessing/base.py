@@ -8,7 +8,7 @@ from typing import Any, Protocol
 from bs4 import BeautifulSoup, Tag
 from markdownify import markdownify as md
 
-from ..utils import TextChunker, HTMLProcessor, MarkdownOptimizer
+from ..utils import HTMLProcessor, MarkdownOptimizer, TextChunker
 
 logger = logging.getLogger("mcp-atlassian")
 
@@ -37,7 +37,9 @@ class BasePreprocessor:
         self.base_url = base_url.rstrip("/") if base_url else ""
         self.confluence_client = confluence_client
         self.text_chunker = TextChunker(chunk_size=10000, overlap=500)
-        self.large_text_threshold = 20000  # Textos maiores que isso usarão processamento incremental
+        self.large_text_threshold = (
+            20000  # Texts larger than this will use incremental processing
+        )
 
     def process_html_content(
         self, html_content: str, space_key: str = ""
@@ -53,29 +55,33 @@ class BasePreprocessor:
             Tuple of (processed_html, processed_markdown)
         """
         try:
-            # Usa processamento incremental para conteúdo grande
+            # Use incremental processing for large content
             if len(html_content) > self.large_text_threshold:
                 return self._process_large_html_content(html_content, space_key)
-                
-            # Processamento normal para conteúdos pequenos
+
+            # Normal processing for small content
             soup = BeautifulSoup(html_content, "html.parser")
-            
+
             # Process user mentions
             self._process_user_mentions_in_soup(soup)
-            
+
             # Convert to string and markdown
             processed_html = str(soup)
             processed_markdown = md(processed_html)
-            
-            # Otimiza o markdown
-            processed_markdown = MarkdownOptimizer.remove_empty_markdown_links(processed_markdown)
-            processed_markdown = MarkdownOptimizer.optimize_markdown_tables(processed_markdown)
-            
+
+            # Optimize the markdown
+            processed_markdown = MarkdownOptimizer.remove_empty_markdown_links(
+                processed_markdown
+            )
+            processed_markdown = MarkdownOptimizer.optimize_markdown_tables(
+                processed_markdown
+            )
+
             return processed_html, processed_markdown
 
         except Exception as e:
             logger.error(f"Error in process_html_content: {str(e)}")
-            # Fallback para processamento simples em caso de erro
+            # Fallback to simple processing in case of error
             plain_text = HTMLProcessor.extract_text_from_html(html_content)
             return html_content, plain_text
 
@@ -92,11 +98,11 @@ class BasePreprocessor:
         Returns:
             Tuple of (processed_html, processed_markdown)
         """
-        # Divide o HTML em blocos baseados em elementos estruturais
-        # Tentamos dividir em <div>, <p> ou outros elementos de bloco
+        # Divide HTML into blocks based on structural elements
+        # We try to divide by <div>, <p> or other block elements
         chunks = self._split_html_by_blocks(html_content)
-        
-        # Processa cada chunk separadamente
+
+        # Process each chunk separately
         processed_html_chunks = []
         for chunk in chunks:
             try:
@@ -105,59 +111,67 @@ class BasePreprocessor:
                 processed_html_chunks.append(str(soup))
             except Exception as e:
                 logger.warning(f"Error processing HTML chunk: {str(e)}")
-                # Em caso de erro, mantém o chunk original
+                # In case of error, keep the original chunk
                 processed_html_chunks.append(chunk)
-        
-        # Reconstrói o HTML
-        processed_html = ''.join(processed_html_chunks)
-        
-        # Converte para markdown em chunks
-        def convert_to_md(html_chunk):
+
+        # Rebuild the HTML
+        processed_html = "".join(processed_html_chunks)
+
+        # Convert to markdown in chunks
+        def convert_to_md(html_chunk: str) -> str:
             return md(html_chunk)
-        
-        processed_markdown = self.text_chunker.process_text_in_chunks(processed_html, convert_to_md)
-        
-        # Otimiza o markdown
-        processed_markdown = MarkdownOptimizer.remove_empty_markdown_links(processed_markdown)
-        
+
+        processed_markdown = self.text_chunker.process_text_in_chunks(
+            processed_html, convert_to_md
+        )
+
+        # Optimize the markdown
+        processed_markdown = MarkdownOptimizer.remove_empty_markdown_links(
+            processed_markdown
+        )
+
         return processed_html, processed_markdown
 
     def _split_html_by_blocks(self, html_content: str) -> list[str]:
         """
-        Divide o conteúdo HTML em blocos estruturais para processamento incremental.
-        
+        Divides HTML content into structural blocks for incremental processing.
+
         Args:
-            html_content: Conteúdo HTML a ser dividido
-            
+            html_content: HTML content to be divided
+
         Returns:
-            Lista de blocos HTML
+            List of HTML blocks
         """
-        # Tenta dividir o HTML em grandes blocos estruturais
+        # Try to divide HTML into large structural blocks
         try:
-            soup = BeautifulSoup(html_content, 'html.parser')
-            
-            # Prioriza divisão pelos principais elementos de bloco
+            soup = BeautifulSoup(html_content, "html.parser")
+
+            # Prioritize division by main block elements
             blocks = []
-            for elem in soup.find_all(['div', 'section', 'article', 'header', 'footer', 'main', 'nav']):
-                if len(str(elem)) > 100:  # Ignora blocos muito pequenos
+            for elem in soup.find_all(
+                ["div", "section", "article", "header", "footer", "main", "nav"]
+            ):
+                if len(str(elem)) > 100:  # Ignore very small blocks
                     blocks.append(str(elem))
-                    
-            # Se encontrou blocos suficientes, retorna
+
+            # If found enough blocks, return
             if blocks and sum(len(b) for b in blocks) > 0.8 * len(html_content):
                 return blocks
-                
-            # Segunda tentativa: divide por parágrafos e outros elementos menores
+
+            # Second attempt: divide by paragraphs and other smaller elements
             blocks = []
-            for elem in soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'table']):
+            for elem in soup.find_all(
+                ["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "table"]
+            ):
                 blocks.append(str(elem))
-                
-            # Se encontrou blocos suficientes, retorna
+
+            # If found enough blocks, return
             if blocks and sum(len(b) for b in blocks) > 0.6 * len(html_content):
                 return blocks
         except Exception as e:
             logger.warning(f"Error splitting HTML by blocks: {str(e)}")
-            
-        # Fallback: divide o texto por tamanho
+
+        # Fallback: divide text by size
         return self.text_chunker.chunk_text(html_content)
 
     def _process_user_mentions_in_soup(self, soup: BeautifulSoup) -> None:
@@ -230,12 +244,12 @@ class BasePreprocessor:
         """Convert HTML content to markdown if needed."""
         if not text:
             return ""
-            
-        # Verifica se o texto contém HTML
+
+        # Check if the text contains HTML
         if not re.search(r"<[^>]+>", text):
             return text
-            
-        # Para textos pequenos, usa o método padrão
+
+        # For small texts, use the standard method
         if len(text) <= self.large_text_threshold:
             try:
                 with warnings.catch_warnings():
@@ -246,9 +260,8 @@ class BasePreprocessor:
             except Exception as e:
                 logger.warning(f"Error converting HTML to markdown: {str(e)}")
                 return text
-        
-        # Para textos grandes, usa processamento incremental
+
+        # For large texts, use incremental processing
         return self.text_chunker.process_text_in_chunks(
-            text,
-            lambda chunk: md(f"<div>{chunk}</div>")
+            text, lambda chunk: md(f"<div>{chunk}</div>")
         )

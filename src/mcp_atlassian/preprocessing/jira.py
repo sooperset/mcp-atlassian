@@ -2,11 +2,10 @@
 
 import logging
 import re
-from typing import Any, Match, Optional, Pattern, cast
+from re import Match
+from typing import Any
 
-from bs4 import BeautifulSoup, element
-
-from ..utils import HTMLProcessor, MarkdownOptimizer, TextChunker
+from ..utils import HTMLProcessor, TextChunker
 from .base import BasePreprocessor
 
 logger = logging.getLogger("mcp-atlassian")
@@ -26,14 +25,12 @@ class JiraPreprocessor(BasePreprocessor):
         r"\[([^|]+)\|(?:https?://)?([a-zA-Z0-9\-._~:/?\#\[\]@!$&'()*+,;=]+)\]"
     )
     JIRA_MENTION_RE = re.compile(r"\[~accountid:([a-zA-Z0-9\-]+)\]")
-    
+
     # Memoization to avoid reprocessing frequent patterns
     _memo_cache = {}
     _memo_max_size = 1000
 
-    def __init__(
-        self, base_url: str = "", jira_client: Optional[Any] = None
-    ) -> None:
+    def __init__(self, base_url: str = "", jira_client: Any | None = None) -> None:
         """
         Initialize Jira text preprocessor.
 
@@ -43,7 +40,9 @@ class JiraPreprocessor(BasePreprocessor):
         """
         super().__init__(base_url, jira_client)
         self.text_chunker = TextChunker(chunk_size=5000, overlap=200)
-        self.large_text_threshold = 10000  # Jira texts are usually smaller than Confluence
+        self.large_text_threshold = (
+            10000  # Jira texts are usually smaller than Confluence
+        )
 
     def clean_jira_text(self, jira_text: str) -> str:
         """
@@ -58,16 +57,16 @@ class JiraPreprocessor(BasePreprocessor):
         # Returns empty text for empty input
         if not jira_text:
             return ""
-            
+
         # Incremental processing for large texts
         if len(jira_text) > self.large_text_threshold:
             return self._process_large_jira_text(jira_text)
-        
+
         # Optimizes memory usage by checking if we've already processed this text
         cache_key = hash(jira_text)
         if cache_key in self._memo_cache:
             return self._memo_cache[cache_key]
-            
+
         # Normal processing for small texts
         text = jira_text
 
@@ -86,72 +85,70 @@ class JiraPreprocessor(BasePreprocessor):
         # Store in cache, limiting the size
         if len(self._memo_cache) > self._memo_max_size:
             # Clear half of the cache when it reaches the limit
-            keys_to_remove = list(self._memo_cache.keys())[:self._memo_max_size // 2]
+            keys_to_remove = list(self._memo_cache.keys())[: self._memo_max_size // 2]
             for key in keys_to_remove:
                 del self._memo_cache[key]
-                
+
         self._memo_cache[cache_key] = text
         return text
-        
+
     def _process_large_jira_text(self, jira_text: str) -> str:
         """
         Processa textos grandes do Jira incrementalmente.
-        
+
         Args:
             jira_text: Texto bruto do Jira
-            
+
         Returns:
             Texto processado
         """
         # Os blocos de código e painéis podem se estender por múltiplas linhas
         # Precisamos identificá-los antes de dividir o texto
-        
+
         # Primeiro, identificamos e protegemos blocos especiais
         code_blocks = []
         panels = []
-        
+
         def protect_code_blocks(match: Match) -> str:
             code_blocks.append((match.group(1) or "", match.group(2)))
-            return f"__CODE_BLOCK_{len(code_blocks)-1}__"
-            
+            return f"__CODE_BLOCK_{len(code_blocks) - 1}__"
+
         def protect_panels(match: Match) -> str:
             panels.append((match.group(1) or "", match.group(2)))
-            return f"__PANEL_{len(panels)-1}__"
-        
+            return f"__PANEL_{len(panels) - 1}__"
+
         # Substitui blocos de código e painéis por marcadores
         protected_text = self.JIRA_CODE_BLOCK_RE.sub(protect_code_blocks, jira_text)
         protected_text = self.JIRA_PANEL_RE.sub(protect_panels, protected_text)
-        
-        # Divide o texto em chunks para processamento
+
+        # Split text into chunks for processing
         chunks = self.text_chunker.chunk_text(protected_text, preserve_newlines=True)
-        
-        # Processa cada chunk
+
+        # Process each chunk
         processed_chunks = []
         for chunk in chunks:
-            # Processa links e menções
+            # Process links and mentions
             processed_chunk = self._process_smart_links(chunk)
             processed_chunk = self._process_mentions(processed_chunk)
             processed_chunks.append(processed_chunk)
-            
-        # Junta os chunks processados
+
+        # Join the processed chunks
         result_text = "".join(processed_chunks)
-        
+
         # Restaura os blocos de código
         for i, (lang, code) in enumerate(code_blocks):
             lang_attr = f":{lang}" if lang else ""
             result_text = result_text.replace(
-                f"__CODE_BLOCK_{i}__", 
-                f"```{lang}\n{code}\n```"
+                f"__CODE_BLOCK_{i}__", f"```{lang}\n{code}\n```"
             )
-            
+
         # Restaura os painéis
         for i, (title, content) in enumerate(panels):
             title_attr = f"## {title}\n\n" if title else ""
             result_text = result_text.replace(
-                f"__PANEL_{i}__",
-                f"{title_attr}{content}\n"
+                f"__PANEL_{i}__", f"{title_attr}{content}\n"
             )
-            
+
         return result_text
 
     def _process_code_blocks(self, text: str) -> str:
@@ -179,7 +176,9 @@ class JiraPreprocessor(BasePreprocessor):
             Text with panels converted to markdown
         """
         return self.JIRA_PANEL_RE.sub(
-            lambda m: ("## " + m.group(1) + "\n\n" if m.group(1) else "") + m.group(2) + "\n",
+            lambda m: ("## " + m.group(1) + "\n\n" if m.group(1) else "")
+            + m.group(2)
+            + "\n",
             text,
         )
 
@@ -205,7 +204,7 @@ class JiraPreprocessor(BasePreprocessor):
         Returns:
             Text with user mentions processed
         """
-        
+
         def replace_mention(m: Match) -> str:
             account_id = m.group(1)
             try:
@@ -217,10 +216,10 @@ class JiraPreprocessor(BasePreprocessor):
                         return f"@{user_details['displayName']}"
             except Exception as e:
                 logger.warning(f"Error getting user details: {str(e)}")
-            
+
             # Fallback
             return f"@user_{account_id}"
-            
+
         return self.JIRA_MENTION_RE.sub(replace_mention, text)
 
     def process_fields(self, fields: dict[str, Any]) -> dict[str, Any]:
@@ -234,33 +233,33 @@ class JiraPreprocessor(BasePreprocessor):
             Dict with processed text fields
         """
         processed = fields.copy()
-        
-        # Processa descrição
+
+        # Process description
         if description := processed.get("description"):
             processed["description"] = self.clean_jira_text(description)
-            # Gera um snippet/resumo da descrição
+            # Generate a snippet/summary of the description
             if len(processed["description"]) > 300:
                 processed["description_summary"] = HTMLProcessor.generate_excerpt(
                     processed["description"], max_length=300
                 )
-                
-        # Processa comentários
+
+        # Process comments
         if comments := processed.get("comment", {}).get("comments", []):
             for comment in comments:
                 if body := comment.get("body"):
                     comment["body"] = self.clean_jira_text(body)
-                    # Gera um snippet/resumo de cada comentário
+                    # Generate a snippet/summary of each comment
                     if len(comment["body"]) > 200:
                         comment["body_summary"] = HTMLProcessor.generate_excerpt(
                             comment["body"], max_length=200
                         )
-        
-        # Processa mensagens de trabalho (worklog)
+
+        # Process worklog messages
         if worklogs := processed.get("worklog", {}).get("worklogs", []):
             for worklog in worklogs:
                 if comment := worklog.get("comment"):
                     worklog["comment"] = self.clean_jira_text(comment)
-        
+
         return processed
 
     def process_issue(self, issue: dict[str, Any]) -> dict[str, Any]:
@@ -274,24 +273,26 @@ class JiraPreprocessor(BasePreprocessor):
             Issue with processed text fields
         """
         processed_issue = issue.copy()
-        
-        # Processa campos do issue
+
+        # Process issue fields
         if "fields" in processed_issue:
             processed_issue["fields"] = self.process_fields(processed_issue["fields"])
-            
-        # Processa changelog se disponível
+
+        # Process changelog if available
         if "changelog" in processed_issue:
             changelog = processed_issue["changelog"]
             if "histories" in changelog:
                 for history in changelog["histories"]:
                     for item in history.get("items", []):
-                        # Processa campos de texto em mudanças
+                        # Process text fields in changes
                         for field_name in ["toString", "fromString"]:
                             if field_name in item and isinstance(item[field_name], str):
-                                # Só processa texto que parece ser formatado
+                                # Only process text that seems to be formatted
                                 if "{" in item[field_name] or "[" in item[field_name]:
-                                    item[field_name] = self.clean_jira_text(item[field_name])
-                                    
+                                    item[field_name] = self.clean_jira_text(
+                                        item[field_name]
+                                    )
+
         return processed_issue
 
     def jira_to_markdown(self, input_text: str) -> str:
@@ -594,3 +595,57 @@ class JiraPreprocessor(BasePreprocessor):
         prefix = "1." if last_char == "#" else "-"
 
         return f"{indent}{prefix} {content}"
+
+    def _process_text_with_code_blocks(self, text: str) -> str:
+        """
+        Process Jira text with special handling for code blocks and panels.
+
+        Args:
+            text: Jira formatted text
+
+        Returns:
+            Processed text with markdown links
+        """
+        if not text:
+            return ""
+
+        # Code blocks and panels can span multiple lines
+        # We need to identify them before splitting the text
+        code_blocks = re.findall(r"\{code.*?\}(.*?)\{code\}", text, re.DOTALL)
+        code_block_markers = [f"CODE_BLOCK_{i}" for i in range(len(code_blocks))]
+
+        panels = re.findall(r"\{panel.*?\}(.*?)\{panel\}", text, re.DOTALL)
+        panel_markers = [f"PANEL_{i}" for i in range(len(panels))]
+
+        # Replace code blocks and panels with markers
+        processed_text = text
+        for i, block in enumerate(code_blocks):
+            processed_text = processed_text.replace(
+                f"{{code}}{block}{{code}}", code_block_markers[i]
+            )
+
+        # Split text into chunks for processing
+        lines = processed_text.split("\n")
+        processed_lines = []
+
+        for line in lines:
+            # Process links and mentions
+            processed_line = self._process_smart_links(line)
+            processed_line = self._process_mentions(processed_line)
+            processed_lines.append(processed_line)
+
+        processed_text = "\n".join(processed_lines)
+
+        # Restore code blocks
+        for i, block in enumerate(code_blocks):
+            processed_text = processed_text.replace(
+                code_block_markers[i], f"{{code}}{block}{{code}}"
+            )
+
+        # Restore panels
+        for i, panel in enumerate(panels):
+            processed_text = processed_text.replace(
+                panel_markers[i], f"{{panel}}{panel}{{panel}}"
+            )
+
+        return processed_text

@@ -16,11 +16,11 @@ class ConfluenceConfig:
     username: str = ""
     api_token: str = ""
     personal_token: str = ""
-    
+
     # Cache configuration
     cache_enabled: bool = True
     cache_ttl_seconds: int = 300  # Default TTL: 5 minutes
-    
+
     # Async configuration
     default_timeout_seconds: int = 30  # Default timeout: 30 seconds
     max_concurrent_requests: int = 5  # Default concurrency: 5 requests
@@ -52,7 +52,9 @@ class ConfluenceConfig:
 
         # Optional variables with defaults
         is_cloud = str(os.environ.get("CONFLUENCE_CLOUD", "true")).lower() == "true"
-        ssl_verify = str(os.environ.get("CONFLUENCE_SSL_VERIFY", "true")).lower() == "true"
+        ssl_verify = (
+            str(os.environ.get("CONFLUENCE_SSL_VERIFY", "true")).lower() == "true"
+        )
         auth_type = os.environ.get("CONFLUENCE_AUTH_TYPE", "basic")
 
         # Auth-specific variables
@@ -61,9 +63,11 @@ class ConfluenceConfig:
         personal_token = os.environ.get("CONFLUENCE_PERSONAL_TOKEN", "")
 
         # Cache configuration
-        cache_enabled = str(os.environ.get("CONFLUENCE_CACHE_ENABLED", "true")).lower() == "true"
+        cache_enabled = (
+            str(os.environ.get("CONFLUENCE_CACHE_ENABLED", "true")).lower() == "true"
+        )
         cache_ttl_seconds = int(os.environ.get("CONFLUENCE_CACHE_TTL", "300"))
-        
+
         # Async configuration
         default_timeout_seconds = int(os.environ.get("CONFLUENCE_TIMEOUT", "30"))
         max_concurrent_requests = int(os.environ.get("CONFLUENCE_MAX_CONCURRENT", "5"))

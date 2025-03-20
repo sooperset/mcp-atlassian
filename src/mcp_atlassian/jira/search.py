@@ -1,7 +1,8 @@
 """Module for Jira search operations."""
 
 import logging
-from typing import Any, Callable, Iterator, List, Optional, Tuple
+from collections.abc import Iterator
+from typing import Any
 
 from ..models.jira import JiraIssue, JiraSearchResult
 from ..utils import cached, paginated_iterator
@@ -16,18 +17,37 @@ class SearchMixin(JiraClient):
 
     # Conjuntos de campos padrão para diferentes tipos de consultas
     _DEFAULT_FIELDS = [
-        "summary", "issuetype", "created", "updated", "project", "status",
-        "priority", "assignee", "reporter", "creator"
+        "summary",
+        "issuetype",
+        "created",
+        "updated",
+        "project",
+        "status",
+        "priority",
+        "assignee",
+        "reporter",
+        "creator",
     ]
-    
-    _MINIMAL_FIELDS = [
-        "summary", "issuetype", "status", "project"
-    ]
-    
+
+    _MINIMAL_FIELDS = ["summary", "issuetype", "status", "project"]
+
     _DETAILED_FIELDS = [
-        "summary", "issuetype", "created", "updated", "project", "status",
-        "priority", "assignee", "reporter", "creator", "description",
-        "comment", "fixVersions", "components", "labels", "duedate"
+        "summary",
+        "issuetype",
+        "created",
+        "updated",
+        "project",
+        "status",
+        "priority",
+        "assignee",
+        "reporter",
+        "creator",
+        "description",
+        "comment",
+        "fixVersions",
+        "components",
+        "labels",
+        "duedate",
     ]
 
     def search_issues(
@@ -186,7 +206,7 @@ class SearchMixin(JiraClient):
         try:
             # Determine which fields to request
             request_fields = fields
-            
+
             if not request_fields:
                 if field_set == "minimal":
                     request_fields = self._MINIMAL_FIELDS
@@ -195,7 +215,7 @@ class SearchMixin(JiraClient):
                 elif field_set == "detailed":
                     request_fields = self._DETAILED_FIELDS
                 # "all" or invalid values will pass None for fields, retrieving all fields
-            
+
             results = self.jira.jql(
                 jql=jql,
                 start=start_at,
@@ -341,7 +361,8 @@ class SearchMixin(JiraClient):
         Yields:
             JiraIssue objects one at a time
         """
-        def fetch_page(start: int, limit: int) -> Tuple[List[JiraIssue], int]:
+
+        def fetch_page(start: int, limit: int) -> tuple[list[JiraIssue], int]:
             """Internal function to fetch a page of results."""
             results = self.jql_search(
                 jql=jql,
@@ -352,7 +373,7 @@ class SearchMixin(JiraClient):
                 expand=expand,
                 field_set=field_set,
             )
-            
+
             issues = []
             for issue_data in results.get("issues", []):
                 try:
@@ -361,9 +382,9 @@ class SearchMixin(JiraClient):
                 except Exception as e:
                     logger.warning(f"Error parsing issue data: {e}")
                     continue
-                    
+
             return issues, results.get("total", 0)
-            
+
         # Use the paginated iterator
         return paginated_iterator(
             fetch_function=fetch_page,
