@@ -326,6 +326,10 @@ async def list_tools() -> list[Tool]:
                                 "minimum": 1,
                                 "maximum": 50,
                             },
+                            "spaces_filter": {
+                                "type": "string",
+                                "description": "Comma-separated list of space keys to filter results by. Overrides the environment variable CONFLUENCE_SPACES_FILTER if provided.",
+                            },
                         },
                         "required": ["query"],
                     },
@@ -563,6 +567,10 @@ async def list_tools() -> list[Tool]:
                                 "default": 10,
                                 "minimum": 1,
                                 "maximum": 50,
+                            },
+                            "projects_filter": {
+                                "type": "string",
+                                "description": "Comma-separated list of project keys to filter results by. Overrides the environment variable JIRA_PROJECTS_FILTER if provided.",
                             },
                         },
                         "required": ["jql"],
@@ -863,6 +871,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
 
             query = arguments.get("query", "")
             limit = min(int(arguments.get("limit", 10)), 50)
+            spaces_filter = arguments.get("spaces_filter")
 
             # Check if the query is a simple search term or already a CQL query
             if query and not any(
@@ -874,7 +883,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 query = f'text ~ "{query}"'
                 logger.info(f"Converting simple search term to CQL: {query}")
 
-            pages = ctx.confluence.search(query, limit=limit)
+            pages = ctx.confluence.search(query, limit=limit, spaces_filter=spaces_filter)
 
             # Format results using the to_simplified_dict method
             search_results = [page.to_simplified_dict() for page in pages]
@@ -893,7 +902,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             page_id = arguments.get("page_id")
             include_metadata = arguments.get("include_metadata", True)
 
-            page = ctx.confluence.get_page_content(page_id)
+            page = ctx.confluence.get_page_by_title(page_id)
 
             if include_metadata:
                 # The to_simplified_dict method already includes the content,
@@ -1123,8 +1132,9 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             jql = arguments.get("jql")
             fields = arguments.get("fields", "*all")
             limit = min(int(arguments.get("limit", 10)), 50)
+            projects_filter = arguments.get("projects_filter")
 
-            issues = ctx.jira.search_issues(jql, fields=fields, limit=limit)
+            issues = ctx.jira.search_issues(jql, fields=fields, limit=limit, projects_filter=projects_filter)
 
             # Format results using the to_simplified_dict method
             search_results = [issue.to_simplified_dict() for issue in issues]

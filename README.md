@@ -73,6 +73,7 @@ The integration supports using either Confluence, Jira, or both services. You on
 - For Jira Cloud: Include `JIRA_URL`, `JIRA_USERNAME`, and `JIRA_API_TOKEN`
 - For Jira Server/Data Center: Include `JIRA_URL` and `JIRA_PERSONAL_TOKEN`
 - For SSE transport: Add `--transport sse` and `--port` arguments
+- To filter search results: Use `CONFLUENCE_SPACES_FILTER` and `JIRA_PROJECTS_FILTER` to narrow down results
 
 <details>
 <summary>View all configuration options</summary>
@@ -84,11 +85,13 @@ The integration supports using either Confluence, Jira, or both services. You on
 | Email | `CONFLUENCE_USERNAME` | `--confluence-username` | O | X |
 | API Token | `CONFLUENCE_API_TOKEN` | `--confluence-token` | O | X |
 | PAT | `CONFLUENCE_PERSONAL_TOKEN` | `--confluence-personal-token` | X | O |
+| Spaces Filter | `CONFLUENCE_SPACES_FILTER` | `--confluence-spaces-filter` | Optional | Optional |
 | **Jira** |
 | URL | `JIRA_URL` | `--jira-url` | O | O |
 | Email | `JIRA_USERNAME` | `--jira-username` | O | X |
 | API Token | `JIRA_API_TOKEN` | `--jira-token` | O | X |
 | PAT | `JIRA_PERSONAL_TOKEN` | `--jira-personal-token` | X | O |
+| Projects Filter | `JIRA_PROJECTS_FILTER` | `--jira-projects-filter` | Optional | Optional |
 | **Common** |
 | SSL Verify | `*_SSL_VERIFY` | `--[no-]*-ssl-verify` | X | Optional |
 | Transport | - | `--transport stdio\|sse` | Optional | Optional |
@@ -116,7 +119,26 @@ uvx mcp-atlassian \
   --jira-personal-token=token \
   --transport sse \
   --port 8000
+  
+# With search filters
+uvx mcp-atlassian \
+  --confluence-url=https://your.atlassian.net/wiki \
+  --confluence-username=email \
+  --confluence-token=token \
+  --confluence-spaces-filter=DEV,TEAM,DOC \
+  --jira-url=https://your.atlassian.net \
+  --jira-username=email \
+  --jira-token=token \
+  --jira-projects-filter=PROJ,DEV,SUPPORT
 ```
+
+You can also set filters using environment variables:
+```bash
+export CONFLUENCE_SPACES_FILTER=DEV,TEAM,DOC
+export JIRA_PROJECTS_FILTER=PROJ,DEV,SUPPORT
+```
+
+These filters help narrow down search results to the most relevant spaces or projects, improving response quality and performance.
 
 ### 4. IDE Integration
 
