@@ -883,7 +883,9 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 query = f'text ~ "{query}"'
                 logger.info(f"Converting simple search term to CQL: {query}")
 
-            pages = ctx.confluence.search(query, limit=limit, spaces_filter=spaces_filter)
+            pages = ctx.confluence.search(
+                query, limit=limit, spaces_filter=spaces_filter
+            )
 
             # Format results using the to_simplified_dict method
             search_results = [page.to_simplified_dict() for page in pages]
@@ -1134,7 +1136,9 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             limit = min(int(arguments.get("limit", 10)), 50)
             projects_filter = arguments.get("projects_filter")
 
-            issues = ctx.jira.search_issues(jql, fields=fields, limit=limit, projects_filter=projects_filter)
+            issues = ctx.jira.search_issues(
+                jql, fields=fields, limit=limit, projects_filter=projects_filter
+            )
 
             # Format results using the to_simplified_dict method
             search_results = [issue.to_simplified_dict() for issue in issues]

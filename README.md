@@ -119,7 +119,7 @@ uvx mcp-atlassian \
   --jira-personal-token=token \
   --transport sse \
   --port 8000
-  
+
 # With search filters
 uvx mcp-atlassian \
   --confluence-url=https://your.atlassian.net/wiki \

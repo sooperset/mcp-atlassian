@@ -72,7 +72,7 @@ class ConfluenceConfig:
         # SSL verification (for Server/DC)
         ssl_verify_env = os.getenv("CONFLUENCE_SSL_VERIFY", "true").lower()
         ssl_verify = ssl_verify_env not in ("false", "0", "no")
-        
+
         # Get the spaces filter if provided
         spaces_filter = os.getenv("CONFLUENCE_SPACES_FILTER")
 

@@ -84,7 +84,7 @@ class JiraConfig:
         # SSL verification (for Server/DC)
         ssl_verify_env = os.getenv("JIRA_SSL_VERIFY", "true").lower()
         ssl_verify = ssl_verify_env not in ("false", "0", "no")
-        
+
         # Get the projects filter if provided
         projects_filter = os.getenv("JIRA_PROJECTS_FILTER")
 

@@ -13,7 +13,9 @@ logger = logging.getLogger("mcp-atlassian")
 class SearchMixin(ConfluenceClient):
     """Mixin for Confluence search operations."""
 
-    def search(self, cql: str, limit: int = 10, spaces_filter: str | None = None) -> list[ConfluencePage]:
+    def search(
+        self, cql: str, limit: int = 10, spaces_filter: str | None = None
+    ) -> list[ConfluencePage]:
         """
         Search content using Confluence Query Language (CQL).
 
@@ -28,24 +30,26 @@ class SearchMixin(ConfluenceClient):
         try:
             # Use spaces_filter parameter if provided, otherwise fall back to config
             filter_to_use = spaces_filter or self.config.spaces_filter
-            
+
             # Apply spaces filter if present
             if filter_to_use:
                 # Split spaces filter by commas and handle possible whitespace
                 spaces = [s.strip() for s in filter_to_use.split(",")]
-                
+
                 # Build the space filter query part
                 space_query = " OR ".join([f'space = "{space}"' for space in spaces])
-                
+
                 # Add the space filter to existing query with parentheses
                 if cql and space_query:
-                    if "space = " not in cql:  # Only add if not already filtering by space
-                        cql = f"({cql}) AND ({space_query})" 
+                    if (
+                        "space = " not in cql
+                    ):  # Only add if not already filtering by space
+                        cql = f"({cql}) AND ({space_query})"
                 else:
                     cql = space_query
-                    
+
                 logger.info(f"Applied spaces filter to query: {cql}")
-                
+
             # Execute the CQL search query
             results = self.confluence.cql(cql=cql, limit=limit)
 
