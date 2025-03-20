@@ -34,7 +34,7 @@ def configure_logging() -> None:
     else:
         logging.basicConfig(level=logging.INFO, format=log_format)
         logger.setLevel(logging.INFO)
-        
+
         # Set MCP core loggers to WARNING level to reduce noise
         # This will prevent the standard request processing logs
         logging.getLogger("mcp.server.lowlevel.server").setLevel(logging.WARNING)
@@ -282,7 +282,9 @@ def update_session_activity() -> None:
                 else:
                     session_age = time.time() - session_start
                     # Reduce logging frequency - only log once every 5 minutes after the 5-minute mark
-                    if session_age > 300 and session_age % 300 < 1:  # Every 5 minutes after 5 minutes
+                    if (
+                        session_age > 300 and session_age % 300 < 1
+                    ):  # Every 5 minutes after 5 minutes
                         logger.debug(
                             f"Long-running Cline session detected: {session_age:.0f} seconds"
                         )
@@ -1779,7 +1781,9 @@ async def run_server(transport: str = "stdio", port: int = 8000) -> None:
         # If we get this request, it's almost certainly Cline VS Code
         # Set a flag to force Cline detection for this session
         os.environ["MCP_ATLASSIAN_ASSUME_CLINE"] = "1"
-        logger.debug("Detected ListResourceTemplatesRequest - setting assume_cline=True")
+        logger.debug(
+            "Detected ListResourceTemplatesRequest - setting assume_cline=True"
+        )
 
         # Track session activity
         update_session_activity()
