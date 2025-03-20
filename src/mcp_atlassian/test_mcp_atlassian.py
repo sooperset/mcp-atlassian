@@ -26,7 +26,7 @@ def run_command(command: str) -> str | None:
     try:
         # Security note: shell=True is acceptable here because this is a test script
         # that is run in a controlled environment with known commands
-        result = subprocess.run(  # noqa: S602
+        result = subprocess.run(  # noqa: S602, S607
             command, shell=True, check=True, capture_output=True, text=True
         )
         return result.stdout
@@ -119,7 +119,7 @@ def test_mcp_atlassian() -> bool:
     try:
         # Security note: shell=True is acceptable here because this is a test script
         # that is run in a controlled environment with known commands
-        process = subprocess.Popen(  # noqa: S602
+        process = subprocess.Popen(  # noqa: S602, S607
             cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
         )
 
