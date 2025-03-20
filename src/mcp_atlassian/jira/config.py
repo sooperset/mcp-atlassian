@@ -1,33 +1,29 @@
 """Configuration module for Jira API interactions."""
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 
 @dataclass
 class JiraConfig:
-    """Jira API configuration.
+    """Configuration for Jira client."""
 
-    Handles authentication for both Jira Cloud (using username/API token)
-    and Jira Server/Data Center (using personal access token).
-    """
-
-    url: str  # Base URL for Jira
-    auth_type: Literal["basic", "token"]  # Authentication type
-    username: str | None = None  # Email or username (Cloud)
-    api_token: str | None = None  # API token (Cloud)
-    personal_token: str | None = None  # Personal access token (Server/DC)
-    ssl_verify: bool = True  # Whether to verify SSL certificates
-
-    @property
-    def is_cloud(self) -> bool:
-        """Check if this is a cloud instance.
-
-        Returns:
-            True if this is a cloud instance (atlassian.net), False otherwise.
-        """
-        return "atlassian.net" in self.url
+    url: str
+    is_cloud: bool = True
+    ssl_verify: bool = True
+    auth_type: Literal["basic", "token"] = "basic"
+    username: str = ""
+    api_token: str = ""
+    personal_token: str = ""
+    
+    # Cache configuration
+    cache_enabled: bool = True
+    cache_ttl_seconds: int = 300  # Default TTL: 5 minutes
+    
+    # Async configuration
+    default_timeout_seconds: int = 30  # Default timeout: 30 seconds
+    max_concurrent_requests: int = 5  # Default concurrency: 5 requests
 
     @property
     def verify_ssl(self) -> bool:
@@ -40,55 +36,59 @@ class JiraConfig:
 
     @classmethod
     def from_env(cls) -> "JiraConfig":
-        """Create configuration from environment variables.
+        """Load configuration from environment variables.
 
         Returns:
-            JiraConfig with values from environment variables
+            JiraConfig instance with values from environment
 
         Raises:
-            ValueError: If required environment variables are missing or invalid
+            ValueError: If required environment variables are missing
         """
-        url = os.getenv("JIRA_URL")
-        if not url:
-            error_msg = "Missing required JIRA_URL environment variable"
-            raise ValueError(error_msg)
+        # Required variables
+        try:
+            url = os.environ["JIRA_URL"]
+        except KeyError as e:
+            raise ValueError(f"Required environment variable {e} is missing") from e
 
-        # Determine authentication type based on available environment variables
-        username = os.getenv("JIRA_USERNAME")
-        api_token = os.getenv("JIRA_API_TOKEN")
-        personal_token = os.getenv("JIRA_PERSONAL_TOKEN")
+        # Optional variables with defaults
+        is_cloud = str(os.environ.get("JIRA_CLOUD", "true")).lower() == "true"
+        ssl_verify = str(os.environ.get("JIRA_SSL_VERIFY", "true")).lower() == "true"
+        auth_type = os.environ.get("JIRA_AUTH_TYPE", "basic")
 
-        is_cloud = "atlassian.net" in url
+        # Auth-specific variables
+        username = os.environ.get("JIRA_USERNAME", "")
+        api_token = os.environ.get("JIRA_API_TOKEN", "")
+        personal_token = os.environ.get("JIRA_PERSONAL_TOKEN", "")
 
-        if is_cloud:
-            if username and api_token:
-                auth_type = "basic"
-            else:
-                error_msg = (
-                    "Cloud authentication requires JIRA_USERNAME and JIRA_API_TOKEN"
-                )
-                raise ValueError(error_msg)
-        else:  # Server/Data Center
-            if personal_token:
-                auth_type = "token"
-            elif username and api_token:
-                # Allow basic auth for Server/DC too
-                auth_type = "basic"
-            else:
-                error_msg = (
-                    "Server/Data Center authentication requires JIRA_PERSONAL_TOKEN"
-                )
-                raise ValueError(error_msg)
+        # Cache configuration
+        cache_enabled = str(os.environ.get("JIRA_CACHE_ENABLED", "true")).lower() == "true"
+        cache_ttl_seconds = int(os.environ.get("JIRA_CACHE_TTL", "300"))
+        
+        # Async configuration
+        default_timeout_seconds = int(os.environ.get("JIRA_TIMEOUT", "30"))
+        max_concurrent_requests = int(os.environ.get("JIRA_MAX_CONCURRENT", "5"))
 
-        # SSL verification (for Server/DC)
-        ssl_verify_env = os.getenv("JIRA_SSL_VERIFY", "true").lower()
-        ssl_verify = ssl_verify_env not in ("false", "0", "no")
+        # Validate auth configuration
+        if auth_type == "basic" and (not username or not api_token):
+            raise ValueError(
+                "For basic authentication, JIRA_USERNAME and JIRA_API_TOKEN are required"
+            )
+        elif auth_type == "token" and not personal_token:
+            raise ValueError(
+                "For token authentication, JIRA_PERSONAL_TOKEN is required"
+            )
 
+        # Create and return the configuration instance
         return cls(
             url=url,
+            is_cloud=is_cloud,
+            ssl_verify=ssl_verify,
             auth_type=auth_type,
             username=username,
             api_token=api_token,
             personal_token=personal_token,
-            ssl_verify=ssl_verify,
+            cache_enabled=cache_enabled,
+            cache_ttl_seconds=cache_ttl_seconds,
+            default_timeout_seconds=default_timeout_seconds,
+            max_concurrent_requests=max_concurrent_requests,
         )
