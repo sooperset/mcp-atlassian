@@ -1,9 +1,11 @@
 """Module for Jira project operations."""
 
 import logging
-from typing import Any
+import asyncio
+from typing import Any, Dict, List
 
 from ..models import JiraIssue, JiraProject, JiraSearchResult
+from ..utils import cached, run_async
 from .client import JiraClient
 
 logger = logging.getLogger("mcp-jira")
@@ -16,6 +18,7 @@ class ProjectsMixin(JiraClient):
     including project details, components, versions, and other project-related operations.
     """
 
+    @cached("jira_projects", 3600)  # Cache for 1 hour
     def get_all_projects(self, include_archived: bool = False) -> list[dict[str, Any]]:
         """
         Get all projects visible to the current user.
@@ -38,6 +41,7 @@ class ProjectsMixin(JiraClient):
             logger.error(f"Error getting all projects: {str(e)}")
             return []
 
+    @cached("jira_project", 1800)  # Cache for 30 minutes
     def get_project(self, project_key: str) -> dict[str, Any] | None:
         """
         Get project information by key.
@@ -71,6 +75,7 @@ class ProjectsMixin(JiraClient):
 
         return JiraProject.from_api_response(project_data)
 
+    @cached("jira_project_exists", 1800)  # Cache for 30 minutes
     def project_exists(self, project_key: str) -> bool:
         """
         Check if a project exists.
@@ -88,6 +93,7 @@ class ProjectsMixin(JiraClient):
         except Exception:
             return False
 
+    @cached("jira_project_components", 1800)  # Cache for 30 minutes
     def get_project_components(self, project_key: str) -> list[dict[str, Any]]:
         """
         Get all components for a project.
@@ -99,15 +105,13 @@ class ProjectsMixin(JiraClient):
             List of component data dictionaries
         """
         try:
-            components = self.jira.get_project_components(key=project_key)
+            components = self.jira.get_project_components(project_key)
             return components if isinstance(components, list) else []
-
         except Exception as e:
-            logger.error(
-                f"Error getting components for project {project_key}: {str(e)}"
-            )
+            logger.warning(f"Error getting components for project {project_key}: {e}")
             return []
 
+    @cached("jira_project_versions", 3600)  # Cache for 1 hour
     def get_project_versions(self, project_key: str) -> list[dict[str, Any]]:
         """
         Get all versions for a project.
@@ -119,11 +123,10 @@ class ProjectsMixin(JiraClient):
             List of version data dictionaries
         """
         try:
-            versions = self.jira.get_project_versions(key=project_key)
+            versions = self.jira.get_project_versions(project_key)
             return versions if isinstance(versions, list) else []
-
         except Exception as e:
-            logger.error(f"Error getting versions for project {project_key}: {str(e)}")
+            logger.warning(f"Error getting versions for project {project_key}: {e}")
             return []
 
     def get_project_roles(self, project_key: str) -> dict[str, Any]:
@@ -411,3 +414,89 @@ class ProjectsMixin(JiraClient):
                 f"Error getting accessible projects for user {username}: {str(e)}"
             )
             return []
+
+    def get_projects_parallel(self, project_keys: List[str]) -> Dict[str, JiraProject]:
+        """
+        Get multiple projects in parallel.
+
+        Args:
+            project_keys: List of project keys to fetch
+
+        Returns:
+            Dictionary mapping project keys to JiraProject models or None if not found
+        """
+        # Prepare data for parallel requests
+        request_data = [
+            (self.get_project, [key], {}) for key in project_keys
+        ]
+        
+        # Execute requests in parallel
+        results = self.parallel_requests(request_data)
+        
+        # Build the result dictionary
+        projects_dict = {}
+        for i, project_key in enumerate(project_keys):
+            project_data = results[i]
+            if project_data:
+                projects_dict[project_key] = JiraProject.from_api_response(project_data)
+            else:
+                projects_dict[project_key] = None
+                
+        return projects_dict
+        
+    async def get_projects_async(self, project_keys: List[str]) -> Dict[str, JiraProject]:
+        """
+        Get multiple projects asynchronously.
+
+        Args:
+            project_keys: List of project keys to fetch
+
+        Returns:
+            Dictionary mapping project keys to JiraProject models or None if not found
+        """
+        # Create tasks for each project
+        tasks = []
+        for key in project_keys:
+            tasks.append(self.async_request(self.get_project, key))
+            
+        # Execute all tasks concurrently
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Build the result dictionary
+        projects_dict = {}
+        for i, project_key in enumerate(project_keys):
+            result = results[i]
+            if isinstance(result, Exception):
+                logger.warning(f"Error fetching project {project_key}: {str(result)}")
+                projects_dict[project_key] = None
+            elif result:
+                projects_dict[project_key] = JiraProject.from_api_response(result)
+            else:
+                projects_dict[project_key] = None
+                
+        return projects_dict
+        
+    def get_projects_components_parallel(self, project_keys: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Get components for multiple projects in parallel.
+
+        Args:
+            project_keys: List of project keys
+
+        Returns:
+            Dictionary mapping project keys to lists of component data dictionaries
+        """
+        # Prepare data for parallel requests
+        request_data = [
+            (self.get_project_components, [key], {}) for key in project_keys
+        ]
+        
+        # Execute requests in parallel
+        results = self.parallel_requests(request_data)
+        
+        # Build the result dictionary
+        components_dict = {}
+        for i, project_key in enumerate(project_keys):
+            components_dict[project_key] = results[i]
+                
+        return components_dict

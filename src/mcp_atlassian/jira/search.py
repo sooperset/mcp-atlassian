@@ -1,8 +1,10 @@
 """Module for Jira search operations."""
 
 import logging
+from typing import Any, Callable, Iterator, List, Optional, Tuple
 
 from ..models.jira import JiraIssue, JiraSearchResult
+from ..utils import cached, paginated_iterator
 from .client import JiraClient
 from .utils import parse_date_ymd
 
@@ -11,6 +13,22 @@ logger = logging.getLogger("mcp-jira")
 
 class SearchMixin(JiraClient):
     """Mixin for Jira search operations."""
+
+    # Conjuntos de campos padrão para diferentes tipos de consultas
+    _DEFAULT_FIELDS = [
+        "summary", "issuetype", "created", "updated", "project", "status",
+        "priority", "assignee", "reporter", "creator"
+    ]
+    
+    _MINIMAL_FIELDS = [
+        "summary", "issuetype", "status", "project"
+    ]
+    
+    _DETAILED_FIELDS = [
+        "summary", "issuetype", "created", "updated", "project", "status",
+        "priority", "assignee", "reporter", "creator", "description",
+        "comment", "fixVersions", "components", "labels", "duedate"
+    ]
 
     def search_issues(
         self,
@@ -138,3 +156,218 @@ class SearchMixin(JiraClient):
         """
         # Use the common utility function for consistent formatting
         return parse_date_ymd(date_str)
+
+    @cached("jira_jql_search", 300)  # Cache for 5 minutes
+    def jql_search(
+        self,
+        jql: str,
+        start_at: int = 0,
+        max_results: int = 50,
+        validate: bool = True,
+        fields: list[str] | None = None,
+        expand: list[str] | None = None,
+        field_set: str = "default",
+    ) -> dict[str, Any]:
+        """
+        Execute a JQL search and get raw results.
+
+        Args:
+            jql: JQL query string
+            start_at: The index of the first result
+            max_results: Maximum results to return
+            validate: Whether to validate the JQL before running
+            fields: List of fields to return (overrides field_set if provided)
+            expand: List of items to expand
+            field_set: Predefined set of fields to return: "minimal", "default", "detailed", or "all"
+
+        Returns:
+            Dictionary with search results
+        """
+        try:
+            # Determine which fields to request
+            request_fields = fields
+            
+            if not request_fields:
+                if field_set == "minimal":
+                    request_fields = self._MINIMAL_FIELDS
+                elif field_set == "default":
+                    request_fields = self._DEFAULT_FIELDS
+                elif field_set == "detailed":
+                    request_fields = self._DETAILED_FIELDS
+                # "all" or invalid values will pass None for fields, retrieving all fields
+            
+            results = self.jira.jql(
+                jql=jql,
+                start=start_at,
+                limit=max_results,
+                validate=validate,
+                fields=request_fields,
+                expand=expand,
+            )
+            return results if isinstance(results, dict) else {}
+        except Exception as e:
+            logger.warning(f"Error executing JQL search: {e}")
+            logger.debug(f"Failed JQL query: {jql}")
+            return {}
+
+    def jql_search_issues(
+        self,
+        jql: str,
+        start_at: int = 0,
+        max_results: int = 50,
+        validate: bool = True,
+        fields: list[str] | None = None,
+        expand: list[str] | None = None,
+        field_set: str = "default",
+    ) -> list[JiraIssue]:
+        """
+        Execute a JQL search and return parsed issue models.
+
+        Args:
+            jql: JQL query string
+            start_at: The index of the first result
+            max_results: Maximum results to return
+            validate: Whether to validate the JQL before running
+            fields: List of fields to return (overrides field_set if provided)
+            expand: List of items to expand
+            field_set: Predefined set of fields to return: "minimal", "default", "detailed", or "all"
+
+        Returns:
+            List of JiraIssue objects
+        """
+        raw_results = self.jql_search(
+            jql=jql,
+            start_at=start_at,
+            max_results=max_results,
+            validate=validate,
+            fields=fields,
+            expand=expand,
+            field_set=field_set,
+        )
+
+        issues = []
+        for issue_data in raw_results.get("issues", []):
+            try:
+                issue = JiraIssue.from_api_response(issue_data)
+                issues.append(issue)
+            except Exception as e:
+                logger.warning(f"Error parsing issue data: {e}")
+                continue
+
+        return issues
+
+    def jql_search_result(
+        self,
+        jql: str,
+        start_at: int = 0,
+        max_results: int = 50,
+        validate: bool = True,
+        fields: list[str] | None = None,
+        expand: list[str] | None = None,
+        field_set: str = "default",
+    ) -> JiraSearchResult:
+        """
+        Execute a JQL search and return a paginated search result.
+
+        Args:
+            jql: JQL query string
+            start_at: The index of the first result
+            max_results: Maximum results to return
+            validate: Whether to validate the JQL before running
+            fields: List of fields to return (overrides field_set if provided)
+            expand: List of items to expand
+            field_set: Predefined set of fields to return: "minimal", "default", "detailed", or "all"
+
+        Returns:
+            JiraSearchResult with pagination metadata and issues
+        """
+        raw_results = self.jql_search(
+            jql=jql,
+            start_at=start_at,
+            max_results=max_results,
+            validate=validate,
+            fields=fields,
+            expand=expand,
+            field_set=field_set,
+        )
+
+        # Parse pagination metadata
+        total = raw_results.get("total", 0)
+        start_at_resp = raw_results.get("startAt", start_at)
+        max_results_resp = raw_results.get("maxResults", max_results)
+
+        # Parse issues
+        issues = []
+        for issue_data in raw_results.get("issues", []):
+            try:
+                issue = JiraIssue.from_api_response(issue_data)
+                issues.append(issue)
+            except Exception as e:
+                logger.warning(f"Error parsing issue data: {e}")
+                continue
+
+        return JiraSearchResult(
+            issues=issues,
+            total=total,
+            start_at=start_at_resp,
+            max_results=max_results_resp,
+        )
+
+    def jql_search_iter(
+        self,
+        jql: str,
+        start_at: int = 0,
+        max_results: int = 1000,
+        page_size: int = 50,
+        validate: bool = True,
+        fields: list[str] | None = None,
+        expand: list[str] | None = None,
+        field_set: str = "default",
+    ) -> Iterator[JiraIssue]:
+        """
+        Execute a JQL search and iterate through all matching issues.
+        This uses efficient pagination to avoid loading all results at once.
+
+        Args:
+            jql: JQL query string
+            start_at: The index of the first result
+            max_results: Maximum total number of results to return (None for all)
+            page_size: Number of results to fetch per page
+            validate: Whether to validate the JQL before running
+            fields: List of fields to return (overrides field_set if provided)
+            expand: List of items to expand
+            field_set: Predefined set of fields to return: "minimal", "default", "detailed", or "all"
+
+        Yields:
+            JiraIssue objects one at a time
+        """
+        def fetch_page(start: int, limit: int) -> Tuple[List[JiraIssue], int]:
+            """Internal function to fetch a page of results."""
+            results = self.jql_search(
+                jql=jql,
+                start_at=start,
+                max_results=limit,
+                validate=validate,
+                fields=fields,
+                expand=expand,
+                field_set=field_set,
+            )
+            
+            issues = []
+            for issue_data in results.get("issues", []):
+                try:
+                    issue = JiraIssue.from_api_response(issue_data)
+                    issues.append(issue)
+                except Exception as e:
+                    logger.warning(f"Error parsing issue data: {e}")
+                    continue
+                    
+            return issues, results.get("total", 0)
+            
+        # Use the paginated iterator
+        return paginated_iterator(
+            fetch_function=fetch_page,
+            start_at=start_at,
+            max_per_page=page_size,
+            max_total=max_results,
+        )

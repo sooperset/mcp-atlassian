@@ -375,85 +375,58 @@ class IssuesMixin(UsersMixin):
         project_key: str,
         summary: str,
         issue_type: str,
-        description: str = "",
-        assignee: str | None = None,
-        **kwargs: Any,  # noqa: ANN401 - Dynamic field types are necessary for Jira API
-    ) -> JiraIssue:
+        description: str | None = None,
+        fields: dict[str, Any] | None = None,
+        parent_key: str | None = None,
+    ) -> str:
         """
         Create a new Jira issue.
 
         Args:
-            project_key: The key of the project
-            summary: The issue summary
-            issue_type: The type of issue to create
-            description: The issue description
-            assignee: The username or account ID of the assignee
-            **kwargs: Additional fields to set on the issue
+            project_key: Project key
+            summary: Issue summary
+            issue_type: Issue type name
+            description: Issue description
+            fields: Additional fields to set
+            parent_key: Parent issue key for subtasks
 
         Returns:
-            JiraIssue model representing the created issue
+            Issue key of the created issue
 
         Raises:
-            Exception: If there is an error creating the issue
+            ValueError: If the issue cannot be created
         """
         try:
-            # Validate required fields
-            if not project_key:
-                raise ValueError("Project key is required")
-            if not summary:
-                raise ValueError("Summary is required")
-            if not issue_type:
-                raise ValueError("Issue type is required")
-
-            # Prepare fields
-            fields: dict[str, Any] = {
-                "project": {"key": project_key},
-                "summary": summary,
-                "issuetype": {"name": issue_type},
-            }
-
-            # Add description if provided
+            all_fields = fields.copy() if fields else {}
+            
+            # Set required fields
+            all_fields["project"] = {"key": project_key}
+            all_fields["summary"] = summary
+            all_fields["issuetype"] = {"name": issue_type}
+            
+            # Set optional fields
             if description:
-                fields["description"] = description
-
-            # Add assignee if provided
-            if assignee:
-                try:
-                    account_id = self._get_account_id(assignee)
-                    self._add_assignee_to_fields(fields, account_id)
-                except ValueError as e:
-                    logger.warning(f"Could not assign issue: {str(e)}")
-
-            # Prepare epic fields if this is an epic
-            if issue_type.lower() == "epic":
-                self._prepare_epic_fields(fields, summary, kwargs)
-
-            # Prepare parent field if this is a subtask
-            if issue_type.lower() == "subtask" or issue_type.lower() == "sub-task":
-                self._prepare_parent_fields(fields, kwargs)
-            # Allow parent field for all issue types when explicitly provided
-            elif "parent" in kwargs:
-                self._prepare_parent_fields(fields, kwargs)
-
-            # Add custom fields
-            self._add_custom_fields(fields, kwargs)
-
+                all_fields["description"] = self._markdown_to_jira(description)
+                
+            # Set parent for subtasks
+            if parent_key and issue_type.lower() == "sub-task":
+                all_fields["parent"] = {"key": parent_key}
+                
             # Create the issue
-            response = self.jira.create_issue(fields=fields)
-
-            # Get the created issue key
+            response = self.jira.create_issue(fields=all_fields)
             issue_key = response.get("key")
+            
             if not issue_key:
-                error_msg = "No issue key in response"
-                raise ValueError(error_msg)
-
-            # Get the full issue data and convert to JiraIssue model
-            issue_data = self.jira.issue(issue_key)
-            return JiraIssue.from_api_response(issue_data)
-
+                raise ValueError("No issue key returned from Jira API")
+                
+            # Invalidate cache for this project
+            self.invalidate_cache_by_prefix(f"jira_project_{project_key}")
+            
+            return issue_key
+            
         except Exception as e:
-            self._handle_create_issue_error(e, issue_type)
-            raise  # Re-raise after logging
+            logger.error(f"Error creating issue: {str(e)}")
+            raise ValueError(f"Failed to create issue: {str(e)}") from e
 
     def _prepare_epic_fields(
         self, fields: dict[str, Any], summary: str, kwargs: dict[str, Any]
@@ -572,194 +545,35 @@ class IssuesMixin(UsersMixin):
     def update_issue(
         self,
         issue_key: str,
-        fields: dict[str, Any] | None = None,
-        **kwargs: Any,  # noqa: ANN401 - Dynamic field types are necessary for Jira API
-    ) -> JiraIssue:
+        fields: dict[str, Any],
+        notify_users: bool = True,
+    ) -> bool:
         """
-        Update a Jira issue.
+        Update fields of an existing issue.
 
         Args:
-            issue_key: The key of the issue to update
+            issue_key: The issue key
             fields: Dictionary of fields to update
-            **kwargs: Additional fields to update
+            notify_users: Whether to notify users of the update
 
         Returns:
-            JiraIssue model representing the updated issue
-
-        Raises:
-            Exception: If there is an error updating the issue
+            True if the update was successful, False otherwise
         """
         try:
-            # Validate required fields
-            if not issue_key:
-                raise ValueError("Issue key is required")
-
-            update_fields = fields or {}
-
-            # Process kwargs
-            for key, value in kwargs.items():
-                if key == "status":
-                    # Status changes are handled separately via transitions
-                    # Add status to fields so _update_issue_with_status can find it
-                    update_fields["status"] = value
-                    return self._update_issue_with_status(issue_key, update_fields)
-
-                if key == "assignee":
-                    # Handle assignee updates
-                    try:
-                        account_id = self._get_account_id(value)
-                        self._add_assignee_to_fields(update_fields, account_id)
-                    except ValueError as e:
-                        logger.warning(f"Could not update assignee: {str(e)}")
-                else:
-                    # Process regular fields
-                    field_ids = self.get_jira_field_ids()
-                    if key in field_ids:
-                        update_fields[field_ids[key]] = value
-                    elif key.startswith("customfield_"):
-                        update_fields[key] = value
-                    else:
-                        update_fields[key] = value
-
-            # Update the issue
-            if update_fields:
-                self.jira.update_issue(
-                    issue_key=issue_key, update={"fields": update_fields}
-                )
-
-            # Get the updated issue data and convert to JiraIssue model
-            issue_data = self.jira.issue(issue_key)
-            return JiraIssue.from_api_response(issue_data)
-
+            self.jira.update_issue(
+                issue_key=issue_key,
+                fields=fields,
+                notify_users=notify_users,
+            )
+            
+            # Invalidate cache for this issue
+            self.invalidate_cache_by_prefix(f"jira_issue_{issue_key}")
+            
+            return True
+            
         except Exception as e:
-            error_msg = str(e)
-            logger.error(f"Error updating issue {issue_key}: {error_msg}")
-            raise ValueError(f"Failed to update issue {issue_key}: {error_msg}") from e
-
-    def _update_issue_with_status(
-        self, issue_key: str, fields: dict[str, Any]
-    ) -> JiraIssue:
-        """
-        Update an issue with a status change.
-
-        Args:
-            issue_key: The key of the issue to update
-            fields: Dictionary of fields to update
-
-        Returns:
-            JiraIssue model representing the updated issue
-
-        Raises:
-            Exception: If there is an error updating the issue
-        """
-        # Extract status from fields and remove it for the standard update
-        status = fields.pop("status", None)
-
-        # First update any fields if needed
-        if fields:
-            self.jira.update_issue(issue_key=issue_key, fields=fields)
-
-        # If no status change is requested, return the issue
-        if not status:
-            issue_data = self.jira.issue(issue_key)
-            return JiraIssue.from_api_response(issue_data)
-
-        # Get available transitions
-        transitions = self.get_available_transitions(issue_key)
-
-        # Extract status name or ID depending on what we received
-        status_name = None
-        status_id = None
-
-        # Handle different input formats for status
-        if isinstance(status, dict):
-            # Dictionary format: {"name": "In Progress"} or {"id": "123"}
-            status_name = status.get("name")
-            status_id = status.get("id")
-        elif isinstance(status, str):
-            # String format: could be a name or an ID
-            if status.isdigit():
-                status_id = status
-            else:
-                status_name = status
-        elif isinstance(status, int):
-            # Integer format: must be an ID
-            status_id = str(status)
-        else:
-            # Unknown format
-            logger.warning(
-                f"Unrecognized status format: {status} (type: {type(status)})"
-            )
-            status_name = str(status)
-
-        # Log what we're searching for
-        if status_name:
-            logger.info(f"Looking for transition to status name: '{status_name}'")
-        if status_id:
-            logger.info(f"Looking for transition with ID: '{status_id}'")
-
-        # Find the appropriate transition
-        transition_id = None
-        for transition in transitions:
-            to_status = transition.get("to", {})
-            transition_status_name = to_status.get("name", "")
-            transition_status_id = to_status.get("id")
-
-            # Match by name (case-insensitive)
-            if (
-                status_name
-                and transition_status_name
-                and transition_status_name.lower() == status_name.lower()
-            ):
-                transition_id = transition.get("id")
-                logger.info(
-                    f"Found transition ID {transition_id} matching status name '{status_name}'"
-                )
-                break
-
-            # Match by ID
-            if (
-                status_id
-                and transition_status_id
-                and str(transition_status_id) == str(status_id)
-            ):
-                transition_id = transition.get("id")
-                logger.info(
-                    f"Found transition ID {transition_id} matching status ID '{status_id}'"
-                )
-                break
-
-            # Direct transition ID match (if status is actually a transition ID)
-            if status_id and str(transition.get("id", "")) == str(status_id):
-                transition_id = transition.get("id")
-                logger.info(f"Using direct transition ID {transition_id}")
-                break
-
-        if not transition_id:
-            available_statuses = ", ".join(
-                [t.get("to", {}).get("name", "") for t in transitions]
-            )
-            error_msg = (
-                f"Could not find transition to status '{status}'. "
-                f"Available statuses: {available_statuses}"
-            )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        # Perform the transition
-        logger.info(f"Performing transition with ID {transition_id}")
-        self.jira.set_issue_status_by_transition_id(
-            issue_key=issue_key,
-            transition_id=(
-                int(transition_id)
-                if isinstance(transition_id, str) and transition_id.isdigit()
-                else transition_id
-            ),
-        )
-
-        # Get the updated issue data
-        issue_data = self.jira.issue(issue_key)
-        return JiraIssue.from_api_response(issue_data)
+            logger.error(f"Error updating issue {issue_key}: {str(e)}")
+            return False
 
     def delete_issue(self, issue_key: str) -> bool:
         """

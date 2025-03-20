@@ -2,104 +2,297 @@
 
 import logging
 import re
-from typing import Any
+from typing import Any, Match, Optional, Pattern, cast
 
+from bs4 import BeautifulSoup, element
+
+from ..utils import HTMLProcessor, MarkdownOptimizer, TextChunker
 from .base import BasePreprocessor
 
 logger = logging.getLogger("mcp-atlassian")
 
 
 class JiraPreprocessor(BasePreprocessor):
-    """Handles text preprocessing for Jira content."""
+    """
+    Implementation of text preprocessor for Jira.
 
-    def __init__(self, base_url: str = "", **kwargs: Any) -> None:
+    Handles Jira-specific markup, user mentions, and links.
+    """
+
+    # Regular expressions for Jira text processing
+    JIRA_CODE_BLOCK_RE = re.compile(r"\{code(?::([a-z]+))?\}(.*?)\{code\}", re.DOTALL)
+    JIRA_PANEL_RE = re.compile(r"\{panel(?::title=([^|]+))?\}(.*?)\{panel\}", re.DOTALL)
+    JIRA_SMART_LINK_RE = re.compile(
+        r"\[([^|]+)\|(?:https?://)?([a-zA-Z0-9\-._~:/?\#\[\]@!$&'()*+,;=]+)\]"
+    )
+    JIRA_MENTION_RE = re.compile(r"\[~accountid:([a-zA-Z0-9\-]+)\]")
+    
+    # Memoização para evitar reprocessamento de padrões frequentes
+    _memo_cache = {}
+    _memo_max_size = 1000
+
+    def __init__(
+        self, base_url: str = "", jira_client: Optional[Any] = None
+    ) -> None:
         """
-        Initialize the Jira text preprocessor.
+        Initialize Jira text preprocessor.
 
         Args:
-            base_url: Base URL for Jira API
-            **kwargs: Additional arguments for the base class
+            base_url: Base URL for Jira API server
+            jira_client: Optional Jira client for user lookups
         """
-        super().__init__(base_url=base_url, **kwargs)
+        super().__init__(base_url, jira_client)
+        self.text_chunker = TextChunker(chunk_size=5000, overlap=200)
+        self.large_text_threshold = 10000  # Jira textos costumam ser menores que Confluence
 
-    def clean_jira_text(self, text: str) -> str:
+    def clean_jira_text(self, jira_text: str) -> str:
         """
-        Clean Jira text content by:
-        1. Processing user mentions and links
-        2. Converting Jira markup to markdown
-        3. Converting HTML/wiki markup to markdown
-        """
-        if not text:
-            return ""
-
-        # Process user mentions
-        mention_pattern = r"\[~accountid:(.*?)\]"
-        text = self._process_mentions(text, mention_pattern)
-
-        # Process Jira smart links
-        text = self._process_smart_links(text)
-
-        # First convert any Jira markup to Markdown
-        text = self.jira_to_markdown(text)
-
-        # Then convert any remaining HTML to markdown
-        text = self._convert_html_to_markdown(text)
-
-        return text.strip()
-
-    def _process_mentions(self, text: str, pattern: str) -> str:
-        """
-        Process user mentions in text.
+        Process Jira text to standard markdown/HTML.
 
         Args:
-            text: The text containing mentions
-            pattern: Regular expression pattern to match mentions
+            jira_text: Raw Jira markup text
 
         Returns:
-            Text with mentions replaced with display names
+            Processed text
         """
-        mentions = re.findall(pattern, text)
-        for account_id in mentions:
-            try:
-                # Note: This is a placeholder - actual user fetching should be injected
-                display_name = f"User:{account_id}"
-                text = text.replace(f"[~accountid:{account_id}]", display_name)
-            except Exception as e:
-                logger.error(f"Error processing mention for {account_id}: {str(e)}")
+        # Retorna texto vazio para entrada vazia
+        if not jira_text:
+            return ""
+            
+        # Processamento incremental para textos grandes
+        if len(jira_text) > self.large_text_threshold:
+            return self._process_large_jira_text(jira_text)
+        
+        # Otimiza o uso de memória verificando se já processamos este texto antes
+        cache_key = hash(jira_text)
+        if cache_key in self._memo_cache:
+            return self._memo_cache[cache_key]
+            
+        # Processamento normal para textos pequenos
+        text = jira_text
+
+        # Code blocks
+        text = self._process_code_blocks(text)
+
+        # Panels
+        text = self._process_panels(text)
+
+        # Smart links
+        text = self._process_smart_links(text)
+
+        # Mentions
+        text = self._process_mentions(text)
+
+        # Armazena na cache, limitando o tamanho
+        if len(self._memo_cache) > self._memo_max_size:
+            # Limpa metade do cache quando chega ao limite
+            keys_to_remove = list(self._memo_cache.keys())[:self._memo_max_size // 2]
+            for key in keys_to_remove:
+                del self._memo_cache[key]
+                
+        self._memo_cache[cache_key] = text
         return text
+        
+    def _process_large_jira_text(self, jira_text: str) -> str:
+        """
+        Processa textos grandes do Jira incrementalmente.
+        
+        Args:
+            jira_text: Texto bruto do Jira
+            
+        Returns:
+            Texto processado
+        """
+        # Os blocos de código e painéis podem se estender por múltiplas linhas
+        # Precisamos identificá-los antes de dividir o texto
+        
+        # Primeiro, identificamos e protegemos blocos especiais
+        code_blocks = []
+        panels = []
+        
+        def protect_code_blocks(match: Match) -> str:
+            code_blocks.append((match.group(1) or "", match.group(2)))
+            return f"__CODE_BLOCK_{len(code_blocks)-1}__"
+            
+        def protect_panels(match: Match) -> str:
+            panels.append((match.group(1) or "", match.group(2)))
+            return f"__PANEL_{len(panels)-1}__"
+        
+        # Substitui blocos de código e painéis por marcadores
+        protected_text = self.JIRA_CODE_BLOCK_RE.sub(protect_code_blocks, jira_text)
+        protected_text = self.JIRA_PANEL_RE.sub(protect_panels, protected_text)
+        
+        # Divide o texto em chunks para processamento
+        chunks = self.text_chunker.chunk_text(protected_text, preserve_newlines=True)
+        
+        # Processa cada chunk
+        processed_chunks = []
+        for chunk in chunks:
+            # Processa links e menções
+            processed_chunk = self._process_smart_links(chunk)
+            processed_chunk = self._process_mentions(processed_chunk)
+            processed_chunks.append(processed_chunk)
+            
+        # Junta os chunks processados
+        result_text = "".join(processed_chunks)
+        
+        # Restaura os blocos de código
+        for i, (lang, code) in enumerate(code_blocks):
+            lang_attr = f":{lang}" if lang else ""
+            result_text = result_text.replace(
+                f"__CODE_BLOCK_{i}__", 
+                f"```{lang}\n{code}\n```"
+            )
+            
+        # Restaura os painéis
+        for i, (title, content) in enumerate(panels):
+            title_attr = f"## {title}\n\n" if title else ""
+            result_text = result_text.replace(
+                f"__PANEL_{i}__",
+                f"{title_attr}{content}\n"
+            )
+            
+        return result_text
+
+    def _process_code_blocks(self, text: str) -> str:
+        """
+        Process Jira code blocks into markdown format.
+
+        Args:
+            text: Input text
+
+        Returns:
+            Text with code blocks converted to markdown
+        """
+        return self.JIRA_CODE_BLOCK_RE.sub(
+            lambda m: f"```{m.group(1) or ''}\n{m.group(2)}\n```", text
+        )
+
+    def _process_panels(self, text: str) -> str:
+        """
+        Process Jira panels into markdown format.
+
+        Args:
+            text: Input text
+
+        Returns:
+            Text with panels converted to markdown
+        """
+        return self.JIRA_PANEL_RE.sub(
+            lambda m: ("## " + m.group(1) + "\n\n" if m.group(1) else "") + m.group(2) + "\n",
+            text,
+        )
 
     def _process_smart_links(self, text: str) -> str:
-        """Process Jira/Confluence smart links."""
-        # Pattern matches: [text|url|smart-link]
-        link_pattern = r"\[(.*?)\|(.*?)\|smart-link\]"
-        matches = re.finditer(link_pattern, text)
+        """
+        Process Jira smart links into markdown format.
 
-        for match in matches:
-            full_match = match.group(0)
-            link_text = match.group(1)
-            link_url = match.group(2)
+        Args:
+            text: Input text
 
-            # Extract issue key if it's a Jira issue link
-            issue_key_match = re.search(r"browse/([A-Z]+-\d+)", link_url)
-            # Check if it's a Confluence wiki link
-            confluence_match = re.search(
-                r"wiki/spaces/.+?/pages/\d+/(.+?)(?:\?|$)", link_url
-            )
+        Returns:
+            Text with smart links converted to markdown
+        """
+        return self.JIRA_SMART_LINK_RE.sub(r"[\1](https://\2)", text)
 
-            if issue_key_match:
-                issue_key = issue_key_match.group(1)
-                clean_url = f"{self.base_url}/browse/{issue_key}"
-                text = text.replace(full_match, f"[{issue_key}]({clean_url})")
-            elif confluence_match:
-                url_title = confluence_match.group(1)
-                readable_title = url_title.replace("+", " ")
-                readable_title = re.sub(r"^[A-Z]+-\d+\s+", "", readable_title)
-                text = text.replace(full_match, f"[{readable_title}]({link_url})")
-            else:
-                clean_url = link_url.split("?")[0]
-                text = text.replace(full_match, f"[{link_text}]({clean_url})")
+    def _process_mentions(self, text: str) -> str:
+        """
+        Process Jira user mentions with real names if available.
 
-        return text
+        Args:
+            text: Input text
+
+        Returns:
+            Text with user mentions processed
+        """
+        
+        def replace_mention(m: Match) -> str:
+            account_id = m.group(1)
+            try:
+                if self.confluence_client:
+                    user_details = self.confluence_client.get_user_details_by_accountid(
+                        account_id
+                    )
+                    if user_details and "displayName" in user_details:
+                        return f"@{user_details['displayName']}"
+            except Exception as e:
+                logger.warning(f"Error getting user details: {str(e)}")
+            
+            # Fallback
+            return f"@user_{account_id}"
+            
+        return self.JIRA_MENTION_RE.sub(replace_mention, text)
+
+    def process_fields(self, fields: dict[str, Any]) -> dict[str, Any]:
+        """
+        Process all relevant text fields in a Jira issue.
+
+        Args:
+            fields: Dict of fields from Jira
+
+        Returns:
+            Dict with processed text fields
+        """
+        processed = fields.copy()
+        
+        # Processa descrição
+        if description := processed.get("description"):
+            processed["description"] = self.clean_jira_text(description)
+            # Gera um snippet/resumo da descrição
+            if len(processed["description"]) > 300:
+                processed["description_summary"] = HTMLProcessor.generate_excerpt(
+                    processed["description"], max_length=300
+                )
+                
+        # Processa comentários
+        if comments := processed.get("comment", {}).get("comments", []):
+            for comment in comments:
+                if body := comment.get("body"):
+                    comment["body"] = self.clean_jira_text(body)
+                    # Gera um snippet/resumo de cada comentário
+                    if len(comment["body"]) > 200:
+                        comment["body_summary"] = HTMLProcessor.generate_excerpt(
+                            comment["body"], max_length=200
+                        )
+        
+        # Processa mensagens de trabalho (worklog)
+        if worklogs := processed.get("worklog", {}).get("worklogs", []):
+            for worklog in worklogs:
+                if comment := worklog.get("comment"):
+                    worklog["comment"] = self.clean_jira_text(comment)
+        
+        return processed
+
+    def process_issue(self, issue: dict[str, Any]) -> dict[str, Any]:
+        """
+        Process a Jira issue dictionary.
+
+        Args:
+            issue: Dict representing a Jira issue
+
+        Returns:
+            Issue with processed text fields
+        """
+        processed_issue = issue.copy()
+        
+        # Processa campos do issue
+        if "fields" in processed_issue:
+            processed_issue["fields"] = self.process_fields(processed_issue["fields"])
+            
+        # Processa changelog se disponível
+        if "changelog" in processed_issue:
+            changelog = processed_issue["changelog"]
+            if "histories" in changelog:
+                for history in changelog["histories"]:
+                    for item in history.get("items", []):
+                        # Processa campos de texto em mudanças
+                        for field_name in ["toString", "fromString"]:
+                            if field_name in item and isinstance(item[field_name], str):
+                                # Só processa texto que parece ser formatado
+                                if "{" in item[field_name] or "[" in item[field_name]:
+                                    item[field_name] = self.clean_jira_text(item[field_name])
+                                    
+        return processed_issue
 
     def jira_to_markdown(self, input_text: str) -> str:
         """

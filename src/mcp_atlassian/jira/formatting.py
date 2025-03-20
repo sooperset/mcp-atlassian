@@ -20,6 +20,8 @@ class FormattingMixin(JiraClient):
     formatting issue content for display, parsing dates, and sanitizing content.
     """
 
+    preprocessor: JiraPreprocessor = None
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Initialize the FormattingMixin.
 

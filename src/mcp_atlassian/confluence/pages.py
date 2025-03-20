@@ -1,6 +1,7 @@
 """Module for Confluence page operations."""
 
 import logging
+from typing import Any
 
 import requests
 
@@ -214,112 +215,128 @@ class PagesMixin(ConfluenceClient):
         title: str,
         body: str,
         parent_id: str | None = None,
-        *,
-        is_markdown: bool = True,
-    ) -> ConfluencePage:
+        content_type: str = "page",
+    ) -> dict[str, Any]:
         """
-        Create a new page in a Confluence space.
+        Create a new Confluence page.
 
         Args:
-            space_key: The key of the space to create the page in
-            title: The title of the new page
-            body: The content of the page (markdown or storage format)
-            parent_id: Optional ID of a parent page
-            is_markdown: Whether the body content is in markdown format (default: True, keyword-only)
+            space_key: Space key where the page should be created
+            title: Title of the page
+            body: Content of the page (markdown or HTML)
+            parent_id: Optional parent page ID
+            content_type: Type of content ('page' or 'blogpost')
 
         Returns:
-            ConfluencePage model containing the new page's data
-
-        Raises:
-            Exception: If there is an error creating the page
+            Dictionary with created page data
         """
         try:
-            # Convert markdown to Confluence storage format if needed
-            storage_body = (
-                self.preprocessor.markdown_to_confluence_storage(body)
-                if is_markdown
-                else body
-            )
+            # Convert markdown content to storage format if needed
+            is_markdown = not body.strip().startswith("<")
+            if is_markdown:
+                body = self.preprocessor.markdown_to_storage(body)
+            
+            # Convert HTML content to storage format if needed
+            elif not body.strip().startswith("<ac:"):  # Not already in storage format
+                body = self.preprocessor.html_to_storage(body)
 
             # Create the page
-            result = self.confluence.create_page(
-                space=space_key,
-                title=title,
-                body=storage_body,
-                parent_id=parent_id,
-                representation="storage",
-            )
+            if parent_id:
+                page_data = self.confluence.create_page(
+                    space=space_key,
+                    title=title,
+                    body=body,
+                    parent_id=parent_id,
+                    type=content_type,
+                    representation="storage",
+                )
+            else:
+                page_data = self.confluence.create_page(
+                    space=space_key,
+                    title=title,
+                    body=body,
+                    type=content_type,
+                    representation="storage",
+                )
+                
+            # Invalidate cache for this space
+            self.invalidate_cache_by_prefix(f"confluence_space_{space_key}")
+            
+            return page_data
 
-            # Get the new page content
-            page_id = result.get("id")
-            if not page_id:
-                raise ValueError("Create page response did not contain an ID")
-
-            return self.get_page_content(page_id)
         except Exception as e:
-            logger.error(
-                f"Error creating page '{title}' in space {space_key}: {str(e)}"
-            )
-            raise Exception(
-                f"Failed to create page '{title}' in space {space_key}: {str(e)}"
-            ) from e
+            logger.error(f"Error creating page in {space_key}: {e}")
+            raise ValueError(f"Failed to create page: {e}") from e
 
     def update_page(
         self,
         page_id: str,
-        title: str,
-        body: str,
-        *,
-        is_minor_edit: bool = False,
-        version_comment: str = "",
-        is_markdown: bool = True,
-    ) -> ConfluencePage:
+        title: str | None = None,
+        body: str | None = None,
+        version_comment: str | None = None,
+        minor_edit: bool = False,
+    ) -> dict[str, Any]:
         """
-        Update an existing page in Confluence.
+        Update an existing Confluence page.
 
         Args:
-            page_id: The ID of the page to update
-            title: The new title of the page
-            body: The new content of the page (markdown or storage format)
-            is_minor_edit: Whether this is a minor edit (keyword-only)
-            version_comment: Optional comment for this version (keyword-only)
-            is_markdown: Whether the body content is in markdown format (default: True, keyword-only)
+            page_id: ID of the page to update
+            title: New title for the page (or None to keep existing)
+            body: New content for the page (or None to keep existing)
+            version_comment: Optional comment for the version
+            minor_edit: Whether this is a minor edit
 
         Returns:
-            ConfluencePage model containing the updated page's data
-
-        Raises:
-            Exception: If there is an error updating the page
+            Dictionary with updated page data
         """
         try:
-            # Convert markdown to Confluence storage format if needed
-            storage_body = (
-                self.preprocessor.markdown_to_confluence_storage(body)
-                if is_markdown
-                else body
-            )
-
-            # We'll let the underlying Confluence API handle this operation completely
-            # as it has internal logic for versioning and updating
-            logger.debug(f"Updating page {page_id} with title '{title}'")
-
-            # Simply pass through all parameters, making sure to match parameter names
-            response = self.confluence.update_page(
+            # Get the current page data to preserve existing values if needed
+            current_page = self.confluence.get_page_by_id(page_id)
+            
+            if not current_page:
+                raise ValueError(f"Page with ID {page_id} not found")
+                
+            page_space_key = current_page.get("space", {}).get("key")
+            
+            # Use the current title if a new one is not provided
+            if title is None:
+                title = current_page.get("title", "")
+                
+            # If body is None, keep the existing content
+            if body is None:
+                # Get current body content
+                body = self.confluence.get_page_by_id(
+                    page_id, expand="body.storage"
+                ).get("body", {}).get("storage", {}).get("value", "")
+            else:
+                # Convert markdown content to storage format if needed
+                is_markdown = not body.strip().startswith("<")
+                if is_markdown:
+                    body = self.preprocessor.markdown_to_storage(body)
+                # Convert HTML content to storage format if needed
+                elif not body.strip().startswith("<ac:"):  # Not already in storage format
+                    body = self.preprocessor.html_to_storage(body)
+            
+            # Update the page
+            page_data = self.confluence.update_page(
                 page_id=page_id,
                 title=title,
-                body=storage_body,
-                type="page",
+                body=body,
                 representation="storage",
-                minor_edit=is_minor_edit,  # This matches the parameter name in the API
                 version_comment=version_comment,
-                always_update=True,  # Force update to avoid content comparison issues
+                minor_edit=minor_edit,
             )
-
-            # After update, refresh the page data
-            return self.get_page_content(page_id)
+            
+            # Invalidate caches
+            self.invalidate_cache_by_prefix(f"confluence_page_{page_id}")
+            if page_space_key:
+                self.invalidate_cache_by_prefix(f"confluence_space_{page_space_key}")
+                
+            return page_data
+            
         except Exception as e:
-            logger.error(f"Error updating page {page_id}: {str(e)}")
-            raise Exception(f"Failed to update page {page_id}: {str(e)}") from e
+            logger.error(f"Error updating page {page_id}: {e}")
+            raise ValueError(f"Failed to update page: {e}") from e
 
     def get_page_children(
         self,

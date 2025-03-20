@@ -1,10 +1,12 @@
 """Module for Confluence space operations."""
 
 import logging
-from typing import cast
+from typing import cast, Dict, List, Any
+import asyncio
 
 import requests
 
+from ..utils import cached, run_async
 from .client import ConfluenceClient
 
 logger = logging.getLogger("mcp-atlassian")
@@ -13,6 +15,7 @@ logger = logging.getLogger("mcp-atlassian")
 class SpacesMixin(ConfluenceClient):
     """Mixin for Confluence space operations."""
 
+    @cached("confluence_spaces", 3600)  # Cache for 1 hour
     def get_spaces(self, start: int = 0, limit: int = 10) -> dict[str, object]:
         """
         Get all available spaces.
@@ -28,6 +31,7 @@ class SpacesMixin(ConfluenceClient):
         # Cast the return value to the expected type
         return cast(dict[str, object], spaces)
 
+    @cached("confluence_user_contributed_spaces", 1800)  # Cache for 30 minutes
     def get_user_contributed_spaces(self, limit: int = 250) -> dict:
         """
         Get spaces the current user has contributed to.
@@ -98,3 +102,74 @@ class SpacesMixin(ConfluenceClient):
             logger.error(f"Unexpected error fetching Confluence spaces: {str(e)}")
             logger.debug("Full exception details for Confluence spaces:", exc_info=True)
             return {}
+
+    def get_multiple_spaces_parallel(self, space_keys: List[str]) -> Dict[str, Any]:
+        """
+        Get information for multiple spaces in parallel.
+
+        Args:
+            space_keys: List of space keys to fetch
+
+        Returns:
+            Dictionary mapping space keys to space information
+        """
+        # Função auxiliar para obter um espaço específico
+        def get_space(space_key: str) -> Dict[str, Any]:
+            try:
+                return self.confluence.get_space(space_key)
+            except Exception as e:
+                logger.warning(f"Error fetching space {space_key}: {e}")
+                return None
+        
+        # Prepare data for parallel requests
+        request_data = [
+            (get_space, [key], {}) for key in space_keys
+        ]
+        
+        # Execute requests in parallel
+        results = self.parallel_requests(request_data)
+        
+        # Build the result dictionary
+        spaces_dict = {}
+        for i, space_key in enumerate(space_keys):
+            spaces_dict[space_key] = results[i]
+                
+        return spaces_dict
+        
+    async def get_multiple_spaces_async(self, space_keys: List[str]) -> Dict[str, Any]:
+        """
+        Get information for multiple spaces asynchronously.
+
+        Args:
+            space_keys: List of space keys to fetch
+
+        Returns:
+            Dictionary mapping space keys to space information
+        """
+        # Função auxiliar para obter um espaço específico
+        def get_space(space_key: str) -> Dict[str, Any]:
+            try:
+                return self.confluence.get_space(space_key)
+            except Exception as e:
+                logger.warning(f"Error fetching space {space_key}: {e}")
+                return None
+                
+        # Create tasks for each space
+        tasks = []
+        for key in space_keys:
+            tasks.append(self.async_request(get_space, key))
+            
+        # Execute all tasks concurrently
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Build the result dictionary
+        spaces_dict = {}
+        for i, space_key in enumerate(space_keys):
+            result = results[i]
+            if isinstance(result, Exception):
+                logger.warning(f"Error fetching space {space_key}: {str(result)}")
+                spaces_dict[space_key] = None
+            else:
+                spaces_dict[space_key] = result
+                
+        return spaces_dict
