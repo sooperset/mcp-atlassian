@@ -46,8 +46,7 @@ def get_available_services() -> dict[str, bool | None]:
             confluence_vars = all(
                 [confluence_url, os.getenv("CONFLUENCE_PERSONAL_TOKEN")]
             )
-            logger.info(
-                "Using Confluence Server/Data Center authentication method")
+            logger.info("Using Confluence Server/Data Center authentication method")
     else:
         confluence_vars = False
 
@@ -58,8 +57,7 @@ def get_available_services() -> dict[str, bool | None]:
         is_cloud = "atlassian.net" in jira_url
         if is_cloud:
             jira_vars = all(
-                [jira_url, os.getenv("JIRA_USERNAME"),
-                 os.getenv("JIRA_API_TOKEN")]
+                [jira_url, os.getenv("JIRA_USERNAME"), os.getenv("JIRA_API_TOKEN")]
             )
             logger.info("Using Jira Cloud authentication method")
         else:
@@ -212,8 +210,7 @@ async def read_resource(uri: str) -> tuple[str, str]:
                 title = page_dict.get("title", "Untitled")
                 url = page_dict.get("url", "")
 
-                content.append(
-                    f"# [{title}]({url})\n\n{page.page_content}\n\n---")
+                content.append(f"# [{title}]({url})\n\n{page.page_content}\n\n---")
 
             return "\n\n".join(content), "text/markdown"
 
@@ -231,8 +228,7 @@ async def read_resource(uri: str) -> tuple[str, str]:
     # Handle Jira resources
     elif uri.startswith("jira://"):
         if not ctx or not ctx.jira:
-            raise ValueError(
-                "Jira is not configured. Please provide Jira credentials.")
+            raise ValueError("Jira is not configured. Please provide Jira credentials.")
         parts = uri.replace("jira://", "").split("/")
 
         # Handle project listing
@@ -257,8 +253,7 @@ async def read_resource(uri: str) -> tuple[str, str]:
                 summary = issue_dict.get("summary", "Untitled")
                 url = issue_dict.get("url", "")
                 status = issue_dict.get("status", {})
-                status_name = status.get(
-                    "name", "Unknown") if status else "Unknown"
+                status_name = status.get("name", "Unknown") if status else "Unknown"
 
                 # Create a markdown representation of the issue
                 issue_content = (
@@ -283,8 +278,7 @@ async def read_resource(uri: str) -> tuple[str, str]:
             markdown = f"# {issue_dict.get('key')}: {issue_dict.get('summary')}\n\n"
 
             if issue_dict.get("status"):
-                status_name = issue_dict.get(
-                    "status", {}).get("name", "Unknown")
+                status_name = issue_dict.get("status", {}).get("name", "Unknown")
                 markdown += f"**Status:** {status_name}\n\n"
 
             if issue_dict.get("description"):
@@ -893,8 +887,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             return [
                 TextContent(
                     type="text",
-                    text=json.dumps(search_results, indent=2,
-                                    ensure_ascii=False),
+                    text=json.dumps(search_results, indent=2, ensure_ascii=False),
                 )
             ]
 
@@ -906,8 +899,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             include_metadata = arguments.get("include_metadata", True)
             markdown = arguments.get("markdown", True)
 
-            page = ctx.confluence.get_page_content(
-                page_id, convert_to_markdown=markdown)
+            page = ctx.confluence.get_page_content(page_id, convert_to_markdown=markdown)
 
             if include_metadata:
                 # The to_simplified_dict method already includes the content,
@@ -978,8 +970,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             return [
                 TextContent(
                     type="text",
-                    text=json.dumps(ancestor_pages, indent=2,
-                                    ensure_ascii=False),
+                    text=json.dumps(ancestor_pages, indent=2, ensure_ascii=False),
                 )
             ]
 
@@ -991,14 +982,12 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             comments = ctx.confluence.get_page_comments(page_id)
 
             # Format comments using their to_simplified_dict method if available
-            formatted_comments = [format_comment(
-                comment) for comment in comments]
+            formatted_comments = [format_comment(comment) for comment in comments]
 
             return [
                 TextContent(
                     type="text",
-                    text=json.dumps(formatted_comments,
-                                    indent=2, ensure_ascii=False),
+                    text=json.dumps(formatted_comments, indent=2, ensure_ascii=False),
                 )
             ]
 
@@ -1068,8 +1057,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             page_id = arguments.get("page_id")
 
             if not page_id:
-                raise ValueError(
-                    "Missing required parameter: page_id is required.")
+                raise ValueError("Missing required parameter: page_id is required.")
 
             try:
                 # Delete the page
@@ -1092,14 +1080,12 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 return [
                     TextContent(
                         type="text",
-                        text=json.dumps(response, indent=2,
-                                        ensure_ascii=False),
+                        text=json.dumps(response, indent=2, ensure_ascii=False),
                     )
                 ]
             except Exception as e:
                 # API call failed with an exception
-                logger.error(
-                    f"Error deleting Confluence page {page_id}: {str(e)}")
+                logger.error(f"Error deleting Confluence page {page_id}: {str(e)}")
                 return [
                     TextContent(
                         type="text",
@@ -1152,8 +1138,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             return [
                 TextContent(
                     type="text",
-                    text=json.dumps(search_results, indent=2,
-                                    ensure_ascii=False),
+                    text=json.dumps(search_results, indent=2, ensure_ascii=False),
                 )
             ]
 
@@ -1172,8 +1157,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             return [
                 TextContent(
                     type="text",
-                    text=json.dumps(project_issues, indent=2,
-                                    ensure_ascii=False),
+                    text=json.dumps(project_issues, indent=2, ensure_ascii=False),
                 )
             ]
 
@@ -1194,8 +1178,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             additional_fields = {}
             if arguments.get("additional_fields"):
                 try:
-                    additional_fields = json.loads(
-                        arguments.get("additional_fields"))
+                    additional_fields = json.loads(arguments.get("additional_fields"))
                 except json.JSONDecodeError:
                     raise ValueError("Invalid JSON in additional_fields")
 
@@ -1237,8 +1220,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             additional_fields = {}
             if arguments.get("additional_fields"):
                 try:
-                    additional_fields = json.loads(
-                        arguments.get("additional_fields"))
+                    additional_fields = json.loads(arguments.get("additional_fields"))
                 except json.JSONDecodeError:
                     raise ValueError("Invalid JSON in additional_fields")
 
@@ -1274,8 +1256,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             # Delete the issue
             deleted = ctx.jira.delete_issue(issue_key)
 
-            result = {
-                "message": f"Issue {issue_key} has been deleted successfully."}
+            result = {"message": f"Issue {issue_key} has been deleted successfully."}
 
             return [
                 TextContent(
@@ -1317,8 +1298,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 started=started,
             )
 
-            result = {"message": "Worklog added successfully",
-                      "worklog": worklog}
+            result = {"message": "Worklog added successfully", "worklog": worklog}
 
             return [
                 TextContent(
