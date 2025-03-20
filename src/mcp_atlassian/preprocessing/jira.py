@@ -27,7 +27,7 @@ class JiraPreprocessor(BasePreprocessor):
     )
     JIRA_MENTION_RE = re.compile(r"\[~accountid:([a-zA-Z0-9\-]+)\]")
     
-    # Memoização para evitar reprocessamento de padrões frequentes
+    # Memoization to avoid reprocessing frequent patterns
     _memo_cache = {}
     _memo_max_size = 1000
 
@@ -43,7 +43,7 @@ class JiraPreprocessor(BasePreprocessor):
         """
         super().__init__(base_url, jira_client)
         self.text_chunker = TextChunker(chunk_size=5000, overlap=200)
-        self.large_text_threshold = 10000  # Jira textos costumam ser menores que Confluence
+        self.large_text_threshold = 10000  # Jira texts are usually smaller than Confluence
 
     def clean_jira_text(self, jira_text: str) -> str:
         """
@@ -55,20 +55,20 @@ class JiraPreprocessor(BasePreprocessor):
         Returns:
             Processed text
         """
-        # Retorna texto vazio para entrada vazia
+        # Returns empty text for empty input
         if not jira_text:
             return ""
             
-        # Processamento incremental para textos grandes
+        # Incremental processing for large texts
         if len(jira_text) > self.large_text_threshold:
             return self._process_large_jira_text(jira_text)
         
-        # Otimiza o uso de memória verificando se já processamos este texto antes
+        # Optimizes memory usage by checking if we've already processed this text
         cache_key = hash(jira_text)
         if cache_key in self._memo_cache:
             return self._memo_cache[cache_key]
             
-        # Processamento normal para textos pequenos
+        # Normal processing for small texts
         text = jira_text
 
         # Code blocks
@@ -83,9 +83,9 @@ class JiraPreprocessor(BasePreprocessor):
         # Mentions
         text = self._process_mentions(text)
 
-        # Armazena na cache, limitando o tamanho
+        # Store in cache, limiting the size
         if len(self._memo_cache) > self._memo_max_size:
-            # Limpa metade do cache quando chega ao limite
+            # Clear half of the cache when it reaches the limit
             keys_to_remove = list(self._memo_cache.keys())[:self._memo_max_size // 2]
             for key in keys_to_remove:
                 del self._memo_cache[key]

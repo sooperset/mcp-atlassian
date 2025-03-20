@@ -571,9 +571,9 @@ class HTMLProcessor:
 
 
 class MarkdownOptimizer:
-    """Utilitário para otimizar operações com Markdown."""
+    """Utility for optimizing Markdown operations."""
     
-    # Cache para conversões frequentes
+    # Cache for frequent conversions
     _md_to_html_cache = {}
     _html_to_md_cache = {}
     
