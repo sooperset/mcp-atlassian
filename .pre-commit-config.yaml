@@ -55,14 +55,3 @@ repos:
             'python-dotenv',
             'markdownify'
         ]
-
-# Custom local hooks
--   repo: local
-    hooks:
-    -   id: atlassian-test
-        name: MCP Atlassian Test
-        entry: python src/mcp_atlassian/test_mcp_atlassian.py
-        language: system
-        pass_filenames: false
-        files: ^src/mcp_atlassian/
-        always_run: true
