@@ -899,7 +899,9 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             include_metadata = arguments.get("include_metadata", True)
             convert_to_markdown = arguments.get("convert_to_markdown", True)
 
-            page = ctx.confluence.get_page_content(page_id, convert_to_markdown=convert_to_markdown)
+            page = ctx.confluence.get_page_content(
+                page_id, convert_to_markdown=convert_to_markdown
+            )
 
             if include_metadata:
                 # The to_simplified_dict method already includes the content,
