@@ -19,6 +19,11 @@ logger = logging.getLogger("mcp-atlassian")
     help="Increase verbosity (can be used multiple times)",
 )
 @click.option(
+    "--debug/--no-debug",
+    default=None,
+    help="Enable or disable debug mode (overrides MCP_ATLASSIAN_DEBUG environment variable)",
+)
+@click.option(
     "--env-file", type=click.Path(exists=True, dir_okay=False), help="Path to .env file"
 )
 @click.option(
@@ -64,6 +69,7 @@ logger = logging.getLogger("mcp-atlassian")
 )
 def main(
     verbose: bool,
+    debug: bool | None,
     env_file: str | None,
     transport: str,
     port: int,
@@ -82,15 +88,6 @@ def main(
 
     Supports both Atlassian Cloud and Jira Server/Data Center deployments.
     """
-    # Configure logging based on verbosity
-    logging_level = logging.INFO
-    if verbose == 1:
-        logging_level = logging.INFO
-    elif verbose >= 2:
-        logging_level = logging.DEBUG
-
-    logging.basicConfig(level=logging_level, stream=sys.stderr)
-
     # Load environment variables from file if specified, otherwise try default .env
     if env_file:
         logger.debug(f"Loading environment from file: {env_file}")
@@ -98,6 +95,26 @@ def main(
     else:
         logger.debug("Attempting to load environment from default .env file")
         load_dotenv()
+
+    # Set debug mode based on command line flag or environment variable
+    if debug is not None:
+        # Command line flag takes precedence
+        os.environ["MCP_ATLASSIAN_DEBUG"] = "1" if debug else "0"
+
+    # Configure logging based on verbosity and debug mode
+    debug_mode = os.getenv("MCP_ATLASSIAN_DEBUG", "0") == "1"
+    logging_level = logging.INFO
+    if debug_mode or verbose >= 2:
+        logging_level = logging.DEBUG
+    elif verbose == 1:
+        logging_level = logging.INFO
+
+    # Configure logging with format
+    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    logging.basicConfig(level=logging_level, format=log_format, stream=sys.stderr)
+
+    if debug_mode:
+        logger.debug("Debug mode enabled via environment variable")
 
     # Set environment variables from command line arguments if provided
     if confluence_url:

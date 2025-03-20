@@ -1,12 +1,16 @@
 import json
 import logging
 import os
+import sys
+import time
+import traceback
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
+import mcp
 from mcp.server import Server
 from mcp.types import Resource, TextContent, Tool
 
@@ -15,6 +19,79 @@ from .jira import JiraFetcher
 
 # Configure logging
 logger = logging.getLogger("mcp-atlassian")
+
+
+def configure_logging() -> None:
+    """Configure logging based on environment variables."""
+    debug_mode = os.getenv("MCP_ATLASSIAN_DEBUG", "0") == "1"
+
+    # Set up logging format
+    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    if debug_mode:
+        logging.basicConfig(level=logging.DEBUG, format=log_format)
+        logger.setLevel(logging.DEBUG)
+        logger.debug("Debug mode enabled")
+    else:
+        logging.basicConfig(level=logging.INFO, format=log_format)
+        logger.setLevel(logging.INFO)
+        
+        # Set MCP core loggers to WARNING level to reduce noise
+        # This will prevent the standard request processing logs
+        logging.getLogger("mcp.server.lowlevel.server").setLevel(logging.WARNING)
+        logging.getLogger("mcp.server").setLevel(logging.WARNING)
+
+
+# Call configure_logging at import time
+configure_logging()
+
+
+class DebugTransport:
+    """Wrapper for transport that logs all messages."""
+
+    def __init__(self, read_stream: Any, write_stream: Any) -> None:
+        self.read_stream = read_stream
+        self.write_stream = write_stream
+
+    async def read(self) -> str:
+        msg = await self.read_stream.read()
+        logger.debug(f">>> Received: {msg}")
+        return msg
+
+    async def write(self, data: str) -> None:
+        logger.debug(f"<<< Sending: {data}")
+        await self.write_stream.write(data)
+
+
+def detect_client_type(client_info: dict) -> str:
+    """Detect the type of client connecting to the server."""
+    client_id = client_info.get("client_id", "")
+    client_version = client_info.get("client_version", "")
+
+    # Log more details about the client for troubleshooting
+    logger.debug(
+        f"Client connection details - ID: '{client_id}', Version: '{client_version}'"
+    )
+
+    # More robust detection for Cline VS Code
+    if "cline" in client_id.lower():
+        logger.info("Detected Cline VS Code client (by ID)")
+        return "cline"
+    elif "vscode" in client_id.lower() or "vscode" in client_version.lower():
+        logger.info("Detected Cline VS Code client (by VS Code signature)")
+        return "cline"
+    elif client_id.startswith("vsc-") or client_id == "":
+        # VS Code extensions often use this pattern or empty client_id
+        logger.info("Detected potential Cline VS Code client (by VS Code pattern)")
+        return "cline"
+    elif "cursor" in client_id.lower():
+        logger.info("Detected Cursor IDE client")
+        return "cursor"
+    elif "claude" in client_id.lower():
+        logger.info("Detected Claude Desktop client")
+        return "claude"
+    else:
+        logger.info(f"Unknown client: {client_id} {client_version}")
+        return "unknown"
 
 
 @dataclass
@@ -89,10 +166,13 @@ async def server_lifespan(server: Server) -> AsyncIterator[AppContext]:
             jira_url = jira.config.url
             logger.info(f"Jira URL: {jira_url}")
 
+        logger.debug("Server lifespan initialized")
+
         # Provide context to the application
         yield AppContext(confluence=confluence, jira=jira)
     finally:
         # Cleanup resources if needed
+        logger.debug("Server lifespan ending")
         pass
 
 
@@ -100,11 +180,166 @@ async def server_lifespan(server: Server) -> AsyncIterator[AppContext]:
 app = Server("mcp-atlassian", lifespan=server_lifespan)
 
 
+# Session tracking for long-lived connections
+_session_last_activity: dict[str, float] = {}
+_detected_client_types: dict[str, str] = {}  # Maps session_id to client_type
+
+
+def get_client_type() -> str:
+    """Get the detected client type from the app context or detect it."""
+    # Check for forced Cline mode via environment variable
+    if os.getenv("MCP_ATLASSIAN_FORCE_CLINE", "0") == "1":
+        logger.debug("Using forced Cline compatibility mode (via environment variable)")
+        return "cline"
+
+    try:
+        if hasattr(app, "request_context") and hasattr(app.request_context, "session"):
+            session = app.request_context.session
+            session_id = str(id(session))
+
+            # First check our cached client type
+            if session_id in _detected_client_types:
+                return _detected_client_types[session_id]
+
+            # If not found in cache, try to detect from session
+            client_params = getattr(session, "client_params", None)
+            if client_params:
+                # Try different client parameter structures
+                try:
+                    # Standard structure: session.client_params.client_info
+                    if hasattr(client_params, "client_info"):
+                        client_info = client_params.client_info
+                        client_type = detect_client_type(client_info)
+                        if client_type != "unknown":
+                            _detected_client_types[session_id] = client_type
+                            return client_type
+
+                    # Alternative structure: client_params might have client_id directly
+                    elif hasattr(client_params, "client_id"):
+                        client_info = {
+                            "client_id": client_params.client_id,
+                            "client_version": getattr(
+                                client_params, "client_version", ""
+                            ),
+                        }
+                        client_type = detect_client_type(client_info)
+                        if client_type != "unknown":
+                            _detected_client_types[session_id] = client_type
+                            return client_type
+
+                except Exception as e:
+                    logger.debug(
+                        f"Error extracting client info from standard structure: {str(e)}"
+                    )
+
+                # Last resort - check for Cline by examining request patterns
+                # Cline VS Code has specific patterns in how it makes requests
+                try:
+                    # If we've seen the characteristic pattern of requests, it's likely Cline
+                    if session_id in _session_last_activity:
+                        # If this session has been active for a while and still unknown, assume Cline
+                        logger.debug(
+                            "Using fallback detection for Cline VS Code by request pattern"
+                        )
+                        _detected_client_types[session_id] = "cline"
+                        return "cline"
+                except Exception as e2:
+                    logger.debug(f"Error in fallback client detection: {str(e2)}")
+    except Exception as e:
+        logger.debug(f"Error detecting client type: {str(e)}")
+
+    # If we reach here and client is unknown, check environment
+    if os.getenv("MCP_ATLASSIAN_ASSUME_CLINE", "0") == "1":
+        logger.debug("Using assumed Cline client type from environment setting")
+        return "cline"
+
+    return "unknown"
+
+    # Instead of @app.on_initialize, we'll use init detection in request handlers
+
+    return "unknown"
+
+
+# Instead of @app.receive_ping, we'll use a custom method to monitor session activity
+def update_session_activity() -> None:
+    """Update session activity timestamp and monitor long-running sessions."""
+    try:
+        if hasattr(app, "request_context") and hasattr(app.request_context, "session"):
+            client_type = get_client_type()
+            session_id = str(id(app.request_context.session))
+
+            # Update the last activity timestamp for this session
+            _session_last_activity[session_id] = time.time()
+
+            # Log more detailed info for Cline clients, but only in debug mode
+            if client_type == "cline" and logger.isEnabledFor(logging.DEBUG):
+                # Check session age
+                session_start_key = f"{session_id}_start"
+                session_start = _session_last_activity.get(session_start_key)
+                if not session_start:
+                    _session_last_activity[session_start_key] = time.time()
+                    logger.debug(f"New Cline session started: {session_id}")
+                else:
+                    session_age = time.time() - session_start
+                    # Reduce logging frequency - only log once every 5 minutes after the 5-minute mark
+                    if session_age > 300 and session_age % 300 < 1:  # Every 5 minutes after 5 minutes
+                        logger.debug(
+                            f"Long-running Cline session detected: {session_age:.0f} seconds"
+                        )
+    except Exception as e:
+        logger.error(f"Error updating session activity: {str(e)}")
+
+
+# Error handler needs to be reimplemented differently
+def format_error_for_client(error: Exception) -> dict:
+    """Format error response based on client type."""
+    try:
+        client_type = get_client_type()
+
+        logger.error(f"Error occurred for client {client_type}: {str(error)}")
+        logger.debug(f"Detailed error: {traceback.format_exc()}")
+
+        # Basic error response
+        error_response = {
+            "code": -32000,
+            "message": str(error),
+        }
+
+        # Client-specific error handling
+        if client_type == "cline":
+            # Ensure error format matches Cline expectations
+            error_response["data"] = {
+                "details": traceback.format_exc(),
+                "recoverable": True,  # Help Cline handle errors gracefully
+            }
+
+            # Add additional details for timeout and connection issues
+            if "timeout" in str(error).lower() or "connection" in str(error).lower():
+                logger.warning("Detected timeout or connection issue with Cline client")
+                error_response["code"] = -32001  # Special error code for timeouts
+                error_response["message"] = (
+                    "Connection timeout or network issue detected. Please try reconnecting."
+                )
+                error_response["data"]["retry_suggested"] = True
+
+        return error_response
+    except Exception as e:
+        logger.error(f"Error in format_error_for_client: {str(e)}")
+        return {"code": -32000, "message": str(error)}
+
+
 # Implement server handlers
 @app.list_resources()
 async def list_resources() -> list[Resource]:
     """List Confluence spaces and Jira projects the user is actively interacting with."""
     resources = []
+
+    # Log for debugging, especially for Cline clients
+    client_type = get_client_type()
+    logger.debug(f"Processing list_resources request from client: {client_type}")
+
+    # Monitor session activity
+    update_session_activity()
 
     ctx = app.request_context.lifespan_context
 
@@ -179,6 +414,15 @@ async def list_resources() -> list[Resource]:
 @app.read_resource()
 async def read_resource(uri: str) -> tuple[str, str]:
     """Read content from Confluence based on the resource URI."""
+    # Track session activity
+    update_session_activity()
+
+    # Log for debugging
+    client_type = get_client_type()
+    logger.info(
+        f"Processing read_resource request from client: {client_type}, URI: {uri}"
+    )
+
     parsed_uri = urlparse(uri)
 
     # Get application context
@@ -293,6 +537,14 @@ async def read_resource(uri: str) -> tuple[str, str]:
 async def list_tools() -> list[Tool]:
     """List available Confluence and Jira tools."""
     tools = []
+
+    # Track session activity
+    update_session_activity()
+
+    # Log for debugging
+    client_type = get_client_type()
+    logger.debug(f"Processing list_tools request from client: {client_type}")
+
     ctx = app.request_context.lifespan_context
 
     # Add Confluence tools if Confluence is configured
@@ -842,9 +1094,34 @@ async def list_tools() -> list[Tool]:
 
 @app.call_tool()
 async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
-    """Handle tool calls for Confluence and Jira operations."""
-    ctx = app.request_context.lifespan_context
+    """Call a tool by name with arguments."""
     try:
+        # Get client type using our new function
+        client_type = get_client_type()
+
+        # Track session activity
+        update_session_activity()
+
+        # Log tool call with client information
+        logger.info(f"Tool call: {name} from client: {client_type}")
+        logger.debug(f"Tool arguments: {json.dumps(arguments, indent=2, default=str)}")
+
+        # Get app context
+        ctx = app.request_context.lifespan_context
+
+        # Check if requested service is available
+        # Implement Jira authentication validators
+        if name.startswith("mcp_atlassian_jira") and not ctx.jira:
+            raise ValueError(
+                "Jira is not configured. Please set JIRA_URL and JIRA_USERNAME/JIRA_API_TOKEN or JIRA_PERSONAL_TOKEN."
+            )
+
+        # Implement Confluence authentication validators
+        if name.startswith("mcp_atlassian_confluence") and not ctx.confluence:
+            raise ValueError(
+                "Confluence is not configured. Please set CONFLUENCE_URL and CONFLUENCE_USERNAME/CONFLUENCE_API_TOKEN or CONFLUENCE_PERSONAL_TOKEN."
+            )
+
         # Helper functions for formatting results
         def format_comment(comment: Any) -> dict:
             if hasattr(comment, "to_simplified_dict"):
@@ -1467,21 +1744,85 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
 
 async def run_server(transport: str = "stdio", port: int = 8000) -> None:
     """Run the MCP Atlassian server with the specified transport."""
+    logger.info(f"Starting server with transport: {transport}")
+    debug_mode = os.getenv("MCP_ATLASSIAN_DEBUG", "0") == "1"
+    force_cline = os.getenv("MCP_ATLASSIAN_FORCE_CLINE", "0") == "1"
+    assume_cline = os.getenv("MCP_ATLASSIAN_ASSUME_CLINE", "0") == "1"
+
+    # Log environment info for debugging
+    if debug_mode:
+        logger.debug(f"Debug Mode: {debug_mode}")
+        logger.debug(f"Force Cline Mode: {force_cline}")
+        logger.debug(f"Assume Cline Mode: {assume_cline}")
+        logger.debug(f"Python Version: {sys.version}")
+        logger.debug(
+            f"MCP Version: {mcp.__version__ if hasattr(mcp, '__version__') else 'unknown'}"
+        )
+        logger.debug(f"OS: {os.name} {sys.platform}")
+
+    # Create initialization options
+    init_options = app.create_initialization_options()
+
+    # Add Cline compatibility flag to initialization options
+    # This is part of the compatibility fix for issue #82
+    init_options.capabilities.experimental = {
+        "cline_compatible": True,
+        # Add additional capabilities for better Cline compatibility
+        "keepalive_supported": True,
+        "idle_timeout": 300000,  # 5 minutes in milliseconds
+    }
+
+    # Add special handling for Cline resource templates request
+    @app.list_resource_templates()
+    async def list_resource_templates() -> list:
+        """Handle resource templates request (specifically for Cline)."""
+        # If we get this request, it's almost certainly Cline VS Code
+        # Set a flag to force Cline detection for this session
+        os.environ["MCP_ATLASSIAN_ASSUME_CLINE"] = "1"
+        logger.debug("Detected ListResourceTemplatesRequest - setting assume_cline=True")
+
+        # Track session activity
+        update_session_activity()
+
+        try:
+            # Always treat this as a Cline client
+            # Mark this session as Cline type in our cache
+            if hasattr(app, "request_context") and hasattr(
+                app.request_context, "session"
+            ):
+                session = app.request_context.session
+                session_id = str(id(session))
+                _detected_client_types[session_id] = "cline"
+
+            # Return an empty list to avoid timeout issues
+            return []
+        except Exception as e:
+            logger.error(f"Error processing resource templates request: {str(e)}")
+            # Still return empty list even if logging fails
+            return []
+
     if transport == "sse":
         from mcp.server.sse import SseServerTransport
         from starlette.applications import Starlette
         from starlette.requests import Request
         from starlette.routing import Mount, Route
 
+        logger.debug(f"Initializing SSE transport on port {port}")
         sse = SseServerTransport("/messages/")
 
         async def handle_sse(request: Request) -> None:
+            logger.debug(f"New SSE connection from {request.client}")
             async with sse.connect_sse(
                 request.scope, request.receive, request._send
             ) as streams:
-                await app.run(
-                    streams[0], streams[1], app.create_initialization_options()
-                )
+                read_stream, write_stream = streams
+
+                if debug_mode:
+                    # Wrap streams with debug transport if in debug mode
+                    debug_transport = DebugTransport(read_stream, write_stream)
+                    await app.run(debug_transport, debug_transport, init_options)
+                else:
+                    await app.run(read_stream, write_stream, init_options)
 
         starlette_app = Starlette(
             debug=True,
@@ -1497,11 +1838,20 @@ async def run_server(transport: str = "stdio", port: int = 8000) -> None:
         config = uvicorn.Config(starlette_app, host="0.0.0.0", port=port)  # noqa: S104
         server = uvicorn.Server(config)
         # Use server.serve() instead of run() to stay in the same event loop
+        logger.debug("Starting SSE server - waiting for connections...")
         await server.serve()
     else:
         from mcp.server.stdio import stdio_server
 
+        logger.debug("Initializing stdio transport")
         async with stdio_server() as (read_stream, write_stream):
-            await app.run(
-                read_stream, write_stream, app.create_initialization_options()
+            logger.debug(
+                "Stdio transport initialized - waiting for client connection..."
             )
+
+            if debug_mode:
+                # Wrap streams with debug transport if in debug mode
+                debug_transport = DebugTransport(read_stream, write_stream)
+                await app.run(debug_transport, debug_transport, init_options)
+            else:
+                await app.run(read_stream, write_stream, init_options)
