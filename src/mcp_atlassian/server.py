@@ -355,7 +355,7 @@ async def list_tools() -> list[Tool]:
                             },
                             "markdown": {
                                 "type": "boolean",
-                                "description": "Whether to convert page to markdown or keep it in raw HTML format",
+                                "description": "Whether to convert page to markdown or keep it in raw HTML format. Can help reaviling macros (like dates) and other content not visible in markdown",
                                 "default": True,
                             },
                         },
