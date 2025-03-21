@@ -12,6 +12,7 @@ from mcp.types import Resource, TextContent, Tool
 
 from .confluence import ConfluenceFetcher
 from .jira import JiraFetcher
+from .utils import is_atlassian_cloud_url
 
 # Configure logging
 logger = logging.getLogger("mcp-atlassian")
@@ -32,7 +33,8 @@ def get_available_services() -> dict[str, bool | None]:
     # or server/data center authentication (URL + personal token)
     confluence_url = os.getenv("CONFLUENCE_URL")
     if confluence_url:
-        is_cloud = "atlassian.net" in confluence_url
+        is_cloud = is_atlassian_cloud_url(confluence_url)
+
         if is_cloud:
             confluence_vars = all(
                 [
@@ -54,7 +56,8 @@ def get_available_services() -> dict[str, bool | None]:
     # or server/data center authentication (URL + personal token)
     jira_url = os.getenv("JIRA_URL")
     if jira_url:
-        is_cloud = "atlassian.net" in jira_url
+        is_cloud = is_atlassian_cloud_url(jira_url)
+
         if is_cloud:
             jira_vars = all(
                 [jira_url, os.getenv("JIRA_USERNAME"), os.getenv("JIRA_API_TOKEN")]

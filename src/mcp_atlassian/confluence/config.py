@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
+from ..utils import is_atlassian_cloud_url
+
 
 @dataclass
 class ConfluenceConfig:
@@ -18,8 +20,13 @@ class ConfluenceConfig:
 
     @property
     def is_cloud(self) -> bool:
-        """Check if this is a cloud instance."""
-        return "atlassian.net" in self.url
+        """Check if this is a cloud instance.
+
+        Returns:
+            True if this is a cloud instance (atlassian.net), False otherwise.
+            Localhost URLs are always considered non-cloud (Server/Data Center).
+        """
+        return is_atlassian_cloud_url(self.url)
 
     @property
     def verify_ssl(self) -> bool:
@@ -50,7 +57,8 @@ class ConfluenceConfig:
         api_token = os.getenv("CONFLUENCE_API_TOKEN")
         personal_token = os.getenv("CONFLUENCE_PERSONAL_TOKEN")
 
-        is_cloud = "atlassian.net" in url
+        # Use the shared utility function directly
+        is_cloud = is_atlassian_cloud_url(url)
 
         if is_cloud:
             if username and api_token:
