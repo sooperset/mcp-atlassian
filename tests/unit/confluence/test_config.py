@@ -75,27 +75,43 @@ def test_from_env_missing_server_auth():
 
 def test_is_cloud():
     """Test that is_cloud property returns correct value."""
-    # Cloud instance
+    # Arrange & Act - Cloud URL
     config = ConfluenceConfig(
-        url="https://test.atlassian.net/wiki",
+        url="https://example.atlassian.net/wiki",
         auth_type="basic",
-        username="user",
-        api_token="token",
+        username="test",
+        api_token="test",
     )
+
+    # Assert
     assert config.is_cloud is True
 
-    # Server instance with basic authentication
+    # Arrange & Act - Server URL
     config = ConfluenceConfig(
-        url="https://confluence.company.com",
-        auth_type="basic",
-        username="user",
-        api_token="token",
+        url="https://confluence.example.com",
+        auth_type="token",
+        personal_token="test",
     )
+
+    # Assert
     assert config.is_cloud is False
 
-    # Server instance with token
+    # Arrange & Act - Localhost URL (Data Center/Server)
     config = ConfluenceConfig(
-        url="https://confluence.company.com",
+        url="http://localhost:8090",
         auth_type="token",
-        personal_token="token",
+        personal_token="test",
     )
+
+    # Assert
+    assert config.is_cloud is False
+
+    # Arrange & Act - IP localhost URL (Data Center/Server)
+    config = ConfluenceConfig(
+        url="http://127.0.0.1:8090",
+        auth_type="token",
+        personal_token="test",
+    )
+
+    # Assert
+    assert config.is_cloud is False
