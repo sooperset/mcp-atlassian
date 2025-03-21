@@ -17,6 +17,7 @@ class ConfluenceConfig:
     api_token: str | None = None  # API token used as password
     personal_token: str | None = None  # Personal access token (Server/DC)
     ssl_verify: bool = True  # Whether to verify SSL certificates
+    spaces_filter: str | None = None  # List of space keys to filter searches
 
     @property
     def is_cloud(self) -> bool:
@@ -80,6 +81,9 @@ class ConfluenceConfig:
         ssl_verify_env = os.getenv("CONFLUENCE_SSL_VERIFY", "true").lower()
         ssl_verify = ssl_verify_env not in ("false", "0", "no")
 
+        # Get the spaces filter if provided
+        spaces_filter = os.getenv("CONFLUENCE_SPACES_FILTER")
+
         return cls(
             url=url,
             auth_type=auth_type,
@@ -87,4 +91,5 @@ class ConfluenceConfig:
             api_token=api_token,
             personal_token=personal_token,
             ssl_verify=ssl_verify,
+            spaces_filter=spaces_filter,
         )

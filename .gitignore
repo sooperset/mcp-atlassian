@@ -71,3 +71,6 @@ playground/
 
 # rules
 CLAUDE.md
+
+# cursor
+.cursor*

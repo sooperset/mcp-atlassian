@@ -19,6 +19,7 @@ class SearchMixin(JiraClient):
         start: int = 0,
         limit: int = 50,
         expand: str | None = None,
+        projects_filter: str | None = None,
     ) -> list[JiraIssue]:
         """
         Search for issues using JQL (Jira Query Language).
@@ -29,6 +30,7 @@ class SearchMixin(JiraClient):
             start: Starting index
             limit: Maximum issues to return
             expand: Optional items to expand (comma-separated)
+            projects_filter: Optional comma-separated list of project keys to filter by, overrides config
 
         Returns:
             List of JiraIssue models representing the search results
@@ -37,6 +39,32 @@ class SearchMixin(JiraClient):
             Exception: If there is an error searching for issues
         """
         try:
+            # Use projects_filter parameter if provided, otherwise fall back to config
+            filter_to_use = projects_filter or self.config.projects_filter
+
+            # Apply projects filter if present
+            if filter_to_use:
+                # Split projects filter by commas and handle possible whitespace
+                projects = [p.strip() for p in filter_to_use.split(",")]
+
+                # Build the project filter query part
+                if len(projects) == 1:
+                    project_query = f"project = {projects[0]}"
+                else:
+                    quoted_projects = [f'"{p}"' for p in projects]
+                    projects_list = ", ".join(quoted_projects)
+                    project_query = f"project IN ({projects_list})"
+
+                # Add the project filter to existing query
+                if jql and project_query:
+                    if "project = " not in jql and "project IN" not in jql:
+                        # Only add if not already filtering by project
+                        jql = f"({jql}) AND {project_query}"
+                else:
+                    jql = project_query
+
+                logger.info(f"Applied projects filter to query: {jql}")
+
             response = self.jira.jql(
                 jql, fields=fields, start=start, limit=limit, expand=expand
             )

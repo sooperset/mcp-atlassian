@@ -21,6 +21,7 @@ class JiraConfig:
     api_token: str | None = None  # API token (Cloud)
     personal_token: str | None = None  # Personal access token (Server/DC)
     ssl_verify: bool = True  # Whether to verify SSL certificates
+    projects_filter: str | None = None  # List of project keys to filter searches
 
     @property
     def is_cloud(self) -> bool:
@@ -88,6 +89,9 @@ class JiraConfig:
         ssl_verify_env = os.getenv("JIRA_SSL_VERIFY", "true").lower()
         ssl_verify = ssl_verify_env not in ("false", "0", "no")
 
+        # Get the projects filter if provided
+        projects_filter = os.getenv("JIRA_PROJECTS_FILTER")
+
         return cls(
             url=url,
             auth_type=auth_type,
@@ -95,4 +99,5 @@ class JiraConfig:
             api_token=api_token,
             personal_token=personal_token,
             ssl_verify=ssl_verify,
+            projects_filter=projects_filter,
         )
