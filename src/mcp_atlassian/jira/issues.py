@@ -424,7 +424,11 @@ class IssuesMixin(UsersMixin):
                 except ValueError as e:
                     logger.warning(f"Could not assign issue: {str(e)}")
 
+            # Make a copy of kwargs to preserve original values for two-step Epic creation
+            kwargs_copy = kwargs.copy()
+
             # Prepare epic fields if this is an epic
+            # This step now stores epic-specific fields in kwargs for post-creation update
             if issue_type.lower() == "epic":
                 self._prepare_epic_fields(fields, summary, kwargs)
 
@@ -447,6 +451,27 @@ class IssuesMixin(UsersMixin):
                 error_msg = "No issue key in response"
                 raise ValueError(error_msg)
 
+            # For Epics, perform the second step: update Epic-specific fields
+            if issue_type.lower() == "epic":
+                # Check if we have any stored Epic fields to update
+                has_epic_fields = any(k.startswith("__epic_") for k in kwargs)
+                if has_epic_fields:
+                    logger.info(
+                        f"Performing post-creation update for Epic {issue_key} with Epic-specific fields"
+                    )
+                    try:
+                        # Delegate to EpicsMixin.update_epic_fields
+                        from mcp_atlassian.jira.epics import EpicsMixin
+
+                        return EpicsMixin.update_epic_fields(self, issue_key, kwargs)
+                    except Exception as update_error:
+                        logger.error(
+                            f"Error during post-creation update of Epic {issue_key}: {str(update_error)}"
+                        )
+                        logger.info(
+                            "Continuing with the original Epic that was successfully created"
+                        )
+
             # Get the full issue data and convert to JiraIssue model
             issue_data = self.jira.issue(issue_key)
             return JiraIssue.from_api_response(issue_data)
@@ -461,22 +486,20 @@ class IssuesMixin(UsersMixin):
         """
         Prepare fields for epic creation.
 
+        This method delegates to the prepare_epic_fields method in EpicsMixin.
+
         Args:
             fields: The fields dictionary to update
             summary: The epic summary
             kwargs: Additional fields from the user
         """
-        # Get all field IDs
-        field_ids = self.get_jira_field_ids()
+        # Delegate to EpicsMixin.prepare_epic_fields
+        # Since JiraFetcher inherits from both IssuesMixin and EpicsMixin,
+        # this will correctly use the prepare_epic_fields method from EpicsMixin
+        # which implements the two-step Epic creation approach
+        from mcp_atlassian.jira.epics import EpicsMixin
 
-        # Epic Name field
-        epic_name_field = field_ids.get("Epic Name")
-        if epic_name_field and "epic_name" not in kwargs:
-            fields[epic_name_field] = summary
-
-        # Override with user-provided epic name if available
-        if "epic_name" in kwargs and epic_name_field:
-            fields[epic_name_field] = kwargs["epic_name"]
+        EpicsMixin.prepare_epic_fields(self, fields, summary, kwargs)
 
     def _prepare_parent_fields(
         self, fields: dict[str, Any], kwargs: dict[str, Any]
