@@ -599,6 +599,106 @@ async def test_jira_create_task_with_parent(
 
 
 @pytest.mark.anyio
+async def test_jira_create_epic(
+    jira_client: JiraFetcher,
+    test_project_key: str,
+    resource_tracker: ResourceTracker,
+    cleanup_resources: Callable[[], None],
+) -> None:
+    """
+    Test creating an Epic issue in Jira.
+
+    This test verifies that the create_issue method can handle Epic creation
+    properly for any Jira instance, regardless of the specific custom field
+    configuration used for Epic Name or other Epic-specific fields.
+    """
+    # Generate unique identifiers for this test
+    test_id = str(uuid.uuid4())[:8]
+    epic_summary = f"Test Epic {test_id}"
+
+    try:
+        # Attempt to create the Epic - this should succeed after implementation is fixed
+        epic_issue = jira_client.create_issue(
+            project_key=test_project_key,
+            summary=epic_summary,
+            description="This is a test epic for validating Epic creation functionality.",
+            issue_type="Epic",
+        )
+
+        # Track the epic for cleanup if creation succeeds
+        resource_tracker.add_jira_issue(epic_issue.key)
+
+        # Verify the epic response
+        assert epic_issue is not None
+        assert epic_issue.key.startswith(test_project_key)
+        assert epic_issue.summary == epic_summary
+
+        print(f"\nTEST PASSED: Successfully created Epic issue {epic_issue.key}")
+
+        # Try to retrieve the epic to verify it was truly created
+        retrieved_epic = jira_client.get_issue(epic_issue.key)
+        assert retrieved_epic is not None
+        assert retrieved_epic.key == epic_issue.key
+        assert retrieved_epic.summary == epic_summary
+
+    except Exception as e:
+        # Log the error but don't catch it - we want the test to fail
+        # when Epic creation doesn't work
+        print(f"\nERROR creating Epic: {str(e)}")
+
+        # Print information about field IDs to help with fixing the implementation
+        try:
+            print("\n=== Jira Field Information for Debugging ===")
+            field_ids = jira_client.get_jira_field_ids()
+
+            # Print information about all custom fields
+            print("\nAll custom fields:")
+            custom_fields = {
+                k: v for k, v in field_ids.items() if k.startswith("customfield_")
+            }
+            for key, value in custom_fields.items():
+                print(f"  {key}: {value}")
+
+            # Print epic-related fields separately for emphasis
+            print("\nEpic-related fields:")
+            epic_related_fields = {
+                k: v
+                for k, v in field_ids.items()
+                if isinstance(k, str) and "epic" in k.lower()
+            }
+
+            if epic_related_fields:
+                for key, value in epic_related_fields.items():
+                    print(f"  {key}: {value}")
+            else:
+                print("  No epic-related fields found")
+
+            # Get available issue types to confirm Epic is a valid type
+            print("\nAvailable issue types:")
+            try:
+                project_meta = jira_client.jira.project(test_project_key)
+                issue_types = project_meta.get("issueTypes", [])
+                for issue_type in issue_types:
+                    print(f"  {issue_type.get('name')}: {issue_type.get('id')}")
+
+                    # If this is the Epic type, print any required fields
+                    if issue_type.get("name") == "Epic":
+                        print(f"  - Epic issue type ID: {issue_type.get('id')}")
+            except Exception as meta_err:
+                print(f"  Error getting issue types: {str(meta_err)}")
+
+        except Exception as field_err:
+            print(f"Could not get field IDs: {str(field_err)}")
+
+        # Re-raise the original exception to make the test fail
+        raise
+
+    finally:
+        # Clean up resources even if the test fails
+        cleanup_resources()
+
+
+@pytest.mark.anyio
 async def test_jira_add_comment(
     jira_client: JiraFetcher,
     test_issue_key: str,
