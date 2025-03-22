@@ -71,3 +71,7 @@ playground/
 
 # rules
 CLAUDE.md
+
+# repomix
+.repomixignore
+repomix.config.json
