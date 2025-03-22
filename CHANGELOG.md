@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.2.6] - 2025-03-22
+
+### Added
+- Added support for getting Confluence pages in raw format without converting to markdown
+
+### Enhanced
+- Enhanced Jira Epic creation with a two-step approach for better field handling
+- Enhanced Epic field discovery with improved fallback mechanisms
+- Enhanced test script to support test filtering and added new tests for Jira Epic creation
+
+### Fixed
+- Fixed SSL verification bypass for self-signed certificates
+- Implemented proper SSL verification handling for Confluence and Jira servers
+
 ## [0.2.5] - 2025-03-18
 
 ### Added
