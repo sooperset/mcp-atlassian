@@ -89,6 +89,7 @@ uvx mcp-atlassian \
 - `--[no-]confluence-ssl-verify`: Toggle SSL verification for Confluence Server/DC
 - `--[no-]jira-ssl-verify`: Toggle SSL verification for Jira Server/DC
 - `--verbose`: Increase logging verbosity (can be used multiple times)
+- `--read-only`: Run in read-only mode (disables all write operations)
 
 > **Note:** All configuration options can also be set via environment variables. See the `.env.example` file in the repository for the full list of available environment variables.
 

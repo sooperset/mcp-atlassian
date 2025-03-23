@@ -62,6 +62,11 @@ logger = logging.getLogger("mcp-atlassian")
     default=True,
     help="Verify SSL certificates for Jira Server/Data Center (default: verify)",
 )
+@click.option(
+    "--read-only",
+    is_flag=True,
+    help="Run in read-only mode (disables all write operations)",
+)
 def main(
     verbose: bool,
     env_file: str | None,
@@ -77,6 +82,7 @@ def main(
     jira_token: str | None,
     jira_personal_token: str | None,
     jira_ssl_verify: bool,
+    read_only: bool = False,
 ) -> None:
     """MCP Atlassian Server - Jira and Confluence functionality for MCP
 
@@ -116,6 +122,10 @@ def main(
         os.environ["JIRA_API_TOKEN"] = jira_token
     if jira_personal_token:
         os.environ["JIRA_PERSONAL_TOKEN"] = jira_personal_token
+
+    # Set read-only mode from CLI flag
+    if read_only:
+        os.environ["READ_ONLY_MODE"] = "true"
 
     # Set SSL verification for Confluence Server/Data Center
     os.environ["CONFLUENCE_SSL_VERIFY"] = str(confluence_ssl_verify).lower()

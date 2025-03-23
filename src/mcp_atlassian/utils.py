@@ -1,6 +1,7 @@
 """Utility functions for the MCP Atlassian integration."""
 
 import logging
+import os
 import ssl
 from typing import Any
 from urllib.parse import urlparse
@@ -117,3 +118,18 @@ def configure_ssl_verification(
         adapter = SSLIgnoreAdapter()
         session.mount(f"https://{domain}", adapter)
         session.mount(f"http://{domain}", adapter)
+
+
+def is_read_only_mode() -> bool:
+    """Check if the server is running in read-only mode.
+
+    Read-only mode prevents all write operations (create, update, delete)
+    while allowing all read operations. This is useful for working with
+    production Atlassian instances where you want to prevent accidental
+    modifications.
+
+    Returns:
+        True if read-only mode is enabled, False otherwise
+    """
+    value = os.getenv("READ_ONLY_MODE", "false")
+    return value.lower() in ("true", "1", "yes", "y", "on")
