@@ -43,7 +43,7 @@ class SearchMixin(JiraClient):
 
             # Convert the response to a search result model
             search_result = JiraSearchResult.from_api_response(
-                response, base_url=self.config.url
+                response, base_url=self.config.url, requested_fields=fields
             )
 
             # Return the list of issues

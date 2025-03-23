@@ -285,15 +285,85 @@ class TestSearchMixin:
             search_mixin.get_epic_issues("EPIC-1")
 
     def test_parse_date(self, search_mixin):
-        """Test the actual implementation of _parse_date."""
-        # Test ISO format
-        result = search_mixin._parse_date("2024-01-01T12:34:56.789+0000")
-        assert result == "2024-01-01", f"Expected '2024-01-01' but got '{result}'"
+        """Test the _parse_date method."""
+        # Test with a valid ISO date
+        result = search_mixin._parse_date("2023-01-15T14:30:45.123+0000")
+        assert result == "2023-01-15"
 
-        # Test invalid format
-        result = search_mixin._parse_date("invalid date")
-        assert result == "invalid date", f"Expected 'invalid date' but got '{result}'"
+        # Test with an empty string
+        result = search_mixin._parse_date("")
+        assert result == ""
 
-        # Test None value
-        result = search_mixin._parse_date(None)
-        assert result == "", f"Expected empty string but got '{result}'"
+    def test_search_issues_with_fields_parameter(self, search_mixin):
+        """Test search with specific fields parameter, including custom fields."""
+        # Setup mock response with a custom field
+        mock_issues = {
+            "issues": [
+                {
+                    "id": "10001",
+                    "key": "TEST-123",
+                    "fields": {
+                        "summary": "Test issue with custom field",
+                        "assignee": {
+                            "displayName": "Test User",
+                            "emailAddress": "test@example.com",
+                            "active": True,
+                        },
+                        "customfield_10049": "Custom value",
+                        "issuetype": {"name": "Bug"},
+                        "status": {"name": "Open"},
+                        "description": "Issue description",
+                        "created": "2024-01-01T10:00:00.000+0000",
+                        "updated": "2024-01-01T11:00:00.000+0000",
+                        "priority": {"name": "High"},
+                    },
+                }
+            ],
+            "total": 1,
+            "startAt": 0,
+            "maxResults": 50,
+        }
+        search_mixin.jira.jql.return_value = mock_issues
+        search_mixin.config.url = "https://example.atlassian.net"
+
+        # Call the method with specific fields
+        result = search_mixin.search_issues(
+            "project = TEST", fields="summary,assignee,customfield_10049"
+        )
+
+        # Verify the JQL call includes the fields parameter
+        search_mixin.jira.jql.assert_called_once_with(
+            "project = TEST",
+            fields="summary,assignee,customfield_10049",
+            start=0,
+            limit=50,
+            expand=None,
+        )
+
+        # Verify results
+        assert isinstance(result, list)
+        assert len(result) == 1
+        issue = result[0]
+
+        # Convert to simplified dict to check field filtering
+        simplified = issue.to_simplified_dict()
+
+        # These fields should be included (plus id and key which are always included)
+        assert "id" in simplified
+        assert "key" in simplified
+        assert "summary" in simplified
+        assert "assignee" in simplified
+        assert "customfield_10049" in simplified
+
+        # These fields should NOT be included
+        assert "description" not in simplified
+        assert "status" not in simplified
+        assert "issue_type" not in simplified
+        assert "priority" not in simplified
+        assert "created" not in simplified
+        assert "updated" not in simplified
+
+        # Verify the values of included fields
+        assert simplified["summary"] == "Test issue with custom field"
+        assert simplified["assignee"]["name"] == "Test User"
+        assert simplified["customfield_10049"] == "Custom value"

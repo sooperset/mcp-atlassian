@@ -391,6 +391,8 @@ class JiraIssue(ApiModel, TimestampMixin):
     url: str | None = None
     epic_key: str | None = None
     epic_name: str | None = None
+    custom_fields: dict[str, Any] = Field(default_factory=dict)
+    requested_fields: list[str] | None = None
 
     @property
     def page_content(self) -> str | None:
@@ -492,6 +494,7 @@ class JiraIssue(ApiModel, TimestampMixin):
             data: The issue data from the Jira API
             **kwargs: Additional context parameters, including:
                 - base_url: Base URL for constructing the issue URL
+                - requested_fields: List of fields that were requested (if any)
 
         Returns:
             A JiraIssue instance
@@ -511,6 +514,15 @@ class JiraIssue(ApiModel, TimestampMixin):
         if not isinstance(fields, dict):
             logger.debug(f"Fields is not a dict, using empty dict: {type(fields)}")
             fields = {}
+
+        # Store requested fields if provided
+        requested_fields = kwargs.get("requested_fields")
+
+        # Extract custom fields - any field beginning with "customfield_"
+        custom_fields = {}
+        for key, value in fields.items():
+            if key.startswith("customfield_"):
+                custom_fields[key] = value
 
         # Process status
         status = None
@@ -628,29 +640,98 @@ class JiraIssue(ApiModel, TimestampMixin):
             url=url,
             epic_key=epic_key,
             epic_name=epic_name,
+            custom_fields=custom_fields,
+            requested_fields=requested_fields,
         )
 
     def to_simplified_dict(self) -> dict[str, Any]:
-        """Convert to a simplified dictionary representation."""
-        return {
+        """
+        Convert to a simplified dictionary representation.
+
+        If requested_fields is provided, only those fields will be included
+        in the result, plus id and key which are always included.
+        """
+        # Start with the minimal set of fields that should always be included
+        result: dict[str, Any] = {
             "id": self.id,
-            "summary": self.summary,
             "key": self.key,
-            "description": self.description,
-            "created": self.format_timestamp(self.created),
-            "updated": self.format_timestamp(self.updated),
-            "status": self.status.to_simplified_dict() if self.status else None,
-            "issue_type": self.issue_type.to_simplified_dict()
+        }
+
+        # If no specific fields were requested, include all standard fields
+        if not self.requested_fields or "*all" in self.requested_fields:
+            result.update(
+                {
+                    "summary": self.summary,
+                    "description": self.description,
+                    "created": self.format_timestamp(self.created),
+                    "updated": self.format_timestamp(self.updated),
+                    "status": self.status.to_simplified_dict() if self.status else None,
+                    "issue_type": self.issue_type.to_simplified_dict()
+                    if self.issue_type
+                    else None,
+                    "priority": self.priority.to_simplified_dict()
+                    if self.priority
+                    else None,
+                    "assignee": self.assignee.to_simplified_dict()
+                    if self.assignee
+                    else None,
+                    "reporter": self.reporter.to_simplified_dict()
+                    if self.reporter
+                    else None,
+                    "labels": self.labels,
+                    "components": self.components,
+                    "comments": [
+                        comment.to_simplified_dict() for comment in self.comments
+                    ],
+                    "url": self.url,
+                }
+            )
+            return result
+
+        # If specific fields were requested, only include those
+        field_mapping = {
+            "summary": lambda: self.summary,
+            "description": lambda: self.description,
+            "created": lambda: self.format_timestamp(self.created),
+            "updated": lambda: self.format_timestamp(self.updated),
+            "status": lambda: self.status.to_simplified_dict() if self.status else None,
+            "issuetype": lambda: self.issue_type.to_simplified_dict()
             if self.issue_type
             else None,
-            "priority": self.priority.to_simplified_dict() if self.priority else None,
-            "assignee": self.assignee.to_simplified_dict() if self.assignee else None,
-            "reporter": self.reporter.to_simplified_dict() if self.reporter else None,
-            "labels": self.labels,
-            "components": self.components,
-            "comments": [comment.to_simplified_dict() for comment in self.comments],
-            "url": self.url,
+            "issue_type": lambda: self.issue_type.to_simplified_dict()
+            if self.issue_type
+            else None,
+            "priority": lambda: self.priority.to_simplified_dict()
+            if self.priority
+            else None,
+            "assignee": lambda: self.assignee.to_simplified_dict()
+            if self.assignee
+            else None,
+            "reporter": lambda: self.reporter.to_simplified_dict()
+            if self.reporter
+            else None,
+            "labels": lambda: self.labels,
+            "components": lambda: self.components,
+            "comment": lambda: [
+                comment.to_simplified_dict() for comment in self.comments
+            ],
+            "comments": lambda: [
+                comment.to_simplified_dict() for comment in self.comments
+            ],
+            "url": lambda: self.url,
+            "epic_key": lambda: self.epic_key,
+            "epic_name": lambda: self.epic_name,
         }
+
+        for field in self.requested_fields:
+            # Handle standard fields
+            if field in field_mapping:
+                result[field] = field_mapping[field]()
+            # Handle custom fields
+            elif field.startswith("customfield_") and field in self.custom_fields:
+                result[field] = self.custom_fields[field]
+
+        return result
 
 
 class JiraProject(ApiModel):
@@ -912,12 +993,21 @@ class JiraSearchResult(ApiModel):
             data: The search result data from the Jira API
             **kwargs: Additional context parameters, including:
                 - base_url: Base URL for constructing issue URLs
+                - requested_fields: List of fields that were requested (if "*all" or specific fields)
 
         Returns:
             A JiraSearchResult instance
         """
         if not data:
             return cls()
+
+        # Check if specific fields were requested
+        requested_fields = kwargs.get("requested_fields")
+
+        # If requested_fields is a comma-separated string, split it
+        if isinstance(requested_fields, str):
+            requested_fields = [field.strip() for field in requested_fields.split(",")]
+            kwargs["requested_fields"] = requested_fields
 
         # Convert raw issues to JiraIssue models
         issues = [
