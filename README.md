@@ -96,7 +96,7 @@ uvx mcp-atlassian \
 
 ### Claude Desktop Setup
 
-Using uvx (recommended):
+Using uvx (recommended) - Cloud:
 
 ```json
 {
@@ -118,7 +118,7 @@ Using uvx (recommended):
 ```
 
 <details>
-<summary>Server/Data Center Configuration</summary>
+<summary>Using uvx (recommended) - Server/Data Center </summary>
 
 ```json
 {
