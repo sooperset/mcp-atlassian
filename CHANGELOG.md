@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2025-03-25
+
+### Added
+- Added read-only mode to disable write operations
+- Added CONTRIBUTING.md with development setup and workflow guidelines
+
+### Enhanced
+- Simplified README structure for better clarity
+- Improved field parameter handling in jira_search function
+- Enhanced documentation with focus on CLI arguments as primary configuration method
+
+### Fixed
+- Fixed fields parameter in jira_search function to properly filter returned fields
+
 ## [0.2.6] - 2025-03-22
 
 ### Added
