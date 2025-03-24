@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2025-03-25
+
+### Added
+- Added read-only mode to disable write operations
+- Added CONTRIBUTING.md with development setup and workflow guidelines
+
+### Enhanced
+- Simplified README structure for better clarity
+- Improved field parameter handling in jira_search function
+- Enhanced documentation with focus on CLI arguments as primary configuration method
+
+### Fixed
+- Fixed fields parameter in jira_search function to properly filter returned fields
+
+## [0.2.6] - 2025-03-22
+
+### Added
+- Added support for getting Confluence pages in raw format without converting to markdown
+
+### Enhanced
+- Enhanced Jira Epic creation with a two-step approach for better field handling
+- Enhanced Epic field discovery with improved fallback mechanisms
+- Enhanced test script to support test filtering and added new tests for Jira Epic creation
+
+### Fixed
+- Fixed SSL verification bypass for self-signed certificates
+- Implemented proper SSL verification handling for Confluence and Jira servers
+
 ## [0.2.5] - 2025-03-18
 
 ### Added

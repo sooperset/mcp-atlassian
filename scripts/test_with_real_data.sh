@@ -7,6 +7,7 @@
 TEST_TYPE="all"  # Can be "all", "models", or "api"
 VERBOSITY="-v"   # Verbosity level
 RUN_WRITE_TESTS=false
+FILTER=""        # Test filter using pytest's -k option
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -35,6 +36,11 @@ while [[ $# -gt 0 ]]; do
       RUN_WRITE_TESTS=true
       shift
       ;;
+    -k)
+      FILTER="-k \"$2\""
+      shift
+      shift
+      ;;
     --help)
       echo "Usage: $0 [options]"
       echo "Options:"
@@ -44,6 +50,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --quiet                Minimal output"
       echo "  --verbose              More detailed output"
       echo "  --with-write-tests     Include tests that modify data (including TextContent validation)"
+      echo "  -k \"PATTERN\"         Only run tests matching the given pattern (uses pytest's -k option)"
       echo "  --help                 Show this help message"
       exit 0
       ;;
@@ -119,6 +126,14 @@ run_api_tests() {
     echo ""
     echo "===== API Read-Only Tests ====="
 
+    # If a filter is provided, run all tests with that filter
+    if [[ -n "$FILTER" ]]; then
+        echo "Running tests with filter: $FILTER"
+        eval "uv run pytest tests/test_real_api_validation.py $VERBOSITY $FILTER"
+        return
+    fi
+
+    # Otherwise run specific tests based on write/read only setting
     # Run the read-only tests
     uv run pytest tests/test_real_api_validation.py::test_jira_get_issue tests/test_real_api_validation.py::test_jira_get_epic_issues tests/test_real_api_validation.py::test_confluence_get_page_content $VERBOSITY
 
@@ -130,7 +145,7 @@ run_api_tests() {
         sleep 5
 
         # Run the write operation tests
-        uv run pytest tests/test_real_api_validation.py::test_jira_create_issue tests/test_real_api_validation.py::test_jira_create_subtask tests/test_real_api_validation.py::test_jira_create_task_with_parent tests/test_real_api_validation.py::test_jira_add_comment tests/test_real_api_validation.py::test_confluence_create_page tests/test_real_api_validation.py::test_confluence_update_page $VERBOSITY
+        uv run pytest tests/test_real_api_validation.py::test_jira_create_issue tests/test_real_api_validation.py::test_jira_create_subtask tests/test_real_api_validation.py::test_jira_create_task_with_parent tests/test_real_api_validation.py::test_jira_add_comment tests/test_real_api_validation.py::test_confluence_create_page tests/test_real_api_validation.py::test_confluence_update_page tests/test_real_api_validation.py::test_jira_create_epic tests/test_real_api_validation.py::test_jira_create_epic_two_step $VERBOSITY
 
         # Run the skipped transition test if explicitly requested write tests
         echo ""

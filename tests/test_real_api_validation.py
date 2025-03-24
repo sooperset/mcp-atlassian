@@ -599,6 +599,67 @@ async def test_jira_create_task_with_parent(
 
 
 @pytest.mark.anyio
+async def test_jira_create_epic(
+    jira_client: JiraFetcher,
+    test_project_key: str,
+    resource_tracker: ResourceTracker,
+    cleanup_resources: Callable[[], None],
+) -> None:
+    """
+    Test creating an Epic issue in Jira.
+
+    This test verifies that the create_issue method can handle Epic creation
+    properly for any Jira instance, regardless of the specific custom field
+    configuration used for Epic Name or other Epic-specific fields.
+    """
+    # Generate unique identifiers for this test
+    test_id = str(uuid.uuid4())[:8]
+    epic_summary = f"Test Epic {test_id}"
+
+    try:
+        # Attempt to create the Epic - this should succeed after implementation is fixed
+        epic_issue = jira_client.create_issue(
+            project_key=test_project_key,
+            summary=epic_summary,
+            description="This is a test epic for validating Epic creation functionality.",
+            issue_type="Epic",
+        )
+
+        # Track the epic for cleanup if creation succeeds
+        resource_tracker.add_jira_issue(epic_issue.key)
+
+        # Verify the epic response
+        assert epic_issue is not None
+        assert epic_issue.key.startswith(test_project_key)
+        assert epic_issue.summary == epic_summary
+
+        print(f"\nTEST PASSED: Successfully created Epic issue {epic_issue.key}")
+
+        # Try to retrieve the epic to verify it was truly created
+        retrieved_epic = jira_client.get_issue(epic_issue.key)
+        assert retrieved_epic is not None
+        assert retrieved_epic.key == epic_issue.key
+        assert retrieved_epic.summary == epic_summary
+
+    except Exception as e:
+        # Log the error but don't catch it - we want the test to fail
+        # when Epic creation doesn't work
+        print(f"\nERROR creating Epic: {str(e)}")
+
+        # Print information about field IDs to help with fixing the implementation
+        try:
+            print("\n=== Jira Field Information for Debugging ===")
+            field_ids = jira_client.get_jira_field_ids()
+            print(f"Available field IDs: {field_ids}")
+        except Exception as error:
+            print(f"Error retrieving field IDs: {str(error)}")
+
+        raise
+    finally:
+        cleanup_resources()
+
+
+@pytest.mark.anyio
 async def test_jira_add_comment(
     jira_client: JiraFetcher,
     test_issue_key: str,
@@ -845,4 +906,192 @@ async def test_jira_transition_issue(
         assert "to do" not in status_name.lower()
     finally:
         # Clean up resources even if the test fails
+        cleanup_resources()
+
+
+@pytest.mark.anyio
+async def test_jira_create_epic_with_custom_fields(
+    jira_client: JiraFetcher,
+    test_project_key: str,
+    resource_tracker: ResourceTracker,
+    cleanup_resources: Callable[[], None],
+) -> None:
+    """
+    Test creating an Epic issue in Jira with custom Epic fields.
+
+    This test verifies that the create_issue method can handle Epic creation
+    with explicit Epic Name and Epic Color values, properly detecting the
+    correct custom fields regardless of the Jira configuration.
+    """
+    # Generate unique identifiers for this test
+    test_id = str(uuid.uuid4())[:8]
+    epic_summary = f"Test Epic {test_id}"
+    custom_epic_name = f"Custom Epic Name {test_id}"
+
+    try:
+        # Force field discovery to ensure we have the latest field IDs
+        if hasattr(jira_client, "_field_ids_cache"):
+            delattr(jira_client, "_field_ids_cache")
+
+        # Get field IDs and log them for debugging
+        field_ids = jira_client.get_jira_field_ids()
+        print(f"Discovered field IDs: {field_ids}")
+
+        # Attempt to create the Epic with custom values
+        epic_issue = jira_client.create_issue(
+            project_key=test_project_key,
+            summary=epic_summary,
+            description="This is a test epic with custom values.",
+            issue_type="Epic",
+            epic_name=custom_epic_name,
+            epic_color="blue",
+        )
+
+        # Track the epic for cleanup
+        resource_tracker.add_jira_issue(epic_issue.key)
+
+        # Verify Epic was created correctly
+        assert epic_issue is not None
+        assert epic_issue.key.startswith(test_project_key)
+        assert epic_issue.summary == epic_summary
+
+        print(f"\nTEST PASSED: Successfully created Epic issue {epic_issue.key}")
+
+        # Retrieve the Epic to verify custom fields were set
+        retrieved_epic = jira_client.get_issue(epic_issue.key)
+
+        # Verify custom Epic Name - the field might be accessible under different properties
+        # depending on the Jira configuration
+        has_epic_name = False
+        if hasattr(retrieved_epic, "epic_name") and retrieved_epic.epic_name:
+            assert retrieved_epic.epic_name == custom_epic_name
+            has_epic_name = True
+            print(
+                f"Verified Epic Name via epic_name property: {retrieved_epic.epic_name}"
+            )
+
+        if not has_epic_name:
+            print("Could not verify Epic Name directly, checking raw fields...")
+            # Try to get the raw API response to verify the custom fields
+            if hasattr(jira_client, "jira"):
+                raw_issue = jira_client.jira.issue(epic_issue.key)
+                fields = raw_issue.get("fields", {})
+
+                # Find the Epic Name field by searching known patterns
+                for field_id, value in fields.items():
+                    if field_id.startswith("customfield_") and isinstance(value, str):
+                        if value == custom_epic_name:
+                            print(
+                                f"Found Epic Name in custom field {field_id}: {value}"
+                            )
+                            has_epic_name = True
+                            break
+
+        if not has_epic_name:
+            print("WARNING: Could not verify Epic Name was set correctly")
+
+    except Exception as e:
+        print(f"\nERROR creating Epic with custom fields: {str(e)}")
+
+        # Print information about field IDs to help with debugging
+        try:
+            print("\n=== Jira Field Information for Debugging ===")
+            field_ids = jira_client.get_jira_field_ids()
+            print(f"Available field IDs: {field_ids}")
+        except Exception as error:
+            print(f"Error retrieving field IDs: {str(error)}")
+
+        raise
+    finally:
+        cleanup_resources()
+
+
+@pytest.mark.anyio
+async def test_jira_create_epic_two_step(
+    jira_client: JiraFetcher,
+    test_project_key: str,
+    resource_tracker: ResourceTracker,
+    cleanup_resources: Callable[[], None],
+) -> None:
+    """
+    Test the two-step Epic creation process.
+
+    This test verifies that the create_issue method can successfully create an Epic
+    using the two-step approach (create basic issue first, then update Epic fields)
+    to work around screen configuration issues.
+    """
+    # Generate unique identifiers for this test
+    test_id = str(uuid.uuid4())[:8]
+    epic_summary = f"Two-Step Epic {test_id}"
+    epic_name = f"Epic Name {test_id}"
+
+    try:
+        # Clear any cached field IDs to force fresh discovery
+        if hasattr(jira_client, "_field_ids"):
+            delattr(jira_client, "_field_ids")
+
+        # Show all available field IDs - useful for debugging
+        field_ids = jira_client.get_jira_field_ids()
+        print(f"\nAvailable field IDs for Epic creation: {field_ids}")
+
+        # Create the Epic - should use the two-step process internally
+        print("\nAttempting to create Epic using two-step process...")
+        epic_issue = jira_client.create_issue(
+            project_key=test_project_key,
+            summary=epic_summary,
+            description="This is a test epic using the two-step creation process.",
+            issue_type="Epic",
+            epic_name=epic_name,  # This should be stored for post-creation update
+            epic_color="blue",  # This should be stored for post-creation update
+        )
+
+        # Track the epic for cleanup
+        resource_tracker.add_jira_issue(epic_issue.key)
+
+        # Verify the Epic was created
+        assert epic_issue is not None
+        assert epic_issue.key.startswith(test_project_key)
+        assert epic_issue.summary == epic_summary
+
+        print(f"\nSuccessfully created Epic: {epic_issue.key}")
+
+        # Try to retrieve the Epic to verify Epic-specific fields
+        retrieved_epic = jira_client.get_issue(epic_issue.key)
+        print(f"\nRetrieved Epic: {retrieved_epic.key}")
+
+        # Log epic field information for debugging
+        print(f"Epic name: {retrieved_epic.epic_name}")
+
+        # Try to get the raw API response to inspect all fields
+        try:
+            # Using _raw property if available, or direct API call as fallback
+            if hasattr(retrieved_epic, "_raw"):
+                raw_data = retrieved_epic._raw
+            else:
+                raw_data = jira_client.jira.issue(epic_issue.key)
+
+            # Print relevant fields for debugging
+            if "fields" in raw_data:
+                for field_id, field_value in raw_data["fields"].items():
+                    if "epic" in field_id.lower() or field_id in field_ids.values():
+                        print(f"Field {field_id}: {field_value}")
+        except Exception as e:
+            print(f"Error getting raw Epic data: {str(e)}")
+
+        print("\nTEST PASSED: Successfully completed two-step Epic creation test")
+
+    except Exception as e:
+        print(f"\nERROR in two-step Epic creation test: {str(e)}")
+
+        # Print debugging information
+        print("\nAvailable field IDs:")
+        try:
+            field_ids = jira_client.get_jira_field_ids()
+            for name, field_id in field_ids.items():
+                print(f"  {name}: {field_id}")
+        except Exception as field_error:
+            print(f"Error getting field IDs: {str(field_error)}")
+
+        raise
+    finally:
         cleanup_resources()

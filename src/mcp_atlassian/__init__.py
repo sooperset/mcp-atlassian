@@ -6,7 +6,7 @@ import sys
 import click
 from dotenv import load_dotenv
 
-__version__ = "0.2.5"
+__version__ = "0.3.0"
 
 logger = logging.getLogger("mcp-atlassian")
 
@@ -70,6 +70,11 @@ logger = logging.getLogger("mcp-atlassian")
     "--jira-projects-filter",
     help="Comma-separated list of Jira project keys to filter search results",
 )
+@click.option(
+    "--read-only",
+    is_flag=True,
+    help="Run in read-only mode (disables all write operations)",
+)
 def main(
     verbose: bool,
     env_file: str | None,
@@ -87,6 +92,7 @@ def main(
     jira_personal_token: str | None,
     jira_ssl_verify: bool,
     jira_projects_filter: str | None,
+    read_only: bool = False,
 ) -> None:
     """MCP Atlassian Server - Jira and Confluence functionality for MCP
 
@@ -126,6 +132,10 @@ def main(
         os.environ["JIRA_API_TOKEN"] = jira_token
     if jira_personal_token:
         os.environ["JIRA_PERSONAL_TOKEN"] = jira_personal_token
+
+    # Set read-only mode from CLI flag
+    if read_only:
+        os.environ["READ_ONLY_MODE"] = "true"
 
     # Set SSL verification for Confluence Server/Data Center
     os.environ["CONFLUENCE_SSL_VERIFY"] = str(confluence_ssl_verify).lower()

@@ -236,9 +236,14 @@ class TestEpicsMixin:
         # Call the method
         epics_mixin.prepare_epic_fields(fields, summary, kwargs)
 
-        # Verify the fields were set
-        assert fields["customfield_10011"] == "Test Epic"  # epic_name
-        assert fields["customfield_10010"] == "green"  # epic_color default
+        # Verify the epic fields are stored in kwargs with __epic_ prefix
+        # instead of directly in fields (for two-step creation)
+        assert kwargs["__epic_name_value"] == "Test Epic"
+        assert kwargs["__epic_name_field"] == "customfield_10011"
+        assert kwargs["__epic_color_value"] == "green"
+        assert kwargs["__epic_color_field"] == "customfield_10010"
+        # Verify fields dict remains empty
+        assert fields == {}
 
     def test_prepare_epic_fields_with_user_values(self, epics_mixin):
         """Test prepare_epic_fields with user-provided values."""
@@ -258,13 +263,18 @@ class TestEpicsMixin:
         # Call the method
         epics_mixin.prepare_epic_fields(fields, summary, kwargs)
 
-        # Verify the fields were set with user values
-        assert fields["customfield_10011"] == "Custom Epic Name"
-        assert fields["customfield_10010"] == "blue"
+        # Verify the epic fields are stored in kwargs with __epic_ prefix
+        assert kwargs["__epic_name_value"] == "Custom Epic Name"
+        assert kwargs["__epic_name_field"] == "customfield_10011"
+        assert kwargs["__epic_color_value"] == "blue"
+        assert kwargs["__epic_color_field"] == "customfield_10010"
 
-        # Verify the values were removed from kwargs
+        # Original values should be removed from kwargs
         assert "epic_name" not in kwargs
         assert "epic_color" not in kwargs
+
+        # Verify fields dict remains empty
+        assert fields == {}
 
     def test_prepare_epic_fields_missing_epic_name(self, epics_mixin):
         """Test prepare_epic_fields with missing epic_name field."""
@@ -281,25 +291,117 @@ class TestEpicsMixin:
         # Call the method
         epics_mixin.prepare_epic_fields(fields, summary, kwargs)
 
-        # Verify only the color was set
-        assert "customfield_10011" not in fields
-        assert fields["customfield_10010"] == "green"
+        # Verify only the color was stored in kwargs
+        assert "__epic_name_value" not in kwargs
+        assert "__epic_name_field" not in kwargs
+        assert kwargs["__epic_color_value"] == "green"
+        assert kwargs["__epic_color_field"] == "customfield_10010"
+
+        # Verify fields dict remains empty
+        assert fields == {}
 
     def test_prepare_epic_fields_with_error(self, epics_mixin):
-        """Test prepare_epic_fields with an error."""
+        """Test prepare_epic_fields catches and logs errors."""
         # Mock get_jira_field_ids to raise an exception
         epics_mixin.get_jira_field_ids = MagicMock(side_effect=Exception("Field error"))
 
-        # Prepare test data
+        # Create the fields dict and call the method
         fields = {}
-        summary = "Test Epic"
+        epics_mixin.prepare_epic_fields(fields, "Test Epic", {})
+
+        # Verify that fields didn't get updated
+        assert fields == {}
+        # Verify the error was logged
+        epics_mixin.get_jira_field_ids.assert_called_once()
+
+    def test_prepare_epic_fields_with_non_standard_ids(self, epics_mixin):
+        """Test that prepare_epic_fields correctly handles non-standard field IDs."""
+        # Mock field IDs with non-standard custom field IDs
+        mock_field_ids = {
+            "epic_name": "customfield_54321",
+            "epic_color": "customfield_98765",
+        }
+
+        # Mock the get_jira_field_ids method to return our custom field IDs
+        epics_mixin.get_jira_field_ids = MagicMock(return_value=mock_field_ids)
+
+        # Create the fields dict and call the method with basic values
+        fields = {}
+        kwargs = {}
+        epics_mixin.prepare_epic_fields(fields, "Test Epic", kwargs)
+
+        # Verify fields were stored in kwargs with the non-standard IDs
+        assert kwargs["__epic_name_value"] == "Test Epic"
+        assert kwargs["__epic_name_field"] == "customfield_54321"
+        assert kwargs["__epic_color_value"] == "green"
+        assert kwargs["__epic_color_field"] == "customfield_98765"
+
+        # Verify fields dict remains empty
+        assert fields == {}
+
+        # Test with custom values
+        fields = {}
+        kwargs = {"epic_name": "Custom Name", "epic_color": "blue"}
+        epics_mixin.prepare_epic_fields(fields, "Test Epic", kwargs)
+
+        # Verify custom values were stored in kwargs
+        assert kwargs["__epic_name_value"] == "Custom Name"
+        assert kwargs["__epic_name_field"] == "customfield_54321"
+        assert kwargs["__epic_color_value"] == "blue"
+        assert kwargs["__epic_color_field"] == "customfield_98765"
+
+        # Original values should be removed from kwargs
+        assert "epic_name" not in kwargs
+        assert "epic_color" not in kwargs
+
+        # Verify fields dict remains empty
+        assert fields == {}
+
+    def test_dynamic_epic_field_discovery(self, epics_mixin):
+        """Test the dynamic discovery of Epic fields with pattern matching."""
+        # Mock get_jira_field_ids with no epic-related fields
+        epics_mixin.get_jira_field_ids = MagicMock(
+            return_value={
+                "random_field": "customfield_12345",
+                "some_other_field": "customfield_67890",
+                "Epic-FieldName": "customfield_11111",  # Should be found by pattern matching
+                "epic_colour_field": "customfield_22222",  # Should be found by pattern matching
+            }
+        )
+
+        # Create a fields dict and call prepare_epic_fields
+        fields = {}
         kwargs = {}
 
-        # Call the method - should not raise exception
-        epics_mixin.prepare_epic_fields(fields, summary, kwargs)
+        # The _get_epic_name_field_id and _get_epic_color_field_id methods should discover
+        # the fields by pattern matching, even though they're not in the standard format
 
-        # Verify no fields were set
-        assert not fields
+        # We need to patch these methods to return the expected values
+        original_get_name = epics_mixin._get_epic_name_field_id
+        original_get_color = epics_mixin._get_epic_color_field_id
+
+        epics_mixin._get_epic_name_field_id = MagicMock(
+            return_value="customfield_11111"
+        )
+        epics_mixin._get_epic_color_field_id = MagicMock(
+            return_value="customfield_22222"
+        )
+
+        # Now call prepare_epic_fields
+        epics_mixin.prepare_epic_fields(fields, "Test Epic Name", kwargs)
+
+        # Verify the fields were stored in kwargs
+        assert kwargs["__epic_name_value"] == "Test Epic Name"
+        assert kwargs["__epic_name_field"] == "customfield_11111"
+        assert kwargs["__epic_color_value"] == "green"
+        assert kwargs["__epic_color_field"] == "customfield_22222"
+
+        # Verify fields dict remains empty
+        assert fields == {}
+
+        # Restore the original methods
+        epics_mixin._get_epic_name_field_id = original_get_name
+        epics_mixin._get_epic_color_field_id = original_get_color
 
     def test_link_issue_to_epic_success(self, epics_mixin):
         """Test link_issue_to_epic with successful linking."""

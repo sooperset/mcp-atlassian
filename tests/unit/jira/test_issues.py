@@ -297,22 +297,49 @@ class TestIssuesMixin:
             return_value=JiraIssue(key="EPIC-123", description="", summary="Test Epic")
         )
 
-        # Mock get_jira_field_ids
-        with patch.object(
-            issues_mixin,
-            "get_jira_field_ids",
-            return_value={"Epic Name": "customfield_10011"},
-        ):
-            # Call the method
-            issues_mixin.create_issue(
-                project_key="TEST",
-                summary="Test Epic",
-                issue_type="Epic",
-            )
+        # Mock the prepare_epic_fields method from EpicsMixin
+        with patch(
+            "mcp_atlassian.jira.epics.EpicsMixin.prepare_epic_fields"
+        ) as mock_prepare_epic:
+            # Set up the mock to store epic values in kwargs
+            # Note: First argument is self because EpicsMixin.prepare_epic_fields is called as a class method
+            def side_effect(self_arg, fields, summary, kwargs):
+                kwargs["__epic_name_value"] = summary
+                kwargs["__epic_name_field"] = "customfield_10011"
+                return None
 
-            # Verify epic fields were properly set
-            fields = issues_mixin.jira.create_issue.call_args[1]["fields"]
-            assert fields["customfield_10011"] == "Test Epic"
+            mock_prepare_epic.side_effect = side_effect
+
+            # Mock get_jira_field_ids
+            with patch.object(
+                issues_mixin,
+                "get_jira_field_ids",
+                return_value={"Epic Name": "customfield_10011"},
+            ):
+                # Call the method
+                result = issues_mixin.create_issue(
+                    project_key="TEST",
+                    summary="Test Epic",
+                    issue_type="Epic",
+                )
+
+                # Verify create_issue was called with the right project and summary
+                create_args = issues_mixin.jira.create_issue.call_args[1]
+                fields = create_args["fields"]
+                assert fields["project"]["key"] == "TEST"
+                assert fields["summary"] == "Test Epic"
+
+                # Verify epic fields are NOT in the fields dictionary (two-step creation)
+                assert "customfield_10011" not in fields
+
+                # Verify that prepare_epic_fields was called
+                mock_prepare_epic.assert_called_once()
+
+                # For an Epic, verify that update_issue should be called for the second step
+                # This would happen in the EpicsMixin.update_epic_fields method which is called
+                # after the initial creation
+                assert issues_mixin.get_issue.called
+                assert result.key == "EPIC-123"
 
     def test_update_issue_basic(self, issues_mixin):
         """Test updating an issue with basic fields."""
