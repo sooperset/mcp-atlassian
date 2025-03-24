@@ -67,7 +67,8 @@ class SSLIgnoreAdapter(HTTPAdapter):
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
-
+        context.options |= ssl.OP_LEGACY_SERVER_CONNECT
+        
         self.poolmanager = PoolManager(
             num_pools=connections,
             maxsize=maxsize,
