@@ -210,7 +210,9 @@ class TestSearchMixin:
         assert len(result) == 1
 
         # Test with filter when query already has project
-        result = search_mixin.search_issues("project = EXISTING", projects_filter="TEST")
+        result = search_mixin.search_issues(
+            "project = EXISTING", projects_filter="TEST"
+        )
         search_mixin.jira.jql.assert_called_with(
             "project = EXISTING",  # Should not add filter when project already exists
             fields="*all",

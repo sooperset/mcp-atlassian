@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from mcp_atlassian.jira.projects import ProjectsMixin
 from mcp_atlassian.jira.config import JiraConfig
+from mcp_atlassian.jira.projects import ProjectsMixin
 
 
 @pytest.fixture
