@@ -5,12 +5,24 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from mcp_atlassian.jira.projects import ProjectsMixin
+from mcp_atlassian.jira.config import JiraConfig
 
 
 @pytest.fixture
-def projects_mixin():
+def mock_config():
+    """Fixture to create a mock JiraConfig instance."""
+    config = MagicMock(spec=JiraConfig)
+    config.url = "https://test.atlassian.net"
+    config.username = "test@example.com"
+    config.api_token = "test-token"
+    config.auth_type = "token"
+    return config
+
+
+@pytest.fixture
+def projects_mixin(mock_config):
     """Fixture to create a ProjectsMixin instance for testing."""
-    mixin = ProjectsMixin()
+    mixin = ProjectsMixin(config=mock_config)
     mixin.jira = MagicMock()
     return mixin
 
