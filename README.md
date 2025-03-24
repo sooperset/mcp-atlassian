@@ -110,6 +110,9 @@ uvx mcp-atlassian \
   --jira-url=https://your.atlassian.net \
   --jira-username=email \
   --jira-token=token
+  # Optional filters:
+  # --confluence-spaces-filter=DEV,TEAM,DOC \
+  # --jira-projects-filter=PROJ,DEV,SUPPORT
 
 # For Server/DC (SSE transport)
 uvx mcp-atlassian \
@@ -119,24 +122,13 @@ uvx mcp-atlassian \
   --jira-personal-token=token \
   --transport sse \
   --port 8000
+  # Optional filters:
+  # --confluence-spaces-filter=DEV,TEAM,DOC \
+  # --jira-projects-filter=PROJ,DEV,SUPPORT
 
-# With search filters
-uvx mcp-atlassian \
-  --confluence-url=https://your.atlassian.net/wiki \
-  --confluence-username=email \
-  --confluence-token=token \
-  --confluence-spaces-filter=DEV,TEAM,DOC \
-  --jira-url=https://your.atlassian.net \
-  --jira-username=email \
-  --jira-token=token \
-  --jira-projects-filter=PROJ,DEV,SUPPORT
-```
-
-You can also set filters using environment variables:
-```bash
-export CONFLUENCE_SPACES_FILTER=DEV,TEAM,DOC
-export JIRA_PROJECTS_FILTER=PROJ,DEV,SUPPORT
-```
+# You can also set filters using environment variables:
+# export CONFLUENCE_SPACES_FILTER=DEV,TEAM,DOC
+# export JIRA_PROJECTS_FILTER=PROJ,DEV,SUPPORT
 
 These filters help narrow down search results to the most relevant spaces or projects, improving response quality and performance.
 
@@ -298,20 +290,26 @@ CONFLUENCE_URL=https://your-domain.atlassian.net/wiki  # Your Confluence cloud U
 CONFLUENCE_USERNAME=your.email@domain.com              # Your Atlassian account email
 CONFLUENCE_API_TOKEN=your_api_token                    # API token for Confluence
 
+# Optional Confluence filters
+# CONFLUENCE_SPACES_FILTER=DEV,TEAM,DOC                # Optional: Filter Confluence spaces
+
 # Confluence Server/Data Center (alternative to CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN)
 # CONFLUENCE_URL=https://confluence.your-company.com        # Your Confluence Server/Data Center URL
 # CONFLUENCE_PERSONAL_TOKEN=your_personal_access_token      # Personal Access Token for Confluence Server/Data Center
-# CONFLUENCE_SSL_VERIFY=true                                # Set to 'false' for self-signed certificates
+# CONFLUENCE_SSL_VERIFY=true                               # Set to 'false' for self-signed certificates
 
 # Jira Cloud
 JIRA_URL=https://your-domain.atlassian.net            # Your Jira cloud URL
 JIRA_USERNAME=your.email@domain.com                   # Your Atlassian account email
 JIRA_API_TOKEN=your_api_token                         # API token for Jira Cloud
 
+# Optional Jira filters
+# JIRA_PROJECTS_FILTER=PROJ,DEV,SUPPORT               # Optional: Filter Jira projects
+
 # Jira Server/Data Center (alternative to JIRA_USERNAME and JIRA_API_TOKEN)
 # JIRA_URL=https://jira.your-company.com              # Your Jira Server/Data Center URL
 # JIRA_PERSONAL_TOKEN=your_personal_access_token      # Personal Access Token for Jira Server/Data Center
-# JIRA_SSL_VERIFY=true                                # Set to 'false' for self-signed certificates
+# JIRA_SSL_VERIFY=true                               # Set to 'false' for self-signed certificates
 ```
 
 </details>

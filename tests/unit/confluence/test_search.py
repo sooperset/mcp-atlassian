@@ -146,6 +146,99 @@ class TestSearchMixin:
         assert isinstance(results, list)
         assert len(results) == 0
 
+    def test_search_with_spaces_filter(self, search_mixin):
+        """Test search with spaces filter."""
+        # Prepare the mock
+        search_mixin.confluence.cql.return_value = {
+            "results": [
+                {
+                    "content": {
+                        "id": "123456789",
+                        "title": "Test Page",
+                        "type": "page",
+                        "space": {"key": "SPACE", "name": "Test Space"},
+                        "version": {"number": 1},
+                    },
+                    "excerpt": "Test content excerpt",
+                    "url": "https://confluence.example.com/pages/123456789",
+                }
+            ]
+        }
+
+        # Mock the preprocessor
+        search_mixin.preprocessor.process_html_content.return_value = (
+            "<p>Processed HTML</p>",
+            "Processed content",
+        )
+
+        # Test with single space filter
+        result = search_mixin.search("test query", spaces_filter="DEV")
+        search_mixin.confluence.cql.assert_called_with(
+            cql='(test query) AND (space = "DEV")',
+            limit=10,
+        )
+        assert len(result) == 1
+
+        # Test with multiple spaces filter
+        result = search_mixin.search("test query", spaces_filter="DEV,TEAM")
+        search_mixin.confluence.cql.assert_called_with(
+            cql='(test query) AND (space = "DEV" OR space = "TEAM")',
+            limit=10,
+        )
+        assert len(result) == 1
+
+        # Test with filter when query already has space
+        result = search_mixin.search('space = "EXISTING"', spaces_filter="DEV")
+        search_mixin.confluence.cql.assert_called_with(
+            cql='space = "EXISTING"',  # Should not add filter when space already exists
+            limit=10,
+        )
+        assert len(result) == 1
+
+    def test_search_with_config_spaces_filter(self, search_mixin):
+        """Test search using spaces filter from config."""
+        # Prepare the mock
+        search_mixin.confluence.cql.return_value = {
+            "results": [
+                {
+                    "content": {
+                        "id": "123456789",
+                        "title": "Test Page",
+                        "type": "page",
+                        "space": {"key": "SPACE", "name": "Test Space"},
+                        "version": {"number": 1},
+                    },
+                    "excerpt": "Test content excerpt",
+                    "url": "https://confluence.example.com/pages/123456789",
+                }
+            ]
+        }
+
+        # Mock the preprocessor
+        search_mixin.preprocessor.process_html_content.return_value = (
+            "<p>Processed HTML</p>",
+            "Processed content",
+        )
+
+        # Set config filter
+        search_mixin.config.spaces_filter = "DEV,TEAM"
+
+        # Test with config filter
+        result = search_mixin.search("test query")
+        search_mixin.confluence.cql.assert_called_with(
+            cql='(test query) AND (space = "DEV" OR space = "TEAM")',
+            limit=10,
+        )
+        assert len(result) == 1
+
+        # Test that explicit filter overrides config filter
+        result = search_mixin.search("test query", spaces_filter="OVERRIDE")
+        search_mixin.confluence.cql.assert_called_with(
+            cql='(test query) AND (space = "OVERRIDE")',
+            limit=10,
+        )
+        assert len(result) == 1
+
     def test_search_general_exception(self, search_mixin):
         """Test handling of general exceptions during search."""
         # Mock a general exception

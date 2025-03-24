@@ -165,6 +165,106 @@ class TestSearchMixin:
         with pytest.raises(Exception, match="Error searching issues"):
             search_mixin.search_issues("project = TEST")
 
+    def test_search_issues_with_projects_filter(self, search_mixin):
+        """Test search with projects filter."""
+        # Setup mock response
+        mock_issues = {
+            "issues": [
+                {
+                    "id": "10001",
+                    "key": "TEST-123",
+                    "fields": {
+                        "summary": "Test issue",
+                        "issuetype": {"name": "Bug"},
+                        "status": {"name": "Open"},
+                    },
+                }
+            ],
+            "total": 1,
+            "startAt": 0,
+            "maxResults": 50,
+        }
+        search_mixin.jira.jql.return_value = mock_issues
+        search_mixin.config.url = "https://example.atlassian.net"
+
+        # Test with single project filter
+        result = search_mixin.search_issues("text ~ 'test'", projects_filter="TEST")
+        search_mixin.jira.jql.assert_called_with(
+            "(text ~ 'test') AND project = TEST",
+            fields="*all",
+            start=0,
+            limit=50,
+            expand=None,
+        )
+        assert len(result) == 1
+
+        # Test with multiple projects filter
+        result = search_mixin.search_issues("text ~ 'test'", projects_filter="TEST,DEV")
+        search_mixin.jira.jql.assert_called_with(
+            '(text ~ \'test\') AND project IN ("TEST", "DEV")',
+            fields="*all",
+            start=0,
+            limit=50,
+            expand=None,
+        )
+        assert len(result) == 1
+
+        # Test with filter when query already has project
+        result = search_mixin.search_issues("project = EXISTING", projects_filter="TEST")
+        search_mixin.jira.jql.assert_called_with(
+            "project = EXISTING",  # Should not add filter when project already exists
+            fields="*all",
+            start=0,
+            limit=50,
+            expand=None,
+        )
+        assert len(result) == 1
+
+    def test_search_issues_with_config_projects_filter(self, search_mixin):
+        """Test search using projects filter from config."""
+        # Setup mock response
+        mock_issues = {
+            "issues": [
+                {
+                    "id": "10001",
+                    "key": "TEST-123",
+                    "fields": {
+                        "summary": "Test issue",
+                        "issuetype": {"name": "Bug"},
+                        "status": {"name": "Open"},
+                    },
+                }
+            ],
+            "total": 1,
+            "startAt": 0,
+            "maxResults": 50,
+        }
+        search_mixin.jira.jql.return_value = mock_issues
+        search_mixin.config.url = "https://example.atlassian.net"
+        search_mixin.config.projects_filter = "TEST,DEV"
+
+        # Test with config filter
+        result = search_mixin.search_issues("text ~ 'test'")
+        search_mixin.jira.jql.assert_called_with(
+            '(text ~ \'test\') AND project IN ("TEST", "DEV")',
+            fields="*all",
+            start=0,
+            limit=50,
+            expand=None,
+        )
+        assert len(result) == 1
+
+        # Test that explicit filter overrides config filter
+        result = search_mixin.search_issues("text ~ 'test'", projects_filter="OVERRIDE")
+        search_mixin.jira.jql.assert_called_with(
+            "(text ~ 'test') AND project = OVERRIDE",
+            fields="*all",
+            start=0,
+            limit=50,
+            expand=None,
+        )
+        assert len(result) == 1
+
     def test_get_project_issues(self, search_mixin):
         """Test get_project_issues method."""
         # Mock the search_issues method
