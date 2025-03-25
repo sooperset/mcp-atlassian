@@ -274,7 +274,7 @@ For Cloud:
 
 For SSE transport, first start the server:
 ```bash
-uvx mcp-atlassian ... --transport sse --port 9000
+uvx mcp-atlassian --transport sse --port 9000
 ```
 
 Then configure in Cursor:
@@ -282,7 +282,15 @@ Then configure in Cursor:
 {
   "mcpServers": {
     "mcp-atlassian-sse": {
-      "url": "http://localhost:9000/sse"
+      "url": "http://localhost:9000/sse",
+      "env": {
+        "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
+        "CONFLUENCE_USERNAME": "your.email@company.com",
+        "CONFLUENCE_API_TOKEN": "your_api_token",
+        "JIRA_URL": "https://your-company.atlassian.net",
+        "JIRA_USERNAME": "your.email@company.com",
+        "JIRA_API_TOKEN": "your_api_token"
+      }
     }
   }
 }
