@@ -219,8 +219,6 @@ There are two ways to configure the Docker environment:
 
 ### Cursor IDE Setup
 
-The following instructions are for Cursor 0.47+, which uses JSON-based MCP configuration.
-
 1. Open Cursor Settings
 2. Navigate to `Features` > `MCP Servers` (or directly to `MCP`)
 3. Click `+ Add new global MCP server`
