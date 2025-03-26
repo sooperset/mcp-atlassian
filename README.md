@@ -88,10 +88,12 @@ uvx mcp-atlassian \
 - `--port`: Port number for SSE transport (default: 8000)
 - `--[no-]confluence-ssl-verify`: Toggle SSL verification for Confluence Server/DC
 - `--[no-]jira-ssl-verify`: Toggle SSL verification for Jira Server/DC
-- `--verbose`: Increase logging verbosity (can be used multiple times)
-- `--read-only`: Run in read-only mode (disables all write operations)
 - `--confluence-spaces-filter`: Comma-separated list of space keys to filter Confluence search results (e.g., "DEV,TEAM,DOC")
 - `--jira-projects-filter`: Comma-separated list of project keys to filter Jira search results (e.g., "PROJ,DEV,SUPPORT")
+- `--read-only`: Run in read-only mode (disables all write operations)
+- `--verbose`: Increase logging verbosity (can be used multiple times, default is WARNING level)
+  - `-v` or `--verbose`: Set logging to INFO level
+  - `-vv` or `--verbose --verbose`: Set logging to DEBUG level
 
 > **Note:** All configuration options can also be set via environment variables. See the `.env.example` file in the repository for the full list of available environment variables.
 

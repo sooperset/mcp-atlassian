@@ -8,12 +8,12 @@ output stream based on their level.
 import logging
 
 
-def setup_logging(level: int = logging.INFO) -> logging.Logger:
+def setup_logging(level: int = logging.WARNING) -> logging.Logger:
     """
     Configure MCP-Atlassian logging with level-based stream routing.
 
     Args:
-        level: The minimum logging level to display
+        level: The minimum logging level to display (default: WARNING)
 
     Returns:
         The configured logger instance
@@ -32,8 +32,12 @@ def setup_logging(level: int = logging.INFO) -> logging.Logger:
     handler.setFormatter(formatter)
     root_logger.addHandler(handler)
 
-    # Configure the application logger
-    logger = logging.getLogger("mcp-atlassian")
-    logger.setLevel(level)
+    # Configure specific loggers
+    loggers = ["mcp-atlassian", "mcp.server", "mcp.server.lowlevel.server", "mcp-jira"]
 
-    return logger
+    for logger_name in loggers:
+        logger = logging.getLogger(logger_name)
+        logger.setLevel(level)
+
+    # Return the application logger
+    return logging.getLogger("mcp-atlassian")

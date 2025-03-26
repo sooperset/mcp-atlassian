@@ -4,15 +4,15 @@ from mcp_atlassian.utils.logging import setup_logging
 
 
 def test_setup_logging_default_level():
-    """Test setup_logging with default INFO level"""
+    """Test setup_logging with default WARNING level"""
     logger = setup_logging()
 
-    # Check logger level is set to INFO
-    assert logger.level == logging.INFO
+    # Check logger level is set to WARNING
+    assert logger.level == logging.WARNING
 
     # Check root logger is configured
     root_logger = logging.getLogger()
-    assert root_logger.level == logging.INFO
+    assert root_logger.level == logging.WARNING
 
     # Verify handler and formatter
     assert len(root_logger.handlers) == 1

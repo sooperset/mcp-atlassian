@@ -10,7 +10,7 @@ from .utils.logging import setup_logging
 __version__ = "0.3.0"
 
 # Initialize logging with appropriate level
-logging_level = logging.INFO
+logging_level = logging.WARNING
 if os.getenv("MCP_VERBOSE", "").lower() in ("true", "1", "yes"):
     logging_level = logging.DEBUG
 
@@ -106,7 +106,7 @@ def main(
     Supports both Atlassian Cloud and Jira Server/Data Center deployments.
     """
     # Configure logging based on verbosity
-    logging_level = logging.INFO
+    logging_level = logging.WARNING
     if verbose == 1:
         logging_level = logging.INFO
     elif verbose >= 2:
