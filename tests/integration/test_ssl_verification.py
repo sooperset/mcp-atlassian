@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 from requests.sessions import Session
 
-from mcp_atlassian.utils import SSLIgnoreAdapter, configure_ssl_verification
+from mcp_atlassian.utils.ssl import SSLIgnoreAdapter, configure_ssl_verification
 
 
 @pytest.mark.integration

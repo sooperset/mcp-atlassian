@@ -12,7 +12,8 @@ from mcp.types import Resource, TextContent, Tool
 
 from .confluence import ConfluenceFetcher
 from .jira import JiraFetcher
-from .utils import is_atlassian_cloud_url, is_read_only_mode
+from .utils.io import is_read_only_mode
+from .utils.urls import is_atlassian_cloud_url
 
 # Configure logging
 logger = logging.getLogger("mcp-atlassian")

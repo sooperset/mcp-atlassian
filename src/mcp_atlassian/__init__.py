@@ -1,14 +1,21 @@
 import asyncio
 import logging
 import os
-import sys
 
 import click
 from dotenv import load_dotenv
 
+from .utils.logging import setup_logging
+
 __version__ = "0.3.0"
 
-logger = logging.getLogger("mcp-atlassian")
+# Initialize logging with appropriate level
+logging_level = logging.INFO
+if os.getenv("MCP_VERBOSE", "").lower() in ("true", "1", "yes"):
+    logging_level = logging.DEBUG
+
+# Set up logging using the utility function
+logger = setup_logging(logging_level)
 
 
 @click.command()
@@ -105,7 +112,9 @@ def main(
     elif verbose >= 2:
         logging_level = logging.DEBUG
 
-    logging.basicConfig(level=logging_level, stream=sys.stderr)
+    # Use our utility function for logging setup
+    global logger
+    logger = setup_logging(logging_level)
 
     # Load environment variables from file if specified, otherwise try default .env
     if env_file:

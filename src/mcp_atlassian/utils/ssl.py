@@ -1,7 +1,6 @@
-"""Utility functions for the MCP Atlassian integration."""
+"""SSL-related utility functions for MCP Atlassian."""
 
 import logging
-import os
 import ssl
 from typing import Any
 from urllib.parse import urlparse
@@ -10,25 +9,7 @@ from requests.adapters import HTTPAdapter
 from requests.sessions import Session
 from urllib3.poolmanager import PoolManager
 
-# Configure logging
 logger = logging.getLogger("mcp-atlassian")
-
-
-def is_atlassian_cloud_url(url: str) -> bool:
-    """Determine if a URL belongs to Atlassian Cloud or Server/Data Center.
-
-    Args:
-        url: The URL to check
-
-    Returns:
-        True if the URL is for an Atlassian Cloud instance, False for Server/Data Center
-    """
-    # Localhost and IP-based URLs are always Server/Data Center
-    if "localhost" in url or "127.0.0.1" in url:
-        return False
-
-    # The standard check for Atlassian cloud domains
-    return "atlassian.net" in url
 
 
 class SSLIgnoreAdapter(HTTPAdapter):
@@ -40,16 +21,6 @@ class SSLIgnoreAdapter(HTTPAdapter):
 
     This adapter also enables legacy SSL renegotiation which may be required for some older servers.
     Note that this reduces security and should only be used when absolutely necessary.
-
-    Example:
-        session = requests.Session()
-        adapter = SSLIgnoreAdapter()
-        session.mount('https://example.com', adapter)  # Disable SSL verification for example.com
-
-    Warning:
-        Only use this adapter when SSL verification must be disabled for specific use cases.
-        Disabling SSL verification and enabling legacy renegotiation reduces security by making
-        the connection vulnerable to man-in-the-middle attacks and other SSL/TLS vulnerabilities.
     """
 
     def init_poolmanager(
@@ -115,7 +86,7 @@ def configure_ssl_verification(
     """
     if not ssl_verify:
         logger.warning(
-            f"SSL verification is disabled for {service_name}. This may be insecure."
+            f"{service_name} SSL verification disabled. This is insecure and should only be used in testing environments."
         )
 
         # Get the domain from the configured URL
@@ -125,18 +96,3 @@ def configure_ssl_verification(
         adapter = SSLIgnoreAdapter()
         session.mount(f"https://{domain}", adapter)
         session.mount(f"http://{domain}", adapter)
-
-
-def is_read_only_mode() -> bool:
-    """Check if the server is running in read-only mode.
-
-    Read-only mode prevents all write operations (create, update, delete)
-    while allowing all read operations. This is useful for working with
-    production Atlassian instances where you want to prevent accidental
-    modifications.
-
-    Returns:
-        True if read-only mode is enabled, False otherwise
-    """
-    value = os.getenv("READ_ONLY_MODE", "false")
-    return value.lower() in ("true", "1", "yes", "y", "on")
