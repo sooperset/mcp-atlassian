@@ -627,6 +627,71 @@ class TestJiraIssue:
         assert "comments" in simplified
         assert len(simplified["comments"]) > 0
 
+    def test_jira_issue_with_custom_fields(self):
+        """Test JiraIssue handling of custom fields."""
+        # Create test data with custom fields
+        issue_data = {
+            "id": "10001",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test issue",
+                "customfield_10001": "Simple string value",
+                "customfield_10002": {"value": "Option value"},
+                "customfield_10003": [{"value": "Item 1"}, {"value": "Item 2"}],
+            },
+        }
+
+        # Test with no requested fields (should include all)
+        issue = JiraIssue.from_api_response(issue_data)
+        simplified = issue.to_simplified_dict()
+
+        # Check standard fields
+        assert simplified["key"] == "TEST-123"
+        assert simplified["summary"] == "Test issue"
+
+        # Check custom fields
+        assert simplified["customfield_10001"] == "Simple string value"
+        assert simplified["customfield_10002"] == {"value": "Option value"}
+        assert simplified["customfield_10003"] == [
+            {"value": "Item 1"},
+            {"value": "Item 2"},
+        ]
+
+        # Test with specific requested fields as string
+        issue = JiraIssue.from_api_response(
+            issue_data, requested_fields="summary,customfield_10001"
+        )
+        simplified = issue.to_simplified_dict()
+
+        # Check only requested fields are included
+        assert "key" in simplified  # key is always included
+        assert "summary" in simplified
+        assert "customfield_10001" in simplified
+        assert "customfield_10002" not in simplified
+
+        # Test with specific requested fields as list
+        issue = JiraIssue.from_api_response(
+            issue_data, requested_fields=["key", "customfield_10002"]
+        )
+        simplified = issue.to_simplified_dict()
+
+        # Check only requested fields are included (plus key which is always included)
+        assert "key" in simplified
+        assert "customfield_10002" in simplified
+        assert "summary" not in simplified
+        assert "customfield_10001" not in simplified
+
+        # Test with *all as requested field
+        issue = JiraIssue.from_api_response(issue_data, requested_fields="*all")
+        simplified = issue.to_simplified_dict()
+
+        # Check all fields are included
+        assert "key" in simplified
+        assert "summary" in simplified
+        assert "customfield_10001" in simplified
+        assert "customfield_10002" in simplified
+        assert "customfield_10003" in simplified
+
 
 class TestJiraSearchResult:
     """Tests for the JiraSearchResult model."""

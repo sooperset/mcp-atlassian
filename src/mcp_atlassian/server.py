@@ -535,6 +535,11 @@ async def list_tools() -> list[Tool]:
                                 "type": "string",
                                 "description": "Jira issue key (e.g., 'PROJ-123')",
                             },
+                            "fields": {
+                                "type": "string",
+                                "description": "Fields to return. Can be a comma-separated list (e.g., 'summary,status,customfield_10010') or '*all' for all fields",
+                                "default": None,
+                            },
                             "expand": {
                                 "type": "string",
                                 "description": (
@@ -553,6 +558,16 @@ async def list_tools() -> list[Tool]:
                                 "minimum": 0,
                                 "maximum": 100,
                                 "default": None,
+                            },
+                            "properties": {
+                                "type": "string",
+                                "description": "A comma-separated list of issue properties to return",
+                                "default": None,
+                            },
+                            "update_history": {
+                                "type": "boolean",
+                                "description": "Whether to update the issue view history for the requesting user",
+                                "default": True,
                             },
                         },
                         "required": ["issue_key"],
@@ -1173,11 +1188,19 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 raise ValueError("Jira is not configured.")
 
             issue_key = arguments.get("issue_key")
+            fields = arguments.get("fields")
             expand = arguments.get("expand")
             comment_limit = arguments.get("comment_limit")
+            properties = arguments.get("properties")
+            update_history = arguments.get("update_history", True)
 
             issue = ctx.jira.get_issue(
-                issue_key, expand=expand, comment_limit=comment_limit
+                issue_key,
+                fields=fields,
+                expand=expand,
+                comment_limit=comment_limit,
+                properties=properties,
+                update_history=update_history,
             )
 
             result = {"content": issue.to_simplified_dict()}

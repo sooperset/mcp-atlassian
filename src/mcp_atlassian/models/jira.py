@@ -515,8 +515,22 @@ class JiraIssue(ApiModel, TimestampMixin):
             logger.debug(f"Fields is not a dict, using empty dict: {type(fields)}")
             fields = {}
 
-        # Store requested fields if provided
+        # Store requested fields if provided and normalize format
         requested_fields = kwargs.get("requested_fields")
+
+        # Handle different formats of requested_fields
+        if requested_fields is not None:
+            if isinstance(requested_fields, str) and requested_fields != "*all":
+                # Convert comma-separated string to list
+                requested_fields = [
+                    field.strip() for field in requested_fields.split(",")
+                ]
+            elif isinstance(requested_fields, list | tuple | set):
+                # Keep as-is for collections, but convert to list for consistency
+                requested_fields = list(requested_fields)
+            elif requested_fields == "*all" or requested_fields == ["*all"]:
+                # Treat "*all" as None to include all fields
+                requested_fields = None
 
         # Extract custom fields - any field beginning with "customfield_"
         custom_fields = {}
@@ -657,8 +671,9 @@ class JiraIssue(ApiModel, TimestampMixin):
             "key": self.key,
         }
 
-        # If no specific fields were requested, include all standard fields
+        # If no specific fields were requested, include all standard fields and custom fields
         if not self.requested_fields or "*all" in self.requested_fields:
+            # Add standard fields
             result.update(
                 {
                     "summary": self.summary,
@@ -686,6 +701,11 @@ class JiraIssue(ApiModel, TimestampMixin):
                     "url": self.url,
                 }
             )
+
+            # Add custom fields directly at top level, not nested
+            for field_id, value in self.custom_fields.items():
+                result[field_id] = value
+
             return result
 
         # If specific fields were requested, only include those
@@ -726,7 +746,9 @@ class JiraIssue(ApiModel, TimestampMixin):
         for field in self.requested_fields:
             # Handle standard fields
             if field in field_mapping:
-                result[field] = field_mapping[field]()
+                value = field_mapping[field]()
+                if value is not None:  # Only include non-None values
+                    result[field] = value
             # Handle custom fields
             elif field.startswith("customfield_") and field in self.custom_fields:
                 result[field] = self.custom_fields[field]

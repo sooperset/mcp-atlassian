@@ -17,6 +17,9 @@ class EpicsMixin(UsersMixin):
         issue_key: str,
         expand: str | None = None,
         comment_limit: int | str | None = 10,
+        fields: str | list[str] | tuple[str, ...] | set[str] | None = None,
+        properties: str | list[str] | None = None,
+        update_history: bool = True,
     ) -> JiraIssue:
         """
         Get a Jira issue by key.
@@ -25,6 +28,9 @@ class EpicsMixin(UsersMixin):
             issue_key: The issue key (e.g., PROJECT-123)
             expand: Fields to expand in the response
             comment_limit: Maximum number of comments to include, or "all"
+            fields: Fields to return (comma-separated string, list, tuple, set, or "*all")
+            properties: Issue properties to return (comma-separated string or list)
+            update_history: Whether to update the issue view history
 
         Returns:
             JiraIssue model with issue data and metadata
@@ -38,13 +44,30 @@ class EpicsMixin(UsersMixin):
             if expand:
                 expand_param = expand
 
-            # Get the issue data
-            issue = self.jira.issue(issue_key, expand=expand_param)
+            # Convert fields to proper format if it's a list/tuple/set
+            fields_param = fields
+            if fields and isinstance(fields, list | tuple | set):
+                fields_param = ",".join(fields)
+
+            # Convert properties to proper format if it's a list
+            properties_param = properties
+            if properties and isinstance(properties, list | tuple | set):
+                properties_param = ",".join(properties)
+
+            # Get the issue data with all parameters
+            # Using get_issue instead of issue to support all parameters
+            issue = self.jira.get_issue(
+                issue_key,
+                expand=expand_param,
+                fields=fields_param,
+                properties=properties_param,
+                update_history=update_history,
+            )
             if not issue:
                 raise ValueError(f"Issue {issue_key} not found")
 
             # Extract fields data, safely handling None
-            fields = issue.get("fields", {}) or {}
+            fields_data = issue.get("fields", {}) or {}
 
             # Process comments if needed
             comment_limit_int = None
@@ -70,9 +93,9 @@ class EpicsMixin(UsersMixin):
 
             # Add comments to the issue data for processing by the model
             if comments:
-                if "comment" not in fields:
-                    fields["comment"] = {}
-                fields["comment"]["comments"] = comments
+                if "comment" not in fields_data:
+                    fields_data["comment"] = {}
+                fields_data["comment"]["comments"] = comments
 
             # Get epic information
             epic_info = {}
@@ -82,16 +105,18 @@ class EpicsMixin(UsersMixin):
             epic_link_field = field_ids.get("epic_link")
             if (
                 epic_link_field
-                and epic_link_field in fields
-                and fields[epic_link_field]
+                and epic_link_field in fields_data
+                and fields_data[epic_link_field]
             ):
-                epic_info["epic_key"] = fields[epic_link_field]
+                epic_info["epic_key"] = fields_data[epic_link_field]
 
             # Update the issue data with the fields
-            issue["fields"] = fields
+            issue["fields"] = fields_data
 
             # Create and return the JiraIssue model
-            return JiraIssue.from_api_response(issue, base_url=self.config.url)
+            return JiraIssue.from_api_response(
+                issue, base_url=self.config.url, requested_fields=fields
+            )
         except Exception as e:
             error_msg = str(e)
             if "Issue does not exist" in error_msg:
@@ -594,7 +619,7 @@ class EpicsMixin(UsersMixin):
         """
         try:
             # First, check if the issue is an Epic
-            epic = self.jira.issue(epic_key)
+            epic = self.jira.get_issue(epic_key)
             fields_data = epic.get("fields", {})
 
             # Safely check if the issue is an Epic
