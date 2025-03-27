@@ -366,6 +366,84 @@ class JiraComment(ApiModel, TimestampMixin):
         return result
 
 
+class JiraAttachment(ApiModel):
+    """
+    Model representing a Jira issue attachment.
+    
+    This model contains information about files attached to Jira issues,
+    including the filename, size, content type, and download URL.
+    """
+
+    id: str = JIRA_DEFAULT_ID
+    filename: str = EMPTY_STRING
+    size: int = 0
+    content_type: str | None = None
+    created: str = EMPTY_STRING
+    author: JiraUser | None = None
+    url: str | None = None
+    thumbnail_url: str | None = None
+
+    @classmethod
+    def from_api_response(cls, data: dict[str, Any], **kwargs: Any) -> "JiraAttachment":
+        """
+        Create a JiraAttachment from a Jira API response.
+
+        Args:
+            data: The attachment data from the Jira API
+
+        Returns:
+            A JiraAttachment instance
+        """
+        if not data:
+            return cls()
+
+        # Handle non-dictionary data by returning a default instance
+        if not isinstance(data, dict):
+            logger.debug("Received non-dictionary data, returning default instance")
+            return cls()
+
+        # Ensure ID is a string
+        attachment_id = data.get("id", JIRA_DEFAULT_ID)
+        if attachment_id is not None:
+            attachment_id = str(attachment_id)
+
+        # Extract author information
+        author = None
+        if author_data := data.get("author"):
+            author = JiraUser.from_api_response(author_data)
+
+        return cls(
+            id=attachment_id,
+            filename=str(data.get("filename", EMPTY_STRING)),
+            size=int(data.get("size", 0)),
+            content_type=data.get("mimeType"),
+            created=data.get("created", EMPTY_STRING),
+            author=author,
+            url=data.get("content"),
+            thumbnail_url=data.get("thumbnail"),
+        )
+
+    def to_simplified_dict(self) -> dict[str, Any]:
+        """Convert to simplified dictionary for API response."""
+        result = {
+            "filename": self.filename,
+            "size": self.size,
+            "created": self.created,
+            "url": self.url,
+        }
+
+        if self.content_type:
+            result["content_type"] = self.content_type
+            
+        if self.author:
+            result["author"] = self.author.display_name
+            
+        if self.thumbnail_url:
+            result["thumbnail_url"] = self.thumbnail_url
+
+        return result
+
+
 class JiraIssue(ApiModel, TimestampMixin):
     """
     Model representing a Jira issue.
@@ -388,6 +466,7 @@ class JiraIssue(ApiModel, TimestampMixin):
     labels: list[str] = Field(default_factory=list)
     components: list[str] = Field(default_factory=list)
     comments: list[JiraComment] = Field(default_factory=list)
+    attachments: list[JiraAttachment] = Field(default_factory=list)
     url: str | None = None
     epic_key: str | None = None
     epic_name: str | None = None
@@ -570,6 +649,14 @@ class JiraIssue(ApiModel, TimestampMixin):
             if isinstance(comments_list, list):
                 comments = [JiraComment.from_api_response(c) for c in comments_list]
 
+        # Process attachments
+        attachments = []
+        attachments_data = fields.get("attachment", [])
+        if isinstance(attachments_data, list):
+            for attachment in attachments_data:
+                if isinstance(attachment, dict):
+                    attachments.append(JiraAttachment.from_api_response(attachment))
+
         # Construct URL if base_url is provided
         url = None
         base_url = kwargs.get("base_url")
@@ -637,6 +724,7 @@ class JiraIssue(ApiModel, TimestampMixin):
             labels=labels,
             components=components,
             comments=comments,
+            attachments=attachments,
             url=url,
             epic_key=epic_key,
             epic_name=epic_name,
@@ -717,6 +805,9 @@ class JiraIssue(ApiModel, TimestampMixin):
             ],
             "comments": lambda: [
                 comment.to_simplified_dict() for comment in self.comments
+            ],
+            "attachments": lambda: [
+                attachment.to_simplified_dict() for attachment in self.attachments
             ],
             "url": lambda: self.url,
             "epic_key": lambda: self.epic_key,

@@ -669,6 +669,24 @@ async def list_tools() -> list[Tool]:
                         "required": ["issue_key"],
                     },
                 ),
+                Tool(
+                    name="jira_download_attachments",
+                    description="Download attachments from a Jira issue",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "issue_key": {
+                                "type": "string",
+                                "description": "Jira issue key (e.g., 'PROJ-123')",
+                            },
+                            "target_dir": {
+                                "type": "string",
+                                "description": "Directory where attachments should be saved",
+                            },
+                        },
+                        "required": ["issue_key", "target_dir"],
+                    },
+                ),
             ]
         )
 
@@ -1293,6 +1311,31 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             return [
                 TextContent(
                     type="text", text=json.dumps(result, indent=2, ensure_ascii=False)
+                )
+            ]
+
+        elif name == "jira_download_attachments" and ctx and ctx.jira:
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            issue_key = arguments.get("issue_key")
+            target_dir = arguments.get("target_dir")
+
+            if not issue_key:
+                raise ValueError("Missing required parameter: issue_key")
+            if not target_dir:
+                raise ValueError("Missing required parameter: target_dir")
+
+            # Download the attachments
+            result = ctx.jira.download_issue_attachments(
+                issue_key=issue_key, 
+                target_dir=target_dir
+            )
+
+            return [
+                TextContent(
+                    type="text", 
+                    text=json.dumps(result, indent=2, ensure_ascii=False)
                 )
             ]
 
