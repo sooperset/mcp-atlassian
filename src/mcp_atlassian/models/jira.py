@@ -470,6 +470,7 @@ class JiraIssue(ApiModel, TimestampMixin):
     url: str | None = None
     epic_key: str | None = None
     epic_name: str | None = None
+    fix_versions: list[str] = Field(default_factory=list)
     custom_fields: dict[str, Any] = Field(default_factory=dict)
     requested_fields: str | list[str] | None = None
 
@@ -674,6 +675,14 @@ class JiraIssue(ApiModel, TimestampMixin):
                 if isinstance(attachment, dict):
                     attachments.append(JiraAttachment.from_api_response(attachment))
 
+        # Extract fixVersions safely
+        fix_versions = []
+        fix_versions_data = fields.get("fixVersions", [])
+        if isinstance(fix_versions_data, list):
+            for version in fix_versions_data:
+                if isinstance(version, dict) and "name" in version:
+                    fix_versions.append(version.get("name"))
+
         # Construct URL if base_url is provided
         url = None
         base_url = kwargs.get("base_url")
@@ -745,6 +754,7 @@ class JiraIssue(ApiModel, TimestampMixin):
             url=url,
             epic_key=epic_key,
             epic_name=epic_name,
+            fix_versions=fix_versions,
             custom_fields=custom_fields,
             requested_fields=requested_fields,
         )
@@ -809,6 +819,7 @@ class JiraIssue(ApiModel, TimestampMixin):
                     "url": self.url,
                     "epic_key": self.epic_key,
                     "epic_name": self.epic_name,
+                    "fix_versions": self.fix_versions,
                 }
             )
 
@@ -855,6 +866,7 @@ class JiraIssue(ApiModel, TimestampMixin):
                 "url": lambda: self.url,
                 "epic_key": lambda: self.epic_key,
                 "epic_name": lambda: self.epic_name,
+                "fix_versions": lambda: self.fix_versions,
             }
 
             # Process each requested field
