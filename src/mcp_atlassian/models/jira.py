@@ -1030,3 +1030,50 @@ class JiraSearchResult(ApiModel):
                 "Search found %d issues but no issue data was returned", self.total
             )
         return self
+
+
+class JiraBoard(ApiModel):
+    """
+    Model representing a Jira board.
+    """
+
+    id: str = JIRA_DEFAULT_ID
+    name: str = UNKNOWN
+    type: str = UNKNOWN
+
+    @classmethod
+    def from_api_response(cls, data: dict[str, Any], **kwargs: Any) -> "JiraBoard":
+        """
+        Create a JiraTransition instance from an API response dictionary.
+
+        Args:
+            data: The API response data
+            **kwargs: Additional options
+
+        Returns:
+            A new JiraTransition instance
+        """
+        if not data:
+            return cls()
+
+        # Handle non-dictionary data by returning a default instance
+        if not isinstance(data, dict):
+            logger.debug("Received non-dictionary data, returning default instance")
+            return cls()
+
+        transition_data: dict[str, Any] = {}
+
+        # Ensure ID is a string (API sometimes returns integers)
+        transition_id = data.get("id", JIRA_DEFAULT_ID)
+        if transition_id is not None:
+            transition_id = str(transition_id)
+        transition_data["id"] = transition_id
+
+        transition_data["name"] = str(data.get("name", UNKNOWN))
+        transition_data["type"] = str(data.get("type", UNKNOWN))
+
+        return cls(
+            id=transition_id,
+            name=str(data.get("name", UNKNOWN)),
+            type=str(data.get("type", UNKNOWN)),
+        )
