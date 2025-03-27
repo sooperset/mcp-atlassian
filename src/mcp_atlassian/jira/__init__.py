@@ -20,6 +20,7 @@ from .search import SearchMixin
 from .transitions import TransitionsMixin
 from .users import UsersMixin
 from .worklog import WorklogMixin
+from .attachments import AttachmentsMixin
 
 
 class JiraFetcher(
@@ -33,6 +34,7 @@ class JiraFetcher(
     SearchMixin,
     IssuesMixin,
     UsersMixin,
+    AttachmentsMixin,
 ):
     """
     The main Jira client class providing access to all Jira operations.
@@ -48,6 +50,7 @@ class JiraFetcher(
     - SearchMixin: Search operations
     - IssuesMixin: Issue operations
     - UsersMixin: User operations
+    - AttachmentsMixin: Attachment download operations
 
     The class structure is designed to maintain backward compatibility while
     improving code organization and maintainability.
