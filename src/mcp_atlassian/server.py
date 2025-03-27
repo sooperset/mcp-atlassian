@@ -1328,14 +1328,12 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
 
             # Download the attachments
             result = ctx.jira.download_issue_attachments(
-                issue_key=issue_key, 
-                target_dir=target_dir
+                issue_key=issue_key, target_dir=target_dir
             )
 
             return [
                 TextContent(
-                    type="text", 
-                    text=json.dumps(result, indent=2, ensure_ascii=False)
+                    type="text", text=json.dumps(result, indent=2, ensure_ascii=False)
                 )
             ]
 

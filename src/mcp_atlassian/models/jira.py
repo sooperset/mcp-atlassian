@@ -369,7 +369,7 @@ class JiraComment(ApiModel, TimestampMixin):
 class JiraAttachment(ApiModel):
     """
     Model representing a Jira issue attachment.
-    
+
     This model contains information about files attached to Jira issues,
     including the filename, size, content type, and download URL.
     """
@@ -434,10 +434,10 @@ class JiraAttachment(ApiModel):
 
         if self.content_type:
             result["content_type"] = self.content_type
-            
+
         if self.author:
             result["author"] = self.author.display_name
-            
+
         if self.thumbnail_url:
             result["thumbnail_url"] = self.thumbnail_url
 
