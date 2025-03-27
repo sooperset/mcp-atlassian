@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2025-03-28
+
+### Added
+- Added support for retrieving Jira custom fields via MCP API (#157)
+- Added ability to download attachments from JIRA issues (#160)
+- Added development environment with devcontainer support (#159)
+- Added JiraBoards and get_all_agile_boards tool (#158)
+
 ## [0.3.1] - 2025-03-27
 
 ### Added
