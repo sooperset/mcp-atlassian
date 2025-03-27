@@ -557,7 +557,7 @@ async def list_tools() -> list[Tool]:
                                 ),
                                 "minimum": 0,
                                 "maximum": 100,
-                                "default": None,
+                                "default": 10,
                             },
                             "properties": {
                                 "type": "string",
