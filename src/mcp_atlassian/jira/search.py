@@ -19,7 +19,7 @@ class SearchMixin(JiraClient):
         | list[str]
         | tuple[str, ...]
         | set[str]
-        | None = "summary,description,status,assignee,reporter,priority,created,updated,issuetype",
+        | None = "summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
         start: int = 0,
         limit: int = 50,
         expand: str | None = None,

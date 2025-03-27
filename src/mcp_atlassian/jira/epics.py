@@ -21,7 +21,7 @@ class EpicsMixin(UsersMixin):
         | list[str]
         | tuple[str, ...]
         | set[str]
-        | None = "summary,description,status,assignee,reporter,priority,created,updated,issuetype",
+        | None = "summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
         properties: str | list[str] | None = None,
         update_history: bool = True,
     ) -> JiraIssue:
@@ -47,7 +47,7 @@ class EpicsMixin(UsersMixin):
             if (
                 isinstance(fields, str)
                 and fields
-                == "summary,description,status,assignee,reporter,priority,created,updated,issuetype"
+                == "summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype"
             ):
                 # Default fields are being used - preserve the order
                 default_fields_list = fields.split(",")

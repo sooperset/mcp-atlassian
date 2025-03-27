@@ -54,7 +54,7 @@ class TestSearchMixin:
         # Verify
         search_mixin.jira.jql.assert_called_once_with(
             "project = TEST",
-            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype",
+            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
             start=0,
             limit=50,
             expand=None,
@@ -195,7 +195,7 @@ class TestSearchMixin:
         result = search_mixin.search_issues("text ~ 'test'", projects_filter="TEST")
         search_mixin.jira.jql.assert_called_with(
             "(text ~ 'test') AND project = TEST",
-            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype",
+            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
             start=0,
             limit=50,
             expand=None,
@@ -206,7 +206,7 @@ class TestSearchMixin:
         result = search_mixin.search_issues("text ~ 'test'", projects_filter="TEST,DEV")
         search_mixin.jira.jql.assert_called_with(
             '(text ~ \'test\') AND project IN ("TEST", "DEV")',
-            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype",
+            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
             start=0,
             limit=50,
             expand=None,
@@ -219,7 +219,7 @@ class TestSearchMixin:
         )
         search_mixin.jira.jql.assert_called_with(
             "project = EXISTING",  # Should not add filter when project already exists
-            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype",
+            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
             start=0,
             limit=50,
             expand=None,
@@ -253,7 +253,7 @@ class TestSearchMixin:
         result = search_mixin.search_issues("text ~ 'test'")
         search_mixin.jira.jql.assert_called_with(
             '(text ~ \'test\') AND project IN ("TEST", "DEV")',
-            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype",
+            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
             start=0,
             limit=50,
             expand=None,
@@ -264,7 +264,7 @@ class TestSearchMixin:
         result = search_mixin.search_issues("text ~ 'test'", projects_filter="OVERRIDE")
         search_mixin.jira.jql.assert_called_with(
             "(text ~ 'test') AND project = OVERRIDE",
-            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype",
+            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
             start=0,
             limit=50,
             expand=None,
