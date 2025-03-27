@@ -22,6 +22,22 @@ pre-commit install
 cp .env.example .env
 ```
 
+## Development Setup with local VSCode devcontainer
+
+1. Clone your fork: `git clone https://github.com/YOUR-USERNAME/mcp-atlassian.git`
+2. Add the upstream remote: `git remote add upstream https://github.com/sooperset/mcp-atlassian.git`
+3. Open the project with VSCode and open with devcontainer
+4. Add this bit of config to your `.vscode/settings.json`:
+```json
+{
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+    "[python]": {
+      "editor.defaultFormatter": "charliermarsh.ruff",
+      "editor.formatOnSave": true
+    }
+}
+```
+
 ## Development Workflow
 
 1. Create a feature or fix branch:
