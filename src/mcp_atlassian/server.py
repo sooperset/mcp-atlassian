@@ -537,8 +537,8 @@ async def list_tools() -> list[Tool]:
                             },
                             "fields": {
                                 "type": "string",
-                                "description": "Fields to return. Can be a comma-separated list (e.g., 'summary,status,customfield_10010') or '*all' for all fields",
-                                "default": None,
+                                "description": "Fields to return. Can be a comma-separated list (e.g., 'summary,status,customfield_10010'), '*all' for all fields (including custom fields), or omitted for essential fields only",
+                                "default": "summary,description,status,assignee,reporter,priority,created,updated,issuetype",
                             },
                             "expand": {
                                 "type": "string",

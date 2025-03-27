@@ -48,7 +48,11 @@ class TestIssuesMixin:
 
         # Verify API calls
         issues_mixin.jira.get_issue.assert_called_once_with(
-            "TEST-123", expand=None, fields=None, properties=None, update_history=True
+            "TEST-123",
+            expand=None,
+            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype",
+            properties=None,
+            update_history=True,
         )
 
         # Verify result structure
@@ -100,7 +104,11 @@ class TestIssuesMixin:
 
         # Verify the API calls
         issues_mixin.jira.get_issue.assert_called_once_with(
-            "TEST-123", expand=None, fields=None, properties=None, update_history=True
+            "TEST-123",
+            expand=None,
+            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype",
+            properties=None,
+            update_history=True,
         )
         issues_mixin.jira.issue_get_comments.assert_called_once_with("TEST-123")
 
@@ -171,7 +179,7 @@ class TestIssuesMixin:
             issues_mixin.jira.get_issue.assert_any_call(
                 "TEST-123",
                 expand=None,
-                fields=None,
+                fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype",
                 properties=None,
                 update_history=True,
             )
@@ -604,7 +612,7 @@ class TestIssuesMixin:
         issues_mixin.jira.get_issue.assert_called_with(
             "TEST-123",
             expand=None,
-            fields=None,
+            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype",
             properties="property1,property2",
             update_history=True,
         )
@@ -617,7 +625,7 @@ class TestIssuesMixin:
         issues_mixin.jira.get_issue.assert_called_with(
             "TEST-123",
             expand=None,
-            fields=None,
+            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype",
             properties="property1,property2",
             update_history=True,
         )
@@ -636,5 +644,9 @@ class TestIssuesMixin:
 
         # Verify API call - should include update_history parameter
         issues_mixin.jira.get_issue.assert_called_with(
-            "TEST-123", expand=None, fields=None, properties=None, update_history=False
+            "TEST-123",
+            expand=None,
+            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype",
+            properties=None,
+            update_history=False,
         )

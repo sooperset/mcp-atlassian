@@ -392,7 +392,7 @@ class JiraIssue(ApiModel, TimestampMixin):
     epic_key: str | None = None
     epic_name: str | None = None
     custom_fields: dict[str, Any] = Field(default_factory=dict)
-    requested_fields: list[str] | None = None
+    requested_fields: str | list[str] | None = None
 
     @property
     def page_content(self) -> str | None:
@@ -528,9 +528,12 @@ class JiraIssue(ApiModel, TimestampMixin):
             elif isinstance(requested_fields, list | tuple | set):
                 # Keep as-is for collections, but convert to list for consistency
                 requested_fields = list(requested_fields)
-            elif requested_fields == "*all" or requested_fields == ["*all"]:
-                # Treat "*all" as None to include all fields
-                requested_fields = None
+            elif requested_fields == "*all":
+                # Keep "*all" as a string to signal all fields should be included
+                requested_fields = "*all"
+            elif requested_fields == ["*all"]:
+                # Handle the case where it's in a list
+                requested_fields = "*all"
 
         # Extract custom fields - any field beginning with "customfield_"
         custom_fields = {}
@@ -661,19 +664,32 @@ class JiraIssue(ApiModel, TimestampMixin):
     def to_simplified_dict(self) -> dict[str, Any]:
         """
         Convert to a simplified dictionary representation.
-
-        If requested_fields is provided, only those fields will be included
-        in the result, plus id and key which are always included.
+        - If fields="*all", all fields are included
+        - If specific fields are requested, only those are included
+        - If no fields specified, essential fields are included by default
         """
-        # Start with the minimal set of fields that should always be included
+        # Always include id and key
         result: dict[str, Any] = {
             "id": self.id,
             "key": self.key,
         }
 
-        # If no specific fields were requested, include all standard fields and custom fields
-        if not self.requested_fields or "*all" in self.requested_fields:
-            # Add standard fields
+        # Define essential fields (same as default in API definition)
+        essential_fields = [
+            "summary",
+            "description",
+            "status",
+            "assignee",
+            "reporter",
+            "priority",
+            "created",
+            "updated",
+            "issuetype",
+        ]
+
+        # Case 1: "*all" was explicitly requested - include everything
+        if self.requested_fields == "*all":
+            # Add all standard fields
             result.update(
                 {
                     "summary": self.summary,
@@ -702,56 +718,89 @@ class JiraIssue(ApiModel, TimestampMixin):
                 }
             )
 
-            # Add custom fields directly at top level, not nested
+            # Add all custom fields
             for field_id, value in self.custom_fields.items():
                 result[field_id] = value
 
-            return result
+        # Case 2: Specific fields were requested
+        elif self.requested_fields:
+            field_mapping = {
+                "summary": lambda: self.summary,
+                "description": lambda: self.description,
+                "created": lambda: self.format_timestamp(self.created),
+                "updated": lambda: self.format_timestamp(self.updated),
+                "status": lambda: self.status.to_simplified_dict()
+                if self.status
+                else None,
+                "issuetype": lambda: self.issue_type.to_simplified_dict()
+                if self.issue_type
+                else None,
+                "issue_type": lambda: self.issue_type.to_simplified_dict()
+                if self.issue_type
+                else None,
+                "priority": lambda: self.priority.to_simplified_dict()
+                if self.priority
+                else None,
+                "assignee": lambda: self.assignee.to_simplified_dict()
+                if self.assignee
+                else None,
+                "reporter": lambda: self.reporter.to_simplified_dict()
+                if self.reporter
+                else None,
+                "labels": lambda: self.labels,
+                "components": lambda: self.components,
+                "comment": lambda: [
+                    comment.to_simplified_dict() for comment in self.comments
+                ],
+                "comments": lambda: [
+                    comment.to_simplified_dict() for comment in self.comments
+                ],
+                "url": lambda: self.url,
+                "epic_key": lambda: self.epic_key,
+                "epic_name": lambda: self.epic_name,
+            }
 
-        # If specific fields were requested, only include those
-        field_mapping = {
-            "summary": lambda: self.summary,
-            "description": lambda: self.description,
-            "created": lambda: self.format_timestamp(self.created),
-            "updated": lambda: self.format_timestamp(self.updated),
-            "status": lambda: self.status.to_simplified_dict() if self.status else None,
-            "issuetype": lambda: self.issue_type.to_simplified_dict()
-            if self.issue_type
-            else None,
-            "issue_type": lambda: self.issue_type.to_simplified_dict()
-            if self.issue_type
-            else None,
-            "priority": lambda: self.priority.to_simplified_dict()
-            if self.priority
-            else None,
-            "assignee": lambda: self.assignee.to_simplified_dict()
-            if self.assignee
-            else None,
-            "reporter": lambda: self.reporter.to_simplified_dict()
-            if self.reporter
-            else None,
-            "labels": lambda: self.labels,
-            "components": lambda: self.components,
-            "comment": lambda: [
-                comment.to_simplified_dict() for comment in self.comments
-            ],
-            "comments": lambda: [
-                comment.to_simplified_dict() for comment in self.comments
-            ],
-            "url": lambda: self.url,
-            "epic_key": lambda: self.epic_key,
-            "epic_name": lambda: self.epic_name,
-        }
+            # Process each requested field
+            for field in self.requested_fields:
+                # Handle standard fields
+                if field in field_mapping:
+                    value = field_mapping[field]()
+                    if value is not None:  # Only include non-None values
+                        result[field] = value
+                # Handle custom fields
+                elif field.startswith("customfield_") and field in self.custom_fields:
+                    result[field] = self.custom_fields[field]
 
-        for field in self.requested_fields:
-            # Handle standard fields
-            if field in field_mapping:
-                value = field_mapping[field]()
-                if value is not None:  # Only include non-None values
-                    result[field] = value
-            # Handle custom fields
-            elif field.startswith("customfield_") and field in self.custom_fields:
-                result[field] = self.custom_fields[field]
+        # Case 3: No specific fields requested - use essential fields
+        else:
+            field_mapping = {
+                "summary": lambda: self.summary,
+                "description": lambda: self.description,
+                "status": lambda: self.status.to_simplified_dict()
+                if self.status
+                else None,
+                "assignee": lambda: self.assignee.to_simplified_dict()
+                if self.assignee
+                else None,
+                "reporter": lambda: self.reporter.to_simplified_dict()
+                if self.reporter
+                else None,
+                "priority": lambda: self.priority.to_simplified_dict()
+                if self.priority
+                else None,
+                "created": lambda: self.format_timestamp(self.created),
+                "updated": lambda: self.format_timestamp(self.updated),
+                "issuetype": lambda: self.issue_type.to_simplified_dict()
+                if self.issue_type
+                else None,
+            }
+
+            # Add each essential field if it has a value
+            for field in essential_fields:
+                if field in field_mapping:
+                    value = field_mapping[field]()
+                    if value is not None:
+                        result[field] = value
 
         return result
 

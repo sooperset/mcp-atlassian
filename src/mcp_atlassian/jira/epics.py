@@ -17,7 +17,11 @@ class EpicsMixin(UsersMixin):
         issue_key: str,
         expand: str | None = None,
         comment_limit: int | str | None = 10,
-        fields: str | list[str] | tuple[str, ...] | set[str] | None = None,
+        fields: str
+        | list[str]
+        | tuple[str, ...]
+        | set[str]
+        | None = "summary,description,status,assignee,reporter,priority,created,updated,issuetype",
         properties: str | list[str] | None = None,
         update_history: bool = True,
     ) -> JiraIssue:
