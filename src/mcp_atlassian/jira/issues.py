@@ -44,16 +44,55 @@ class IssuesMixin(UsersMixin):
             Exception: If there is an error retrieving the issue
         """
         try:
-            # Ensure "comment" field is included if comment_limit is specified and non-zero
-            if comment_limit and comment_limit != 0:
-                if isinstance(fields, str):
+            # Ensure necessary fields are included based on special parameters
+            if (
+                isinstance(fields, str)
+                and fields
+                == "summary,description,status,assignee,reporter,priority,created,updated,issuetype"
+            ):
+                # Default fields are being used - preserve the order
+                default_fields_list = fields.split(",")
+                additional_fields = []
+
+                # Add 'comment' field if comment_limit is specified and non-zero
+                if (
+                    comment_limit
+                    and comment_limit != 0
+                    and "comment" not in default_fields_list
+                ):
+                    additional_fields.append("comment")
+
+                # Add appropriate fields based on expand parameter
+                if expand:
+                    expand_params = expand.split(",")
                     if (
-                        fields
-                        == "summary,description,status,assignee,reporter,priority,created,updated,issuetype"
+                        "changelog" in expand_params
+                        and "changelog" not in default_fields_list
+                        and "changelog" not in additional_fields
                     ):
-                        # If using default fields string, append comment
-                        fields += ",comment"
-                    elif fields != "*all" and "comment" not in fields:
+                        additional_fields.append("changelog")
+                    if (
+                        "renderedFields" in expand_params
+                        and "rendered" not in default_fields_list
+                        and "rendered" not in additional_fields
+                    ):
+                        additional_fields.append("rendered")
+
+                # Add appropriate fields based on properties parameter
+                if (
+                    properties
+                    and "properties" not in default_fields_list
+                    and "properties" not in additional_fields
+                ):
+                    additional_fields.append("properties")
+
+                # Combine default fields with additional fields, preserving order
+                if additional_fields:
+                    fields = fields + "," + ",".join(additional_fields)
+            # Handle non-default fields string
+            elif comment_limit and comment_limit != 0:
+                if isinstance(fields, str):
+                    if fields != "*all" and "comment" not in fields:
                         # Add comment to string fields
                         fields += ",comment"
                 elif isinstance(fields, list) and "comment" not in fields:

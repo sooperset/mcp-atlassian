@@ -608,11 +608,11 @@ class TestIssuesMixin:
         # Test with properties parameter as string
         issues_mixin.get_issue("TEST-123", properties="property1,property2")
 
-        # Verify API call - should include properties parameter
+        # Verify API call - should include properties parameter and add 'properties' to fields
         issues_mixin.jira.get_issue.assert_called_with(
             "TEST-123",
             expand=None,
-            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype,comment",
+            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype,comment,properties",
             properties="property1,property2",
             update_history=True,
         )
@@ -621,11 +621,11 @@ class TestIssuesMixin:
         issues_mixin.jira.get_issue.reset_mock()
         issues_mixin.get_issue("TEST-123", properties=["property1", "property2"])
 
-        # Verify API call - should include properties parameter as comma-separated string
+        # Verify API call - should include properties parameter as comma-separated string and add 'properties' to fields
         issues_mixin.jira.get_issue.assert_called_with(
             "TEST-123",
             expand=None,
-            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype,comment",
+            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype,comment,properties",
             properties="property1,property2",
             update_history=True,
         )
