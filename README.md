@@ -1,5 +1,10 @@
 # MCP Atlassian
 
+![PyPI Version](https://img.shields.io/pypi/v/mcp-atlassian)
+![PyPI - Downloads](https://img.shields.io/pypi/dm/mcp-atlassian)
+![PePy - Total Downloads](https://static.pepy.tech/personalized-badge/mcp-atlassian?period=total&units=international_system&left_color=grey&right_color=blue&left_text=Total%20Downloads)
+![License](https://img.shields.io/github/license/sooperset/mcp-atlassian)
+
 Model Context Protocol (MCP) server for Atlassian products (Confluence and Jira). This integration supports both Confluence & Jira Cloud and Server/Data Center deployments.
 
 ### Feature Demo
