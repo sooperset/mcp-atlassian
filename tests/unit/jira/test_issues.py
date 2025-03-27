@@ -50,7 +50,7 @@ class TestIssuesMixin:
         issues_mixin.jira.get_issue.assert_called_once_with(
             "TEST-123",
             expand=None,
-            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype",
+            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype,comment",
             properties=None,
             update_history=True,
         )
@@ -106,7 +106,7 @@ class TestIssuesMixin:
         issues_mixin.jira.get_issue.assert_called_once_with(
             "TEST-123",
             expand=None,
-            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype",
+            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype,comment",
             properties=None,
             update_history=True,
         )
@@ -179,7 +179,7 @@ class TestIssuesMixin:
             issues_mixin.jira.get_issue.assert_any_call(
                 "TEST-123",
                 expand=None,
-                fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype",
+                fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype,comment",
                 properties=None,
                 update_history=True,
             )
@@ -542,7 +542,7 @@ class TestIssuesMixin:
         issues_mixin.jira.get_issue.assert_called_with(
             "TEST-123",
             expand=None,
-            fields="summary,customfield_10049",
+            fields="summary,customfield_10049,comment",
             properties=None,
             update_history=True,
         )
@@ -563,7 +563,7 @@ class TestIssuesMixin:
         issues_mixin.jira.get_issue.assert_called_with(
             "TEST-123",
             expand=None,
-            fields="summary,customfield_10050",
+            fields="summary,customfield_10050,comment",
             properties=None,
             update_history=True,
         )
@@ -612,7 +612,7 @@ class TestIssuesMixin:
         issues_mixin.jira.get_issue.assert_called_with(
             "TEST-123",
             expand=None,
-            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype",
+            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype,comment",
             properties="property1,property2",
             update_history=True,
         )
@@ -625,7 +625,7 @@ class TestIssuesMixin:
         issues_mixin.jira.get_issue.assert_called_with(
             "TEST-123",
             expand=None,
-            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype",
+            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype,comment",
             properties="property1,property2",
             update_history=True,
         )
@@ -646,7 +646,7 @@ class TestIssuesMixin:
         issues_mixin.jira.get_issue.assert_called_with(
             "TEST-123",
             expand=None,
-            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype",
+            fields="summary,description,status,assignee,reporter,priority,created,updated,issuetype,comment",
             properties=None,
             update_history=False,
         )

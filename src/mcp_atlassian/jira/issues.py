@@ -44,6 +44,32 @@ class IssuesMixin(UsersMixin):
             Exception: If there is an error retrieving the issue
         """
         try:
+            # Ensure "comment" field is included if comment_limit is specified and non-zero
+            if comment_limit and comment_limit != 0:
+                if isinstance(fields, str):
+                    if (
+                        fields
+                        == "summary,description,status,assignee,reporter,priority,created,updated,issuetype"
+                    ):
+                        # If using default fields string, append comment
+                        fields += ",comment"
+                    elif fields != "*all" and "comment" not in fields:
+                        # Add comment to string fields
+                        fields += ",comment"
+                elif isinstance(fields, list) and "comment" not in fields:
+                    # Add comment to list fields
+                    fields = fields + ["comment"]
+                elif isinstance(fields, tuple) and "comment" not in fields:
+                    # Convert tuple to list, add comment, then convert back to tuple
+                    fields_list = list(fields)
+                    fields_list.append("comment")
+                    fields = tuple(fields_list)
+                elif isinstance(fields, set) and "comment" not in fields:
+                    # Add comment to set fields
+                    fields_copy = fields.copy()
+                    fields_copy.add("comment")
+                    fields = fields_copy
+
             # Build expand parameter if provided
             expand_param = None
             if expand:
