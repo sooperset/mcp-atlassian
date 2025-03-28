@@ -199,14 +199,61 @@ class SearchMixin(JiraClient):
             return search_result.issues
         except requests.HTTPError as e:
             logger.error(
-                f"Error searching issues for board '{board_id}': {str(e.response.content)}"
+                f"Error searching issues for board with JQL '{board_id}': {str(e.response.content)}"
             )
             raise Exception(
-                f"Error searching issues for board: {str(e.response.content)}"
+                f"Error searching issues for board with JQL: {str(e.response.content)}"
             ) from e
         except Exception as e:
             logger.error(f"Error searching issues for board with JQL '{jql}': {str(e)}")
-            raise Exception(f"Error searching issues for board: {str(e)}") from e
+            raise Exception(
+                f"Error searching issues for board with JQL {str(e)}"
+            ) from e
+
+    def get_sprint_issues(
+        self,
+        sprint_id: str,
+        fields: str = "*all",
+        start: int = 0,
+        limit: int = 50,
+    ) -> list[JiraIssue]:
+        """
+        Get all issues linked to a specific sprint.
+
+        Args:
+            sprint_id: The ID of the sprint
+            fields: Fields to return (comma-separated string or "*all")
+            start: Starting index
+            limit: Maximum issues to return
+
+        Returns:
+            List of JiraIssue models representing the issues linked to the sprint
+
+        Raises:
+            Exception: If there is an error getting board issues
+        """
+        try:
+            response = self.jira.get_sprint_issues(
+                sprint_id=sprint_id,
+                start=start,
+                limit=limit,
+            )
+
+            # Convert the response to a search result model
+            search_result = JiraSearchResult.from_api_response(
+                response, base_url=self.config.url, requested_fields=fields
+            )
+            return search_result.issues
+        except requests.HTTPError as e:
+            logger.error(
+                f"Error searching issues for sprint '{sprint_id}': {str(e.response.content)}"
+            )
+            raise Exception(
+                f"Error searching issues for sprint: {str(e.response.content)}"
+            ) from e
+        except Exception as e:
+            logger.error(f"Error searching issues for sprint: {sprint_id}': {str(e)}")
+            raise Exception(f"Error searching issues for sprint: {str(e)}") from e
 
     def _parse_date(self, date_str: str) -> str:
         """

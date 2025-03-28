@@ -782,6 +782,41 @@ async def list_tools() -> list[Tool]:
                         },
                     },
                 ),
+                Tool(
+                    name="jira_get_sprint_issues",
+                    description="Get jira issues from sprint",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "sprint_id": {
+                                "type": "string",
+                                "description": "The id of sprint (e.g., '10001')",
+                            },
+                            "fields": {
+                                "type": "string",
+                                "description": (
+                                    "Comma-separated fields to return in the results. "
+                                    "Use '*all' for all fields, or specify individual "
+                                    "fields like 'summary,status,assignee,priority'"
+                                ),
+                                "default": "*all",
+                            },
+                            "start": {
+                                "type": "number",
+                                "description": "Start index of issue",
+                                "default": 0,
+                            },
+                            "limit": {
+                                "type": "number",
+                                "description": "Maximum number of results (1-50)",
+                                "default": 10,
+                                "minimum": 1,
+                                "maximum": 50,
+                            },
+                        },
+                        "required": ["sprint_id"],
+                    },
+                ),
             ]
         )
 
@@ -1490,6 +1525,29 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                         indent=2,
                         ensure_ascii=False,
                     ),
+                )
+            ]
+
+        elif name == "jira_get_sprint_issues" and ctx and ctx.jira:
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            sprint_id = arguments.get("sprint_id")
+            fields = arguments.get("fields", "*all")
+            start = arguments.get("start", 0)
+            limit = min(int(arguments.get("limit", 10)), 50)
+
+            issues = ctx.jira.get_sprint_issues(
+                sprint_id=sprint_id, fields=fields, start=start, limit=limit
+            )
+
+            # Format results
+            sprint_issues = [issue.to_simplified_dict() for issue in issues]
+
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(sprint_issues, indent=2, ensure_ascii=False),
                 )
             ]
 
