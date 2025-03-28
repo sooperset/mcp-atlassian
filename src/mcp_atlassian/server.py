@@ -669,6 +669,39 @@ async def list_tools() -> list[Tool]:
                         "required": ["issue_key"],
                     },
                 ),
+                Tool(
+                    name="jira_get_agile_boards",
+                    description="Get jira agile boards by name, project key, or type",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "board_name": {
+                                "type": "string",
+                                "description": "The name of board, support fuzzy search",
+                            },
+                            "project_key": {
+                                "type": "string",
+                                "description": "Jira project key (e.g., 'PROJ-123')",
+                            },
+                            "board_type": {
+                                "type": "string",
+                                "description": "The type of jira board (e.g., 'scrum', 'kanban')",
+                            },
+                            "start": {
+                                "type": "number",
+                                "description": "Start index of board",
+                                "default": 0,
+                            },
+                            "limit": {
+                                "type": "number",
+                                "description": "Maximum number of results (1-50)",
+                                "default": 10,
+                                "minimum": 1,
+                                "maximum": 50,
+                            },
+                        },
+                    },
+                ),
             ]
         )
 
@@ -1588,6 +1621,35 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                         text=error_msg,
                     )
                 ]
+
+        elif name == "jira_get_agile_boards":
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            board_name = arguments.get("board_name")
+            project_key = arguments.get("project_key")
+            board_type = arguments.get("board_type")
+            start = arguments.get("start", 0)
+            limit = min(int(arguments.get("limit", 10)), 50)
+
+            boards = ctx.jira.get_all_agile_boards_model(
+                board_name=board_name,
+                project_key=project_key,
+                board_type=board_type,
+                start=start,
+                limit=limit,
+            )
+
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        [board.to_simplified_dict() for board in boards],
+                        indent=2,
+                        ensure_ascii=False,
+                    ),
+                )
+            ]
 
         raise ValueError(f"Unknown tool: {name}")
 

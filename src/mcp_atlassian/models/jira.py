@@ -1077,3 +1077,13 @@ class JiraBoard(ApiModel):
             name=str(data.get("name", UNKNOWN)),
             type=str(data.get("type", UNKNOWN)),
         )
+
+    def to_simplified_dict(self) -> dict[str, Any]:
+        """
+        Convert to a simplified dictionary representation.
+        """
+        return {
+            "id": self.id,
+            "name": self.name,
+            "type": self.type,
+        }
