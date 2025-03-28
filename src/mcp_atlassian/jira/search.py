@@ -15,7 +15,11 @@ class SearchMixin(JiraClient):
     def search_issues(
         self,
         jql: str,
-        fields: str = "*all",
+        fields: str
+        | list[str]
+        | tuple[str, ...]
+        | set[str]
+        | None = "summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
         start: int = 0,
         limit: int = 50,
         expand: str | None = None,
@@ -26,7 +30,7 @@ class SearchMixin(JiraClient):
 
         Args:
             jql: JQL query string
-            fields: Fields to return (comma-separated string or "*all")
+            fields: Fields to return (comma-separated string, list, tuple, set, or "*all")
             start: Starting index
             limit: Maximum issues to return
             expand: Optional items to expand (comma-separated)
@@ -65,8 +69,13 @@ class SearchMixin(JiraClient):
 
                 logger.info(f"Applied projects filter to query: {jql}")
 
+            # Convert fields to proper format if it's a list/tuple/set
+            fields_param = fields
+            if fields and isinstance(fields, list | tuple | set):
+                fields_param = ",".join(fields)
+
             response = self.jira.jql(
-                jql, fields=fields, start=start, limit=limit, expand=expand
+                jql, fields=fields_param, start=start, limit=limit, expand=expand
             )
 
             # Convert the response to a search result model

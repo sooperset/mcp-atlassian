@@ -17,6 +17,13 @@ class EpicsMixin(UsersMixin):
         issue_key: str,
         expand: str | None = None,
         comment_limit: int | str | None = 10,
+        fields: str
+        | list[str]
+        | tuple[str, ...]
+        | set[str]
+        | None = "summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
+        properties: str | list[str] | None = None,
+        update_history: bool = True,
     ) -> JiraIssue:
         """
         Get a Jira issue by key.
@@ -25,6 +32,9 @@ class EpicsMixin(UsersMixin):
             issue_key: The issue key (e.g., PROJECT-123)
             expand: Fields to expand in the response
             comment_limit: Maximum number of comments to include, or "all"
+            fields: Fields to return (comma-separated string, list, tuple, set, or "*all")
+            properties: Issue properties to return (comma-separated string or list)
+            update_history: Whether to update the issue view history
 
         Returns:
             JiraIssue model with issue data and metadata
@@ -33,18 +43,100 @@ class EpicsMixin(UsersMixin):
             Exception: If there is an error retrieving the issue
         """
         try:
+            # Ensure necessary fields are included based on special parameters
+            if (
+                isinstance(fields, str)
+                and fields
+                == "summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype"
+            ):
+                # Default fields are being used - preserve the order
+                default_fields_list = fields.split(",")
+                additional_fields = []
+
+                # Add 'comment' field if comment_limit is specified and non-zero
+                if (
+                    comment_limit
+                    and comment_limit != 0
+                    and "comment" not in default_fields_list
+                ):
+                    additional_fields.append("comment")
+
+                # Add appropriate fields based on expand parameter
+                if expand:
+                    expand_params = expand.split(",")
+                    if (
+                        "changelog" in expand_params
+                        and "changelog" not in default_fields_list
+                        and "changelog" not in additional_fields
+                    ):
+                        additional_fields.append("changelog")
+                    if (
+                        "renderedFields" in expand_params
+                        and "rendered" not in default_fields_list
+                        and "rendered" not in additional_fields
+                    ):
+                        additional_fields.append("rendered")
+
+                # Add appropriate fields based on properties parameter
+                if (
+                    properties
+                    and "properties" not in default_fields_list
+                    and "properties" not in additional_fields
+                ):
+                    additional_fields.append("properties")
+
+                # Combine default fields with additional fields, preserving order
+                if additional_fields:
+                    fields = fields + "," + ",".join(additional_fields)
+            # Handle non-default fields string
+            elif comment_limit and comment_limit != 0:
+                if isinstance(fields, str):
+                    if fields != "*all" and "comment" not in fields:
+                        # Add comment to string fields
+                        fields += ",comment"
+                elif isinstance(fields, list) and "comment" not in fields:
+                    # Add comment to list fields
+                    fields = fields + ["comment"]
+                elif isinstance(fields, tuple) and "comment" not in fields:
+                    # Convert tuple to list, add comment, then convert back to tuple
+                    fields_list = list(fields)
+                    fields_list.append("comment")
+                    fields = tuple(fields_list)
+                elif isinstance(fields, set) and "comment" not in fields:
+                    # Add comment to set fields
+                    fields_copy = fields.copy()
+                    fields_copy.add("comment")
+                    fields = fields_copy
+
             # Build expand parameter if provided
             expand_param = None
             if expand:
                 expand_param = expand
 
-            # Get the issue data
-            issue = self.jira.issue(issue_key, expand=expand_param)
+            # Convert fields to proper format if it's a list/tuple/set
+            fields_param = fields
+            if fields and isinstance(fields, list | tuple | set):
+                fields_param = ",".join(fields)
+
+            # Convert properties to proper format if it's a list
+            properties_param = properties
+            if properties and isinstance(properties, list | tuple | set):
+                properties_param = ",".join(properties)
+
+            # Get the issue data with all parameters
+            # Using get_issue instead of issue to support all parameters
+            issue = self.jira.get_issue(
+                issue_key,
+                expand=expand_param,
+                fields=fields_param,
+                properties=properties_param,
+                update_history=update_history,
+            )
             if not issue:
                 raise ValueError(f"Issue {issue_key} not found")
 
             # Extract fields data, safely handling None
-            fields = issue.get("fields", {}) or {}
+            fields_data = issue.get("fields", {}) or {}
 
             # Process comments if needed
             comment_limit_int = None
@@ -70,9 +162,9 @@ class EpicsMixin(UsersMixin):
 
             # Add comments to the issue data for processing by the model
             if comments:
-                if "comment" not in fields:
-                    fields["comment"] = {}
-                fields["comment"]["comments"] = comments
+                if "comment" not in fields_data:
+                    fields_data["comment"] = {}
+                fields_data["comment"]["comments"] = comments
 
             # Get epic information
             epic_info = {}
@@ -82,16 +174,18 @@ class EpicsMixin(UsersMixin):
             epic_link_field = field_ids.get("epic_link")
             if (
                 epic_link_field
-                and epic_link_field in fields
-                and fields[epic_link_field]
+                and epic_link_field in fields_data
+                and fields_data[epic_link_field]
             ):
-                epic_info["epic_key"] = fields[epic_link_field]
+                epic_info["epic_key"] = fields_data[epic_link_field]
 
             # Update the issue data with the fields
-            issue["fields"] = fields
+            issue["fields"] = fields_data
 
             # Create and return the JiraIssue model
-            return JiraIssue.from_api_response(issue, base_url=self.config.url)
+            return JiraIssue.from_api_response(
+                issue, base_url=self.config.url, requested_fields=fields
+            )
         except Exception as e:
             error_msg = str(e)
             if "Issue does not exist" in error_msg:
@@ -594,7 +688,7 @@ class EpicsMixin(UsersMixin):
         """
         try:
             # First, check if the issue is an Epic
-            epic = self.jira.issue(epic_key)
+            epic = self.jira.get_issue(epic_key)
             fields_data = epic.get("fields", {})
 
             # Safely check if the issue is an Epic

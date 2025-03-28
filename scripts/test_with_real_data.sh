@@ -135,7 +135,7 @@ run_api_tests() {
 
     # Otherwise run specific tests based on write/read only setting
     # Run the read-only tests
-    uv run pytest tests/test_real_api_validation.py::test_jira_get_issue tests/test_real_api_validation.py::test_jira_get_epic_issues tests/test_real_api_validation.py::test_confluence_get_page_content $VERBOSITY
+    uv run pytest tests/test_real_api_validation.py::test_jira_get_issue tests/test_real_api_validation.py::test_jira_get_issue_with_fields tests/test_real_api_validation.py::test_jira_get_epic_issues tests/test_real_api_validation.py::test_confluence_get_page_content $VERBOSITY
 
     if [[ "$RUN_WRITE_TESTS" == "true" ]]; then
         echo ""

@@ -399,6 +399,62 @@ async def test_jira_get_issue(jira_client: JiraFetcher, test_issue_key: str) -> 
 
 
 @pytest.mark.anyio
+async def test_jira_get_issue_with_fields(
+    jira_client: JiraFetcher, test_issue_key: str
+) -> None:
+    """Test retrieving a Jira issue with specific fields."""
+    # Get the issue with all fields first to have a reference
+    full_issue = jira_client.get_issue(test_issue_key)
+    assert full_issue is not None
+
+    # Now get the issue with only specific fields
+    limited_issue = jira_client.get_issue(
+        test_issue_key, fields="summary,description,customfield_*"
+    )
+
+    # Verify we got the requested fields
+    assert limited_issue is not None
+    assert limited_issue.key == test_issue_key
+    assert limited_issue.summary is not None
+
+    # Get simplified dicts to compare
+    full_data = full_issue.to_simplified_dict()
+    limited_data = limited_issue.to_simplified_dict()
+
+    # Required fields should be in both
+    assert "key" in full_data and "key" in limited_data
+    assert "id" in full_data and "id" in limited_data
+    assert "summary" in full_data and "summary" in limited_data
+
+    # Fields that should be in limited result
+    assert "description" in limited_data
+
+    # Check custom fields if there are any
+    custom_fields_found = False
+    for field in limited_data:
+        if field.startswith("customfield_"):
+            custom_fields_found = True
+            break
+
+    # Fields that shouldn't be in limited result unless they were requested
+    if "assignee" in full_data and "assignee" not in limited_data:
+        assert "assignee" not in limited_data
+    if "status" in full_data and "status" not in limited_data:
+        assert "status" not in limited_data
+
+    # Test with a list of fields
+    list_fields_issue = jira_client.get_issue(
+        test_issue_key, fields=["summary", "status"]
+    )
+
+    assert list_fields_issue is not None
+    list_data = list_fields_issue.to_simplified_dict()
+    assert "summary" in list_data
+    if "status" in full_data:
+        assert "status" in list_data
+
+
+@pytest.mark.anyio
 async def test_jira_get_epic_issues(
     jira_client: JiraFetcher, test_epic_key: str
 ) -> None:
