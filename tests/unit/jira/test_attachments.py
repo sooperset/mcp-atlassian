@@ -6,14 +6,27 @@ from mcp_atlassian.jira.attachments import AttachmentsMixin
 from mcp_atlassian.jira.config import JiraConfig
 
 # BSTASZ: some simple test scenarios for AttachmentsMixin
-# downloading attachment & attachments with a success,
-# with relative path
-# fail with no URL
-# fail with HTTP error
-# errors testing for files - write error, file exists, etc.
-# fail with not found issue
-# fail with missing URLs
-# fail with attachments downloading errors
+# For downloading attachments from JIRA:
+# success case - downloads attachment correctly
+# relative path handling - converts to absolute path
+# error cases:
+#   - no URL provided
+#   - HTTP error
+#   - file write error
+#   - file not created
+#   - issue not found
+#   - missing URLs
+#   - multiple attachment download failures
+
+# For uploading attachments to JIRA:
+# success case - file uploads correctly
+# relative path handling - converts to absolute path
+# error cases:
+#   - no issue key provided
+#   - no file path provided
+#   - file not found
+#   - API error during upload
+#   - no response from API
 
 
 class TestAttachmentsMixin:
@@ -395,3 +408,173 @@ class TestAttachmentsMixin:
             assert len(result["failed"]) == 1
             assert result["failed"][0]["filename"] == "test1.txt"
             assert "No URL available" in result["failed"][0]["error"]
+
+    # Tests for upload_attachment method
+
+    def test_upload_attachment_success(self):
+        """Test successful attachment upload."""
+        # Mock the Jira API response
+        mock_attachment_response = {
+            "id": "12345",
+            "filename": "test_file.txt",
+            "size": 100,
+        }
+        self.client.jira.add_attachment.return_value = mock_attachment_response
+
+        # Mock file operations
+        with (
+            patch("os.path.exists") as mock_exists,
+            patch("os.path.getsize") as mock_getsize,
+            patch("os.path.isabs") as mock_isabs,
+            patch("os.path.abspath") as mock_abspath,
+            patch("os.path.basename") as mock_basename,
+            patch("builtins.open", mock_open(read_data=b"test content")),
+        ):
+            mock_exists.return_value = True
+            mock_getsize.return_value = 100
+            mock_isabs.return_value = True
+            mock_abspath.return_value = "/absolute/path/test_file.txt"
+            mock_basename.return_value = "test_file.txt"
+
+            # Call the method
+            result = self.client.upload_attachment(
+                "TEST-123", "/absolute/path/test_file.txt"
+            )
+
+            # Assertions
+            assert result["success"] is True
+            assert result["issue_key"] == "TEST-123"
+            assert result["filename"] == "test_file.txt"
+            assert result["size"] == 100
+            assert result["id"] == "12345"
+            self.client.jira.add_attachment.assert_called_once_with(
+                issue_key="TEST-123", filename="/absolute/path/test_file.txt"
+            )
+
+    def test_upload_attachment_relative_path(self):
+        """Test attachment upload with a relative path."""
+        # Mock the Jira API response
+        mock_attachment_response = {
+            "id": "12345",
+            "filename": "test_file.txt",
+            "size": 100,
+        }
+        self.client.jira.add_attachment.return_value = mock_attachment_response
+
+        # Mock file operations
+        with (
+            patch("os.path.exists") as mock_exists,
+            patch("os.path.getsize") as mock_getsize,
+            patch("os.path.isabs") as mock_isabs,
+            patch("os.path.abspath") as mock_abspath,
+            patch("os.path.basename") as mock_basename,
+            patch("builtins.open", mock_open(read_data=b"test content")),
+        ):
+            mock_exists.return_value = True
+            mock_getsize.return_value = 100
+            mock_isabs.return_value = False
+            mock_abspath.return_value = "/absolute/path/test_file.txt"
+            mock_basename.return_value = "test_file.txt"
+
+            # Call the method with a relative path
+            result = self.client.upload_attachment("TEST-123", "test_file.txt")
+
+            # Assertions
+            assert result["success"] is True
+            mock_isabs.assert_called_once_with("test_file.txt")
+            mock_abspath.assert_called_once_with("test_file.txt")
+            self.client.jira.add_attachment.assert_called_once_with(
+                issue_key="TEST-123", filename="/absolute/path/test_file.txt"
+            )
+
+    def test_upload_attachment_no_issue_key(self):
+        """Test attachment upload with no issue key."""
+        result = self.client.upload_attachment("", "/path/to/file.txt")
+
+        # Assertions
+        assert result["success"] is False
+        assert "No issue key provided" in result["error"]
+        self.client.jira.add_attachment.assert_not_called()
+
+    def test_upload_attachment_no_file_path(self):
+        """Test attachment upload with no file path."""
+        result = self.client.upload_attachment("TEST-123", "")
+
+        # Assertions
+        assert result["success"] is False
+        assert "No file path provided" in result["error"]
+        self.client.jira.add_attachment.assert_not_called()
+
+    def test_upload_attachment_file_not_found(self):
+        """Test attachment upload when file doesn't exist."""
+        # Mock file operations
+        with (
+            patch("os.path.exists") as mock_exists,
+            patch("os.path.isabs") as mock_isabs,
+            patch("os.path.abspath") as mock_abspath,
+            patch("builtins.open", mock_open(read_data=b"test content")),
+        ):
+            mock_exists.return_value = False
+            mock_isabs.return_value = True
+            mock_abspath.return_value = "/absolute/path/test_file.txt"
+
+            result = self.client.upload_attachment(
+                "TEST-123", "/absolute/path/test_file.txt"
+            )
+
+            # Assertions
+            assert result["success"] is False
+            assert "File not found" in result["error"]
+            self.client.jira.add_attachment.assert_not_called()
+
+    def test_upload_attachment_api_error(self):
+        """Test attachment upload with an API error."""
+        # Mock the Jira API to raise an exception
+        self.client.jira.add_attachment.side_effect = Exception("API Error")
+
+        # Mock file operations
+        with (
+            patch("os.path.exists") as mock_exists,
+            patch("os.path.isabs") as mock_isabs,
+            patch("os.path.abspath") as mock_abspath,
+            patch("os.path.basename") as mock_basename,
+            patch("builtins.open", mock_open(read_data=b"test content")),
+        ):
+            mock_exists.return_value = True
+            mock_isabs.return_value = True
+            mock_abspath.return_value = "/absolute/path/test_file.txt"
+            mock_basename.return_value = "test_file.txt"
+
+            result = self.client.upload_attachment(
+                "TEST-123", "/absolute/path/test_file.txt"
+            )
+
+            # Assertions
+            assert result["success"] is False
+            assert "API Error" in result["error"]
+
+    def test_upload_attachment_no_response(self):
+        """Test attachment upload when API returns no response."""
+        # Mock the Jira API to return None
+        self.client.jira.add_attachment.return_value = None
+
+        # Mock file operations
+        with (
+            patch("os.path.exists") as mock_exists,
+            patch("os.path.isabs") as mock_isabs,
+            patch("os.path.abspath") as mock_abspath,
+            patch("os.path.basename") as mock_basename,
+            patch("builtins.open", mock_open(read_data=b"test content")),
+        ):
+            mock_exists.return_value = True
+            mock_isabs.return_value = True
+            mock_abspath.return_value = "/absolute/path/test_file.txt"
+            mock_basename.return_value = "test_file.txt"
+
+            result = self.client.upload_attachment(
+                "TEST-123", "/absolute/path/test_file.txt"
+            )
+
+            # Assertions
+            assert result["success"] is False
+            assert "Failed to upload attachment" in result["error"]

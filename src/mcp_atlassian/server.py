@@ -778,6 +778,11 @@ async def list_tools() -> list[Tool]:
                                     "description": "Optional JSON string of additional fields to update. Use this for custom fields or more complex updates.",
                                     "default": "{}",
                                 },
+                                "attachments": {
+                                    "type": "string",
+                                    "description": "Optional JSON string or comma-separated list of file paths to attach to the issue. "
+                                    'Example: "/path/to/file1.txt,/path/to/file2.txt" or "["/path/to/file1.txt","/path/to/file2.txt"]"',
+                                },
                             },
                             "required": ["issue_key", "fields"],
                         },
@@ -1445,7 +1450,37 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 except json.JSONDecodeError:
                     raise ValueError("Invalid JSON in additional_fields")
 
+            # Handle attachments if provided
+            attachments = []
+            if arguments.get("attachments"):
+                # Parse attachments - can be a single string or a list of strings
+                if isinstance(arguments.get("attachments"), str):
+                    try:
+                        # Try to parse as JSON array
+                        parsed_attachments = json.loads(arguments.get("attachments"))
+                        if isinstance(parsed_attachments, list):
+                            attachments = parsed_attachments
+                        else:
+                            # Single file path as a JSON string
+                            attachments = [parsed_attachments]
+                    except json.JSONDecodeError:
+                        # Plain string - single file path
+                        attachments = [arguments.get("attachments")]
+                elif isinstance(arguments.get("attachments"), list):
+                    # Already a list
+                    attachments = arguments.get("attachments")
+
+                # Validate all paths exist
+                for path in attachments[:]:
+                    if not os.path.exists(path):
+                        logger.warning(f"Attachment file not found: {path}")
+                        attachments.remove(path)
+
             try:
+                # Add attachments to additional_fields if any valid paths were found
+                if attachments:
+                    additional_fields["attachments"] = attachments
+
                 # Update the issue - directly pass fields to JiraFetcher.update_issue
                 # instead of using fields as a parameter name
                 issue = ctx.jira.update_issue(
@@ -1453,6 +1488,15 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
 
                 result = issue.to_simplified_dict()
+
+                # Include attachment results if available
+                if (
+                    hasattr(issue, "custom_fields")
+                    and "attachment_results" in issue.custom_fields
+                ):
+                    result["attachment_results"] = issue.custom_fields[
+                        "attachment_results"
+                    ]
 
                 return [
                     TextContent(
@@ -1547,7 +1591,8 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
 
             return [
                 TextContent(
-                    type="text", text=json.dumps(result, indent=2, ensure_ascii=False)
+                    type="text",
+                    text=json.dumps(result, indent=2, ensure_ascii=False),
                 )
             ]
 

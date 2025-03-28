@@ -705,7 +705,10 @@ class IssuesMixin(UsersMixin):
         Args:
             issue_key: The key of the issue to update
             fields: Dictionary of fields to update
-            **kwargs: Additional fields to update
+            **kwargs: Additional fields to update. Special fields include:
+                - attachments: List of file paths to upload as attachments
+                - status: New status for the issue (handled via transitions)
+                - assignee: New assignee for the issue
 
         Returns:
             JiraIssue model representing the updated issue
@@ -719,6 +722,7 @@ class IssuesMixin(UsersMixin):
                 raise ValueError("Issue key is required")
 
             update_fields = fields or {}
+            attachments_result = None
 
             # Process kwargs
             for key, value in kwargs.items():
@@ -728,7 +732,19 @@ class IssuesMixin(UsersMixin):
                     update_fields["status"] = value
                     return self._update_issue_with_status(issue_key, update_fields)
 
-                if key == "assignee":
+                elif key == "attachments":
+                    # Handle attachments separately - they're not part of fields update
+                    if (
+                        value
+                        and isinstance(value, list | tuple)
+                        and hasattr(self, "upload_attachments")
+                    ):
+                        # We'll process attachments after updating fields
+                        pass
+                    else:
+                        logger.warning(f"Invalid attachments value: {value}")
+
+                elif key == "assignee":
                     # Handle assignee updates
                     try:
                         account_id = self._get_account_id(value)
@@ -745,15 +761,40 @@ class IssuesMixin(UsersMixin):
                     else:
                         update_fields[key] = value
 
-            # Update the issue
+            # Update the issue fields
             if update_fields:
                 self.jira.update_issue(
                     issue_key=issue_key, update={"fields": update_fields}
                 )
 
+            # Handle attachments if provided
+            if (
+                "attachments" in kwargs
+                and kwargs["attachments"]
+                and hasattr(self, "upload_attachments")
+            ):
+                try:
+                    attachments_result = self.upload_attachments(
+                        issue_key, kwargs["attachments"]
+                    )
+                    logger.info(
+                        f"Uploaded attachments to {issue_key}: {attachments_result}"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Error uploading attachments to {issue_key}: {str(e)}"
+                    )
+                    # Continue with the update even if attachments fail
+
             # Get the updated issue data and convert to JiraIssue model
             issue_data = self.jira.get_issue(issue_key)
-            return JiraIssue.from_api_response(issue_data)
+            issue = JiraIssue.from_api_response(issue_data)
+
+            # Add attachment results to the response if available
+            if attachments_result:
+                issue.custom_fields["attachment_results"] = attachments_result
+
+            return issue
 
         except Exception as e:
             error_msg = str(e)
