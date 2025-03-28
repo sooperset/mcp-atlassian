@@ -22,6 +22,7 @@ from .transitions import TransitionsMixin
 from .users import UsersMixin
 from .worklog import WorklogMixin
 from .boards import BoardsMixin
+from .attachments import AttachmentsMixin
 
 
 class JiraFetcher(
@@ -37,6 +38,7 @@ class JiraFetcher(
     UsersMixin,
     BoardsMixin,
     SprintsMixin,
+    AttachmentsMixin,
 ):
     """
     The main Jira client class providing access to all Jira operations.
@@ -54,6 +56,7 @@ class JiraFetcher(
     - UsersMixin: User operations
     - BoardsMixin: Board operations
     - SprintsMixin: Sprint operations
+    - AttachmentsMixin: Attachment download operations
 
     The class structure is designed to maintain backward compatibility while
     improving code organization and maintainability.

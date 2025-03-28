@@ -543,13 +543,21 @@ class TestEpicsMixin:
     def test_get_epic_issues_success(self, epics_mixin):
         """Test get_epic_issues with successful retrieval."""
         # Setup mocks
-        epics_mixin.jira.issue.return_value = {
+        epics_mixin.jira.get_issue.return_value = {
             "key": "EPIC-123",
             "fields": {"issuetype": {"name": "Epic"}},
         }
 
         epics_mixin.get_jira_field_ids = MagicMock(
             return_value={"epic_link": "customfield_10014"}
+        )
+
+        # Mock search_issues to return test data
+        epics_mixin.search_issues = MagicMock(
+            return_value=[
+                JiraIssue(key="TEST-456", summary="Issue 1"),
+                JiraIssue(key="TEST-789", summary="Issue 2"),
+            ]
         )
 
         # Call the method
@@ -572,7 +580,7 @@ class TestEpicsMixin:
     def test_get_epic_issues_not_epic(self, epics_mixin):
         """Test get_epic_issues when the issue is not an epic."""
         # Setup mocks - issue is not an epic
-        epics_mixin.jira.issue.return_value = {
+        epics_mixin.jira.get_issue.return_value = {
             "key": "TEST-123",
             "fields": {"issuetype": {"name": "Task"}},
         }
@@ -586,7 +594,7 @@ class TestEpicsMixin:
     def test_get_epic_issues_no_results(self, epics_mixin):
         """Test get_epic_issues when no results are found."""
         # Setup mocks
-        epics_mixin.jira.issue.return_value = {
+        epics_mixin.jira.get_issue.return_value = {
             "key": "EPIC-123",
             "fields": {"issuetype": {"name": "Epic"}},
         }
@@ -608,7 +616,7 @@ class TestEpicsMixin:
     def test_get_epic_issues_fallback_jql(self, epics_mixin):
         """Test get_epic_issues with fallback JQL queries."""
         # Setup mocks
-        epics_mixin.jira.issue.return_value = {
+        epics_mixin.jira.get_issue.return_value = {
             "key": "EPIC-123",
             "fields": {"issuetype": {"name": "Epic"}},
         }
@@ -642,7 +650,7 @@ class TestEpicsMixin:
     def test_get_epic_issues_no_search_issues(self, epics_mixin):
         """Test get_epic_issues when search_issues method is not available."""
         # Setup mocks
-        epics_mixin.jira.issue.return_value = {
+        epics_mixin.jira.get_issue.return_value = {
             "key": "EPIC-123",
             "fields": {"issuetype": {"name": "Epic"}},
         }
@@ -674,7 +682,7 @@ class TestEpicsMixin:
     def test_get_epic_issues_api_error(self, epics_mixin):
         """Test get_epic_issues with API error."""
         # Setup mocks - simulate API error
-        epics_mixin.jira.issue.side_effect = Exception("API error")
+        epics_mixin.jira.get_issue.side_effect = Exception("API error")
 
         # Call the method and expect an error
         with pytest.raises(Exception, match="Error getting epic issues: API error"):
