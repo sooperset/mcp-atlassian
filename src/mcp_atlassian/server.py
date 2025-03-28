@@ -702,6 +702,57 @@ async def list_tools() -> list[Tool]:
                         },
                     },
                 ),
+                Tool(
+                    name="jira_get_board_issues",
+                    description="Get all issues linked to a specific board",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "board_id": {
+                                "type": "string",
+                                "description": "The id of the board (e.g., '1001')",
+                            },
+                            "jql": {
+                                "type": "string",
+                                "description": "JQL query string (Jira Query Language). Examples:\n"
+                                '- Find Epics: "issuetype = Epic AND project = PROJ"\n'
+                                '- Find issues in Epic: "parent = PROJ-123"\n'
+                                "- Find by status: \"status = 'In Progress' AND project = PROJ\"\n"
+                                '- Find by assignee: "assignee = currentUser()"\n'
+                                '- Find recently updated: "updated >= -7d AND project = PROJ"\n'
+                                '- Find by label: "labels = frontend AND project = PROJ"\n'
+                                '- Find by priority: "priority = High AND project = PROJ"',
+                            },
+                            "fields": {
+                                "type": "string",
+                                "description": (
+                                    "Comma-separated fields to return in the results. "
+                                    "Use '*all' for all fields, or specify individual "
+                                    "fields like 'summary,status,assignee,priority'"
+                                ),
+                                "default": "*all",
+                            },
+                            "start": {
+                                "type": "number",
+                                "description": "Start index of issue",
+                                "default": 0,
+                            },
+                            "limit": {
+                                "type": "number",
+                                "description": "Maximum number of results (1-50)",
+                                "default": 10,
+                                "minimum": 1,
+                                "maximum": 50,
+                            },
+                            "expand": {
+                                "type": "string",
+                                "description": "Fields to expand in the response (e.g., 'version', 'body.storage')",
+                                "default": "version",
+                            },
+                        },
+                        "required": ["board_id", "jql"],
+                    },
+                ),
             ]
         )
 
@@ -1329,6 +1380,66 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
+        elif name == "jira_get_agile_boards" and ctx and ctx.jira:
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            board_name = arguments.get("board_name")
+            project_key = arguments.get("project_key")
+            board_type = arguments.get("board_type")
+            start = arguments.get("start", 0)
+            limit = min(int(arguments.get("limit", 10)), 50)
+
+            boards = ctx.jira.get_all_agile_boards_model(
+                board_name=board_name,
+                project_key=project_key,
+                board_type=board_type,
+                start=start,
+                limit=limit,
+            )
+
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        [board.to_simplified_dict() for board in boards],
+                        indent=2,
+                        ensure_ascii=False,
+                    ),
+                )
+            ]
+
+        elif name == "jira_get_board_issues" and ctx and ctx.jira:
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            board_id = arguments.get("board_id")
+            jql = arguments.get("jql")
+            fields = arguments.get("fields", "*all")
+
+            start = arguments.get("start", 0)
+            limit = min(int(arguments.get("limit", 10)), 50)
+            expand = arguments.get("expand", "version")
+
+            issues = ctx.jira.get_board_issues(
+                board_id=board_id,
+                jql=jql,
+                fields=fields,
+                start=start,
+                limit=limit,
+                expand=expand,
+            )
+
+            # Format results
+            board_issues = [issue.to_simplified_dict() for issue in issues]
+
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(board_issues, indent=2, ensure_ascii=False),
+                )
+            ]
+
         elif name == "jira_create_issue":
             if not ctx or not ctx.jira:
                 raise ValueError("Jira is not configured.")
@@ -1621,35 +1732,6 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                         text=error_msg,
                     )
                 ]
-
-        elif name == "jira_get_agile_boards":
-            if not ctx or not ctx.jira:
-                raise ValueError("Jira is not configured.")
-
-            board_name = arguments.get("board_name")
-            project_key = arguments.get("project_key")
-            board_type = arguments.get("board_type")
-            start = arguments.get("start", 0)
-            limit = min(int(arguments.get("limit", 10)), 50)
-
-            boards = ctx.jira.get_all_agile_boards_model(
-                board_name=board_name,
-                project_key=project_key,
-                board_type=board_type,
-                start=start,
-                limit=limit,
-            )
-
-            return [
-                TextContent(
-                    type="text",
-                    text=json.dumps(
-                        [board.to_simplified_dict() for board in boards],
-                        indent=2,
-                        ensure_ascii=False,
-                    ),
-                )
-            ]
 
         raise ValueError(f"Unknown tool: {name}")
 

@@ -2,6 +2,8 @@
 
 import logging
 
+import requests
+
 from ..models.jira import JiraIssue, JiraSearchResult
 from .client import JiraClient
 from .utils import parse_date_ymd
@@ -153,6 +155,58 @@ class SearchMixin(JiraClient):
         except Exception as e:
             logger.error(f"Error getting issues for epic {epic_key}: {str(e)}")
             raise Exception(f"Error getting epic issues: {str(e)}") from e
+
+    def get_board_issues(
+        self,
+        board_id: str,
+        jql: str,
+        fields: str = "*all",
+        start: int = 0,
+        limit: int = 50,
+        expand: str | None = None,
+    ) -> list[JiraIssue]:
+        """
+        Get all issues linked to a specific board.
+
+        Args:
+            board_id: The ID of the board
+            jql: JQL query string
+            fields: Fields to return (comma-separated string or "*all")
+            start: Starting index
+            limit: Maximum issues to return
+            expand: Optional items to expand (comma-separated)
+
+        Returns:
+            List of JiraIssue models representing the issues linked to the board
+
+        Raises:
+            Exception: If there is an error getting board issues
+        """
+        try:
+            response = self.jira.get_issues_for_board(
+                board_id=board_id,
+                jql=jql,
+                fields=fields,
+                start=start,
+                limit=limit,
+                expand=expand,
+            )
+
+            # Convert the response to a search result model
+            search_result = JiraSearchResult.from_api_response(
+                response, base_url=self.config.url, requested_fields=fields
+            )
+            return search_result.issues
+        except requests.HTTPError as e:
+            logger.error(
+                f"Error searching issues for board '{board_id}': {str(e.response.content)}"
+            )
+            raise Exception(
+                f"Error searching issues for board: {str(e.response.content)}"
+            ) from e
+        except Exception as e:
+            logger.error(f"Error searching issues for board with JQL '{jql}': {str(e)}")
+            raise Exception(f"Error searching issues for board: {str(e)}") from e
 
     def _parse_date(self, date_str: str) -> str:
         """
