@@ -156,3 +156,121 @@ class AttachmentsMixin(JiraClient):
             "downloaded": downloaded,
             "failed": failed,
         }
+
+    def upload_attachment(self, issue_key: str, file_path: str) -> dict[str, Any]:
+        """
+        Upload a single attachment to a Jira issue.
+
+        Args:
+            issue_key: The Jira issue key (e.g., 'PROJ-123')
+            file_path: The path to the file to upload
+
+        Returns:
+            A dictionary with upload result information
+        """
+        if not issue_key:
+            logger.error("No issue key provided for attachment upload")
+            return {"success": False, "error": "No issue key provided"}
+
+        if not file_path:
+            logger.error("No file path provided for attachment upload")
+            return {"success": False, "error": "No file path provided"}
+
+        try:
+            # Convert to absolute path if relative
+            if not os.path.isabs(file_path):
+                file_path = os.path.abspath(file_path)
+
+            # Check if file exists
+            if not os.path.exists(file_path):
+                logger.error(f"File not found: {file_path}")
+                return {"success": False, "error": f"File not found: {file_path}"}
+
+            logger.info(f"Uploading attachment from {file_path} to issue {issue_key}")
+
+            # Use the Jira API to upload the file
+            filename = os.path.basename(file_path)
+            with open(file_path, "rb") as file:
+                attachment = self.jira.add_attachment(
+                    issue_key=issue_key, filename=file_path
+                )
+
+            if attachment:
+                file_size = os.path.getsize(file_path)
+                logger.info(
+                    f"Successfully uploaded attachment {filename} to {issue_key} (size: {file_size} bytes)"
+                )
+                return {
+                    "success": True,
+                    "issue_key": issue_key,
+                    "filename": filename,
+                    "size": file_size,
+                    "id": attachment.get("id")
+                    if isinstance(attachment, dict)
+                    else None,
+                }
+            else:
+                logger.error(f"Failed to upload attachment {filename} to {issue_key}")
+                return {
+                    "success": False,
+                    "error": f"Failed to upload attachment {filename} to {issue_key}",
+                }
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Error uploading attachment: {error_msg}")
+            return {"success": False, "error": error_msg}
+
+    def upload_attachments(
+        self, issue_key: str, file_paths: list[str]
+    ) -> dict[str, Any]:
+        """
+        Upload multiple attachments to a Jira issue.
+
+        Args:
+            issue_key: The Jira issue key (e.g., 'PROJ-123')
+            file_paths: List of paths to files to upload
+
+        Returns:
+            A dictionary with upload results
+        """
+        if not issue_key:
+            logger.error("No issue key provided for attachment upload")
+            return {"success": False, "error": "No issue key provided"}
+
+        if not file_paths:
+            logger.error("No file paths provided for attachment upload")
+            return {"success": False, "error": "No file paths provided"}
+
+        logger.info(f"Uploading {len(file_paths)} attachments to issue {issue_key}")
+
+        # Upload each attachment
+        uploaded = []
+        failed = []
+
+        for file_path in file_paths:
+            result = self.upload_attachment(issue_key, file_path)
+
+            if result.get("success"):
+                uploaded.append(
+                    {
+                        "filename": result.get("filename"),
+                        "size": result.get("size"),
+                        "id": result.get("id"),
+                    }
+                )
+            else:
+                failed.append(
+                    {
+                        "filename": os.path.basename(file_path),
+                        "error": result.get("error"),
+                    }
+                )
+
+        return {
+            "success": True,
+            "issue_key": issue_key,
+            "total": len(file_paths),
+            "uploaded": uploaded,
+            "failed": failed,
+        }
