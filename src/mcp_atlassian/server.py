@@ -753,6 +753,35 @@ async def list_tools() -> list[Tool]:
                         "required": ["board_id", "jql"],
                     },
                 ),
+                Tool(
+                    name="jira_get_sprints_from_board",
+                    description="Get jira sprints from board by state",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "board_id": {
+                                "type": "string",
+                                "description": "The id of board (e.g., '1000')",
+                            },
+                            "state": {
+                                "type": "string",
+                                "description": "Sprint state (e.g., 'active', 'future', 'closed')",
+                            },
+                            "start": {
+                                "type": "number",
+                                "description": "Start index of sprint",
+                                "default": 0,
+                            },
+                            "limit": {
+                                "type": "number",
+                                "description": "Maximum number of results (1-50)",
+                                "default": 10,
+                                "minimum": 1,
+                                "maximum": 50,
+                            },
+                        },
+                    },
+                ),
             ]
         )
 
@@ -1437,6 +1466,30 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 TextContent(
                     type="text",
                     text=json.dumps(board_issues, indent=2, ensure_ascii=False),
+                )
+            ]
+
+        elif name == "jira_get_sprints_from_board" and ctx and ctx.jira:
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            board_id = arguments.get("board_id")
+            state = arguments.get("state", "active")
+            start = arguments.get("start", 0)
+            limit = min(int(arguments.get("limit", 10)), 50)
+
+            sprints = ctx.jira.get_all_sprints_from_board_model(
+                board_id=board_id, state=state, start=start, limit=limit
+            )
+
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        [sprint.to_simplified_dict() for sprint in sprints],
+                        indent=2,
+                        ensure_ascii=False,
+                    ),
                 )
             ]
 

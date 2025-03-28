@@ -23,7 +23,7 @@ def mock_config():
 
 @pytest.fixture
 def boards_mixin(mock_config):
-    """Fixture to create a ProjectsMixin instance for testing."""
+    """Fixture to create a BoardsMixin instance for testing."""
     mixin = BoardsMixin(config=mock_config)
     mixin.jira = MagicMock()
 
