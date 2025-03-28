@@ -7,6 +7,7 @@ import requests
 
 from mcp_atlassian.jira import JiraConfig
 from mcp_atlassian.jira.boards import BoardsMixin
+from mcp_atlassian.models.jira import JiraBoard
 
 
 @pytest.fixture
@@ -22,7 +23,7 @@ def mock_config():
 
 @pytest.fixture
 def boards_mixin(mock_config):
-    """Fixture to create a ProjectsMixin instance for testing."""
+    """Fixture to create a BoardsMixin instance for testing."""
     mixin = BoardsMixin(config=mock_config)
     mixin.jira = MagicMock()
 
@@ -32,20 +33,26 @@ def boards_mixin(mock_config):
 @pytest.fixture
 def mock_boards():
     """Fixture to return mock boards data."""
-    return [
-        {
-            "id": 1000,
-            "self": "https://test.atlassian.net/rest/agile/1.0/board/1000",
-            "name": " Board One",
-            "type": "scrum",
-        },
-        {
-            "id": 1001,
-            "self": "https://test.atlassian.net/rest/agile/1.0/board/1001",
-            "name": " Board Two",
-            "type": "kanban",
-        },
-    ]
+    return {
+        "maxResults": 2,
+        "startAt": 0,
+        "total": 2,
+        "isLast": True,
+        "values": [
+            {
+                "id": 1000,
+                "self": "https://test.atlassian.net/rest/agile/1.0/board/1000",
+                "name": " Board One",
+                "type": "scrum",
+            },
+            {
+                "id": 1001,
+                "self": "https://test.atlassian.net/rest/agile/1.0/board/1001",
+                "name": " Board Two",
+                "type": "kanban",
+            },
+        ],
+    }
 
 
 def test_get_all_agile_boards(boards_mixin, mock_boards):
@@ -53,7 +60,7 @@ def test_get_all_agile_boards(boards_mixin, mock_boards):
     boards_mixin.jira.get_all_agile_boards.return_value = mock_boards
 
     result = boards_mixin.get_all_agile_boards()
-    assert result == mock_boards
+    assert result == mock_boards["values"]
 
 
 def test_get_all_agile_boards_exception(boards_mixin):
@@ -76,10 +83,19 @@ def test_get_all_agile_boards_http_error(boards_mixin):
     boards_mixin.jira.get_all_agile_boards.assert_called_once()
 
 
-def test_get_all_agile_boards_non_list_response(boards_mixin):
+def test_get_all_agile_boards_non_dict_response(boards_mixin):
     """Test get_all_agile_boards method with non-list response."""
-    boards_mixin.jira.get_all_agile_boards.return_value = "not a list"
+    boards_mixin.jira.get_all_agile_boards.return_value = "not a dict"
 
     result = boards_mixin.get_all_agile_boards()
     assert result == []
     boards_mixin.jira.get_all_agile_boards.assert_called_once()
+
+
+def test_get_all_agile_boards_model(boards_mixin, mock_boards):
+    boards_mixin.jira.get_all_agile_boards.return_value = mock_boards
+
+    result = boards_mixin.get_all_agile_boards_model()
+    assert result == [
+        JiraBoard.from_api_response(value) for value in mock_boards["values"]
+    ]

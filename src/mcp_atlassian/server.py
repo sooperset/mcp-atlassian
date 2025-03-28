@@ -702,6 +702,154 @@ async def list_tools() -> list[Tool]:
                         "required": ["issue_key", "target_dir"],
                     },
                 ),
+                Tool(
+                    name="jira_get_agile_boards",
+                    description="Get jira agile boards by name, project key, or type",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "board_name": {
+                                "type": "string",
+                                "description": "The name of board, support fuzzy search",
+                            },
+                            "project_key": {
+                                "type": "string",
+                                "description": "Jira project key (e.g., 'PROJ-123')",
+                            },
+                            "board_type": {
+                                "type": "string",
+                                "description": "The type of jira board (e.g., 'scrum', 'kanban')",
+                            },
+                            "start": {
+                                "type": "number",
+                                "description": "Start index of board",
+                                "default": 0,
+                            },
+                            "limit": {
+                                "type": "number",
+                                "description": "Maximum number of results (1-50)",
+                                "default": 10,
+                                "minimum": 1,
+                                "maximum": 50,
+                            },
+                        },
+                    },
+                ),
+                Tool(
+                    name="jira_get_board_issues",
+                    description="Get all issues linked to a specific board",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "board_id": {
+                                "type": "string",
+                                "description": "The id of the board (e.g., '1001')",
+                            },
+                            "jql": {
+                                "type": "string",
+                                "description": "JQL query string (Jira Query Language). Examples:\n"
+                                '- Find Epics: "issuetype = Epic AND project = PROJ"\n'
+                                '- Find issues in Epic: "parent = PROJ-123"\n'
+                                "- Find by status: \"status = 'In Progress' AND project = PROJ\"\n"
+                                '- Find by assignee: "assignee = currentUser()"\n'
+                                '- Find recently updated: "updated >= -7d AND project = PROJ"\n'
+                                '- Find by label: "labels = frontend AND project = PROJ"\n'
+                                '- Find by priority: "priority = High AND project = PROJ"',
+                            },
+                            "fields": {
+                                "type": "string",
+                                "description": (
+                                    "Comma-separated fields to return in the results. "
+                                    "Use '*all' for all fields, or specify individual "
+                                    "fields like 'summary,status,assignee,priority'"
+                                ),
+                                "default": "*all",
+                            },
+                            "start": {
+                                "type": "number",
+                                "description": "Start index of issue",
+                                "default": 0,
+                            },
+                            "limit": {
+                                "type": "number",
+                                "description": "Maximum number of results (1-50)",
+                                "default": 10,
+                                "minimum": 1,
+                                "maximum": 50,
+                            },
+                            "expand": {
+                                "type": "string",
+                                "description": "Fields to expand in the response (e.g., 'version', 'body.storage')",
+                                "default": "version",
+                            },
+                        },
+                        "required": ["board_id", "jql"],
+                    },
+                ),
+                Tool(
+                    name="jira_get_sprints_from_board",
+                    description="Get jira sprints from board by state",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "board_id": {
+                                "type": "string",
+                                "description": "The id of board (e.g., '1000')",
+                            },
+                            "state": {
+                                "type": "string",
+                                "description": "Sprint state (e.g., 'active', 'future', 'closed')",
+                            },
+                            "start": {
+                                "type": "number",
+                                "description": "Start index of sprint",
+                                "default": 0,
+                            },
+                            "limit": {
+                                "type": "number",
+                                "description": "Maximum number of results (1-50)",
+                                "default": 10,
+                                "minimum": 1,
+                                "maximum": 50,
+                            },
+                        },
+                    },
+                ),
+                Tool(
+                    name="jira_get_sprint_issues",
+                    description="Get jira issues from sprint",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "sprint_id": {
+                                "type": "string",
+                                "description": "The id of sprint (e.g., '10001')",
+                            },
+                            "fields": {
+                                "type": "string",
+                                "description": (
+                                    "Comma-separated fields to return in the results. "
+                                    "Use '*all' for all fields, or specify individual "
+                                    "fields like 'summary,status,assignee,priority'"
+                                ),
+                                "default": "*all",
+                            },
+                            "start": {
+                                "type": "number",
+                                "description": "Start index of issue",
+                                "default": 0,
+                            },
+                            "limit": {
+                                "type": "number",
+                                "description": "Maximum number of results (1-50)",
+                                "default": 10,
+                                "minimum": 1,
+                                "maximum": 50,
+                            },
+                        },
+                        "required": ["sprint_id"],
+                    },
+                ),
             ]
         )
 
@@ -1363,6 +1511,113 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             return [
                 TextContent(
                     type="text", text=json.dumps(result, indent=2, ensure_ascii=False)
+                )
+            ]
+
+        elif name == "jira_get_agile_boards" and ctx and ctx.jira:
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            board_name = arguments.get("board_name")
+            project_key = arguments.get("project_key")
+            board_type = arguments.get("board_type")
+            start = arguments.get("start", 0)
+            limit = min(int(arguments.get("limit", 10)), 50)
+
+            boards = ctx.jira.get_all_agile_boards_model(
+                board_name=board_name,
+                project_key=project_key,
+                board_type=board_type,
+                start=start,
+                limit=limit,
+            )
+
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        [board.to_simplified_dict() for board in boards],
+                        indent=2,
+                        ensure_ascii=False,
+                    ),
+                )
+            ]
+
+        elif name == "jira_get_board_issues" and ctx and ctx.jira:
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            board_id = arguments.get("board_id")
+            jql = arguments.get("jql")
+            fields = arguments.get("fields", "*all")
+
+            start = arguments.get("start", 0)
+            limit = min(int(arguments.get("limit", 10)), 50)
+            expand = arguments.get("expand", "version")
+
+            issues = ctx.jira.get_board_issues(
+                board_id=board_id,
+                jql=jql,
+                fields=fields,
+                start=start,
+                limit=limit,
+                expand=expand,
+            )
+
+            # Format results
+            board_issues = [issue.to_simplified_dict() for issue in issues]
+
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(board_issues, indent=2, ensure_ascii=False),
+                )
+            ]
+
+        elif name == "jira_get_sprints_from_board" and ctx and ctx.jira:
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            board_id = arguments.get("board_id")
+            state = arguments.get("state", "active")
+            start = arguments.get("start", 0)
+            limit = min(int(arguments.get("limit", 10)), 50)
+
+            sprints = ctx.jira.get_all_sprints_from_board_model(
+                board_id=board_id, state=state, start=start, limit=limit
+            )
+
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        [sprint.to_simplified_dict() for sprint in sprints],
+                        indent=2,
+                        ensure_ascii=False,
+                    ),
+                )
+            ]
+
+        elif name == "jira_get_sprint_issues" and ctx and ctx.jira:
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            sprint_id = arguments.get("sprint_id")
+            fields = arguments.get("fields", "*all")
+            start = arguments.get("start", 0)
+            limit = min(int(arguments.get("limit", 10)), 50)
+
+            issues = ctx.jira.get_sprint_issues(
+                sprint_id=sprint_id, fields=fields, start=start, limit=limit
+            )
+
+            # Format results
+            sprint_issues = [issue.to_simplified_dict() for issue in issues]
+
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(sprint_issues, indent=2, ensure_ascii=False),
                 )
             ]
 

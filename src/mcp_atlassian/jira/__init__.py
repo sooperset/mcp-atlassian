@@ -17,9 +17,11 @@ from .formatting import FormattingMixin
 from .issues import IssuesMixin
 from .projects import ProjectsMixin
 from .search import SearchMixin
+from .sprints import SprintsMixin
 from .transitions import TransitionsMixin
 from .users import UsersMixin
 from .worklog import WorklogMixin
+from .boards import BoardsMixin
 from .attachments import AttachmentsMixin
 
 
@@ -34,6 +36,8 @@ class JiraFetcher(
     SearchMixin,
     IssuesMixin,
     UsersMixin,
+    BoardsMixin,
+    SprintsMixin,
     AttachmentsMixin,
 ):
     """
@@ -50,6 +54,8 @@ class JiraFetcher(
     - SearchMixin: Search operations
     - IssuesMixin: Issue operations
     - UsersMixin: User operations
+    - BoardsMixin: Board operations
+    - SprintsMixin: Sprint operations
     - AttachmentsMixin: Attachment download operations
 
     The class structure is designed to maintain backward compatibility while

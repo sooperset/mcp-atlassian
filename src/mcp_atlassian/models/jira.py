@@ -1212,14 +1212,14 @@ class JiraBoard(ApiModel):
     @classmethod
     def from_api_response(cls, data: dict[str, Any], **kwargs: Any) -> "JiraBoard":
         """
-        Create a JiraTransition instance from an API response dictionary.
+        Create a JiraBoard instance from an API response dictionary.
 
         Args:
             data: The API response data
             **kwargs: Additional options
 
         Returns:
-            A new JiraTransition instance
+            A new JiraBoard instance
         """
         if not data:
             return cls()
@@ -1245,3 +1245,92 @@ class JiraBoard(ApiModel):
             name=str(data.get("name", UNKNOWN)),
             type=str(data.get("type", UNKNOWN)),
         )
+
+    def to_simplified_dict(self) -> dict[str, Any]:
+        """
+        Convert to a simplified dictionary representation.
+        """
+        return {
+            "id": self.id,
+            "name": self.name,
+            "type": self.type,
+        }
+
+
+class JiraSprint(ApiModel):
+    """
+    Model representing a Jira sprint.
+    """
+
+    id: str = JIRA_DEFAULT_ID
+    state: str = UNKNOWN
+    name: str = UNKNOWN
+    start_date: str = EMPTY_STRING
+    end_date: str = EMPTY_STRING
+    activated_date: str = EMPTY_STRING
+    origin_board_id: str = JIRA_DEFAULT_ID
+    goal: str = EMPTY_STRING
+    synced: bool = False
+    auto_start_stop: bool = False
+
+    @classmethod
+    def from_api_response(cls, data: dict[str, Any], **kwargs: Any) -> "JiraSprint":
+        """
+        Create a JiraSprint instance from an API response dictionary.
+
+        Args:
+            data: The API response data
+            **kwargs: Additional options
+
+        Returns:
+            A new JiraSprint instance
+        """
+        if not data:
+            return cls()
+
+        # Handle non-dictionary data by returning a default instance
+        if not isinstance(data, dict):
+            logger.debug("Received non-dictionary data, returning default instance")
+            return cls()
+
+        transition_data: dict[str, Any] = {}
+
+        # Ensure ID is a string (API sometimes returns integers)
+        transition_id = data.get("id", JIRA_DEFAULT_ID)
+        if transition_id is not None:
+            transition_id = str(transition_id)
+        transition_data["id"] = transition_id
+
+        transition_data["state"] = data.get("state", UNKNOWN)
+        transition_data["name"] = data.get("name", UNKNOWN)
+
+        transition_data["start_date"] = data.get("startDate", EMPTY_STRING)
+        transition_data["end_date"] = data.get("endDate", EMPTY_STRING)
+        transition_data["activatedDate"] = data.get("activatedDate", EMPTY_STRING)
+
+        transition_data["originBoardId"] = str(
+            data.get("originBoardId", JIRA_DEFAULT_ID)
+        )
+
+        transition_data["goal"] = data.get("goal", EMPTY_STRING)
+        transition_data["synced"] = data.get("synced", False)
+        transition_data["autoStartStop"] = data.get("autoStartStop", False)
+
+        return cls(**transition_data)
+
+    def to_simplified_dict(self) -> dict[str, Any]:
+        """
+        Convert to a simplified dictionary representation.
+        """
+        return {
+            "id": self.id,
+            "state": self.state,
+            "name": self.name,
+            "start_date": self.start_date,
+            "end_date": self.end_date,
+            "activatedDate": self.activated_date,
+            "originBoardId": self.origin_board_id,
+            "goal": self.goal,
+            "synced": self.synced,
+            "autoStartStop": self.auto_start_stop,
+        }

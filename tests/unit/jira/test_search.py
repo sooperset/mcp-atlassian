@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 
 from mcp_atlassian.jira.search import SearchMixin
 from mcp_atlassian.models.jira import JiraIssue
@@ -473,3 +474,131 @@ class TestSearchMixin:
         assert simplified["summary"] == "Test issue with custom field"
         assert simplified["assignee"]["name"] == "Test User"
         assert simplified["customfield_10049"] == "Custom value"
+
+    def test_get_board_issues(self, search_mixin):
+        """Test get_project_issues method."""
+        mock_issues = {
+            "issues": [
+                {
+                    "id": "10001",
+                    "key": "TEST-123",
+                    "fields": {
+                        "summary": "Test issue",
+                        "issuetype": {"name": "Bug"},
+                        "status": {"name": "Open"},
+                        "description": "Issue description",
+                        "created": "2024-01-01T10:00:00.000+0000",
+                        "updated": "2024-01-01T11:00:00.000+0000",
+                        "priority": {"name": "High"},
+                    },
+                }
+            ],
+            "total": 1,
+            "startAt": 0,
+            "maxResults": 50,
+        }
+        search_mixin.jira.get_issues_for_board.return_value = mock_issues
+
+        # Call the method
+        result = search_mixin.get_board_issues("1000", jql="", limit=20)
+
+        # Verify results
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert all(isinstance(issue, JiraIssue) for issue in result)
+
+        # Check the first issue
+        issue = result[0]
+        assert issue.key == "TEST-123"
+        assert issue.summary == "Test issue"
+        assert issue.description == "Issue description"
+        assert issue.status is not None
+        assert issue.status.name == "Open"
+        assert issue.issue_type is not None
+        assert issue.issue_type.name == "Bug"
+        assert issue.priority is not None
+        assert issue.priority.name == "High"
+
+        # Remove backward compatibility checks
+        assert "Issue description" in issue.description
+        assert issue.key == "TEST-123"
+
+    def test_get_board_issues_exception(self, search_mixin):
+        search_mixin.jira.get_issues_for_board.side_effect = Exception("API Error")
+
+        with pytest.raises(Exception) as e:
+            search_mixin.get_board_issues("1000", jql="", limit=20)
+        assert "API Error" in str(e.value)
+
+    def test_get_board_issues_http_error(self, search_mixin):
+        search_mixin.jira.get_issues_for_board.side_effect = requests.HTTPError(
+            response=MagicMock(content="API Error content")
+        )
+
+        with pytest.raises(Exception) as e:
+            search_mixin.get_board_issues("1000", jql="", limit=20)
+        assert "API Error content" in str(e.value)
+
+    def test_get_sprint_issues(self, search_mixin):
+        """Test get_sprint_issues method."""
+        mock_issues = {
+            "issues": [
+                {
+                    "id": "10001",
+                    "key": "TEST-123",
+                    "fields": {
+                        "summary": "Test issue",
+                        "issuetype": {"name": "Bug"},
+                        "status": {"name": "Open"},
+                        "description": "Issue description",
+                        "created": "2024-01-01T10:00:00.000+0000",
+                        "updated": "2024-01-01T11:00:00.000+0000",
+                        "priority": {"name": "High"},
+                    },
+                }
+            ],
+            "total": 1,
+            "startAt": 0,
+            "maxResults": 50,
+        }
+        search_mixin.jira.get_sprint_issues.return_value = mock_issues
+
+        # Call the method
+        result = search_mixin.get_sprint_issues("10001")
+
+        # Verify results
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert all(isinstance(issue, JiraIssue) for issue in result)
+
+        # Check the first issue
+        issue = result[0]
+        assert issue.key == "TEST-123"
+        assert issue.summary == "Test issue"
+        assert issue.description == "Issue description"
+        assert issue.status is not None
+        assert issue.status.name == "Open"
+        assert issue.issue_type is not None
+        assert issue.issue_type.name == "Bug"
+        assert issue.priority is not None
+        assert issue.priority.name == "High"
+
+        # Remove backward compatibility checks
+        assert "Issue description" in issue.description
+        assert issue.key == "TEST-123"
+
+    def test_get_sprint_issues_exception(self, search_mixin):
+        search_mixin.jira.get_sprint_issues.side_effect = Exception("API Error")
+
+        with pytest.raises(Exception) as e:
+            search_mixin.get_sprint_issues("10001")
+        assert "API Error" in str(e.value)
+
+    def test_get_sprint_issues_http_error(self, search_mixin):
+        search_mixin.jira.get_sprint_issues.side_effect = requests.HTTPError(
+            response=MagicMock(content="API Error content")
+        )
+
+        with pytest.raises(Exception) as e:
+            search_mixin.get_sprint_issues("10001")
+        assert "API Error content" in str(e.value)
