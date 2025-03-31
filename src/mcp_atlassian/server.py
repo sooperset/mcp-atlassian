@@ -31,13 +31,13 @@ def get_available_services() -> dict[str, bool | None]:
     """Determine which services are available based on environment variables."""
 
     # Check for either cloud authentication (URL + username + API token)
-    # or server/data center authentication (URL + personal token)
+    # or server/data center authentication (URL + ( personal token or username + API token ))
     confluence_url = os.getenv("CONFLUENCE_URL")
     if confluence_url:
         is_cloud = is_atlassian_cloud_url(confluence_url)
 
         if is_cloud:
-            confluence_vars = all(
+            confluence_is_setup = all(
                 [
                     confluence_url,
                     os.getenv("CONFLUENCE_USERNAME"),
@@ -46,12 +46,20 @@ def get_available_services() -> dict[str, bool | None]:
             )
             logger.info("Using Confluence Cloud authentication method")
         else:
-            confluence_vars = all(
-                [confluence_url, os.getenv("CONFLUENCE_PERSONAL_TOKEN")]
+            confluence_is_setup = all(
+                [
+                    confluence_url,
+                    os.getenv("CONFLUENCE_PERSONAL_TOKEN")
+                    # Some on prem/data center use username and api token too.
+                    or (
+                        os.getenv("CONFLUENCE_USERNAME")
+                        and os.getenv("CONFLUENCE_API_TOKEN")
+                    ),
+                ]
             )
             logger.info("Using Confluence Server/Data Center authentication method")
     else:
-        confluence_vars = False
+        confluence_is_setup = False
 
     # Check for either cloud authentication (URL + username + API token)
     # or server/data center authentication (URL + personal token)
@@ -60,17 +68,17 @@ def get_available_services() -> dict[str, bool | None]:
         is_cloud = is_atlassian_cloud_url(jira_url)
 
         if is_cloud:
-            jira_vars = all(
+            jira_is_setup = all(
                 [jira_url, os.getenv("JIRA_USERNAME"), os.getenv("JIRA_API_TOKEN")]
             )
             logger.info("Using Jira Cloud authentication method")
         else:
-            jira_vars = all([jira_url, os.getenv("JIRA_PERSONAL_TOKEN")])
+            jira_is_setup = all([jira_url, os.getenv("JIRA_PERSONAL_TOKEN")])
             logger.info("Using Jira Server/Data Center authentication method")
     else:
-        jira_vars = False
+        jira_is_setup = False
 
-    return {"confluence": confluence_vars, "jira": jira_vars}
+    return {"confluence": confluence_is_setup, "jira": jira_is_setup}
 
 
 @asynccontextmanager
