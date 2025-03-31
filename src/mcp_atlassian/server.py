@@ -5,10 +5,10 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlparse
 
 from mcp.server import Server
 from mcp.types import Resource, TextContent, Tool
+from pydantic import AnyUrl
 
 from .confluence import ConfluenceFetcher
 from .jira import JiraFetcher
@@ -194,20 +194,23 @@ async def list_resources() -> list[Resource]:
 
 
 @app.read_resource()
-async def read_resource(uri: str) -> tuple[str, str]:
+async def read_resource(uri: AnyUrl) -> tuple[str, str]:
     """Read content from Confluence based on the resource URI."""
-    parsed_uri = urlparse(uri)
+    # parsed_uri = urlparse(uri)
+
+    # logger.debug("Got resource URI: %s", parsed_uri)
+    str_uri = str(uri)
 
     # Get application context
     ctx = app.request_context.lifespan_context
 
     # Handle Confluence resources
-    if uri.startswith("confluence://"):
+    if str_uri.startswith("confluence://"):
         if not ctx or not ctx.confluence:
             raise ValueError(
                 "Confluence is not configured. Please provide Confluence credentials."
             )
-        parts = uri.replace("confluence://", "").split("/")
+        parts = str_uri.replace("confluence://", "").split("/")
 
         # Handle space listing
         if len(parts) == 1:
@@ -222,12 +225,12 @@ async def read_resource(uri: str) -> tuple[str, str]:
                 pages = ctx.confluence.get_space_pages(space_key, limit=10)
 
             content = []
-            for page in pages:
-                page_dict = page.to_simplified_dict()
+            for p in pages:
+                page_dict = p.to_simplified_dict()
                 title = page_dict.get("title", "Untitled")
                 url = page_dict.get("url", "")
 
-                content.append(f"# [{title}]({url})\n\n{page.page_content}\n\n---")
+                content.append(f"# [{title}]({url})\n\n{p.page_content}\n\n---")
 
             return "\n\n".join(content), "text/markdown"
 
@@ -237,16 +240,16 @@ async def read_resource(uri: str) -> tuple[str, str]:
             title = parts[2]
             page = ctx.confluence.get_page_by_title(space_key, title)
 
-            if not page:
+            if page is None:
                 raise ValueError(f"Page not found: {title}")
 
             return page.page_content, "text/markdown"
 
     # Handle Jira resources
-    elif uri.startswith("jira://"):
+    elif str_uri.startswith("jira://"):
         if not ctx or not ctx.jira:
             raise ValueError("Jira is not configured. Please provide Jira credentials.")
-        parts = uri.replace("jira://", "").split("/")
+        parts = str_uri.replace("jira://", "").split("/")
 
         # Handle project listing
         if len(parts) == 1:
@@ -303,7 +306,7 @@ async def read_resource(uri: str) -> tuple[str, str]:
 
             return markdown, "text/markdown"
 
-    raise ValueError(f"Invalid resource URI: {uri}")
+    raise ValueError(f"Invalid resource URI: {str_uri}")
 
 
 @app.list_tools()
