@@ -150,7 +150,7 @@ async def list_resources() -> list[Resource]:
             account_id = ctx.jira.get_current_user_account_id()
 
             # Use JQL to find issues the user is assigned to or reported
-            jql = f"assignee = {account_id} OR reporter = {account_id} ORDER BY updated DESC"
+            jql = f'assignee = "{account_id}" OR reporter = "{account_id}" ORDER BY updated DESC'
             issues = ctx.jira.jira.jql(jql, limit=250, fields=["project"])
 
             # Extract and deduplicate projects
