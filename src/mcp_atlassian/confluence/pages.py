@@ -6,11 +6,10 @@ import requests
 from atlassian.errors import ApiError
 from requests.exceptions import RequestException
 
-from ..models.confluence import ConfluenceAttachment, ConfluencePage
+from ..models.confluence import ConfluencePage
 from .client import ConfluenceClient
 from .exceptions import (
     ConfluenceAttachContentError,
-    ConfluenceGetAttachmentsFromContentError,
 )
 
 logger = logging.getLogger("mcp-atlassian")
@@ -34,7 +33,7 @@ class PagesMixin(ConfluenceClient):
             ConfluencePage model containing the page content and metadata
         """
         page = self.confluence.get_page_by_id(
-            page_id=page_id, expand="body.storage,version,space"
+            page_id=page_id, expand="body.storage,version,space,children.attachment"
         )
         space_key = page.get("space", {}).get("key", "")
         content = page["body"]["storage"]["value"]
@@ -442,44 +441,7 @@ class PagesMixin(ConfluenceClient):
             logger.error(f"Error deleting page {page_id}: {str(e)}")
             raise Exception(f"Failed to delete page {page_id}: {str(e)}") from e
 
-    def get_attachments_from_content(self, page_id: str) -> list[ConfluenceAttachment]:
-        """
-        Get attachments from a Confluence page.
-
-        Args:
-            page_id: The ID of the page
-
-        Returns:
-            List of ConfluenceAttachment models containing the attachments
-
-        Raises:
-            ConfluenceGetAttachmentsFromContentException: If there is an error getting attachments from the page
-        """
-        try:
-            logger.debug(f"Getting attachments from page {page_id}")
-            results = self.confluence.get_attachments_from_content(page_id=page_id)
-
-            # Handle both pagination modes
-            if isinstance(results, dict) and "results" in results:
-                attachments = results.get("results", [])
-            else:
-                attachments = results or []
-
-            return [
-                ConfluenceAttachment.from_api_response(data) for data in attachments
-            ]
-        except ApiError as e:
-            logger.error(f"Confluence API Error: {e}")
-            raise ConfluenceGetAttachmentsFromContentError(
-                f"Error when trying to get attachments from page {page_id}: {str(e)}"
-            ) from e
-        except RequestException as e:
-            logger.error(f"Network error: {e}")
-            raise ConfluenceGetAttachmentsFromContentError(
-                f"Error when trying to connect to Confluence: {str(e)}"
-            ) from e
-
-    def attach_content(self, content: bytes, name: str, page_id: str) -> None:
+    def attach_content(self, content: bytes, name: str, page_id: str) -> ConfluencePage:
         """
         Attach content to a Confluence page.
 
@@ -504,3 +466,4 @@ class PagesMixin(ConfluenceClient):
             raise ConfluenceAttachContentError(
                 f"Error when trying to connect to Confluence: {str(e)}"
             ) from e
+        return self.get_page_content(page_id=page_id, convert_to_markdown=False)
