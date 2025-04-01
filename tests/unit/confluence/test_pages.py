@@ -8,8 +8,8 @@ from atlassian.errors import ApiError
 from requests.exceptions import RequestException
 
 from mcp_atlassian.confluence.exceptions import (
-    ConfluenceAttachContentException,
-    ConfluenceGetAttachmentsFromContentException,
+    ConfluenceAttachContentError,
+    ConfluenceGetAttachmentsFromContentError,
 )
 from mcp_atlassian.confluence.pages import PagesMixin
 from mcp_atlassian.models.confluence import ConfluenceAttachment, ConfluencePage
@@ -451,7 +451,7 @@ class TestPagesMixin:
 
         # Act/Assert
         with pytest.raises(
-            ConfluenceGetAttachmentsFromContentException,
+            ConfluenceGetAttachmentsFromContentError,
             match="Error when trying to get attachments from page",
         ):
             pages_mixin.get_attachments_from_content(page_id)
@@ -466,7 +466,7 @@ class TestPagesMixin:
 
         # Act/Assert
         with pytest.raises(
-            ConfluenceGetAttachmentsFromContentException,
+            ConfluenceGetAttachmentsFromContentError,
             match="Error when trying to connect to Confluence: Network error",
         ):
             pages_mixin.get_attachments_from_content(page_id)
@@ -481,7 +481,7 @@ class TestPagesMixin:
 
         # Act/Assert
         with pytest.raises(
-            ConfluenceGetAttachmentsFromContentException,
+            ConfluenceGetAttachmentsFromContentError,
             match=f"Unexpected error when trying to get attachments from page {page_id}: Unexpected value error",
         ):
             pages_mixin.get_attachments_from_content(page_id)
@@ -497,7 +497,14 @@ class TestPagesMixin:
         mock_response.status_code = 200
         pages_mixin.confluence.attach_content.return_value = mock_response
 
-        pages_mixin.attach_content(content=content, name=name, page_id=page_id)
+        try:
+            pages_mixin.attach_content(content=content, name=name, page_id=page_id)
+        except ConfluenceAttachContentError as e:
+            pytest.fail(f"Unexpected error: {str(e)}")
+
+        pages_mixin.confluence.attach_content.assert_called_once_with(
+            content=content, name=name, page_id=page_id
+        )
 
     def test_attach_content_api_error(self, pages_mixin):
         """Test error handling when attaching content."""
@@ -510,7 +517,7 @@ class TestPagesMixin:
 
         # Act/Assert
         with pytest.raises(
-            ConfluenceAttachContentException,
+            ConfluenceAttachContentError,
             match=f"Error when trying to attach content to page {page_id}: {exception_message}",
         ):
             pages_mixin.attach_content(content=content, name=name, page_id=page_id)
@@ -528,7 +535,7 @@ class TestPagesMixin:
 
         # Act/Assert
         with pytest.raises(
-            ConfluenceAttachContentException,
+            ConfluenceAttachContentError,
             match=f"Error when trying to connect to Confluence: {exception_message}",
         ):
             pages_mixin.attach_content(content=content, name=name, page_id=page_id)
@@ -546,7 +553,7 @@ class TestPagesMixin:
 
         # Act/Assert
         with pytest.raises(
-            ConfluenceAttachContentException,
+            ConfluenceAttachContentError,
             match=f"Unexpected error when trying to attach content to page {page_id}: {exception_message}",
         ):
             pages_mixin.attach_content(content=content, name=name, page_id=page_id)

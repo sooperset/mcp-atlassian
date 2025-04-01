@@ -9,8 +9,8 @@ from requests.exceptions import RequestException
 from ..models.confluence import ConfluenceAttachment, ConfluencePage
 from .client import ConfluenceClient
 from .exceptions import (
-    ConfluenceAttachContentException,
-    ConfluenceGetAttachmentsFromContentException,
+    ConfluenceAttachContentError,
+    ConfluenceGetAttachmentsFromContentError,
 )
 
 logger = logging.getLogger("mcp-atlassian")
@@ -470,17 +470,17 @@ class PagesMixin(ConfluenceClient):
             ]
         except ApiError as e:
             logger.error(f"Confluence API Error: {e}")
-            raise ConfluenceGetAttachmentsFromContentException(
+            raise ConfluenceGetAttachmentsFromContentError(
                 f"Error when trying to get attachments from page {page_id}: {str(e)}"
             ) from e
         except RequestException as e:
             logger.error(f"Network error: {e}")
-            raise ConfluenceGetAttachmentsFromContentException(
+            raise ConfluenceGetAttachmentsFromContentError(
                 f"Error when trying to connect to Confluence: {str(e)}"
             ) from e
         except Exception as e:
             logger.error(f"Unexpected error: {str(e)}")
-            raise ConfluenceGetAttachmentsFromContentException(
+            raise ConfluenceGetAttachmentsFromContentError(
                 f"Unexpected error when trying to get attachments from page {page_id}: {str(e)}"
             ) from e
 
@@ -501,16 +501,16 @@ class PagesMixin(ConfluenceClient):
             self.confluence.attach_content(content=content, name=name, page_id=page_id)
         except ApiError as e:
             logger.error(f"Confluence API Error: {e}")
-            raise ConfluenceAttachContentException(
+            raise ConfluenceAttachContentError(
                 f"Error when trying to attach content to page {page_id}: {str(e)}"
             ) from e
         except RequestException as e:
             logger.error(f"Network error: {e}")
-            raise ConfluenceAttachContentException(
+            raise ConfluenceAttachContentError(
                 f"Error when trying to connect to Confluence: {str(e)}"
             ) from e
         except Exception as e:
             logger.error(f"Unexpected error: {str(e)}")
-            raise ConfluenceAttachContentException(
+            raise ConfluenceAttachContentError(
                 f"Unexpected error when trying to attach content to page {page_id}: {str(e)}"
             ) from e

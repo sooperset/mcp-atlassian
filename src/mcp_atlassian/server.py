@@ -1452,7 +1452,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 ctx.confluence.attach_content(
                     content=content, name=name, page_id=page_id
                 )
-            except ConfluenceAttachContentException as e:
+            except ConfluenceAttachContentError as e:
                 logger.error(
                     f"Error attaching content to Confluence page {page_id}: {str(e)}"
                 )
@@ -1484,7 +1484,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                         for attachment in attachments
                     ]
                 )
-            except ConfluenceGetAttachmentsFromContentException as e:
+            except ConfluenceGetAttachmentsFromContentError as e:
                 logger.error(
                     f"Error getting attachments from Confluence page {page_id}: {str(e)}"
                 )
@@ -1540,7 +1540,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                         for attachment in attachments
                     ]
                 )
-            except ConfluenceGetAttachmentsFromContentException as e:
+            except ConfluenceGetAttachmentsFromContentError as e:
                 logger.error(
                     f"Error getting attachments from Confluence page {page_id}: {str(e)}"
                 )
