@@ -404,7 +404,7 @@ class TestPagesMixin:
         assert result is True
 
     def test_attach_content_error(self, pages_mixin):
-        """Test error handling when deleting a page."""
+        """Test error handling when attaching content."""
         # Arrange
         page_id = "987654321"
         content = b"Content to attach"
