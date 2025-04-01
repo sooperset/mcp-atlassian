@@ -115,6 +115,52 @@ class ConfluenceUser(ApiModel):
         }
 
 
+class ConfluenceAttachment(ApiModel):
+    """
+    Model representing a Confluence attachment.
+    """
+
+    id: str
+    type: str
+    status: str
+    title: str
+    media_type: str
+    file_size: int
+
+    @classmethod
+    def from_api_response(
+        cls, data: dict[str, Any], **kwargs: Any
+    ) -> "ConfluenceAttachment":
+        """
+        Create a ConfluenceAttachment from a Confluence API response.
+
+        Args:
+            data: The attachment data from the Confluence API
+
+        Returns:
+            A ConfluenceAttachment instance
+        """
+        return cls(
+            id=data["id"],
+            type=data["type"],
+            status=data["status"],
+            title=data["title"],
+            media_type=data["metadata"]["mediaType"],
+            file_size=data["extensions"]["fileSize"],
+        )
+
+    def to_simplified_dict(self) -> dict[str, Any]:
+        """Convert to simplified dictionary for API response."""
+        return {
+            "id": self.id,
+            "type": self.type,
+            "status": self.status,
+            "title": self.title,
+            "media_type": self.media_type,
+            "file_size": self.file_size,
+        }
+
+
 class ConfluenceSpace(ApiModel):
     """
     Model representing a Confluence space.

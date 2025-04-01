@@ -8,7 +8,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from mcp.server import Server
-from mcp.types import Resource, TextContent, Tool
+from mcp.types import CallToolResult, Resource, TextContent, Tool
 
 from .confluence import ConfluenceFetcher
 from .confluence.utils import quote_cql_identifier_if_needed
@@ -558,6 +558,20 @@ async def list_tools() -> list[Tool]:
                                 },
                             },
                             "required": ["content", "name", "page_id"],
+                        },
+                    ),
+                    Tool(
+                        name="confluence_get_attachments_from_content",
+                        description="Get attachments from a Confluence page",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "page_id": {
+                                    "type": "string",
+                                    "description": "The ID of the page",
+                                },
+                            },
+                            "required": ["page_id"],
                         },
                     ),
                 ]
@@ -1398,70 +1412,147 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
 
         elif name == "confluence_attach_content":
             if not ctx or not ctx.confluence:
-                raise ValueError("Confluence is not configured.")
+                return CallToolResult(
+                    isError=True,
+                    content=[
+                        TextContent(
+                            type="text", text="Error: Confluence is not configured."
+                        )
+                    ],
+                )
 
             # Write operation - check read-only mode
             if read_only:
-                return [
-                    TextContent(
-                        "Operation 'confluence_attach_content' is not available in read-only mode."
-                    )
-                ]
+                return CallToolResult(
+                    isError=True,
+                    content=[
+                        TextContent(
+                            type="text",
+                            text="Error: Operation 'confluence_attach_content' is not available in read-only mode.",
+                        )
+                    ],
+                )
 
             content = arguments.get("content")
             name = arguments.get("name")
             page_id = arguments.get("page_id")
 
             if not content or not name or not page_id:
-                raise ValueError(
-                    "Missing required parameters: content, name, and page_id are required."
+                return CallToolResult(
+                    isError=True,
+                    content=[
+                        TextContent(
+                            type="text",
+                            text="Error: Missing required parameters: content, name, and page_id are required.",
+                        )
+                    ],
                 )
 
             try:
-                # Attach content to the page
-                result = ctx.confluence.attach_content(
-                    content=content.encode("utf-8"), name=name, page_id=page_id
+                ctx.confluence.attach_content(
+                    content=content, name=name, page_id=page_id
                 )
-
-                # Format results - our fixed implementation now correctly returns True on success
-                if result:
-                    response = {
-                        "success": True,
-                        "message": f"Content attached to page {page_id} successfully",
-                    }
-                else:
-                    # This branch should rarely be hit with our updated implementation
-                    # but we keep it for safety
-                    response = {
-                        "success": False,
-                        "message": f"Unable to attach content to page {page_id}. The API request completed but attachment was unsuccessful.",
-                    }
-
-                return [
-                    TextContent(
-                        type="text",
-                        text=json.dumps(response, indent=2, ensure_ascii=False),
-                    )
-                ]
-            except Exception as e:
-                # API call failed with an exception
+            except ConfluenceAttachContentException as e:
                 logger.error(
                     f"Error attaching content to Confluence page {page_id}: {str(e)}"
                 )
-                return [
-                    TextContent(
-                        type="text",
-                        text=json.dumps(
-                            {
-                                "success": False,
-                                "message": f"Error attaching content to page {page_id}",
-                                "error": str(e),
-                            },
-                            indent=2,
-                            ensure_ascii=False,
-                        ),
-                    )
-                ]
+                return CallToolResult(
+                    isError=True,
+                    content=[
+                        TextContent(
+                            type="text",
+                            text=f"Error attaching content to Confluence page {page_id}: {str(e)}",
+                        )
+                    ],
+                )
+
+            try:
+                attachments = ctx.confluence.get_attachments_from_content(
+                    page_id=page_id
+                )
+
+                return CallToolResult(
+                    content=[
+                        TextContent(
+                            type="text",
+                            text=json.dumps(
+                                attachment.to_simplified_dict(),
+                                indent=2,
+                                ensure_ascii=False,
+                            ),
+                        )
+                        for attachment in attachments
+                    ]
+                )
+            except ConfluenceGetAttachmentsFromContentException as e:
+                logger.error(
+                    f"Error getting attachments from Confluence page {page_id}: {str(e)}"
+                )
+                return CallToolResult(
+                    isError=True,
+                    content=[
+                        TextContent(
+                            type="text",
+                            text=f"Error: {str(e)}",
+                        )
+                    ],
+                )
+
+        elif name == "confluence_get_attachments_from_content":
+            if not ctx or not ctx.confluence:
+                return CallToolResult(
+                    isError=True,
+                    content=[
+                        TextContent(
+                            type="text", text="Error: Confluence is not configured."
+                        )
+                    ],
+                )
+
+            page_id = arguments.get("page_id")
+
+            if not page_id:
+                return CallToolResult(
+                    isError=True,
+                    content=[
+                        TextContent(
+                            type="text",
+                            text="Error: Missing required parameter: page_id is required.",
+                        )
+                    ],
+                )
+
+            try:
+                attachments = ctx.confluence.get_attachments_from_content(
+                    page_id=page_id
+                )
+
+                return CallToolResult(
+                    content=[
+                        TextContent(
+                            type="text",
+                            text=json.dumps(
+                                attachment.to_simplified_dict(),
+                                indent=2,
+                                ensure_ascii=False,
+                            ),
+                        )
+                        for attachment in attachments
+                    ]
+                )
+            except ConfluenceGetAttachmentsFromContentException as e:
+                logger.error(
+                    f"Error getting attachments from Confluence page {page_id}: {str(e)}"
+                )
+                return CallToolResult(
+                    isError=True,
+                    content=[
+                        TextContent(
+                            type="text",
+                            text=f"Error getting attachments from Confluence page {page_id}: {str(e)}",
+                        )
+                    ],
+                )
 
         # Jira operations
         elif name == "jira_get_issue" and ctx and ctx.jira:

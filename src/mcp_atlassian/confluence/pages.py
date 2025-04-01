@@ -3,9 +3,15 @@
 import logging
 
 import requests
+from atlassian.errors import ApiError
+from requests.exceptions import RequestException
 
-from ..models.confluence import ConfluencePage
+from ..models.confluence import ConfluenceAttachment, ConfluencePage
 from .client import ConfluenceClient
+from .exceptions import (
+    ConfluenceAttachContentException,
+    ConfluenceGetAttachmentsFromContentException,
+)
 
 logger = logging.getLogger("mcp-atlassian")
 
@@ -436,7 +442,49 @@ class PagesMixin(ConfluenceClient):
             logger.error(f"Error deleting page {page_id}: {str(e)}")
             raise Exception(f"Failed to delete page {page_id}: {str(e)}") from e
 
-    def attach_content(self, content: bytes, name: str, page_id: str) -> bool:
+    def get_attachments_from_content(self, page_id: str) -> list[ConfluenceAttachment]:
+        """
+        Get attachments from a Confluence page.
+
+        Args:
+            page_id: The ID of the page
+
+        Returns:
+            List of ConfluenceAttachment models containing the attachments
+
+        Raises:
+            ConfluenceGetAttachmentsFromContentException: If there is an error getting attachments from the page
+        """
+        try:
+            logger.debug(f"Getting attachments from page {page_id}")
+            results = self.confluence.get_attachments_from_content(page_id=page_id)
+
+            # Handle both pagination modes
+            if isinstance(results, dict) and "results" in results:
+                attachments = results.get("results", [])
+            else:
+                attachments = results or []
+
+            return [
+                ConfluenceAttachment.from_api_response(data) for data in attachments
+            ]
+        except ApiError as e:
+            logger.error(f"Confluence API Error: {e}")
+            raise ConfluenceGetAttachmentsFromContentException(
+                f"Error when trying to get attachments from page {page_id}: {str(e)}"
+            ) from e
+        except RequestException as e:
+            logger.error(f"Network error: {e}")
+            raise ConfluenceGetAttachmentsFromContentException(
+                f"Error when trying to connect to Confluence: {str(e)}"
+            ) from e
+        except Exception as e:
+            logger.error(f"Unexpected error: {str(e)}")
+            raise ConfluenceGetAttachmentsFromContentException(
+                f"Unexpected error when trying to get attachments from page {page_id}: {str(e)}"
+            ) from e
+
+    def attach_content(self, content: bytes, name: str, page_id: str) -> None:
         """
         Attach content to a Confluence page.
 
@@ -445,35 +493,24 @@ class PagesMixin(ConfluenceClient):
             name: The name of the attachment
             page_id: The ID of the page to attach the content to
 
-        Returns:
-            Boolean indicating success (True) or failure (False)
-
         Raises:
-            Exception: If there is an error attaching the content
+            ConfluenceAttachContentException: If there is an error attaching the content
         """
         try:
             logger.debug(f"Attaching content to page {page_id}")
-            response = self.confluence.attach_content(
-                content=content, name=name, page_id=page_id
-            )
-
-            # Check if we got a response object
-            if isinstance(response, requests.Response):
-                # Check if status code indicates success (2xx)
-                success = 200 <= response.status_code < 300
-                logger.debug(
-                    f"Attach content to page {page_id} returned status code {response.status_code}"
-                )
-                return success
-            # If it's not a response object but truthy (like True), consider it a success
-            elif response:
-                return True
-            # Default to true since no exception was raised
-            # This is safer than returning false when we don't know what happened
-            return True
-
+            self.confluence.attach_content(content=content, name=name, page_id=page_id)
+        except ApiError as e:
+            logger.error(f"Confluence API Error: {e}")
+            raise ConfluenceAttachContentException(
+                f"Error when trying to attach content to page {page_id}: {str(e)}"
+            ) from e
+        except RequestException as e:
+            logger.error(f"Network error: {e}")
+            raise ConfluenceAttachContentException(
+                f"Error when trying to connect to Confluence: {str(e)}"
+            ) from e
         except Exception as e:
-            logger.error(f"Error attaching content to page {page_id}: {str(e)}")
-            raise Exception(
-                f"Failed to attach content to page {page_id}: {str(e)}"
+            logger.error(f"Unexpected error: {str(e)}")
+            raise ConfluenceAttachContentException(
+                f"Unexpected error when trying to attach content to page {page_id}: {str(e)}"
             ) from e
