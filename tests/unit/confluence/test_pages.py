@@ -386,7 +386,7 @@ class TestPagesMixin:
         with pytest.raises(Exception, match="Failed to delete page"):
             pages_mixin.delete_page(page_id)
 
-    def test_delete_page_success(self, pages_mixin):
+    def test_attach_content_success(self, pages_mixin):
         """Test successfully attach content."""
         # Arrange
         page_id = "987654321"
@@ -403,15 +403,17 @@ class TestPagesMixin:
         )
         assert result is True
 
-    def test_delete_page_error(self, pages_mixin):
+    def test_attach_content_error(self, pages_mixin):
         """Test error handling when deleting a page."""
         # Arrange
         page_id = "987654321"
-        pages_mixin.confluence.remove_page.side_effect = Exception("API Error")
+        content = b"Content to attach"
+        name = "test.pdf"
+        pages_mixin.confluence.attach_content.side_effect = Exception("API Error")
 
         # Act/Assert
-        with pytest.raises(Exception, match="Failed to delete page"):
-            pages_mixin.delete_page(page_id)
+        with pytest.raises(Exception, match="Failed to attach content"):
+            pages_mixin.attach_content(content=content, name=name, page_id=page_id)
 
     def test_get_page_children_success(self, pages_mixin):
         """Test successfully getting child pages."""
