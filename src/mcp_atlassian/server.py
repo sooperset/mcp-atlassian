@@ -537,6 +537,29 @@ async def list_tools() -> list[Tool]:
                             "required": ["page_id"],
                         },
                     ),
+                    Tool(
+                        name="confluence_attach_content",
+                        description="Attach content to a Confluence page",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "content": {
+                                    "type": "string",
+                                    "format": "binary",
+                                    "description": "The content to attach (bytes)",
+                                },
+                                "name": {
+                                    "type": "string",
+                                    "description": "The name of the attachment",
+                                },
+                                "page_id": {
+                                    "type": "string",
+                                    "description": "The ID of the page to attach the content to",
+                                },
+                            },
+                            "required": ["content", "name", "page_id"],
+                        },
+                    ),
                 ]
             )
 
@@ -1365,6 +1388,73 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                             {
                                 "success": False,
                                 "message": f"Error deleting page {page_id}",
+                                "error": str(e),
+                            },
+                            indent=2,
+                            ensure_ascii=False,
+                        ),
+                    )
+                ]
+
+        elif name == "confluence_attach_content":
+            if not ctx or not ctx.confluence:
+                raise ValueError("Confluence is not configured.")
+
+            # Write operation - check read-only mode
+            if read_only:
+                return [
+                    TextContent(
+                        "Operation 'confluence_attach_content' is not available in read-only mode."
+                    )
+                ]
+
+            content = arguments.get("content")
+            name = arguments.get("name")
+            page_id = arguments.get("page_id")
+
+            if not content or not name or not page_id:
+                raise ValueError(
+                    "Missing required parameters: content, name, and page_id are required."
+                )
+
+            try:
+                # Attach content to the page
+                result = ctx.confluence.attach_content(
+                    content=content.encode("utf-8"), name=name, page_id=page_id
+                )
+
+                # Format results - our fixed implementation now correctly returns True on success
+                if result:
+                    response = {
+                        "success": True,
+                        "message": f"Content attached to page {page_id} successfully",
+                    }
+                else:
+                    # This branch should rarely be hit with our updated implementation
+                    # but we keep it for safety
+                    response = {
+                        "success": False,
+                        "message": f"Unable to attach content to page {page_id}. The API request completed but attachment was unsuccessful.",
+                    }
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(response, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                # API call failed with an exception
+                logger.error(
+                    f"Error attaching content to Confluence page {page_id}: {str(e)}"
+                )
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(
+                            {
+                                "success": False,
+                                "message": f"Error attaching content to page {page_id}",
                                 "error": str(e),
                             },
                             indent=2,
