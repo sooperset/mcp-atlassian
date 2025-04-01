@@ -560,20 +560,6 @@ async def list_tools() -> list[Tool]:
                             "required": ["content", "name", "page_id"],
                         },
                     ),
-                    Tool(
-                        name="confluence_get_attachments_from_content",
-                        description="Get attachments from a Confluence page",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "page_id": {
-                                    "type": "string",
-                                    "description": "The ID of the page",
-                                },
-                            },
-                            "required": ["page_id"],
-                        },
-                    ),
                 ]
             )
 
