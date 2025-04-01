@@ -478,11 +478,6 @@ class PagesMixin(ConfluenceClient):
             raise ConfluenceGetAttachmentsFromContentError(
                 f"Error when trying to connect to Confluence: {str(e)}"
             ) from e
-        except Exception as e:
-            logger.error(f"Unexpected error: {str(e)}")
-            raise ConfluenceGetAttachmentsFromContentError(
-                f"Unexpected error when trying to get attachments from page {page_id}: {str(e)}"
-            ) from e
 
     def attach_content(self, content: bytes, name: str, page_id: str) -> None:
         """
@@ -508,9 +503,4 @@ class PagesMixin(ConfluenceClient):
             logger.error(f"Network error: {e}")
             raise ConfluenceAttachContentError(
                 f"Error when trying to connect to Confluence: {str(e)}"
-            ) from e
-        except Exception as e:
-            logger.error(f"Unexpected error: {str(e)}")
-            raise ConfluenceAttachContentError(
-                f"Unexpected error when trying to attach content to page {page_id}: {str(e)}"
             ) from e

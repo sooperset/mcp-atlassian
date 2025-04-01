@@ -471,21 +471,6 @@ class TestPagesMixin:
         ):
             pages_mixin.get_attachments_from_content(page_id)
 
-    def test_get_attachments_from_content_unexpected_error(self, pages_mixin):
-        """Test error handling when getting attachments from content due to unexpected error."""
-        # Arrange
-        page_id = "987654321"
-        pages_mixin.confluence.get_attachments_from_content.side_effect = ValueError(
-            "Unexpected value error"
-        )
-
-        # Act/Assert
-        with pytest.raises(
-            ConfluenceGetAttachmentsFromContentError,
-            match=f"Unexpected error when trying to get attachments from page {page_id}: Unexpected value error",
-        ):
-            pages_mixin.get_attachments_from_content(page_id)
-
     def test_attach_content_success(self, pages_mixin):
         """Test successfully attach content."""
         # Arrange
@@ -537,24 +522,6 @@ class TestPagesMixin:
         with pytest.raises(
             ConfluenceAttachContentError,
             match=f"Error when trying to connect to Confluence: {exception_message}",
-        ):
-            pages_mixin.attach_content(content=content, name=name, page_id=page_id)
-
-    def test_attach_content_unexpected_error(self, pages_mixin):
-        """Test error handling when attaching content due to unexpected error."""
-        # Arrange
-        page_id = "987654321"
-        content = b"Content to attach"
-        name = "test.pdf"
-        exception_message = "Unexpected value error"
-        pages_mixin.confluence.attach_content.side_effect = ValueError(
-            exception_message
-        )
-
-        # Act/Assert
-        with pytest.raises(
-            ConfluenceAttachContentError,
-            match=f"Unexpected error when trying to attach content to page {page_id}: {exception_message}",
         ):
             pages_mixin.attach_content(content=content, name=name, page_id=page_id)
 
