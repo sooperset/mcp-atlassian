@@ -12,6 +12,7 @@ from mcp.types import Resource, TextContent, Tool
 
 from .confluence import ConfluenceFetcher
 from .jira import JiraFetcher
+from .jira.utils import escape_jql_string
 from .utils.io import is_read_only_mode
 from .utils.urls import is_atlassian_cloud_url
 
@@ -149,8 +150,13 @@ async def list_resources() -> list[Resource]:
             # Get current user's account ID
             account_id = ctx.jira.get_current_user_account_id()
 
-            # Use JQL to find issues the user is assigned to or reported
-            jql = f'assignee = "{account_id}" OR reporter = "{account_id}" ORDER BY updated DESC'
+            # Escape the account ID for safe JQL insertion
+            escaped_account_id = escape_jql_string(account_id)
+
+            # Use JQL to find issues the user is assigned to or reported, using the escaped ID
+            # Note: We use the escaped_account_id directly, as it already includes the necessary quotes.
+            jql = f"assignee = {escaped_account_id} OR reporter = {escaped_account_id} ORDER BY updated DESC"
+            logger.debug(f"Executing JQL for list_resources: {jql}")
             issues = ctx.jira.jira.jql(jql, limit=250, fields=["project"])
 
             # Extract and deduplicate projects
@@ -180,7 +186,7 @@ async def list_resources() -> list[Resource]:
                 ]
             )
         except Exception as e:
-            logger.error(f"Error fetching Jira projects: {str(e)}")
+            logger.error(f"Error fetching Jira projects: {e}", exc_info=True)
 
     return resources
 
