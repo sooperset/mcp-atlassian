@@ -560,49 +560,6 @@ async def list_tools() -> list[Tool]:
                             "required": ["content", "name", "page_id"],
                         },
                     ),
-                    Tool(
-                        name="confluence_get_image_content",
-                        description="Get the content of an image attachment from a Confluence page by name. Allowed extensions : .jpeg, .jpg, .png",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "page_id": {
-                                    "type": "string",
-                                    "description": "The ID of the page",
-                                },
-                                "filename": {
-                                    "type": "string",
-                                    "description": "The name of the attachment",
-                                },
-                            },
-                            "required": ["page_id", "filename"],
-                        },
-                    ),
-                    Tool(
-                        name="confluence_get_pdf_content",
-                        description="Get the content of a PDF attachment from a Confluence page by name. Allowed extensions : .pdf",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "page_id": {
-                                    "type": "string",
-                                    "description": "The ID of the page",
-                                },
-                                "filename": {
-                                    "type": "string",
-                                    "description": "The name of the attachment",
-                                },
-                                "content_maximum_length": {
-                                    "type": "integer",
-                                    "description": "Maximum length of the content to return",
-                                    "default": 100_000,
-                                    "minimum": 1_000,
-                                    "maximum": 1_000_000,
-                                },
-                            },
-                            "required": ["page_id", "filename"],
-                        },
-                    ),
                 ]
             )
 
@@ -1486,25 +1443,6 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                         ),
                     )
                 ]
-
-        elif name == "confluence_get_image_content":
-            if not ctx or not ctx.confluence:
-                raise ValueError("Confluence is not configured.")
-
-            page_id = arguments.get("page_id")
-            filename = arguments.get("filename")
-
-            if not page_id or not filename:
-                return [
-                    TextContent(
-                        type="text",
-                        text="Error: Missing required parameters: page_id and filename are required.",
-                    )
-                ]
-
-            image_content = ctx.confluence.get_image_content(
-                page_id=page_id, filename=filename
-            )
 
         # Jira operations
         elif name == "jira_get_issue" and ctx and ctx.jira:
