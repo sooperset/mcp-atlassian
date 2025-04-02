@@ -451,12 +451,12 @@ class PagesMixin(ConfluenceClient):
 
         """
         try:
-            logger.debug(f"Attaching content to page {page_id}")
+            logger.debug("Attaching content to page %s", page_id)
             self.confluence.attach_content(content=content, name=name, page_id=page_id)
         except ApiError as e:
-            logger.error(f"Confluence API Error: {e}")
+            logger.error("Confluence API Error: %s", str(e))
             return None
         except RequestException as e:
-            logger.error(f"Network error: {e}")
+            logger.error("Network error: %s", str(e))
             return None
         return self.get_page_content(page_id=page_id, convert_to_markdown=False)
