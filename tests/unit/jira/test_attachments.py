@@ -5,28 +5,43 @@ from unittest.mock import MagicMock, mock_open, patch
 from mcp_atlassian.jira.attachments import AttachmentsMixin
 from mcp_atlassian.jira.config import JiraConfig
 
-# BSTASZ: some simple test scenarios for AttachmentsMixin
-# For downloading attachments from JIRA:
-# success case - downloads attachment correctly
-# relative path handling - converts to absolute path
-# error cases:
-#   - no URL provided
-#   - HTTP error
-#   - file write error
-#   - file not created
-#   - issue not found
-#   - missing URLs
-#   - multiple attachment download failures
-
-# For uploading attachments to JIRA:
-# success case - file uploads correctly
-# relative path handling - converts to absolute path
-# error cases:
-#   - no issue key provided
-#   - no file path provided
-#   - file not found
-#   - API error during upload
-#   - no response from API
+# Test scenarios for AttachmentsMixin
+#
+# 1. Single Attachment Download (download_attachment method):
+#    - Success case: Downloads attachment correctly with proper HTTP response
+#    - Path handling: Converts relative path to absolute path
+#    - Error cases:
+#      - No URL provided
+#      - HTTP error during download
+#      - File write error
+#      - File not created after write operation
+#
+# 2. Issue Attachments Download (download_issue_attachments method):
+#    - Success case: Downloads all attachments for an issue
+#    - Path handling: Converts relative target directory to absolute path
+#    - Edge cases:
+#      - Issue has no attachments
+#      - Issue not found
+#      - Issue has no fields
+#      - Some attachments fail to download
+#      - Attachment has missing URL
+#
+# 3. Single Attachment Upload (upload_attachment method):
+#    - Success case: Uploads file correctly
+#    - Path handling: Converts relative file path to absolute path
+#    - Error cases:
+#      - No issue key provided
+#      - No file path provided
+#      - File not found
+#      - API error during upload
+#      - No response from API
+#
+# 4. Multiple Attachments Upload (upload_attachments method):
+#    - Success case: Uploads multiple files correctly
+#    - Partial success: Some files upload successfully, others fail
+#    - Error cases:
+#      - Empty list of file paths
+#      - No issue key provided
 
 
 class TestAttachmentsMixin:
@@ -578,3 +593,132 @@ class TestAttachmentsMixin:
             # Assertions
             assert result["success"] is False
             assert "Failed to upload attachment" in result["error"]
+
+    # Tests for upload_attachments method
+
+    def test_upload_attachments_success(self):
+        """Test successful upload of multiple attachments."""
+        # Set up mock for upload_attachment method to simulate successful uploads
+        file_paths = [
+            "/path/to/file1.txt",
+            "/path/to/file2.pdf",
+            "/path/to/file3.jpg",
+        ]
+
+        # Create mock successful results for each file
+        mock_results = [
+            {
+                "success": True,
+                "issue_key": "TEST-123",
+                "filename": f"file{i + 1}.{ext}",
+                "size": 100 * (i + 1),
+                "id": f"id{i + 1}",
+            }
+            for i, ext in enumerate(["txt", "pdf", "jpg"])
+        ]
+
+        with patch.object(
+            self.client, "upload_attachment", side_effect=mock_results
+        ) as mock_upload:
+            # Call the method
+            result = self.client.upload_attachments("TEST-123", file_paths)
+
+            # Assertions
+            assert result["success"] is True
+            assert result["issue_key"] == "TEST-123"
+            assert result["total"] == 3
+            assert len(result["uploaded"]) == 3
+            assert len(result["failed"]) == 0
+
+            # Check that upload_attachment was called for each file
+            assert mock_upload.call_count == 3
+            mock_upload.assert_any_call("TEST-123", "/path/to/file1.txt")
+            mock_upload.assert_any_call("TEST-123", "/path/to/file2.pdf")
+            mock_upload.assert_any_call("TEST-123", "/path/to/file3.jpg")
+
+            # Verify uploaded files details
+            assert result["uploaded"][0]["filename"] == "file1.txt"
+            assert result["uploaded"][1]["filename"] == "file2.pdf"
+            assert result["uploaded"][2]["filename"] == "file3.jpg"
+            assert result["uploaded"][0]["size"] == 100
+            assert result["uploaded"][1]["size"] == 200
+            assert result["uploaded"][2]["size"] == 300
+            assert result["uploaded"][0]["id"] == "id1"
+            assert result["uploaded"][1]["id"] == "id2"
+            assert result["uploaded"][2]["id"] == "id3"
+
+    def test_upload_attachments_mixed_results(self):
+        """Test upload of multiple attachments with mixed success and failure."""
+        # Set up mock for upload_attachment method to simulate mixed results
+        file_paths = [
+            "/path/to/file1.txt",  # Will succeed
+            "/path/to/file2.pdf",  # Will fail
+            "/path/to/file3.jpg",  # Will succeed
+        ]
+
+        # Create mock results with mixed success/failure
+        mock_results = [
+            {
+                "success": True,
+                "issue_key": "TEST-123",
+                "filename": "file1.txt",
+                "size": 100,
+                "id": "id1",
+            },
+            {"success": False, "error": "File not found: /path/to/file2.pdf"},
+            {
+                "success": True,
+                "issue_key": "TEST-123",
+                "filename": "file3.jpg",
+                "size": 300,
+                "id": "id3",
+            },
+        ]
+
+        with patch.object(
+            self.client, "upload_attachment", side_effect=mock_results
+        ) as mock_upload:
+            # Call the method
+            result = self.client.upload_attachments("TEST-123", file_paths)
+
+            # Assertions
+            assert (
+                result["success"] is True
+            )  # Overall success is True even with partial failures
+            assert result["issue_key"] == "TEST-123"
+            assert result["total"] == 3
+            assert len(result["uploaded"]) == 2
+            assert len(result["failed"]) == 1
+
+            # Check that upload_attachment was called for each file
+            assert mock_upload.call_count == 3
+
+            # Verify uploaded files details
+            assert result["uploaded"][0]["filename"] == "file1.txt"
+            assert result["uploaded"][1]["filename"] == "file3.jpg"
+            assert result["uploaded"][0]["size"] == 100
+            assert result["uploaded"][1]["size"] == 300
+            assert result["uploaded"][0]["id"] == "id1"
+            assert result["uploaded"][1]["id"] == "id3"
+
+            # Verify failed file details
+            assert result["failed"][0]["filename"] == "file2.pdf"
+            assert "File not found" in result["failed"][0]["error"]
+
+    def test_upload_attachments_empty_list(self):
+        """Test upload with an empty list of file paths."""
+        # Call the method with an empty list
+        result = self.client.upload_attachments("TEST-123", [])
+
+        # Assertions
+        assert result["success"] is False
+        assert "No file paths provided" in result["error"]
+
+    def test_upload_attachments_no_issue_key(self):
+        """Test upload with no issue key provided."""
+        # Call the method with no issue key
+        result = self.client.upload_attachments("", ["/path/to/file.txt"])
+
+        # Assertions
+        assert result["success"] is False
+        assert "No issue key provided" in result["error"]
