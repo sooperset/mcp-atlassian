@@ -737,18 +737,29 @@ class JiraIssue(ApiModel, TimestampMixin):
 
         # Extract all fields that aren't explicitly processed into custom_fields
         known_fields = {
-            "summary", "description", "status", "issuetype", "priority", 
-            "assignee", "reporter", "labels", "components", "comment", 
-            "attachment", "created", "updated", "fixVersions"
+            "summary",
+            "description",
+            "status",
+            "issuetype",
+            "priority",
+            "assignee",
+            "reporter",
+            "labels",
+            "components",
+            "comment",
+            "attachment",
+            "created",
+            "updated",
+            "fixVersions",
         }
-        
+
         for key, value in fields.items():
             # Skip already processed fields and null values
             if key in known_fields or key.startswith("customfield_") or value is None:
                 continue
             # Add all other fields to custom_fields
             custom_fields[key] = value
-            
+
         return cls(
             id=issue_id,
             key=key,
