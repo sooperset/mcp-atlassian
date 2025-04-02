@@ -1464,8 +1464,16 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                             # Single file path as a JSON string
                             attachments = [parsed_attachments]
                     except json.JSONDecodeError:
-                        # Plain string - single file path
-                        attachments = [arguments.get("attachments")]
+                        # Handle non-JSON string formats
+                        if "," in arguments.get("attachments"):
+                            # Split by comma and strip whitespace (supporting comma-separated list format)
+                            attachments = [
+                                path.strip()
+                                for path in arguments.get("attachments").split(",")
+                            ]
+                        else:
+                            # Plain string - single file path
+                            attachments = [arguments.get("attachments")]
                 elif isinstance(arguments.get("attachments"), list):
                     # Already a list
                     attachments = arguments.get("attachments")
