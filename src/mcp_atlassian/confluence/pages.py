@@ -449,14 +449,16 @@ class PagesMixin(ConfluenceClient):
             name: The name of the attachment
             page_id: The ID of the page to attach the content to
 
+        Returns:
+            ConfluencePage model containing the updated page's data or None if an error occurred
         """
         try:
-            logger.debug("Attaching content to page %s", page_id)
+            logger.debug("Attaching content %s to page %s", name, page_id)
             self.confluence.attach_content(content=content, name=name, page_id=page_id)
         except ApiError as e:
-            logger.error("Confluence API Error: %s", str(e))
+            logger.error("Confluence API Error when trying to attach content %s to page %s: %s", name, page_id, str(e))
             return None
         except RequestException as e:
-            logger.error("Network error: %s", str(e))
+            logger.error("Network error when trying to attach content %s to page %s: %s", name, page_id, str(e))
             return None
         return self.get_page_content(page_id=page_id, convert_to_markdown=False)

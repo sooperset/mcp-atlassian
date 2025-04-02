@@ -487,10 +487,9 @@ class ConfluencePage(ApiModel, TimestampMixin):
             result["version"] = self.version.number
 
         # Add attachments if available
-        if self.attachments:
-            result["attachments"] = [
-                attachment.to_simplified_dict() for attachment in self.attachments
-            ]
+        result["attachments"] = [
+            attachment.to_simplified_dict() for attachment in self.attachments
+        ]
 
         # Add content if it's not empty
         if self.content and self.content_format:
