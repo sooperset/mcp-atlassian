@@ -11,6 +11,7 @@ from mcp.server import Server
 from mcp.types import Resource, TextContent, Tool
 
 from .confluence import ConfluenceFetcher
+from .confluence.utils import quote_cql_identifier_if_needed
 from .jira import JiraFetcher
 from .jira.utils import escape_jql_string
 from .utils.io import is_read_only_mode
@@ -219,8 +220,11 @@ async def read_resource(uri: str) -> tuple[str, str]:
         if len(parts) == 1:
             space_key = parts[0]
 
+            # Apply the fix here - properly quote the space key
+            quoted_space_key = quote_cql_identifier_if_needed(space_key)
+
             # Use CQL to find recently updated pages in this space
-            cql = f'space = "{space_key}" AND contributor = currentUser() ORDER BY lastmodified DESC'
+            cql = f"space = {quoted_space_key} AND contributor = currentUser() ORDER BY lastmodified DESC"
             pages = ctx.confluence.search(cql=cql, limit=20)
 
             if not pages:
@@ -336,6 +340,7 @@ async def list_tools() -> list[Tool]:
                                 "type": "string",
                                 "description": "Search query - can be either a simple text (e.g. 'project documentation') or a CQL query string. Examples of CQL:\n"
                                 "- Basic search: 'type=page AND space=DEV'\n"
+                                "- Personal space search: 'space=\"~username\"' (note: personal space keys starting with ~ must be quoted)\n"
                                 "- Search by title: 'title~\"Meeting Notes\"'\n"
                                 "- Recent content: 'created >= \"2023-01-01\"'\n"
                                 "- Content with specific label: 'label=documentation'\n"
@@ -344,7 +349,8 @@ async def list_tools() -> list[Tool]:
                                 "- Content you contributed to recently: 'contributor = currentUser() AND lastModified > startOfWeek()'\n"
                                 "- Content watched by user: 'watcher = \"user@domain.com\" AND type = page'\n"
                                 '- Exact phrase in content: \'text ~ "\\"Urgent Review Required\\"" AND label = "pending-approval"\'\n'
-                                '- Title wildcards: \'title ~ "Minutes*" AND (space = "HR" OR space = "Marketing")\'\n',
+                                '- Title wildcards: \'title ~ "Minutes*" AND (space = "HR" OR space = "Marketing")\'\n'
+                                'Note: Special identifiers need proper quoting in CQL: personal space keys (e.g., "~username"), reserved words, numeric IDs, and identifiers with special characters.',
                             },
                             "limit": {
                                 "type": "number",
