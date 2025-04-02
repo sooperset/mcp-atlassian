@@ -8,9 +8,6 @@ from requests.exceptions import RequestException
 
 from ..models.confluence import ConfluencePage
 from .client import ConfluenceClient
-from .exceptions import (
-    ConfluenceAttachContentError,
-)
 
 logger = logging.getLogger("mcp-atlassian")
 
@@ -441,7 +438,9 @@ class PagesMixin(ConfluenceClient):
             logger.error(f"Error deleting page {page_id}: {str(e)}")
             raise Exception(f"Failed to delete page {page_id}: {str(e)}") from e
 
-    def attach_content(self, content: bytes, name: str, page_id: str) -> ConfluencePage:
+    def attach_content(
+        self, content: bytes, name: str, page_id: str
+    ) -> ConfluencePage | None:
         """
         Attach content to a Confluence page.
 
@@ -450,20 +449,14 @@ class PagesMixin(ConfluenceClient):
             name: The name of the attachment
             page_id: The ID of the page to attach the content to
 
-        Raises:
-            ConfluenceAttachContentException: If there is an error attaching the content
         """
         try:
             logger.debug(f"Attaching content to page {page_id}")
             self.confluence.attach_content(content=content, name=name, page_id=page_id)
         except ApiError as e:
             logger.error(f"Confluence API Error: {e}")
-            raise ConfluenceAttachContentError(
-                f"Error when trying to attach content to page {page_id}: {str(e)}"
-            ) from e
+            return None
         except RequestException as e:
             logger.error(f"Network error: {e}")
-            raise ConfluenceAttachContentError(
-                f"Error when trying to connect to Confluence: {str(e)}"
-            ) from e
+            return None
         return self.get_page_content(page_id=page_id, convert_to_markdown=False)

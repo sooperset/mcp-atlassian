@@ -7,9 +7,6 @@ import requests
 from atlassian.errors import ApiError
 from requests.exceptions import RequestException
 
-from mcp_atlassian.confluence.exceptions import (
-    ConfluenceAttachContentError,
-)
 from mcp_atlassian.confluence.pages import PagesMixin
 from mcp_atlassian.models.confluence import ConfluencePage
 
@@ -429,11 +426,8 @@ class TestPagesMixin:
         pages_mixin.confluence.attach_content.side_effect = ApiError(exception_message)
 
         # Act/Assert
-        with pytest.raises(
-            ConfluenceAttachContentError,
-            match=f"Error when trying to attach content to page {page_id}: {exception_message}",
-        ):
-            pages_mixin.attach_content(content=content, name=name, page_id=page_id)
+        result = pages_mixin.attach_content(content=content, name=name, page_id=page_id)
+        assert result is None
 
     def test_attach_content_network_error(self, pages_mixin):
         """Test error handling when attaching content due to network error."""
@@ -447,10 +441,21 @@ class TestPagesMixin:
         )
 
         # Act/Assert
-        with pytest.raises(
-            ConfluenceAttachContentError,
-            match=f"Error when trying to connect to Confluence: {exception_message}",
-        ):
+        result = pages_mixin.attach_content(content=content, name=name, page_id=page_id)
+        assert result is None
+
+    def test_attach_content_unexpected_error(self, pages_mixin):
+        """Test error handling when attaching content due to unexpected error."""
+        # Arrange
+        page_id = "987654321"
+        content = b"Content to attach"
+        name = "test.pdf"
+        exception_message = "Unexpected error"
+        pages_mixin.confluence.attach_content.side_effect = ValueError(
+            exception_message
+        )
+
+        with pytest.raises(ValueError, match=exception_message):
             pages_mixin.attach_content(content=content, name=name, page_id=page_id)
 
     def test_get_page_children_success(self, pages_mixin):
