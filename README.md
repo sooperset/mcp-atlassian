@@ -21,7 +21,7 @@ Model Context Protocol (MCP) server for Atlassian products (Confluence and Jira)
 | Product | Deployment Type | Support Status              |
 |---------|----------------|-----------------------------|
 | **Confluence** | Cloud | ✅ Fully supported           |
-| **Confluence** | Server/Data Center | ✅ Supported (version 7.9+)  |
+| **Confluence** | Server/Data Center | ✅ Supported (version 6.0+)  |
 | **Jira** | Cloud | ✅ Fully supported           |
 | **Jira** | Server/Data Center | ✅ Supported (version 8.14+) |
 
@@ -40,10 +40,6 @@ First, generate the necessary authentication tokens for Confluence & Jira:
 1. Go to your profile (avatar) → **Profile** → **Personal Access Tokens**
 2. Click **Create token**, name it, set expiry
 3. Copy the token immediately
-
-#### For Server/Data Center Confluence using username/password basic auth
-1. Know your username and password
-2. See section *Required Arguments* for confluence basic authentication
 
 ### 2. Installation
 
@@ -87,14 +83,6 @@ uvx mcp-atlassian \
   --confluence-personal-token your_token \
   --jira-url https://jira.your-company.com \
   --jira-personal-token your_token
-```
-
-For Server/Data Center confluence using username/password basic authentication:
-```bash
-uvx mcp-atlassian \
-  --confluence-url https://confluence.your-company.com \
-  --confluence-username your.email@company.com \
-  --confluence-token your_confluence_password \
 ```
 
 > **Note:** You can configure just Confluence, just Jira, or both services. Simply include only the arguments for the service(s) you want to use. For example, to use only Confluence Cloud, you would only need `--confluence-url`, `--confluence-username`, and `--confluence-token`.
@@ -153,6 +141,66 @@ Using uvx (recommended) - Cloud:
         "--confluence-personal-token=your_token",
         "--jira-url=https://jira.your-company.com",
         "--jira-personal-token=your_token"
+      ]
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary>Using uvx - Confluence with Basic Auth (older servers)</summary>
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "uvx",
+      "args": [
+        "mcp-atlassian",
+        "--confluence-url=https://confluence.your-company.com",
+        "--confluence-username=your.email@company.com",
+        "--confluence-token=your_password"
+      ]
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary>Using uvx - Confluence only</summary>
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "uvx",
+      "args": [
+        "mcp-atlassian",
+        "--confluence-url=https://your-company.atlassian.net/wiki",
+        "--confluence-username=your.email@company.com",
+        "--confluence-token=your_api_token"
+      ]
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary>Using uvx - Jira only</summary>
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "uvx",
+      "args": [
+        "mcp-atlassian",
+        "--jira-url=https://your-company.atlassian.net",
+        "--jira-username=your.email@company.com",
+        "--jira-token=your_api_token"
       ]
     }
   }
@@ -333,18 +381,25 @@ Then configure *only the URL* in Cursor's `~/.cursor/mcp.json`:
 | `confluence_create_page` | Create a new Confluence page |
 | `confluence_update_page` | Update an existing Confluence page |
 | `confluence_delete_page` | Delete an existing Confluence page |
+| `confluence_attach_content` | Attach content to a Confluence page |
 | `jira_get_issue` | Get details of a specific Jira issue |
 | `jira_search` | Search Jira issues using JQL |
 | `jira_get_project_issues` | Get all issues for a specific Jira project |
+| `jira_get_epic_issues` | Get all issues linked to a specific Epic |
 | `jira_create_issue` | Create a new issue in Jira |
 | `jira_update_issue` | Update an existing Jira issue |
 | `jira_delete_issue` | Delete an existing Jira issue |
 | `jira_get_transitions` | Get available status transitions for a Jira issue |
 | `jira_transition_issue` | Transition a Jira issue to a new status |
+| `jira_add_comment` | Add a comment to a Jira issue |
 | `jira_add_worklog` | Add a worklog entry to a Jira issue |
 | `jira_get_worklog` | Get worklog entries for a Jira issue |
+| `jira_download_attachments` | Download attachments from a Jira issue |
 | `jira_link_to_epic` | Link an issue to an Epic |
-| `jira_get_epic_issues` | Get all issues linked to a specific Epic |
+| `jira_get_agile_boards` | Get Jira agile boards by name, project key, or type |
+| `jira_get_board_issues` | Get all issues linked to a specific board |
+| `jira_get_sprints_from_board` | Get Jira sprints from board by state |
+| `jira_get_sprint_issues` | Get Jira issues from sprint |
 
 ## Development & Debugging
 
