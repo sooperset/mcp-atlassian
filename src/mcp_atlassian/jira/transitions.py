@@ -3,6 +3,9 @@
 import logging
 from typing import Any
 
+from requests.exceptions import HTTPError
+
+from ..exceptions import MCPAtlassianAuthenticationError
 from ..models import JiraIssue, JiraTransition
 from .client import JiraClient
 
@@ -23,6 +26,7 @@ class TransitionsMixin(JiraClient):
             List of available transitions with id, name, and to status details
 
         Raises:
+            MCPAtlassianAuthenticationError: If authentication fails with the Jira API (401/403)
             Exception: If there is an error getting transitions
         """
         try:
@@ -69,6 +73,20 @@ class TransitionsMixin(JiraClient):
                 result.append(transition_info)
 
             return result
+        except HTTPError as http_err:
+            if http_err.response is not None and http_err.response.status_code in [
+                401,
+                403,
+            ]:
+                error_msg = (
+                    f"Authentication failed for Jira API ({http_err.response.status_code}). "
+                    "Token may be expired or invalid. Please verify credentials."
+                )
+                logger.error(error_msg)
+                raise MCPAtlassianAuthenticationError(error_msg) from http_err
+            else:
+                logger.error(f"HTTP error during API call: {http_err}", exc_info=False)
+                raise http_err
         except Exception as e:
             error_msg = f"Error getting transitions for {issue_key}: {str(e)}"
             logger.error(error_msg)
@@ -127,6 +145,7 @@ class TransitionsMixin(JiraClient):
             JiraIssue model representing the transitioned issue
 
         Raises:
+            MCPAtlassianAuthenticationError: If authentication fails with the Jira API (401/403)
             ValueError: If there is an error transitioning the issue
         """
         try:
@@ -229,11 +248,32 @@ class TransitionsMixin(JiraClient):
             if hasattr(self, "get_issue") and callable(self.get_issue):
                 return self.get_issue(issue_key)
             else:
-                # Fallback to creating a basic issue model with the key
-                logger.debug(
-                    f"No get_issue method available, returning basic issue model for {issue_key}"
+                # Fallback to using jira.get_issue directly
+                issue = self.jira.get_issue(issue_key)
+                if not issue:
+                    raise ValueError(f"Issue {issue_key} not found after transition")
+
+                # Create and return the JiraIssue model
+                return JiraIssue.from_api_response(
+                    issue, base_url=self.config.url if hasattr(self, "config") else None
                 )
-                return JiraIssue(key=issue_key)
+        except HTTPError as http_err:
+            if http_err.response is not None and http_err.response.status_code in [
+                401,
+                403,
+            ]:
+                error_msg = (
+                    f"Authentication failed for Jira API ({http_err.response.status_code}). "
+                    "Token may be expired or invalid. Please verify credentials."
+                )
+                logger.error(error_msg)
+                raise MCPAtlassianAuthenticationError(error_msg) from http_err
+            else:
+                logger.error(f"HTTP error during API call: {http_err}", exc_info=False)
+                raise http_err
+        except ValueError as e:
+            logger.error(f"Value error transitioning issue {issue_key}: {str(e)}")
+            raise
         except Exception as e:
             error_msg = (
                 f"Error transitioning issue {issue_key} with transition ID "

@@ -3,7 +3,9 @@
 import logging
 
 import requests
+from requests.exceptions import HTTPError
 
+from ..exceptions import MCPAtlassianAuthenticationError
 from ..models.jira import JiraIssue, JiraSearchResult
 from .client import JiraClient
 from .utils import parse_date_ymd
@@ -42,6 +44,7 @@ class SearchMixin(JiraClient):
             List of JiraIssue models representing the search results
 
         Raises:
+            MCPAtlassianAuthenticationError: If authentication fails with the Jira API (401/403)
             Exception: If there is an error searching for issues
         """
         try:
@@ -87,6 +90,20 @@ class SearchMixin(JiraClient):
 
             # Return the list of issues
             return search_result.issues
+        except HTTPError as http_err:
+            if http_err.response is not None and http_err.response.status_code in [
+                401,
+                403,
+            ]:
+                error_msg = (
+                    f"Authentication failed for Jira API ({http_err.response.status_code}). "
+                    "Token may be expired or invalid. Please verify credentials."
+                )
+                logger.error(error_msg)
+                raise MCPAtlassianAuthenticationError(error_msg) from http_err
+            else:
+                logger.error(f"HTTP error during API call: {http_err}", exc_info=False)
+                raise http_err
         except Exception as e:
             logger.error(f"Error searching issues with JQL '{jql}': {str(e)}")
             raise Exception(f"Error searching issues: {str(e)}") from e

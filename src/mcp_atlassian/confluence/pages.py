@@ -4,8 +4,9 @@ import logging
 
 import requests
 from atlassian.errors import ApiError
-from requests.exceptions import RequestException
+from requests.exceptions import HTTPError, RequestException
 
+from ..exceptions import MCPAtlassianAuthenticationError
 from ..models.confluence import ConfluencePage
 from .client import ConfluenceClient
 
@@ -28,28 +29,52 @@ class PagesMixin(ConfluenceClient):
 
         Returns:
             ConfluencePage model containing the page content and metadata
+
+        Raises:
+            MCPAtlassianAuthenticationError: If authentication fails with the Confluence API (401/403)
+            Exception: If there is an error retrieving the page
         """
-        page = self.confluence.get_page_by_id(
-            page_id=page_id, expand="body.storage,version,space,children.attachment"
-        )
-        space_key = page.get("space", {}).get("key", "")
-        content = page["body"]["storage"]["value"]
-        processed_html, processed_markdown = self.preprocessor.process_html_content(
-            content, space_key=space_key
-        )
+        try:
+            page = self.confluence.get_page_by_id(
+                page_id=page_id, expand="body.storage,version,space,children.attachment"
+            )
+            space_key = page.get("space", {}).get("key", "")
+            content = page["body"]["storage"]["value"]
+            processed_html, processed_markdown = self.preprocessor.process_html_content(
+                content, space_key=space_key
+            )
 
-        # Use the appropriate content format based on the convert_to_markdown flag
-        page_content = processed_markdown if convert_to_markdown else processed_html
+            # Use the appropriate content format based on the convert_to_markdown flag
+            page_content = processed_markdown if convert_to_markdown else processed_html
 
-        # Create and return the ConfluencePage model
-        return ConfluencePage.from_api_response(
-            page,
-            base_url=self.config.url,
-            include_body=True,
-            # Override content with our processed version
-            content_override=page_content,
-            content_format="storage" if not convert_to_markdown else "markdown",
-        )
+            # Create and return the ConfluencePage model
+            return ConfluencePage.from_api_response(
+                page,
+                base_url=self.config.url,
+                include_body=True,
+                # Override content with our processed version
+                content_override=page_content,
+                content_format="storage" if not convert_to_markdown else "markdown",
+            )
+        except HTTPError as http_err:
+            if http_err.response is not None and http_err.response.status_code in [
+                401,
+                403,
+            ]:
+                error_msg = (
+                    f"Authentication failed for Confluence API ({http_err.response.status_code}). "
+                    "Token may be expired or invalid. Please verify credentials."
+                )
+                logger.error(error_msg)
+                raise MCPAtlassianAuthenticationError(error_msg) from http_err
+            else:
+                logger.error(f"HTTP error during API call: {http_err}", exc_info=False)
+                raise http_err
+        except Exception as e:
+            logger.error(
+                f"Error retrieving page content for page ID {page_id}: {str(e)}"
+            )
+            raise Exception(f"Error retrieving page content: {str(e)}") from e
 
     def get_page_ancestors(self, page_id: str) -> list[ConfluencePage]:
         """
@@ -61,6 +86,9 @@ class PagesMixin(ConfluenceClient):
         Returns:
             List of ConfluencePage models representing the ancestors in hierarchical order
                 (immediate parent first, root ancestor last)
+
+        Raises:
+            MCPAtlassianAuthenticationError: If authentication fails with the Confluence API (401/403)
         """
         try:
             # Use the Atlassian Python API to get ancestors
@@ -78,6 +106,20 @@ class PagesMixin(ConfluenceClient):
                 ancestor_models.append(page_model)
 
             return ancestor_models
+        except HTTPError as http_err:
+            if http_err.response is not None and http_err.response.status_code in [
+                401,
+                403,
+            ]:
+                error_msg = (
+                    f"Authentication failed for Confluence API ({http_err.response.status_code}). "
+                    "Token may be expired or invalid. Please verify credentials."
+                )
+                logger.error(error_msg)
+                raise MCPAtlassianAuthenticationError(error_msg) from http_err
+            else:
+                logger.error(f"HTTP error during API call: {http_err}", exc_info=False)
+                raise http_err
         except Exception as e:
             logger.error(f"Error fetching ancestors for page {page_id}: {str(e)}")
             logger.debug("Full exception details:", exc_info=True)
