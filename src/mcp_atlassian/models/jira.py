@@ -755,7 +755,7 @@ class JiraIssue(ApiModel, TimestampMixin):
 
         for key, value in fields.items():
             # Skip already processed fields and null values
-            if key in known_fields or key.startswith("customfield_") or value is None:
+            if key in known_fields or value is None:
                 continue
             # Add all other fields to custom_fields
             custom_fields[key] = value
