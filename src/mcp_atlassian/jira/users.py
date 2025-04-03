@@ -1,5 +1,6 @@
 """Module for Jira user operations."""
 
+import json
 import logging
 
 import requests
@@ -25,7 +26,37 @@ class UsersMixin(JiraClient):
             return self._current_user_account_id
 
         try:
-            myself = self.jira.myself()
+            url = f"{self.config.url.rstrip('/')}/rest/api/2/myself"
+            headers = {"Accept": "application/json"}
+
+            if self.config.auth_type == "token":
+                headers["Authorization"] = f"Bearer {self.config.personal_token}"
+                auth = None
+            else:
+                auth = (self.config.username or "", self.config.api_token or "")
+
+            response = requests.get(
+                url,
+                headers=headers,
+                auth=auth,
+                verify=self.config.ssl_verify,
+                timeout=30,
+            )
+
+            if response.status_code != 200:
+                error_msg = f"Failed to get user data: HTTP {response.status_code}"
+                logger.error(error_msg)
+                raise Exception(error_msg)
+
+            # Only parse the JSON, don't convert any fields to Python objects
+            try:
+                myself = json.loads(response.text)
+            except json.JSONDecodeError as e:
+                error_msg = f"Failed to parse JSON response: {str(e)}"
+                logger.error(error_msg)
+                raise Exception(error_msg)
+
+            # Original logic to extract the ID
             if "accountId" in myself:
                 self._current_user_account_id = myself["accountId"]
                 return self._current_user_account_id
