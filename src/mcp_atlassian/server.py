@@ -5,11 +5,11 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlparse
 
 from atlassian.errors import ApiError
 from mcp.server import Server
 from mcp.types import Resource, TextContent, Tool
+from pydantic import AnyUrl
 from requests.exceptions import RequestException
 
 from .confluence import ConfluenceFetcher
@@ -203,20 +203,19 @@ async def list_resources() -> list[Resource]:
 
 
 @app.read_resource()
-async def read_resource(uri: str) -> tuple[str, str]:
+async def read_resource(uri: AnyUrl) -> str:
     """Read content from Confluence based on the resource URI."""
-    parsed_uri = urlparse(uri)
 
     # Get application context
     ctx = app.request_context.lifespan_context
 
     # Handle Confluence resources
-    if uri.startswith("confluence://"):
+    if str(uri).startswith("confluence://"):
         if not ctx or not ctx.confluence:
             raise ValueError(
                 "Confluence is not configured. Please provide Confluence credentials."
             )
-        parts = uri.replace("confluence://", "").split("/")
+        parts = str(uri).replace("confluence://", "").split("/")
 
         # Handle space listing
         if len(parts) == 1:
@@ -241,7 +240,7 @@ async def read_resource(uri: str) -> tuple[str, str]:
 
                 content.append(f"# [{title}]({url})\n\n{page.page_content}\n\n---")
 
-            return "\n\n".join(content), "text/markdown"
+            return "\n\n".join(content)
 
         # Handle specific page
         elif len(parts) >= 3 and parts[1] == "pages":
@@ -252,13 +251,13 @@ async def read_resource(uri: str) -> tuple[str, str]:
             if not page:
                 raise ValueError(f"Page not found: {title}")
 
-            return page.page_content, "text/markdown"
+            return page.page_content
 
     # Handle Jira resources
-    elif uri.startswith("jira://"):
+    elif str(uri).startswith("jira://"):
         if not ctx or not ctx.jira:
             raise ValueError("Jira is not configured. Please provide Jira credentials.")
-        parts = uri.replace("jira://", "").split("/")
+        parts = str(uri).replace("jira://", "").split("/")
 
         # Handle project listing
         if len(parts) == 1:
@@ -293,7 +292,7 @@ async def read_resource(uri: str) -> tuple[str, str]:
 
                 content.append(f"{issue_content}---")
 
-            return "\n\n".join(content), "text/markdown"
+            return "\n\n".join(content)
 
         # Handle specific issue
         elif len(parts) >= 2:
@@ -313,7 +312,7 @@ async def read_resource(uri: str) -> tuple[str, str]:
             if issue_dict.get("description"):
                 markdown += f"{issue_dict.get('description')}\n\n"
 
-            return markdown, "text/markdown"
+            return markdown
 
     raise ValueError(f"Invalid resource URI: {uri}")
 
