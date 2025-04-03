@@ -462,7 +462,7 @@ class PagesMixin(ConfluenceClient):
                 page_id,
                 str(e),
             )
-            return None
+            raise
         except RequestException as e:
             logger.error(
                 "Network error when trying to attach content %s to page %s: %s",
@@ -470,5 +470,5 @@ class PagesMixin(ConfluenceClient):
                 page_id,
                 str(e),
             )
-            return None
+            raise
         return self.get_page_content(page_id=page_id, convert_to_markdown=False)

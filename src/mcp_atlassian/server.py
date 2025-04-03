@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
+from atlassian.errors import ApiError
 from mcp.server import Server
 from mcp.types import Resource, TextContent, Tool
+from requests.exceptions import RequestException
 
 from .confluence import ConfluenceFetcher
 from .confluence.utils import quote_cql_identifier_if_needed
@@ -1420,18 +1422,10 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                     )
                 ]
 
-            page = ctx.confluence.attach_content(
-                content=content, name=name, page_id=page_id
-            )
-            if page is None:
-                logger.error("Error attaching content to Confluence page %s", page_id)
-                return [
-                    TextContent(
-                        type="text",
-                        text=f"Error attaching content to Confluence page {page_id}",
-                    )
-                ]
-            else:
+            try:
+                page = ctx.confluence.attach_content(
+                    content=content, name=name, page_id=page_id
+                )
                 page_data = page.to_simplified_dict()
                 return [
                     TextContent(
@@ -1441,6 +1435,20 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                             indent=2,
                             ensure_ascii=False,
                         ),
+                    )
+                ]
+            except ApiError as e:
+                return [
+                    TextContent(
+                        type="text",
+                        text=f"Confluence API Error when trying to attach content {name} to page {page_id}: {str(e)}",
+                    )
+                ]
+            except RequestException as e:
+                return [
+                    TextContent(
+                        type="text",
+                        text=f"Network error when trying to attach content {name} to page {page_id}: {str(e)}",
                     )
                 ]
 

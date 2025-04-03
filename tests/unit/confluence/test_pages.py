@@ -426,8 +426,8 @@ class TestPagesMixin:
         pages_mixin.confluence.attach_content.side_effect = ApiError(exception_message)
 
         # Act/Assert
-        result = pages_mixin.attach_content(content=content, name=name, page_id=page_id)
-        assert result is None
+        with pytest.raises(ApiError, match=exception_message):
+            pages_mixin.attach_content(content=content, name=name, page_id=page_id)
 
     def test_attach_content_network_error(self, pages_mixin):
         """Test error handling when attaching content due to network error."""
@@ -441,10 +441,10 @@ class TestPagesMixin:
         )
 
         # Act/Assert
-        result = pages_mixin.attach_content(content=content, name=name, page_id=page_id)
-        assert result is None
+        with pytest.raises(RequestException, match=exception_message):
+            pages_mixin.attach_content(content=content, name=name, page_id=page_id)
 
-    def test_attach_content_unexpected_error(self, pages_mixin):
+    def test_attach_content_unhandled_exception_propagate(self, pages_mixin):
         """Test error handling when attaching content due to unexpected error."""
         # Arrange
         page_id = "987654321"
@@ -455,6 +455,7 @@ class TestPagesMixin:
             exception_message
         )
 
+        # Act/Assert
         with pytest.raises(ValueError, match=exception_message):
             pages_mixin.attach_content(content=content, name=name, page_id=page_id)
 
