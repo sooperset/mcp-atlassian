@@ -661,17 +661,23 @@ class IssuesMixin(UsersMixin):
         for key, value in kwargs.items():
             # Explicitly handle components field
             if key.lower() == "components":
-                # Assuming the value is already in the correct format e.g., [{'name': 'Genius'}] or [{'id': '11004'}]
+                # Assuming the value is already in the correct format e.g., [{'name': 'Vortex'}] or [{'id': '11004'}]
                 # We need the actual field ID for components. Let's try the common one, but this might need adjustment.
                 # If 'Components' field ID is known, use it directly. Otherwise, try a common default or log a warning.
-                component_field_id = field_ids.get("Components", field_ids.get("components")) # Try both cases
+                component_field_id = field_ids.get(
+                    "Components", field_ids.get("components")
+                )  # Try both cases
                 if component_field_id:
                     fields[component_field_id] = value
-                    logger.debug(f"Explicitly added components using field ID: {component_field_id}")
+                    logger.debug(
+                        f"Explicitly added components using field ID: {component_field_id}"
+                    )
                 else:
                     # Fallback or warning if component ID not found
-                    logger.warning("Could not find field ID for 'Components'. Components may not be set.")
-                continue # Skip further processing for components
+                    logger.warning(
+                        "Could not find field ID for 'Components'. Components may not be set."
+                    )
+                continue  # Skip further processing for components
 
             if key in ("epic_name", "epic_link", "parent"):
                 continue  # Handled separately
