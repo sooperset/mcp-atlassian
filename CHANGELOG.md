@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2025-04-03
+
+### Added
+- Add tools to retrieve Jira Agile boards (`jira_get_agile_boards`), sprints (`jira_get_sprints_from_board`), board issues (`jira_get_board_issues`), and sprint issues (`jira_get_sprint_issues`) (#166)
+- Implement Jira attachment upload functionality via `jira_update_issue` tool using the `attachments` parameter (#168, #7ad3485)
+- Add tool to attach content to Confluence pages (`confluence_attach_content`) (#178)
+- Add explicit `MCPAtlassianAuthenticationError` for handling 401/403 authentication errors, providing clearer feedback for expired tokens or permission issues (#190, #183)
+
+### Changed
+- Improve custom field handling in `JiraIssue` model to automatically include all fields not explicitly processed under `custom_fields`, making more data accessible (#182)
+- Enable basic authentication support (username/API token) for on-premise/Data Center Confluence instances, previously only token auth was explicitly checked (#173)
+- General updates and refinements to Jira issue handling logic (#187)
+
+### Fixed
+- Parse `fixVersions` field correctly in Jira issues, previously missed (#162)
+- Fix JQL error in `list_resources` when user identifier (e.g., email) contains special characters like '@' by properly quoting and escaping the identifier (#180, #172)
+- Fix Confluence search (`confluence_search`) and resource reading (`read_resource` for space URIs) when using space keys that require quotes (e.g., personal spaces '~...', reserved CQL words, numeric keys) by adding conditional CQL identifier quoting (#185, #184)
+- Fix Python C-level timestamp conversion error ("timestamp too large") when fetching user data from Jira Data Center 9.x instances by using a direct API request bypassing the problematic library parsing (#189, #171)
+
 ## [0.4.0] - 2025-03-28
 
 ### Added
