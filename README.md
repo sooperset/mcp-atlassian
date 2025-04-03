@@ -13,7 +13,8 @@ Model Context Protocol (MCP) server for Atlassian products (Confluence and Jira)
 <details>
 <summary>Confluence Demo</summary>
 
-![Confluence Demo](https://github.com/user-attachments/assets/8a203391-795a-474f-8123-9c11f13a780e)
+https://github.com/user-attachments/assets/7fe9c488-ad0c-4876-9b54-120b666bb785
+
 </details>
 
 ### Compatibility
