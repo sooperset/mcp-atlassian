@@ -6,6 +6,7 @@ import pytest
 import requests
 
 from mcp_atlassian.confluence.search import SearchMixin
+from mcp_atlassian.confluence.utils import quote_cql_identifier_if_needed
 
 
 class TestSearchMixin:
@@ -147,7 +148,7 @@ class TestSearchMixin:
         assert len(results) == 0
 
     def test_search_with_spaces_filter(self, search_mixin):
-        """Test search with spaces filter."""
+        """Test searching with spaces filter from parameter."""
         # Prepare the mock
         search_mixin.confluence.cql.return_value = {
             "results": [
@@ -173,16 +174,23 @@ class TestSearchMixin:
 
         # Test with single space filter
         result = search_mixin.search("test query", spaces_filter="DEV")
+
+        # Verify space was properly quoted in the CQL query
+        quoted_dev = quote_cql_identifier_if_needed("DEV")
         search_mixin.confluence.cql.assert_called_with(
-            cql='(test query) AND (space = "DEV")',
+            cql=f"(test query) AND (space = {quoted_dev})",
             limit=10,
         )
         assert len(result) == 1
 
         # Test with multiple spaces filter
         result = search_mixin.search("test query", spaces_filter="DEV,TEAM")
+
+        # Verify spaces were properly quoted in the CQL query
+        quoted_dev = quote_cql_identifier_if_needed("DEV")
+        quoted_team = quote_cql_identifier_if_needed("TEAM")
         search_mixin.confluence.cql.assert_called_with(
-            cql='(test query) AND (space = "DEV" OR space = "TEAM")',
+            cql=f"(test query) AND (space = {quoted_dev} OR space = {quoted_team})",
             limit=10,
         )
         assert len(result) == 1
@@ -225,16 +233,23 @@ class TestSearchMixin:
 
         # Test with config filter
         result = search_mixin.search("test query")
+
+        # Verify spaces were properly quoted in the CQL query
+        quoted_dev = quote_cql_identifier_if_needed("DEV")
+        quoted_team = quote_cql_identifier_if_needed("TEAM")
         search_mixin.confluence.cql.assert_called_with(
-            cql='(test query) AND (space = "DEV" OR space = "TEAM")',
+            cql=f"(test query) AND (space = {quoted_dev} OR space = {quoted_team})",
             limit=10,
         )
         assert len(result) == 1
 
         # Test that explicit filter overrides config filter
         result = search_mixin.search("test query", spaces_filter="OVERRIDE")
+
+        # Verify space was properly quoted in the CQL query
+        quoted_override = quote_cql_identifier_if_needed("OVERRIDE")
         search_mixin.confluence.cql.assert_called_with(
-            cql='(test query) AND (space = "OVERRIDE")',
+            cql=f"(test query) AND (space = {quoted_override})",
             limit=10,
         )
         assert len(result) == 1

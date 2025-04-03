@@ -175,3 +175,13 @@ def get_mixin_method(
         "TRACE utils.get_mixin_method no implementation found, using dummy function"
     )
     return lambda *args, **kwargs: None
+
+
+def escape_jql_string(value: str) -> str:
+    """
+    Escapes characters reserved within JQL string literals ('\\', '"')
+    and encloses the result in double quotes.
+    """
+    # Escape backslash first, then double quote
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'  # Return the properly quoted and escaped string

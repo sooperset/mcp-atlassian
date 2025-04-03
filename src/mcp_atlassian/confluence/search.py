@@ -6,6 +6,7 @@ import requests
 
 from ..models.confluence import ConfluencePage, ConfluenceSearchResult
 from .client import ConfluenceClient
+from .utils import quote_cql_identifier_if_needed
 
 logger = logging.getLogger("mcp-atlassian")
 
@@ -36,8 +37,13 @@ class SearchMixin(ConfluenceClient):
                 # Split spaces filter by commas and handle possible whitespace
                 spaces = [s.strip() for s in filter_to_use.split(",")]
 
-                # Build the space filter query part
-                space_query = " OR ".join([f'space = "{space}"' for space in spaces])
+                # Build the space filter query part using proper quoting for each space key
+                space_query = " OR ".join(
+                    [
+                        f"space = {quote_cql_identifier_if_needed(space)}"
+                        for space in spaces
+                    ]
+                )
 
                 # Add the space filter to existing query with parentheses
                 if cql and space_query:

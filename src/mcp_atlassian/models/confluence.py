@@ -115,6 +115,55 @@ class ConfluenceUser(ApiModel):
         }
 
 
+class ConfluenceAttachment(ApiModel):
+    """
+    Model representing a Confluence attachment.
+    """
+
+    id: str | None = None
+    type: str | None = None
+    status: str | None = None
+    title: str | None = None
+    media_type: str | None = None
+    file_size: int | None = None
+
+    @classmethod
+    def from_api_response(
+        cls, data: dict[str, Any], **kwargs: Any
+    ) -> "ConfluenceAttachment":
+        """
+        Create a ConfluenceAttachment from a Confluence API response.
+
+        Args:
+            data: The attachment data from the Confluence API
+
+        Returns:
+            A ConfluenceAttachment instance
+        """
+        if not data:
+            return cls()
+
+        return cls(
+            id=data.get("id"),
+            type=data.get("type"),
+            status=data.get("status"),
+            title=data.get("title"),
+            media_type=data.get("extensions", {}).get("mediaType"),
+            file_size=data.get("extensions", {}).get("fileSize"),
+        )
+
+    def to_simplified_dict(self) -> dict[str, Any]:
+        """Convert to simplified dictionary for API response."""
+        return {
+            "id": self.id,
+            "type": self.type,
+            "status": self.status,
+            "title": self.title,
+            "media_type": self.media_type,
+            "file_size": self.file_size,
+        }
+
+
 class ConfluenceSpace(ApiModel):
     """
     Model representing a Confluence space.
@@ -302,6 +351,7 @@ class ConfluencePage(ApiModel, TimestampMixin):
     version: ConfluenceVersion | None = None
     ancestors: list[dict[str, Any]] = Field(default_factory=list)
     children: dict[str, Any] = Field(default_factory=dict)
+    attachments: list[ConfluenceAttachment] = Field(default_factory=list)
     url: str | None = None
 
     @property
@@ -365,6 +415,18 @@ class ConfluencePage(ApiModel, TimestampMixin):
         if version_data := data.get("version"):
             version = ConfluenceVersion.from_api_response(version_data)
 
+        # Process attachments
+        attachments = []
+        if (
+            attachments_data := data.get("children", {})
+            .get("attachment", {})
+            .get("results", [])
+        ):
+            attachments = [
+                ConfluenceAttachment.from_api_response(attachment)
+                for attachment in attachments_data
+            ]
+
         # Process metadata timestamps
         created = EMPTY_STRING
         updated = EMPTY_STRING
@@ -397,6 +459,7 @@ class ConfluencePage(ApiModel, TimestampMixin):
             version=version,
             ancestors=data.get("ancestors", []),
             children=data.get("children", {}),
+            attachments=attachments,
             url=url,
         )
 
@@ -422,6 +485,11 @@ class ConfluencePage(ApiModel, TimestampMixin):
         # Add version information if available
         if self.version:
             result["version"] = self.version.number
+
+        # Add attachments if available
+        result["attachments"] = [
+            attachment.to_simplified_dict() for attachment in self.attachments
+        ]
 
         # Add content if it's not empty
         if self.content and self.content_format:

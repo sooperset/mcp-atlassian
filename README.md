@@ -41,6 +41,10 @@ First, generate the necessary authentication tokens for Confluence & Jira:
 2. Click **Create token**, name it, set expiry
 3. Copy the token immediately
 
+#### For Server/Data Center Confluence using username/password basic auth
+1. Know your username and password
+2. See section *Required Arguments* for confluence basic authentication
+
 ### 2. Installation
 
 Choose one of these installation methods:
@@ -83,6 +87,14 @@ uvx mcp-atlassian \
   --confluence-personal-token your_token \
   --jira-url https://jira.your-company.com \
   --jira-personal-token your_token
+```
+
+For Server/Data Center confluence using username/password basic authentication:
+```bash
+uvx mcp-atlassian \
+  --confluence-url https://confluence.your-company.com \
+  --confluence-username your.email@company.com \
+  --confluence-token your_confluence_password \
 ```
 
 > **Note:** You can configure just Confluence, just Jira, or both services. Simply include only the arguments for the service(s) you want to use. For example, to use only Confluence Cloud, you would only need `--confluence-url`, `--confluence-username`, and `--confluence-token`.

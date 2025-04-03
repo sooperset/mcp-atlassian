@@ -3,6 +3,8 @@
 import logging
 
 import requests
+from atlassian.errors import ApiError
+from requests.exceptions import RequestException
 
 from ..models.confluence import ConfluencePage
 from .client import ConfluenceClient
@@ -28,7 +30,7 @@ class PagesMixin(ConfluenceClient):
             ConfluencePage model containing the page content and metadata
         """
         page = self.confluence.get_page_by_id(
-            page_id=page_id, expand="body.storage,version,space"
+            page_id=page_id, expand="body.storage,version,space,children.attachment"
         )
         space_key = page.get("space", {}).get("key", "")
         content = page["body"]["storage"]["value"]
@@ -435,3 +437,38 @@ class PagesMixin(ConfluenceClient):
         except Exception as e:
             logger.error(f"Error deleting page {page_id}: {str(e)}")
             raise Exception(f"Failed to delete page {page_id}: {str(e)}") from e
+
+    def attach_content(
+        self, content: bytes, name: str, page_id: str
+    ) -> ConfluencePage | None:
+        """
+        Attach content to a Confluence page.
+
+        Args:
+            content: The content to attach (bytes)
+            name: The name of the attachment
+            page_id: The ID of the page to attach the content to
+
+        Returns:
+            ConfluencePage model containing the updated page's data
+        """
+        try:
+            logger.debug("Attaching content %s to page %s", name, page_id)
+            self.confluence.attach_content(content=content, name=name, page_id=page_id)
+        except ApiError as e:
+            logger.error(
+                "Confluence API Error when trying to attach content %s to page %s: %s",
+                name,
+                page_id,
+                str(e),
+            )
+            raise
+        except RequestException as e:
+            logger.error(
+                "Network error when trying to attach content %s to page %s: %s",
+                name,
+                page_id,
+                str(e),
+            )
+            raise
+        return self.get_page_content(page_id=page_id, convert_to_markdown=False)

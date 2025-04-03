@@ -124,6 +124,26 @@ MOCK_PAGE_RESPONSE = {
             "self": "https://example.atlassian.net/wiki/rest/api/content/987654321/version/1"
         },
     },
+    "children": {
+        "attachment": {
+            "results": [
+                {
+                    "id": "att105348",
+                    "type": "attachment",
+                    "status": "current",
+                    "title": "random_geometric_image.svg",
+                    "extensions": {"mediaType": "application/binary", "fileSize": 1098},
+                },
+                {
+                    "id": "att9535345",
+                    "type": "attachment",
+                    "status": "current",
+                    "title": "stockmaster-architecture.svg",
+                    "extensions": {"mediaType": "application/binary", "fileSize": 6186},
+                },
+            ]
+        }
+    },
     "body": {
         "storage": {
             "value": '<h2><ac:emoticon ac:name="blue-star" />&nbsp;Date</h2><p><time datetime="2024-01-01" /></p><h2><ac:emoticon ac:name="blue-star" />&nbsp;Participants</h2><ul><li><p><ac:link><ri:user ri:account-id="user123" /></ac:link></p></li></ul><h2><ac:emoticon ac:name="blue-star" />&nbsp;Goals</h2><ul><li><p>Example goal</p></li></ul>',
