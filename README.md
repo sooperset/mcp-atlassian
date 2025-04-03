@@ -291,25 +291,24 @@ For Cloud:
 
 #### SSE Transport Configuration
 
-For SSE transport, first start the server:
+For SSE transport, first start the server with its configuration provided via command-line arguments or server-side environment variables (e.g., from a `.env` file):
 ```bash
-uvx mcp-atlassian --transport sse --port 9000
+# Example starting the server with Cloud configuration
+uvx mcp-atlassian --transport sse --port 9000 \
+  --confluence-url https://your-company.atlassian.net/wiki \
+  --confluence-username your.email@company.com \
+  --confluence-token your_api_token \
+  --jira-url https://your-company.atlassian.net \
+  --jira-username your.email@company.com \
+  --jira-token your_api_token
 ```
 
-Then configure in Cursor:
+Then configure *only the URL* in Cursor's `~/.cursor/mcp.json`:
 ```json
 {
   "mcpServers": {
     "mcp-atlassian-sse": {
-      "url": "http://localhost:9000/sse",
-      "env": {
-        "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
-        "CONFLUENCE_USERNAME": "your.email@company.com",
-        "CONFLUENCE_API_TOKEN": "your_api_token",
-        "JIRA_URL": "https://your-company.atlassian.net",
-        "JIRA_USERNAME": "your.email@company.com",
-        "JIRA_API_TOKEN": "your_api_token"
-      }
+      "url": "http://localhost:9000/sse"
     }
   }
 }
