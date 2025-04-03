@@ -450,7 +450,7 @@ class PagesMixin(ConfluenceClient):
             page_id: The ID of the page to attach the content to
 
         Returns:
-            ConfluencePage model containing the updated page's data or None if an error occurred
+            ConfluencePage model containing the updated page's data
         """
         try:
             logger.debug("Attaching content %s to page %s", name, page_id)
