@@ -31,7 +31,6 @@ FROM python:3.10-slim
 WORKDIR /app
 
 COPY --from=uv --chown=app:app /app/.venv /app/.venv
-COPY .env.example /app/.env
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"

@@ -4,6 +4,7 @@
 ![PyPI - Downloads](https://img.shields.io/pypi/dm/mcp-atlassian)
 ![PePy - Total Downloads](https://static.pepy.tech/personalized-badge/mcp-atlassian?period=total&units=international_system&left_color=grey&right_color=blue&left_text=Total%20Downloads)
 ![License](https://img.shields.io/github/license/sooperset/mcp-atlassian)
+[![smithery badge](https://smithery.ai/badge/mcp-atlassian)](https://smithery.ai/server/mcp-atlassian)
 
 Model Context Protocol (MCP) server for Atlassian products (Confluence and Jira). This integration supports both Confluence & Jira Cloud and Server/Data Center deployments.
 
@@ -361,6 +362,14 @@ Then configure *only the URL* in Cursor's `~/.cursor/mcp.json`:
     }
   }
 }
+```
+
+### Installing via Smithery
+
+To install Atlassian Integration for Claude Desktop automatically via [Smithery](https://smithery.ai/server/mcp-atlassian):
+
+```bash
+npx -y @smithery/cli install mcp-atlassian --client claude
 ```
 
 ## Resources
