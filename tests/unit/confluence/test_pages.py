@@ -444,7 +444,7 @@ class TestPagesMixin:
         with pytest.raises(RequestException, match=exception_message):
             pages_mixin.attach_content(content=content, name=name, page_id=page_id)
 
-    def test_attach_content_unhandled_exception_propagate(self, pages_mixin):
+    def test_attach_content_unhandled_exception_propagates(self, pages_mixin):
         """Test error handling when attaching content due to unexpected error."""
         # Arrange
         page_id = "987654321"
