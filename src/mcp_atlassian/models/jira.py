@@ -474,6 +474,27 @@ class JiraIssue(ApiModel, TimestampMixin):
     custom_fields: dict[str, Any] = Field(default_factory=dict)
     requested_fields: str | list[str] | None = None
 
+    def __getattribute__(self, name: str) -> Any:
+        """
+        Override attribute access to prioritize model properties over custom fields.
+
+        This fixes issues with test assertions by ensuring that when we access attributes
+        like `issue.key`, we get the model property instead of a custom field with the same name.
+        """
+        try:
+            # First try to get the attribute from the model
+            return super().__getattribute__(name)
+        except AttributeError:
+            # If not found in model, check custom fields
+            try:
+                custom_fields = super().__getattribute__("custom_fields")
+                if name in custom_fields:
+                    return custom_fields[name]
+            except AttributeError:
+                pass
+            # Propagate the original error
+            raise
+
     @property
     def page_content(self) -> str | None:
         """
@@ -744,22 +765,61 @@ class JiraIssue(ApiModel, TimestampMixin):
             "priority",
             "assignee",
             "reporter",
-            "labels",
             "components",
             "comment",
             "attachment",
+            "fixVersions",
+            "labels",
             "created",
             "updated",
-            "fixVersions",
+            "duedate",
+            "resolutiondate",
+            "resolution",
+            "project",
+            "parent",
+            "subtasks",
+            "timetracking",
+            "security",
+            "worklog",  # Add worklog to known_fields to prevent conflicts
         }
 
-        for key, value in fields.items():
-            # Skip already processed fields and null values
-            if key in known_fields or value is None:
-                continue
-            # Add all other fields to custom_fields
-            custom_fields[key] = value
+        # First create field_map, which should exclude Jira model property names
+        field_map = {}
+        model_property_names = {
+            "id",
+            "key",
+            "summary",
+            "description",
+            "created",
+            "updated",
+            "status",
+            "issue_type",
+            "priority",
+            "assignee",
+            "reporter",
+            "labels",
+            "components",
+            "comments",
+            "attachments",
+            "url",
+            "epic_key",
+            "epic_name",
+            "fix_versions",
+            "custom_fields",
+            "requested_fields",
+            "page_content",
+        }
 
+        for field, value in fields.items():
+            if field not in known_fields and not field.startswith("customfield_"):
+                # Never add fields that would overwrite JiraIssue model properties
+                if field not in model_property_names:
+                    field_map[field] = value
+
+        # Now merge field_map into custom_fields
+        custom_fields.update(field_map)
+
+        # Create the issue instance
         return cls(
             id=issue_id,
             key=key,
