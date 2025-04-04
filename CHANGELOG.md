@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.6.1] - 2025-04-05
+
+### Added
+- Return count metadata (`total`, `start_at`, `max_results`) in Jira search results (`jira_search`, `jira_get_project_issues`, `jira_get_epic_issues`) to enable pagination and count-based queries (#203, #164)
+
 ## [0.6.0] - 2025-04-05
 
 ### Added
