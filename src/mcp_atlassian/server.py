@@ -1514,9 +1514,9 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             )
             limit = min(int(arguments.get("limit", 10)), 50)
             projects_filter = arguments.get("projects_filter")
-            start_at = int(arguments.get("startAt", 0))  # Get startAt, default to 0
+            start_at = int(arguments.get("startAt", 0))  # Get startAt
 
-            issues = ctx.jira.search_issues(
+            search_result = ctx.jira.search_issues(
                 jql,
                 fields=fields,
                 limit=limit,
@@ -1525,12 +1525,20 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             )
 
             # Format results using the to_simplified_dict method
-            search_results = [issue.to_simplified_dict() for issue in issues]
+            issues = [issue.to_simplified_dict() for issue in search_result.issues]
+
+            # Include metadata in the response
+            response = {
+                "total": search_result.total,
+                "start_at": search_result.start_at,
+                "max_results": search_result.max_results,
+                "issues": issues,
+            }
 
             return [
                 TextContent(
                     type="text",
-                    text=json.dumps(search_results, indent=2, ensure_ascii=False),
+                    text=json.dumps(response, indent=2, ensure_ascii=False),
                 )
             ]
 
@@ -1542,17 +1550,25 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             limit = min(int(arguments.get("limit", 10)), 50)
             start_at = int(arguments.get("startAt", 0))  # Get startAt
 
-            issues = ctx.jira.get_project_issues(
+            search_result = ctx.jira.get_project_issues(
                 project_key, start=start_at, limit=limit
             )
 
             # Format results
-            project_issues = [issue.to_simplified_dict() for issue in issues]
+            issues = [issue.to_simplified_dict() for issue in search_result.issues]
+
+            # Include metadata in the response
+            response = {
+                "total": search_result.total,
+                "start_at": search_result.start_at,
+                "max_results": search_result.max_results,
+                "issues": issues,
+            }
 
             return [
                 TextContent(
                     type="text",
-                    text=json.dumps(project_issues, indent=2, ensure_ascii=False),
+                    text=json.dumps(response, indent=2, ensure_ascii=False),
                 )
             ]
 
@@ -1565,15 +1581,25 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             start_at = int(arguments.get("startAt", 0))  # Get startAt
 
             # Get issues linked to the epic
-            issues = ctx.jira.get_epic_issues(epic_key, start=start_at, limit=limit)
+            search_result = ctx.jira.get_epic_issues(
+                epic_key, start=start_at, limit=limit
+            )
 
             # Format results
-            epic_issues = [issue.to_simplified_dict() for issue in issues]
+            issues = [issue.to_simplified_dict() for issue in search_result.issues]
+
+            # Include metadata in the response
+            response = {
+                "total": search_result.total,
+                "start_at": search_result.start_at,
+                "max_results": search_result.max_results,
+                "issues": issues,
+            }
 
             return [
                 TextContent(
                     type="text",
-                    text=json.dumps(epic_issues, indent=2, ensure_ascii=False),
+                    text=json.dumps(response, indent=2, ensure_ascii=False),
                 )
             ]
 
@@ -1687,7 +1713,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             limit = min(int(arguments.get("limit", 10)), 50)
             expand = arguments.get("expand", "version")
 
-            issues = ctx.jira.get_board_issues(
+            search_result = ctx.jira.get_board_issues(
                 board_id=board_id,
                 jql=jql,
                 fields=fields,
@@ -1697,12 +1723,20 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             )
 
             # Format results
-            board_issues = [issue.to_simplified_dict() for issue in issues]
+            issues = [issue.to_simplified_dict() for issue in search_result.issues]
+
+            # Include metadata in the response
+            response = {
+                "total": search_result.total,
+                "start_at": search_result.start_at,
+                "max_results": search_result.max_results,
+                "issues": issues,
+            }
 
             return [
                 TextContent(
                     type="text",
-                    text=json.dumps(board_issues, indent=2, ensure_ascii=False),
+                    text=json.dumps(response, indent=2, ensure_ascii=False),
                 )
             ]
 
@@ -1739,17 +1773,28 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             start_at = int(arguments.get("startAt", 0))
             limit = min(int(arguments.get("limit", 10)), 50)
 
-            issues = ctx.jira.get_sprint_issues(
-                sprint_id=sprint_id, fields=fields, start=start_at, limit=limit
+            search_result = ctx.jira.get_sprint_issues(
+                sprint_id=sprint_id,
+                fields=fields,
+                start=start_at,
+                limit=limit,
             )
 
             # Format results
-            sprint_issues = [issue.to_simplified_dict() for issue in issues]
+            issues = [issue.to_simplified_dict() for issue in search_result.issues]
+
+            # Include metadata in the response
+            response = {
+                "total": search_result.total,
+                "start_at": search_result.start_at,
+                "max_results": search_result.max_results,
+                "issues": issues,
+            }
 
             return [
                 TextContent(
                     type="text",
-                    text=json.dumps(sprint_issues, indent=2, ensure_ascii=False),
+                    text=json.dumps(response, indent=2, ensure_ascii=False),
                 )
             ]
 

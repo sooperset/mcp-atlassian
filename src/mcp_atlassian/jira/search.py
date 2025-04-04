@@ -6,7 +6,7 @@ import requests
 from requests.exceptions import HTTPError
 
 from ..exceptions import MCPAtlassianAuthenticationError
-from ..models.jira import JiraIssue, JiraSearchResult
+from ..models.jira import JiraSearchResult
 from .client import JiraClient
 from .utils import parse_date_ymd
 
@@ -28,7 +28,7 @@ class SearchMixin(JiraClient):
         limit: int = 50,
         expand: str | None = None,
         projects_filter: str | None = None,
-    ) -> list[JiraIssue]:
+    ) -> JiraSearchResult:
         """
         Search for issues using JQL (Jira Query Language).
 
@@ -41,7 +41,7 @@ class SearchMixin(JiraClient):
             projects_filter: Optional comma-separated list of project keys to filter by, overrides config
 
         Returns:
-            List of JiraIssue models representing the search results
+            JiraSearchResult object containing issues and metadata (total, start_at, max_results)
 
         Raises:
             MCPAtlassianAuthenticationError: If authentication fails with the Jira API (401/403)
@@ -88,8 +88,8 @@ class SearchMixin(JiraClient):
                 response, base_url=self.config.url, requested_fields=fields
             )
 
-            # Return the list of issues
-            return search_result.issues
+            # Return the full search result object
+            return search_result
         except HTTPError as http_err:
             if http_err.response is not None and http_err.response.status_code in [
                 401,
@@ -110,7 +110,7 @@ class SearchMixin(JiraClient):
 
     def get_project_issues(
         self, project_key: str, start: int = 0, limit: int = 50
-    ) -> list[JiraIssue]:
+    ) -> JiraSearchResult:
         """
         Get all issues for a project.
 
@@ -120,7 +120,7 @@ class SearchMixin(JiraClient):
             limit: Maximum results to return
 
         Returns:
-            List of JiraIssue models containing project issues
+            JiraSearchResult object containing project issues and metadata
 
         Raises:
             Exception: If there is an error getting project issues
@@ -130,7 +130,7 @@ class SearchMixin(JiraClient):
 
     def get_epic_issues(
         self, epic_key: str, start: int = 0, limit: int = 50
-    ) -> list[JiraIssue]:
+    ) -> JiraSearchResult:
         """
         Get all issues linked to a specific epic.
 
@@ -140,7 +140,7 @@ class SearchMixin(JiraClient):
             start: Sets the offset for the number of issues returned if returning more than limit
 
         Returns:
-            List of JiraIssue models representing the issues linked to the epic
+            JiraSearchResult object containing epic issues and metadata
 
         Raises:
             ValueError: If the issue is not an Epic
@@ -193,7 +193,7 @@ class SearchMixin(JiraClient):
         start: int = 0,
         limit: int = 50,
         expand: str | None = None,
-    ) -> list[JiraIssue]:
+    ) -> JiraSearchResult:
         """
         Get all issues linked to a specific board.
 
@@ -206,7 +206,7 @@ class SearchMixin(JiraClient):
             expand: Optional items to expand (comma-separated)
 
         Returns:
-            List of JiraIssue models representing the issues linked to the board
+            JiraSearchResult object containing board issues and metadata
 
         Raises:
             Exception: If there is an error getting board issues
@@ -225,7 +225,7 @@ class SearchMixin(JiraClient):
             search_result = JiraSearchResult.from_api_response(
                 response, base_url=self.config.url, requested_fields=fields
             )
-            return search_result.issues
+            return search_result
         except requests.HTTPError as e:
             logger.error(
                 f"Error searching issues for board with JQL '{board_id}': {str(e.response.content)}"
@@ -245,7 +245,7 @@ class SearchMixin(JiraClient):
         fields: str = "*all",
         start: int = 0,
         limit: int = 50,
-    ) -> list[JiraIssue]:
+    ) -> JiraSearchResult:
         """
         Get all issues linked to a specific sprint.
 
@@ -256,7 +256,7 @@ class SearchMixin(JiraClient):
             limit: Maximum issues to return
 
         Returns:
-            List of JiraIssue models representing the issues linked to the sprint
+            JiraSearchResult object containing sprint issues and metadata
 
         Raises:
             Exception: If there is an error getting board issues
@@ -272,7 +272,7 @@ class SearchMixin(JiraClient):
             search_result = JiraSearchResult.from_api_response(
                 response, base_url=self.config.url, requested_fields=fields
             )
-            return search_result.issues
+            return search_result
         except requests.HTTPError as e:
             logger.error(
                 f"Error searching issues for sprint '{sprint_id}': {str(e.response.content)}"
