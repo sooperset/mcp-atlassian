@@ -3,6 +3,9 @@
 import logging
 from typing import Any
 
+from requests.exceptions import HTTPError
+
+from ..exceptions import MCPAtlassianAuthenticationError
 from ..models.jira import JiraIssue
 from .users import UsersMixin
 from .utils import parse_date_human_readable
@@ -41,6 +44,7 @@ class IssuesMixin(UsersMixin):
             JiraIssue model with issue data and metadata
 
         Raises:
+            MCPAtlassianAuthenticationError: If authentication fails with the Jira API (401/403)
             Exception: If there is an error retrieving the issue
         """
         try:
@@ -191,6 +195,20 @@ class IssuesMixin(UsersMixin):
                 base_url=self.config.url if hasattr(self, "config") else None,
                 requested_fields=fields,
             )
+        except HTTPError as http_err:
+            if http_err.response is not None and http_err.response.status_code in [
+                401,
+                403,
+            ]:
+                error_msg = (
+                    f"Authentication failed for Jira API ({http_err.response.status_code}). "
+                    "Token may be expired or invalid. Please verify credentials."
+                )
+                logger.error(error_msg)
+                raise MCPAtlassianAuthenticationError(error_msg) from http_err
+            else:
+                logger.error(f"HTTP error during API call: {http_err}", exc_info=False)
+                raise http_err
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Error retrieving issue {issue_key}: {error_msg}")
@@ -659,10 +677,31 @@ class IssuesMixin(UsersMixin):
 
         # Process each kwarg
         for key, value in kwargs.items():
+            # Explicitly handle components field
+            if key.lower() == "components":
+                # Assuming the value is already in the correct format e.g., [{'name': 'Vortex'}] or [{'id': '11004'}]
+                # We need the actual field ID for components. Let's try the common one, but this might need adjustment.
+                # If 'Components' field ID is known, use it directly. Otherwise, try a common default or log a warning.
+                component_field_id = field_ids.get(
+                    "Components", field_ids.get("components")
+                )  # Try both cases
+                if component_field_id:
+                    fields[component_field_id] = value
+                    logger.debug(
+                        f"Explicitly added components using field ID: {component_field_id}"
+                    )
+                else:
+                    # Fallback or warning if component ID not found
+                    logger.warning(
+                        "Could not find field ID for 'Components'. Components may not be set."
+                    )
+                continue  # Skip further processing for components
+
             if key in ("epic_name", "epic_link", "parent"):
                 continue  # Handled separately
 
             # Check if this is a known field
+            # Use case-insensitive check for field names if needed, but rely on field_ids map primarily
             if key in field_ids:
                 fields[field_ids[key]] = value
             elif key.startswith("customfield_"):

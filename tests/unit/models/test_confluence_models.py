@@ -8,6 +8,7 @@ and the simplified dictionary conversion for API responses.
 import pytest
 
 from src.mcp_atlassian.models.confluence import (
+    ConfluenceAttachment,
     ConfluenceComment,
     ConfluencePage,
     ConfluenceSearchResult,
@@ -21,6 +22,74 @@ try:
     from src.mcp_atlassian.confluence.client import ConfluenceClient  # noqa: F401
 except ImportError:
     pass
+
+
+class TestConfluenceAttachment:
+    """Tests for the ConfluenceAttachment model."""
+
+    def test_from_api_response_with_valid_data(self):
+        """Test creating a ConfluenceAttachment from valid API data."""
+        attachment_data = {
+            "id": "att105348",
+            "type": "attachment",
+            "status": "current",
+            "title": "random_geometric_image.svg",
+            "extensions": {"mediaType": "application/binary", "fileSize": 1098},
+        }
+
+        attachment = ConfluenceAttachment.from_api_response(attachment_data)
+
+        assert attachment.id == "att105348"
+        assert attachment.title == "random_geometric_image.svg"
+        assert attachment.type == "attachment"
+        assert attachment.status == "current"
+        assert attachment.media_type == "application/binary"
+        assert attachment.file_size == 1098
+
+    def test_from_api_response_with_empty_data(self):
+        """Test creating a ConfluenceAttachment from empty data."""
+        attachment = ConfluenceAttachment.from_api_response({})
+
+        # Should use default values
+        assert attachment.id is None
+        assert attachment.title is None
+        assert attachment.type is None
+        assert attachment.status is None
+        assert attachment.media_type is None
+        assert attachment.file_size is None
+
+    def test_from_api_response_with_none_data(self):
+        """Test creating a ConfluenceAttachment from None data."""
+        attachment = ConfluenceAttachment.from_api_response(None)
+
+        # Should use default values
+        assert attachment.id is None
+        assert attachment.title is None
+        assert attachment.type is None
+        assert attachment.status is None
+        assert attachment.media_type is None
+        assert attachment.file_size is None
+
+    def test_to_simplified_dict(self):
+        """Test converting ConfluenceAttachment to a simplified dictionary."""
+        attachment = ConfluenceAttachment(
+            id="att105348",
+            title="random_geometric_image.svg",
+            type="attachment",
+            status="current",
+            media_type="application/binary",
+            file_size=1098,
+        )
+
+        simplified = attachment.to_simplified_dict()
+
+        assert isinstance(simplified, dict)
+        assert simplified["id"] == "att105348"
+        assert simplified["title"] == "random_geometric_image.svg"
+        assert simplified["type"] == "attachment"
+        assert simplified["status"] == "current"
+        assert simplified["media_type"] == "application/binary"
+        assert simplified["file_size"] == 1098
 
 
 class TestConfluenceUser:
@@ -405,7 +474,7 @@ class TestRealConfluenceData:
 
             # Get page data directly from the Confluence API
             page_data = confluence_client.confluence.get_page_by_id(
-                page_id=page_id, expand="body.storage,version,space"
+                page_id=page_id, expand="body.storage,version,space,children.attachment"
             )
 
             # Convert to model
@@ -418,6 +487,7 @@ class TestRealConfluenceData:
             assert page.title is not None
             assert page.space is not None
             assert page.space.key is not None
+            assert page.attachments is not None
 
             # Verify that to_simplified_dict works
             simplified = page.to_simplified_dict()

@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from mcp_atlassian.jira.users import UsersMixin
 
@@ -35,73 +36,128 @@ class TestUsersMixin:
         # Ensure no cached value
         users_mixin._current_user_account_id = None
 
-        # Call the method
-        account_id = users_mixin.get_current_user_account_id()
+        # Mock the requests.get method to bypass atlassian-python-api
+        with patch("requests.get") as mock_get:
+            # Configure the mock response
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.text = '{"accountId": "test-account-id"}'
+            mock_get.return_value = mock_response
 
-        # Verify result
-        assert account_id == "test-account-id"  # From mock_atlassian_jira fixture
-        # Verify the API was called
-        users_mixin.jira.myself.assert_called_once()
+            # Call the method
+            account_id = users_mixin.get_current_user_account_id()
+
+            # Verify result
+            assert account_id == "test-account-id"
+            # Verify requests.get was called with the correct URL
+            mock_get.assert_called_once()
+            assert "/rest/api/2/myself" in mock_get.call_args[0][0]
+
+    def test_get_current_user_account_id_data_center_timestamp_issue(self, users_mixin):
+        """Test that get_current_user_account_id handles Jira Data Center with problematic timestamps."""
+        # Ensure no cached value
+        users_mixin._current_user_account_id = None
+
+        # Mock the requests.get method to bypass atlassian-python-api
+        with patch("requests.get") as mock_get:
+            # Configure the mock response with a JSON that would cause timestamp issues
+            # but our solution should properly handle it by using direct JSON parsing
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.text = (
+                '{"key": "jira-dc-user", "name": "DC User", '
+                '"created": "9999-12-31T23:59:59.999+0000", '  # Problematic timestamp
+                '"lastLogin": "0000-01-01T00:00:00.000+0000"}'  # Another problematic timestamp
+            )
+            mock_get.return_value = mock_response
+
+            # Call the method
+            account_id = users_mixin.get_current_user_account_id()
+
+            # Verify result - should extract key without timestamp parsing issues
+            assert account_id == "jira-dc-user"
+            # Verify requests.get was called
+            mock_get.assert_called_once()
 
     def test_get_current_user_account_id_error(self, users_mixin):
         """Test that get_current_user_account_id handles errors."""
         # Ensure no cached value
         users_mixin._current_user_account_id = None
-        # Make the API call raise an exception
-        users_mixin.jira.myself.side_effect = Exception("API error")
 
-        # Call the method and verify it raises the expected exception
-        with pytest.raises(
-            Exception, match="Unable to get current user account ID: API error"
-        ):
-            users_mixin.get_current_user_account_id()
+        # Mock the requests.get method to raise an exception
+        with patch("requests.get") as mock_get:
+            mock_get.side_effect = requests.RequestException("API error")
+
+            # Call the method and verify it raises the expected exception
+            with pytest.raises(
+                Exception, match="Unable to get current user account ID: API error"
+            ):
+                users_mixin.get_current_user_account_id()
+
+            # Verify requests.get was called
+            mock_get.assert_called_once()
 
     def test_get_current_user_account_id_jira_data_center_key(self, users_mixin):
         """Test that get_current_user_account_id falls back to 'key' for Jira Data Center."""
         # Ensure no cached value
         users_mixin._current_user_account_id = None
-        # Mock Jira Data Center response that has 'key' but no 'accountId'
-        users_mixin.jira.myself.return_value = {
-            "key": "jira-data-center-key",
-            "name": "Test User",
-        }
 
-        # Call the method
-        account_id = users_mixin.get_current_user_account_id()
+        # Mock the requests.get response with a Jira Data Center response
+        with patch("requests.get") as mock_get:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.text = '{"key": "jira-data-center-key", "name": "Test User"}'
+            mock_get.return_value = mock_response
 
-        # Verify result
-        assert account_id == "jira-data-center-key"
-        # Verify the API was called
-        users_mixin.jira.myself.assert_called_once()
+            # Call the method
+            account_id = users_mixin.get_current_user_account_id()
+
+            # Verify result
+            assert account_id == "jira-data-center-key"
+            # Verify requests.get was called
+            mock_get.assert_called_once()
 
     def test_get_current_user_account_id_jira_data_center_name(self, users_mixin):
         """Test that get_current_user_account_id falls back to 'name' when no 'key' or 'accountId'."""
         # Ensure no cached value
         users_mixin._current_user_account_id = None
-        # Mock Jira Data Center response that has only 'name'
-        users_mixin.jira.myself.return_value = {"name": "jira-data-center-name"}
 
-        # Call the method
-        account_id = users_mixin.get_current_user_account_id()
+        # Mock the requests.get response with a Jira Data Center response
+        with patch("requests.get") as mock_get:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.text = '{"name": "jira-data-center-name"}'
+            mock_get.return_value = mock_response
 
-        # Verify result
-        assert account_id == "jira-data-center-name"
-        # Verify the API was called
-        users_mixin.jira.myself.assert_called_once()
+            # Call the method
+            account_id = users_mixin.get_current_user_account_id()
+
+            # Verify result
+            assert account_id == "jira-data-center-name"
+            # Verify requests.get was called
+            mock_get.assert_called_once()
 
     def test_get_current_user_account_id_no_identifiers(self, users_mixin):
         """Test that get_current_user_account_id raises error when no identifiers are found."""
         # Ensure no cached value
         users_mixin._current_user_account_id = None
-        # Mock response with no identifiers
-        users_mixin.jira.myself.return_value = {"someField": "someValue"}
 
-        # Call the method and verify it raises the expected exception
-        with pytest.raises(
-            Exception,
-            match="Unable to get current user account ID: Could not find accountId, key, or name in user data",
-        ):
-            users_mixin.get_current_user_account_id()
+        # Mock the requests.get response with no identifiers
+        with patch("requests.get") as mock_get:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.text = '{"someField": "someValue"}'
+            mock_get.return_value = mock_response
+
+            # Call the method and verify it raises the expected exception
+            with pytest.raises(
+                Exception,
+                match="Unable to get current user account ID: Could not find accountId, key, or name in user data",
+            ):
+                users_mixin.get_current_user_account_id()
+
+            # Verify requests.get was called
+            mock_get.assert_called_once()
 
     def test_get_account_id_already_account_id(self, users_mixin):
         """Test that _get_account_id returns the input if it looks like an account ID."""

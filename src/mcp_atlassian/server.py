@@ -5,10 +5,12 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, cast
-from urllib.parse import urlparse
 
+from atlassian.errors import ApiError
 from mcp.server import Server
 from mcp.types import Resource, TextContent, Tool
+from pydantic import AnyUrl
+from requests.exceptions import RequestException
 
 from .confluence import ConfluenceFetcher
 from .confluence.utils import quote_cql_identifier_if_needed
@@ -201,20 +203,19 @@ async def list_resources() -> list[Resource]:
 
 
 @app.read_resource()
-async def read_resource(uri: str) -> tuple[str, str]:
+async def read_resource(uri: AnyUrl) -> str:
     """Read content from Confluence based on the resource URI."""
-    parsed_uri = urlparse(uri)
 
     # Get application context
     ctx = app.request_context.lifespan_context
 
     # Handle Confluence resources
-    if uri.startswith("confluence://"):
+    if str(uri).startswith("confluence://"):
         if not ctx or not ctx.confluence:
             raise ValueError(
                 "Confluence is not configured. Please provide Confluence credentials."
             )
-        parts = uri.replace("confluence://", "").split("/")
+        parts = str(uri).replace("confluence://", "").split("/")
 
         # Handle space listing
         if len(parts) == 1:
@@ -239,7 +240,7 @@ async def read_resource(uri: str) -> tuple[str, str]:
 
                 content.append(f"# [{title}]({url})\n\n{page.page_content}\n\n---")
 
-            return "\n\n".join(content), "text/markdown"
+            return "\n\n".join(content)
 
         # Handle specific page
         elif len(parts) >= 3 and parts[1] == "pages":
@@ -250,13 +251,13 @@ async def read_resource(uri: str) -> tuple[str, str]:
             if not page:
                 raise ValueError(f"Page not found: {title}")
 
-            return page.page_content, "text/markdown"
+            return page.page_content
 
     # Handle Jira resources
-    elif uri.startswith("jira://"):
+    elif str(uri).startswith("jira://"):
         if not ctx or not ctx.jira:
             raise ValueError("Jira is not configured. Please provide Jira credentials.")
-        parts = uri.replace("jira://", "").split("/")
+        parts = str(uri).replace("jira://", "").split("/")
 
         # Handle project listing
         if len(parts) == 1:
@@ -291,7 +292,7 @@ async def read_resource(uri: str) -> tuple[str, str]:
 
                 content.append(f"{issue_content}---")
 
-            return "\n\n".join(content), "text/markdown"
+            return "\n\n".join(content)
 
         # Handle specific issue
         elif len(parts) >= 2:
@@ -311,7 +312,7 @@ async def read_resource(uri: str) -> tuple[str, str]:
             if issue_dict.get("description"):
                 markdown += f"{issue_dict.get('description')}\n\n"
 
-            return markdown, "text/markdown"
+            return markdown
 
     raise ValueError(f"Invalid resource URI: {uri}")
 
@@ -535,6 +536,29 @@ async def list_tools() -> list[Tool]:
                                 },
                             },
                             "required": ["page_id"],
+                        },
+                    ),
+                    Tool(
+                        name="confluence_attach_content",
+                        description="Attach content to a Confluence page",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "content": {
+                                    "type": "string",
+                                    "format": "binary",
+                                    "description": "The content to attach (bytes)",
+                                },
+                                "name": {
+                                    "type": "string",
+                                    "description": "The name of the attachment",
+                                },
+                                "page_id": {
+                                    "type": "string",
+                                    "description": "The ID of the page to attach the content to",
+                                },
+                            },
+                            "required": ["content", "name", "page_id"],
                         },
                     ),
                 ]
@@ -1390,6 +1414,60 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                             indent=2,
                             ensure_ascii=False,
                         ),
+                    )
+                ]
+
+        elif name == "confluence_attach_content":
+            if not ctx or not ctx.confluence:
+                raise ValueError("Confluence is not configured.")
+
+            # Write operation - check read-only mode
+            if read_only:
+                return [
+                    TextContent(
+                        "Operation 'confluence_attach_content' is not available in read-only mode."
+                    )
+                ]
+
+            content = arguments.get("content")
+            name = arguments.get("name")
+            page_id = arguments.get("page_id")
+
+            if not content or not name or not page_id:
+                return [
+                    TextContent(
+                        type="text",
+                        text="Error: Missing required parameters: content, name, and page_id are required.",
+                    )
+                ]
+
+            try:
+                page = ctx.confluence.attach_content(
+                    content=content, name=name, page_id=page_id
+                )
+                page_data = page.to_simplified_dict()
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(
+                            page_data,
+                            indent=2,
+                            ensure_ascii=False,
+                        ),
+                    )
+                ]
+            except ApiError as e:
+                return [
+                    TextContent(
+                        type="text",
+                        text=f"Confluence API Error when trying to attach content {name} to page {page_id}: {str(e)}",
+                    )
+                ]
+            except RequestException as e:
+                return [
+                    TextContent(
+                        type="text",
+                        text=f"Network error when trying to attach content {name} to page {page_id}: {str(e)}",
                     )
                 ]
 

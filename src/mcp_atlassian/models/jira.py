@@ -735,6 +735,31 @@ class JiraIssue(ApiModel, TimestampMixin):
             fields, ["Epic Name", "epic-name", "epicname"]
         )
 
+        # Extract all fields that aren't explicitly processed into custom_fields
+        known_fields = {
+            "summary",
+            "description",
+            "status",
+            "issuetype",
+            "priority",
+            "assignee",
+            "reporter",
+            "labels",
+            "components",
+            "comment",
+            "attachment",
+            "created",
+            "updated",
+            "fixVersions",
+        }
+
+        for key, value in fields.items():
+            # Skip already processed fields and null values
+            if key in known_fields or value is None:
+                continue
+            # Add all other fields to custom_fields
+            custom_fields[key] = value
+
         return cls(
             id=issue_id,
             key=key,
@@ -876,8 +901,8 @@ class JiraIssue(ApiModel, TimestampMixin):
                     value = field_mapping[field]()
                     if value is not None:  # Only include non-None values
                         result[field] = value
-                # Handle custom fields
-                elif field.startswith("customfield_") and field in self.custom_fields:
+                # All other fields are custom fields
+                elif field in self.custom_fields:
                     result[field] = self.custom_fields[field]
 
         # Case 3: No specific fields requested - use essential fields
