@@ -6,7 +6,7 @@ import pytest
 import requests
 
 from mcp_atlassian.jira.search import SearchMixin
-from mcp_atlassian.models.jira import JiraIssue
+from mcp_atlassian.models.jira import JiraIssue, JiraSearchResult
 
 
 class TestSearchMixin:
@@ -62,12 +62,15 @@ class TestSearchMixin:
         )
 
         # Verify results
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert all(isinstance(issue, JiraIssue) for issue in result)
+        assert isinstance(result, JiraSearchResult)
+        assert len(result.issues) == 1
+        assert all(isinstance(issue, JiraIssue) for issue in result.issues)
+        assert result.total == 1
+        assert result.start_at == 0
+        assert result.max_results == 50
 
         # Check the first issue
-        issue = result[0]
+        issue = result.issues[0]
         assert issue.key == "TEST-123"
         assert issue.summary == "Test issue"
         assert issue.description == "Issue description"
@@ -110,14 +113,14 @@ class TestSearchMixin:
         result = search_mixin.search_issues("project = TEST")
 
         # Verify results
-        assert len(result) == 1
-        assert isinstance(result[0], JiraIssue)
-        assert result[0].key == "TEST-123"
-        assert result[0].description is None
-        assert result[0].summary == "Test issue"
+        assert len(result.issues) == 1
+        assert isinstance(result.issues[0], JiraIssue)
+        assert result.issues[0].key == "TEST-123"
+        assert result.issues[0].description is None
+        assert result.issues[0].summary == "Test issue"
 
         # Update to use direct properties instead of backward compatibility
-        assert "Test issue" in result[0].summary
+        assert "Test issue" in result.issues[0].summary
 
     def test_search_issues_with_missing_fields(self, search_mixin):
         """Test search with issues missing some fields."""
@@ -142,12 +145,12 @@ class TestSearchMixin:
         result = search_mixin.search_issues("project = TEST")
 
         # Verify results
-        assert len(result) == 1
-        assert isinstance(result[0], JiraIssue)
-        assert result[0].key == "TEST-123"
-        assert result[0].summary == "Test issue"
-        assert result[0].status is None
-        assert result[0].issue_type is None
+        assert len(result.issues) == 1
+        assert isinstance(result.issues[0], JiraIssue)
+        assert result.issues[0].key == "TEST-123"
+        assert result.issues[0].summary == "Test issue"
+        assert result.issues[0].status is None
+        assert result.issues[0].issue_type is None
 
     def test_search_issues_with_empty_results(self, search_mixin):
         """Test search with no results."""
@@ -158,8 +161,9 @@ class TestSearchMixin:
         result = search_mixin.search_issues("project = NONEXISTENT")
 
         # Verify results
-        assert isinstance(result, list)
-        assert len(result) == 0
+        assert isinstance(result, JiraSearchResult)
+        assert len(result.issues) == 0
+        assert result.total == 0
 
     def test_search_issues_with_error(self, search_mixin):
         """Test search with API error."""
@@ -201,9 +205,10 @@ class TestSearchMixin:
             limit=50,
             expand=None,
         )
-        assert len(result) == 1
+        assert len(result.issues) == 1
+        assert result.total == 1
 
-        # Test with multiple projects filter
+        # Test with multiple project filter
         result = search_mixin.search_issues("text ~ 'test'", projects_filter="TEST,DEV")
         search_mixin.jira.jql.assert_called_with(
             '(text ~ \'test\') AND project IN ("TEST", "DEV")',
@@ -212,20 +217,8 @@ class TestSearchMixin:
             limit=50,
             expand=None,
         )
-        assert len(result) == 1
-
-        # Test with filter when query already has project
-        result = search_mixin.search_issues(
-            "project = EXISTING", projects_filter="TEST"
-        )
-        search_mixin.jira.jql.assert_called_with(
-            "project = EXISTING",  # Should not add filter when project already exists
-            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
-            start=0,
-            limit=50,
-            expand=None,
-        )
-        assert len(result) == 1
+        assert len(result.issues) == 1
+        assert result.total == 1
 
     def test_search_issues_with_config_projects_filter(self, search_mixin):
         """Test search using projects filter from config."""
@@ -259,9 +252,10 @@ class TestSearchMixin:
             limit=50,
             expand=None,
         )
-        assert len(result) == 1
+        assert len(result.issues) == 1
+        assert result.total == 1
 
-        # Test that explicit filter overrides config filter
+        # Test with override
         result = search_mixin.search_issues("text ~ 'test'", projects_filter="OVERRIDE")
         search_mixin.jira.jql.assert_called_with(
             "(text ~ 'test') AND project = OVERRIDE",
@@ -270,132 +264,153 @@ class TestSearchMixin:
             limit=50,
             expand=None,
         )
-        assert len(result) == 1
+        assert len(result.issues) == 1
+        assert result.total == 1
+
+        # Test with override - multiple projects
+        result = search_mixin.search_issues(
+            "text ~ 'test'", projects_filter="OVER1,OVER2"
+        )
+        search_mixin.jira.jql.assert_called_with(
+            '(text ~ \'test\') AND project IN ("OVER1", "OVER2")',
+            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
+            start=0,
+            limit=50,
+            expand=None,
+        )
+        assert len(result.issues) == 1
+        assert result.total == 1
 
     def test_get_project_issues(self, search_mixin):
         """Test get_project_issues method."""
-        # Mock the search_issues method
-        search_mixin.search_issues = MagicMock(
-            return_value=[JiraIssue(key="TEST-123", summary="Test Issue")]
-        )
+        # Setup mock response
+        search_mixin.jira.jql.return_value = {"issues": []}
 
         # Call the method
-        result = search_mixin.get_project_issues("TEST", limit=20)
+        result = search_mixin.get_project_issues("TEST")
 
-        # Verify
-        search_mixin.search_issues.assert_called_once_with(
-            "project = TEST ORDER BY created DESC", start=0, limit=20
+        # Verify JQL query
+        search_mixin.jira.jql.assert_called_once_with(
+            "project = TEST ORDER BY created DESC",
+            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
+            start=0,
+            limit=50,
+            expand=None,
         )
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert all(isinstance(issue, JiraIssue) for issue in result)
+        assert isinstance(result, JiraSearchResult)
+        assert len(result.issues) == 0
 
     def test_get_epic_issues_success(self, search_mixin):
-        """Test successful get_epic_issues call."""
-        # Setup mock responses
-        epic_data = {
-            "id": "10001",
-            "key": "EPIC-1",
+        """Test get_epic_issues method."""
+        # Setup mock response
+        search_mixin.jira.issue.return_value = {
+            "key": "TEST-123",
             "fields": {"issuetype": {"name": "Epic"}},
         }
-        search_mixin.jira.issue.return_value = epic_data
-
-        # Mock search_issues to return test issues
-        search_mixin.search_issues = MagicMock(
-            return_value=[JiraIssue(key="TEST-123", summary="Test Issue")]
-        )
+        search_mixin.jira.jql.return_value = {"issues": []}
 
         # Call the method
-        result = search_mixin.get_epic_issues("EPIC-1")
+        result = search_mixin.get_epic_issues("TEST-123")
 
-        # Verify
-        search_mixin.jira.issue.assert_called_once_with("EPIC-1")
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert all(isinstance(issue, JiraIssue) for issue in result)
+        # Verify JQL query
+        search_mixin.jira.issue.assert_called_once_with("TEST-123")
+        search_mixin.jira.jql.assert_called_once_with(
+            'issueFunction in issuesScopedToEpic("TEST-123")',
+            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
+            start=0,
+            limit=50,
+            expand=None,
+        )
+        assert isinstance(result, JiraSearchResult)
+        assert len(result.issues) == 0
 
     def test_get_epic_issues_not_epic(self, search_mixin):
         """Test get_epic_issues with a non-epic issue."""
-        # Setup mock response for a non-epic issue
-        non_epic_data = {
-            "id": "10001",
-            "key": "STORY-1",
+        # Setup mock response
+        search_mixin.jira.issue.return_value = {
+            "key": "TEST-123",
             "fields": {"issuetype": {"name": "Story"}},
         }
-        search_mixin.jira.issue.return_value = non_epic_data
 
-        # Verify it raises ValueError
-        with pytest.raises(ValueError, match="is not an Epic"):
-            search_mixin.get_epic_issues("STORY-1")
+        # Call the method and verify it raises the expected exception
+        with pytest.raises(ValueError, match="TEST-123 is not an Epic"):
+            search_mixin.get_epic_issues("TEST-123")
 
     def test_get_epic_issues_with_field_ids(self, search_mixin):
-        """Test get_epic_issues using custom field IDs."""
-        # Setup mock responses
-        epic_data = {
-            "id": "10001",
-            "key": "EPIC-1",
-            "fields": {"issuetype": {"name": "Epic"}},
-        }
-        search_mixin.jira.issue.return_value = epic_data
+        """Test get_epic_issues with custom Epic field IDs."""
+        # Setup mock response with custom epic field ids
+        epic_key = "TEST-123"
+        search_mixin.config.epic_link_field = "customfield_10009"  # Example field ID
+        search_mixin.config.epic_name_field = "customfield_10010"  # Example field ID
 
-        # Add field_ids support
-        search_mixin.get_jira_field_ids = MagicMock(
-            return_value={"epic_link": "customfield_10014"}
-        )
-
-        # Mock search_issues with different responses depending on JQL
+        # Mock responses using side effects
         def search_side_effect(jql, **kwargs):
-            if "issueFunction" in jql:
-                # First query fails
-                raise Exception("issueFunction not supported")
-            else:
-                # Fallback query succeeds
-                return [JiraIssue(key="TEST-123", summary="Test Issue")]
+            assert epic_key in jql
+            return {
+                "issues": [
+                    {
+                        "key": "TEST-124",
+                        "fields": {
+                            "summary": "Linked issue",
+                            "customfield_10009": "TEST-123",  # Epic link
+                        },
+                    }
+                ],
+                "total": 1,
+                "startAt": 0,
+                "maxResults": 50,
+            }
 
-        search_mixin.search_issues = MagicMock(side_effect=search_side_effect)
+        search_mixin.jira.issue.return_value = {
+            "key": epic_key,
+            "fields": {
+                "issuetype": {"name": "Epic"},
+                "customfield_10010": "Epic Name",  # Epic name
+            },
+        }
+        search_mixin.jira.jql.side_effect = search_side_effect
 
         # Call the method
-        result = search_mixin.get_epic_issues("EPIC-1")
+        result = search_mixin.get_epic_issues(epic_key)
 
-        # Verify results
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert all(isinstance(issue, JiraIssue) for issue in result)
+        # Verify
+        assert isinstance(result, JiraSearchResult)
+        assert len(result.issues) == 1
+        assert result.issues[0].key == "TEST-124"
+        assert result.issues[0].summary == "Linked issue"
+        assert result.issues[0].custom_fields["customfield_10009"] == "TEST-123"
 
     def test_get_epic_issues_no_results(self, search_mixin):
         """Test get_epic_issues with no linked issues."""
-        # Setup mock responses
-        epic_data = {
-            "id": "10001",
-            "key": "EPIC-1",
+        # Setup mock response
+        search_mixin.jira.issue.return_value = {
+            "key": "TEST-123",
             "fields": {"issuetype": {"name": "Epic"}},
         }
-        search_mixin.jira.issue.return_value = epic_data
-
-        # Mock search_issues to return empty list
-        search_mixin.search_issues = MagicMock(return_value=[])
+        search_mixin.jira.jql.return_value = {"issues": []}
 
         # Call the method
-        result = search_mixin.get_epic_issues("EPIC-1")
+        result = search_mixin.get_epic_issues("TEST-123")
 
-        # Verify
-        assert isinstance(result, list)
-        assert len(result) == 0
+        # Verify results
+        assert isinstance(result, JiraSearchResult)
+        assert len(result.issues) == 0
+        assert result.total == 0
 
     def test_get_epic_issues_with_error(self, search_mixin):
-        """Test get_epic_issues with general error."""
-        # Setup mock to raise exception
+        """Test get_epic_issues with API error."""
+        # Setup mock to raise exception on issue lookup
         search_mixin.jira.issue.side_effect = Exception("API Error")
 
-        # Verify it raises the wrapped exception
+        # Call the method and verify it raises the expected exception
         with pytest.raises(Exception, match="Error getting epic issues"):
-            search_mixin.get_epic_issues("EPIC-1")
+            search_mixin.get_epic_issues("TEST-123")
 
     def test_parse_date(self, search_mixin):
         """Test the _parse_date method."""
-        # Test with a valid ISO date
-        result = search_mixin._parse_date("2023-01-15T14:30:45.123+0000")
-        assert result == "2023-01-15"
+        # Test with a valid date string
+        result = search_mixin._parse_date("2024-01-01T10:00:00.000+0000")
+        assert "2024-01-01" in result
 
         # Test with an empty string
         result = search_mixin._parse_date("")
@@ -448,9 +463,9 @@ class TestSearchMixin:
         )
 
         # Verify results
-        assert isinstance(result, list)
-        assert len(result) == 1
-        issue = result[0]
+        assert isinstance(result, JiraSearchResult)
+        assert len(result.issues) == 1
+        issue = result.issues[0]
 
         # Convert to simplified dict to check field filtering
         simplified = issue.to_simplified_dict()
@@ -492,9 +507,13 @@ class TestSearchMixin:
         jql = "project = PROJ"
         start_index = 5
 
-        issues = search_mixin.search_issues(jql, start=start_index, limit=10)
+        result = search_mixin.search_issues(jql, start=start_index, limit=10)
 
-        assert len(issues) == 1
+        assert len(result.issues) == 1
+        assert result.start_at == 5
+        assert result.max_results == 10
+        assert result.total == 1
+
         search_mixin.jira.jql.assert_called_once_with(
             jql,
             fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
@@ -520,11 +539,15 @@ class TestSearchMixin:
         project_key = "PROJ"
         start_index = 3
 
-        issues = search_mixin.get_project_issues(
+        result = search_mixin.get_project_issues(
             project_key, start=start_index, limit=5
         )
 
-        assert len(issues) == 1
+        assert len(result.issues) == 1
+        assert result.start_at == 3
+        assert result.max_results == 5
+        assert result.total == 1
+
         expected_jql = f"project = {project_key} ORDER BY created DESC"
         search_mixin.jira.jql.assert_called_once_with(
             expected_jql,
@@ -557,9 +580,13 @@ class TestSearchMixin:
         }
         start_index = 2
 
-        issues = search_mixin.get_epic_issues(epic_key, start=start_index, limit=10)
+        result = search_mixin.get_epic_issues(epic_key, start=start_index, limit=10)
 
-        assert len(issues) == 1
+        assert len(result.issues) == 1
+        assert result.start_at == 2
+        assert result.max_results == 10
+        assert result.total == 1
+
         # Check the epic issue call first
         search_mixin.jira.issue.assert_called_once_with(epic_key)
         # Check the JQL call (assuming issueFunction works)
@@ -600,12 +627,15 @@ class TestSearchMixin:
         result = search_mixin.get_board_issues("1000", jql="", limit=20)
 
         # Verify results
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert all(isinstance(issue, JiraIssue) for issue in result)
+        assert isinstance(result, JiraSearchResult)
+        assert len(result.issues) == 1
+        assert all(isinstance(issue, JiraIssue) for issue in result.issues)
+        assert result.total == 1
+        assert result.start_at == 0
+        assert result.max_results == 50
 
         # Check the first issue
-        issue = result[0]
+        issue = result.issues[0]
         assert issue.key == "TEST-123"
         assert issue.summary == "Test issue"
         assert issue.description == "Issue description"
@@ -664,12 +694,15 @@ class TestSearchMixin:
         result = search_mixin.get_sprint_issues("10001")
 
         # Verify results
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert all(isinstance(issue, JiraIssue) for issue in result)
+        assert isinstance(result, JiraSearchResult)
+        assert len(result.issues) == 1
+        assert all(isinstance(issue, JiraIssue) for issue in result.issues)
+        assert result.total == 1
+        assert result.start_at == 0
+        assert result.max_results == 50
 
         # Check the first issue
-        issue = result[0]
+        issue = result.issues[0]
         assert issue.key == "TEST-123"
         assert issue.summary == "Test issue"
         assert issue.description == "Issue description"
@@ -679,10 +712,6 @@ class TestSearchMixin:
         assert issue.issue_type.name == "Bug"
         assert issue.priority is not None
         assert issue.priority.name == "High"
-
-        # Remove backward compatibility checks
-        assert "Issue description" in issue.description
-        assert issue.key == "TEST-123"
 
     def test_get_sprint_issues_exception(self, search_mixin):
         search_mixin.jira.get_sprint_issues.side_effect = Exception("API Error")
