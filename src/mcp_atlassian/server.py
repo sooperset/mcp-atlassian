@@ -652,7 +652,7 @@ async def list_tools() -> list[Tool]:
                             },
                             "startAt": {
                                 "type": "number",
-                                "description": "Starting index for search results (0-based)",
+                                "description": "Starting index for pagination (0-based)",
                                 "default": 0,
                                 "minimum": 0,
                             },
@@ -683,7 +683,7 @@ async def list_tools() -> list[Tool]:
                             },
                             "startAt": {
                                 "type": "number",
-                                "description": "Starting index for issues (0-based)",
+                                "description": "Starting index for pagination (0-based)",
                                 "default": 0,
                                 "minimum": 0,
                             },
@@ -710,7 +710,7 @@ async def list_tools() -> list[Tool]:
                             },
                             "startAt": {
                                 "type": "number",
-                                "description": "Starting index for issues (0-based)",
+                                "description": "Starting index for pagination (0-based)",
                                 "default": 0,
                                 "minimum": 0,
                             },
@@ -782,9 +782,9 @@ async def list_tools() -> list[Tool]:
                                 "type": "string",
                                 "description": "The type of jira board (e.g., 'scrum', 'kanban')",
                             },
-                            "start": {
+                            "startAt": {
                                 "type": "number",
-                                "description": "Start index of board",
+                                "description": "Starting index for pagination (0-based)",
                                 "default": 0,
                             },
                             "limit": {
@@ -827,9 +827,9 @@ async def list_tools() -> list[Tool]:
                                 ),
                                 "default": "*all",
                             },
-                            "start": {
+                            "startAt": {
                                 "type": "number",
-                                "description": "Start index of issue",
+                                "description": "Starting index for pagination (0-based)",
                                 "default": 0,
                             },
                             "limit": {
@@ -862,9 +862,9 @@ async def list_tools() -> list[Tool]:
                                 "type": "string",
                                 "description": "Sprint state (e.g., 'active', 'future', 'closed')",
                             },
-                            "start": {
+                            "startAt": {
                                 "type": "number",
-                                "description": "Start index of sprint",
+                                "description": "Starting index for pagination (0-based)",
                                 "default": 0,
                             },
                             "limit": {
@@ -896,9 +896,9 @@ async def list_tools() -> list[Tool]:
                                 ),
                                 "default": "*all",
                             },
-                            "start": {
+                            "startAt": {
                                 "type": "number",
-                                "description": "Start index of issue",
+                                "description": "Starting index for pagination (0-based)",
                                 "default": 0,
                             },
                             "limit": {
@@ -1653,14 +1653,14 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             board_name = arguments.get("board_name")
             project_key = arguments.get("project_key")
             board_type = arguments.get("board_type")
-            start = arguments.get("start", 0)
+            start_at = int(arguments.get("startAt", 0))
             limit = min(int(arguments.get("limit", 10)), 50)
 
             boards = ctx.jira.get_all_agile_boards_model(
                 board_name=board_name,
                 project_key=project_key,
                 board_type=board_type,
-                start=start,
+                start=start_at,
                 limit=limit,
             )
 
@@ -1683,7 +1683,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             jql = arguments.get("jql")
             fields = arguments.get("fields", "*all")
 
-            start = arguments.get("start", 0)
+            start_at = int(arguments.get("startAt", 0))
             limit = min(int(arguments.get("limit", 10)), 50)
             expand = arguments.get("expand", "version")
 
@@ -1691,7 +1691,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 board_id=board_id,
                 jql=jql,
                 fields=fields,
-                start=start,
+                start=start_at,
                 limit=limit,
                 expand=expand,
             )
@@ -1712,11 +1712,11 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
 
             board_id = arguments.get("board_id")
             state = arguments.get("state", "active")
-            start = arguments.get("start", 0)
+            start_at = int(arguments.get("startAt", 0))
             limit = min(int(arguments.get("limit", 10)), 50)
 
             sprints = ctx.jira.get_all_sprints_from_board_model(
-                board_id=board_id, state=state, start=start, limit=limit
+                board_id=board_id, state=state, start=start_at, limit=limit
             )
 
             return [
@@ -1736,11 +1736,11 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
 
             sprint_id = arguments.get("sprint_id")
             fields = arguments.get("fields", "*all")
-            start = arguments.get("start", 0)
+            start_at = int(arguments.get("startAt", 0))
             limit = min(int(arguments.get("limit", 10)), 50)
 
             issues = ctx.jira.get_sprint_issues(
-                sprint_id=sprint_id, fields=fields, start=start, limit=limit
+                sprint_id=sprint_id, fields=fields, start=start_at, limit=limit
             )
 
             # Format results
