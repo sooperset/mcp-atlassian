@@ -1,0 +1,39 @@
+# .github/workflows/tests.yml
+
+name: Run Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Run pytest on Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false # Allow other Python versions to finish even if one fails
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"] # Based on requires-python >=3.10
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'uv' # Enable caching for uv managed by setup-python
+
+    - name: Install uv
+      run: pip install uv # Install uv using pip
+
+    - name: Install dependencies
+      run: uv sync --frozen --all-extras --dev # Use uv sync as specified in CONTRIBUTING.md
+
+    - name: Run tests with pytest
+      # Add -v for verbose output, helpful in CI
+      # Add basic coverage reporting to terminal logs
+      run: uv run pytest -v --cov=src/mcp_atlassian --cov-report=term-missing
