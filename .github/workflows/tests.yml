@@ -38,4 +38,5 @@ jobs:
     - name: Run tests with pytest
       # Add -v for verbose output, helpful in CI
       # Add basic coverage reporting to terminal logs
-      run: uv run pytest -v --cov=src/mcp_atlassian --cov-report=term-missing
+      # Skip real API validation tests as they require credentials
+      run: uv run pytest -v -k "not test_real_api_validation" --cov=src/mcp_atlassian --cov-report=term-missing
