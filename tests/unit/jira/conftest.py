@@ -81,4 +81,3 @@ def search_mixin(mock_config, mock_atlassian_jira):
         # Replace the actual Jira instance with our mock
         mixin.jira = mock_atlassian_jira
         yield mixin
-
