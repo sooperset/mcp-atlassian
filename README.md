@@ -222,10 +222,8 @@ Using uvx (recommended) - Cloud:
 {
   "mcpServers": {
     "mcp-atlassian": {
-      "command": "python",
+      "command": "mcp-atlassian",
       "args": [
-        "-m",
-        "mcp-atlassian",
         "--confluence-url=https://your-company.atlassian.net/wiki",
         "--confluence-username=your.email@company.com",
         "--confluence-token=your_api_token",
