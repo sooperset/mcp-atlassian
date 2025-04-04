@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2025-04-05
+
+### Added
+- Add pagination support to Jira list tools with new `startAt` parameter for `jira_search`, `jira_get_project_issues`, and `jira_get_epic_issues` (#198)
+- Add pytest workflow for automated testing across multiple Python versions (3.10, 3.11, 3.12) (#200)
+- Add Smithery deployment and installation support (#194)
+
+### Changed
+- Unify pagination parameter names to 'startAt' across Jira tools for better consistency and developer experience (#201)
+- Improve configuration documentation and readability in .env.example with clear sections and alternative options (#192)
+
+### Fixed
+- Fix model property access in JiraIssue to prevent custom fields from overriding model properties (#199)
+- Fix read_resource signature to properly take in an AnyUrl and return str (#195)
+- Correct command invocation instructions in README.md to use the `mcp-atlassian` script instead of incorrect `python -m` commands (#197)
+- Update server tests for read_resource signature change (#199)
+
 ## [0.5.0] - 2025-04-03
 
 ### Added
