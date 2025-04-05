@@ -1228,25 +1228,46 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             expand = arguments.get("expand", "version")
             limit = min(int(arguments.get("limit", 25)), 50)
             include_content = arguments.get("include_content", False)
+            convert_to_markdown = arguments.get("convert_to_markdown", True)
+            start = arguments.get("start", 0)
 
             # Add body.storage to expand if content is requested
             if include_content and "body" not in expand:
-                expand = f"{expand},body.storage"
+                expand = f"{expand},body.storage" if expand else "body.storage"
 
-            # Format results using the to_simplified_dict method
-            child_pages = [page.to_simplified_dict() for page in pages]
+            pages = None  # Initialize pages to None before try block
 
-            # Return the formatted results
+            try:
+                pages = ctx.confluence.get_page_children(
+                    page_id=parent_id,
+                    start=start,
+                    limit=limit,
+                    expand=expand,
+                    convert_to_markdown=convert_to_markdown,
+                )
+
+                child_pages = [page.to_simplified_dict() for page in pages]
+
+                result = {
+                    "parent_id": parent_id,
+                    "total": len(child_pages),
+                    "limit": limit,
+                    "results": child_pages,
+                }
+
+            except Exception as e:
+                # --- Error Handling ---
+                logger.error(
+                    f"Error getting/processing children for page ID {parent_id}: {e}",
+                    exc_info=True,
+                )
+                result = {"error": f"Failed to get child pages: {e}"}
+
             return [
                 TextContent(
                     type="text",
                     text=json.dumps(
-                        {
-                            "parent_id": parent_id,
-                            "total": len(child_pages),
-                            "limit": limit,
-                            "results": child_pages,
-                        },
+                        result,
                         indent=2,
                         ensure_ascii=False,
                     ),
