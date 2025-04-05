@@ -548,7 +548,6 @@ class IssuesMixin(UsersMixin):
             if component:
                 fields["components"] = [{"name": component}]
 
-
             # Make a copy of kwargs to preserve original values for two-step Epic creation
             kwargs_copy = kwargs.copy()
 
