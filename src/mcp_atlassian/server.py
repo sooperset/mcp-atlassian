@@ -921,7 +921,7 @@ async def list_tools() -> list[Tool]:
                 [
                     Tool(
                         name="jira_create_issue",
-                        description="Create a new Jira issue with optional Epic link or parent for subtasks",
+                        description="Create a new Jira issue with optional Epic link or parent for subtasks and optional component",
                         inputSchema={
                             "type": "object",
                             "properties": {
@@ -954,6 +954,10 @@ async def list_tools() -> list[Tool]:
                                     "description": "Issue description",
                                     "default": "",
                                 },
+                                "component": {
+                                    "type": "string",
+                                    "description": "Name of the component of the ticket (Frontend, Backend, UI, etc.)",
+                                },
                                 "additional_fields": {
                                     "type": "string",
                                     "description": (
@@ -961,7 +965,6 @@ async def list_tools() -> list[Tool]:
                                         "Examples:\n"
                                         '- Set priority: {"priority": {"name": "High"}}\n'
                                         '- Add labels: {"labels": ["frontend", "urgent"]}\n'
-                                        '- Add components: {"components": [{"name": "UI"}]}\n'
                                         '- Link to parent (for any issue type): {"parent": "PROJ-123"}\n'
                                         '- Custom fields: {"customfield_10010": "value"}'
                                     ),
@@ -1818,6 +1821,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             # Extract optional arguments
             description = arguments.get("description", "")
             assignee = arguments.get("assignee")
+            component = arguments.get("component")
 
             # Parse additional fields
             additional_fields = {}
@@ -1834,6 +1838,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 issue_type=issue_type,
                 description=description,
                 assignee=assignee,
+                component=component,
                 **additional_fields,
             )
 

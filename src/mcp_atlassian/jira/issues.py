@@ -496,6 +496,7 @@ class IssuesMixin(UsersMixin):
         issue_type: str,
         description: str = "",
         assignee: str | None = None,
+        component : str | None = None,
         **kwargs: Any,  # noqa: ANN401 - Dynamic field types are necessary for Jira API
     ) -> JiraIssue:
         """
@@ -542,6 +543,11 @@ class IssuesMixin(UsersMixin):
                     self._add_assignee_to_fields(fields, account_id)
                 except ValueError as e:
                     logger.warning(f"Could not assign issue: {str(e)}")
+
+            # Add component if provided
+            if component:
+                fields["components"] = [{"name": component}]
+
 
             # Make a copy of kwargs to preserve original values for two-step Epic creation
             kwargs_copy = kwargs.copy()
