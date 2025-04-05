@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.6.2] - 2025-04-05
+
+### Added
+- Enhanced component support for Jira issues to allow multiple components when creating tickets (#208, #115)
+
+### Fixed
+- Fixed variable scope issue in confluence_get_page_children where local variable 'pages' was not accessible due to improper indentation (#209, #206)
+
 ## [0.6.1] - 2025-04-05
 
 ### Added
