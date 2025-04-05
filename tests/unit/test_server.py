@@ -709,3 +709,61 @@ async def test_call_tool_invalid_arguments(app_context):
 
         # Just verify we got a result
         assert isinstance(result, list)
+
+
+@pytest.mark.anyio
+async def test_call_tool_jira_create_issue_with_components(app_context):
+    """Test the jira_create_issue tool with components parameter."""
+    # Mock JiraFetcher.create_issue to return a mock issue
+    mock_issue = MagicMock()
+    mock_issue.to_simplified_dict.return_value = {
+        "key": "TEST-123",
+        "summary": "Test Issue with Components",
+    }
+    app_context.jira.create_issue.return_value = mock_issue
+
+    with (
+        patch("mcp_atlassian.server.is_read_only_mode", return_value=False),
+        mock_request_context(app_context),
+    ):
+        # Call the tool with components parameter
+        result = await call_tool(
+            "jira_create_issue",
+            {
+                "project_key": "TEST",
+                "summary": "Test Issue with Components",
+                "issue_type": "Bug",
+                "components": ["UI", "API"],
+            },
+        )
+
+        # Verify the create_issue method was called with correct parameters
+        app_context.jira.create_issue.assert_called_once_with(
+            project_key="TEST",
+            summary="Test Issue with Components",
+            issue_type="Bug",
+            description="",
+            assignee=None,
+            components=["UI", "API"],
+        )
+
+        # Verify we got a result
+        assert isinstance(result, list)
+
+        # Reset the mock
+        app_context.jira.create_issue.reset_mock()
+
+        # Call the tool without components parameter
+        result = await call_tool(
+            "jira_create_issue",
+            {
+                "project_key": "TEST",
+                "summary": "Test Issue without Components",
+                "issue_type": "Bug",
+            },
+        )
+
+        # Verify the create_issue method was called with components=None
+        app_context.jira.create_issue.assert_called_once()
+        call_kwargs = app_context.jira.create_issue.call_args[1]
+        assert call_kwargs["components"] is None

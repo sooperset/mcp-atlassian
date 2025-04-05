@@ -496,7 +496,7 @@ class IssuesMixin(UsersMixin):
         issue_type: str,
         description: str = "",
         assignee: str | None = None,
-        component : str | None = None,
+        components: list[str] | None = None,
         **kwargs: Any,  # noqa: ANN401 - Dynamic field types are necessary for Jira API
     ) -> JiraIssue:
         """
@@ -508,6 +508,7 @@ class IssuesMixin(UsersMixin):
             issue_type: The type of issue to create
             description: The issue description
             assignee: The username or account ID of the assignee
+            components: List of component names to assign (e.g., ["Frontend", "API"])
             **kwargs: Additional fields to set on the issue
 
         Returns:
@@ -544,9 +545,35 @@ class IssuesMixin(UsersMixin):
                 except ValueError as e:
                     logger.warning(f"Could not assign issue: {str(e)}")
 
-            # Add component if provided
-            if component:
-                fields["components"] = [{"name": component}]
+            # Add components if provided
+            if components:
+                if isinstance(components, list):
+                    # Filter out any None or empty/whitespace-only strings
+                    valid_components = [
+                        comp_name.strip()
+                        for comp_name in components
+                        if isinstance(comp_name, str) and comp_name.strip()
+                    ]
+                    if valid_components:
+                        # Format as list of {"name": ...} dicts for the API
+                        fields["components"] = [
+                            {"name": comp_name} for comp_name in valid_components
+                        ]
+                else:
+                    # Log a warning if the type is unexpectedly not a list
+                    logger.warning(
+                        f"Expected 'components' parameter to be a list[str], "
+                        f"but received type {type(components)}. Ignoring."
+                    )
+
+            # Precedence Handling (Add this before processing kwargs / calling _add_custom_fields)
+            if "components" in fields and "components" in kwargs:
+                logger.warning(
+                    "Components provided via both 'components' argument and 'additional_fields'. "
+                    "Using the explicit 'components' argument."
+                )
+                # Remove the conflicting key from kwargs to prevent issues later
+                kwargs.pop("components", None)
 
             # Make a copy of kwargs to preserve original values for two-step Epic creation
             kwargs_copy = kwargs.copy()
