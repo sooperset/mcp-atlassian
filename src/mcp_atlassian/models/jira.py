@@ -444,6 +444,50 @@ class JiraAttachment(ApiModel):
         return result
 
 
+class JiraTimetracking(ApiModel):
+    """
+    Model representing the time tracking information for a Jira issue.
+    """
+
+    original_estimate: str | None = Field(None, alias="originalEstimate")
+    remaining_estimate: str | None = Field(None, alias="remainingEstimate")
+    time_spent: str | None = Field(None, alias="timeSpent")
+    original_estimate_seconds: int | None = Field(None, alias="originalEstimateSeconds")
+    remaining_estimate_seconds: int | None = Field(
+        None, alias="remainingEstimateSeconds"
+    )
+    time_spent_seconds: int | None = Field(None, alias="timeSpentSeconds")
+
+    model_config = {
+        "populate_by_name": True,
+        "str_strip_whitespace": True,
+    }
+
+    @classmethod
+    def from_api_response(
+        cls, data: dict[str, Any], **kwargs: Any
+    ) -> "JiraTimetracking | None":
+        """
+        Create a JiraTimetracking instance from an API response dictionary.
+        Args:
+            data: The timetracking data from the Jira API or None
+            **kwargs: Additional options
+        Returns:
+            A new JiraTimetracking instance or None if data is None
+        """
+        if data is None:
+            return None
+
+        return cls.model_validate(data)
+
+    def to_simplified_dict(self) -> dict[str, Any]:
+        """Convert to a simplified dictionary representation."""
+        # Get the model data with aliases (camelCase keys)
+        data = self.model_dump(by_alias=True)
+        # Exclude None values
+        return {k: v for k, v in data.items() if v is not None}
+
+
 class JiraIssue(ApiModel, TimestampMixin):
     """
     Model representing a Jira issue.
@@ -467,6 +511,7 @@ class JiraIssue(ApiModel, TimestampMixin):
     components: list[str] = Field(default_factory=list)
     comments: list[JiraComment] = Field(default_factory=list)
     attachments: list[JiraAttachment] = Field(default_factory=list)
+    timetracking: JiraTimetracking | None = None
     url: str | None = None
     epic_key: str | None = None
     epic_name: str | None = None
@@ -696,6 +741,12 @@ class JiraIssue(ApiModel, TimestampMixin):
                 if isinstance(attachment, dict):
                     attachments.append(JiraAttachment.from_api_response(attachment))
 
+        # Process timetracking
+        timetracking = None
+        timetracking_data = fields.get("timetracking")
+        if timetracking_data:
+            timetracking = JiraTimetracking.from_api_response(timetracking_data)
+
         # Extract fixVersions safely
         fix_versions = []
         fix_versions_data = fields.get("fixVersions", [])
@@ -842,6 +893,7 @@ class JiraIssue(ApiModel, TimestampMixin):
             fix_versions=fix_versions,
             custom_fields=custom_fields,
             requested_fields=requested_fields,
+            timetracking=timetracking,
         )
 
     def to_simplified_dict(self) -> dict[str, Any]:
@@ -908,6 +960,10 @@ class JiraIssue(ApiModel, TimestampMixin):
                 }
             )
 
+            # Add timetracking if available
+            if self.timetracking:
+                result["timetracking"] = self.timetracking.to_simplified_dict()
+
             # Add all custom fields
             for field_id, value in self.custom_fields.items():
                 result[field_id] = value
@@ -952,6 +1008,9 @@ class JiraIssue(ApiModel, TimestampMixin):
                 "epic_key": lambda: self.epic_key,
                 "epic_name": lambda: self.epic_name,
                 "fix_versions": lambda: self.fix_versions,
+                "timetracking": lambda: self.timetracking.to_simplified_dict()
+                if self.timetracking
+                else None,
             }
 
             # Process each requested field
