@@ -733,7 +733,7 @@ async def test_call_tool_jira_create_issue_with_components(app_context):
                 "project_key": "TEST",
                 "summary": "Test Issue with Components",
                 "issue_type": "Bug",
-                "components": ["UI", "API"],
+                "components": "UI,API",
             },
         )
 
