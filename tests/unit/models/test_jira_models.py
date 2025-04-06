@@ -18,6 +18,7 @@ from src.mcp_atlassian.models.jira import (
     JiraSearchResult,
     JiraStatus,
     JiraStatusCategory,
+    JiraTimetracking,
     JiraTransition,
     JiraUser,
     JiraWorklog,
@@ -347,6 +348,70 @@ class TestJiraComment:
         # Author should be included as a string
         assert "author" in simplified
         assert simplified["author"] == "Comment User"
+
+
+class TestJiraTimetracking:
+    """Tests for the JiraTimetracking model."""
+
+    def test_from_api_response_with_valid_data(self):
+        """Test creating a JiraTimetracking from valid API data."""
+        data = {
+            "originalEstimate": "2h",
+            "remainingEstimate": "1h 30m",
+            "timeSpent": "30m",
+            "originalEstimateSeconds": 7200,
+            "remainingEstimateSeconds": 5400,
+            "timeSpentSeconds": 1800,
+        }
+
+        timetracking = JiraTimetracking.from_api_response(data)
+
+        assert timetracking.original_estimate == "2h"
+        assert timetracking.remaining_estimate == "1h 30m"
+        assert timetracking.time_spent == "30m"
+        assert timetracking.original_estimate_seconds == 7200
+        assert timetracking.remaining_estimate_seconds == 5400
+        assert timetracking.time_spent_seconds == 1800
+
+    def test_from_api_response_with_empty_data(self):
+        """Test creating a JiraTimetracking from empty data."""
+        timetracking = JiraTimetracking.from_api_response({})
+
+        # Should use default values
+        assert timetracking.original_estimate is None
+        assert timetracking.remaining_estimate is None
+        assert timetracking.time_spent is None
+        assert timetracking.original_estimate_seconds is None
+        assert timetracking.remaining_estimate_seconds is None
+        assert timetracking.time_spent_seconds is None
+
+    def test_from_api_response_with_none_data(self):
+        """Test creating a JiraTimetracking from None data."""
+        timetracking = JiraTimetracking.from_api_response(None)
+
+        # Should return None
+        assert timetracking is None
+
+    def test_to_simplified_dict(self):
+        """Test converting JiraTimetracking to a simplified dictionary."""
+        timetracking = JiraTimetracking(
+            original_estimate="2h",
+            remaining_estimate="1h 30m",
+            time_spent="30m",
+            original_estimate_seconds=7200,
+            remaining_estimate_seconds=5400,
+            time_spent_seconds=1800,
+        )
+
+        simplified = timetracking.to_simplified_dict()
+
+        assert isinstance(simplified, dict)
+        assert simplified["originalEstimate"] == "2h"
+        assert simplified["remainingEstimate"] == "1h 30m"
+        assert simplified["timeSpent"] == "30m"
+        assert simplified["originalEstimateSeconds"] == 7200
+        assert simplified["remainingEstimateSeconds"] == 5400
+        assert simplified["timeSpentSeconds"] == 1800
 
 
 class TestJiraIssue:
@@ -729,6 +794,54 @@ class TestJiraIssue:
         # Should include everything
         assert "customfield_10001" in simplified
         assert "customfield_10002" in simplified
+
+    def test_timetracking_field_processing(self):
+        """Test that timetracking data is properly processed."""
+        issue_data = {
+            "id": "10000",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test Issue",
+                "description": "Test Description",
+                "timetracking": {
+                    "originalEstimate": "2h",
+                    "remainingEstimate": "1h 30m",
+                    "timeSpent": "30m",
+                    "originalEstimateSeconds": 7200,
+                    "remainingEstimateSeconds": 5400,
+                    "timeSpentSeconds": 1800,
+                },
+            },
+        }
+
+        issue = JiraIssue.from_api_response(issue_data)
+
+        # Verify timetracking field is populated
+        assert issue.timetracking is not None
+        assert issue.timetracking.original_estimate == "2h"
+        assert issue.timetracking.remaining_estimate == "1h 30m"
+        assert issue.timetracking.time_spent == "30m"
+        assert issue.timetracking.original_estimate_seconds == 7200
+        assert issue.timetracking.remaining_estimate_seconds == 5400
+        assert issue.timetracking.time_spent_seconds == 1800
+
+        # Verify timetracking is included in simplified dict with *all fields
+        issue.requested_fields = "*all"
+        simplified = issue.to_simplified_dict()
+        assert "timetracking" in simplified
+        assert simplified["timetracking"]["originalEstimate"] == "2h"
+        assert simplified["timetracking"]["remainingEstimate"] == "1h 30m"
+
+        # Verify timetracking is included when specifically requested
+        issue.requested_fields = ["summary", "timetracking"]
+        simplified = issue.to_simplified_dict()
+        assert "timetracking" in simplified
+        assert simplified["timetracking"]["originalEstimate"] == "2h"
+
+        # Verify timetracking is not included in default essential fields
+        issue.requested_fields = None
+        simplified = issue.to_simplified_dict()
+        assert "timetracking" not in simplified
 
 
 class TestJiraSearchResult:
