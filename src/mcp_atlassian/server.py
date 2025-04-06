@@ -956,10 +956,9 @@ async def list_tools() -> list[Tool]:
                                     "default": "",
                                 },
                                 "components": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                    "description": 'List of component names to assign (e.g., ["Frontend", "API"])',
-                                    "default": [],
+                                    "type": "string",
+                                    "description": "Comma-separated list of component names to assign (e.g., 'Frontend,API')",
+                                    "default": "",
                                 },
                                 "additional_fields": {
                                     "type": "string",
@@ -1846,6 +1845,13 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             description = arguments.get("description", "")
             assignee = arguments.get("assignee")
             components = arguments.get("components")
+
+            # Parse components from comma-separated string to list
+            if components and isinstance(components, str):
+                # Split by comma and strip whitespace, removing empty entries
+                components = [
+                    comp.strip() for comp in components.split(",") if comp.strip()
+                ]
 
             # Parse additional fields
             additional_fields = {}
