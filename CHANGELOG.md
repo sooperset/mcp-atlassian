@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.6.3] - 2025-04-07
+
+### Added
+- Added support for Jira timetracking field with proper model field mapping (#217, #213)
+
+### Changed
+- Updated documentation to include fixVersions example in jira_create_issue additional_fields parameter (#216)
+
+### Fixed
+- Changed components parameter type from array to string for Windsurf compatibility (#215)
+
 ## [0.6.2] - 2025-04-05
 
 ### Added
