@@ -968,6 +968,7 @@ async def list_tools() -> list[Tool]:
                                         '- Set priority: {"priority": {"name": "High"}}\n'
                                         '- Add labels: {"labels": ["frontend", "urgent"]}\n'
                                         '- Link to parent (for any issue type): {"parent": "PROJ-123"}\n'
+                                        '- Set Fix Version/s: {"fixVersions": [{"id": "10020"}]}\n'
                                         '- Custom fields: {"customfield_10010": "value"}'
                                     ),
                                     "default": "{}",

@@ -559,21 +559,6 @@ class IssuesMixin(UsersMixin):
                         fields["components"] = [
                             {"name": comp_name} for comp_name in valid_components
                         ]
-                else:
-                    # Log a warning if the type is unexpectedly not a list
-                    logger.warning(
-                        f"Expected 'components' parameter to be a list[str], "
-                        f"but received type {type(components)}. Ignoring."
-                    )
-
-            # Precedence Handling (Add this before processing kwargs / calling _add_custom_fields)
-            if "components" in fields and "components" in kwargs:
-                logger.warning(
-                    "Components provided via both 'components' argument and 'additional_fields'. "
-                    "Using the explicit 'components' argument."
-                )
-                # Remove the conflicting key from kwargs to prevent issues later
-                kwargs.pop("components", None)
 
             # Make a copy of kwargs to preserve original values for two-step Epic creation
             kwargs_copy = kwargs.copy()
