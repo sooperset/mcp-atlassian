@@ -946,7 +946,7 @@ async def list_tools() -> list[Tool]:
                                     ),
                                 },
                                 "assignee": {
-                                    "type": ["string", "null"],
+                                    "type": "string",
                                     "description": "Assignee of the ticket (accountID, full name or e-mail)",
                                     "default": None,
                                 },
