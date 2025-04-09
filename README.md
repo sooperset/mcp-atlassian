@@ -295,80 +295,70 @@ For Jira Server/DC, use:
 
 ### SSE Transport Configuration
 
-<details> <summary>Using SSE Instead of stdio</summary>
+For SSE transport, first start the server with its configuration provided via command-line arguments or server-side environment variables (e.g., from a `.env` file):
+```bash
+# Example starting the server with Cloud configuration
+uvx mcp-atlassian --transport sse --port 9000 \
+  --confluence-url https://your-company.atlassian.net/wiki \
+  --confluence-username your.email@company.com \
+  --confluence-token your_api_token \
+  --jira-url https://your-company.atlassian.net \
+  --jira-username your.email@company.com \
+  --jira-token your_api_token
+```
 
-1.  Start the server manually in a terminal:
-
-    ```bash
-    docker run --rm -p 9000:9000 \
-      --env-file /path/to/your/.env \
-      ghcr.io/sooperset/mcp-atlassian:latest \
-      --transport sse --port 9000 -vv
-    ```
-
-2.  Configure your IDE to connect to the running server via its URL:
-
-    ```json
-    {
-      "mcpServers": {
-        "mcp-atlassian-sse": {
-          "url": "http://localhost:9000/sse"
-        }
-      }
+Then configure *only the URL* in Cursor's `~/.cursor/mcp.json`:
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian-sse": {
+      "url": "http://localhost:9000/sse"
     }
-    ```
-</details>
+  }
+}
+```
 
-## Tools
+## Resources
 
-### Key Tools
+> **Note:** The MCP server filters resources to only show Confluence spaces and Jira projects that the user is actively interacting with, based on their contributions and assignments.
 
-#### Confluence Tools
+- `confluence://{space_key}`: Access Confluence spaces
+- `jira://{project_key}`: Access Jira projects
 
-- `confluence_search`: Search Confluence content using CQL
-- `confluence_get_page`: Get content of a specific page
-- `confluence_create_page`: Create a new page
-- `confluence_update_page`: Update an existing page
+## Available Tools
 
-#### Jira Tools
+| Tool | Description |
+|------|-------------|
+| `confluence_search` | Search Confluence content using CQL |
+| `confluence_get_page` | Get content of a specific Confluence page |
+| `confluence_get_page_children` | Get child pages of a specific Confluence page |
+| `confluence_get_page_ancestors` | Get parent pages of a specific Confluence page |
+| `confluence_get_comments` | Get comments for a specific Confluence page |
+| `confluence_create_page` | Create a new Confluence page |
+| `confluence_update_page` | Update an existing Confluence page |
+| `confluence_delete_page` | Delete an existing Confluence page |
+| `confluence_attach_content` | Attach content to a Confluence page |
+| `jira_get_issue` | Get details of a specific Jira issue |
+| `jira_search` | Search Jira issues using JQL |
+| `jira_get_project_issues` | Get all issues for a specific Jira project |
+| `jira_get_epic_issues` | Get all issues linked to a specific Epic |
+| `jira_create_issue` | Create a new issue in Jira |
+| `jira_update_issue` | Update an existing Jira issue |
+| `jira_delete_issue` | Delete an existing Jira issue |
+| `jira_get_transitions` | Get available status transitions for a Jira issue |
+| `jira_transition_issue` | Transition a Jira issue to a new status |
+| `jira_add_comment` | Add a comment to a Jira issue |
+| `jira_add_worklog` | Add a worklog entry to a Jira issue |
+| `jira_get_worklog` | Get worklog entries for a Jira issue |
+| `jira_download_attachments` | Download attachments from a Jira issue |
+| `jira_link_to_epic` | Link an issue to an Epic |
+| `jira_get_agile_boards` | Get Jira agile boards by name, project key, or type |
+| `jira_get_board_issues` | Get all issues linked to a specific board |
+| `jira_get_sprints_from_board` | Get Jira sprints from board by state |
+| `jira_create_sprint` | Create Jira sprint for a board |
+| `jira_get_sprint_issues` | Get Jira issues from sprint |
 
-- `jira_get_issue`: Get details of a specific issue
-- `jira_search`: Search issues using JQL
-- `jira_create_issue`: Create a new issue
-- `jira_update_issue`: Update an existing issue
-- `jira_transition_issue`: Transition an issue to a new status
-- `jira_add_comment`: Add a comment to an issue
-
-<details> <summary>View All Tools</summary>
-
-|Confluence Tools|Jira Tools|
-|---|---|
-|`confluence_search`|`jira_get_issue`|
-|`confluence_get_page`|`jira_search`|
-|`confluence_get_page_children`|`jira_get_project_issues`|
-|`confluence_get_page_ancestors`|`jira_get_epic_issues`|
-|`confluence_get_comments`|`jira_create_issue`|
-|`confluence_create_page`|`jira_batch_create_issues`|
-|`confluence_update_page`|`jira_update_issue`|
-|`confluence_delete_page`|`jira_delete_issue`|
-||`jira_get_transitions`|
-||`jira_transition_issue`|
-||`jira_add_comment`|
-||`jira_add_worklog`|
-||`jira_get_worklog`|
-||`jira_download_attachments`|
-||`jira_link_to_epic`|
-||`jira_get_agile_boards`|
-||`jira_get_board_issues`|
-||`jira_get_sprints_from_board`|
-||`jira_get_sprint_issues`|
-||`jira_update_sprint`|
-||`jira_create_issue_link`|
-||`jira_remove_issue_link`|
-
-</details>
-
-## Troubleshooting & Debugging
+## Development & Debugging
 
 ### Common Issues
 
