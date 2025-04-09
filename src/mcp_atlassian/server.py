@@ -11,6 +11,7 @@ from mcp.server import Server
 from mcp.types import Resource, TextContent, Tool
 from pydantic import AnyUrl
 from requests.exceptions import RequestException
+from thefuzz import fuzz
 
 from .confluence import ConfluenceFetcher
 from .confluence.utils import quote_cql_identifier_if_needed
@@ -662,6 +663,33 @@ async def list_tools() -> list[Tool]:
                             },
                         },
                         "required": ["jql"],
+                    },
+                ),
+                Tool(
+                    name="jira_search_fields",
+                    description="Search Jira fields by keyword with fuzzy match",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "keyword": {
+                                "type": "string",
+                                "description": "The keyword to search for",
+                                "default": "",
+                            },
+                            "limit": {
+                                "type": "number",
+                                "description": "Maximum number of results (1-50)",
+                                "default": 10,
+                                "minimum": 1,
+                                "maximum": 50,
+                            },
+                            "refresh": {
+                                "type": "boolean",
+                                "description": "Whether to force refresh the field list",
+                                "default": False,
+                            },
+                        },
+                        "required": [],
                     },
                 ),
                 Tool(
@@ -1566,6 +1594,46 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 TextContent(
                     type="text",
                     text=json.dumps(response, indent=2, ensure_ascii=False),
+                )
+            ]
+
+        elif name == "jira_search_fields" and ctx and ctx.jira:
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            keyword = arguments.get("keyword")
+            limit = min(int(arguments.get("limit", 10)), 50)
+            refresh = arguments.get("refresh", False)
+
+            fields = ctx.jira.get_fields(refresh=refresh)
+
+            # fuzzy search
+            def similarity(keyword: str, field: dict) -> int:
+                name_candidates = [
+                    field.get("id", ""),
+                    field.get("key", ""),
+                    field.get("name", ""),
+                    *field.get("clauseNames", []),
+                ]
+
+                # calculate the fuzzy match score
+                return max(
+                    fuzz.partial_ratio(keyword.lower(), name.lower())
+                    for name in name_candidates
+                )
+
+            # sort by similarity
+            sorted_fields = sorted(
+                fields, key=lambda x: similarity(keyword, x), reverse=True
+            )
+
+            # return the top limit results
+            result = sorted_fields[:limit]
+
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(result, indent=2, ensure_ascii=False),
                 )
             ]
 
