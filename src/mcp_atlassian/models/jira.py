@@ -32,7 +32,7 @@ Usage examples:
 
 import logging
 import warnings
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
@@ -517,7 +517,7 @@ class JiraIssue(ApiModel, TimestampMixin):
     epic_name: str | None = None
     fix_versions: list[str] = Field(default_factory=list)
     custom_fields: dict[str, Any] = Field(default_factory=dict)
-    requested_fields: str | list[str] | None = None
+    requested_fields: Literal["*all"] | list[str] | None = None
 
     def __getattribute__(self, name: str) -> Any:
         """
@@ -662,24 +662,25 @@ class JiraIssue(ApiModel, TimestampMixin):
             fields = {}
 
         # Store requested fields if provided and normalize format
-        requested_fields = kwargs.get("requested_fields")
+        requested_fields_raw = kwargs.get("requested_fields")
 
         # Handle different formats of requested_fields
-        if requested_fields is not None:
-            if isinstance(requested_fields, str) and requested_fields != "*all":
+        if isinstance(requested_fields_raw, str):
+            if requested_fields_raw == "*all":
+                requested_fields = "*all"
+            else:
                 # Convert comma-separated string to list
                 requested_fields = [
-                    field.strip() for field in requested_fields.split(",")
+                    field.strip() for field in requested_fields_raw.split(",")
                 ]
-            elif isinstance(requested_fields, list | tuple | set):
+        elif isinstance(requested_fields_raw, list | tuple | set):
+            if "*all" in requested_fields_raw:
+                requested_fields = "*all"
+            else:
                 # Keep as-is for collections, but convert to list for consistency
-                requested_fields = list(requested_fields)
-            elif requested_fields == "*all":
-                # Keep "*all" as a string to signal all fields should be included
-                requested_fields = "*all"
-            elif requested_fields == ["*all"]:
-                # Handle the case where it's in a list
-                requested_fields = "*all"
+                requested_fields = list(requested_fields_raw)
+        else:
+            requested_fields = None
 
         # Extract custom fields - any field beginning with "customfield_"
         custom_fields = {}
