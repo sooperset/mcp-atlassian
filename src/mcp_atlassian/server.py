@@ -4,13 +4,16 @@ import os
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
 from atlassian.errors import ApiError
 from mcp.server import Server
 from mcp.types import Resource, TextContent, Tool
 from pydantic import AnyUrl
 from requests.exceptions import RequestException
+
+from mcp_atlassian.confluence import ConfluenceConfig
+from mcp_atlassian.jira import JiraConfig
 
 from .confluence import ConfluenceFetcher
 from .confluence.utils import quote_cql_identifier_if_needed
@@ -21,6 +24,7 @@ from .utils.urls import is_atlassian_cloud_url
 
 # Configure logging
 logger = logging.getLogger("mcp-atlassian")
+T = TypeVar("T")  # A generic type for the FetcherClass
 
 
 @dataclass
@@ -85,16 +89,58 @@ def get_available_services() -> dict[str, bool | None]:
     return {"confluence": confluence_is_setup, "jira": jira_is_setup}
 
 
+def build_service(
+    service_name: str, ConfigClass: type[T], FetcherClass: type[T]
+) -> T | None:
+    """Initialize resources."""
+    services = get_available_services()
+
+    if not services.get(service_name):
+        return None
+
+    url = os.getenv(f"{service_name.upper()}_URL")
+    if not url:
+        return None
+
+    # No user config? Use default Fetcher (unauthenticated)
+    if not app.user_config or app.user_config is None:
+        return FetcherClass()
+
+    is_cloud = is_atlassian_cloud_url(url)
+
+    if is_cloud:
+        auth_type = "basic"
+        username = app.user_config.get(f"{service_name}-username")
+        token = app.user_config.get(f"{service_name}-token")
+        personal_token = None
+    else:
+        auth_type = "token"
+        username = None
+        token = None
+        personal_token = app.user_config.get(f"{service_name}-personal-token")
+
+    config = ConfigClass(
+        url=url,
+        auth_type=auth_type,
+        username=username,
+        api_token=token,
+        personal_token=personal_token,
+    )
+
+    return FetcherClass(config)
+
+
 @asynccontextmanager
 async def server_lifespan(server: Server) -> AsyncIterator[AppContext]:
     """Initialize and clean up application resources."""
     # Get available services
     services = get_available_services()
+    confluence = None
+    jira = None
 
     try:
-        # Initialize services
-        confluence = ConfluenceFetcher() if services["confluence"] else None
-        jira = JiraFetcher() if services["jira"] else None
+        confluence = build_service("confluence", ConfluenceConfig, ConfluenceFetcher)
+        jira = build_service("jira", JiraConfig, JiraFetcher)
 
         # Log the startup information
         logger.info("Starting MCP Atlassian server")
@@ -2182,6 +2228,33 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
         return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
+def parse_raw_query_params(raw_query: str) -> dict:
+    """
+    Parse a raw query string into a dictionary without decoding the values.
+
+    Args:
+        raw_query (str): The raw query string (e.g., "key1=value1&key2=value2").
+
+    Returns:
+        dict: A dictionary of key-value pairs with raw, unmodified strings.
+    """
+    params = {}
+    if not raw_query:
+        return params
+
+    # Split the query string into key-value pairs
+    pairs = raw_query.split("&")
+    for pair in pairs:
+        if "=" in pair:
+            key, value = pair.split("=", 1)  # Split on the first '=' only
+            params[key] = value
+        else:
+            # Handle keys without values (e.g., "key1&key2=value2")
+            params[pair] = None
+
+    return params
+
+
 async def run_server(transport: str = "stdio", port: int = 8000) -> None:
     """Run the MCP Atlassian server with the specified transport."""
     if transport == "sse":
@@ -2193,6 +2266,30 @@ async def run_server(transport: str = "stdio", port: int = 8000) -> None:
         sse = SseServerTransport("/messages/")
 
         async def handle_sse(request: Request) -> None:
+            # Extract query parameters
+            raw_query_string = request.url.query
+            # Parse raw query string manually to preserve special characters
+            query_params = parse_raw_query_params(raw_query_string)
+            if not query_params:
+                app.user_config = None
+            else:
+                user_config = {
+                    "confluence-username": query_params.get(
+                        "confluence-username", None
+                    ),
+                    "confluence-token": query_params.get("confluence-token", None),
+                    "confluence-personal-token": query_params.get(
+                        "confluence-personal-token", None
+                    ),
+                    "jira-username": query_params.get("jira-username", None),
+                    "jira-token": query_params.get("jira-token", None),
+                    "jira-personal-token": query_params.get(
+                        "jira-personal-token", None
+                    ),
+                }
+
+                app.user_config = user_config
+
             async with sse.connect_sse(
                 request.scope, request.receive, request._send
             ) as streams:
@@ -2211,7 +2308,13 @@ async def run_server(transport: str = "stdio", port: int = 8000) -> None:
         import uvicorn
 
         # Set up uvicorn config
-        config = uvicorn.Config(starlette_app, host="0.0.0.0", port=port)  # noqa: S104
+        config = uvicorn.Config(
+            starlette_app,
+            host="0.0.0.0",
+            port=port,
+            ssl_keyfile=os.getenv("SSL_KEY") if os.getenv("SSL_KEY") else None,
+            ssl_certfile=os.getenv("SSL_CRT") if os.getenv("SSL_CRT") else None,
+        )  # noqa: S104
         server = uvicorn.Server(config)
         # Use server.serve() instead of run() to stay in the same event loop
         await server.serve()
