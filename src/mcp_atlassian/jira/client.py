@@ -17,16 +17,18 @@ class JiraClient:
     """Base client for Jira API interactions."""
 
     def __init__(self, config: JiraConfig | None = None) -> None:
-        """Initialize the Jira client with configuration options.
+        """Initialize the Jira client with a given configuration.
 
         Args:
-            config: Optional configuration object (will use env vars if not provided)
+            config: Jira configuration object. If None, will be loaded from environment variables.
 
         Raises:
-            ValueError: If configuration is invalid or required credentials are missing
+            TypeError: If configuration is invalid.
         """
-        # Load configuration from environment variables if not provided
-        self.config = config or JiraConfig.from_env()
+        if config is None:
+            self.config = JiraConfig.from_env()
+        else:
+            self.config = config
 
         # Initialize the Jira client based on auth type
         if self.config.auth_type == "token":
@@ -63,7 +65,7 @@ class JiraClient:
     def _clean_text(self, text: str) -> str:
         """Clean text content by:
         1. Processing user mentions and links
-        2. Converting HTML/wiki markup to markdown
+        2. Converting HTML/wiki markup to markdown.
 
         Args:
             text: Text to clean
@@ -79,8 +81,7 @@ class JiraClient:
         return self.preprocessor.clean_jira_text(text)
 
     def _markdown_to_jira(self, markdown_text: str) -> str:
-        """
-        Convert Markdown syntax to Jira markup syntax.
+        """Convert Markdown syntax to Jira markup syntax.
 
         Args:
             markdown_text: Text in Markdown format

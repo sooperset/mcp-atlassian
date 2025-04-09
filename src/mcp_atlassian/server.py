@@ -1,23 +1,30 @@
 import json
 import logging
 import os
+import hashlib
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 from atlassian.errors import ApiError
+from cachetools import TTLCache
 from mcp.server import Server
 from mcp.types import Resource, TextContent, Tool
 from pydantic import AnyUrl
 from requests.exceptions import RequestException
 
-from .confluence import ConfluenceFetcher
+from .confluence import ConfluenceFetcher, ConfluenceConfig
 from .confluence.utils import quote_cql_identifier_if_needed
-from .jira import JiraFetcher
+from .jira import JiraFetcher, JiraConfig
 from .jira.utils import escape_jql_string
-from .utils.io import is_read_only_mode
+from .utils.io import is_read_only_mode, is_multi_user_mode
+from .utils.params import parse_query_string_params, user_config_from_query_params
 from .utils.urls import is_atlassian_cloud_url
+
+from contextvars import ContextVar
+
+user_configs_ctx: ContextVar[tuple[JiraConfig | None, ConfluenceConfig | None] | None] = ContextVar("user_config_ctx", default=None)
 
 # Configure logging
 logger = logging.getLogger("mcp-atlassian")
@@ -27,62 +34,104 @@ logger = logging.getLogger("mcp-atlassian")
 class AppContext:
     """Application context for MCP Atlassian."""
 
-    confluence: ConfluenceFetcher | None = None
-    jira: JiraFetcher | None = None
+    is_multi_user: bool = False
+    confluence_fetchers_cache: TTLCache | None = field(default=None, init=False)
+    jira_fetchers_cache: TTLCache | None = field(default=None, init=False)
+    confluence_fetcher: ConfluenceFetcher | None = field(default=None)
+    jira_fetcher: JiraFetcher | None = field(default=None)
+
+    def __post_init__(self):
+        if self.is_multi_user:
+            self.confluence_fetchers_cache = TTLCache(maxsize=100, ttl=3600)
+            self.jira_clients_cache = TTLCache(maxsize=100, ttl=3600)
+            self.jira_fetcher = None
+            self.confluence_fetcher = None
+
+    def get_jira(self, config: JiraConfig | None = None) -> JiraFetcher | None:
+        if self.is_multi_user and config:
+            user_id_hash = hashlib.sha256(config.username.encode()).hexdigest()
+            if jira_fetcher := self.jira_fetchers_cache.get(user_id_hash):
+                return jira_fetcher
+            self.jira_fetchers_cache[user_id_hash] = JiraFetcher(config)
+            return self.jira_fetchers_cache[user_id_hash]
+        return self.jira_fetcher
+
+    def get_confluence(self, config: ConfluenceConfig | None = None) -> ConfluenceFetcher | None:
+        if self.is_multi_user and config:
+            user_id_hash = hashlib.sha256(config.username.encode()).hexdigest()
+            if confluence_fetcher := self.confluence_fetchers_cache.get(user_id_hash):
+                return confluence_fetcher
+            self.confluence_fetchers_cache[user_id_hash] = ConfluenceFetcher(config)
+            return self.confluence_fetchers_cache[user_id_hash]
+        return self.confluence_fetcher
 
 
 def get_available_services() -> dict[str, bool | None]:
-    """Determine which services are available based on environment variables."""
+    """Determine which services *could* be configured based on environment variables.
+    In multi-user mode, this just indicates if the service *might* be used,
+    actual usability depends on per-request headers.
+    """
+    is_multi = is_multi_user_mode()
 
-    # Check for either cloud authentication (URL + username + API token)
-    # or server/data center authentication (URL + ( personal token or username + API token ))
+    # Confluence check
     confluence_url = os.getenv("CONFLUENCE_URL")
+    confluence_is_potentially_setup = False
     if confluence_url:
         is_cloud = is_atlassian_cloud_url(confluence_url)
-
         if is_cloud:
-            confluence_is_setup = all(
+            confluence_is_potentially_setup = all(
                 [
                     confluence_url,
                     os.getenv("CONFLUENCE_USERNAME"),
                     os.getenv("CONFLUENCE_API_TOKEN"),
                 ]
             )
-            logger.info("Using Confluence Cloud authentication method")
         else:
-            confluence_is_setup = all(
+            confluence_is_potentially_setup = all(
                 [
                     confluence_url,
                     os.getenv("CONFLUENCE_PERSONAL_TOKEN")
-                    # Some on prem/data center use username and api token too.
                     or (
                         os.getenv("CONFLUENCE_USERNAME")
-                        and os.getenv("CONFLUENCE_API_TOKEN")
+                        and os.getenv("CONfluence_API_TOKEN")
                     ),
                 ]
             )
-            logger.info("Using Confluence Server/Data Center authentication method")
-    else:
-        confluence_is_setup = False
 
-    # Check for either cloud authentication (URL + username + API token)
-    # or server/data center authentication (URL + personal token)
+    configs = user_configs_ctx.get() if (is_multi and user_configs_ctx.get()) else (None, None)
+    confluence_multi_available = (configs[1] is not None and configs[1].url is not None) and is_multi
+
+    # In multi-user mode, even without env vars, service is potentially available
+    confluence_available = confluence_is_potentially_setup or confluence_multi_available
+
+    # Jira check
     jira_url = os.getenv("JIRA_URL")
+    jira_is_potentially_setup = False
     if jira_url:
         is_cloud = is_atlassian_cloud_url(jira_url)
-
         if is_cloud:
-            jira_is_setup = all(
+            jira_is_potentially_setup = all(
                 [jira_url, os.getenv("JIRA_USERNAME"), os.getenv("JIRA_API_TOKEN")]
             )
-            logger.info("Using Jira Cloud authentication method")
-        else:
-            jira_is_setup = all([jira_url, os.getenv("JIRA_PERSONAL_TOKEN")])
-            logger.info("Using Jira Server/Data Center authentication method")
-    else:
-        jira_is_setup = False
+        else: # Server/DC: Personal token OR username/api_token
+            jira_is_potentially_setup = all(
+                [jira_url, os.getenv("JIRA_PERSONAL_TOKEN") or \
+                (os.getenv("JIRA_USERNAME") and os.getenv("JIRA_API_TOKEN"))]
+            )
 
-    return {"confluence": confluence_is_setup, "jira": jira_is_setup}
+
+    jira_multi_available = (configs[0] is not None and configs[0].url is not None) and is_multi
+    # In multi-user mode, even without env vars, service is potentially available
+    jira_available = jira_is_potentially_setup or jira_multi_available
+
+
+    if is_multi:
+        logger.info("Multi-user mode: Service availability determined by request headers.")
+    else:
+        logger.info(f"Single-user mode: Confluence potentially configured: {confluence_is_potentially_setup}, Jira potentially configured: {jira_is_potentially_setup}")
+
+    # Return whether service is generally available
+    return {"confluence": confluence_available, "jira": jira_available}
 
 
 @asynccontextmanager
@@ -92,6 +141,10 @@ async def server_lifespan(server: Server) -> AsyncIterator[AppContext]:
     services = get_available_services()
 
     try:
+
+        if is_multi_user_mode():
+            yield AppContext(is_multi_user=True)
+
         # Initialize services
         confluence = ConfluenceFetcher() if services["confluence"] else None
         jira = JiraFetcher() if services["jira"] else None
@@ -111,7 +164,7 @@ async def server_lifespan(server: Server) -> AsyncIterator[AppContext]:
             logger.info(f"Jira URL: {jira_url}")
 
         # Provide context to the application
-        yield AppContext(confluence=confluence, jira=jira)
+        yield AppContext(confluence_fetcher=confluence, jira_fetcher=jira)
     finally:
         # Cleanup resources if needed
         pass
@@ -129,11 +182,15 @@ async def list_resources() -> list[Resource]:
 
     ctx = app.request_context.lifespan_context
 
+    configs = user_configs_ctx.get() if (ctx.is_multi_user and user_configs_ctx.get()) else (None, None)
+    jira = ctx.get_jira(configs[0])
+    confluence = ctx.get_confluence(configs[1])
+
     # Add Confluence spaces the user has contributed to
-    if ctx and ctx.confluence:
+    if ctx and confluence:
         try:
             # Get spaces the user has contributed to
-            spaces = ctx.confluence.get_user_contributed_spaces(limit=250)
+            spaces = confluence.get_user_contributed_spaces(limit=250)
 
             # Add spaces to resources
             resources.extend(
@@ -156,10 +213,10 @@ async def list_resources() -> list[Resource]:
             logger.error(f"Error fetching Confluence spaces: {str(e)}")
 
     # Add Jira projects the user is involved with
-    if ctx and ctx.jira:
+    if ctx and jira:
         try:
             # Get current user's account ID
-            account_id = ctx.jira.get_current_user_account_id()
+            account_id = jira.get_current_user_account_id()
 
             # Escape the account ID for safe JQL insertion
             escaped_account_id = escape_jql_string(account_id)
@@ -168,7 +225,7 @@ async def list_resources() -> list[Resource]:
             # Note: We use the escaped_account_id directly, as it already includes the necessary quotes.
             jql = f"assignee = {escaped_account_id} OR reporter = {escaped_account_id} ORDER BY updated DESC"
             logger.debug(f"Executing JQL for list_resources: {jql}")
-            issues = ctx.jira.jira.jql(jql, limit=250, fields=["project"])
+            issues = jira.jira.jql(jql, limit=250, fields=["project"])
 
             # Extract and deduplicate projects
             projects = {}
@@ -209,9 +266,14 @@ async def read_resource(uri: AnyUrl) -> str:
     # Get application context
     ctx = app.request_context.lifespan_context
 
+    configs = user_configs_ctx.get() if (ctx.is_multi_user and user_configs_ctx.get()) else (None, None)
+
     # Handle Confluence resources
     if str(uri).startswith("confluence://"):
-        if not ctx or not ctx.confluence:
+
+        confluence = ctx.get_confluence(configs[1])
+
+        if not ctx or not confluence:
             raise ValueError(
                 "Confluence is not configured. Please provide Confluence credentials."
             )
@@ -226,11 +288,11 @@ async def read_resource(uri: AnyUrl) -> str:
 
             # Use CQL to find recently updated pages in this space
             cql = f"space = {quoted_space_key} AND contributor = currentUser() ORDER BY lastmodified DESC"
-            pages = ctx.confluence.search(cql=cql, limit=20)
+            pages = confluence.search(cql=cql, limit=20)
 
             if not pages:
                 # Fallback to regular space pages if no user-contributed pages found
-                pages = ctx.confluence.get_space_pages(space_key, limit=10)
+                pages = confluence.get_space_pages(space_key, limit=10)
 
             content = []
             for page in pages:
@@ -246,7 +308,7 @@ async def read_resource(uri: AnyUrl) -> str:
         elif len(parts) >= 3 and parts[1] == "pages":
             space_key = parts[0]
             title = parts[2]
-            page = ctx.confluence.get_page_by_title(space_key, title)
+            page = confluence.get_page_by_title(space_key, title)
 
             if not page:
                 raise ValueError(f"Page not found: {title}")
@@ -255,7 +317,10 @@ async def read_resource(uri: AnyUrl) -> str:
 
     # Handle Jira resources
     elif str(uri).startswith("jira://"):
-        if not ctx or not ctx.jira:
+
+        jira = ctx.get_jira(configs[0])
+
+        if not ctx or not jira:
             raise ValueError("Jira is not configured. Please provide Jira credentials.")
         parts = str(uri).replace("jira://", "").split("/")
 
@@ -264,15 +329,15 @@ async def read_resource(uri: AnyUrl) -> str:
             project_key = parts[0]
 
             # Get current user's account ID
-            account_id = ctx.jira.get_current_user_account_id()
+            account_id = jira.get_current_user_account_id()
 
             # Use JQL to find issues in this project that the user is involved with
             jql = f"project = {project_key} AND (assignee = {account_id} OR reporter = {account_id}) ORDER BY updated DESC"
-            issues = ctx.jira.search_issues(jql=jql, limit=20)
+            issues = jira.search_issues(jql=jql, limit=20)
 
             if not issues:
                 # Fallback to recent issues if no user-related issues found
-                issues = ctx.jira.get_project_issues(project_key, limit=10)
+                issues = jira.get_project_issues(project_key, limit=10)
 
             content = []
             for issue in issues:
@@ -297,7 +362,7 @@ async def read_resource(uri: AnyUrl) -> str:
         # Handle specific issue
         elif len(parts) >= 2:
             issue_key = parts[1] if len(parts) > 1 else parts[0]
-            issue = ctx.jira.get_issue(issue_key)
+            issue = jira.get_issue(issue_key)
 
             if not issue:
                 raise ValueError(f"Issue not found: {issue_key}")
@@ -326,8 +391,10 @@ async def list_tools() -> list[Tool]:
     # Check if we're in read-only mode
     read_only = is_read_only_mode()
 
+    multi_user = ctx.is_multi_user
+
     # Add Confluence tools if Confluence is configured
-    if ctx and ctx.confluence:
+    if (ctx and ctx.get_confluence()) or multi_user:
         # Always add read operations
         tools.extend(
             [
@@ -565,7 +632,7 @@ async def list_tools() -> list[Tool]:
             )
 
     # Add Jira tools if Jira is configured
-    if ctx and ctx.jira:
+    if (ctx and ctx.get_jira()) or multi_user:
         # Always add read operations
         tools.extend(
             [
@@ -1139,9 +1206,18 @@ async def list_tools() -> list[Tool]:
 
 
 @app.call_tool()
-async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
+async def call_tool(name: str,
+                    arguments: Any,
+                    url: str | None = None,
+                    username: str | None = None,
+                    api_token: str | None = None,
+                    personal_token: str | None = None,) -> Sequence[TextContent]:
     """Handle tool calls for Confluence and Jira operations."""
     ctx = app.request_context.lifespan_context
+
+    configs = user_configs_ctx.get() if (ctx.is_multi_user and user_configs_ctx.get()) else (None, None)
+    confluence = ctx.get_confluence(configs[1])
+    jira = ctx.get_jira(configs[0])
 
     # Check if we're in read-only mode for write operations
     read_only = is_read_only_mode()
@@ -1160,8 +1236,8 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             }
 
         # Confluence operations
-        if name == "confluence_search" and ctx and ctx.confluence:
-            if not ctx or not ctx.confluence:
+        if name == "confluence_search" and ctx and confluence:
+            if not ctx or not confluence:
                 raise ValueError("Confluence is not configured.")
 
             query = arguments.get("query", "")
@@ -1178,7 +1254,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 query = f'text ~ "{query}"'
                 logger.info(f"Converting simple search term to CQL: {query}")
 
-            pages = ctx.confluence.search(
+            pages = confluence.search(
                 query, limit=limit, spaces_filter=spaces_filter
             )
 
@@ -1192,15 +1268,15 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "confluence_get_page" and ctx and ctx.confluence:
-            if not ctx or not ctx.confluence:
+        elif name == "confluence_get_page" and ctx and confluence:
+            if not ctx or not confluence:
                 raise ValueError("Confluence is not configured.")
 
             page_id = arguments.get("page_id")
             include_metadata = arguments.get("include_metadata", True)
             convert_to_markdown = arguments.get("convert_to_markdown", True)
 
-            page = ctx.confluence.get_page_content(
+            page = confluence.get_page_content(
                 page_id, convert_to_markdown=convert_to_markdown
             )
 
@@ -1220,8 +1296,8 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "confluence_get_page_children" and ctx and ctx.confluence:
-            if not ctx or not ctx.confluence:
+        elif name == "confluence_get_page_children" and ctx and confluence:
+            if not ctx or not confluence:
                 raise ValueError("Confluence is not configured.")
 
             parent_id = arguments.get("parent_id")
@@ -1238,7 +1314,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             pages = None  # Initialize pages to None before try block
 
             try:
-                pages = ctx.confluence.get_page_children(
+                pages = confluence.get_page_children(
                     page_id=parent_id,
                     start=start,
                     limit=limit,
@@ -1274,14 +1350,14 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "confluence_get_page_ancestors" and ctx and ctx.confluence:
-            if not ctx or not ctx.confluence:
+        elif name == "confluence_get_page_ancestors" and ctx and confluence:
+            if not ctx or not confluence:
                 raise ValueError("Confluence is not configured.")
 
             page_id = arguments.get("page_id")
 
             # Get the ancestor pages
-            ancestors = ctx.confluence.get_page_ancestors(page_id)
+            ancestors = confluence.get_page_ancestors(page_id)
 
             # Format results
             ancestor_pages = [page.to_simplified_dict() for page in ancestors]
@@ -1293,12 +1369,12 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "confluence_get_comments" and ctx and ctx.confluence:
-            if not ctx or not ctx.confluence:
+        elif name == "confluence_get_comments" and ctx and confluence:
+            if not ctx or not confluence:
                 raise ValueError("Confluence is not configured.")
 
             page_id = arguments.get("page_id")
-            comments = ctx.confluence.get_page_comments(page_id)
+            comments = confluence.get_page_comments(page_id)
 
             # Format comments using their to_simplified_dict method if available
             formatted_comments = [format_comment(comment) for comment in comments]
@@ -1311,7 +1387,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             ]
 
         elif name == "confluence_create_page":
-            if not ctx or not ctx.confluence:
+            if not ctx or not confluence:
                 raise ValueError("Confluence is not configured.")
 
             # Write operation - check read-only mode
@@ -1329,7 +1405,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             parent_id = arguments.get("parent_id")
 
             # Create the page (with automatic markdown conversion)
-            page = ctx.confluence.create_page(
+            page = confluence.create_page(
                 space_key=space_key,
                 title=title,
                 body=content,
@@ -1348,7 +1424,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             ]
 
         elif name == "confluence_update_page":
-            if not ctx or not ctx.confluence:
+            if not ctx or not confluence:
                 raise ValueError("Confluence is not configured.")
 
             # Write operation - check read-only mode
@@ -1371,7 +1447,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
 
             # Update the page (with automatic markdown conversion)
-            updated_page = ctx.confluence.update_page(
+            updated_page = confluence.update_page(
                 page_id=page_id,
                 title=title,
                 body=content,
@@ -1386,7 +1462,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             return [TextContent(type="text", text=json.dumps({"page": page_data}))]
 
         elif name == "confluence_delete_page":
-            if not ctx or not ctx.confluence:
+            if not ctx or not confluence:
                 raise ValueError("Confluence is not configured.")
 
             # Write operation - check read-only mode
@@ -1404,7 +1480,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
 
             try:
                 # Delete the page
-                result = ctx.confluence.delete_page(page_id=page_id)
+                result = confluence.delete_page(page_id=page_id)
 
                 # Format results - our fixed implementation now correctly returns True on success
                 if result:
@@ -1445,7 +1521,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 ]
 
         elif name == "confluence_attach_content":
-            if not ctx or not ctx.confluence:
+            if not ctx or not confluence:
                 raise ValueError("Confluence is not configured.")
 
             # Write operation - check read-only mode
@@ -1469,7 +1545,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 ]
 
             try:
-                page = ctx.confluence.attach_content(
+                page = confluence.attach_content(
                     content=content, name=name, page_id=page_id
                 )
                 page_data = page.to_simplified_dict()
@@ -1499,8 +1575,8 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 ]
 
         # Jira operations
-        elif name == "jira_get_issue" and ctx and ctx.jira:
-            if not ctx or not ctx.jira:
+        elif name == "jira_get_issue" and ctx and jira:
+            if not ctx or not jira:
                 raise ValueError("Jira is not configured.")
 
             issue_key = arguments.get("issue_key")
@@ -1513,7 +1589,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             properties = arguments.get("properties")
             update_history = arguments.get("update_history", True)
 
-            issue = ctx.jira.get_issue(
+            issue = jira.get_issue(
                 issue_key,
                 fields=fields,
                 expand=expand,
@@ -1530,8 +1606,8 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "jira_search" and ctx and ctx.jira:
-            if not ctx or not ctx.jira:
+        elif name == "jira_search" and ctx and jira:
+            if not ctx or not jira:
                 raise ValueError("Jira is not configured.")
 
             jql = arguments.get("jql")
@@ -1543,7 +1619,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             projects_filter = arguments.get("projects_filter")
             start_at = int(arguments.get("startAt", 0))  # Get startAt
 
-            search_result = ctx.jira.search_issues(
+            search_result = jira.search_issues(
                 jql,
                 fields=fields,
                 limit=limit,
@@ -1569,15 +1645,15 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "jira_get_project_issues" and ctx and ctx.jira:
-            if not ctx or not ctx.jira:
+        elif name == "jira_get_project_issues" and ctx and jira:
+            if not ctx or not jira:
                 raise ValueError("Jira is not configured.")
 
             project_key = arguments.get("project_key")
             limit = min(int(arguments.get("limit", 10)), 50)
             start_at = int(arguments.get("startAt", 0))  # Get startAt
 
-            search_result = ctx.jira.get_project_issues(
+            search_result = jira.get_project_issues(
                 project_key, start=start_at, limit=limit
             )
 
@@ -1599,8 +1675,8 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "jira_get_epic_issues" and ctx and ctx.jira:
-            if not ctx or not ctx.jira:
+        elif name == "jira_get_epic_issues" and ctx and jira:
+            if not ctx or not jira:
                 raise ValueError("Jira is not configured.")
 
             epic_key = arguments.get("epic_key")
@@ -1608,7 +1684,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             start_at = int(arguments.get("startAt", 0))  # Get startAt
 
             # Get issues linked to the epic
-            search_result = ctx.jira.get_epic_issues(
+            search_result = jira.get_epic_issues(
                 epic_key, start=start_at, limit=limit
             )
 
@@ -1630,14 +1706,14 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "jira_get_transitions" and ctx and ctx.jira:
-            if not ctx or not ctx.jira:
+        elif name == "jira_get_transitions" and ctx and jira:
+            if not ctx or not jira:
                 raise ValueError("Jira is not configured.")
 
             issue_key = arguments.get("issue_key")
 
             # Get available transitions
-            transitions = ctx.jira.get_available_transitions(issue_key)
+            transitions = jira.get_available_transitions(issue_key)
 
             # Format transitions
             formatted_transitions = []
@@ -1659,14 +1735,14 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "jira_get_worklog" and ctx and ctx.jira:
-            if not ctx or not ctx.jira:
+        elif name == "jira_get_worklog" and ctx and jira:
+            if not ctx or not jira:
                 raise ValueError("Jira is not configured.")
 
             issue_key = arguments.get("issue_key")
 
             # Get worklogs
-            worklogs = ctx.jira.get_worklogs(issue_key)
+            worklogs = jira.get_worklogs(issue_key)
 
             result = {"worklogs": worklogs}
 
@@ -1676,8 +1752,8 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "jira_download_attachments" and ctx and ctx.jira:
-            if not ctx or not ctx.jira:
+        elif name == "jira_download_attachments" and ctx and jira:
+            if not ctx or not jira:
                 raise ValueError("Jira is not configured.")
 
             issue_key = arguments.get("issue_key")
@@ -1689,7 +1765,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 raise ValueError("Missing required parameter: target_dir")
 
             # Download the attachments
-            result = ctx.jira.download_issue_attachments(
+            result = jira.download_issue_attachments(
                 issue_key=issue_key, target_dir=target_dir
             )
 
@@ -1699,8 +1775,8 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "jira_get_agile_boards" and ctx and ctx.jira:
-            if not ctx or not ctx.jira:
+        elif name == "jira_get_agile_boards" and ctx and jira:
+            if not ctx or not jira:
                 raise ValueError("Jira is not configured.")
 
             board_name = arguments.get("board_name")
@@ -1709,7 +1785,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             start_at = int(arguments.get("startAt", 0))
             limit = min(int(arguments.get("limit", 10)), 50)
 
-            boards = ctx.jira.get_all_agile_boards_model(
+            boards = jira.get_all_agile_boards_model(
                 board_name=board_name,
                 project_key=project_key,
                 board_type=board_type,
@@ -1728,8 +1804,8 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "jira_get_board_issues" and ctx and ctx.jira:
-            if not ctx or not ctx.jira:
+        elif name == "jira_get_board_issues" and ctx and jira:
+            if not ctx or not jira:
                 raise ValueError("Jira is not configured.")
 
             board_id = arguments.get("board_id")
@@ -1740,7 +1816,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             limit = min(int(arguments.get("limit", 10)), 50)
             expand = arguments.get("expand", "version")
 
-            search_result = ctx.jira.get_board_issues(
+            search_result = jira.get_board_issues(
                 board_id=board_id,
                 jql=jql,
                 fields=fields,
@@ -1767,8 +1843,8 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "jira_get_sprints_from_board" and ctx and ctx.jira:
-            if not ctx or not ctx.jira:
+        elif name == "jira_get_sprints_from_board" and ctx and jira:
+            if not ctx or not jira:
                 raise ValueError("Jira is not configured.")
 
             board_id = arguments.get("board_id")
@@ -1776,7 +1852,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             start_at = int(arguments.get("startAt", 0))
             limit = min(int(arguments.get("limit", 10)), 50)
 
-            sprints = ctx.jira.get_all_sprints_from_board_model(
+            sprints = jira.get_all_sprints_from_board_model(
                 board_id=board_id, state=state, start=start_at, limit=limit
             )
 
@@ -1791,8 +1867,8 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "jira_get_sprint_issues" and ctx and ctx.jira:
-            if not ctx or not ctx.jira:
+        elif name == "jira_get_sprint_issues" and ctx and jira:
+            if not ctx or not jira:
                 raise ValueError("Jira is not configured.")
 
             sprint_id = arguments.get("sprint_id")
@@ -1800,7 +1876,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             start_at = int(arguments.get("startAt", 0))
             limit = min(int(arguments.get("limit", 10)), 50)
 
-            search_result = ctx.jira.get_sprint_issues(
+            search_result = jira.get_sprint_issues(
                 sprint_id=sprint_id,
                 fields=fields,
                 start=start_at,
@@ -1826,7 +1902,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             ]
 
         elif name == "jira_create_issue":
-            if not ctx or not ctx.jira:
+            if not ctx or not jira:
                 raise ValueError("Jira is not configured.")
 
             # Write operation - check read-only mode
@@ -1863,7 +1939,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                     raise ValueError("Invalid JSON in additional_fields")
 
             # Create the issue
-            issue = ctx.jira.create_issue(
+            issue = jira.create_issue(
                 project_key=project_key,
                 summary=summary,
                 issue_type=issue_type,
@@ -2193,6 +2269,17 @@ async def run_server(transport: str = "stdio", port: int = 8000) -> None:
         sse = SseServerTransport("/messages/")
 
         async def handle_sse(request: Request) -> None:
+
+            query_string = request.url.query
+            # There could be special characters in the query string, so we need to decode it
+            query_params = parse_query_string_params(query_string)
+
+            if not query_params:
+                user_configs_ctx.set(None)
+            else:
+                user_configs = user_config_from_query_params(query_params)
+                user_configs_ctx.set(user_configs)
+
             async with sse.connect_sse(
                 request.scope, request.receive, request._send
             ) as streams:
