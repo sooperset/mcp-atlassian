@@ -43,7 +43,7 @@ class AppContext:
     def __post_init__(self):
         if self.is_multi_user:
             self.confluence_fetchers_cache = TTLCache(maxsize=100, ttl=3600)
-            self.jira_clients_cache = TTLCache(maxsize=100, ttl=3600)
+            self.jira_fetchers_cache = TTLCache(maxsize=100, ttl=3600)
             self.jira_fetcher = None
             self.confluence_fetcher = None
 
