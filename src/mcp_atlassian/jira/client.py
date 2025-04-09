@@ -16,16 +16,19 @@ logger = logging.getLogger("mcp-jira")
 class JiraClient:
     """Base client for Jira API interactions."""
 
-    def __init__(self, config: JiraConfig) -> None:
+    def __init__(self, config: JiraConfig | None = None) -> None:
         """Initialize the Jira client with a given configuration.
 
         Args:
-            config: Jira configuration object.
+            config: Jira configuration object. If None, will be loaded from environment variables.
 
         Raises:
             TypeError: If configuration is invalid.
         """
-        self.config = config
+        if config is None:
+            self.config = JiraConfig.from_env()
+        else:
+            self.config = config
 
         # Initialize the Jira client based on auth type
         if self.config.auth_type == "token":
