@@ -641,7 +641,7 @@ async def list_tools() -> list[Tool]:
                                     "Use '*all' for all fields, or specify individual "
                                     "fields like 'summary,status,assignee,priority'"
                                 ),
-                                "default": "*all",
+                                "default": "summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
                             },
                             "limit": {
                                 "type": "number",
