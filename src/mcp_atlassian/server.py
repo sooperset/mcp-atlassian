@@ -93,7 +93,7 @@ def get_available_services() -> dict[str, bool | None]:
                     os.getenv("CONFLUENCE_PERSONAL_TOKEN")
                     or (
                         os.getenv("CONFLUENCE_USERNAME")
-                        and os.getenv("CONfluence_API_TOKEN")
+                        and os.getenv("CONFLUENCE_API_TOKEN")
                     ),
                 ]
             )
