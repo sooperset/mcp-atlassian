@@ -118,7 +118,7 @@ def test_process_html_content():
     """Test the _process_html_content method."""
     # Arrange
     with (
-        patch("mcp_atlassian.confluence.client.ConfluenceConfig.from_env"),
+        patch("mcp_atlassian.confluence.client.ConfluenceConfig.from_env") as config_mock,
         patch("mcp_atlassian.confluence.client.Confluence"),
         patch(
             "mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"
@@ -131,7 +131,7 @@ def test_process_html_content():
             "Markdown",
         )
 
-        client = ConfluenceClient()
+        client = ConfluenceClient(config_mock)
 
         # Act
         html, markdown = client._process_html_content("<p>Test</p>", "TEST")
@@ -148,7 +148,7 @@ def test_get_user_details_by_accountid():
     """Test the get_user_details_by_accountid method."""
     # Arrange
     with (
-        patch("mcp_atlassian.confluence.client.ConfluenceConfig.from_env"),
+        patch("mcp_atlassian.confluence.client.ConfluenceConfig.from_env") as config_mock,
         patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence_class,
         patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
         patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
@@ -161,7 +161,7 @@ def test_get_user_details_by_accountid():
             "active": True,
         }
 
-        client = ConfluenceClient()
+        client = ConfluenceClient(config_mock)
 
         # Act
         user_details = client.get_user_details_by_accountid("123456")

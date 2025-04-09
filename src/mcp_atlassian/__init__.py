@@ -12,7 +12,7 @@ __version__ = "0.6.3"
 
 # Initialize logging with appropriate level
 logging_level = logging.WARNING
-if os.getenv("MCP_VERBOSE", "").lower() in ("true", "1", "yes"):
+if os.getenv("MCP_VERBOSE", "").lower() in {"true", "1", "yes"}:
     logging_level = logging.DEBUG
 
 # Set up logging using the utility function
@@ -30,7 +30,8 @@ multi_user_mode: ContextVar[bool] = ContextVar("multi_user_mode", default=False)
     help="Increase verbosity (can be used multiple times)",
 )
 @click.option(
-    "--env-file", type=click.Path(exists=True, dir_okay=False), help="Path to .env file"
+    "--env-file",
+    type=click.Path(exists=True, dir_okay=False), help="Path to .env file",
 )
 @click.option(
     "--transport",

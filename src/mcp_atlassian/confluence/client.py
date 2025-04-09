@@ -15,17 +15,16 @@ logger = logging.getLogger("mcp-atlassian")
 class ConfluenceClient:
     """Base client for Confluence API interactions."""
 
-    def __init__(self, config: ConfluenceConfig | None = None) -> None:
-        """Initialize the Confluence client with given or environment config.
+    def __init__(self, config: ConfluenceConfig) -> None:
+        """Initialize the Confluence client with a given configuration.
 
         Args:
-            config: Configuration for Confluence client. If None, will load from
-                environment.
+            config: Configuration for Confluence client.
 
         Raises:
-            ValueError: If configuration is invalid or environment variables are missing
+            ValueError: If configuration is invalid.
         """
-        self.config = config or ConfluenceConfig.from_env()
+        self.config = config
 
         # Initialize the Confluence client based on auth type
         if self.config.auth_type == "token":

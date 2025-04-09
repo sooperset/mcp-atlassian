@@ -180,8 +180,9 @@ def mock_confluence_client():
 def app_context(mock_jira_client, mock_confluence_client):
     """Create an AppContext with mock clients."""
     return AppContext(
-        jira=mock_jira_client,
-        confluence=mock_confluence_client,
+        is_multi_user=False,
+        jira_fetcher=mock_jira_client,
+        confluence_fetcher=mock_confluence_client,
     )
 
 
@@ -246,8 +247,8 @@ async def test_server_lifespan():
         async with server_lifespan(mock_server) as ctx:
             # Verify context contains expected clients
             assert isinstance(ctx, AppContext)
-            assert ctx.confluence is not None
-            assert ctx.jira is not None
+            assert ctx.get_jira() is not None
+            assert ctx.get_confluence() is not None
 
             # Verify logging calls
             mock_logger.info.assert_any_call("Starting MCP Atlassian server")
@@ -265,10 +266,13 @@ async def test_list_resources_both_services(app_context):
         # Call the handler directly
         resources = await list_resources()
 
+        jira = app_context.get_jira()
+        confluence = app_context.get_confluence()
+
         # Verify clients were called
-        app_context.jira.get_current_user_account_id.assert_called_once()
-        app_context.jira.jira.jql.assert_called_once()
-        app_context.confluence.get_user_contributed_spaces.assert_called_once()
+        jira.get_current_user_account_id.assert_called_once()
+        jira.jira.jql.assert_called_once()
+        confluence.get_user_contributed_spaces.assert_called_once()
 
         # Verify returned resources
         assert isinstance(resources, list)
@@ -287,15 +291,15 @@ async def test_list_resources_both_services(app_context):
 async def test_list_resources_only_jira(app_context):
     """Test the list_resources handler with only Jira available."""
     # Modify the context to have only Jira
-    app_context.confluence = None
+    app_context.confluence_fetcher = None
 
     with mock_request_context(app_context):
         # Call the handler directly
         resources = await list_resources()
 
         # Verify only Jira client was called
-        app_context.jira.get_current_user_account_id.assert_called_once()
-        app_context.jira.jira.jql.assert_called_once()
+        app_context.get_jira().get_current_user_account_id.assert_called_once()
+        app_context.get_jira().jira.jql.assert_called_once()
 
         # Verify returned resources
         assert isinstance(resources, list)
@@ -307,14 +311,14 @@ async def test_list_resources_only_jira(app_context):
 async def test_list_resources_only_confluence(app_context):
     """Test the list_resources handler with only Confluence available."""
     # Modify the context to have only Confluence
-    app_context.jira = None
+    app_context.jira_fetcher = None
 
     with mock_request_context(app_context):
         # Call the handler directly
         resources = await list_resources()
 
         # Verify only Confluence client was called
-        app_context.confluence.get_user_contributed_spaces.assert_called_once()
+        app_context.get_confluence().get_user_contributed_spaces.assert_called_once()
 
         # Verify returned resources
         assert isinstance(resources, list)
@@ -326,8 +330,8 @@ async def test_list_resources_only_confluence(app_context):
 async def test_list_resources_no_services(app_context):
     """Test the list_resources handler with no services available."""
     # Modify the context to have no services
-    app_context.jira = None
-    app_context.confluence = None
+    app_context.jira_fetcher = None
+    app_context.confluence_fetcher = None
 
     with mock_request_context(app_context):
         # Call the handler directly
@@ -342,8 +346,8 @@ async def test_list_resources_no_services(app_context):
 async def test_list_resources_client_error(app_context):
     """Test the list_resources handler when clients raise exceptions."""
     # Configure clients to raise exceptions
-    app_context.jira.get_current_user_account_id.side_effect = Exception("Jira error")
-    app_context.confluence.get_user_contributed_spaces.side_effect = Exception(
+    app_context.get_jira().get_current_user_account_id.side_effect = Exception("Jira error")
+    app_context.get_confluence().get_user_contributed_spaces.side_effect = Exception(
         "Confluence error"
     )
 
@@ -365,9 +369,9 @@ async def test_list_resources_client_error(app_context):
             "confluence://TEST",
             "text/markdown",
             lambda ctx: (
-                setattr(ctx.confluence, "search", MagicMock(return_value=[])),  # type: ignore
+                setattr(ctx.get_confluence(), "search", MagicMock(return_value=[])),  # type: ignore
                 setattr(
-                    ctx.confluence,
+                    ctx.get_confluence(),
                     "get_space_pages",
                     MagicMock(
                         return_value=[
@@ -390,7 +394,7 @@ async def test_list_resources_client_error(app_context):
             "confluence://TEST/pages/Test Page",
             "text/markdown",
             lambda ctx: setattr(
-                ctx.confluence,
+                ctx.get_confluence(),
                 "get_page_by_title",
                 MagicMock(return_value=MagicMock(page_content="Test page content")),
             ),
@@ -401,12 +405,12 @@ async def test_list_resources_client_error(app_context):
             "text/markdown",
             lambda ctx: (
                 setattr(
-                    ctx.jira,
+                    ctx.get_jira(),
                     "get_current_user_account_id",
                     MagicMock(return_value="test-account-id"),
                 ),  # type: ignore
                 setattr(
-                    ctx.jira,
+                    ctx.get_jira(),
                     "search_issues",
                     MagicMock(
                         return_value=[
@@ -431,7 +435,7 @@ async def test_list_resources_client_error(app_context):
             "jira://TEST-123",
             "text/markdown",
             lambda ctx: setattr(
-                ctx.jira,
+                ctx.get_jira(),
                 "get_issue",
                 MagicMock(
                     return_value=MagicMock(
@@ -480,7 +484,7 @@ async def test_read_resource_valid_uris(
             "confluence://TEST/pages/NONEXISTENT",
             "Page not found",
             lambda ctx: setattr(
-                ctx.confluence,
+                ctx.get_confluence(),
                 "get_page_by_title",
                 MagicMock(side_effect=ValueError("Page not found")),
             ),
@@ -489,7 +493,7 @@ async def test_read_resource_valid_uris(
         (
             "jira://NONEXISTENT-123",
             "",
-            lambda ctx: setattr(ctx.jira, "get_issue", MagicMock(return_value=None)),
+            lambda ctx: setattr(ctx.get_jira(), "get_issue", MagicMock(return_value=None)),
         ),
     ],
 )
@@ -518,7 +522,7 @@ async def test_read_resource_invalid_uris(uri, expected_error, mock_setup, app_c
 async def test_read_resource_client_error(app_context):
     """Test the read_resource handler when clients raise exceptions."""
     # Configure clients to raise exceptions
-    app_context.jira.get_issue = MagicMock(side_effect=Exception("Jira error"))
+    app_context.get_jira().get_issue = MagicMock(side_effect=Exception("Jira error"))
 
     with mock_request_context(app_context):
         try:
@@ -536,7 +540,7 @@ async def test_list_tools_both_services():
     """Test the list_tools handler with both services available."""
     # Create a mock context
     mock_context = AppContext(
-        jira=MagicMock(spec=JiraFetcher), confluence=MagicMock(spec=ConfluenceFetcher)
+        jira_fetcher=MagicMock(spec=JiraFetcher), confluence_fetcher=MagicMock(spec=ConfluenceFetcher)
     )
 
     with (
@@ -570,7 +574,7 @@ async def test_list_tools_read_only_mode():
     """Test the list_tools handler in read-only mode."""
     # Create a mock context
     mock_context = AppContext(
-        jira=MagicMock(spec=JiraFetcher), confluence=MagicMock(spec=ConfluenceFetcher)
+        jira_fetcher=MagicMock(spec=JiraFetcher), confluence_fetcher=MagicMock(spec=ConfluenceFetcher)
     )
 
     with (
@@ -611,7 +615,7 @@ async def test_list_tools_read_only_mode():
             "jira_search",
             {"jql": "project = TEST"},
             lambda ctx: setattr(
-                ctx.jira,
+                ctx.get_jira(),
                 "search_issues",
                 MagicMock(
                     return_value=[
@@ -630,7 +634,7 @@ async def test_list_tools_read_only_mode():
             "confluence_search",
             {"query": "space = TEST"},
             lambda ctx: setattr(
-                ctx.confluence,
+                ctx.get_confluence(),
                 "search",
                 MagicMock(
                     return_value={
@@ -720,7 +724,7 @@ async def test_call_tool_jira_create_issue_with_components(app_context):
         "key": "TEST-123",
         "summary": "Test Issue with Components",
     }
-    app_context.jira.create_issue.return_value = mock_issue
+    app_context.jira_fetcher.create_issue.return_value = mock_issue
 
     with (
         patch("mcp_atlassian.server.is_read_only_mode", return_value=False),
@@ -737,8 +741,10 @@ async def test_call_tool_jira_create_issue_with_components(app_context):
             },
         )
 
+        jira = app_context.get_jira()
+
         # Verify the create_issue method was called with correct parameters
-        app_context.jira.create_issue.assert_called_once_with(
+        jira.create_issue.assert_called_once_with(
             project_key="TEST",
             summary="Test Issue with Components",
             issue_type="Bug",
@@ -751,7 +757,7 @@ async def test_call_tool_jira_create_issue_with_components(app_context):
         assert isinstance(result, list)
 
         # Reset the mock
-        app_context.jira.create_issue.reset_mock()
+        jira.create_issue.reset_mock()
 
         # Call the tool without components parameter
         result = await call_tool(
@@ -764,6 +770,6 @@ async def test_call_tool_jira_create_issue_with_components(app_context):
         )
 
         # Verify the create_issue method was called with components=None
-        app_context.jira.create_issue.assert_called_once()
-        call_kwargs = app_context.jira.create_issue.call_args[1]
+        jira.create_issue.assert_called_once()
+        call_kwargs = jira.create_issue.call_args[1]
         assert call_kwargs["components"] is None
