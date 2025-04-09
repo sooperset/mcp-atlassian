@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from contextvars import ContextVar
 
 import click
 from dotenv import load_dotenv
@@ -16,6 +17,9 @@ if os.getenv("MCP_VERBOSE", "").lower() in ("true", "1", "yes"):
 
 # Set up logging using the utility function
 logger = setup_logging(logging_level)
+
+# Context variable to store multi-user mode status
+multi_user_mode: ContextVar[bool] = ContextVar("multi_user_mode", default=False)
 
 
 @click.command()
@@ -100,10 +104,12 @@ def main(
     jira_ssl_verify: bool,
     jira_projects_filter: str | None,
     read_only: bool = False,
+    multi_user: bool = False,
 ) -> None:
     """MCP Atlassian Server - Jira and Confluence functionality for MCP
 
     Supports both Atlassian Cloud and Jira Server/Data Center deployments.
+    Can run in single-user mode (credentials from env/CLI) or multi-user mode.
     """
     # Configure logging based on verbosity
     logging_level = logging.WARNING
@@ -124,23 +130,34 @@ def main(
         logger.debug("Attempting to load environment from default .env file")
         load_dotenv()
 
+    # Store multi-user mode status - accessible by other modules
+    if multi_user:
+        os.environ["MCP_ATLASSIAN_MULTI_USER"] = "true"
+        logger.info("Running in multi-user mode. Credentials expected via request headers.")
+    else:
+        # Ensure it's not set if the flag isn't passed
+        os.environ.pop("MCP_ATLASSIAN_MULTI_USER", None)
+        logger.info("Running in single-user mode. Loading credentials from environment/CLI.")
+
     # Set environment variables from command line arguments if provided
-    if confluence_url:
-        os.environ["CONFLUENCE_URL"] = confluence_url
-    if confluence_username:
-        os.environ["CONFLUENCE_USERNAME"] = confluence_username
-    if confluence_token:
-        os.environ["CONFLUENCE_API_TOKEN"] = confluence_token
-    if confluence_personal_token:
-        os.environ["CONFLUENCE_PERSONAL_TOKEN"] = confluence_personal_token
-    if jira_url:
-        os.environ["JIRA_URL"] = jira_url
-    if jira_username:
-        os.environ["JIRA_USERNAME"] = jira_username
-    if jira_token:
-        os.environ["JIRA_API_TOKEN"] = jira_token
-    if jira_personal_token:
-        os.environ["JIRA_PERSONAL_TOKEN"] = jira_personal_token
+    # Skip setting global credentials if in multi-user mode
+    if not multi_user:
+        if confluence_url:
+            os.environ["CONFLUENCE_URL"] = confluence_url
+        if confluence_username:
+            os.environ["CONFLUENCE_USERNAME"] = confluence_username
+        if confluence_token:
+            os.environ["CONFLUENCE_API_TOKEN"] = confluence_token
+        if confluence_personal_token:
+            os.environ["CONFLUENCE_PERSONAL_TOKEN"] = confluence_personal_token
+        if jira_url:
+            os.environ["JIRA_URL"] = jira_url
+        if jira_username:
+            os.environ["JIRA_USERNAME"] = jira_username
+        if jira_token:
+            os.environ["JIRA_API_TOKEN"] = jira_token
+        if jira_personal_token:
+            os.environ["JIRA_PERSONAL_TOKEN"] = jira_personal_token
 
     # Set read-only mode from CLI flag
     if read_only:
@@ -166,7 +183,7 @@ def main(
     asyncio.run(server.run_server(transport=transport, port=port))
 
 
-__all__ = ["main", "server", "__version__"]
+__all__ = ["main", "server", "__version__", "multi_user_mode"]
 
 if __name__ == "__main__":
     main()
