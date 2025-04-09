@@ -526,8 +526,18 @@ class JiraIssue(ApiModel, TimestampMixin):
         This fixes issues with test assertions by ensuring that when we access attributes
         like `issue.key`, we get the model property instead of a custom field with the same name.
         """
+
+        aliases = {
+            "issuetype": "issue_type",
+            "comment": "comments",
+            "attachment": "attachments",
+            "fixVersions": "fix_versions",
+        }
+
         try:
             # First try to get the attribute from the model
+            if name in aliases:
+                name = aliases[name]
             return super().__getattribute__(name)
         except AttributeError:
             # If not found in model, check custom fields
@@ -824,14 +834,14 @@ class JiraIssue(ApiModel, TimestampMixin):
             "labels",
             "created",
             "updated",
-            "duedate",
-            "resolutiondate",
-            "resolution",
-            "project",
-            "parent",
-            "subtasks",
+            # "duedate",
+            # "resolutiondate",
+            # "resolution",
+            # "project",
+            # "parent",
+            # "subtasks",
             "timetracking",
-            "security",
+            # "security",
             "worklog",  # Add worklog to known_fields to prevent conflicts
         }
 
