@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.6.4] - 2025-04-09
+
+### Fixed
+- Improved type restriction for `JiraIssue.requested_fields` and corrected `jira_search` argument description (#227, #226)
+- Resolved Windsurf parsing error (#228)
+
 ## [0.6.3] - 2025-04-07
 
 ### Added
