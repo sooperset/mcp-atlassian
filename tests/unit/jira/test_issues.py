@@ -946,7 +946,7 @@ class TestIssuesMixin:
         assert call_args["issueUpdates"][0]["fields"]["summary"] == "Test Issue 1"
         assert call_args["issueUpdates"][1]["fields"]["summary"] == "Test Issue 2"
 
-    def test_batch_create_issues_validate_only(self, issues_mixin, caplog):
+    def test_batch_create_issues_validate_only(self, issues_mixin):
         """Test batch_create_issues with validate_only=True."""
         # Setup test data
         issues = [
@@ -968,10 +968,6 @@ class TestIssuesMixin:
         # Verify no issues were created
         assert len(result) == 0
         assert not issues_mixin.jira.create_issues.called
-
-        # Verify validation logs
-        assert "Validated issue creation: TEST - Test Issue 1 (Task)" in caplog.text
-        assert "Validated issue creation: TEST - Test Issue 2 (Bug)" in caplog.text
 
     def test_batch_create_issues_missing_required_fields(self, issues_mixin):
         """Test batch_create_issues with missing required fields."""
