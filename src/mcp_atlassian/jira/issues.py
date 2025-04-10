@@ -1246,13 +1246,17 @@ class IssuesMixin(UsersMixin):
             ValueError: If any required fields are missing or invalid
             MCPAtlassianAuthenticationError: If authentication fails
         """
-        created_issues = []
+        if not issues:
+            return []
+
+        # Prepare issues for bulk creation
+        issue_updates = []
         for issue_data in issues:
             try:
-                # Extract required fields
-                project_key = issue_data.pop("project_key")
-                summary = issue_data.pop("summary")
-                issue_type = issue_data.pop("issue_type")
+                # Extract and validate required fields
+                project_key = issue_data.pop("project_key", None)
+                summary = issue_data.pop("summary", None)
+                issue_type = issue_data.pop("issue_type", None)
                 description = issue_data.pop("description", "")
                 assignee = issue_data.pop("assignee", None)
                 components = issue_data.pop("components", None)
@@ -1263,27 +1267,88 @@ class IssuesMixin(UsersMixin):
                         f"Missing required fields for issue: {project_key=}, {summary=}, {issue_type=}"
                     )
 
+                # Prepare fields dictionary
+                fields = {
+                    "project": {"key": project_key},
+                    "summary": summary,
+                    "issuetype": {"name": issue_type},
+                }
+
+                # Add optional fields
+                if description:
+                    fields["description"] = description
+
+                # Add assignee if provided
+                if assignee:
+                    try:
+                        account_id = self._get_account_id(assignee)
+                        self._add_assignee_to_fields(fields, account_id)
+                    except ValueError as e:
+                        logger.warning(f"Could not assign issue: {str(e)}")
+
+                # Add components if provided
+                if components:
+                    if isinstance(components, list):
+                        valid_components = [
+                            comp_name.strip()
+                            for comp_name in components
+                            if isinstance(comp_name, str) and comp_name.strip()
+                        ]
+                        if valid_components:
+                            fields["components"] = [
+                                {"name": comp_name} for comp_name in valid_components
+                            ]
+
+                # Add any remaining custom fields
+                self._add_custom_fields(fields, issue_data)
+
                 if validate_only:
-                    # For validation, we'll just log the issue that would be created
+                    # For validation, just log the issue that would be created
                     logger.info(
                         f"Validated issue creation: {project_key} - {summary} ({issue_type})"
                     )
                     continue
 
-                # Create the issue using existing create_issue method
-                issue = self.create_issue(
-                    project_key=project_key,
-                    summary=summary,
-                    issue_type=issue_type,
-                    description=description,
-                    assignee=assignee,
-                    components=components,
-                    **issue_data  # Pass any remaining fields as kwargs
-                )
-                created_issues.append(issue)
+                # Add to bulk creation list
+                issue_updates.append({"fields": fields})
+
             except Exception as e:
-                logger.error(f"Failed to create issue: {str(e)}")
-                # Re-raise if this is the first issue to fail
-                if not created_issues:
+                logger.error(f"Failed to prepare issue for creation: {str(e)}")
+                if not issue_updates:
                     raise
-        return created_issues
+
+        if validate_only:
+            return []
+
+        try:
+            # Call Jira's bulk create endpoint
+            response = self.jira.create_issues({"issueUpdates": issue_updates})
+
+            # Process results
+            created_issues = []
+            for issue_info in response.get("issues", []):
+                issue_key = issue_info.get("key")
+                if issue_key:
+                    try:
+                        # Fetch the full issue data
+                        issue_data = self.jira.get_issue(issue_key)
+                        created_issues.append(
+                            JiraIssue.from_api_response(
+                                issue_data,
+                                base_url=self.config.url if hasattr(self, "config") else None,
+                            )
+                        )
+                    except Exception as e:
+                        logger.error(f"Error fetching created issue {issue_key}: {str(e)}")
+
+            # Log any errors from the bulk creation
+            errors = response.get("errors", [])
+            if errors:
+                for error in errors:
+                    logger.error(f"Bulk creation error: {error}")
+
+            return created_issues
+
+        except Exception as e:
+            logger.error(f"Error in bulk issue creation: {str(e)}")
+            raise

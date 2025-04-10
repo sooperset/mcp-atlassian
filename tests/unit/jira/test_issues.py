@@ -908,13 +908,24 @@ class TestIssuesMixin:
             },
         ]
 
-        # Mock create_issue to return different issues
-        def create_issue_side_effect(*args, **kwargs):
-            if kwargs["summary"] == "Test Issue 1":
-                return JiraIssue(id="1", key="TEST-1", summary="Test Issue 1")
-            return JiraIssue(id="2", key="TEST-2", summary="Test Issue 2")
+        # Mock bulk create response
+        bulk_response = {
+            "issues": [
+                {"id": "1", "key": "TEST-1", "self": "http://example.com/TEST-1"},
+                {"id": "2", "key": "TEST-2", "self": "http://example.com/TEST-2"},
+            ],
+            "errors": []
+        }
+        issues_mixin.jira.create_issues.return_value = bulk_response
 
-        issues_mixin.create_issue = MagicMock(side_effect=create_issue_side_effect)
+        # Mock get_issue responses
+        def get_issue_side_effect(key):
+            if key == "TEST-1":
+                return {"id": "1", "key": "TEST-1", "fields": {"summary": "Test Issue 1"}}
+            return {"id": "2", "key": "TEST-2", "fields": {"summary": "Test Issue 2"}}
+
+        issues_mixin.jira.get_issue.side_effect = get_issue_side_effect
+        issues_mixin._get_account_id.return_value = "user123"
 
         # Call the method
         result = issues_mixin.batch_create_issues(issues)
@@ -924,24 +935,12 @@ class TestIssuesMixin:
         assert result[0].key == "TEST-1"
         assert result[1].key == "TEST-2"
 
-        # Verify create_issue was called correctly
-        assert issues_mixin.create_issue.call_count == 2
-        issues_mixin.create_issue.assert_any_call(
-            project_key="TEST",
-            summary="Test Issue 1",
-            issue_type="Task",
-            description="Description 1",
-            assignee=None,
-            components=None,
-        )
-        issues_mixin.create_issue.assert_any_call(
-            project_key="TEST",
-            summary="Test Issue 2",
-            issue_type="Bug",
-            description="Description 2",
-            assignee="john.doe",
-            components=["Frontend"],
-        )
+        # Verify bulk create was called correctly
+        issues_mixin.jira.create_issues.assert_called_once()
+        call_args = issues_mixin.jira.create_issues.call_args[0][0]
+        assert len(call_args["issueUpdates"]) == 2
+        assert call_args["issueUpdates"][0]["fields"]["summary"] == "Test Issue 1"
+        assert call_args["issueUpdates"][1]["fields"]["summary"] == "Test Issue 2"
 
     def test_batch_create_issues_validate_only(self, issues_mixin, caplog):
         """Test batch_create_issues with validate_only=True."""
@@ -964,7 +963,7 @@ class TestIssuesMixin:
 
         # Verify no issues were created
         assert len(result) == 0
-        assert issues_mixin.create_issue.call_count == 0
+        assert not issues_mixin.jira.create_issues.called
 
         # Verify validation logs
         assert "Validated issue creation: TEST - Test Issue 1 (Task)" in caplog.text
@@ -991,7 +990,7 @@ class TestIssuesMixin:
             issues_mixin.batch_create_issues(issues)
 
         assert "Missing required fields" in str(exc_info.value)
-        assert issues_mixin.create_issue.call_count == 0
+        assert not issues_mixin.jira.create_issues.called
 
     def test_batch_create_issues_partial_failure(self, issues_mixin):
         """Test batch_create_issues when some issues fail to create."""
@@ -1005,36 +1004,80 @@ class TestIssuesMixin:
             {
                 "project_key": "TEST",
                 "summary": "Test Issue 2",
-                "issue_type": "InvalidType",  # This will cause failure
-            },
-            {
-                "project_key": "TEST",
-                "summary": "Test Issue 3",
-                "issue_type": "Task",
+                "issue_type": "Bug",
             },
         ]
 
-        # Mock create_issue to succeed for first issue and fail for second
-        def create_issue_side_effect(*args, **kwargs):
-            if kwargs["issue_type"] == "InvalidType":
-                raise ValueError("Invalid issue type")
-            return JiraIssue(
-                id=str(len(issues_mixin.create_issue.mock_calls)),
-                key=f"TEST-{len(issues_mixin.create_issue.mock_calls)}",
-                summary=kwargs["summary"],
-            )
+        # Mock bulk create response with an error
+        bulk_response = {
+            "issues": [
+                {"id": "1", "key": "TEST-1", "self": "http://example.com/TEST-1"},
+            ],
+            "errors": [
+                {"issue": {"key": None}, "error": "Invalid issue type"}
+            ]
+        }
+        issues_mixin.jira.create_issues.return_value = bulk_response
 
-        issues_mixin.create_issue = MagicMock(side_effect=create_issue_side_effect)
+        # Mock get_issue response for successful creation
+        issues_mixin.jira.get_issue.return_value = {
+            "id": "1",
+            "key": "TEST-1",
+            "fields": {"summary": "Test Issue 1"}
+        }
 
         # Call the method
         result = issues_mixin.batch_create_issues(issues)
 
-        # Verify results - should have first and third issues
-        assert len(result) == 2
+        # Verify results - should have only the first issue
+        assert len(result) == 1
         assert result[0].key == "TEST-1"
-        assert result[0].summary == "Test Issue 1"
-        assert result[1].key == "TEST-2"
-        assert result[1].summary == "Test Issue 3"
 
         # Verify error was logged
-        assert issues_mixin.create_issue.call_count == 3
+        issues_mixin.jira.create_issues.assert_called_once()
+        assert len(issues_mixin.jira.get_issue.mock_calls) == 1
+
+    def test_batch_create_issues_empty_list(self, issues_mixin):
+        """Test batch_create_issues with an empty list."""
+        result = issues_mixin.batch_create_issues([])
+        assert result == []
+        assert not issues_mixin.jira.create_issues.called
+
+    def test_batch_create_issues_with_components(self, issues_mixin):
+        """Test batch_create_issues with component handling."""
+        # Setup test data with various component formats
+        issues = [
+            {
+                "project_key": "TEST",
+                "summary": "Test Issue 1",
+                "issue_type": "Task",
+                "components": ["Frontend", "", None, "  Backend  "],
+            }
+        ]
+
+        # Mock responses
+        bulk_response = {
+            "issues": [
+                {"id": "1", "key": "TEST-1", "self": "http://example.com/TEST-1"},
+            ],
+            "errors": []
+        }
+        issues_mixin.jira.create_issues.return_value = bulk_response
+        issues_mixin.jira.get_issue.return_value = {
+            "id": "1",
+            "key": "TEST-1",
+            "fields": {"summary": "Test Issue 1"}
+        }
+
+        # Call the method
+        result = issues_mixin.batch_create_issues(issues)
+
+        # Verify results
+        assert len(result) == 1
+        
+        # Verify components were properly formatted
+        call_args = issues_mixin.jira.create_issues.call_args[0][0]
+        components = call_args["issueUpdates"][0]["fields"]["components"]
+        assert len(components) == 2
+        assert components[0]["name"] == "Frontend"
+        assert components[1]["name"] == "Backend"
