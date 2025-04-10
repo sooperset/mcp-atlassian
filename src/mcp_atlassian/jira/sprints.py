@@ -47,7 +47,7 @@ class SprintsMixin(JiraClient):
             return []
 
     def get_all_sprints_from_board_model(
-        self, board_id: str, state: str | None, start: int = 0, limit: int = 50
+        self, board_id: str, state: str = None, start: int = 0, limit: int = 50
     ) -> list[JiraSprint]:
         """
         Get all sprints as JiraSprint from a board.
