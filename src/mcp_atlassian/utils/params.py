@@ -4,38 +4,14 @@ This module provides utility functions to parse query string parameters
 and create user configuration objects for Jira and Confluence.
 """
 
-from collections import defaultdict
 from typing import Any
-from urllib.parse import unquote_plus
 
 from ..confluence.config import ConfluenceConfig
 from ..jira.config import JiraConfig
 
 
-def parse_query_string_params(raw_query: str) -> dict:
-    """Parse a query string into a dictionary of parameters.
-
-    Args:
-        raw_query (str): The raw query string to parse.
-
-    Returns:
-        dict: A dictionary of parsed parameters.
-    """
-    if not raw_query:
-        return {}
-
-    params = defaultdict(list)
-    for pair in raw_query.split("&"):
-        key_value = pair.split("=", 1)
-        key = unquote_plus(key_value[0])
-        value = unquote_plus(key_value[1]) if len(key_value) > 1 else None
-        params[key].append(value)
-
-    return dict(params)
-
-
-def user_config_from_query_params(
-    query_params: dict[str, Any],
+def user_config_from_header(
+    header: dict[str, Any],
 ) -> tuple[JiraConfig | None, ConfluenceConfig | None] | None:
     """Create user configuration objects from query parameters.
 
@@ -47,12 +23,12 @@ def user_config_from_query_params(
         or None if no valid configurations are found.
     """
     config = {
-        "confluence-username": query_params.get("confluence-username"),
-        "confluence-token": query_params.get("confluence-token"),
-        "confluence-personal-token": query_params.get("confluence-personal-token"),
-        "jira-username": query_params.get("jira-username"),
-        "jira-token": query_params.get("jira-token"),
-        "jira-personal-token": query_params.get("jira-personal-token"),
+        "confluence-username": header.get("confluence-username"),
+        "confluence-token": header.get("confluence-token"),
+        "confluence-personal-token": header.get("confluence-personal-token"),
+        "jira-username": header.get("jira-username"),
+        "jira-token": header.get("jira-token"),
+        "jira-personal-token": header.get("jira-personal-token"),
     }
 
     if not any(config.values()):

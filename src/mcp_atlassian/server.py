@@ -20,7 +20,7 @@ from .confluence.utils import quote_cql_identifier_if_needed
 from .jira import JiraConfig, JiraFetcher
 from .jira.utils import escape_jql_string
 from .utils.io import is_multi_user_mode, is_read_only_mode
-from .utils.params import parse_query_string_params, user_config_from_query_params
+from .utils.params import user_config_from_header
 from .utils.urls import is_atlassian_cloud_url
 
 user_configs_ctx: ContextVar[
@@ -2329,14 +2329,12 @@ async def run_server(transport: str = "stdio", port: int = 8000) -> None:
         sse = SseServerTransport("/messages/")
 
         async def handle_sse(request: Request) -> None:
-            query_string = request.url.query
-            # There could be special characters in the query string, so we need to decode it
-            query_params = parse_query_string_params(query_string)
 
-            if not query_params:
+            user_configs = user_config_from_header(request.headers)
+
+            if not user_configs:
                 user_configs_ctx.set(None)
             else:
-                user_configs = user_config_from_query_params(query_params)
                 user_configs_ctx.set(user_configs)
 
             async with sse.connect_sse(
