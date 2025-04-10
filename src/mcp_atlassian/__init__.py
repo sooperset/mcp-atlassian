@@ -88,6 +88,11 @@ multi_user_mode: ContextVar[bool] = ContextVar("multi_user_mode", default=False)
     is_flag=True,
     help="Run in read-only mode (disables all write operations)",
 )
+@click.option(
+    "--multi-user",
+    is_flag=True,
+    help="Run in multi-user mode (credentials expected via request headers)",
+)
 def main(
     verbose: bool,
     env_file: str | None,
