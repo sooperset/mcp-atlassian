@@ -13,6 +13,14 @@ from ..jira.config import JiraConfig
 
 
 def parse_query_string_params(raw_query: str) -> dict:
+    """Parse a query string into a dictionary of parameters.
+
+    Args:
+        raw_query (str): The raw query string to parse.
+
+    Returns:
+        dict: A dictionary of parsed parameters.
+    """
     if not raw_query:
         return {}
 
@@ -29,6 +37,15 @@ def parse_query_string_params(raw_query: str) -> dict:
 def user_config_from_query_params(
     query_params: dict[str, Any],
 ) -> tuple[JiraConfig | None, ConfluenceConfig | None] | None:
+    """Create user configuration objects from query parameters.
+
+    Args:
+        query_params (dict[str, Any]): Dictionary of query parameters.
+
+    Returns:
+        tuple[JiraConfig | None, ConfluenceConfig | None] | None: Tuple of JiraConfig and ConfluenceConfig objects,
+        or None if no valid configurations are found.
+    """
     config = {
         "confluence-username": query_params.get("confluence-username"),
         "confluence-token": query_params.get("confluence-token"),
