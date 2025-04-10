@@ -2329,9 +2329,11 @@ async def run_server(transport: str = "stdio", port: int = 8000) -> None:
         sse = SseServerTransport("/messages/")
 
         async def handle_sse(request: Request) -> None:
-
+            """Handle SSE connections."""
+            # get the user configs from the request headers
             user_configs = user_config_from_header(request.headers)
 
+            # set the user configs in the context
             if not user_configs:
                 user_configs_ctx.set(None)
             else:
