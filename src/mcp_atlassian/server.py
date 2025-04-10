@@ -902,9 +902,14 @@ async def list_tools() -> list[Tool]:
                             "goal": {
                                 "type": "string",
                                 "description": "Goal of the sprint",
-                            }
+                            },
                         },
-                        "required": ["board_id ", "sprint_name", "start_date", "end_date"],
+                        "required": [
+                            "board_id ",
+                            "sprint_name",
+                            "start_date",
+                            "end_date",
+                        ],
                     },
                 ),
                 Tool(
@@ -1820,7 +1825,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                     ),
                 )
             ]
-        
+
         elif name == "jira_create_sprint" and ctx and ctx.jira:
             if not ctx or not ctx.jira:
                 raise ValueError("Jira is not configured.")
@@ -1832,12 +1837,19 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             end_date = arguments.get("end_date")
 
             sprint = ctx.jira.create_sprint(
-                board_id=board_id, sprint_name=sprint_name, goal=goal, start_date=start_date, end_date=end_date
+                board_id=board_id,
+                sprint_name=sprint_name,
+                goal=goal,
+                start_date=start_date,
+                end_date=end_date,
             )
-            
+
             return [
                 TextContent(
-                    type="text", text=json.dumps(sprint.to_simplified_dict(), indent=2, ensure_ascii=False)
+                    type="text",
+                    text=json.dumps(
+                        sprint.to_simplified_dict(), indent=2, ensure_ascii=False
+                    ),
                 )
             ]
 
