@@ -914,14 +914,18 @@ class TestIssuesMixin:
                 {"id": "1", "key": "TEST-1", "self": "http://example.com/TEST-1"},
                 {"id": "2", "key": "TEST-2", "self": "http://example.com/TEST-2"},
             ],
-            "errors": []
+            "errors": [],
         }
         issues_mixin.jira.create_issues.return_value = bulk_response
 
         # Mock get_issue responses
         def get_issue_side_effect(key):
             if key == "TEST-1":
-                return {"id": "1", "key": "TEST-1", "fields": {"summary": "Test Issue 1"}}
+                return {
+                    "id": "1",
+                    "key": "TEST-1",
+                    "fields": {"summary": "Test Issue 1"},
+                }
             return {"id": "2", "key": "TEST-2", "fields": {"summary": "Test Issue 2"}}
 
         issues_mixin.jira.get_issue.side_effect = get_issue_side_effect
@@ -1013,9 +1017,7 @@ class TestIssuesMixin:
             "issues": [
                 {"id": "1", "key": "TEST-1", "self": "http://example.com/TEST-1"},
             ],
-            "errors": [
-                {"issue": {"key": None}, "error": "Invalid issue type"}
-            ]
+            "errors": [{"issue": {"key": None}, "error": "Invalid issue type"}],
         }
         issues_mixin.jira.create_issues.return_value = bulk_response
 
@@ -1023,7 +1025,7 @@ class TestIssuesMixin:
         issues_mixin.jira.get_issue.return_value = {
             "id": "1",
             "key": "TEST-1",
-            "fields": {"summary": "Test Issue 1"}
+            "fields": {"summary": "Test Issue 1"},
         }
 
         # Call the method
@@ -1060,13 +1062,13 @@ class TestIssuesMixin:
             "issues": [
                 {"id": "1", "key": "TEST-1", "self": "http://example.com/TEST-1"},
             ],
-            "errors": []
+            "errors": [],
         }
         issues_mixin.jira.create_issues.return_value = bulk_response
         issues_mixin.jira.get_issue.return_value = {
             "id": "1",
             "key": "TEST-1",
-            "fields": {"summary": "Test Issue 1"}
+            "fields": {"summary": "Test Issue 1"},
         }
 
         # Call the method
@@ -1074,7 +1076,7 @@ class TestIssuesMixin:
 
         # Verify results
         assert len(result) == 1
-        
+
         # Verify components were properly formatted
         call_args = issues_mixin.jira.create_issues.call_args[0][0]
         components = call_args["issueUpdates"][0]["fields"]["components"]

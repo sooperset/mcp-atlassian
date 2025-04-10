@@ -997,13 +997,13 @@ async def list_tools() -> list[Tool]:
                                         '  {"project_key": "PROJ", "summary": "Issue 1", "issue_type": "Task"},\n'
                                         '  {"project_key": "PROJ", "summary": "Issue 2", "issue_type": "Bug", "components": ["Frontend"]}\n'
                                         "]"
-                                    )
+                                    ),
                                 },
                                 "validate_only": {
                                     "type": "boolean",
                                     "description": "If true, only validates the issues without creating them",
-                                    "default": False
-                                }
+                                    "default": False,
+                                },
                             },
                             "required": ["issues"],
                         },

@@ -1335,11 +1335,15 @@ class IssuesMixin(UsersMixin):
                         created_issues.append(
                             JiraIssue.from_api_response(
                                 issue_data,
-                                base_url=self.config.url if hasattr(self, "config") else None,
+                                base_url=self.config.url
+                                if hasattr(self, "config")
+                                else None,
                             )
                         )
                     except Exception as e:
-                        logger.error(f"Error fetching created issue {issue_key}: {str(e)}")
+                        logger.error(
+                            f"Error fetching created issue {issue_key}: {str(e)}"
+                        )
 
             # Log any errors from the bulk creation
             errors = response.get("errors", [])
