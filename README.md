@@ -403,6 +403,8 @@ Then configure *only the URL* in Cursor's `~/.cursor/mcp.json`:
 | `jira_get_board_issues` | Get all issues linked to a specific board |
 | `jira_get_sprints_from_board` | Get Jira sprints from board by state |
 | `jira_get_sprint_issues` | Get Jira issues from sprint |
+| `jira_update_sprint` | Update an existing Jira Sprint |
+
 
 ## Development & Debugging
 
