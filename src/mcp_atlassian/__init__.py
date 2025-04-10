@@ -31,7 +31,8 @@ multi_user_mode: ContextVar[bool] = ContextVar("multi_user_mode", default=False)
 )
 @click.option(
     "--env-file",
-    type=click.Path(exists=True, dir_okay=False), help="Path to .env file",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Path to .env file",
 )
 @click.option(
     "--transport",
@@ -134,11 +135,15 @@ def main(
     # Store multi-user mode status - accessible by other modules
     if multi_user:
         os.environ["MCP_ATLASSIAN_MULTI_USER"] = "true"
-        logger.info("Running in multi-user mode. Credentials expected via request headers.")
+        logger.info(
+            "Running in multi-user mode. Credentials expected via request headers."
+        )
     else:
         # Ensure it's not set if the flag isn't passed
         os.environ.pop("MCP_ATLASSIAN_MULTI_USER", None)
-        logger.info("Running in single-user mode. Loading credentials from environment/CLI.")
+        logger.info(
+            "Running in single-user mode. Loading credentials from environment/CLI."
+        )
 
     # Set environment variables from command line arguments if provided
     # Skip setting global credentials if in multi-user mode

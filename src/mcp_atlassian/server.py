@@ -23,7 +23,9 @@ from .utils.io import is_multi_user_mode, is_read_only_mode
 from .utils.params import parse_query_string_params, user_config_from_query_params
 from .utils.urls import is_atlassian_cloud_url
 
-user_configs_ctx: ContextVar[tuple[JiraConfig | None, ConfluenceConfig | None] | None] = ContextVar("user_config_ctx", default=None)
+user_configs_ctx: ContextVar[
+    tuple[JiraConfig | None, ConfluenceConfig | None] | None
+] = ContextVar("user_config_ctx", default=None)
 
 # Configure logging
 logger = logging.getLogger("mcp-atlassian")
@@ -39,7 +41,9 @@ class AppContext:
     confluence_fetcher: ConfluenceFetcher | None = field(default=None)
     jira_fetcher: JiraFetcher | None = field(default=None)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Initialize caches for Confluence and Jira fetchers."""
+        # Initialize caches for multi-user mode
         if self.is_multi_user:
             self.confluence_fetchers_cache = TTLCache(maxsize=100, ttl=3600)
             self.jira_fetchers_cache = TTLCache(maxsize=100, ttl=3600)
@@ -47,6 +51,17 @@ class AppContext:
             self.confluence_fetcher = None
 
     def get_jira(self, config: JiraConfig | None = None) -> JiraFetcher | None:
+        """Get a Jira fetcher for a given configuration.
+
+        If in multi-user mode, it caches the fetcher based on the user ID hash.
+        If not in multi-user mode, it returns the default fetcher.
+
+        Args:
+            config (JiraConfig | None): The Jira configuration for the user.
+
+        Returns:
+            JiraFetcher | None: The Jira fetcher for the user.
+        """
         if self.is_multi_user and config:
             user_id_hash = hashlib.sha256(config.username.encode()).hexdigest()
             if jira_fetcher := self.jira_fetchers_cache.get(user_id_hash):
@@ -55,7 +70,20 @@ class AppContext:
             return self.jira_fetchers_cache[user_id_hash]
         return self.jira_fetcher
 
-    def get_confluence(self, config: ConfluenceConfig | None = None) -> ConfluenceFetcher | None:
+    def get_confluence(
+        self, config: ConfluenceConfig | None = None
+    ) -> ConfluenceFetcher | None:
+        """Get a Jira fetcher for a given configuration.
+
+        If in multi-user mode, it caches the fetcher based on the user ID hash.
+        If not in multi-user mode, it returns the default fetcher.
+
+        Args:
+            config (JiraConfig | None): The Jira configuration for the user.
+
+        Returns:
+            JiraFetcher | None: The Jira fetcher for the user.
+        """
         if self.is_multi_user and config:
             user_id_hash = hashlib.sha256(config.username.encode()).hexdigest()
             if confluence_fetcher := self.confluence_fetchers_cache.get(user_id_hash):
@@ -67,8 +95,12 @@ class AppContext:
 
 def get_available_services() -> dict[str, bool | None]:
     """Determine which services *could* be configured based on environment variables.
+
     In multi-user mode, this just indicates if the service *might* be used,
     actual usability depends on per-request headers.
+
+    Returns:
+        dict[str, bool | None]: Dictionary indicating the availability of Confluence and Jira services.
     """
     is_multi = is_multi_user_mode()
 
@@ -97,8 +129,14 @@ def get_available_services() -> dict[str, bool | None]:
                 ]
             )
 
-    configs = user_configs_ctx.get() if (is_multi and user_configs_ctx.get()) else (None, None)
-    confluence_multi_available = (configs[1] is not None and configs[1].url is not None) and is_multi
+    configs = (
+        user_configs_ctx.get()
+        if (is_multi and user_configs_ctx.get())
+        else (None, None)
+    )
+    confluence_multi_available = (
+        configs[1] is not None and configs[1].url is not None
+    ) and is_multi
 
     # In multi-user mode, even without env vars, service is potentially available
     confluence_available = confluence_is_potentially_setup or confluence_multi_available
@@ -112,20 +150,29 @@ def get_available_services() -> dict[str, bool | None]:
             jira_is_potentially_setup = all(
                 [jira_url, os.getenv("JIRA_USERNAME"), os.getenv("JIRA_API_TOKEN")]
             )
-        else: # Server/DC: Personal token OR username/api_token
+        else:  # Server/DC: Personal token OR username/api_token
             jira_is_potentially_setup = all(
-                [jira_url, os.getenv("JIRA_PERSONAL_TOKEN") or \
-                (os.getenv("JIRA_USERNAME") and os.getenv("JIRA_API_TOKEN"))]
+                [
+                    jira_url,
+                    os.getenv("JIRA_PERSONAL_TOKEN")
+                    or (os.getenv("JIRA_USERNAME") and os.getenv("JIRA_API_TOKEN")),
+                ]
             )
 
-    jira_multi_available = (configs[0] is not None and configs[0].url is not None) and is_multi
+    jira_multi_available = (
+        configs[0] is not None and configs[0].url is not None
+    ) and is_multi
     # In multi-user mode, even without env vars, service is potentially available
     jira_available = jira_is_potentially_setup or jira_multi_available
 
     if is_multi:
-        logger.info("Multi-user mode: Service availability determined by request headers.")
+        logger.info(
+            "Multi-user mode: Service availability determined by request headers."
+        )
     else:
-        logger.info(f"Single-user mode: Confluence potentially configured: {confluence_is_potentially_setup}, Jira potentially configured: {jira_is_potentially_setup}")
+        logger.info(
+            f"Single-user mode: Confluence potentially configured: {confluence_is_potentially_setup}, Jira potentially configured: {jira_is_potentially_setup}"
+        )
 
     # Return whether service is generally available
     return {"confluence": confluence_available, "jira": jira_available}
@@ -138,7 +185,6 @@ async def server_lifespan(server: Server) -> AsyncIterator[AppContext]:
     services = get_available_services()
 
     try:
-
         if is_multi_user_mode():
             yield AppContext(is_multi_user=True)
 
@@ -180,7 +226,11 @@ async def list_resources() -> list[Resource]:
     ctx = app.request_context.lifespan_context
 
     # Get user configurations based on multi-user context
-    user_configs = user_configs_ctx.get() if (ctx.is_multi_user and user_configs_ctx.get()) else (None, None)
+    user_configs = (
+        user_configs_ctx.get()
+        if (ctx.is_multi_user and user_configs_ctx.get())
+        else (None, None)
+    )
 
     # Extract specific configurations for clarity
     jira_config, confluence_config = user_configs if user_configs else (None, None)
@@ -270,14 +320,17 @@ async def read_resource(uri: AnyUrl) -> str:
     ctx = app.request_context.lifespan_context
 
     # Get user configurations based on multi-user context
-    user_configs = user_configs_ctx.get() if (ctx.is_multi_user and user_configs_ctx.get()) else (None, None)
+    user_configs = (
+        user_configs_ctx.get()
+        if (ctx.is_multi_user and user_configs_ctx.get())
+        else (None, None)
+    )
 
     # Extract specific configurations for clarity
     jira_config, confluence_config = user_configs if user_configs else (None, None)
 
     # Handle Confluence resources
     if str(uri).startswith("confluence://"):
-
         confluence = ctx.get_confluence(confluence_config)
 
         if not ctx or not confluence:
@@ -324,7 +377,6 @@ async def read_resource(uri: AnyUrl) -> str:
 
     # Handle Jira resources
     elif str(uri).startswith("jira://"):
-
         jira = ctx.get_jira(jira_config)
 
         if not ctx or not jira:
@@ -1218,7 +1270,11 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
     ctx = app.request_context.lifespan_context
 
     # Get user configurations based on multi-user context
-    user_configs = user_configs_ctx.get() if (ctx.is_multi_user and user_configs_ctx.get()) else (None, None)
+    user_configs = (
+        user_configs_ctx.get()
+        if (ctx.is_multi_user and user_configs_ctx.get())
+        else (None, None)
+    )
 
     # Extract specific configurations for clarity
     jira_config, confluence_config = user_configs if user_configs else (None, None)
@@ -1262,9 +1318,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 query = f'text ~ "{query}"'
                 logger.info(f"Converting simple search term to CQL: {query}")
 
-            pages = confluence.search(
-                query, limit=limit, spaces_filter=spaces_filter
-            )
+            pages = confluence.search(query, limit=limit, spaces_filter=spaces_filter)
 
             # Format results using the to_simplified_dict method
             search_results = [page.to_simplified_dict() for page in pages]
@@ -1692,9 +1746,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             start_at = int(arguments.get("startAt", 0))  # Get startAt
 
             # Get issues linked to the epic
-            search_result = jira.get_epic_issues(
-                epic_key, start=start_at, limit=limit
-            )
+            search_result = jira.get_epic_issues(epic_key, start=start_at, limit=limit)
 
             # Format results
             issues = [issue.to_simplified_dict() for issue in search_result.issues]
@@ -2277,7 +2329,6 @@ async def run_server(transport: str = "stdio", port: int = 8000) -> None:
         sse = SseServerTransport("/messages/")
 
         async def handle_sse(request: Request) -> None:
-
             query_string = request.url.query
             # There could be special characters in the query string, so we need to decode it
             query_params = parse_query_string_params(query_string)
@@ -2292,7 +2343,9 @@ async def run_server(transport: str = "stdio", port: int = 8000) -> None:
                 request.scope, request.receive, request._send
             ) as streams:
                 await app.run(
-                    streams[0], streams[1], app.create_initialization_options(),
+                    streams[0],
+                    streams[1],
+                    app.create_initialization_options(),
                 )
 
         starlette_app = Starlette(

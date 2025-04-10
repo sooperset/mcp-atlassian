@@ -148,7 +148,7 @@ class JiraConfig:
 
         Returns:
             The Jira URL
-            """
+        """
         url = os.getenv("JIRA_URL")
         if not url:
             error_msg = "Missing required JIRA_URL environment variable"
