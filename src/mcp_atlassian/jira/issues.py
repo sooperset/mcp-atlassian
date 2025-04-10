@@ -1220,3 +1220,70 @@ class IssuesMixin(UsersMixin):
         except Exception as e:
             logger.error(f"Error transitioning issue {issue_key}: {str(e)}")
             raise
+
+    def batch_create_issues(
+        self,
+        issues: list[dict[str, Any]],
+        validate_only: bool = False,
+    ) -> list[JiraIssue]:
+        """Create multiple Jira issues in a batch.
+
+        Args:
+            issues: List of issue dictionaries, each containing:
+                - project_key (str): Key of the project
+                - summary (str): Issue summary
+                - issue_type (str): Type of issue
+                - description (str, optional): Issue description
+                - assignee (str, optional): Username of assignee
+                - components (list[str], optional): List of component names
+                - **kwargs: Additional fields specific to your Jira instance
+            validate_only: If True, only validates the issues without creating them
+
+        Returns:
+            List of created JiraIssue objects
+
+        Raises:
+            ValueError: If any required fields are missing or invalid
+            MCPAtlassianAuthenticationError: If authentication fails
+        """
+        created_issues = []
+        for issue_data in issues:
+            try:
+                # Extract required fields
+                project_key = issue_data.pop("project_key")
+                summary = issue_data.pop("summary")
+                issue_type = issue_data.pop("issue_type")
+                description = issue_data.pop("description", "")
+                assignee = issue_data.pop("assignee", None)
+                components = issue_data.pop("components", None)
+
+                # Validate required fields
+                if not all([project_key, summary, issue_type]):
+                    raise ValueError(
+                        f"Missing required fields for issue: {project_key=}, {summary=}, {issue_type=}"
+                    )
+
+                if validate_only:
+                    # For validation, we'll just log the issue that would be created
+                    logger.info(
+                        f"Validated issue creation: {project_key} - {summary} ({issue_type})"
+                    )
+                    continue
+
+                # Create the issue using existing create_issue method
+                issue = self.create_issue(
+                    project_key=project_key,
+                    summary=summary,
+                    issue_type=issue_type,
+                    description=description,
+                    assignee=assignee,
+                    components=components,
+                    **issue_data  # Pass any remaining fields as kwargs
+                )
+                created_issues.append(issue)
+            except Exception as e:
+                logger.error(f"Failed to create issue: {str(e)}")
+                # Re-raise if this is the first issue to fail
+                if not created_issues:
+                    raise
+        return created_issues
