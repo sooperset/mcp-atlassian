@@ -15,7 +15,7 @@ class SprintsMixin(JiraClient):
     """Mixin for Jira sprints operations."""
 
     def get_all_sprints_from_board(
-        self, board_id: str, state: str | None, start: int = 0, limit: int = 50
+        self, board_id: str, state: str = None, start: int = 0, limit: int = 50
     ) -> list[dict[str, Any]]:
         """
         Get all sprints from a board.
