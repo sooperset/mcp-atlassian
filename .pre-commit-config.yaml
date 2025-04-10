@@ -1,57 +1,29 @@
 repos:
--   repo: https://github.com/pre-commit/pre-commit-hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
     hooks:
-    -   id: trailing-whitespace
-    -   id: end-of-file-fixer
-    -   id: check-yaml
-    -   id: check-added-large-files
-    -   id: check-toml
-    -   id: debug-statements
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-toml
+      - id: debug-statements
 
--   repo: https://github.com/astral-sh/ruff-pre-commit
+  - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.9.7
     hooks:
-    -   id: ruff-format
-    -   id: ruff
-        args: [
-            "--fix",
-            "--exit-non-zero-on-fix",
-            "--ignore=BLE001,EM102,FBT001,FBT002,E501,F841,S112,S113,B904"
-        ]
+      - id: ruff-format
+      - id: ruff
+        args: [ "--fix", "--exit-non-zero-on-fix", "--ignore=BLE001,EM102,FBT001,FBT002,E501,F841,S112,S113,B904" ]
 
--   repo: https://github.com/pre-commit/mirrors-mypy
+  - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.8.0
     hooks:
-    -   id: mypy
+      - id: mypy
         # TODO: Fix these type errors in future PRs:
         # - Union-attr errors in server.py (None checks needed)
         # - Index error in jira_mocks.py (tests/fixtures/jira_mocks.py:421)
         # - Assignment type errors in jira.py (str to int assignments)
         # - Unreachable statements in preprocessing.py and jira.py
-        args: [
-            "--ignore-missing-imports",
-            "--no-strict-optional",
-            "--disable-error-code=index",
-            "--disable-error-code=unreachable",
-            "--disable-error-code=assignment",
-            "--disable-error-code=arg-type",
-            "--disable-error-code=return-value",
-            "--disable-error-code=has-type",
-            "--disable-error-code=no-any-return",
-            "--disable-error-code=misc",
-            "--disable-error-code=var-annotated",
-            "--disable-error-code=no-untyped-def",
-            "--disable-error-code=annotation-unchecked",
-        ]
-        additional_dependencies: [
-            'types-beautifulsoup4',
-            'types-requests',
-            'types-setuptools',
-            'types-urllib3',
-            'atlassian-python-api',
-            'beautifulsoup4',
-            'httpx',
-            'python-dotenv',
-            'markdownify'
-        ]
+        args: [ "--ignore-missing-imports", "--no-strict-optional", "--disable-error-code=index", "--disable-error-code=unreachable", "--disable-error-code=assignment", "--disable-error-code=arg-type", "--disable-error-code=return-value", "--disable-error-code=has-type", "--disable-error-code=no-any-return", "--disable-error-code=misc", "--disable-error-code=var-annotated", "--disable-error-code=no-untyped-def", "--disable-error-code=annotation-unchecked" ]
+        additional_dependencies: [ 'types-beautifulsoup4', 'types-requests', 'types-setuptools', 'types-urllib3', 'atlassian-python-api', 'beautifulsoup4', 'httpx', 'python-dotenv', 'markdownify', 'types-cachetools' ]
