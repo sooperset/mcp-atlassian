@@ -179,9 +179,15 @@ async def list_resources() -> list[Resource]:
 
     ctx = app.request_context.lifespan_context
 
-    configs = user_configs_ctx.get() if (ctx.is_multi_user and user_configs_ctx.get()) else (None, None)
-    jira = ctx.get_jira(configs[0])
-    confluence = ctx.get_confluence(configs[1])
+    # Get user configurations based on multi-user context
+    user_configs = user_configs_ctx.get() if (ctx.is_multi_user and user_configs_ctx.get()) else (None, None)
+
+    # Extract specific configurations for clarity
+    jira_config, confluence_config = user_configs if user_configs else (None, None)
+
+    # Initialize service clients
+    confluence = ctx.get_confluence(confluence_config)
+    jira = ctx.get_jira(jira_config)
 
     # Add Confluence spaces the user has contributed to
     if ctx and confluence:
@@ -263,12 +269,16 @@ async def read_resource(uri: AnyUrl) -> str:
     # Get application context
     ctx = app.request_context.lifespan_context
 
-    configs = user_configs_ctx.get() if (ctx.is_multi_user and user_configs_ctx.get()) else (None, None)
+    # Get user configurations based on multi-user context
+    user_configs = user_configs_ctx.get() if (ctx.is_multi_user and user_configs_ctx.get()) else (None, None)
+
+    # Extract specific configurations for clarity
+    jira_config, confluence_config = user_configs if user_configs else (None, None)
 
     # Handle Confluence resources
     if str(uri).startswith("confluence://"):
 
-        confluence = ctx.get_confluence(configs[1])
+        confluence = ctx.get_confluence(confluence_config)
 
         if not ctx or not confluence:
             raise ValueError(
@@ -315,7 +325,7 @@ async def read_resource(uri: AnyUrl) -> str:
     # Handle Jira resources
     elif str(uri).startswith("jira://"):
 
-        jira = ctx.get_jira(configs[0])
+        jira = ctx.get_jira(jira_config)
 
         if not ctx or not jira:
             raise ValueError("Jira is not configured. Please provide Jira credentials.")
@@ -1203,18 +1213,19 @@ async def list_tools() -> list[Tool]:
 
 
 @app.call_tool()
-async def call_tool(name: str,
-                    arguments: Any,
-                    url: str | None = None,
-                    username: str | None = None,
-                    api_token: str | None = None,
-                    personal_token: str | None = None,) -> Sequence[TextContent]:
+async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
     """Handle tool calls for Confluence and Jira operations."""
     ctx = app.request_context.lifespan_context
 
-    configs = user_configs_ctx.get() if (ctx.is_multi_user and user_configs_ctx.get()) else (None, None)
-    confluence = ctx.get_confluence(configs[1])
-    jira = ctx.get_jira(configs[0])
+    # Get user configurations based on multi-user context
+    user_configs = user_configs_ctx.get() if (ctx.is_multi_user and user_configs_ctx.get()) else (None, None)
+
+    # Extract specific configurations for clarity
+    jira_config, confluence_config = user_configs if user_configs else (None, None)
+
+    # Initialize service clients
+    confluence = ctx.get_confluence(confluence_config)
+    jira = ctx.get_jira(jira_config)
 
     # Check if we're in read-only mode for write operations
     read_only = is_read_only_mode()
