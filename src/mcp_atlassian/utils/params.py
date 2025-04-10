@@ -1,9 +1,16 @@
-from collections import defaultdict
-from urllib.parse import unquote_plus
-from typing import Any
+"""Parse query string parameters and create user configuration objects.
 
-from ..jira.config import JiraConfig
+This module provides utility functions to parse query string parameters
+and create user configuration objects for Jira and Confluence.
+"""
+
+from collections import defaultdict
+from typing import Any
+from urllib.parse import unquote_plus
+
 from ..confluence.config import ConfluenceConfig
+from ..jira.config import JiraConfig
+
 
 def parse_query_string_params(raw_query: str) -> dict:
     if not raw_query:
@@ -19,20 +26,24 @@ def parse_query_string_params(raw_query: str) -> dict:
     return dict(params)
 
 
-def user_config_from_query_params(query_params: dict[str, Any]) -> tuple[JiraConfig | None, ConfluenceConfig | None] | None:
+def user_config_from_query_params(
+    query_params: dict[str, Any],
+) -> tuple[JiraConfig | None, ConfluenceConfig | None] | None:
     config = {
-        "confluence-username": query_params.get("confluence-username", None),
-        "confluence-token": query_params.get("confluence-token", None),
-        "confluence-personal-token": query_params.get("confluence-personal-token", None),
-        "jira-username": query_params.get("jira-username", None),
-        "jira-token": query_params.get("jira-token", None),
-        "jira-personal-token": query_params.get("jira-personal-token", None),
+        "confluence-username": query_params.get("confluence-username"),
+        "confluence-token": query_params.get("confluence-token"),
+        "confluence-personal-token": query_params.get("confluence-personal-token"),
+        "jira-username": query_params.get("jira-username"),
+        "jira-token": query_params.get("jira-token"),
+        "jira-personal-token": query_params.get("jira-personal-token"),
     }
 
     if not any(config.values()):
         return None
 
-    if config["confluence-username"] and (config["confluence-token"] or config["confluence-personal-token"]):
+    if config["confluence-username"] and (
+        config["confluence-token"] or config["confluence-personal-token"]
+    ):
         confluence_config = ConfluenceConfig.from_request(
             username=config["confluence-username"],
             api_token=config["confluence-token"],
@@ -41,7 +52,9 @@ def user_config_from_query_params(query_params: dict[str, Any]) -> tuple[JiraCon
     else:
         confluence_config = None
 
-    if config["jira-username"] and (config["jira-token"] or config["jira-personal-token"]):
+    if config["jira-username"] and (
+        config["jira-token"] or config["jira-personal-token"]
+    ):
         jira_config = JiraConfig.from_request(
             username=config["jira-username"],
             api_token=config["jira-token"],

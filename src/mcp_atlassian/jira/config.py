@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Literal
 
 from ..utils import is_atlassian_cloud_url
-from ..utils.io import is_multi_user_mode
 
 
 @dataclass
@@ -149,7 +148,7 @@ class JiraConfig:
 
         Returns:
             The Jira URL
-        """
+            """
         url = os.getenv("JIRA_URL")
         if not url:
             error_msg = "Missing required JIRA_URL environment variable"

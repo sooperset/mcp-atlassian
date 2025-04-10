@@ -1,9 +1,10 @@
+import hashlib
 import json
 import logging
 import os
-import hashlib
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -14,15 +15,13 @@ from mcp.types import Resource, TextContent, Tool
 from pydantic import AnyUrl
 from requests.exceptions import RequestException
 
-from .confluence import ConfluenceFetcher, ConfluenceConfig
+from .confluence import ConfluenceConfig, ConfluenceFetcher
 from .confluence.utils import quote_cql_identifier_if_needed
-from .jira import JiraFetcher, JiraConfig
+from .jira import JiraConfig, JiraFetcher
 from .jira.utils import escape_jql_string
-from .utils.io import is_read_only_mode, is_multi_user_mode
+from .utils.io import is_multi_user_mode, is_read_only_mode
 from .utils.params import parse_query_string_params, user_config_from_query_params
 from .utils.urls import is_atlassian_cloud_url
-
-from contextvars import ContextVar
 
 user_configs_ctx: ContextVar[tuple[JiraConfig | None, ConfluenceConfig | None] | None] = ContextVar("user_config_ctx", default=None)
 
@@ -119,11 +118,9 @@ def get_available_services() -> dict[str, bool | None]:
                 (os.getenv("JIRA_USERNAME") and os.getenv("JIRA_API_TOKEN"))]
             )
 
-
     jira_multi_available = (configs[0] is not None and configs[0].url is not None) and is_multi
     # In multi-user mode, even without env vars, service is potentially available
     jira_available = jira_is_potentially_setup or jira_multi_available
-
 
     if is_multi:
         logger.info("Multi-user mode: Service availability determined by request headers.")
@@ -2284,7 +2281,7 @@ async def run_server(transport: str = "stdio", port: int = 8000) -> None:
                 request.scope, request.receive, request._send
             ) as streams:
                 await app.run(
-                    streams[0], streams[1], app.create_initialization_options()
+                    streams[0], streams[1], app.create_initialization_options(),
                 )
 
         starlette_app = Starlette(

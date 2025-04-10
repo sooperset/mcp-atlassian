@@ -24,6 +24,7 @@ class JiraClient:
 
         Raises:
             TypeError: If configuration is invalid.
+
         """
         if config is None:
             self.config = JiraConfig.from_env()

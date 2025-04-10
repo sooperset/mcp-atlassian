@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Literal
 
 from ..utils import is_atlassian_cloud_url
-from ..utils.io import is_multi_user_mode
 
 
 @dataclass
@@ -44,8 +43,8 @@ class ConfluenceConfig:
         """Create configuration from environment variables.
 
         Returns:
-            ConfluenceConfig with values from environment variables or None if in multi-user mode
-            and required variables are missing.
+            ConfluenceConfig with values from environment variables or
+            None if in multi-user mode and required variables are missing.
 
         Raises:
             ValueError: If any required environment variable is missing

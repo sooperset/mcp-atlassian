@@ -2,6 +2,7 @@
 
 import os
 
+
 def is_read_only_mode() -> bool:
     """Check if the server is running in read-only mode.
 
