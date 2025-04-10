@@ -118,7 +118,9 @@ def test_process_html_content():
     """Test the _process_html_content method."""
     # Arrange
     with (
-        patch("mcp_atlassian.confluence.client.ConfluenceConfig.from_env") as config_mock,
+        patch(
+            "mcp_atlassian.confluence.client.ConfluenceConfig.from_env"
+        ) as config_mock,
         patch("mcp_atlassian.confluence.client.Confluence"),
         patch(
             "mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"
@@ -148,7 +150,9 @@ def test_get_user_details_by_accountid():
     """Test the get_user_details_by_accountid method."""
     # Arrange
     with (
-        patch("mcp_atlassian.confluence.client.ConfluenceConfig.from_env") as config_mock,
+        patch(
+            "mcp_atlassian.confluence.client.ConfluenceConfig.from_env"
+        ) as config_mock,
         patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence_class,
         patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
         patch("mcp_atlassian.confluence.client.configure_ssl_verification"),

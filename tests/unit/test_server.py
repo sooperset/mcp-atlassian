@@ -346,7 +346,9 @@ async def test_list_resources_no_services(app_context):
 async def test_list_resources_client_error(app_context):
     """Test the list_resources handler when clients raise exceptions."""
     # Configure clients to raise exceptions
-    app_context.get_jira().get_current_user_account_id.side_effect = Exception("Jira error")
+    app_context.get_jira().get_current_user_account_id.side_effect = Exception(
+        "Jira error"
+    )
     app_context.get_confluence().get_user_contributed_spaces.side_effect = Exception(
         "Confluence error"
     )
@@ -493,7 +495,9 @@ async def test_read_resource_valid_uris(
         (
             "jira://NONEXISTENT-123",
             "",
-            lambda ctx: setattr(ctx.get_jira(), "get_issue", MagicMock(return_value=None)),
+            lambda ctx: setattr(
+                ctx.get_jira(), "get_issue", MagicMock(return_value=None)
+            ),
         ),
     ],
 )
@@ -540,7 +544,8 @@ async def test_list_tools_both_services():
     """Test the list_tools handler with both services available."""
     # Create a mock context
     mock_context = AppContext(
-        jira_fetcher=MagicMock(spec=JiraFetcher), confluence_fetcher=MagicMock(spec=ConfluenceFetcher)
+        jira_fetcher=MagicMock(spec=JiraFetcher),
+        confluence_fetcher=MagicMock(spec=ConfluenceFetcher),
     )
 
     with (
@@ -574,7 +579,8 @@ async def test_list_tools_read_only_mode():
     """Test the list_tools handler in read-only mode."""
     # Create a mock context
     mock_context = AppContext(
-        jira_fetcher=MagicMock(spec=JiraFetcher), confluence_fetcher=MagicMock(spec=ConfluenceFetcher)
+        jira_fetcher=MagicMock(spec=JiraFetcher),
+        confluence_fetcher=MagicMock(spec=ConfluenceFetcher),
     )
 
     with (

@@ -614,6 +614,9 @@ dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
+    { name = "types-cachetools" },
+    { name = "types-deprecated" },
+    { name = "types-six" },
     { name = "uv" },
 ]
 
@@ -644,6 +647,9 @@ dev = [
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pytest-cov", specifier = ">=4.1.0" },
     { name = "ruff", specifier = ">=0.3.0" },
+    { name = "types-cachetools", specifier = ">=5.5.0.20240820" },
+    { name = "types-deprecated", specifier = ">=1.2.15.20250304" },
+    { name = "types-six", specifier = ">=1.17.0.20250403" },
     { name = "uv", specifier = ">=0.1.0" },
 ]
 
@@ -1211,6 +1217,24 @@ wheels = [
 ]
 
 [[package]]
+name = "types-cachetools"
+version = "5.5.0.20240820"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c2/7e/ad6ba4a56b2a994e0f0a04a61a50466b60ee88a13d10a18c83ac14a66c61/types-cachetools-5.5.0.20240820.tar.gz", hash = "sha256:b888ab5c1a48116f7799cd5004b18474cd82b5463acb5ffb2db2fc9c7b053bc0", size = 4198 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/27/4d/fd7cc050e2d236d5570c4d92531c0396573a1e14b31735870e849351c717/types_cachetools-5.5.0.20240820-py3-none-any.whl", hash = "sha256:efb2ed8bf27a4b9d3ed70d33849f536362603a90b8090a328acf0cd42fda82e2", size = 4149 },
+]
+
+[[package]]
+name = "types-deprecated"
+version = "1.2.15.20250304"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0e/67/eeefaaabb03b288aad85483d410452c8bbcbf8b2bd876b0e467ebd97415b/types_deprecated-1.2.15.20250304.tar.gz", hash = "sha256:c329030553029de5cc6cb30f269c11f4e00e598c4241290179f63cda7d33f719", size = 8015 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4d/e3/c18aa72ab84e0bc127a3a94e93be1a6ac2cb281371d3a45376ab7cfdd31c/types_deprecated-1.2.15.20250304-py3-none-any.whl", hash = "sha256:86a65aa550ea8acf49f27e226b8953288cd851de887970fbbdf2239c116c3107", size = 8553 },
+]
+
+[[package]]
 name = "types-html5lib"
 version = "1.1.11.20241018"
 source = { registry = "https://pypi.org/simple" }
@@ -1262,6 +1286,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/87/88/365d6b46f1088ddeccbc89c26190c3180088ef6e7c8d162fc619496aab96/types_requests-2.32.0.20250301.tar.gz", hash = "sha256:3d909dc4eaab159c0d964ebe8bfa326a7afb4578d8706408d417e17d61b0c500", size = 22977 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b9/c2/e44564e8995dbc1738c2acacb8009d59c8cb19327da95a1b5c5d9cb68364/types_requests-2.32.0.20250301-py3-none-any.whl", hash = "sha256:0003e0124e2cbefefb88222ff822b48616af40c74df83350f599a650c8de483b", size = 20671 },
+]
+
+[[package]]
+name = "types-six"
+version = "1.17.0.20250403"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/81/78/a711162eca091781522be07bf10694f2b731bbdbb885ec037a807e7658c5/types_six-1.17.0.20250403.tar.gz", hash = "sha256:82076f86e6e672a95adbf8b52625b1b3c72a8b9a893180344c1a02a6daabead6", size = 15521 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a6/d1/14a6a959a3f53105034ebe346a1f3c375296637292780f6e952fcf634974/types_six-1.17.0.20250403-py3-none-any.whl", hash = "sha256:0bbb20fc34a18163afe7cac70b85864bd6937e6d73413c5b8f424def28760ae8", size = 19951 },
 ]
 
 [[package]]
