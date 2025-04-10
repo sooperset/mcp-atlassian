@@ -20,7 +20,7 @@ from .confluence.utils import quote_cql_identifier_if_needed
 from .jira import JiraConfig, JiraFetcher
 from .jira.utils import escape_jql_string
 from .utils.io import is_multi_user_mode, is_read_only_mode
-from .utils.params import user_config_from_header
+from .utils.params import user_config_from_request
 from .utils.urls import is_atlassian_cloud_url
 
 user_configs_ctx: ContextVar[
@@ -2330,8 +2330,17 @@ async def run_server(transport: str = "stdio", port: int = 8000) -> None:
 
         async def handle_sse(request: Request) -> None:
             """Handle SSE connections."""
-            # get the user configs from the request headers
-            user_configs = user_config_from_header(request.headers)
+            # Get the user configs from both the request headers and query parameters
+            # Headers have priority as they're more secure for credentials
+            headers_dict = dict(request.headers)
+            query_params = dict(request.query_params)
+
+            # Merge query parameters and headers, with headers taking precedence
+            # When merging dictionaries, the second one's values override the first
+            config_params = {**query_params, **headers_dict}
+
+            # Get user configs from the combined parameters
+            user_configs = user_config_from_request(config_params)
 
             # set the user configs in the context
             if not user_configs:

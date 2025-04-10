@@ -10,25 +10,26 @@ from ..confluence.config import ConfluenceConfig
 from ..jira.config import JiraConfig
 
 
-def user_config_from_header(
-    header: dict[str, Any],
+def user_config_from_request(
+    config_params: dict[str, Any],
 ) -> tuple[JiraConfig | None, ConfluenceConfig | None] | None:
-    """Create user configuration objects from query parameters.
+    """Create user configuration objects from request headers and query parameters.
 
     Args:
-        query_params (dict[str, Any]): Dictionary of query parameters.
+        config_params (dict[str, Any]): Dictionary of configuration parameters
+            from the request headers and query parameters.
 
     Returns:
         tuple[JiraConfig | None, ConfluenceConfig | None] | None: Tuple of JiraConfig and ConfluenceConfig objects,
         or None if no valid configurations are found.
     """
     config = {
-        "confluence-username": header.get("confluence-username"),
-        "confluence-token": header.get("confluence-token"),
-        "confluence-personal-token": header.get("confluence-personal-token"),
-        "jira-username": header.get("jira-username"),
-        "jira-token": header.get("jira-token"),
-        "jira-personal-token": header.get("jira-personal-token"),
+        "confluence-username": config_params.get("confluence-username"),
+        "confluence-token": config_params.get("confluence-token"),
+        "confluence-personal-token": config_params.get("confluence-personal-token"),
+        "jira-username": config_params.get("jira-username"),
+        "jira-token": config_params.get("jira-token"),
+        "jira-personal-token": config_params.get("jira-personal-token"),
     }
 
     if not any(config.values()):
