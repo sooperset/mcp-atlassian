@@ -118,7 +118,102 @@ def test_get_all_sprints_from_board_non_dict_response(sprints_mixin):
 def test_get_all_sprints_from_board_model(sprints_mixin, mock_sprints):
     sprints_mixin.jira.get_all_sprints_from_board.return_value = mock_sprints
 
-    result = sprints_mixin.get_all_sprints_from_board_model("1000")
+    result = sprints_mixin.get_all_sprints_from_board_model(board_id="1000", state=None)
     assert result == [
         JiraSprint.from_api_response(value) for value in mock_sprints["values"]
     ]
+
+
+def test_update_sprint_success(sprints_mixin, mock_sprints):
+    """Test update_sprint method with valid data."""
+    mock_updated_sprint = mock_sprints["values"][0]
+    sprints_mixin.jira.update_partially_sprint.return_value = mock_updated_sprint
+
+    result = sprints_mixin.update_sprint(
+        sprint_id="10000",
+        sprint_name="Updated Sprint Name",
+        state="active",
+        start_date="2024-05-01T00:00:00.000Z",
+        end_date="2024-05-15T00:00:00.000Z",
+        goal="Updated goal",
+    )
+
+    assert result == JiraSprint.from_api_response(mock_updated_sprint)
+    sprints_mixin.jira.update_partially_sprint.assert_called_once_with(
+        sprint_id="10000",
+        data={
+            "name": "Updated Sprint Name",
+            "state": "active",
+            "startDate": "2024-05-01T00:00:00.000Z",
+            "endDate": "2024-05-15T00:00:00.000Z",
+            "goal": "Updated goal",
+        },
+    )
+
+
+def test_update_sprint_invalid_state(sprints_mixin):
+    """Test update_sprint method with invalid state."""
+    result = sprints_mixin.update_sprint(
+        sprint_id="10000",
+        sprint_name="Updated Sprint Name",
+        state="invalid_state",
+        start_date=None,
+        end_date=None,
+        goal=None,
+    )
+
+    assert result is None
+    sprints_mixin.jira.update_partially_sprint.assert_not_called()
+
+
+def test_update_sprint_missing_sprint_id(sprints_mixin):
+    """Test update_sprint method with missing sprint_id."""
+    result = sprints_mixin.update_sprint(
+        sprint_id=None,
+        sprint_name="Updated Sprint Name",
+        state="active",
+        start_date=None,
+        end_date=None,
+        goal=None,
+    )
+
+    assert result is None
+    sprints_mixin.jira.update_partially_sprint.assert_not_called()
+
+
+def test_update_sprint_http_error(sprints_mixin):
+    """Test update_sprint method with HTTPError."""
+    sprints_mixin.jira.update_partially_sprint.side_effect = requests.HTTPError(
+        response=MagicMock(content="API Error content")
+    )
+
+    result = sprints_mixin.update_sprint(
+        sprint_id="10000",
+        sprint_name="Updated Sprint Name",
+        state="active",
+        start_date=None,
+        end_date=None,
+        goal=None,
+    )
+
+    assert result is None
+    sprints_mixin.jira.update_partially_sprint.assert_called_once()
+
+
+def test_update_sprint_exception(sprints_mixin):
+    """Test update_sprint method with a generic exception."""
+    sprints_mixin.jira.update_partially_sprint.side_effect = Exception(
+        "Unexpected Error"
+    )
+
+    result = sprints_mixin.update_sprint(
+        sprint_id="10000",
+        sprint_name="Updated Sprint Name",
+        state="active",
+        start_date=None,
+        end_date=None,
+        goal=None,
+    )
+
+    assert result is None
+    sprints_mixin.jira.update_partially_sprint.assert_called_once()

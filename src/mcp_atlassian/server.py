@@ -912,6 +912,36 @@ async def list_tools() -> list[Tool]:
                         "required": ["sprint_id"],
                     },
                 ),
+                Tool(
+                    name="jira_update_sprint",
+                    description="Update jira sprint",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "sprint_id": {
+                                "type": "string",
+                                "description": "The id of sprint (e.g., '10001')",
+                            },
+                            "name": {
+                                "type": "string",
+                                "description": "Optional: New name for the sprint",
+                            },
+                            "state": {
+                                "type": "string",
+                                "description": "Optional: New state for the sprint (future|active|closed)",
+                            },
+                            "start_date": {
+                                "type": "string",
+                                "description": "Optional: New start date for the sprint",
+                            },
+                            "end_date": {
+                                "type": "string",
+                                "description": "Optional: New end date for the sprint",
+                            },
+                        },
+                        "required": ["sprint_id"],
+                    },
+                ),
             ]
         )
 
@@ -1822,6 +1852,35 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 TextContent(
                     type="text",
                     text=json.dumps(response, indent=2, ensure_ascii=False),
+                )
+            ]
+
+        elif name == "jira_update_sprint" and ctx and ctx.jira:
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            sprint_id = arguments.get("sprint_id")
+            sprint_name = arguments.get("sprint_name")
+            goal = arguments.get("goal")
+            start_date = arguments.get("start_date")
+            end_date = arguments.get("end_date")
+            state = arguments.get("state")
+
+            sprint = ctx.jira.update_sprint(
+                sprint_id=sprint_id,
+                sprint_name=sprint_name,
+                goal=goal,
+                start_date=start_date,
+                end_date=end_date,
+                state=state,
+            )
+
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        sprint.to_simplified_dict(), indent=2, ensure_ascii=False
+                    ),
                 )
             ]
 

@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+- Added `jira_update_sprint`
 
 ## [0.6.4] - 2025-04-09
 
