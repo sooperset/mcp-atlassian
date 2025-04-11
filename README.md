@@ -402,6 +402,7 @@ Then configure *only the URL* in Cursor's `~/.cursor/mcp.json`:
 | `jira_get_agile_boards` | Get Jira agile boards by name, project key, or type |
 | `jira_get_board_issues` | Get all issues linked to a specific board |
 | `jira_get_sprints_from_board` | Get Jira sprints from board by state |
+| `jira_create_sprint` | Create Jira sprint for a board |
 | `jira_get_sprint_issues` | Get Jira issues from sprint |
 
 ## Development & Debugging
