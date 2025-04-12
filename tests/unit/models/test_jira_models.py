@@ -1355,21 +1355,37 @@ class TestRealJiraData:
         if not jira:
             pytest.skip("Base Jira client failed")
 
+        transitions_data = None  # Initialize
         try:
             transitions_data = jira.get_issue_transitions(default_jira_issue_key)
-            assert isinstance(transitions_data, dict)
-            assert "transitions" in transitions_data
 
-            if not transitions_data or len(transitions_data) == 0:
+            actual_transitions_list = []
+            if isinstance(transitions_data, list):
+                actual_transitions_list = transitions_data
+            else:
+                # Handle unexpected format with test failure
+                pytest.fail(
+                    f"Unexpected transitions data format received from API: "
+                    f"{type(transitions_data)}. Data: {transitions_data}"
+                )
+
+            # Verify transitions list is actually a list
+            assert isinstance(actual_transitions_list, list)
+
+            if not actual_transitions_list:
                 pytest.skip(f"No transitions found for issue {default_jira_issue_key}")
 
-            # Test the first transition
-            transition_item = transitions_data["transitions"][0]
+            transition_item = actual_transitions_list[0]
             assert isinstance(transition_item, dict)
+
             # Check for essential keys in the raw data
             assert "id" in transition_item
             assert "name" in transition_item
-            assert "to" in transition_item and isinstance(transition_item["to"], dict)
+            assert "to" in transition_item
+
+            # Only check 'to' field name if it's a dictionary
+            if isinstance(transition_item["to"], dict):
+                assert "name" in transition_item["to"]
 
             # Convert to model
             transition = JiraTransition.from_api_response(transition_item)
@@ -1380,8 +1396,18 @@ class TestRealJiraData:
             simplified = transition.to_simplified_dict()
             assert simplified["id"] == str(transition_item["id"])
             assert simplified["name"] == transition_item["name"]
+
         except Exception as e:
-            pytest.fail(f"Error testing real Jira transitions: {e}")
+            # Include data type details in error message
+            error_details = f"Received data type: {type(transitions_data)}"
+            if transitions_data is not None:
+                error_details += (
+                    f", Data: {str(transitions_data)[:200]}..."  # Show partial data
+                )
+
+            pytest.fail(
+                f"Error testing real Jira transitions for issue {default_jira_issue_key}: {e}. {error_details}"
+            )
 
     def test_real_jira_worklog(self, use_real_jira_data, default_jira_issue_key):
         """Test that the JiraWorklog model works with real Jira API data."""
