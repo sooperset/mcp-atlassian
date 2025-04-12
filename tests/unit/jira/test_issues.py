@@ -516,8 +516,8 @@ class TestIssuesMixin:
         # Verify the components field was preserved with the explicit value
         assert fields["components"] == [{"name": "Explicit"}]
 
-    def test_create_issue_with_assignee(self, issues_mixin):
-        """Test creating an issue with an assignee."""
+    def test_create_issue_with_assignee_cloud(self, issues_mixin):
+        """Test creating an issue with an assignee in Jira Cloud."""
         # Mock create_issue response
         create_response = {"key": "TEST-123"}
         issues_mixin.jira.create_issue.return_value = create_response
@@ -527,7 +527,10 @@ class TestIssuesMixin:
             return_value=JiraIssue(key="TEST-123", description="", summary="Test Issue")
         )
 
-        # Use a config with is_cloud = True - can't directly set property
+        # Mock _get_account_id to return a Cloud account ID
+        issues_mixin._get_account_id = MagicMock(return_value="cloud-account-id")
+
+        # Configure for Cloud
         issues_mixin.config = MagicMock()
         issues_mixin.config.is_cloud = True
 
@@ -539,9 +542,45 @@ class TestIssuesMixin:
             assignee="testuser",
         )
 
-        # Verify the assignee was properly set
+        # Verify _get_account_id was called with the correct username
+        issues_mixin._get_account_id.assert_called_once_with("testuser")
+
+        # Verify the assignee was properly set for Cloud (accountId)
         fields = issues_mixin.jira.create_issue.call_args[1]["fields"]
-        assert fields["assignee"] == {"accountId": "test-account-id"}
+        assert fields["assignee"] == {"accountId": "cloud-account-id"}
+
+    def test_create_issue_with_assignee_server(self, issues_mixin):
+        """Test creating an issue with an assignee in Jira Server/DC."""
+        # Mock create_issue response
+        create_response = {"key": "TEST-456"}
+        issues_mixin.jira.create_issue.return_value = create_response
+
+        # Mock get_issue response
+        issues_mixin.get_issue = MagicMock(
+            return_value=JiraIssue(key="TEST-456", description="", summary="Test Issue")
+        )
+
+        # Mock _get_account_id to return a Server user ID (typically username)
+        issues_mixin._get_account_id = MagicMock(return_value="server-user")
+
+        # Configure for Server/DC
+        issues_mixin.config = MagicMock()
+        issues_mixin.config.is_cloud = False
+
+        # Call the method
+        issues_mixin.create_issue(
+            project_key="TEST",
+            summary="Test Issue",
+            issue_type="Bug",
+            assignee="testuser",
+        )
+
+        # Verify _get_account_id was called with the correct username
+        issues_mixin._get_account_id.assert_called_once_with("testuser")
+
+        # Verify the assignee was properly set for Server/DC (name)
+        fields = issues_mixin.jira.create_issue.call_args[1]["fields"]
+        assert fields["assignee"] == {"name": "server-user"}
 
     def test_create_epic(self, issues_mixin):
         """Test creating an epic."""
@@ -958,3 +997,33 @@ class TestIssuesMixin:
             properties=None,
             update_history=False,
         )
+
+    def test_add_assignee_to_fields_cloud(self, issues_mixin):
+        """Test _add_assignee_to_fields for Cloud instance."""
+        # Set up cloud config
+        issues_mixin.config = MagicMock()
+        issues_mixin.config.is_cloud = True
+
+        # Test fields dict
+        fields = {}
+
+        # Call the method
+        issues_mixin._add_assignee_to_fields(fields, "account-123")
+
+        # Verify result
+        assert fields["assignee"] == {"accountId": "account-123"}
+
+    def test_add_assignee_to_fields_server_dc(self, issues_mixin):
+        """Test _add_assignee_to_fields for Server/Data Center instance."""
+        # Set up Server/DC config
+        issues_mixin.config = MagicMock()
+        issues_mixin.config.is_cloud = False
+
+        # Test fields dict
+        fields = {}
+
+        # Call the method
+        issues_mixin._add_assignee_to_fields(fields, "jdoe")
+
+        # Verify result
+        assert fields["assignee"] == {"name": "jdoe"}
