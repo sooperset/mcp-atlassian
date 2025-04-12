@@ -11,6 +11,7 @@ from .common import (
     JiraAttachment,
     JiraIssueType,
     JiraPriority,
+    JiraResolution,
     JiraStatus,
     JiraStatusCategory,
     JiraTimetracking,
@@ -30,6 +31,7 @@ __all__ = [
     "JiraIssueType",
     "JiraPriority",
     "JiraAttachment",
+    "JiraResolution",
     "JiraTimetracking",
     # Entity-specific models
     "JiraComment",

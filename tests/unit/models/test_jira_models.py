@@ -22,6 +22,7 @@ from src.mcp_atlassian.models.jira import (
     JiraIssueType,
     JiraPriority,
     JiraProject,
+    JiraResolution,
     JiraSearchResult,
     JiraStatus,
     JiraStatusCategory,
@@ -33,9 +34,53 @@ from src.mcp_atlassian.models.jira import (
 
 # Optional: Import real API client for optional real-data testing
 try:
-    from src.mcp_atlassian.jira.client import JiraClient  # noqa: F401
+    from atlassian import Jira
+
+    from src.mcp_atlassian.jira import JiraConfig, JiraFetcher
+    from src.mcp_atlassian.jira.issues import IssuesMixin
+    from src.mcp_atlassian.jira.projects import ProjectsMixin
+    from src.mcp_atlassian.jira.transitions import TransitionsMixin
+    from src.mcp_atlassian.jira.worklog import WorklogMixin
+
+    real_api_available = True
 except ImportError:
-    pass
+    real_api_available = False
+
+    # Create a module-level namespace for dummy classes
+    class _DummyClasses:
+        """Namespace for dummy classes when real imports fail."""
+
+        class JiraFetcher:
+            pass
+
+        class JiraConfig:
+            @staticmethod
+            def from_env():
+                return None
+
+        class IssuesMixin:
+            pass
+
+        class ProjectsMixin:
+            pass
+
+        class TransitionsMixin:
+            pass
+
+        class WorklogMixin:
+            pass
+
+        class Jira:
+            pass
+
+    # Assign dummy classes to module namespace
+    JiraFetcher = _DummyClasses.JiraFetcher
+    JiraConfig = _DummyClasses.JiraConfig
+    IssuesMixin = _DummyClasses.IssuesMixin
+    ProjectsMixin = _DummyClasses.ProjectsMixin
+    TransitionsMixin = _DummyClasses.TransitionsMixin
+    WorklogMixin = _DummyClasses.WorklogMixin
+    Jira = _DummyClasses.Jira
 
 
 class TestJiraUser:
@@ -418,6 +463,88 @@ class TestJiraIssue:
         assert len(issue.comments) == 1
         assert issue.comments[0].body == "This is a test comment"
 
+        assert isinstance(issue.fix_versions, list)
+        assert "v1.0" in issue.fix_versions
+
+        assert isinstance(issue.attachments, list)
+        assert len(issue.attachments) == 1
+        assert issue.attachments[0].filename == "test_attachment.txt"
+
+        assert isinstance(issue.timetracking, JiraTimetracking)
+        assert issue.timetracking.original_estimate == "1d"
+
+        assert issue.project is not None
+        assert issue.project.key == "PROJ"
+        assert issue.project.name == "Test Project"
+        assert issue.resolution is not None
+        assert issue.resolution.name == "Fixed"
+        assert issue.duedate == "2024-12-31"
+        assert issue.resolutiondate == "2024-01-15T11:00:00.000+0000"
+        assert issue.parent is not None
+        assert issue.parent["key"] == "PROJ-122"
+        assert issue.subtasks is not None
+        assert len(issue.subtasks) == 1
+        assert issue.subtasks[0]["key"] == "PROJ-124"
+        assert issue.security is not None
+        assert issue.security["name"] == "Internal"
+        assert issue.worklog is not None
+        assert issue.worklog["total"] == 0
+        assert issue.worklog["maxResults"] == 20
+
+    def test_from_api_response_with_new_fields(self):
+        """Test creating a JiraIssue focusing on parsing the new fields."""
+        # Construct local mock data including the new fields
+        local_issue_data = {
+            "id": "9999",
+            "key": "NEW-1",
+            "fields": {
+                "summary": "Issue testing new fields",
+                "project": {
+                    "id": "10001",
+                    "key": "NEWPROJ",
+                    "name": "New Project",
+                    "avatarUrls": {"48x48": "url"},
+                },
+                "resolution": {"id": "10002", "name": "Fixed"},
+                "duedate": "2025-01-31",
+                "resolutiondate": "2024-08-01T12:00:00.000+0000",
+                "parent": {
+                    "id": "9998",
+                    "key": "NEW-0",
+                    "fields": {"summary": "Parent Task"},
+                },
+                "subtasks": [
+                    {"id": "10000", "key": "NEW-2", "fields": {"summary": "Subtask 1"}},
+                    {"id": "10001", "key": "NEW-3", "fields": {"summary": "Subtask 2"}},
+                ],
+                "security": {"id": "10003", "name": "Dev Only"},
+                "worklog": {"total": 2, "maxResults": 20, "worklogs": []},
+            },
+        }
+        issue = JiraIssue.from_api_response(local_issue_data)
+
+        assert issue.id == "9999"
+        assert issue.key == "NEW-1"
+        assert issue.summary == "Issue testing new fields"
+
+        # Assertions for new fields using LOCAL data
+        assert isinstance(issue.project, JiraProject)
+        assert issue.project.key == "NEWPROJ"
+        assert issue.project.name == "New Project"
+        assert isinstance(issue.resolution, JiraResolution)
+        assert issue.resolution.name == "Fixed"
+        assert issue.duedate == "2025-01-31"
+        assert issue.resolutiondate == "2024-08-01T12:00:00.000+0000"
+        assert isinstance(issue.parent, dict)
+        assert issue.parent["key"] == "NEW-0"
+        assert isinstance(issue.subtasks, list)
+        assert len(issue.subtasks) == 2
+        assert issue.subtasks[0]["key"] == "NEW-2"
+        assert isinstance(issue.security, dict)
+        assert issue.security["name"] == "Dev Only"
+        assert isinstance(issue.worklog, dict)
+        assert issue.worklog["total"] == 2
+
     def test_from_api_response_with_empty_data(self):
         """Test creating a JiraIssue from empty data."""
         issue = JiraIssue.from_api_response({})
@@ -434,6 +561,135 @@ class TestJiraIssue:
         assert issue.reporter is None
         assert len(issue.labels) == 0
         assert len(issue.comments) == 0
+        assert issue.project is None
+        assert issue.resolution is None
+        assert issue.duedate is None
+        assert issue.resolutiondate is None
+        assert issue.parent is None
+        assert issue.subtasks == []
+        assert issue.security is None
+        assert issue.worklog is None
+
+    def test_to_simplified_dict(self, jira_issue_data):
+        """Test converting a JiraIssue to a simplified dictionary."""
+        # --- Test default (essential fields) ---
+        issue = JiraIssue.from_api_response(jira_issue_data)
+        simplified = issue.to_simplified_dict()
+
+        # Essential fields from original test
+        assert isinstance(simplified, dict)
+        assert "key" in simplified
+        assert simplified["key"] == "PROJ-123"
+        assert "summary" in simplified
+        assert simplified["summary"] == "Test Issue Summary"
+
+        assert "created" in simplified
+        assert isinstance(simplified["created"], str)
+        assert "updated" in simplified
+        assert isinstance(simplified["updated"], str)
+
+        if isinstance(simplified["status"], str):
+            assert simplified["status"] == "In Progress"
+        elif isinstance(simplified["status"], dict):
+            assert simplified["status"]["name"] == "In Progress"
+
+        if isinstance(simplified["issue_type"], str):
+            assert simplified["issue_type"] == "Task"
+        elif isinstance(simplified["issue_type"], dict):
+            assert simplified["issue_type"]["name"] == "Task"
+
+        if isinstance(simplified["priority"], str):
+            assert simplified["priority"] == "Medium"
+        elif isinstance(simplified["priority"], dict):
+            assert simplified["priority"]["name"] == "Medium"
+
+        assert "assignee" in simplified
+        assert "reporter" in simplified
+
+        # Test with "*all"
+        issue_all = JiraIssue.from_api_response(
+            jira_issue_data, requested_fields="*all"
+        )
+        simplified_all = issue_all.to_simplified_dict()
+
+        # Check keys for all standard fields (new and old) are present
+        all_standard_keys = {
+            "id",
+            "key",
+            "summary",
+            "description",
+            "created",
+            "updated",
+            "status",
+            "issue_type",
+            "priority",
+            "assignee",
+            "reporter",
+            "labels",
+            "components",
+            "timetracking",
+            "comments",
+            "attachments",
+            "url",
+            "epic_key",
+            "epic_name",
+            "fix_versions",
+            "project",
+            "resolution",
+            "duedate",
+            "resolutiondate",
+            "parent",
+            "subtasks",
+            "security",
+            "worklog",
+            # Custom fields present in the mock data should be at the root level when requesting *all
+            "customfield_10011",
+            "customfield_10014",
+            "customfield_10001",
+            "customfield_10002",
+            "customfield_10003",
+        }
+        assert all_standard_keys.issubset(simplified_all.keys())
+
+        # Check values for new fields based on mock data
+        assert simplified_all["project"]["key"] == "PROJ"
+        assert simplified_all["resolution"]["name"] == "Fixed"
+        assert simplified_all["duedate"] == "2024-12-31"
+        assert simplified_all["resolutiondate"] == "2024-01-15T11:00:00.000+0000"
+        assert simplified_all["parent"]["key"] == "PROJ-122"
+        assert len(simplified_all["subtasks"]) == 1
+        assert simplified_all["security"]["name"] == "Internal"
+        assert isinstance(simplified_all["worklog"], dict)
+
+        requested = [
+            "key",
+            "summary",
+            "project",
+            "resolution",
+            "subtasks",
+            "customfield_10011",
+        ]
+        issue_specific = JiraIssue.from_api_response(
+            jira_issue_data, requested_fields=requested
+        )
+        simplified_specific = issue_specific.to_simplified_dict()
+
+        # Check the requested keys are present
+        assert set(simplified_specific.keys()) == {
+            "id",
+            "key",
+            "summary",
+            "project",
+            "resolution",
+            "subtasks",
+            "customfield_10011",
+        }
+
+        # Check values based on mock data
+        assert simplified_specific["project"]["key"] == "PROJ"
+        assert simplified_specific["resolution"]["name"] == "Fixed"
+        assert len(simplified_specific["subtasks"]) == 1
+        assert simplified_specific["customfield_10011"] == "Epic Name Example"
 
     def test_find_custom_field_in_api_response(self):
         """Test the _find_custom_field_in_api_response method with different field patterns."""
@@ -580,73 +836,18 @@ class TestJiraIssue:
         assert issue.epic_key == "EPIC-789"
         assert issue.epic_name == "Special Epic Name"
 
-    def test_to_simplified_dict(self, jira_issue_data):
-        """Test converting a JiraIssue to a simplified dictionary."""
+    def test_jira_issue_with_custom_fields(self, jira_issue_data):
+        """Test JiraIssue handling of custom fields."""
         issue = JiraIssue.from_api_response(jira_issue_data)
         simplified = issue.to_simplified_dict()
-
-        assert isinstance(simplified, dict)
-        assert "key" in simplified
         assert simplified["key"] == "PROJ-123"
-        assert "summary" in simplified
         assert simplified["summary"] == "Test Issue Summary"
-
-        assert "created" in simplified
-        assert isinstance(simplified["created"], str)
-        assert "updated" in simplified
-        assert isinstance(simplified["updated"], str)
-
-        assert "status" in simplified
-        if isinstance(simplified["status"], str):
-            assert simplified["status"] == "In Progress"
-        elif isinstance(simplified["status"], dict):
-            assert simplified["status"]["name"] == "In Progress"
-
-        assert "issue_type" in simplified
-        if isinstance(simplified["issue_type"], str):
-            assert simplified["issue_type"] == "Task"
-        elif isinstance(simplified["issue_type"], dict):
-            assert simplified["issue_type"]["name"] == "Task"
-
-        assert "priority" in simplified
-        if isinstance(simplified["priority"], str):
-            assert simplified["priority"] == "Medium"
-        elif isinstance(simplified["priority"], dict):
-            assert simplified["priority"]["name"] == "Medium"
-
-        assert "assignee" in simplified
-        assert "reporter" in simplified
-
-        # Test with "*all"
-        issue = JiraIssue.from_api_response(jira_issue_data, requested_fields="*all")
-        simplified = issue.to_simplified_dict()
-        assert "labels" in simplified
-        assert "comments" in simplified
-        assert len(simplified["comments"]) > 0
-
-    def test_jira_issue_with_custom_fields(self):
-        """Test JiraIssue handling of custom fields."""
-        issue_data = {
-            "id": "10001",
-            "key": "TEST-123",
-            "fields": {
-                "summary": "Test issue",
-                "customfield_10001": "Simple string value",
-                "customfield_10002": {"value": "Option value"},
-                "customfield_10003": [{"value": "Item 1"}, {"value": "Item 2"}],
-            },
-        }
-
-        issue = JiraIssue.from_api_response(issue_data)
-        simplified = issue.to_simplified_dict()
-        assert simplified["key"] == "TEST-123"
-        assert simplified["summary"] == "Test issue"
         assert "customfield_10001" not in simplified
         assert "customfield_10002" not in simplified
         assert "customfield_10003" not in simplified
 
         issue = JiraIssue.from_api_response(
-            issue_data, requested_fields="summary,customfield_10001"
+            jira_issue_data, requested_fields="summary,customfield_10001"
         )
         simplified = issue.to_simplified_dict()
         assert "key" in simplified
@@ -655,7 +856,7 @@ class TestJiraIssue:
         assert "customfield_10002" not in simplified
 
         issue = JiraIssue.from_api_response(
-            issue_data, requested_fields=["key", "customfield_10002"]
+            jira_issue_data, requested_fields=["key", "customfield_10002"]
         )
         simplified = issue.to_simplified_dict()
         assert "key" in simplified
@@ -663,7 +864,7 @@ class TestJiraIssue:
         assert "summary" not in simplified
         assert "customfield_10001" not in simplified
 
-        issue = JiraIssue.from_api_response(issue_data, requested_fields="*all")
+        issue = JiraIssue.from_api_response(jira_issue_data, requested_fields="*all")
         simplified = issue.to_simplified_dict()
         assert "key" in simplified
         assert "summary" in simplified
@@ -671,82 +872,82 @@ class TestJiraIssue:
         assert "customfield_10002" in simplified
         assert "customfield_10003" in simplified
 
-    def test_jira_issue_with_default_fields(self):
-        """Test that JiraIssue returns only essential fields by default."""
-        issue_data = {
-            "id": "10001",
-            "key": "TEST-123",
-            "fields": {
-                "summary": "Test issue",
-                "description": "Description",
-                "status": {"name": "Open"},
-                "assignee": {"displayName": "Test User"},
-                "reporter": {"displayName": "Reporter User"},
-                "priority": {"name": "Medium"},
-                "created": "2023-01-01T00:00:00.000+0000",
-                "updated": "2023-01-02T00:00:00.000+0000",
-                "issuetype": {"name": "Task"},
-                "customfield_10001": "Custom value",
-                "customfield_10002": {"value": "Option value"},
-            },
-        }
+        issue_specific = JiraIssue.from_api_response(
+            jira_issue_data, requested_fields="key,customfield_10014"
+        )
+        simplified_specific = issue_specific.to_simplified_dict()
+        assert "customfield_10014" in simplified_specific
+        assert simplified_specific.get("customfield_10014") == "EPIC-KEY-1"
 
-        issue = JiraIssue.from_api_response(issue_data)
+    def test_jira_issue_with_default_fields(self, jira_issue_data):
+        """Test that JiraIssue returns only essential fields by default."""
+        issue = JiraIssue.from_api_response(jira_issue_data)
         simplified = issue.to_simplified_dict()
-        assert "key" in simplified
-        assert "summary" in simplified
-        assert "description" in simplified
-        assert "status" in simplified
+        # Check essential fields ARE present
+        essential_keys = {
+            "id",
+            "key",
+            "summary",
+            "url",
+            "description",
+            "status",
+            "issue_type",
+            "priority",
+            "project",
+            "resolution",
+            "duedate",
+            "resolutiondate",
+            "parent",
+            "subtasks",
+            "security",
+            "worklog",
+            "assignee",
+            "reporter",
+            "labels",
+            "components",
+            "fix_versions",
+            "epic_key",
+            "epic_name",
+            "timetracking",
+            "created",
+            "updated",
+            "comments",
+            "attachments",
+        }
+        # We check if the key is present; value might be None if not in source data
+        for key in essential_keys:
+            assert key in simplified, (
+                f"Essential key '{key}' missing from default simplified dict"
+            )
         assert "customfield_10001" not in simplified
         assert "customfield_10002" not in simplified
 
-        issue = JiraIssue.from_api_response(issue_data, requested_fields="*all")
+        issue = JiraIssue.from_api_response(jira_issue_data, requested_fields="*all")
         simplified = issue.to_simplified_dict()
         assert "customfield_10001" in simplified
         assert "customfield_10002" in simplified
 
-    def test_timetracking_field_processing(self):
+    def test_timetracking_field_processing(self, jira_issue_data):
         """Test that timetracking data is properly processed."""
-        issue_data = {
-            "id": "10000",
-            "key": "TEST-123",
-            "fields": {
-                "summary": "Test Issue",
-                "description": "Test Description",
-                "timetracking": {
-                    "originalEstimate": "2h",
-                    "remainingEstimate": "1h 30m",
-                    "timeSpent": "30m",
-                    "originalEstimateSeconds": 7200,
-                    "remainingEstimateSeconds": 5400,
-                    "timeSpentSeconds": 1800,
-                },
-            },
-        }
-
-        issue = JiraIssue.from_api_response(issue_data)
+        issue = JiraIssue.from_api_response(jira_issue_data)
         assert issue.timetracking is not None
-        assert issue.timetracking.original_estimate == "2h"
-        assert issue.timetracking.remaining_estimate == "1h 30m"
-        assert issue.timetracking.time_spent == "30m"
-        assert issue.timetracking.original_estimate_seconds == 7200
-        assert issue.timetracking.remaining_estimate_seconds == 5400
-        assert issue.timetracking.time_spent_seconds == 1800
+        assert issue.timetracking.original_estimate == "1d"
+        assert issue.timetracking.remaining_estimate == "4h"
+        assert issue.timetracking.time_spent == "4h"
+        assert issue.timetracking.original_estimate_seconds == 28800
+        assert issue.timetracking.remaining_estimate_seconds == 14400
+        assert issue.timetracking.time_spent_seconds == 14400
 
         issue.requested_fields = "*all"
         simplified = issue.to_simplified_dict()
         assert "timetracking" in simplified
-        assert simplified["timetracking"]["original_estimate"] == "2h"
-        assert simplified["timetracking"]["remaining_estimate"] == "1h 30m"
+        assert simplified["timetracking"]["original_estimate"] == "1d"
+        assert simplified["timetracking"]["remaining_estimate"] == "4h"
 
         issue.requested_fields = ["summary", "timetracking"]
         simplified = issue.to_simplified_dict()
         assert "timetracking" in simplified
-        assert simplified["timetracking"]["original_estimate"] == "2h"
-
-        issue.requested_fields = None
-        simplified = issue.to_simplified_dict()
-        assert "timetracking" not in simplified
+        assert simplified["timetracking"]["original_estimate"] == "1d"
 
 
 class TestJiraSearchResult:
@@ -1003,42 +1204,125 @@ class TestJiraWorklog:
 class TestRealJiraData:
     """Tests using real Jira data (optional)."""
 
+    # Helper to get client/config
+    def _get_client(self) -> IssuesMixin | None:
+        if not real_api_available:
+            return None
+        try:
+            config = JiraConfig.from_env()
+            return IssuesMixin(config=config)
+        except ValueError:
+            pytest.skip("Real Jira environment not configured")
+            return None
+
+    def _get_project_client(self) -> ProjectsMixin | None:
+        if not real_api_available:
+            return None
+        try:
+            config = JiraConfig.from_env()
+            return ProjectsMixin(config=config)
+        except ValueError:
+            pytest.skip("Real Jira environment not configured")
+            return None
+
+    def _get_transition_client(self) -> TransitionsMixin | None:
+        if not real_api_available:
+            return None
+        try:
+            config = JiraConfig.from_env()
+            return TransitionsMixin(config=config)
+        except ValueError:
+            pytest.skip("Real Jira environment not configured")
+            return None
+
+    def _get_worklog_client(self) -> WorklogMixin | None:
+        if not real_api_available:
+            return None
+        try:
+            config = JiraConfig.from_env()
+            return WorklogMixin(config=config)
+        except ValueError:
+            pytest.skip("Real Jira environment not configured")
+            return None
+
+    def _get_base_jira_client(self) -> Jira | None:
+        if not real_api_available:
+            return None
+        try:
+            config = JiraConfig.from_env()
+            if config.auth_type == "basic":
+                return Jira(
+                    url=config.url,
+                    username=config.username,
+                    password=config.api_token,
+                    cloud=config.is_cloud,
+                )
+            else:  # token
+                return Jira(
+                    url=config.url, token=config.personal_token, cloud=config.is_cloud
+                )
+        except ValueError:
+            pytest.skip("Real Jira environment not configured")
+            return None
+
     def test_real_jira_issue(self, use_real_jira_data, default_jira_issue_key):
         """Test that the JiraIssue model works with real Jira API data."""
         if not use_real_jira_data:
             pytest.skip("Skipping real Jira data test")
+        issues_client = self._get_client()
+        if not issues_client or not default_jira_issue_key:
+            pytest.skip("Real Jira client/issue key not available")
 
-        from src.mcp_atlassian.jira.config import JiraConfig
-        from src.mcp_atlassian.jira.issues import IssuesMixin
+        try:
+            issue = issues_client.get_issue(default_jira_issue_key)
+            assert isinstance(issue, JiraIssue)
+            assert issue.key == default_jira_issue_key
+            assert issue.id is not None
+            assert issue.summary is not None
 
-        config = JiraConfig.from_env()
-        issues_client = IssuesMixin(config=config)
-        issue = issues_client.get_issue(default_jira_issue_key)
+            assert hasattr(issue, "project")
+            assert issue.project is None or isinstance(issue.project, JiraProject)
+            assert hasattr(issue, "resolution")
+            assert issue.resolution is None or isinstance(
+                issue.resolution, JiraResolution
+            )
+            assert hasattr(issue, "duedate")
+            assert issue.duedate is None or isinstance(issue.duedate, str)
+            assert hasattr(issue, "resolutiondate")
+            assert issue.resolutiondate is None or isinstance(issue.resolutiondate, str)
+            assert hasattr(issue, "parent")
+            assert issue.parent is None or isinstance(issue.parent, dict)
+            assert hasattr(issue, "subtasks")
+            assert isinstance(issue.subtasks, list)
+            if issue.subtasks:
+                assert isinstance(issue.subtasks[0], dict)
+            assert hasattr(issue, "security")
+            assert issue.security is None or isinstance(issue.security, dict)
+            assert hasattr(issue, "worklog")
+            assert issue.worklog is None or isinstance(issue.worklog, dict)
 
-        assert isinstance(issue, JiraIssue)
-        assert issue.key == default_jira_issue_key
-        assert issue.id is not None
-        assert issue.summary is not None
-
-        simplified = issue.to_simplified_dict()
-        assert simplified["key"] == default_jira_issue_key
+            simplified = issue.to_simplified_dict()
+            assert simplified["key"] == default_jira_issue_key
+        except Exception as e:
+            pytest.fail(f"Error testing real Jira issue: {e}")
 
     def test_real_jira_project(self, use_real_jira_data):
         """Test that the JiraProject model works with real Jira API data."""
         if not use_real_jira_data:
             pytest.skip("Skipping real Jira data test")
+        projects_client = self._get_project_client()
+        if not projects_client:
+            pytest.skip("Real Jira client not available")
 
         # Check for JIRA_TEST_ISSUE_KEY explicitly
         if not os.environ.get("JIRA_TEST_ISSUE_KEY"):
             pytest.skip("JIRA_TEST_ISSUE_KEY environment variable not set")
 
-        from src.mcp_atlassian.jira.config import JiraConfig
-        from src.mcp_atlassian.jira.projects import ProjectsMixin
-
-        config = JiraConfig.from_env()
-        projects_client = ProjectsMixin(config=config)
         default_issue_key = os.environ.get("JIRA_TEST_ISSUE_KEY")
         project_key = default_issue_key.split("-")[0]
+
+        if not project_key:
+            pytest.skip("Could not extract project key from JIRA_TEST_ISSUE_KEY")
 
         try:
             project = projects_client.get_project_model(project_key)
@@ -1055,103 +1339,103 @@ class TestRealJiraData:
             assert simplified["key"] == project_key
         except (AttributeError, TypeError, ValueError) as e:
             pytest.skip(f"Error parsing project data: {e}")
+        except Exception as e:
+            pytest.fail(f"Error testing real Jira project: {e}")
 
     def test_real_jira_transitions(self, use_real_jira_data, default_jira_issue_key):
         """Test that the JiraTransition model works with real Jira API data."""
         if not use_real_jira_data:
             pytest.skip("Skipping real Jira data test")
+        transitions_client = self._get_transition_client()
+        if not transitions_client or not default_jira_issue_key:
+            pytest.skip("Real Jira client/issue key not available")
 
-        from atlassian import Jira
+        # Use the underlying Atlassian API client directly for raw data
+        jira = self._get_base_jira_client()
+        if not jira:
+            pytest.skip("Base Jira client failed")
 
-        from src.mcp_atlassian.jira.config import JiraConfig
-        from src.mcp_atlassian.models.jira import JiraTransition
-
+        transitions_data = None  # Initialize
         try:
-            config = JiraConfig.from_env()
-            jira = Jira(
-                url=config.url,
-                username=config.username,
-                password=config.api_token,
-                cloud=config.is_cloud,
-            )
-
             transitions_data = jira.get_issue_transitions(default_jira_issue_key)
 
-            if not transitions_data or len(transitions_data) == 0:
-                pytest.skip("No transitions available for test issue")
+            actual_transitions_list = []
+            if isinstance(transitions_data, list):
+                actual_transitions_list = transitions_data
+            else:
+                # Handle unexpected format with test failure
+                pytest.fail(
+                    f"Unexpected transitions data format received from API: "
+                    f"{type(transitions_data)}. Data: {transitions_data}"
+                )
 
-            assert len(transitions_data) > 0
-            for transition_item in transitions_data:
-                if "id" in transition_item and not isinstance(
-                    transition_item["id"], str
-                ):
-                    transition_item["id"] = str(transition_item["id"])
+            # Verify transitions list is actually a list
+            assert isinstance(actual_transitions_list, list)
 
-                if isinstance(transition_item.get("to"), str):
-                    to_status_name = transition_item.get("to")
-                    transition_item["to"] = {
-                        "id": str(transition_item.get("id", "")),
-                        "name": to_status_name,
-                    }
+            if not actual_transitions_list:
+                pytest.skip(f"No transitions found for issue {default_jira_issue_key}")
 
-                transition = JiraTransition.from_api_response(transition_item)
-                assert isinstance(transition, JiraTransition)
-                assert transition.id is not None
-                assert transition.name is not None
+            transition_item = actual_transitions_list[0]
+            assert isinstance(transition_item, dict)
 
-                if transition.to_status:
-                    assert transition.to_status.name is not None
+            # Check for essential keys in the raw data
+            assert "id" in transition_item
+            assert "name" in transition_item
+            assert "to" in transition_item
 
-                simplified = transition.to_simplified_dict()
-                assert "id" in simplified
-                assert "name" in simplified
+            # Only check 'to' field name if it's a dictionary
+            if isinstance(transition_item["to"], dict):
+                assert "name" in transition_item["to"]
+
+            # Convert to model
+            transition = JiraTransition.from_api_response(transition_item)
+            assert isinstance(transition, JiraTransition)
+            assert transition.id == str(transition_item["id"])  # Ensure ID is string
+            assert transition.name == transition_item["name"]
+
+            simplified = transition.to_simplified_dict()
+            assert simplified["id"] == str(transition_item["id"])
+            assert simplified["name"] == transition_item["name"]
 
         except Exception as e:
-            pytest.skip(f"Error getting transitions: {str(e)}")
+            # Include data type details in error message
+            error_details = f"Received data type: {type(transitions_data)}"
+            if transitions_data is not None:
+                error_details += (
+                    f", Data: {str(transitions_data)[:200]}..."  # Show partial data
+                )
+
+            pytest.fail(
+                f"Error testing real Jira transitions for issue {default_jira_issue_key}: {e}. {error_details}"
+            )
 
     def test_real_jira_worklog(self, use_real_jira_data, default_jira_issue_key):
         """Test that the JiraWorklog model works with real Jira API data."""
         if not use_real_jira_data:
             pytest.skip("Skipping real Jira data test")
-
-        from atlassian import Jira
-
-        from src.mcp_atlassian.jira.config import JiraConfig
-        from src.mcp_atlassian.models.jira import JiraWorklog
+        worklog_client = self._get_worklog_client()
+        if not worklog_client or not default_jira_issue_key:
+            pytest.skip("Real Jira client/issue key not available")
 
         try:
-            config = JiraConfig.from_env()
-            jira = Jira(
-                url=config.url,
-                username=config.username,
-                password=config.api_token,
-                cloud=config.is_cloud,
-            )
+            # Get worklogs using the model method
+            worklogs = worklog_client.get_worklog_models(default_jira_issue_key)
+            assert isinstance(worklogs, list)
 
-            issue = jira.issue(default_jira_issue_key)
-            if not issue:
-                pytest.skip(f"Could not access issue {default_jira_issue_key}")
+            if not worklogs:
+                pytest.skip(f"Issue {default_jira_issue_key} has no worklogs to test.")
 
-            # Using test data as API access might be limited or issue may have no worklogs
-            test_worklog_data = {
-                "id": "12345",
-                "timeSpent": "1h",
-                "timeSpentSeconds": 3600,
-                "author": {"displayName": "Test User"},
-                "created": "2023-01-01T12:00:00.000+0000",
-            }
-
-            worklog = JiraWorklog.from_api_response(test_worklog_data)
-
+            # Test the first worklog
+            worklog = worklogs[0]
             assert isinstance(worklog, JiraWorklog)
-            assert worklog.id == "12345"
-            assert worklog.time_spent == "1h"
-            assert worklog.time_spent_seconds == 3600
+            assert worklog.id is not None
+            assert worklog.time_spent_seconds >= 0
+            if worklog.author:
+                assert isinstance(worklog.author, JiraUser)
 
             simplified = worklog.to_simplified_dict()
             assert "id" in simplified
             assert "time_spent" in simplified
-            assert simplified["time_spent"] == "1h"
 
         except Exception as e:
-            pytest.skip(f"Error in worklog test: {str(e)}")
+            pytest.fail(f"Error testing real Jira worklog: {e}")

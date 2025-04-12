@@ -413,3 +413,30 @@ class JiraTimetracking(ApiModel):
             result["time_spent"] = self.time_spent
 
         return result
+
+
+class JiraResolution(ApiModel):
+    """Model representing a Jira issue resolution."""
+
+    id: str = JIRA_DEFAULT_ID
+    name: str = UNKNOWN
+    description: str | None = None
+
+    @classmethod
+    def from_api_response(cls, data: dict[str, Any], **kwargs: Any) -> "JiraResolution":
+        """Create a JiraResolution from a Jira API response."""
+        if not isinstance(data, dict):
+            return cls()
+        resolution_id = data.get("id", JIRA_DEFAULT_ID)
+        return cls(
+            id=str(resolution_id),
+            name=data.get("name", UNKNOWN),
+            description=data.get("description"),
+        )
+
+    def to_simplified_dict(self) -> dict[str, Any]:
+        """Convert to simplified dictionary for API response."""
+        result = {"name": self.name}
+        if self.id != JIRA_DEFAULT_ID:
+            result["id"] = self.id
+        return result

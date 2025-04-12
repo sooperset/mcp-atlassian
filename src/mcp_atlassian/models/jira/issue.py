@@ -21,6 +21,7 @@ from .common import (
     JiraAttachment,
     JiraIssueType,
     JiraPriority,
+    JiraResolution,
     JiraStatus,
     JiraTimetracking,
     JiraUser,
@@ -76,6 +77,13 @@ class JiraIssue(ApiModel, TimestampMixin):
     custom_fields: dict[str, Any] = Field(default_factory=dict)
     requested_fields: Literal["*all"] | list[str] | None = None
     project: JiraProject | None = None
+    resolution: JiraResolution | None = None
+    duedate: str | None = None
+    resolutiondate: str | None = None
+    parent: dict | None = None
+    subtasks: list[dict] = Field(default_factory=list)
+    security: dict | None = None
+    worklog: dict | None = None
 
     def __getattribute__(self, name: str) -> Any:
         """
@@ -296,8 +304,38 @@ class JiraIssue(ApiModel, TimestampMixin):
         # Extract project data
         project = None
         project_data = fields.get("project")
-        if project_data:
+        if isinstance(project_data, dict):
             project = JiraProject.from_api_response(project_data)
+
+        resolution = None
+        resolution_data = fields.get("resolution")
+        if isinstance(resolution_data, dict):
+            resolution = JiraResolution.from_api_response(resolution_data)
+
+        duedate = (
+            fields.get("duedate") if isinstance(fields.get("duedate"), str) else None
+        )
+        resolutiondate = (
+            fields.get("resolutiondate")
+            if isinstance(fields.get("resolutiondate"), str)
+            else None
+        )
+        parent = (
+            fields.get("parent") if isinstance(fields.get("parent"), dict) else None
+        )
+        # Ensure subtasks is a list of dicts
+        subtasks_raw = fields.get("subtasks", [])
+        subtasks = (
+            [st for st in subtasks_raw if isinstance(st, dict)]
+            if isinstance(subtasks_raw, list)
+            else []
+        )
+        security = (
+            fields.get("security") if isinstance(fields.get("security"), dict) else None
+        )
+        worklog = (
+            fields.get("worklog") if isinstance(fields.get("worklog"), dict) else None
+        )
 
         # Lists of strings
         labels = []
@@ -410,6 +448,13 @@ class JiraIssue(ApiModel, TimestampMixin):
             assignee=assignee,
             reporter=reporter,
             project=project,
+            resolution=resolution,
+            duedate=duedate,
+            resolutiondate=resolutiondate,
+            parent=parent,
+            subtasks=subtasks,
+            security=security,
+            worklog=worklog,
             labels=labels,
             components=components,
             comments=comments,
@@ -430,156 +475,126 @@ class JiraIssue(ApiModel, TimestampMixin):
             "key": self.key,
         }
 
-        # Add summary by default unless explicitly filtering by requested_fields
-        add_summary = True
-        if (
-            isinstance(self.requested_fields, list)
-            and "summary" not in self.requested_fields
-        ):
-            add_summary = False
+        # Helper method to check if a field should be included
+        def should_include_field(field_name: str) -> bool:
+            return (
+                self.requested_fields == "*all"
+                or not isinstance(self.requested_fields, list)
+                or field_name in self.requested_fields
+            )
 
-        if add_summary:
+        # Add summary if requested
+        if should_include_field("summary"):
             result["summary"] = self.summary
 
-        # Add URL if available
-        if self.url:
+        # Add URL if available and requested
+        if self.url and should_include_field("url"):
             result["url"] = self.url
 
-        # Add description if available, unless explicitly filtered
-        add_description = True
-        if (
-            isinstance(self.requested_fields, list)
-            and "description" not in self.requested_fields
-        ):
-            add_description = False
-
-        if add_description and self.description:
+        # Add description if available and requested
+        if self.description and should_include_field("description"):
             result["description"] = self.description
 
-        # Add status
-        if self.status:
+        # Add status if available and requested
+        if self.status and should_include_field("status"):
             result["status"] = self.status.to_simplified_dict()
-        else:
-            result["status"] = {"name": "Unknown"}
 
-        # Add issue type
-        if self.issue_type:
+        # Add issue type if available and requested
+        if self.issue_type and should_include_field("issue_type"):
             result["issue_type"] = self.issue_type.to_simplified_dict()
-        else:
-            result["issue_type"] = {"name": "Unknown"}
 
-        # Add priority if not explicitly filtered
-        if self.priority and (
-            not isinstance(self.requested_fields, list)
-            or "priority" in self.requested_fields
-        ):
+        # Add priority if available and requested
+        if self.priority and should_include_field("priority"):
             result["priority"] = self.priority.to_simplified_dict()
 
-        # Add project info if not explicitly filtered
-        if self.project and (
-            not isinstance(self.requested_fields, list)
-            or "project" in self.requested_fields
-        ):
+        # Add project info if available and requested
+        if self.project and should_include_field("project"):
             result["project"] = self.project.to_simplified_dict()
 
-        # Add assignee and reporter if not explicitly filtered
-        add_assignee = (
-            not isinstance(self.requested_fields, list)
-            or "assignee" in self.requested_fields
-        )
-        if add_assignee:
+        # Add resolution if available and requested
+        if self.resolution and should_include_field("resolution"):
+            result["resolution"] = self.resolution.to_simplified_dict()
+
+        # Add dates if available and requested
+        if self.duedate and should_include_field("duedate"):
+            result["duedate"] = self.duedate
+
+        if self.resolutiondate and should_include_field("resolutiondate"):
+            result["resolutiondate"] = self.resolutiondate
+
+        # Add parent and subtasks if available and requested
+        if self.parent and should_include_field("parent"):
+            result["parent"] = self.parent
+
+        if self.subtasks and should_include_field("subtasks"):
+            result["subtasks"] = self.subtasks
+
+        # Add security and worklog if available and requested
+        if self.security and should_include_field("security"):
+            result["security"] = self.security
+
+        if self.worklog and should_include_field("worklog"):
+            result["worklog"] = self.worklog
+
+        # Add assignee if requested
+        if should_include_field("assignee"):
             if self.assignee:
                 result["assignee"] = self.assignee.to_simplified_dict()
             else:
                 result["assignee"] = {"display_name": "Unassigned"}
 
-        if self.reporter and (
-            not isinstance(self.requested_fields, list)
-            or "reporter" in self.requested_fields
-        ):
+        # Add reporter if available and requested
+        if self.reporter and should_include_field("reporter"):
             result["reporter"] = self.reporter.to_simplified_dict()
 
-        # Add lists if not explicitly filtered
-        if self.labels and (
-            not isinstance(self.requested_fields, list)
-            or "labels" in self.requested_fields
-        ):
+        # Add lists if available and requested
+        if self.labels and should_include_field("labels"):
             result["labels"] = self.labels
 
-        if self.components and (
-            not isinstance(self.requested_fields, list)
-            or "components" in self.requested_fields
-        ):
+        if self.components and should_include_field("components"):
             result["components"] = self.components
 
-        if self.fix_versions and (
-            not isinstance(self.requested_fields, list)
-            or "fix_versions" in self.requested_fields
-        ):
+        if self.fix_versions and should_include_field("fix_versions"):
             result["fix_versions"] = self.fix_versions
 
-        # Add epic fields if not explicitly filtered
-        if self.epic_key and (
-            not isinstance(self.requested_fields, list)
-            or "epic_key" in self.requested_fields
-        ):
+        # Add epic fields if available and requested
+        if self.epic_key and should_include_field("epic_key"):
             result["epic_key"] = self.epic_key
 
-        if self.epic_name and (
-            not isinstance(self.requested_fields, list)
-            or "epic_name" in self.requested_fields
-        ):
+        if self.epic_name and should_include_field("epic_name"):
             result["epic_name"] = self.epic_name
 
-        # Add time tracking only if explicitly requested
-        add_timetracking = self.requested_fields == "*all" or (
-            isinstance(self.requested_fields, list)
-            and "timetracking" in self.requested_fields
-        )
-        if add_timetracking and self.timetracking:
+        # Add time tracking if available and requested
+        if self.timetracking and should_include_field("timetracking"):
             result["timetracking"] = self.timetracking.to_simplified_dict()
 
-        # Add created and updated timestamps if not explicitly filtered
-        if self.created and (
-            not isinstance(self.requested_fields, list)
-            or "created" in self.requested_fields
-        ):
+        # Add created and updated timestamps if available and requested
+        if self.created and should_include_field("created"):
             result["created"] = self.created
 
-        if self.updated and (
-            not isinstance(self.requested_fields, list)
-            or "updated" in self.requested_fields
-        ):
+        if self.updated and should_include_field("updated"):
             result["updated"] = self.updated
 
-        # Add comments if requested
-        if self.requested_fields == "*all" or (
-            isinstance(self.requested_fields, list)
-            and "comments" in self.requested_fields
-        ):
+        # Add comments if available and requested
+        if self.comments and should_include_field("comments"):
             result["comments"] = [
                 comment.to_simplified_dict() for comment in self.comments
             ]
 
-        # Add attachments if requested
-        if self.requested_fields == "*all" or (
-            isinstance(self.requested_fields, list)
-            and "attachments" in self.requested_fields
-        ):
+        # Add attachments if available and requested
+        if self.attachments and should_include_field("attachment"):
             result["attachments"] = [
                 attachment.to_simplified_dict() for attachment in self.attachments
             ]
 
         # Process custom fields
         if self.custom_fields:
-            # Add custom fields if requested with "*all"
+            # Add all custom fields if "*all" is requested
             if self.requested_fields == "*all":
                 # Loop through custom fields and add all of them
                 for field_id, field_value in self.custom_fields.items():
                     # Process the value to make it more user-friendly
                     processed_value = self._process_custom_field_value(field_value)
-
-                    # Add with original ID only
                     result[field_id] = processed_value
 
             # Add specific requested custom fields
@@ -605,7 +620,7 @@ class JiraIssue(ApiModel, TimestampMixin):
                             )
                             result[full_id] = value
 
-        return result
+        return {k: v for k, v in result.items() if v is not None}
 
     def _process_custom_field_value(self, field_value: Any) -> Any:
         """
