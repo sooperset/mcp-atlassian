@@ -35,16 +35,20 @@ from .constants import (
     UNKNOWN,
 )
 
-# Jira models
+# Jira models - now imported from the jira package
 from .jira import (
+    JiraAttachment,
+    JiraBoard,
     JiraComment,
     JiraIssue,
     JiraIssueType,
     JiraPriority,
     JiraProject,
     JiraSearchResult,
+    JiraSprint,
     JiraStatus,
     JiraStatusCategory,
+    JiraTimetracking,
     JiraTransition,
     JiraUser,
     JiraWorklog,
@@ -83,6 +87,10 @@ __all__ = [
     "JiraTransition",
     "JiraWorklog",
     "JiraSearchResult",
+    "JiraAttachment",
+    "JiraTimetracking",
+    "JiraBoard",
+    "JiraSprint",
     # Confluence models
     "ConfluenceUser",
     "ConfluenceSpace",
