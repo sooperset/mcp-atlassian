@@ -694,6 +694,12 @@ class IssuesMixin(UsersMixin):
 
         # Process each kwarg
         for key, value in kwargs.items():
+            # Handle fixVersions specifically as it's a standard field often required
+            if key.lower() == "fixversions":
+                fields["fixVersions"] = value
+                logger.debug("Added fixVersions from additional_fields: %s", value)
+                continue  # Handled fixVersions
+
             # Explicitly handle components field
             if key.lower() == "components":
                 # Assuming the value is already in the correct format e.g., [{'name': 'Vortex'}] or [{'id': '11004'}]
