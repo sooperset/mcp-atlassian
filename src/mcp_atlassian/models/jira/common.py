@@ -8,8 +8,6 @@ issue types, priorities, attachments, and time tracking.
 import logging
 from typing import Any
 
-from pydantic import Field
-
 from ..base import ApiModel
 from ..constants import (
     EMPTY_STRING,
@@ -212,12 +210,10 @@ class JiraIssueType(ApiModel):
         if not data:
             return cls()
 
-        # Handle non-dictionary data by returning a default instance
         if not isinstance(data, dict):
             logger.debug("Received non-dictionary data, returning default instance")
             return cls()
 
-        # Ensure ID is a string
         issue_type_id = data.get("id", JIRA_DEFAULT_ID)
         if issue_type_id is not None:
             issue_type_id = str(issue_type_id)
@@ -258,12 +254,10 @@ class JiraPriority(ApiModel):
         if not data:
             return cls()
 
-        # Handle non-dictionary data by returning a default instance
         if not isinstance(data, dict):
             logger.debug("Received non-dictionary data, returning default instance")
             return cls()
 
-        # Ensure ID is a string
         priority_id = data.get("id", JIRA_DEFAULT_ID)
         if priority_id is not None:
             priority_id = str(priority_id)
@@ -311,23 +305,19 @@ class JiraAttachment(ApiModel):
         if not data:
             return cls()
 
-        # Handle non-dictionary data by returning a default instance
         if not isinstance(data, dict):
             logger.debug("Received non-dictionary data, returning default instance")
             return cls()
 
-        # Extract author data
         author = None
         author_data = data.get("author")
         if author_data:
             author = JiraUser.from_api_response(author_data)
 
-        # Ensure ID is a string
         attachment_id = data.get("id", JIRA_DEFAULT_ID)
         if attachment_id is not None:
             attachment_id = str(attachment_id)
 
-        # Extract size with type safety
         size = data.get("size", 0)
         try:
             size = int(size) if size is not None else 0
@@ -370,49 +360,56 @@ class JiraAttachment(ApiModel):
 
 class JiraTimetracking(ApiModel):
     """
-    Model representing the time tracking information for a Jira issue.
+    Model for Jira timetracking information.
+
+    This represents time estimates and spent time.
     """
 
-    original_estimate: str | None = Field(None, alias="originalEstimate")
-    remaining_estimate: str | None = Field(None, alias="remainingEstimate")
-    time_spent: str | None = Field(None, alias="timeSpent")
-    original_estimate_seconds: int | None = Field(None, alias="originalEstimateSeconds")
-    remaining_estimate_seconds: int | None = Field(
-        None, alias="remainingEstimateSeconds"
-    )
-    time_spent_seconds: int | None = Field(None, alias="timeSpentSeconds")
-
-    model_config = {
-        "populate_by_name": True,
-    }
+    original_estimate: str | None = None
+    remaining_estimate: str | None = None
+    time_spent: str | None = None
+    original_estimate_seconds: int | None = None
+    remaining_estimate_seconds: int | None = None
+    time_spent_seconds: int | None = None
 
     @classmethod
     def from_api_response(
         cls, data: dict[str, Any], **kwargs: Any
-    ) -> "JiraTimetracking | None":
+    ) -> "JiraTimetracking":
         """
         Create a JiraTimetracking from a Jira API response.
 
         Args:
             data: The timetracking data from the Jira API
+            **kwargs: Additional arguments (not used)
 
         Returns:
-            A JiraTimetracking instance or None if no data
+            A JiraTimetracking instance
         """
         if not data:
-            return None
+            return cls()
 
-        # Handle non-dictionary data
         if not isinstance(data, dict):
-            logger.debug("Received non-dictionary data for timetracking")
-            return None
+            return cls()
 
-        return cls(**data)
+        return cls(
+            original_estimate=data.get("originalEstimate"),
+            remaining_estimate=data.get("remainingEstimate"),
+            time_spent=data.get("timeSpent"),
+            original_estimate_seconds=data.get("originalEstimateSeconds"),
+            remaining_estimate_seconds=data.get("remainingEstimateSeconds"),
+            time_spent_seconds=data.get("timeSpentSeconds"),
+        )
 
-    def to_simplified_dict(self) -> dict[str, Any]:
+    def to_simplified_dict(self) -> dict[str, str | int | None]:
         """Convert to simplified dictionary for API response."""
-        return {
-            "original_estimate": self.original_estimate,
-            "time_spent": self.time_spent,
-            "remaining_estimate": self.remaining_estimate,
-        }
+        result = {}
+
+        if self.original_estimate:
+            result["original_estimate"] = self.original_estimate
+        if self.remaining_estimate:
+            result["remaining_estimate"] = self.remaining_estimate
+        if self.time_spent:
+            result["time_spent"] = self.time_spent
+
+        return result

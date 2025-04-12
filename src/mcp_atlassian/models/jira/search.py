@@ -42,18 +42,15 @@ class JiraSearchResult(ApiModel):
         if not data:
             return cls()
 
-        # Handle non-dictionary data by returning a default instance
         if not isinstance(data, dict):
             logger.debug("Received non-dictionary data, returning default instance")
             return cls()
 
-        # Extract issues
         issues = []
         issues_data = data.get("issues", [])
         if isinstance(issues_data, list):
             for issue_data in issues_data:
                 if issue_data:
-                    # Pass any requested_fields to each issue model
                     requested_fields = kwargs.get("requested_fields")
                     issues.append(
                         JiraIssue.from_api_response(
@@ -61,12 +58,10 @@ class JiraSearchResult(ApiModel):
                         )
                     )
 
-        # Get pagination info
         total = data.get("total", 0)
         start_at = data.get("startAt", 0)
         max_results = data.get("maxResults", 0)
 
-        # Ensure integers
         try:
             total = int(total) if total is not None else 0
         except (ValueError, TypeError):

@@ -918,7 +918,7 @@ class TestIssuesMixin:
         # Check the result
         simplified = issue.to_simplified_dict()
         assert "customfield_10050" in simplified
-        assert simplified["customfield_10050"] == {"value": "Option value"}
+        assert simplified["customfield_10050"] == "Option value"
 
     def test_get_issue_with_all_fields(self, issues_mixin):
         """Test get_issue with '*all' fields parameter."""
