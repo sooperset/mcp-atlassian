@@ -55,9 +55,6 @@ class JiraBoard(ApiModel):
         board_name = str(data.get("name", UNKNOWN))
         board_type = str(data.get("type", UNKNOWN))
 
-        # Location object with projectKey is sometimes available
-        # but we don't currently use it
-
         return cls(
             id=board_id,
             name=board_name,

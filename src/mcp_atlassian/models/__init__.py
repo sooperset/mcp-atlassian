@@ -35,7 +35,7 @@ from .constants import (
     UNKNOWN,
 )
 
-# Jira models - now imported from the jira package
+# Jira models
 from .jira import (
     JiraAttachment,
     JiraBoard,
