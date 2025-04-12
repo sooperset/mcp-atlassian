@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.6.5] - 2025-04-13
+
+### Added
+- Added content type inference for Confluence attachments (#252, #242)
+
+### Changed
+- Refactored Confluence models into modular directory structure (#251)
+- Refactored Jira pydantic models into dedicated package for improved organization (#249)
+- Added support for missing standard Jira fields in JiraIssue model (#250, #230)
+
+### Fixed
+- Fixed Jira Data Center/Server assignee lookup during issue creation (#248)
+- Fixed handling of fixVersions in additional_fields (#247, #241)
+
 ## [0.6.4] - 2025-04-09
 
 ### Fixed
