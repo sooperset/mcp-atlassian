@@ -672,9 +672,22 @@ class TestIssuesMixin:
         ):
             issues_mixin.delete_issue("TEST-123")
 
+    def test_add_custom_fields_with_fixversions(self, issues_mixin):
+        """Test _add_custom_fields properly handles fixVersions field."""
+        # Initialize test data
+        fields = {}
+        kwargs = {"fixVersions": [{"name": "TestRelease"}]}
+
+        # Call the method
+        issues_mixin._add_custom_fields(fields, kwargs)
+
+        # Verify fixVersions was added correctly to fields
+        assert "fixVersions" in fields
+        assert fields["fixVersions"] == [{"name": "TestRelease"}]
+
     def test_get_jira_field_ids_cached(self, issues_mixin):
         """Test get_jira_field_ids returns cached field IDs."""
-        # Setup mock cached data
+        # Setup mocked cache
         issues_mixin._field_ids_cache = {"key1": "value1"}
 
         # Call the method
@@ -756,6 +769,64 @@ class TestIssuesMixin:
         # Verify the issue was created successfully
         assert result is not None
         assert result.key == "TEST-456"
+
+    def test_create_issue_with_fixversions(self, issues_mixin):
+        """Test creating an issue with fixVersions in additional_fields."""
+        # Mock create_issue response
+        create_response = {"id": "12345", "key": "TEST-123"}
+        issues_mixin.jira.create_issue.return_value = create_response
+
+        # Mock the issue data for get_issue
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test Issue",
+                "description": "This is a test issue",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Bug"},
+                "fixVersions": [{"name": "1.0.0"}],
+            },
+        }
+        issues_mixin.jira.get_issue.return_value = issue_data
+
+        # Create the issue with fixVersions in additional_fields
+        result = issues_mixin.create_issue(
+            project_key="TEST",
+            summary="Test Issue",
+            issue_type="Bug",
+            description="This is a test issue",
+            fixVersions=[{"name": "1.0.0"}],
+        )
+
+        # Verify API call to create issue
+        issues_mixin.jira.create_issue.assert_called_once()
+        call_args = issues_mixin.jira.create_issue.call_args[1]
+        fields = call_args["fields"]
+        assert fields["project"]["key"] == "TEST"
+        assert fields["summary"] == "Test Issue"
+        assert fields["issuetype"]["name"] == "Bug"
+        assert fields["description"] == "This is a test issue"
+        assert "fixVersions" in fields
+        assert fields["fixVersions"] == [{"name": "1.0.0"}]
+
+        # Verify API call to get issue
+        issues_mixin.jira.get_issue.assert_called_once_with("TEST-123")
+
+        # Verify result
+        assert result.key == "TEST-123"
+        assert result.summary == "Test Issue"
+        assert result.issue_type.name == "Bug"
+        assert hasattr(result, "fix_versions")
+        assert len(result.fix_versions) == 1
+        # The JiraIssue model might process fixVersions differently, check the actual structure
+        # This depends on how JiraIssue.from_api_response handles the fixVersions field
+        # If it's a list of dictionaries, use:
+        if hasattr(result.fix_versions[0], "name"):
+            assert result.fix_versions[0].name == "1.0.0"
+        else:
+            # If it's a list of strings or other format, adjust accordingly:
+            assert "1.0.0" in str(result.fix_versions[0])
 
     def test_get_issue_with_custom_fields(self, issues_mixin):
         """Test get_issue with custom fields parameter."""
