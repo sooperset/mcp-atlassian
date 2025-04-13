@@ -983,6 +983,37 @@ async def list_tools() -> list[Tool]:
                         },
                     ),
                     Tool(
+                        name="jira_batch_create_issues",
+                        description="Create multiple Jira issues in a batch",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "issues": {
+                                    "type": "string",
+                                    "description": (
+                                        "JSON array of issue objects. Each object should contain:\n"
+                                        "- project_key (required): The project key (e.g., 'PROJ')\n"
+                                        "- summary (required): Issue summary/title\n"
+                                        "- issue_type (required): Type of issue (e.g., 'Task', 'Bug')\n"
+                                        "- description (optional): Issue description\n"
+                                        "- assignee (optional): Assignee username or email\n"
+                                        "- components (optional): Array of component names\n"
+                                        "Example: [\n"
+                                        '  {"project_key": "PROJ", "summary": "Issue 1", "issue_type": "Task"},\n'
+                                        '  {"project_key": "PROJ", "summary": "Issue 2", "issue_type": "Bug", "components": ["Frontend"]}\n'
+                                        "]"
+                                    ),
+                                },
+                                "validate_only": {
+                                    "type": "boolean",
+                                    "description": "If true, only validates the issues without creating them",
+                                    "default": False,
+                                },
+                            },
+                            "required": ["issues"],
+                        },
+                    ),
+                    Tool(
                         name="jira_update_issue",
                         description="Update an existing Jira issue including changing status, adding Epic links, updating fields, etc.",
                         inputSchema={
@@ -1910,6 +1941,47 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 TextContent(
                     type="text",
                     text=f"Issue created successfully:\n{json.dumps(result, indent=2, ensure_ascii=False)}",
+                )
+            ]
+
+        elif name == "jira_batch_create_issues" and ctx and ctx.jira:
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            # Write operation - check read-only mode
+            if read_only:
+                return [
+                    TextContent(
+                        "Operation 'jira_batch_create_issues' is not available in read-only mode."
+                    )
+                ]
+
+            # Extract required arguments
+            issues = arguments.get("issues")
+            validate_only = arguments.get("validate_only", False)
+
+            # Parse issues from JSON string to list of dictionaries
+            if issues and isinstance(issues, str):
+                try:
+                    issues = json.loads(issues)
+                except json.JSONDecodeError:
+                    raise ValueError("Invalid JSON in issues")
+
+            # Create issues in batch
+            created_issues = ctx.jira.batch_create_issues(
+                issues, validate_only=validate_only
+            )
+
+            # Format the response
+            result = {
+                "message": "Issues created successfully",
+                "issues": [issue.to_simplified_dict() for issue in created_issues],
+            }
+
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(result, indent=2, ensure_ascii=False),
                 )
             ]
 

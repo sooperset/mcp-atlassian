@@ -390,6 +390,7 @@ Then configure *only the URL* in Cursor's `~/.cursor/mcp.json`:
 | `jira_get_project_issues` | Get all issues for a specific Jira project |
 | `jira_get_epic_issues` | Get all issues linked to a specific Epic |
 | `jira_create_issue` | Create a new issue in Jira |
+| `jira_batch_create_issues` | Create multiple Jira issues in a single batch operation |
 | `jira_update_issue` | Update an existing Jira issue |
 | `jira_delete_issue` | Delete an existing Jira issue |
 | `jira_get_transitions` | Get available status transitions for a Jira issue |
