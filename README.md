@@ -8,11 +8,20 @@
 
 Model Context Protocol (MCP) server for Atlassian products (Confluence and Jira). This integration supports both Confluence & Jira Cloud and Server/Data Center deployments.
 
-### Feature Demo
-![Jira Demo](https://github.com/user-attachments/assets/61573853-c8a8-45c9-be76-575f2b651984)
+## Example Usage
 
-<details>
-<summary>Confluence Demo</summary>
+Ask your AI assistant to:
+
+- **📝 Automatic Jira Updates** - "Update Jira from our meeting notes"
+- **🔍 AI-Powered Confluence Search** - "Find our OKR guide in Confluence and summarize it"
+- **🐛 Smart Jira Issue Filtering** - "Show me urgent bugs in PROJ project from last week"
+- **📄 Content Creation & Management** - "Create a tech design doc for XYZ feature"
+
+### Feature Demo
+
+https://github.com/user-attachments/assets/35303504-14c6-4ae4-913b-7c25ea511c3e
+
+<details> <summary>Confluence Demo</summary>
 
 https://github.com/user-attachments/assets/7fe9c488-ad0c-4876-9b54-120b666bb785
 
@@ -20,98 +29,119 @@ https://github.com/user-attachments/assets/7fe9c488-ad0c-4876-9b54-120b666bb785
 
 ### Compatibility
 
-| Product | Deployment Type | Support Status              |
-|---------|----------------|-----------------------------|
-| **Confluence** | Cloud | ✅ Fully supported           |
-| **Confluence** | Server/Data Center | ✅ Supported (version 6.0+)  |
-| **Jira** | Cloud | ✅ Fully supported           |
-| **Jira** | Server/Data Center | ✅ Supported (version 8.14+) |
+|Product|Deployment Type|Support Status|
+|---|---|---|
+|**Confluence**|Cloud|✅ Fully supported|
+|**Confluence**|Server/Data Center|✅ Supported (version 6.0+)|
+|**Jira**|Cloud|✅ Fully supported|
+|**Jira**|Server/Data Center|✅ Supported (version 8.14+)|
 
-## Setup Guide
+## Quick Start Guide
 
 ### 1. Authentication Setup
 
 First, generate the necessary authentication tokens for Confluence & Jira:
 
 #### For Cloud
+
 1. Go to https://id.atlassian.com/manage-profile/security/api-tokens
 2. Click **Create API token**, name it
 3. Copy the token immediately
 
 #### For Server/Data Center
+
 1. Go to your profile (avatar) → **Profile** → **Personal Access Tokens**
 2. Click **Create token**, name it, set expiry
 3. Copy the token immediately
 
 ### 2. Installation
 
-Choose one of these installation methods:
+The primary way to use MCP Atlassian is through IDE integration:
+
+**Option 1: Using uvx (Recommended)**
+
+Install uv first:
+
+**macOS/Linux:**
 
 ```bash
-# Using uv (recommended)
-brew install uv
-uvx mcp-atlassian
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
-# Using pip
+**Windows:**
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+With `uv` installed, you can use `uvx mcp-atlassian` directly in your IDE configuration without installing the package separately.
+
+**Option 2: Using pip**
+
+```bash
 pip install mcp-atlassian
+```
 
-# Using Docker
-git clone https://github.com/sooperset/mcp-atlassian.git
-cd mcp-atlassian
-docker build -t mcp/atlassian .
+**Option 3: Using Smithery**
 
-# Using Smithery
+```bash
 npx -y @smithery/cli install mcp-atlassian --client claude
 ```
 
-### 3. Configuration and Usage
+### 3. Key Configuration Options
 
-You can configure the MCP server using command line arguments. The server supports using either Confluence, Jira, or both services - include only the arguments needed for your use case.
+When configuring in your IDE, you can use these optional environment variables:
 
-#### Required Arguments
+- `CONFLUENCE_SPACES_FILTER`: Filter by space keys (e.g., "DEV,TEAM,DOC")
+- `JIRA_PROJECTS_FILTER`: Filter by project keys (e.g., "PROJ,DEV,SUPPORT")
+- `READ_ONLY_MODE`: Set to "true" to disable write operations
+- `MCP_VERBOSE`: Set to "true" for more detailed logging
 
-For Cloud:
-```bash
-uvx mcp-atlassian \
-  --confluence-url https://your-company.atlassian.net/wiki \
-  --confluence-username your.email@company.com \
-  --confluence-token your_api_token \
-  --jira-url https://your-company.atlassian.net \
-  --jira-username your.email@company.com \
-  --jira-token your_api_token
-```
+> **Note:** You can configure just Confluence, just Jira, or both services by including only the variables for the services you need.
 
-For Server/Data Center:
-```bash
-uvx mcp-atlassian \
-  --confluence-url https://confluence.your-company.com \
-  --confluence-personal-token your_token \
-  --jira-url https://jira.your-company.com \
-  --jira-personal-token your_token
-```
-
-> **Note:** You can configure just Confluence, just Jira, or both services. Simply include only the arguments for the service(s) you want to use. For example, to use only Confluence Cloud, you would only need `--confluence-url`, `--confluence-username`, and `--confluence-token`.
-
-#### Optional Arguments
-
-- `--transport`: Choose transport type (`stdio` [default] or `sse`)
-- `--port`: Port number for SSE transport (default: 8000)
-- `--[no-]confluence-ssl-verify`: Toggle SSL verification for Confluence Server/DC
-- `--[no-]jira-ssl-verify`: Toggle SSL verification for Jira Server/DC
-- `--confluence-spaces-filter`: Comma-separated list of space keys to filter Confluence search results (e.g., "DEV,TEAM,DOC")
-- `--jira-projects-filter`: Comma-separated list of project keys to filter Jira search results (e.g., "PROJ,DEV,SUPPORT")
-- `--read-only`: Run in read-only mode (disables all write operations)
-- `--verbose`: Increase logging verbosity (can be used multiple times, default is WARNING level)
-  - `-v` or `--verbose`: Set logging to INFO level
-  - `-vv` or `--verbose --verbose`: Set logging to DEBUG level
-
-> **Note:** All configuration options can also be set via environment variables. See the `.env.example` file in the repository for the full list of available environment variables.
+See the [.env.example](https://github.com/sooperset/mcp-atlassian/blob/main/.env.example) file for all available options.
 
 ## IDE Integration
 
-### Claude Desktop Setup
+MCP Atlassian is designed to be used with AI assistants through IDE integration.
 
-Using uvx (recommended) - Cloud:
+> **Note**: To apply the configuration in Claude Desktop:
+>
+> **Method 1 (Recommended)**: Click hamburger menu (☰) > Settings > Developer > "Edit Config" button
+>
+> **Method 2**: Locate and edit the configuration file directly:
+> - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+> - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+> - **Linux**: `~/.config/Claude/claude_desktop_config.json`
+>
+> **For Cursor**: Open Settings → Features → MCP Servers → + Add new global MCP server
+
+Here's how to set it up based on your installation method:
+
+### Using uvx (Recommended)
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "uvx",
+      "args": ["mcp-atlassian"],
+      "env": {
+        "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
+        "CONFLUENCE_USERNAME": "your.email@company.com",
+        "CONFLUENCE_API_TOKEN": "your_api_token",
+        "JIRA_URL": "https://your-company.atlassian.net",
+        "JIRA_USERNAME": "your.email@company.com",
+        "JIRA_API_TOKEN": "your_api_token"
+      }
+    }
+  }
+}
+```
+
+<details> <summary>Alternative: Using CLI Arguments</summary>
+
+You can also use command-line arguments instead of environment variables:
 
 ```json
 {
@@ -132,188 +162,23 @@ Using uvx (recommended) - Cloud:
 }
 ```
 
-<details>
-<summary>Using uvx (recommended) - Server/Data Center </summary>
+</details> <details> <summary>Using pip</summary>
 
-```json
-{
-  "mcpServers": {
-    "mcp-atlassian": {
-      "command": "uvx",
-      "args": [
-        "mcp-atlassian",
-        "--confluence-url=https://confluence.your-company.com",
-        "--confluence-personal-token=your_token",
-        "--jira-url=https://jira.your-company.com",
-        "--jira-personal-token=your_token"
-      ]
-    }
-  }
-}
-```
-</details>
-
-<details>
-<summary>Using uvx - Confluence with Basic Auth (older servers)</summary>
-
-```json
-{
-  "mcpServers": {
-    "mcp-atlassian": {
-      "command": "uvx",
-      "args": [
-        "mcp-atlassian",
-        "--confluence-url=https://confluence.your-company.com",
-        "--confluence-username=your.email@company.com",
-        "--confluence-token=your_password"
-      ]
-    }
-  }
-}
-```
-</details>
-
-<details>
-<summary>Using uvx - Confluence only</summary>
-
-```json
-{
-  "mcpServers": {
-    "mcp-atlassian": {
-      "command": "uvx",
-      "args": [
-        "mcp-atlassian",
-        "--confluence-url=https://your-company.atlassian.net/wiki",
-        "--confluence-username=your.email@company.com",
-        "--confluence-token=your_api_token"
-      ]
-    }
-  }
-}
-```
-</details>
-
-<details>
-<summary>Using uvx - Jira only</summary>
-
-```json
-{
-  "mcpServers": {
-    "mcp-atlassian": {
-      "command": "uvx",
-      "args": [
-        "mcp-atlassian",
-        "--jira-url=https://your-company.atlassian.net",
-        "--jira-username=your.email@company.com",
-        "--jira-token=your_api_token"
-      ]
-    }
-  }
-}
-```
-</details>
-
-<details>
-<summary>Using pip</summary>
-
-> Note: Examples below use Cloud configuration. For Server/Data Center, use the corresponding arguments (--confluence-personal-token, --jira-personal-token) as shown in the Configuration section above.
+If you've installed mcp-atlassian with pip, use this configuration instead:
 
 ```json
 {
   "mcpServers": {
     "mcp-atlassian": {
       "command": "mcp-atlassian",
-      "args": [
-        "--confluence-url=https://your-company.atlassian.net/wiki",
-        "--confluence-username=your.email@company.com",
-        "--confluence-token=your_api_token",
-        "--jira-url=https://your-company.atlassian.net",
-        "--jira-username=your.email@company.com",
-        "--jira-token=your_api_token"
-      ]
-    }
-  }
-}
-```
-</details>
-
-<details>
-<summary>Using docker</summary>
-
-> Note: Examples below use Cloud configuration. For Server/Data Center, use the corresponding arguments (--confluence-personal-token, --jira-personal-token) as shown in the Configuration section above.
-
-There are two ways to configure the Docker environment:
-
-1. Using cli arguments directly in the config:
-```json
-{
-  "mcpServers": {
-    "mcp-atlassian": {
-      "command": "docker",
-      "args": [
-        "run",
-        "--rm",
-        "-i",
-        "mcp/atlassian",
-        "--confluence-url=https://your-company.atlassian.net/wiki",
-        "--confluence-username=your.email@company.com",
-        "--confluence-token=your_api_token",
-        "--jira-url=https://your-company.atlassian.net",
-        "--jira-username=your.email@company.com",
-        "--jira-token=your_api_token"
-      ]
-    }
-  }
-}
-```
-
-2. Using an environment file:
-```json
-{
-  "mcpServers": {
-    "mcp-atlassian": {
-      "command": "docker",
-      "args": [
-        "run",
-        "--rm",
-        "-i",
-        "--env-file",
-        "/path/to/your/.env",
-        "mcp/atlassian"
-      ]
-    }
-  }
-}
-```
-</details>
-
-### Cursor IDE Setup
-
-1. Open Cursor Settings
-2. Navigate to `Features` > `MCP Servers` (or directly to `MCP`)
-3. Click `+ Add new global MCP server`
-
-This will create or edit the `~/.cursor/mcp.json` file with your MCP server configuration.
-
-![Cursor MCP Configuration](https://github.com/user-attachments/assets/d0901421-7359-4f3f-8330-a82fc574a015)
-
-#### JSON Configuration for stdio Transport
-
-For Cloud:
-```json
-{
-  "mcpServers": {
-    "mcp-atlassian": {
-      "command": "uvx",
-      "args": [
-        "mcp-atlassian",
-        "--confluence-url=https://your-company.atlassian.net/wiki",
-        "--confluence-username=your.email@company.com",
-        "--confluence-token=your_api_token",
-        "--jira-url=https://your-company.atlassian.net",
-        "--jira-username=your.email@company.com",
-        "--jira-token=your_api_token"
-      ]
+      "env": {
+        "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
+        "CONFLUENCE_USERNAME": "your.email@company.com",
+        "CONFLUENCE_API_TOKEN": "your_api_token",
+        "JIRA_URL": "https://your-company.atlassian.net",
+        "JIRA_USERNAME": "your.email@company.com",
+        "JIRA_API_TOKEN": "your_api_token"
+      }
     }
   }
 }
@@ -322,29 +187,73 @@ For Cloud:
 <details>
 <summary>Server/Data Center Configuration</summary>
 
+For Server/Data Center deployments, use these environment variables instead:
+
 ```json
 {
   "mcpServers": {
     "mcp-atlassian": {
       "command": "uvx",
-      "args": [
-        "mcp-atlassian",
-        "--confluence-url=https://confluence.your-company.com",
-        "--confluence-personal-token=your_token",
-        "--jira-url=https://jira.your-company.com",
-        "--jira-personal-token=your_token"
-      ]
+      "args": ["mcp-atlassian"],
+      "env": {
+        "CONFLUENCE_URL": "https://confluence.your-company.com",
+        "CONFLUENCE_PERSONAL_TOKEN": "your_token",
+        "JIRA_URL": "https://jira.your-company.com",
+        "JIRA_PERSONAL_TOKEN": "your_token"
+      }
     }
   }
 }
 ```
 </details>
 
-#### SSE Transport Configuration
+</details> <details> <summary>Single Service Configurations</summary>
 
-For SSE transport, first start the server with its configuration provided via command-line arguments or server-side environment variables (e.g., from a `.env` file):
+For Confluence only:
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "uvx",
+      "args": ["mcp-atlassian"],
+      "env": {
+        "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
+        "CONFLUENCE_USERNAME": "your.email@company.com",
+        "CONFLUENCE_API_TOKEN": "your_api_token"
+      }
+    }
+  }
+}
+```
+
+For Jira only:
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "uvx",
+      "args": ["mcp-atlassian"],
+      "env": {
+        "JIRA_URL": "https://your-company.atlassian.net",
+        "JIRA_USERNAME": "your.email@company.com",
+        "JIRA_API_TOKEN": "your_api_token"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+### SSE Transport Configuration
+
+<details> <summary>Using SSE Instead of stdio</summary>
+
+1. Start the server with:
+
 ```bash
-# Example starting the server with Cloud configuration
 uvx mcp-atlassian --transport sse --port 9000 \
   --confluence-url https://your-company.atlassian.net/wiki \
   --confluence-username your.email@company.com \
@@ -354,7 +263,8 @@ uvx mcp-atlassian --transport sse --port 9000 \
   --jira-token your_api_token
 ```
 
-Then configure *only the URL* in Cursor's `~/.cursor/mcp.json`:
+2. Configure in your IDE:
+
 ```json
 {
   "mcpServers": {
@@ -364,86 +274,87 @@ Then configure *only the URL* in Cursor's `~/.cursor/mcp.json`:
   }
 }
 ```
+</details>
 
-## Resources
+## Resources and Tools
 
-> **Note:** The MCP server filters resources to only show Confluence spaces and Jira projects that the user is actively interacting with, based on their contributions and assignments.
+### Resources
 
 - `confluence://{space_key}`: Access Confluence spaces
 - `jira://{project_key}`: Access Jira projects
 
-## Available Tools
+> **Note:** The MCP server filters resources to only show Confluence spaces and Jira projects that the user is actively interacting with, based on their contributions and assignments.
 
-| Tool | Description |
-|------|-------------|
-| `confluence_search` | Search Confluence content using CQL |
-| `confluence_get_page` | Get content of a specific Confluence page |
-| `confluence_get_page_children` | Get child pages of a specific Confluence page |
-| `confluence_get_page_ancestors` | Get parent pages of a specific Confluence page |
-| `confluence_get_comments` | Get comments for a specific Confluence page |
-| `confluence_create_page` | Create a new Confluence page |
-| `confluence_update_page` | Update an existing Confluence page |
-| `confluence_delete_page` | Delete an existing Confluence page |
-| `confluence_attach_content` | Attach content to a Confluence page |
-| `jira_get_issue` | Get details of a specific Jira issue |
-| `jira_search` | Search Jira issues using JQL |
-| `jira_get_project_issues` | Get all issues for a specific Jira project |
-| `jira_get_epic_issues` | Get all issues linked to a specific Epic |
-| `jira_create_issue` | Create a new issue in Jira |
-| `jira_batch_create_issues` | Create multiple Jira issues in a single batch operation |
-| `jira_update_issue` | Update an existing Jira issue |
-| `jira_delete_issue` | Delete an existing Jira issue |
-| `jira_get_transitions` | Get available status transitions for a Jira issue |
-| `jira_transition_issue` | Transition a Jira issue to a new status |
-| `jira_add_comment` | Add a comment to a Jira issue |
-| `jira_add_worklog` | Add a worklog entry to a Jira issue |
-| `jira_get_worklog` | Get worklog entries for a Jira issue |
-| `jira_download_attachments` | Download attachments from a Jira issue |
-| `jira_link_to_epic` | Link an issue to an Epic |
-| `jira_get_agile_boards` | Get Jira agile boards by name, project key, or type |
-| `jira_get_board_issues` | Get all issues linked to a specific board |
-| `jira_get_sprints_from_board` | Get Jira sprints from board by state |
-| `jira_get_sprint_issues` | Get Jira issues from sprint |
+### Key Tools
 
-## Development & Debugging
+#### Confluence Tools
 
-### Local Development Setup
+- `confluence_search`: Search Confluence content using CQL
+- `confluence_get_page`: Get content of a specific page
+- `confluence_create_page`: Create a new page
+- `confluence_update_page`: Update an existing page
+- `confluence_attach_content`: Attach content to a page
 
-If you've cloned the repository and want to run a local version:
+#### Jira Tools
 
-For Cloud:
-```json
-{
-  "mcpServers": {
-    "mcp-atlassian": {
-      "command": "uv",
-      "args": [
-        "--directory", "/path/to/your/mcp-atlassian",
-        "run", "mcp-atlassian",
-        "--confluence-url=https://your-domain.atlassian.net/wiki",
-        "--confluence-username=your.email@domain.com",
-        "--confluence-token=your_api_token",
-        "--jira-url=https://your-domain.atlassian.net",
-        "--jira-username=your.email@domain.com",
-        "--jira-token=your_api_token"
-      ]
-    }
-  }
-}
-```
+- `jira_get_issue`: Get details of a specific issue
+- `jira_search`: Search issues using JQL
+- `jira_create_issue`: Create a new issue
+- `jira_update_issue`: Update an existing issue
+- `jira_transition_issue`: Transition an issue to a new status
+- `jira_add_comment`: Add a comment to an issue
+
+<details> <summary>View All Tools</summary>
+
+|Confluence Tools|Jira Tools|
+|---|---|
+|`confluence_search`|`jira_get_issue`|
+|`confluence_get_page`|`jira_search`|
+|`confluence_get_page_children`|`jira_get_project_issues`|
+|`confluence_get_page_ancestors`|`jira_get_epic_issues`|
+|`confluence_get_comments`|`jira_create_issue`|
+|`confluence_create_page`|`jira_batch_create_issues`|
+|`confluence_update_page`|`jira_update_issue`|
+|`confluence_delete_page`|`jira_delete_issue`|
+|`confluence_attach_content`|`jira_get_transitions`|
+||`jira_transition_issue`|
+||`jira_add_comment`|
+||`jira_add_worklog`|
+||`jira_get_worklog`|
+||`jira_download_attachments`|
+||`jira_link_to_epic`|
+||`jira_get_agile_boards`|
+||`jira_get_board_issues`|
+||`jira_get_sprints_from_board`|
+||`jira_get_sprint_issues`|
+
+</details>
+
+## Troubleshooting & Debugging
+
+### Common Issues
+
+- **Authentication Failures**:
+    - For Cloud: Check your API tokens (not your account password)
+    - For Server/Data Center: Verify your personal access token is valid and not expired
+    - For older Confluence servers: Some older versions require basic authentication with `CONFLUENCE_USERNAME` and `CONFLUENCE_API_TOKEN` (where token is your password)
+- **SSL Certificate Issues**: If using Server/Data Center and encounter SSL errors, set `CONFLUENCE_SSL_VERIFY=false` or `JIRA_SSL_VERIFY=false`
+- **Permission Errors**: Ensure your Atlassian account has sufficient permissions to access the spaces/projects
 
 ### Debugging Tools
 
 ```bash
-# Using MCP Inspector
-# For installed package
+# Using MCP Inspector for testing
 npx @modelcontextprotocol/inspector uvx mcp-atlassian ...
 
 # For local development version
 npx @modelcontextprotocol/inspector uv --directory /path/to/your/mcp-atlassian run mcp-atlassian ...
 
 # View logs
+# macOS
 tail -n 20 -f ~/Library/Logs/Claude/mcp*.log
+# Windows
+type %APPDATA%\Claude\logs\mcp*.log | more
 ```
 
 ## Security
@@ -451,6 +362,20 @@ tail -n 20 -f ~/Library/Logs/Claude/mcp*.log
 - Never share API tokens
 - Keep .env files secure and private
 - See [SECURITY.md](SECURITY.md) for best practices
+
+## Contributing
+
+We welcome contributions to MCP Atlassian! If you'd like to contribute:
+
+1. Check out our [CONTRIBUTING.md](CONTRIBUTING.md) guide
+2. Set up your development environment:
+   ```bash
+   uv sync --frozen --all-extras --dev
+   pre-commit install
+   ```
+3. Make changes and submit a pull request
+
+We use pre-commit hooks for code quality and follow semantic versioning for releases.
 
 ## License
 
