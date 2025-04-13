@@ -85,7 +85,6 @@ pip install mcp-atlassian
 **Option 3: Using Smithery**
 
 ```bash
-# Smithery automatically configures your IDE
 npx -y @smithery/cli install mcp-atlassian --client claude
 ```
 
