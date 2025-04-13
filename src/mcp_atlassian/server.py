@@ -1937,10 +1937,11 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                     raise ValueError("Invalid JSON in issues")
 
             # Create issues in batch
-            created_issues = []
-            for issue in issues:
-                created_issues.append(ctx.jira.create_issue(**issue))
+            created_issues = ctx.jira.batch_create_issues(
+                issues, validate_only=validate_only
+            )
 
+            # Format the response
             result = {
                 "message": "Issues created successfully",
                 "issues": [issue.to_simplified_dict() for issue in created_issues],
