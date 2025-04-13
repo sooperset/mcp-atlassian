@@ -106,10 +106,16 @@ See the [.env.example](https://github.com/sooperset/mcp-atlassian/blob/main/.env
 
 MCP Atlassian is designed to be used with AI assistants through IDE integration.
 
-> **Note**: To apply the configuration:
+> **Note**: To apply the configuration in Claude Desktop:
 >
-> - **Claude Desktop**: Navigate to Settings > Edit Config > claude_desktop_config.json
-> - **Cursor**: Open Settings → Features → MCP Servers → + Add new global MCP server
+> **Method 1 (Recommended)**: Click hamburger menu (☰) > Settings > Developer > "Edit Config" button
+>
+> **Method 2**: Locate and edit the configuration file directly:
+> - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+> - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+> - **Linux**: `~/.config/Claude/claude_desktop_config.json`
+>
+> **For Cursor**: Open Settings → Features → MCP Servers → + Add new global MCP server
 
 Here's how to set it up based on your installation method:
 
