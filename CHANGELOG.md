@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+- added `jira_create_sprint`
 
 ### Added
 - Added `batch_create_issues` method to create multiple Jira issues in a single operation

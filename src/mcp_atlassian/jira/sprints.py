@@ -68,3 +68,44 @@ class SprintsMixin(JiraClient):
             limit=limit,
         )
         return [JiraSprint.from_api_response(sprint) for sprint in sprints]
+
+    def create_sprint(
+        self,
+        board_id: str,
+        sprint_name: str,
+        start_date: str,
+        end_date: str,
+        goal: str = None,
+    ) -> JiraSprint:
+        """
+        Create a new sprint.
+
+        Args:
+            sprint_name: Sprint name
+            board_id: Board ID
+            start_date: Start date in ISO format
+            end_date: End date in ISO format
+            goal: Sprint goal
+
+        Returns:
+            Created sprint details
+        """
+
+        try:
+            sprint = self.jira.create_sprint(
+                name=sprint_name,
+                board_id=board_id,
+                start_date=start_date,
+                end_date=end_date,
+                goal=goal,
+            )
+
+            logger.error(f"SPRINTDAVE Sprint created: {sprint}")
+
+            return JiraSprint.from_api_response(sprint)
+        except requests.HTTPError as e:
+            logger.error(f"Error creating sprint: {str(e.response.content)}")
+            return {}
+        except Exception as e:
+            logger.error(f"Error creating sprint: {str(e)}")
+            return {}
