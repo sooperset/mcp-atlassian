@@ -1,5 +1,6 @@
 """Unit tests for server"""
 
+import json
 import os
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -723,24 +724,143 @@ async def test_call_tool_jira_create_issue_with_components(app_context):
     }
     app_context.jira.create_issue.return_value = mock_issue
 
-    # Test with string components
-    arguments = {
-        "project_key": "TEST",
-        "summary": "Test Issue with Components",
-        "issue_type": "Task",
-        "description": "Test Description",
-        "components": "Frontend,Backend",
-    }
+    with (
+        patch("mcp_atlassian.server.is_read_only_mode", return_value=False),
+        mock_request_context(app_context),
+    ):
+        # Call the tool with components parameter
+        result = await call_tool(
+            "jira_create_issue",
+            {
+                "project_key": "TEST",
+                "summary": "Test Issue with Components",
+                "issue_type": "Bug",
+                "components": "UI,API",
+            },
+        )
 
+        # Verify the create_issue method was called with correct parameters
+        app_context.jira.create_issue.assert_called_once_with(
+            project_key="TEST",
+            summary="Test Issue with Components",
+            issue_type="Bug",
+            description="",
+            assignee=None,
+            components=["UI", "API"],
+        )
+
+        # Verify we got a result
+        assert isinstance(result, list)
+
+        # Reset the mock
+        app_context.jira.create_issue.reset_mock()
+
+        # Call the tool without components parameter
+        result = await call_tool(
+            "jira_create_issue",
+            {
+                "project_key": "TEST",
+                "summary": "Test Issue without Components",
+                "issue_type": "Bug",
+            },
+        )
+
+        # Verify the create_issue method was called with components=None
+        app_context.jira.create_issue.assert_called_once()
+        call_kwargs = app_context.jira.create_issue.call_args[1]
+        assert call_kwargs["components"] is None
+
+
+@pytest.mark.anyio
+async def test_call_tool_jira_batch_create_issues(app_context: AppContext) -> None:
+    """Test successful batch creation of Jira issues.
+
+    Args:
+        app_context: The application context fixture with mocked Jira client.
+    """
+    # Mock data for testing
+    test_issues = [
+        {
+            "project_key": "TEST",
+            "summary": "Test Issue 1",
+            "issue_type": "Task",
+            "description": "Test description 1",
+            "assignee": "test.user@example.com",
+            "components": ["Frontend", "API"],
+        },
+        {
+            "project_key": "TEST",
+            "summary": "Test Issue 2",
+            "issue_type": "Bug",
+            "description": "Test description 2",
+        },
+    ]
+
+    # Configure mock response for batch_create_issues
+    mock_created_issues = [
+        MagicMock(
+            to_simplified_dict=MagicMock(
+                return_value={
+                    "key": "TEST-1",
+                    "summary": "Test Issue 1",
+                    "type": "Task",
+                    "status": "To Do",
+                }
+            )
+        ),
+        MagicMock(
+            to_simplified_dict=MagicMock(
+                return_value={
+                    "key": "TEST-2",
+                    "summary": "Test Issue 2",
+                    "type": "Bug",
+                    "status": "To Do",
+                }
+            )
+        ),
+    ]
+    app_context.jira.batch_create_issues.return_value = mock_created_issues
+
+    # Test with JSON string input
     with mock_request_context(app_context):
-        # Execute
-        result = await call_tool("jira_create_issue", arguments)
+        result = await call_tool(
+            "jira_batch_create_issues",
+            {"issues": json.dumps(test_issues), "validate_only": False},
+        )
 
-        # Verify
+    # Verify the result
+    assert len(result) == 1
+    assert result[0].type == "text"
+
+    # Parse the response JSON
+    response = json.loads(result[0].text)
+    assert response["message"] == "Issues created successfully"
+    assert len(response["issues"]) == 2
+    assert response["issues"][0]["key"] == "TEST-1"
+    assert response["issues"][1]["key"] == "TEST-2"
+
+    # Verify the mock was called correctly
+    app_context.jira.batch_create_issues.assert_called_once_with(
+        test_issues, validate_only=False
+    )
+
+
+@pytest.mark.anyio
+async def test_call_tool_jira_batch_create_issues_invalid_json(
+    app_context: AppContext,
+) -> None:
+    """Test error handling for invalid JSON input in batch issue creation.
+
+    Args:
+        app_context: The application context fixture with mocked Jira client.
+    """
+    with mock_request_context(app_context):
+        result = await call_tool(
+            "jira_batch_create_issues",
+            {"issues": "{invalid json", "validate_only": False},
+        )
+
+        # Verify we got an error response
         assert len(result) == 1
         assert result[0].type == "text"
-
-        # Check the components are processed correctly
-        app_context.jira.create_issue.assert_called_once()
-        call_args = app_context.jira.create_issue.call_args[1]
-        assert call_args["components"] == ["Frontend", "Backend"]
+        assert "Invalid JSON in issues" in result[0].text

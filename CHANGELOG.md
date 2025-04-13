@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+- Added `batch_create_issues` method to create multiple Jira issues in a single operation
+  - Supports validation-only mode for checking issue data before creation
+  - Handles partial failures gracefully, continuing with remaining issues
+  - Provides detailed error logging for failed issue creations
+- Registered `jira_batch_create_issues` as a tool in server.py for batch issue creation
+  - Accepts JSON array of issue objects with required and optional fields
+  - Supports validation-only mode through tool parameter
+  - Returns detailed creation results for each issue
+
 ## [0.6.5] - 2025-04-13
 
 ### Added
