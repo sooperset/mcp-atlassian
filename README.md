@@ -19,7 +19,7 @@ Ask your AI assistant to:
 
 ### Feature Demo
 
-![Jira Demo](https://github.com/user-attachments/assets/61573853-c8a8-45c9-be76-575f2b651984)
+https://github.com/user-attachments/assets/35303504-14c6-4ae4-913b-7c25ea511c3e
 
 <details> <summary>Confluence Demo</summary>
 
