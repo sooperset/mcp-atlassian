@@ -481,7 +481,12 @@ class PagesMixin(ConfluenceClient):
             raise Exception(f"Failed to delete page {page_id}: {str(e)}") from e
 
     def attach_content(
-        self, content: bytes, name: str, page_id: str
+        self,
+        content: bytes,
+        name: str,
+        page_id: str,
+        content_type: str = "application/octet-stream",
+        comment: str = None,
     ) -> ConfluencePage | None:
         """
         Attach content to a Confluence page.
@@ -490,13 +495,21 @@ class PagesMixin(ConfluenceClient):
             content: The content to attach (bytes)
             name: The name of the attachment
             page_id: The ID of the page to attach the content to
+            content_type: The MIME type of the content (defaults to "application/octet-stream")
+            comment: Optional comment for the attachment
 
         Returns:
             ConfluencePage model containing the updated page's data
         """
         try:
             logger.debug("Attaching content %s to page %s", name, page_id)
-            self.confluence.attach_content(content=content, name=name, page_id=page_id)
+            self.confluence.attach_content(
+                content=content,
+                name=name,
+                page_id=page_id,
+                content_type=content_type,
+                comment=comment,
+            )
         except ApiError as e:
             logger.error(
                 "Confluence API Error when trying to attach content %s to page %s: %s",

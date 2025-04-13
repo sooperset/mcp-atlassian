@@ -236,20 +236,53 @@ class TestUsersMixin:
             }
         ]
 
+        # Mock config.is_cloud to return True
+        users_mixin.config = MagicMock()
+        users_mixin.config.is_cloud = True
+
         # Call the method
         account_id = users_mixin._lookup_user_directly("Test User")
 
         # Verify result
         assert account_id == "direct-account-id"
-        # Verify API call
+        # Verify API call with query parameter for Cloud
         users_mixin.jira.user_find_by_user_string.assert_called_once_with(
             query="Test User", start=0, limit=1
+        )
+
+    def test_lookup_user_directly_server_dc(self, users_mixin):
+        """Test _lookup_user_directly for Server/DC when user is found."""
+        # Mock the API response
+        users_mixin.jira.user_find_by_user_string.return_value = [
+            {
+                "key": "server-user-key",
+                "displayName": "Test User",
+                "emailAddress": "test@example.com",
+            }
+        ]
+
+        # Mock config.is_cloud to return False for Server/DC
+        users_mixin.config = MagicMock()
+        users_mixin.config.is_cloud = False
+
+        # Call the method
+        account_id = users_mixin._lookup_user_directly("Test User")
+
+        # Verify result
+        assert account_id == "server-user-key"
+        # Verify API call with username parameter for Server/DC
+        users_mixin.jira.user_find_by_user_string.assert_called_once_with(
+            username="Test User", start=0, limit=1
         )
 
     def test_lookup_user_directly_not_found(self, users_mixin):
         """Test _lookup_user_directly when user is not found."""
         # Mock empty API response
         users_mixin.jira.user_find_by_user_string.return_value = []
+
+        # Mock config.is_cloud to return True (default case)
+        users_mixin.config = MagicMock()
+        users_mixin.config.is_cloud = True
 
         # Call the method
         account_id = users_mixin._lookup_user_directly("nonexistent")

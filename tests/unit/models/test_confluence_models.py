@@ -7,7 +7,7 @@ and the simplified dictionary conversion for API responses.
 
 import pytest
 
-from src.mcp_atlassian.models.confluence import (
+from src.mcp_atlassian.models import (
     ConfluenceAttachment,
     ConfluenceComment,
     ConfluencePage,
@@ -478,7 +478,7 @@ class TestRealConfluenceData:
             )
 
             # Convert to model
-            from src.mcp_atlassian.models.confluence import ConfluencePage
+            from src.mcp_atlassian.models import ConfluencePage
 
             page = ConfluencePage.from_api_response(page_data)
 
@@ -496,7 +496,7 @@ class TestRealConfluenceData:
 
             # Get and test comments if available
             try:
-                from src.mcp_atlassian.models.confluence import ConfluenceComment
+                from src.mcp_atlassian.models import ConfluenceComment
 
                 comments_data = confluence_client.confluence.get_page_comments(
                     page_id=page_id, expand="body.view,version"

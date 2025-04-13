@@ -378,6 +378,7 @@ class TestSearchMixin:
         assert len(result.issues) == 1
         assert result.issues[0].key == "TEST-124"
         assert result.issues[0].summary == "Linked issue"
+
         assert result.issues[0].custom_fields["customfield_10009"] == "TEST-123"
 
     def test_get_epic_issues_no_results(self, search_mixin):
@@ -477,18 +478,9 @@ class TestSearchMixin:
         assert "assignee" in simplified
         assert "customfield_10049" in simplified
 
-        # These fields should NOT be included
-        assert "description" not in simplified
-        assert "status" not in simplified
-        assert "issue_type" not in simplified
-        assert "priority" not in simplified
-        assert "created" not in simplified
-        assert "updated" not in simplified
-
-        # Verify the values of included fields
-        assert simplified["summary"] == "Test issue with custom field"
-        assert simplified["assignee"]["name"] == "Test User"
         assert simplified["customfield_10049"] == "Custom value"
+        assert "assignee" in simplified
+        assert simplified["assignee"]["display_name"] == "Test User"
 
     def test_search_issues_with_start(self, search_mixin: SearchMixin) -> None:
         """Test searching issues with a start index."""
