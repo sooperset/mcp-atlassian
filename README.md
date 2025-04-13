@@ -185,18 +185,28 @@ If you've installed mcp-atlassian with pip, use this configuration instead:
 }
 ```
 
-</details> <details> <summary>Server/Data Center Configuration</summary>
+<details>
+<summary>Server/Data Center Configuration</summary>
 
 For Server/Data Center deployments, use these environment variables instead:
 
 ```json
-"env": {
-  "CONFLUENCE_URL": "https://confluence.your-company.com",
-  "CONFLUENCE_PERSONAL_TOKEN": "your_token",
-  "JIRA_URL": "https://jira.your-company.com",
-  "JIRA_PERSONAL_TOKEN": "your_token"
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "uvx",
+      "args": ["mcp-atlassian"],
+      "env": {
+        "CONFLUENCE_URL": "https://confluence.your-company.com",
+        "CONFLUENCE_PERSONAL_TOKEN": "your_token",
+        "JIRA_URL": "https://jira.your-company.com",
+        "JIRA_PERSONAL_TOKEN": "your_token"
+      }
+    }
+  }
 }
 ```
+</details>
 
 </details> <details> <summary>Single Service Configurations</summary>
 
