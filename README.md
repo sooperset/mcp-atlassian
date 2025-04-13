@@ -384,7 +384,6 @@ Then configure *only the URL* in Cursor's `~/.cursor/mcp.json`:
 | `confluence_create_page` | Create a new Confluence page |
 | `confluence_update_page` | Update an existing Confluence page |
 | `confluence_delete_page` | Delete an existing Confluence page |
-| `confluence_attach_content` | Attach content to a Confluence page |
 | `jira_get_issue` | Get details of a specific Jira issue |
 | `jira_search` | Search Jira issues using JQL |
 | `jira_get_project_issues` | Get all issues for a specific Jira project |

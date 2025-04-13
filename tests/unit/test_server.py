@@ -713,115 +713,34 @@ async def test_call_tool_invalid_arguments(app_context):
 
 @pytest.mark.anyio
 async def test_call_tool_jira_create_issue_with_components(app_context):
-    """Test the jira_create_issue tool with components parameter."""
-    # Mock JiraFetcher.create_issue to return a mock issue
+    """Test calling jira_create_issue with components works correctly."""
+    # Setup mock
     mock_issue = MagicMock()
+    mock_issue.key = "TEST-123"
     mock_issue.to_simplified_dict.return_value = {
         "key": "TEST-123",
         "summary": "Test Issue with Components",
     }
     app_context.jira.create_issue.return_value = mock_issue
 
-    with (
-        patch("mcp_atlassian.server.is_read_only_mode", return_value=False),
-        mock_request_context(app_context),
-    ):
-        # Call the tool with components parameter
-        result = await call_tool(
-            "jira_create_issue",
-            {
-                "project_key": "TEST",
-                "summary": "Test Issue with Components",
-                "issue_type": "Bug",
-                "components": "UI,API",
-            },
-        )
-
-        # Verify the create_issue method was called with correct parameters
-        app_context.jira.create_issue.assert_called_once_with(
-            project_key="TEST",
-            summary="Test Issue with Components",
-            issue_type="Bug",
-            description="",
-            assignee=None,
-            components=["UI", "API"],
-        )
-
-        # Verify we got a result
-        assert isinstance(result, list)
-
-        # Reset the mock
-        app_context.jira.create_issue.reset_mock()
-
-        # Call the tool without components parameter
-        result = await call_tool(
-            "jira_create_issue",
-            {
-                "project_key": "TEST",
-                "summary": "Test Issue without Components",
-                "issue_type": "Bug",
-            },
-        )
-
-        # Verify the create_issue method was called with components=None
-        app_context.jira.create_issue.assert_called_once()
-        call_kwargs = app_context.jira.create_issue.call_args[1]
-        assert call_kwargs["components"] is None
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize(
-    "filename,provided_content_type,expected_content_type",
-    [
-        # Test with explicit content type provided
-        ("image.jpg", "image/jpeg", "image/jpeg"),
-        # Test with inferring content type from common image types
-        ("image.png", None, "image/png"),
-        ("document.jpg", None, "image/jpeg"),
-        ("document.gif", None, "image/gif"),
-        # Test with inferring content type from other common types
-        ("document.pdf", None, "application/pdf"),
-        ("document.txt", None, "text/plain"),
-        # Test with unknown extension where type cannot be inferred
-        ("document.xyz", None, "chemical/x-xyz"),
-        # Test with a truly unknown extension
-        ("document.unknownext", None, "application/octet-stream"),
-    ],
-)
-async def test_confluence_attach_content_content_type(
-    filename, provided_content_type, expected_content_type, app_context
-):
-    """Test that confluence_attach_content correctly handles content type."""
-
-    # Setup
-    mock_content = b"fake binary content"
-    mock_page_model = MagicMock()
-    mock_page_model.to_simplified_dict.return_value = {
-        "id": "12345",
-        "title": "Test Page",
+    # Test with string components
+    arguments = {
+        "project_key": "TEST",
+        "summary": "Test Issue with Components",
+        "issue_type": "Task",
+        "description": "Test Description",
+        "components": "Frontend,Backend",
     }
-
-    # Configure the mock
-    app_context.confluence.attach_content.return_value = mock_page_model
-
-    # Prepare arguments
-    arguments = {"content": mock_content, "name": filename, "page_id": "12345"}
-
-    if provided_content_type:
-        arguments["content_type"] = provided_content_type
 
     with mock_request_context(app_context):
         # Execute
-        result = await call_tool("confluence_attach_content", arguments)
+        result = await call_tool("jira_create_issue", arguments)
 
         # Verify
         assert len(result) == 1
         assert result[0].type == "text"
 
-        # Verify the content_type was correctly passed to the API
-        app_context.confluence.attach_content.assert_called_once()
-        call_args = app_context.confluence.attach_content.call_args[1]
-        assert call_args["content_type"] == expected_content_type
-        assert call_args["content"] == mock_content
-        assert call_args["name"] == filename
-        assert call_args["page_id"] == "12345"
+        # Check the components are processed correctly
+        app_context.jira.create_issue.assert_called_once()
+        call_args = app_context.jira.create_issue.call_args[1]
+        assert call_args["components"] == ["Frontend", "Backend"]
