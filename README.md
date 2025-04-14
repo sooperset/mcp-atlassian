@@ -139,51 +139,6 @@ Here's how to set it up based on your installation method:
 }
 ```
 
-<details> <summary>Alternative: Using CLI Arguments</summary>
-
-You can also use command-line arguments instead of environment variables:
-
-```json
-{
-  "mcpServers": {
-    "mcp-atlassian": {
-      "command": "uvx",
-      "args": [
-        "mcp-atlassian",
-        "--confluence-url=https://your-company.atlassian.net/wiki",
-        "--confluence-username=your.email@company.com",
-        "--confluence-token=your_api_token",
-        "--jira-url=https://your-company.atlassian.net",
-        "--jira-username=your.email@company.com",
-        "--jira-token=your_api_token"
-      ]
-    }
-  }
-}
-```
-
-</details> <details> <summary>Using pip</summary>
-
-If you've installed mcp-atlassian with pip, use this configuration instead:
-
-```json
-{
-  "mcpServers": {
-    "mcp-atlassian": {
-      "command": "mcp-atlassian",
-      "env": {
-        "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
-        "CONFLUENCE_USERNAME": "your.email@company.com",
-        "CONFLUENCE_API_TOKEN": "your_api_token",
-        "JIRA_URL": "https://your-company.atlassian.net",
-        "JIRA_USERNAME": "your.email@company.com",
-        "JIRA_API_TOKEN": "your_api_token"
-      }
-    }
-  }
-}
-```
-
 <details>
 <summary>Server/Data Center Configuration</summary>
 
@@ -207,7 +162,7 @@ For Server/Data Center deployments, use these environment variables instead:
 ```
 </details>
 
-</details> <details> <summary>Single Service Configurations</summary>
+<details> <summary>Single Service Configurations</summary>
 
 For Confluence only:
 
@@ -245,6 +200,53 @@ For Jira only:
 }
 ```
 
+</details>
+
+<details> <summary>Alternative: Using CLI Arguments</summary>
+
+You can also use command-line arguments instead of environment variables:
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "uvx",
+      "args": [
+        "mcp-atlassian",
+        "--confluence-url=https://your-company.atlassian.net/wiki",
+        "--confluence-username=your.email@company.com",
+        "--confluence-token=your_api_token",
+        "--jira-url=https://your-company.atlassian.net",
+        "--jira-username=your.email@company.com",
+        "--jira-token=your_api_token"
+      ]
+    }
+  }
+}
+```
+</details>
+
+<details> <summary>Using pip</summary>
+
+If you've installed mcp-atlassian with pip, use this configuration instead:
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "mcp-atlassian",
+      "env": {
+        "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
+        "CONFLUENCE_USERNAME": "your.email@company.com",
+        "CONFLUENCE_API_TOKEN": "your_api_token",
+        "JIRA_URL": "https://your-company.atlassian.net",
+        "JIRA_USERNAME": "your.email@company.com",
+        "JIRA_API_TOKEN": "your_api_token"
+      }
+    }
+  }
+}
+```
 </details>
 
 ### SSE Transport Configuration
