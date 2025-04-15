@@ -1131,6 +1131,64 @@ async def list_tools() -> list[Tool]:
                         },
                     ),
                     Tool(
+                        name="jira_create_issue_link",
+                        description="Create a link between two Jira issues",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "link_type": {
+                                    "type": "string",
+                                    "description": "The type of link to create (e.g., 'Duplicate', 'Blocks', 'Relates to')",
+                                },
+                                "inward_issue_key": {
+                                    "type": "string",
+                                    "description": "The key of the inward issue (e.g., 'PROJ-123')",
+                                },
+                                "outward_issue_key": {
+                                    "type": "string",
+                                    "description": "The key of the outward issue (e.g., 'PROJ-456')",
+                                },
+                                "comment": {
+                                    "type": "string",
+                                    "description": "Optional comment to add to the link",
+                                },
+                                "comment_visibility": {
+                                    "type": "object",
+                                    "description": "Optional visibility settings for the comment",
+                                    "properties": {
+                                        "type": {
+                                            "type": "string",
+                                            "description": "Type of visibility restriction (e.g., 'group')",
+                                        },
+                                        "value": {
+                                            "type": "string",
+                                            "description": "Value for the visibility restriction (e.g., 'jira-software-users')",
+                                        },
+                                    },
+                                },
+                            },
+                            "required": [
+                                "link_type",
+                                "inward_issue_key",
+                                "outward_issue_key",
+                            ],
+                        },
+                    ),
+                    Tool(
+                        name="jira_remove_issue_link",
+                        description="Remove a link between two Jira issues",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "link_id": {
+                                    "type": "string",
+                                    "description": "The ID of the link to remove",
+                                },
+                            },
+                            "required": ["link_id"],
+                        },
+                    ),
+                    Tool(
                         name="jira_transition_issue",
                         description="Transition a Jira issue to a new status",
                         inputSchema={
@@ -2270,6 +2328,116 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 else:
                     error_msg = f"Error transitioning issue {issue_key} with transition ID {transition_id}: {error_msg}"
 
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "jira_create_issue_link":
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            # Write operation - check read-only mode
+            if read_only:
+                return [
+                    TextContent(
+                        "Operation 'jira_create_issue_link' is not available in read-only mode."
+                    )
+                ]
+
+            # Extract arguments
+            link_type = arguments.get("link_type")
+            inward_issue_key = arguments.get("inward_issue_key")
+            outward_issue_key = arguments.get("outward_issue_key")
+            comment_text = arguments.get("comment")
+            comment_visibility = arguments.get("comment_visibility")
+
+            # Validate required parameters
+            if not link_type:
+                raise ValueError("link_type is required")
+            if not inward_issue_key:
+                raise ValueError("inward_issue_key is required")
+            if not outward_issue_key:
+                raise ValueError("outward_issue_key is required")
+
+            # Prepare the data structure for creating the issue link
+            link_data = {
+                "type": {"name": link_type},
+                "inwardIssue": {"key": inward_issue_key},
+                "outwardIssue": {"key": outward_issue_key},
+            }
+
+            # Add comment if provided
+            if comment_text:
+                comment_data = {"body": comment_text}
+
+                # Add visibility if provided
+                if comment_visibility and isinstance(comment_visibility, dict):
+                    visibility_type = comment_visibility.get("type")
+                    visibility_value = comment_visibility.get("value")
+
+                    if visibility_type and visibility_value:
+                        comment_data["visibility"] = {
+                            "type": visibility_type,
+                            "value": visibility_value,
+                        }
+
+                link_data["comment"] = comment_data
+
+            try:
+                # Create the issue link
+                result = ctx.jira.create_issue_link(link_data)
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(result, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error creating issue link: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "jira_remove_issue_link":
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            # Write operation - check read-only mode
+            if read_only:
+                return [
+                    TextContent(
+                        "Operation 'jira_remove_issue_link' is not available in read-only mode."
+                    )
+                ]
+
+            # Extract arguments
+            link_id = arguments.get("link_id")
+
+            # Validate required parameters
+            if not link_id:
+                raise ValueError("link_id is required")
+
+            try:
+                # Remove the issue link
+                result = ctx.jira.remove_issue_link(link_id)
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(result, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error removing issue link: {str(e)}"
                 logger.error(error_msg)
                 return [
                     TextContent(
