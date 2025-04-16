@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Fixed batch issue creation payload structure in `batch_create_issues` to correctly pass list directly to Jira API without double-wrapping in `issueUpdates`.
+
 ## [0.7.0] - 2025-04-17
 
 ### Removed (Breaking Change)
