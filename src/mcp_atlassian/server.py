@@ -337,10 +337,12 @@ async def list_tools() -> list[Tool]:
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "Search query - can be either a simple text (e.g. 'project documentation') or a CQL query string. Examples of CQL:\n"
+                                "description": "Search query - can be either a simple text (e.g. 'project documentation') or a CQL query string. Simple queries use 'siteSearch' by default, to mimic the WebUI search, with an automatic fallback to 'text' search if not supported. Examples of CQL:\n"
                                 "- Basic search: 'type=page AND space=DEV'\n"
                                 "- Personal space search: 'space=\"~username\"' (note: personal space keys starting with ~ must be quoted)\n"
                                 "- Search by title: 'title~\"Meeting Notes\"'\n"
+                                "- Use siteSearch: 'siteSearch ~ \"important concept\"'\n"
+                                "- Use text search: 'text ~ \"important concept\"'\n"
                                 "- Recent content: 'created >= \"2023-01-01\"'\n"
                                 "- Content with specific label: 'label=documentation'\n"
                                 "- Recently modified content: 'lastModified > startOfMonth(\"-1M\")'\n"
@@ -1237,14 +1239,34 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 x in query
                 for x in ["=", "~", ">", "<", " AND ", " OR ", "currentUser()"]
             ):
-                # Convert simple search term to CQL text search
-                # This will search in all content (title, body, etc.)
-                query = f'text ~ "{query}"'
-                logger.info(f"Converting simple search term to CQL: {query}")
-
-            pages = ctx.confluence.search(
-                query, limit=limit, spaces_filter=spaces_filter
-            )
+                # Convert simple search term to CQL siteSearch (previously it was a 'text' search)
+                # This will use the same search mechanism as the WebUI and give much more relevant results
+                original_query = query  # Store the original query for fallback
+                try:
+                    # Try siteSearch first - it's available in newer versions and provides better results
+                    query = f'siteSearch ~ "{original_query}"'
+                    logger.info(
+                        f"Converting simple search term to CQL using siteSearch: {query}"
+                    )
+                    pages = ctx.confluence.search(
+                        query, limit=limit, spaces_filter=spaces_filter
+                    )
+                except Exception as e:
+                    # If siteSearch fails (possibly not supported in this Confluence version),
+                    # fall back to text search which is supported in all versions
+                    logger.warning(
+                        f"siteSearch failed, falling back to text search: {str(e)}"
+                    )
+                    query = f'text ~ "{original_query}"'
+                    logger.info(f"Falling back to text search with CQL: {query}")
+                    pages = ctx.confluence.search(
+                        query, limit=limit, spaces_filter=spaces_filter
+                    )
+            else:
+                # Using direct CQL query as provided
+                pages = ctx.confluence.search(
+                    query, limit=limit, spaces_filter=spaces_filter
+                )
 
             # Format results using the to_simplified_dict method
             search_results = [page.to_simplified_dict() for page in pages]
