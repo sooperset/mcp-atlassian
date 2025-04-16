@@ -664,6 +664,67 @@ async def test_call_tool_success(tool_name, arguments, mock_setup, app_context):
 
 
 @pytest.mark.anyio
+async def test_confluence_search_simple_term_uses_sitesearch(app_context):
+    """Test that a simple search term is converted to a siteSearch CQL query."""
+    # Setup
+    mock_confluence = app_context.confluence
+    mock_confluence.search.return_value = []
+
+    with mock_request_context(app_context):
+        # Execute
+        await call_tool("confluence_search", {"query": "simple term"})
+
+        # Verify
+        mock_confluence.search.assert_called_once()
+        args, kwargs = mock_confluence.search.call_args
+        assert args[0] == 'siteSearch ~ "simple term"'
+
+
+@pytest.mark.anyio
+async def test_confluence_search_fallback_to_text_search(app_context):
+    """Test fallback to text search when siteSearch fails."""
+    # Setup
+    mock_confluence = app_context.confluence
+
+    # Make the first call to search fail
+    mock_confluence.search.side_effect = [Exception("siteSearch not available"), []]
+
+    with mock_request_context(app_context):
+        # Execute
+        await call_tool("confluence_search", {"query": "simple term"})
+
+        # Verify
+        assert mock_confluence.search.call_count == 2
+        first_call = mock_confluence.search.call_args_list[0]
+        second_call = mock_confluence.search.call_args_list[1]
+
+        # First attempt should use siteSearch
+        assert first_call[0][0] == 'siteSearch ~ "simple term"'
+
+        # Second attempt (fallback) should use text search
+        assert second_call[0][0] == 'text ~ "simple term"'
+
+
+@pytest.mark.anyio
+async def test_confluence_search_direct_cql_not_modified(app_context):
+    """Test that a CQL query is not modified."""
+    # Setup
+    mock_confluence = app_context.confluence
+    mock_confluence.search.return_value = []
+
+    cql_query = 'space = DEV AND title ~ "Meeting"'
+
+    with mock_request_context(app_context):
+        # Execute
+        await call_tool("confluence_search", {"query": cql_query})
+
+        # Verify
+        mock_confluence.search.assert_called_once()
+        args, kwargs = mock_confluence.search.call_args
+        assert args[0] == cql_query
+
+
+@pytest.mark.anyio
 async def test_call_tool_read_only_mode(app_context):
     """Test the call_tool handler in read-only mode."""
     # Create a custom environment with read-only mode enabled
