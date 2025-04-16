@@ -123,9 +123,13 @@ class UsersMixin(JiraClient):
         """
         try:
             # Try to find user
-            response = self.jira.user_find_by_user_string(
-                query=username, start=0, limit=1
-            )
+            params = {}
+            if self.config.is_cloud:
+                params["query"] = username
+            else:
+                params["username"] = username  # Use 'username' for Server/DC
+
+            response = self.jira.user_find_by_user_string(**params, start=0, limit=1)
             if not response:
                 return None
 

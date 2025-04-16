@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "\U0001F4AC Ask a Question or Discuss"
+    url: https://github.com/sooperset/mcp-atlassian/discussions # GitHub Discussions 링크 (활성화되어 있다면)
+    about: Please ask and answer questions here, or start a general discussion.
+  - name: "\U0001F4DA Read the Documentation"
+    url: https://github.com/sooperset/mcp-atlassian/blob/main/README.md
+    about: Check the README for setup and usage instructions.

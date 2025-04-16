@@ -1,5 +1,6 @@
 import json
 import logging
+import mimetypes
 import os
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -558,6 +559,10 @@ async def list_tools() -> list[Tool]:
                                     "type": "string",
                                     "description": "The ID of the page to attach the content to",
                                 },
+                                "content_type": {
+                                    "type": "string",
+                                    "description": "Optional: The MIME type of the content (e.g., 'image/png', 'application/pdf'). If omitted, it will be guessed from the filename.",
+                                },
                             },
                             "required": ["content", "name", "page_id"],
                         },
@@ -642,7 +647,7 @@ async def list_tools() -> list[Tool]:
                                     "Use '*all' for all fields, or specify individual "
                                     "fields like 'summary,status,assignee,priority'"
                                 ),
-                                "default": "*all",
+                                "default": "summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
                             },
                             "limit": {
                                 "type": "number",
@@ -974,7 +979,7 @@ async def list_tools() -> list[Tool]:
                                     ),
                                 },
                                 "assignee": {
-                                    "type": ["string", "null"],
+                                    "type": "string",
                                     "description": "Assignee of the ticket (accountID, full name or e-mail)",
                                     "default": None,
                                 },
@@ -1003,6 +1008,37 @@ async def list_tools() -> list[Tool]:
                                 },
                             },
                             "required": ["project_key", "summary", "issue_type"],
+                        },
+                    ),
+                    Tool(
+                        name="jira_batch_create_issues",
+                        description="Create multiple Jira issues in a batch",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "issues": {
+                                    "type": "string",
+                                    "description": (
+                                        "JSON array of issue objects. Each object should contain:\n"
+                                        "- project_key (required): The project key (e.g., 'PROJ')\n"
+                                        "- summary (required): Issue summary/title\n"
+                                        "- issue_type (required): Type of issue (e.g., 'Task', 'Bug')\n"
+                                        "- description (optional): Issue description\n"
+                                        "- assignee (optional): Assignee username or email\n"
+                                        "- components (optional): Array of component names\n"
+                                        "Example: [\n"
+                                        '  {"project_key": "PROJ", "summary": "Issue 1", "issue_type": "Task"},\n'
+                                        '  {"project_key": "PROJ", "summary": "Issue 2", "issue_type": "Bug", "components": ["Frontend"]}\n'
+                                        "]"
+                                    ),
+                                },
+                                "validate_only": {
+                                    "type": "boolean",
+                                    "description": "If true, only validates the issues without creating them",
+                                    "default": False,
+                                },
+                            },
+                            "required": ["issues"],
                         },
                     ),
                     Tool(
@@ -1120,6 +1156,64 @@ async def list_tools() -> list[Tool]:
                                 },
                             },
                             "required": ["issue_key", "epic_key"],
+                        },
+                    ),
+                    Tool(
+                        name="jira_create_issue_link",
+                        description="Create a link between two Jira issues",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "link_type": {
+                                    "type": "string",
+                                    "description": "The type of link to create (e.g., 'Duplicate', 'Blocks', 'Relates to')",
+                                },
+                                "inward_issue_key": {
+                                    "type": "string",
+                                    "description": "The key of the inward issue (e.g., 'PROJ-123')",
+                                },
+                                "outward_issue_key": {
+                                    "type": "string",
+                                    "description": "The key of the outward issue (e.g., 'PROJ-456')",
+                                },
+                                "comment": {
+                                    "type": "string",
+                                    "description": "Optional comment to add to the link",
+                                },
+                                "comment_visibility": {
+                                    "type": "object",
+                                    "description": "Optional visibility settings for the comment",
+                                    "properties": {
+                                        "type": {
+                                            "type": "string",
+                                            "description": "Type of visibility restriction (e.g., 'group')",
+                                        },
+                                        "value": {
+                                            "type": "string",
+                                            "description": "Value for the visibility restriction (e.g., 'jira-software-users')",
+                                        },
+                                    },
+                                },
+                            },
+                            "required": [
+                                "link_type",
+                                "inward_issue_key",
+                                "outward_issue_key",
+                            ],
+                        },
+                    ),
+                    Tool(
+                        name="jira_remove_issue_link",
+                        description="Remove a link between two Jira issues",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "link_id": {
+                                    "type": "string",
+                                    "description": "The ID of the link to remove",
+                                },
+                            },
+                            "required": ["link_id"],
                         },
                     ),
                     Tool(
@@ -1487,6 +1581,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             content = arguments.get("content")
             name = arguments.get("name")
             page_id = arguments.get("page_id")
+            content_type_arg = arguments.get("content_type")
 
             if not content or not name or not page_id:
                 return [
@@ -1497,8 +1592,33 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 ]
 
             try:
+                # Determine the content type
+                determined_content_type = None
+                if content_type_arg:
+                    determined_content_type = content_type_arg
+                    logger.info(
+                        f"Using provided content type: {determined_content_type}"
+                    )
+                else:
+                    # Guess type from filename if not provided
+                    guessed_type, _ = mimetypes.guess_type(name)
+                    if guessed_type:
+                        determined_content_type = guessed_type
+                        logger.info(
+                            f"Inferred content type '{determined_content_type}' from filename '{name}'"
+                        )
+                    else:
+                        # Fallback if guessing fails
+                        determined_content_type = "application/octet-stream"
+                        logger.warning(
+                            f"Could not guess MIME type for filename '{name}'. Defaulting to '{determined_content_type}'."
+                        )
+
                 page = ctx.confluence.attach_content(
-                    content=content, name=name, page_id=page_id
+                    content=content,
+                    name=name,
+                    page_id=page_id,
+                    content_type=determined_content_type,
                 )
                 page_data = page.to_simplified_dict()
                 return [
@@ -1950,6 +2070,47 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
+        elif name == "jira_batch_create_issues" and ctx and ctx.jira:
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            # Write operation - check read-only mode
+            if read_only:
+                return [
+                    TextContent(
+                        "Operation 'jira_batch_create_issues' is not available in read-only mode."
+                    )
+                ]
+
+            # Extract required arguments
+            issues = arguments.get("issues")
+            validate_only = arguments.get("validate_only", False)
+
+            # Parse issues from JSON string to list of dictionaries
+            if issues and isinstance(issues, str):
+                try:
+                    issues = json.loads(issues)
+                except json.JSONDecodeError:
+                    raise ValueError("Invalid JSON in issues")
+
+            # Create issues in batch
+            created_issues = ctx.jira.batch_create_issues(
+                issues, validate_only=validate_only
+            )
+
+            # Format the response
+            result = {
+                "message": "Issues created successfully",
+                "issues": [issue.to_simplified_dict() for issue in created_issues],
+            }
+
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(result, indent=2, ensure_ascii=False),
+                )
+            ]
+
         elif name == "jira_update_issue":
             if not ctx or not ctx.jira:
                 raise ValueError("Jira is not configured.")
@@ -2235,6 +2396,116 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 else:
                     error_msg = f"Error transitioning issue {issue_key} with transition ID {transition_id}: {error_msg}"
 
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "jira_create_issue_link":
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            # Write operation - check read-only mode
+            if read_only:
+                return [
+                    TextContent(
+                        "Operation 'jira_create_issue_link' is not available in read-only mode."
+                    )
+                ]
+
+            # Extract arguments
+            link_type = arguments.get("link_type")
+            inward_issue_key = arguments.get("inward_issue_key")
+            outward_issue_key = arguments.get("outward_issue_key")
+            comment_text = arguments.get("comment")
+            comment_visibility = arguments.get("comment_visibility")
+
+            # Validate required parameters
+            if not link_type:
+                raise ValueError("link_type is required")
+            if not inward_issue_key:
+                raise ValueError("inward_issue_key is required")
+            if not outward_issue_key:
+                raise ValueError("outward_issue_key is required")
+
+            # Prepare the data structure for creating the issue link
+            link_data = {
+                "type": {"name": link_type},
+                "inwardIssue": {"key": inward_issue_key},
+                "outwardIssue": {"key": outward_issue_key},
+            }
+
+            # Add comment if provided
+            if comment_text:
+                comment_data = {"body": comment_text}
+
+                # Add visibility if provided
+                if comment_visibility and isinstance(comment_visibility, dict):
+                    visibility_type = comment_visibility.get("type")
+                    visibility_value = comment_visibility.get("value")
+
+                    if visibility_type and visibility_value:
+                        comment_data["visibility"] = {
+                            "type": visibility_type,
+                            "value": visibility_value,
+                        }
+
+                link_data["comment"] = comment_data
+
+            try:
+                # Create the issue link
+                result = ctx.jira.create_issue_link(link_data)
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(result, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error creating issue link: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "jira_remove_issue_link":
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            # Write operation - check read-only mode
+            if read_only:
+                return [
+                    TextContent(
+                        "Operation 'jira_remove_issue_link' is not available in read-only mode."
+                    )
+                ]
+
+            # Extract arguments
+            link_id = arguments.get("link_id")
+
+            # Validate required parameters
+            if not link_id:
+                raise ValueError("link_id is required")
+
+            try:
+                # Remove the issue link
+                result = ctx.jira.remove_issue_link(link_id)
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(result, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error removing issue link: {str(e)}"
                 logger.error(error_msg)
                 return [
                     TextContent(

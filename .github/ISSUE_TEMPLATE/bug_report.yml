@@ -1,0 +1,122 @@
+name: "\U0001F41B Bug Report"
+description: Create a report to help us improve mcp-atlassian
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report! Please provide as much detail as possible.
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Prerequisites
+      description: Please confirm the following before submitting the issue.
+      options:
+        - label: I have searched the [existing issues](https://github.com/sooperset/mcp-atlassian/issues) to make sure this bug has not already been reported.
+          required: true
+        - label: I have checked the [README](https://github.com/sooperset/mcp-atlassian/blob/main/README.md) for relevant information.
+          required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: "When I call the `jira_create_issue` tool with..., it fails with..."
+    validations:
+      required: true
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: Provide detailed steps to reproduce the behavior.
+      placeholder: |
+        1. Start the server with command `...`
+        2. Send a `list_tools` request using `...`
+        3. Call the tool `xyz` with arguments `...`
+        4. See error `...`
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected Behavior
+      description: A clear and concise description of what you expected to happen.
+      placeholder: "I expected the Jira issue to be created successfully and return its key."
+    validations:
+      required: true
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual Behavior
+      description: What actually happened? Include full error messages, logs (from the server and the client if possible), or screenshots.
+      placeholder: "The server returned an error message: '...' / The tool call returned an empty list."
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: mcp-atlassian Version
+      description: Which version of `mcp-atlassian` are you using? (Check `pip show mcp-atlassian` or `pyproject.toml`)
+      placeholder: "e.g., 0.6.5"
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation Method
+      description: How did you install `mcp-atlassian`?
+      options:
+        - From PyPI (pip install mcp-atlassian / uv add mcp-atlassian)
+        - From source (git clone)
+        - Docker
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      description: What operating system are you using?
+      options:
+        - Windows
+        - macOS
+        - Linux (Specify distribution below if relevant)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: python-version
+    attributes:
+      label: Python Version
+      description: What version of Python are you using? (`python --version`)
+      placeholder: "e.g., 3.11.4"
+    validations:
+      required: true
+  - type: dropdown
+    id: atlassian-instance
+    attributes:
+      label: Atlassian Instance Type
+      description: Are you connecting to Atlassian Cloud or Server/Data Center?
+      multiple: true
+      options:
+        - Jira Cloud
+        - Jira Server / Data Center
+        - Confluence Cloud
+        - Confluence Server / Data Center
+    validations:
+      required: true
+  - type: input
+    id: client-app
+    attributes:
+      label: Client Application
+      description: What application/library are you using to interact with the MCP server? (This is important!)
+      placeholder: "e.g., Cursor, LangChain, custom script, Inspector Tool"
+    validations:
+      required: true
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Add any other context about the problem here (e.g., environment variables, network configuration like proxies, specific Jira/Confluence setup).
