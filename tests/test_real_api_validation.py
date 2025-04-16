@@ -17,6 +17,7 @@ Required environment variables:
     - CONFLUENCE_TEST_PAGE_ID, JIRA_TEST_PROJECT_KEY, CONFLUENCE_TEST_SPACE_KEY, CONFLUENCE_TEST_SPACE_KEY
 """
 
+import base64
 import datetime
 import json
 import os
@@ -1277,3 +1278,67 @@ class TestRealToolValidation:
             pytest.skip(
                 f"Epic {test_epic_key} has less than 2 issues, cannot test pagination."
             )
+
+
+@pytest.mark.anyio
+async def test_confluence_attach_image(
+    confluence_client: ConfluenceFetcher,
+    test_space_key: str,
+    resource_tracker: ResourceTracker,
+    cleanup_resources: Callable[[], None],
+) -> None:
+    """Test attaching an image to a Confluence page with content type inference."""
+    # First create a test page to attach content to
+    page_title = f"Test Page for Attachment {uuid.uuid4()}"
+    test_content = "# Test Content\n\nThis page is for testing file attachments."
+
+    # Create the page
+    page = confluence_client.create_page(
+        space_key=test_space_key,
+        title=page_title,
+        body=test_content,
+        is_markdown=True,
+    )
+
+    page_id = page.id
+    resource_tracker.add_confluence_page(page_id)
+
+    try:
+        # Create sample PNG image content (1x1 transparent pixel)
+        # This is a minimal valid PNG file
+        png_data = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+
+        # Create a unique filename
+        filename = f"test_image_{uuid.uuid4()}.png"
+
+        # Create arguments for the tool call without specifying content_type (test inference)
+        arguments = {
+            "page_id": page_id,
+            "content_base64": base64.b64encode(png_data).decode("utf-8"),
+            "name": filename,
+        }
+
+        # Call the tool
+        result = await call_tool("confluence_attach_content", arguments)
+
+        # Verify the tool call was successful
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert isinstance(result[0], TextContent)
+
+        # Get the attachment details to verify the content type
+        attachments = confluence_client.confluence.get_attachments_from_content(
+            page_id=page_id, filename=filename
+        )
+
+        # Verify we got results
+        assert attachments.get("results")
+        assert len(attachments["results"]) > 0
+
+        # Verify the content type was correctly inferred
+        attachment_metadata = attachments["results"][0]
+        assert attachment_metadata.get("mediaType") == "image/png"
+
+    finally:
+        # Clean up will be called by the fixture
+        cleanup_resources()

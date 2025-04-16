@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+### Added
+- Added `batch_create_issues` method to create multiple Jira issues in a single operation
+  - Supports validation-only mode for checking issue data before creation
+  - Handles partial failures gracefully, continuing with remaining issues
+  - Provides detailed error logging for failed issue creations
+- Registered `jira_batch_create_issues` as a tool in server.py for batch issue creation
+  - Accepts JSON array of issue objects with required and optional fields
+  - Supports validation-only mode through tool parameter
+  - Returns detailed creation results for each issue
+
+## [0.6.5] - 2025-04-13
+
+### Added
+- Added content type inference for Confluence attachments (#252, #242)
+
+### Changed
+- Refactored Confluence models into modular directory structure (#251)
+- Refactored Jira pydantic models into dedicated package for improved organization (#249)
+- Added support for missing standard Jira fields in JiraIssue model (#250, #230)
+
+### Fixed
+- Fixed Jira Data Center/Server assignee lookup during issue creation (#248)
+- Fixed handling of fixVersions in additional_fields (#247, #241)
+
+## [0.6.4] - 2025-04-09
+
+### Fixed
+- Improved type restriction for `JiraIssue.requested_fields` and corrected `jira_search` argument description (#227, #226)
+- Resolved Windsurf parsing error (#228)
+
 ## [0.6.3] - 2025-04-07
 
 ### Added

@@ -1,0 +1,42 @@
+name: "\U0001F680 Feature Request"
+description: Suggest an idea or enhancement for mcp-atlassian
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an idea! Please describe your proposal clearly.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Is your feature request related to a problem? Please describe.
+      description: A clear and concise description of what the problem is.
+      placeholder: "e.g., I'm always frustrated when [...] because [...]"
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Describe the solution you'd like
+      description: A clear and concise description of what you want to happen. How should the feature work?
+      placeholder: "Add a new tool `confluence_move_page` that takes `page_id` and `target_parent_id` arguments..."
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Describe alternatives you've considered
+      description: A clear and concise description of any alternative solutions or features you've considered.
+      placeholder: "I considered modifying the `confluence_update_page` tool, but..."
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use Case
+      description: How would this feature benefit users? Who is the target audience?
+      placeholder: "This would allow AI agents to automatically organize documentation..."
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Add any other context, mockups, or links about the feature request here.
