@@ -295,7 +295,6 @@ uvx mcp-atlassian --transport sse --port 9000 \
 - `confluence_get_page`: Get content of a specific page
 - `confluence_create_page`: Create a new page
 - `confluence_update_page`: Update an existing page
-- `confluence_attach_content`: Attach content to a page
 
 #### Jira Tools
 
@@ -318,7 +317,7 @@ uvx mcp-atlassian --transport sse --port 9000 \
 |`confluence_create_page`|`jira_batch_create_issues`|
 |`confluence_update_page`|`jira_update_issue`|
 |`confluence_delete_page`|`jira_delete_issue`|
-|`confluence_attach_content`|`jira_get_transitions`|
+||`jira_get_transitions`|
 ||`jira_transition_issue`|
 ||`jira_add_comment`|
 ||`jira_add_worklog`|
@@ -329,6 +328,8 @@ uvx mcp-atlassian --transport sse --port 9000 \
 ||`jira_get_board_issues`|
 ||`jira_get_sprints_from_board`|
 ||`jira_get_sprint_issues`|
+||`jira_create_issue_link`|
+||`jira_remove_issue_link`|
 
 </details>
 

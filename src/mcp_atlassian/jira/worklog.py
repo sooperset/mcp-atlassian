@@ -160,7 +160,7 @@ class WorklogMixin(JiraClient):
             Raw worklog data from the API
         """
         try:
-            return self.jira.worklog(issue_key)
+            return self.jira.worklog(issue_key)  # type: ignore[attr-defined]
         except Exception as e:
             logger.warning(f"Error getting worklog for {issue_key}: {e}")
             return {"worklogs": []}

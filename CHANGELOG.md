@@ -2,15 +2,31 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2025-04-17
+
+### Removed (Breaking Change)
+- Removed `confluence_attach_content` tool due to usability and technical limitations, particularly with image uploads (#255, #242)
+
 ### Added
-- Added `batch_create_issues` method to create multiple Jira issues in a single operation
-  - Supports validation-only mode for checking issue data before creation
-  - Handles partial failures gracefully, continuing with remaining issues
-  - Provides detailed error logging for failed issue creations
-- Registered `jira_batch_create_issues` as a tool in server.py for batch issue creation
-  - Accepts JSON array of issue objects with required and optional fields
-  - Supports validation-only mode through tool parameter
-  - Returns detailed creation results for each issue
+- Added Jira issue linking capabilities:
+    - New tool `jira_create_issue_link` to create links between issues.
+    - New tool `jira_remove_issue_link` to remove existing issue links.
+    - Implemented underlying `LinksMixin` for link operations (#266).
+- Added `jira_batch_create_issues` tool for creating multiple Jira issues efficiently via Jira's bulk API (#244).
+    - Implemented underlying `batch_create_issues` method in `jira.IssuesMixin`.
+- Added standard GitHub templates for Issues (Bug Report, Feature Request) and Pull Requests (#263, #265).
+
+### Changed
+- Enhanced `confluence_search` tool to use `siteSearch` by default for simple terms (improving relevance) with automatic fallback to `text` search for compatibility (#270).
+- Added pagination support (via `startAt` parameter) to the `jira_get_epic_issues` tool (#271, #268).
+
+### Docs
+- Significantly improved README clarity, structure, examples, and configuration instructions (#256).
+- Fixed minor typo in documentation (#258).
+
+### Fixed
+- (Internal fix related to pagination parameter handling in `get_epic_issues` logic, exposed via `jira_get_epic_issues` tool change) (#271, #268).
+- Fixed type ignore comments to resolve CI mypy errors (#271).
 
 ## [0.6.5] - 2025-04-13
 
