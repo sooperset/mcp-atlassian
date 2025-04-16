@@ -318,7 +318,7 @@ uvx mcp-atlassian --transport sse --port 9000 \
 |`confluence_create_page`|`jira_batch_create_issues`|
 |`confluence_update_page`|`jira_update_issue`|
 |`confluence_delete_page`|`jira_delete_issue`|
-|`confluence_attach_content`|`jira_get_transitions`|
+||`jira_get_transitions`|
 ||`jira_transition_issue`|
 ||`jira_add_comment`|
 ||`jira_add_worklog`|
