@@ -154,7 +154,7 @@ class EpicsMixin(UsersMixin):
                 try:
                     comments_data = self.jira.comments(
                         issue_key, limit=comment_limit_int
-                    )
+                    )  # type: ignore[attr-defined]
                     comments = comments_data.get("comments", [])
                 except Exception:
                     # Failed to get comments - continue without them
