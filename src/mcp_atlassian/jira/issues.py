@@ -884,7 +884,7 @@ class IssuesMixin(UsersMixin):
 
         # First update any fields if needed
         if fields:
-            self.jira.update_issue(issue_key=issue_key, fields=fields)
+            self.jira.update_issue(issue_key=issue_key, fields=fields)  # type: ignore[call-arg]
 
         # If no status change is requested, return the issue
         if not status:
@@ -1194,7 +1194,7 @@ class IssuesMixin(UsersMixin):
             Exception: If there is an error getting transitions
         """
         try:
-            transitions = self.jira.issue_get_transitions(issue_key)
+            transitions = self.jira.issue_get_transitions(issue_key)  # type: ignore[attr-defined]
             if isinstance(transitions, dict) and "transitions" in transitions:
                 return transitions["transitions"]
             return transitions
