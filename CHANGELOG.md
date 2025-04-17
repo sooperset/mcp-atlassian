@@ -2,8 +2,12 @@
 
 ## [Unreleased]
 
+## [0.7.1] - 2025-04-18
+
 ### Fixed
-- Fixed batch issue creation payload structure in `batch_create_issues` to correctly pass list directly to Jira API without double-wrapping in `issueUpdates`.
+- Fixed batch issue creation payload structure in `batch_create_issues` to correctly pass list directly to Jira API without double-wrapping in `issueUpdates` (#273).
+- Fixed `jira_get_issue` tool to include comments when comment_limit>0 by correcting field name check from "comments" to "comment" in JiraIssue.to_simplified_dict() (#281, #275).
+- Fixed AttributeError in `jira_get_epic_issues` tool when processing results (#280, #277).
 
 ## [0.7.0] - 2025-04-17
 
