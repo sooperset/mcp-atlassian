@@ -922,7 +922,7 @@ async def list_tools() -> list[Tool]:
                                 "type": "string",
                                 "description": "The id of sprint (e.g., '10001')",
                             },
-                            "name": {
+                            "sprint_name": {
                                 "type": "string",
                                 "description": "Optional: New name for the sprint",
                             },
@@ -937,6 +937,10 @@ async def list_tools() -> list[Tool]:
                             "end_date": {
                                 "type": "string",
                                 "description": "Optional: New end date for the sprint",
+                            },
+                            "goal": {
+                                "type": "string",
+                                "description": "Optional: New goal for the sprint",
                             },
                         },
                         "required": ["sprint_id"],
@@ -1875,6 +1879,19 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 state=state,
             )
 
+            if sprint is None:
+                # Handle the error case, e.g., return an error message
+                error_payload = {
+                    "error": f"Failed to update sprint {sprint_id}. Check logs for details."
+                }
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(error_payload, indent=2, ensure_ascii=False),
+                    )
+                ]
+
+            # If sprint is not None, proceed as before
             return [
                 TextContent(
                     type="text",

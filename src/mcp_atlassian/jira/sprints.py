@@ -83,10 +83,11 @@ class SprintsMixin(JiraClient):
 
         Args:
             sprint_id: Sprint ID
-            name: New name for the sprint (optional)
+            sprint_name: New name for the sprint (optional)
             state: New state for the sprint (future|active|closed - optional)
             start_date: New start date for the sprint (optional)
             end_date: New end date for the sprint (optional)
+            goal: New goal for the sprint (optional)
 
         Returns:
             Updated sprint
