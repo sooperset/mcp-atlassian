@@ -65,7 +65,11 @@ Install uv first:
 **macOS/Linux:**
 
 ```bash
+# Using the official installer
 curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Alternatively, on macOS you can use Homebrew
+brew install uv
 ```
 
 **Windows:**
@@ -87,6 +91,18 @@ pip install mcp-atlassian
 ```bash
 npx -y @smithery/cli install mcp-atlassian --client claude
 ```
+
+**Option 4: Using Docker**
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/sooperset/mcp-atlassian.git
+   cd mcp-atlassian
+   ```
+2. Build the Docker image:
+   ```bash
+   docker build -t mcp/atlassian .
+   ```
 
 ### 3. Key Configuration Options
 
@@ -247,6 +263,48 @@ If you've installed mcp-atlassian with pip, use this configuration instead:
   }
 }
 ```
+</details>
+
+<details> <summary>Using Docker</summary>
+
+If you've built the Docker image, use this configuration:
+
+**Method 1: Using Environment Variables (Recommended)**
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "mcp/atlassian"],
+      "env": {
+        "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
+        "CONFLUENCE_USERNAME": "your.email@company.com",
+        "CONFLUENCE_API_TOKEN": "your_api_token",
+        "JIRA_URL": "https://your-company.atlassian.net",
+        "JIRA_USERNAME": "your.email@company.com",
+        "JIRA_API_TOKEN": "your_api_token"
+      }
+    }
+  }
+}
+```
+
+**Method 2: Using an Environment File**
+
+Create a `.env` file with your variables, then use:
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "--env-file", "/path/to/your/.env", "mcp/atlassian"]
+    }
+  }
+}
+```
+*(Remember to update `/path/to/your/.env` with the correct path to your environment file)*
 </details>
 
 ### SSE Transport Configuration
