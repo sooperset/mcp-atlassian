@@ -1277,3 +1277,31 @@ class TestRealToolValidation:
             pytest.skip(
                 f"Epic {test_epic_key} has less than 2 issues, cannot test pagination."
             )
+
+    @pytest.mark.anyio
+    async def test_jira_get_issue_includes_comments(
+        self, use_real_jira_data: bool, test_issue_key: str
+    ) -> None:
+        """Test that jira_get_issue includes comments when comment_limit > 0."""
+        if not use_real_jira_data:
+            pytest.skip("Real Jira data testing is disabled")
+
+        # Call with comment_limit=10 and without specifying fields
+        # This should use default fields and include comments
+        result = await call_tool(
+            "jira_get_issue",
+            {"issue_key": test_issue_key, "comment_limit": 10},
+        )
+
+        assert isinstance(result, dict)
+        assert "comments" in result
+        assert isinstance(result["comments"], list)
+
+        # Test with fields="summary" explicitly - comments should not be present
+        result_without_comments = await call_tool(
+            "jira_get_issue",
+            {"issue_key": test_issue_key, "comment_limit": 10, "fields": "summary"},
+        )
+
+        assert isinstance(result_without_comments, dict)
+        assert "comments" not in result_without_comments
