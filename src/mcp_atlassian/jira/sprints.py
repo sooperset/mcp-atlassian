@@ -99,6 +99,7 @@ class SprintsMixin(JiraClient):
                 end_date=end_date,
                 goal=goal,
             )
+
             logger.info(f"Sprint created: {sprint}")
 
             return JiraSprint.from_api_response(sprint)
