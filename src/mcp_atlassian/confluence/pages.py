@@ -316,6 +316,7 @@ class PagesMixin(ConfluenceClient):
         is_minor_edit: bool = False,
         version_comment: str = "",
         is_markdown: bool = True,
+        parent_id: str | None = None,
     ) -> ConfluencePage:
         """
         Update an existing page in Confluence.
@@ -327,6 +328,7 @@ class PagesMixin(ConfluenceClient):
             is_minor_edit: Whether this is a minor edit (keyword-only)
             version_comment: Optional comment for this version (keyword-only)
             is_markdown: Whether the body content is in markdown format (default: True, keyword-only)
+            parent_id: Optional new parent page ID (keyword-only)
 
         Returns:
             ConfluencePage model containing the updated page's data
@@ -342,21 +344,22 @@ class PagesMixin(ConfluenceClient):
                 else body
             )
 
-            # We'll let the underlying Confluence API handle this operation completely
-            # as it has internal logic for versioning and updating
             logger.debug(f"Updating page {page_id} with title '{title}'")
 
-            # Simply pass through all parameters, making sure to match parameter names
-            response = self.confluence.update_page(
-                page_id=page_id,
-                title=title,
-                body=storage_body,
-                type="page",
-                representation="storage",
-                minor_edit=is_minor_edit,  # This matches the parameter name in the API
-                version_comment=version_comment,
-                always_update=True,  # Force update to avoid content comparison issues
-            )
+            update_kwargs = {
+                "page_id": page_id,
+                "title": title,
+                "body": storage_body,
+                "type": "page",
+                "representation": "storage",
+                "minor_edit": is_minor_edit,
+                "version_comment": version_comment,
+                "always_update": True,
+            }
+            if parent_id:
+                update_kwargs["parent_id"] = parent_id
+
+            response = self.confluence.update_page(**update_kwargs)
 
             # After update, refresh the page data
             return self.get_page_content(page_id)
