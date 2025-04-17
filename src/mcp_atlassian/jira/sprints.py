@@ -100,12 +100,10 @@ class SprintsMixin(JiraClient):
                 goal=goal,
             )
 
-            logger.error(f"SPRINTDAVE Sprint created: {sprint}")
-
             return JiraSprint.from_api_response(sprint)
         except requests.HTTPError as e:
             logger.error(f"Error creating sprint: {str(e.response.content)}")
-            return {}
+            raise
         except Exception as e:
             logger.error(f"Error creating sprint: {str(e)}")
-            return {}
+            raise
