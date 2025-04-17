@@ -1328,7 +1328,7 @@ class IssuesMixin(UsersMixin):
 
         try:
             # Call Jira's bulk create endpoint
-            response = self.jira.create_issues({"issueUpdates": issue_updates})
+            response = self.jira.create_issues(issue_updates)
 
             # Process results
             created_issues = []
