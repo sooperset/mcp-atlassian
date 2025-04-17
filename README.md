@@ -269,22 +269,25 @@ If you've installed mcp-atlassian with pip, use this configuration instead:
 
 If you've built the Docker image, use this configuration:
 
-**Method 1: Using Environment Variables (Recommended)**
+**Method 1: Using Environment Variables**
 
 ```json
 {
   "mcpServers": {
     "mcp-atlassian": {
       "command": "docker",
-      "args": ["run", "--rm", "-i", "mcp/atlassian"],
-      "env": {
-        "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
-        "CONFLUENCE_USERNAME": "your.email@company.com",
-        "CONFLUENCE_API_TOKEN": "your_api_token",
-        "JIRA_URL": "https://your-company.atlassian.net",
-        "JIRA_USERNAME": "your.email@company.com",
-        "JIRA_API_TOKEN": "your_api_token"
-      }
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "mcp/atlassian",
+        "--confluence-url=https://your-company.atlassian.net/wiki",
+        "--confluence-username=your.email@company.com",
+        "--confluence-token=your_api_token",
+        "--jira-url=https://your-company.atlassian.net",
+        "--jira-username=your.email@company.com",
+        "--jira-token=your_api_token"
+      ]
     }
   }
 }
@@ -292,7 +295,7 @@ If you've built the Docker image, use this configuration:
 
 **Method 2: Using an Environment File**
 
-Create a `.env` file with your variables, then use:
+Create a `.env` file based on the `.env.example` template in the repository and populate it with your variables, then use:
 
 ```json
 {
@@ -304,7 +307,7 @@ Create a `.env` file with your variables, then use:
   }
 }
 ```
-*(Remember to update `/path/to/your/.env` with the correct path to your environment file)*
+
 </details>
 
 ### SSE Transport Configuration
