@@ -1644,14 +1644,14 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 epic_key, start=start_at, limit=limit
             )
 
-            # Format results
-            issues = [issue.to_simplified_dict() for issue in search_result.issues]
+            # Format results - iterate directly over the list
+            issues = [issue.to_simplified_dict() for issue in search_result]
 
             # Include metadata in the response
             response = {
-                "total": search_result.total,
-                "start_at": search_result.start_at,
-                "max_results": search_result.max_results,
+                "total": len(search_result),
+                "start_at": start_at,
+                "max_results": limit,
                 "issues": issues,
             }
 

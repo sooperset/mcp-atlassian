@@ -925,3 +925,63 @@ async def test_call_tool_jira_batch_create_issues_invalid_json(
         assert len(result) == 1
         assert result[0].type == "text"
         assert "Invalid JSON in issues" in result[0].text
+
+
+@pytest.mark.anyio
+async def test_call_tool_jira_get_epic_issues(app_context: AppContext) -> None:
+    """Test the jira_get_epic_issues tool correctly processes a list return value.
+
+    Args:
+        app_context: The application context fixture with mocked Jira client.
+    """
+    # Create mock issues to return
+    mock_issues = [
+        MagicMock(
+            to_simplified_dict=MagicMock(
+                return_value={
+                    "key": "TEST-1",
+                    "summary": "Epic Issue 1",
+                    "type": "Task",
+                    "status": "To Do",
+                }
+            )
+        ),
+        MagicMock(
+            to_simplified_dict=MagicMock(
+                return_value={
+                    "key": "TEST-2",
+                    "summary": "Epic Issue 2",
+                    "type": "Bug",
+                    "status": "In Progress",
+                }
+            )
+        ),
+    ]
+
+    # Configure mock for get_epic_issues to return a list of issues (not an object with .issues attribute)
+    app_context.jira.get_epic_issues.return_value = mock_issues
+
+    # Call the tool
+    with mock_request_context(app_context):
+        result = await call_tool(
+            "jira_get_epic_issues",
+            {"epic_key": "TEST-100", "limit": 10, "startAt": 0},
+        )
+
+    # Verify the result
+    assert len(result) == 1
+    assert result[0].type == "text"
+
+    # Parse the response JSON
+    response = json.loads(result[0].text)
+    assert response["total"] == 2  # Should be the length of the list
+    assert response["start_at"] == 0
+    assert response["max_results"] == 10
+    assert len(response["issues"]) == 2
+    assert response["issues"][0]["key"] == "TEST-1"
+    assert response["issues"][1]["key"] == "TEST-2"
+
+    # Verify the mock was called correctly
+    app_context.jira.get_epic_issues.assert_called_once_with(
+        "TEST-100", start=0, limit=10
+    )
