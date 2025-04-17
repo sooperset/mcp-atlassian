@@ -1821,8 +1821,6 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             ]
 
         elif name == "jira_create_sprint" and ctx and ctx.jira:
-            if not ctx or not ctx.jira:
-                raise ValueError("Jira is not configured.")
 
             board_id = arguments.get("board_id")
             sprint_name = arguments.get("sprint_name")
