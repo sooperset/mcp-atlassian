@@ -6,11 +6,9 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, cast
 
-from atlassian.errors import ApiError
 from mcp.server import Server
 from mcp.types import Resource, TextContent, Tool
 from pydantic import AnyUrl
-from requests.exceptions import RequestException
 
 from .confluence import ConfluenceFetcher
 from .confluence.utils import quote_cql_identifier_if_needed
@@ -339,10 +337,12 @@ async def list_tools() -> list[Tool]:
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "Search query - can be either a simple text (e.g. 'project documentation') or a CQL query string. Examples of CQL:\n"
+                                "description": "Search query - can be either a simple text (e.g. 'project documentation') or a CQL query string. Simple queries use 'siteSearch' by default, to mimic the WebUI search, with an automatic fallback to 'text' search if not supported. Examples of CQL:\n"
                                 "- Basic search: 'type=page AND space=DEV'\n"
                                 "- Personal space search: 'space=\"~username\"' (note: personal space keys starting with ~ must be quoted)\n"
                                 "- Search by title: 'title~\"Meeting Notes\"'\n"
+                                "- Use siteSearch: 'siteSearch ~ \"important concept\"'\n"
+                                "- Use text search: 'text ~ \"important concept\"'\n"
                                 "- Recent content: 'created >= \"2023-01-01\"'\n"
                                 "- Content with specific label: 'label=documentation'\n"
                                 "- Recently modified content: 'lastModified > startOfMonth(\"-1M\")'\n"
@@ -536,29 +536,6 @@ async def list_tools() -> list[Tool]:
                                 },
                             },
                             "required": ["page_id"],
-                        },
-                    ),
-                    Tool(
-                        name="confluence_attach_content",
-                        description="Attach content to a Confluence page",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "content": {
-                                    "type": "string",
-                                    "format": "binary",
-                                    "description": "The content to attach (bytes)",
-                                },
-                                "name": {
-                                    "type": "string",
-                                    "description": "The name of the attachment",
-                                },
-                                "page_id": {
-                                    "type": "string",
-                                    "description": "The ID of the page to attach the content to",
-                                },
-                            },
-                            "required": ["content", "name", "page_id"],
                         },
                     ),
                 ]
@@ -1012,6 +989,37 @@ async def list_tools() -> list[Tool]:
                         },
                     ),
                     Tool(
+                        name="jira_batch_create_issues",
+                        description="Create multiple Jira issues in a batch",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "issues": {
+                                    "type": "string",
+                                    "description": (
+                                        "JSON array of issue objects. Each object should contain:\n"
+                                        "- project_key (required): The project key (e.g., 'PROJ')\n"
+                                        "- summary (required): Issue summary/title\n"
+                                        "- issue_type (required): Type of issue (e.g., 'Task', 'Bug')\n"
+                                        "- description (optional): Issue description\n"
+                                        "- assignee (optional): Assignee username or email\n"
+                                        "- components (optional): Array of component names\n"
+                                        "Example: [\n"
+                                        '  {"project_key": "PROJ", "summary": "Issue 1", "issue_type": "Task"},\n'
+                                        '  {"project_key": "PROJ", "summary": "Issue 2", "issue_type": "Bug", "components": ["Frontend"]}\n'
+                                        "]"
+                                    ),
+                                },
+                                "validate_only": {
+                                    "type": "boolean",
+                                    "description": "If true, only validates the issues without creating them",
+                                    "default": False,
+                                },
+                            },
+                            "required": ["issues"],
+                        },
+                    ),
+                    Tool(
                         name="jira_update_issue",
                         description="Update an existing Jira issue including changing status, adding Epic links, updating fields, etc.",
                         inputSchema={
@@ -1129,6 +1137,64 @@ async def list_tools() -> list[Tool]:
                         },
                     ),
                     Tool(
+                        name="jira_create_issue_link",
+                        description="Create a link between two Jira issues",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "link_type": {
+                                    "type": "string",
+                                    "description": "The type of link to create (e.g., 'Duplicate', 'Blocks', 'Relates to')",
+                                },
+                                "inward_issue_key": {
+                                    "type": "string",
+                                    "description": "The key of the inward issue (e.g., 'PROJ-123')",
+                                },
+                                "outward_issue_key": {
+                                    "type": "string",
+                                    "description": "The key of the outward issue (e.g., 'PROJ-456')",
+                                },
+                                "comment": {
+                                    "type": "string",
+                                    "description": "Optional comment to add to the link",
+                                },
+                                "comment_visibility": {
+                                    "type": "object",
+                                    "description": "Optional visibility settings for the comment",
+                                    "properties": {
+                                        "type": {
+                                            "type": "string",
+                                            "description": "Type of visibility restriction (e.g., 'group')",
+                                        },
+                                        "value": {
+                                            "type": "string",
+                                            "description": "Value for the visibility restriction (e.g., 'jira-software-users')",
+                                        },
+                                    },
+                                },
+                            },
+                            "required": [
+                                "link_type",
+                                "inward_issue_key",
+                                "outward_issue_key",
+                            ],
+                        },
+                    ),
+                    Tool(
+                        name="jira_remove_issue_link",
+                        description="Remove a link between two Jira issues",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "link_id": {
+                                    "type": "string",
+                                    "description": "The ID of the link to remove",
+                                },
+                            },
+                            "required": ["link_id"],
+                        },
+                    ),
+                    Tool(
                         name="jira_transition_issue",
                         description="Transition a Jira issue to a new status",
                         inputSchema={
@@ -1207,14 +1273,34 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 x in query
                 for x in ["=", "~", ">", "<", " AND ", " OR ", "currentUser()"]
             ):
-                # Convert simple search term to CQL text search
-                # This will search in all content (title, body, etc.)
-                query = f'text ~ "{query}"'
-                logger.info(f"Converting simple search term to CQL: {query}")
-
-            pages = ctx.confluence.search(
-                query, limit=limit, spaces_filter=spaces_filter
-            )
+                # Convert simple search term to CQL siteSearch (previously it was a 'text' search)
+                # This will use the same search mechanism as the WebUI and give much more relevant results
+                original_query = query  # Store the original query for fallback
+                try:
+                    # Try siteSearch first - it's available in newer versions and provides better results
+                    query = f'siteSearch ~ "{original_query}"'
+                    logger.info(
+                        f"Converting simple search term to CQL using siteSearch: {query}"
+                    )
+                    pages = ctx.confluence.search(
+                        query, limit=limit, spaces_filter=spaces_filter
+                    )
+                except Exception as e:
+                    # If siteSearch fails (possibly not supported in this Confluence version),
+                    # fall back to text search which is supported in all versions
+                    logger.warning(
+                        f"siteSearch failed, falling back to text search: {str(e)}"
+                    )
+                    query = f'text ~ "{original_query}"'
+                    logger.info(f"Falling back to text search with CQL: {query}")
+                    pages = ctx.confluence.search(
+                        query, limit=limit, spaces_filter=spaces_filter
+                    )
+            else:
+                # Using direct CQL query as provided
+                pages = ctx.confluence.search(
+                    query, limit=limit, spaces_filter=spaces_filter
+                )
 
             # Format results using the to_simplified_dict method
             search_results = [page.to_simplified_dict() for page in pages]
@@ -1478,60 +1564,6 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                     )
                 ]
 
-        elif name == "confluence_attach_content":
-            if not ctx or not ctx.confluence:
-                raise ValueError("Confluence is not configured.")
-
-            # Write operation - check read-only mode
-            if read_only:
-                return [
-                    TextContent(
-                        "Operation 'confluence_attach_content' is not available in read-only mode."
-                    )
-                ]
-
-            content = arguments.get("content")
-            name = arguments.get("name")
-            page_id = arguments.get("page_id")
-
-            if not content or not name or not page_id:
-                return [
-                    TextContent(
-                        type="text",
-                        text="Error: Missing required parameters: content, name, and page_id are required.",
-                    )
-                ]
-
-            try:
-                page = ctx.confluence.attach_content(
-                    content=content, name=name, page_id=page_id
-                )
-                page_data = page.to_simplified_dict()
-                return [
-                    TextContent(
-                        type="text",
-                        text=json.dumps(
-                            page_data,
-                            indent=2,
-                            ensure_ascii=False,
-                        ),
-                    )
-                ]
-            except ApiError as e:
-                return [
-                    TextContent(
-                        type="text",
-                        text=f"Confluence API Error when trying to attach content {name} to page {page_id}: {str(e)}",
-                    )
-                ]
-            except RequestException as e:
-                return [
-                    TextContent(
-                        type="text",
-                        text=f"Network error when trying to attach content {name} to page {page_id}: {str(e)}",
-                    )
-                ]
-
         # Jira operations
         elif name == "jira_get_issue" and ctx and ctx.jira:
             if not ctx or not ctx.jira:
@@ -1646,14 +1678,14 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 epic_key, start=start_at, limit=limit
             )
 
-            # Format results
-            issues = [issue.to_simplified_dict() for issue in search_result.issues]
+            # Format results - iterate directly over the list
+            issues = [issue.to_simplified_dict() for issue in search_result]
 
             # Include metadata in the response
             response = {
-                "total": search_result.total,
-                "start_at": search_result.start_at,
-                "max_results": search_result.max_results,
+                "total": len(search_result),
+                "start_at": start_at,
+                "max_results": limit,
                 "issues": issues,
             }
 
@@ -1958,6 +1990,47 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
+        elif name == "jira_batch_create_issues" and ctx and ctx.jira:
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            # Write operation - check read-only mode
+            if read_only:
+                return [
+                    TextContent(
+                        "Operation 'jira_batch_create_issues' is not available in read-only mode."
+                    )
+                ]
+
+            # Extract required arguments
+            issues = arguments.get("issues")
+            validate_only = arguments.get("validate_only", False)
+
+            # Parse issues from JSON string to list of dictionaries
+            if issues and isinstance(issues, str):
+                try:
+                    issues = json.loads(issues)
+                except json.JSONDecodeError:
+                    raise ValueError("Invalid JSON in issues")
+
+            # Create issues in batch
+            created_issues = ctx.jira.batch_create_issues(
+                issues, validate_only=validate_only
+            )
+
+            # Format the response
+            result = {
+                "message": "Issues created successfully",
+                "issues": [issue.to_simplified_dict() for issue in created_issues],
+            }
+
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(result, indent=2, ensure_ascii=False),
+                )
+            ]
+
         elif name == "jira_update_issue":
             if not ctx or not ctx.jira:
                 raise ValueError("Jira is not configured.")
@@ -2243,6 +2316,116 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 else:
                     error_msg = f"Error transitioning issue {issue_key} with transition ID {transition_id}: {error_msg}"
 
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "jira_create_issue_link":
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            # Write operation - check read-only mode
+            if read_only:
+                return [
+                    TextContent(
+                        "Operation 'jira_create_issue_link' is not available in read-only mode."
+                    )
+                ]
+
+            # Extract arguments
+            link_type = arguments.get("link_type")
+            inward_issue_key = arguments.get("inward_issue_key")
+            outward_issue_key = arguments.get("outward_issue_key")
+            comment_text = arguments.get("comment")
+            comment_visibility = arguments.get("comment_visibility")
+
+            # Validate required parameters
+            if not link_type:
+                raise ValueError("link_type is required")
+            if not inward_issue_key:
+                raise ValueError("inward_issue_key is required")
+            if not outward_issue_key:
+                raise ValueError("outward_issue_key is required")
+
+            # Prepare the data structure for creating the issue link
+            link_data = {
+                "type": {"name": link_type},
+                "inwardIssue": {"key": inward_issue_key},
+                "outwardIssue": {"key": outward_issue_key},
+            }
+
+            # Add comment if provided
+            if comment_text:
+                comment_data = {"body": comment_text}
+
+                # Add visibility if provided
+                if comment_visibility and isinstance(comment_visibility, dict):
+                    visibility_type = comment_visibility.get("type")
+                    visibility_value = comment_visibility.get("value")
+
+                    if visibility_type and visibility_value:
+                        comment_data["visibility"] = {
+                            "type": visibility_type,
+                            "value": visibility_value,
+                        }
+
+                link_data["comment"] = comment_data
+
+            try:
+                # Create the issue link
+                result = ctx.jira.create_issue_link(link_data)
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(result, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error creating issue link: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "jira_remove_issue_link":
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            # Write operation - check read-only mode
+            if read_only:
+                return [
+                    TextContent(
+                        "Operation 'jira_remove_issue_link' is not available in read-only mode."
+                    )
+                ]
+
+            # Extract arguments
+            link_id = arguments.get("link_id")
+
+            # Validate required parameters
+            if not link_id:
+                raise ValueError("link_id is required")
+
+            try:
+                # Remove the issue link
+                result = ctx.jira.remove_issue_link(link_id)
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(result, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error removing issue link: {str(e)}"
                 logger.error(error_msg)
                 return [
                     TextContent(

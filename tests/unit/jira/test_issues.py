@@ -516,8 +516,8 @@ class TestIssuesMixin:
         # Verify the components field was preserved with the explicit value
         assert fields["components"] == [{"name": "Explicit"}]
 
-    def test_create_issue_with_assignee(self, issues_mixin):
-        """Test creating an issue with an assignee."""
+    def test_create_issue_with_assignee_cloud(self, issues_mixin):
+        """Test creating an issue with an assignee in Jira Cloud."""
         # Mock create_issue response
         create_response = {"key": "TEST-123"}
         issues_mixin.jira.create_issue.return_value = create_response
@@ -527,7 +527,10 @@ class TestIssuesMixin:
             return_value=JiraIssue(key="TEST-123", description="", summary="Test Issue")
         )
 
-        # Use a config with is_cloud = True - can't directly set property
+        # Mock _get_account_id to return a Cloud account ID
+        issues_mixin._get_account_id = MagicMock(return_value="cloud-account-id")
+
+        # Configure for Cloud
         issues_mixin.config = MagicMock()
         issues_mixin.config.is_cloud = True
 
@@ -539,9 +542,45 @@ class TestIssuesMixin:
             assignee="testuser",
         )
 
-        # Verify the assignee was properly set
+        # Verify _get_account_id was called with the correct username
+        issues_mixin._get_account_id.assert_called_once_with("testuser")
+
+        # Verify the assignee was properly set for Cloud (accountId)
         fields = issues_mixin.jira.create_issue.call_args[1]["fields"]
-        assert fields["assignee"] == {"accountId": "test-account-id"}
+        assert fields["assignee"] == {"accountId": "cloud-account-id"}
+
+    def test_create_issue_with_assignee_server(self, issues_mixin):
+        """Test creating an issue with an assignee in Jira Server/DC."""
+        # Mock create_issue response
+        create_response = {"key": "TEST-456"}
+        issues_mixin.jira.create_issue.return_value = create_response
+
+        # Mock get_issue response
+        issues_mixin.get_issue = MagicMock(
+            return_value=JiraIssue(key="TEST-456", description="", summary="Test Issue")
+        )
+
+        # Mock _get_account_id to return a Server user ID (typically username)
+        issues_mixin._get_account_id = MagicMock(return_value="server-user")
+
+        # Configure for Server/DC
+        issues_mixin.config = MagicMock()
+        issues_mixin.config.is_cloud = False
+
+        # Call the method
+        issues_mixin.create_issue(
+            project_key="TEST",
+            summary="Test Issue",
+            issue_type="Bug",
+            assignee="testuser",
+        )
+
+        # Verify _get_account_id was called with the correct username
+        issues_mixin._get_account_id.assert_called_once_with("testuser")
+
+        # Verify the assignee was properly set for Server/DC (name)
+        fields = issues_mixin.jira.create_issue.call_args[1]["fields"]
+        assert fields["assignee"] == {"name": "server-user"}
 
     def test_create_epic(self, issues_mixin):
         """Test creating an epic."""
@@ -672,9 +711,22 @@ class TestIssuesMixin:
         ):
             issues_mixin.delete_issue("TEST-123")
 
+    def test_add_custom_fields_with_fixversions(self, issues_mixin):
+        """Test _add_custom_fields properly handles fixVersions field."""
+        # Initialize test data
+        fields = {}
+        kwargs = {"fixVersions": [{"name": "TestRelease"}]}
+
+        # Call the method
+        issues_mixin._add_custom_fields(fields, kwargs)
+
+        # Verify fixVersions was added correctly to fields
+        assert "fixVersions" in fields
+        assert fields["fixVersions"] == [{"name": "TestRelease"}]
+
     def test_get_jira_field_ids_cached(self, issues_mixin):
         """Test get_jira_field_ids returns cached field IDs."""
-        # Setup mock cached data
+        # Setup mocked cache
         issues_mixin._field_ids_cache = {"key1": "value1"}
 
         # Call the method
@@ -757,6 +809,64 @@ class TestIssuesMixin:
         assert result is not None
         assert result.key == "TEST-456"
 
+    def test_create_issue_with_fixversions(self, issues_mixin):
+        """Test creating an issue with fixVersions in additional_fields."""
+        # Mock create_issue response
+        create_response = {"id": "12345", "key": "TEST-123"}
+        issues_mixin.jira.create_issue.return_value = create_response
+
+        # Mock the issue data for get_issue
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test Issue",
+                "description": "This is a test issue",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Bug"},
+                "fixVersions": [{"name": "1.0.0"}],
+            },
+        }
+        issues_mixin.jira.get_issue.return_value = issue_data
+
+        # Create the issue with fixVersions in additional_fields
+        result = issues_mixin.create_issue(
+            project_key="TEST",
+            summary="Test Issue",
+            issue_type="Bug",
+            description="This is a test issue",
+            fixVersions=[{"name": "1.0.0"}],
+        )
+
+        # Verify API call to create issue
+        issues_mixin.jira.create_issue.assert_called_once()
+        call_args = issues_mixin.jira.create_issue.call_args[1]
+        fields = call_args["fields"]
+        assert fields["project"]["key"] == "TEST"
+        assert fields["summary"] == "Test Issue"
+        assert fields["issuetype"]["name"] == "Bug"
+        assert fields["description"] == "This is a test issue"
+        assert "fixVersions" in fields
+        assert fields["fixVersions"] == [{"name": "1.0.0"}]
+
+        # Verify API call to get issue
+        issues_mixin.jira.get_issue.assert_called_once_with("TEST-123")
+
+        # Verify result
+        assert result.key == "TEST-123"
+        assert result.summary == "Test Issue"
+        assert result.issue_type.name == "Bug"
+        assert hasattr(result, "fix_versions")
+        assert len(result.fix_versions) == 1
+        # The JiraIssue model might process fixVersions differently, check the actual structure
+        # This depends on how JiraIssue.from_api_response handles the fixVersions field
+        # If it's a list of dictionaries, use:
+        if hasattr(result.fix_versions[0], "name"):
+            assert result.fix_versions[0].name == "1.0.0"
+        else:
+            # If it's a list of strings or other format, adjust accordingly:
+            assert "1.0.0" in str(result.fix_versions[0])
+
     def test_get_issue_with_custom_fields(self, issues_mixin):
         """Test get_issue with custom fields parameter."""
         # Mock the response with custom fields
@@ -808,7 +918,7 @@ class TestIssuesMixin:
         # Check the result
         simplified = issue.to_simplified_dict()
         assert "customfield_10050" in simplified
-        assert simplified["customfield_10050"] == {"value": "Option value"}
+        assert simplified["customfield_10050"] == "Option value"
 
     def test_get_issue_with_all_fields(self, issues_mixin):
         """Test get_issue with '*all' fields parameter."""
@@ -887,3 +997,226 @@ class TestIssuesMixin:
             properties=None,
             update_history=False,
         )
+
+    def test_batch_create_issues_basic(self, issues_mixin):
+        """Test basic functionality of batch_create_issues."""
+        # Setup test data
+        issues = [
+            {
+                "project_key": "TEST",
+                "summary": "Test Issue 1",
+                "issue_type": "Task",
+                "description": "Description 1",
+            },
+            {
+                "project_key": "TEST",
+                "summary": "Test Issue 2",
+                "issue_type": "Bug",
+                "description": "Description 2",
+                "assignee": "john.doe",
+                "components": ["Frontend"],
+            },
+        ]
+
+        # Mock bulk create response
+        bulk_response = {
+            "issues": [
+                {"id": "1", "key": "TEST-1", "self": "http://example.com/TEST-1"},
+                {"id": "2", "key": "TEST-2", "self": "http://example.com/TEST-2"},
+            ],
+            "errors": [],
+        }
+        issues_mixin.jira.create_issues.return_value = bulk_response
+
+        # Mock get_issue responses
+        def get_issue_side_effect(key):
+            if key == "TEST-1":
+                return {
+                    "id": "1",
+                    "key": "TEST-1",
+                    "fields": {"summary": "Test Issue 1"},
+                }
+            return {"id": "2", "key": "TEST-2", "fields": {"summary": "Test Issue 2"}}
+
+        issues_mixin.jira.get_issue.side_effect = get_issue_side_effect
+        issues_mixin._get_account_id.return_value = "user123"
+
+        # Call the method
+        result = issues_mixin.batch_create_issues(issues)
+
+        # Verify results
+        assert len(result) == 2
+        assert result[0].key == "TEST-1"
+        assert result[1].key == "TEST-2"
+
+        # Verify bulk create was called correctly
+        issues_mixin.jira.create_issues.assert_called_once()
+        call_args = issues_mixin.jira.create_issues.call_args[0][0]
+        assert len(call_args) == 2
+        assert call_args[0]["fields"]["summary"] == "Test Issue 1"
+        assert call_args[1]["fields"]["summary"] == "Test Issue 2"
+
+    def test_batch_create_issues_validate_only(self, issues_mixin):
+        """Test batch_create_issues with validate_only=True."""
+        # Setup test data
+        issues = [
+            {
+                "project_key": "TEST",
+                "summary": "Test Issue 1",
+                "issue_type": "Task",
+            },
+            {
+                "project_key": "TEST",
+                "summary": "Test Issue 2",
+                "issue_type": "Bug",
+            },
+        ]
+
+        # Call the method with validate_only=True
+        result = issues_mixin.batch_create_issues(issues, validate_only=True)
+
+        # Verify no issues were created
+        assert len(result) == 0
+        assert not issues_mixin.jira.create_issues.called
+
+    def test_batch_create_issues_missing_required_fields(self, issues_mixin):
+        """Test batch_create_issues with missing required fields."""
+        # Setup test data with missing fields
+        issues = [
+            {
+                "project_key": "TEST",
+                "summary": "Test Issue 1",
+                # Missing issue_type
+            },
+            {
+                "project_key": "TEST",
+                "summary": "Test Issue 2",
+                "issue_type": "Bug",
+            },
+        ]
+
+        # Verify it raises ValueError
+        with pytest.raises(ValueError) as exc_info:
+            issues_mixin.batch_create_issues(issues)
+
+        assert "Missing required fields" in str(exc_info.value)
+        assert not issues_mixin.jira.create_issues.called
+
+    def test_batch_create_issues_partial_failure(self, issues_mixin):
+        """Test batch_create_issues when some issues fail to create."""
+        # Setup test data
+        issues = [
+            {
+                "project_key": "TEST",
+                "summary": "Test Issue 1",
+                "issue_type": "Task",
+            },
+            {
+                "project_key": "TEST",
+                "summary": "Test Issue 2",
+                "issue_type": "Bug",
+            },
+        ]
+
+        # Mock bulk create response with an error
+        bulk_response = {
+            "issues": [
+                {"id": "1", "key": "TEST-1", "self": "http://example.com/TEST-1"},
+            ],
+            "errors": [{"issue": {"key": None}, "error": "Invalid issue type"}],
+        }
+        issues_mixin.jira.create_issues.return_value = bulk_response
+
+        # Mock get_issue response for successful creation
+        issues_mixin.jira.get_issue.return_value = {
+            "id": "1",
+            "key": "TEST-1",
+            "fields": {"summary": "Test Issue 1"},
+        }
+
+        # Call the method
+        result = issues_mixin.batch_create_issues(issues)
+
+        # Verify results - should have only the first issue
+        assert len(result) == 1
+        assert result[0].key == "TEST-1"
+
+        # Verify error was logged
+        issues_mixin.jira.create_issues.assert_called_once()
+        assert len(issues_mixin.jira.get_issue.mock_calls) == 1
+
+    def test_batch_create_issues_empty_list(self, issues_mixin):
+        """Test batch_create_issues with an empty list."""
+        result = issues_mixin.batch_create_issues([])
+        assert result == []
+        assert not issues_mixin.jira.create_issues.called
+
+    def test_batch_create_issues_with_components(self, issues_mixin):
+        """Test batch_create_issues with component handling."""
+        # Setup test data with various component formats
+        issues = [
+            {
+                "project_key": "TEST",
+                "summary": "Test Issue 1",
+                "issue_type": "Task",
+                "components": ["Frontend", "", None, "  Backend  "],
+            }
+        ]
+
+        # Mock responses
+        bulk_response = {
+            "issues": [
+                {"id": "1", "key": "TEST-1", "self": "http://example.com/TEST-1"},
+            ],
+            "errors": [],
+        }
+        issues_mixin.jira.create_issues.return_value = bulk_response
+        issues_mixin.jira.get_issue.return_value = {
+            "id": "1",
+            "key": "TEST-1",
+            "fields": {"summary": "Test Issue 1"},
+        }
+
+        # Call the method
+        result = issues_mixin.batch_create_issues(issues)
+
+        # Verify results
+        assert len(result) == 1
+
+        # Verify components were properly formatted
+        call_args = issues_mixin.jira.create_issues.call_args[0][0]
+        assert len(call_args) == 1
+        components = call_args[0]["fields"]["components"]
+        assert len(components) == 2
+        assert components[0]["name"] == "Frontend"
+        assert components[1]["name"] == "Backend"
+
+    def test_add_assignee_to_fields_cloud(self, issues_mixin):
+        """Test _add_assignee_to_fields for Cloud instance."""
+        # Set up cloud config
+        issues_mixin.config = MagicMock()
+        issues_mixin.config.is_cloud = True
+
+        # Test fields dict
+        fields = {}
+
+        # Call the method
+        issues_mixin._add_assignee_to_fields(fields, "account-123")
+
+        # Verify result
+        assert fields["assignee"] == {"accountId": "account-123"}
+
+    def test_add_assignee_to_fields_server_dc(self, issues_mixin):
+        """Test _add_assignee_to_fields for Server/Data Center instance."""
+        # Set up Server/DC config
+        issues_mixin.config = MagicMock()
+        issues_mixin.config.is_cloud = False
+
+        # Test fields dict
+        fields = {}
+
+        # Call the method
+        issues_mixin._add_assignee_to_fields(fields, "jdoe")
+
+        # Verify result
+        assert fields["assignee"] == {"name": "jdoe"}

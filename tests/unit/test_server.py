@@ -1,5 +1,6 @@
 """Unit tests for server"""
 
+import json
 import os
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -663,6 +664,67 @@ async def test_call_tool_success(tool_name, arguments, mock_setup, app_context):
 
 
 @pytest.mark.anyio
+async def test_confluence_search_simple_term_uses_sitesearch(app_context):
+    """Test that a simple search term is converted to a siteSearch CQL query."""
+    # Setup
+    mock_confluence = app_context.confluence
+    mock_confluence.search.return_value = []
+
+    with mock_request_context(app_context):
+        # Execute
+        await call_tool("confluence_search", {"query": "simple term"})
+
+        # Verify
+        mock_confluence.search.assert_called_once()
+        args, kwargs = mock_confluence.search.call_args
+        assert args[0] == 'siteSearch ~ "simple term"'
+
+
+@pytest.mark.anyio
+async def test_confluence_search_fallback_to_text_search(app_context):
+    """Test fallback to text search when siteSearch fails."""
+    # Setup
+    mock_confluence = app_context.confluence
+
+    # Make the first call to search fail
+    mock_confluence.search.side_effect = [Exception("siteSearch not available"), []]
+
+    with mock_request_context(app_context):
+        # Execute
+        await call_tool("confluence_search", {"query": "simple term"})
+
+        # Verify
+        assert mock_confluence.search.call_count == 2
+        first_call = mock_confluence.search.call_args_list[0]
+        second_call = mock_confluence.search.call_args_list[1]
+
+        # First attempt should use siteSearch
+        assert first_call[0][0] == 'siteSearch ~ "simple term"'
+
+        # Second attempt (fallback) should use text search
+        assert second_call[0][0] == 'text ~ "simple term"'
+
+
+@pytest.mark.anyio
+async def test_confluence_search_direct_cql_not_modified(app_context):
+    """Test that a CQL query is not modified."""
+    # Setup
+    mock_confluence = app_context.confluence
+    mock_confluence.search.return_value = []
+
+    cql_query = 'space = DEV AND title ~ "Meeting"'
+
+    with mock_request_context(app_context):
+        # Execute
+        await call_tool("confluence_search", {"query": cql_query})
+
+        # Verify
+        mock_confluence.search.assert_called_once()
+        args, kwargs = mock_confluence.search.call_args
+        assert args[0] == cql_query
+
+
+@pytest.mark.anyio
 async def test_call_tool_read_only_mode(app_context):
     """Test the call_tool handler in read-only mode."""
     # Create a custom environment with read-only mode enabled
@@ -713,9 +775,10 @@ async def test_call_tool_invalid_arguments(app_context):
 
 @pytest.mark.anyio
 async def test_call_tool_jira_create_issue_with_components(app_context):
-    """Test the jira_create_issue tool with components parameter."""
-    # Mock JiraFetcher.create_issue to return a mock issue
+    """Test calling jira_create_issue with components works correctly."""
+    # Setup mock
     mock_issue = MagicMock()
+    mock_issue.key = "TEST-123"
     mock_issue.to_simplified_dict.return_value = {
         "key": "TEST-123",
         "summary": "Test Issue with Components",
@@ -767,3 +830,158 @@ async def test_call_tool_jira_create_issue_with_components(app_context):
         app_context.jira.create_issue.assert_called_once()
         call_kwargs = app_context.jira.create_issue.call_args[1]
         assert call_kwargs["components"] is None
+
+
+@pytest.mark.anyio
+async def test_call_tool_jira_batch_create_issues(app_context: AppContext) -> None:
+    """Test successful batch creation of Jira issues.
+
+    Args:
+        app_context: The application context fixture with mocked Jira client.
+    """
+    # Mock data for testing
+    test_issues = [
+        {
+            "project_key": "TEST",
+            "summary": "Test Issue 1",
+            "issue_type": "Task",
+            "description": "Test description 1",
+            "assignee": "test.user@example.com",
+            "components": ["Frontend", "API"],
+        },
+        {
+            "project_key": "TEST",
+            "summary": "Test Issue 2",
+            "issue_type": "Bug",
+            "description": "Test description 2",
+        },
+    ]
+
+    # Configure mock response for batch_create_issues
+    mock_created_issues = [
+        MagicMock(
+            to_simplified_dict=MagicMock(
+                return_value={
+                    "key": "TEST-1",
+                    "summary": "Test Issue 1",
+                    "type": "Task",
+                    "status": "To Do",
+                }
+            )
+        ),
+        MagicMock(
+            to_simplified_dict=MagicMock(
+                return_value={
+                    "key": "TEST-2",
+                    "summary": "Test Issue 2",
+                    "type": "Bug",
+                    "status": "To Do",
+                }
+            )
+        ),
+    ]
+    app_context.jira.batch_create_issues.return_value = mock_created_issues
+
+    # Test with JSON string input
+    with mock_request_context(app_context):
+        result = await call_tool(
+            "jira_batch_create_issues",
+            {"issues": json.dumps(test_issues), "validate_only": False},
+        )
+
+    # Verify the result
+    assert len(result) == 1
+    assert result[0].type == "text"
+
+    # Parse the response JSON
+    response = json.loads(result[0].text)
+    assert response["message"] == "Issues created successfully"
+    assert len(response["issues"]) == 2
+    assert response["issues"][0]["key"] == "TEST-1"
+    assert response["issues"][1]["key"] == "TEST-2"
+
+    # Verify the mock was called correctly
+    app_context.jira.batch_create_issues.assert_called_once_with(
+        test_issues, validate_only=False
+    )
+
+
+@pytest.mark.anyio
+async def test_call_tool_jira_batch_create_issues_invalid_json(
+    app_context: AppContext,
+) -> None:
+    """Test error handling for invalid JSON input in batch issue creation.
+
+    Args:
+        app_context: The application context fixture with mocked Jira client.
+    """
+    with mock_request_context(app_context):
+        result = await call_tool(
+            "jira_batch_create_issues",
+            {"issues": "{invalid json", "validate_only": False},
+        )
+
+        # Verify we got an error response
+        assert len(result) == 1
+        assert result[0].type == "text"
+        assert "Invalid JSON in issues" in result[0].text
+
+
+@pytest.mark.anyio
+async def test_call_tool_jira_get_epic_issues(app_context: AppContext) -> None:
+    """Test the jira_get_epic_issues tool correctly processes a list return value.
+
+    Args:
+        app_context: The application context fixture with mocked Jira client.
+    """
+    # Create mock issues to return
+    mock_issues = [
+        MagicMock(
+            to_simplified_dict=MagicMock(
+                return_value={
+                    "key": "TEST-1",
+                    "summary": "Epic Issue 1",
+                    "type": "Task",
+                    "status": "To Do",
+                }
+            )
+        ),
+        MagicMock(
+            to_simplified_dict=MagicMock(
+                return_value={
+                    "key": "TEST-2",
+                    "summary": "Epic Issue 2",
+                    "type": "Bug",
+                    "status": "In Progress",
+                }
+            )
+        ),
+    ]
+
+    # Configure mock for get_epic_issues to return a list of issues (not an object with .issues attribute)
+    app_context.jira.get_epic_issues.return_value = mock_issues
+
+    # Call the tool
+    with mock_request_context(app_context):
+        result = await call_tool(
+            "jira_get_epic_issues",
+            {"epic_key": "TEST-100", "limit": 10, "startAt": 0},
+        )
+
+    # Verify the result
+    assert len(result) == 1
+    assert result[0].type == "text"
+
+    # Parse the response JSON
+    response = json.loads(result[0].text)
+    assert response["total"] == 2  # Should be the length of the list
+    assert response["start_at"] == 0
+    assert response["max_results"] == 10
+    assert len(response["issues"]) == 2
+    assert response["issues"][0]["key"] == "TEST-1"
+    assert response["issues"][1]["key"] == "TEST-2"
+
+    # Verify the mock was called correctly
+    app_context.jira.get_epic_issues.assert_called_once_with(
+        "TEST-100", start=0, limit=10
+    )

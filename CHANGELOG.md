@@ -3,6 +3,53 @@
 ## [Unreleased]
 - Added `jira_update_sprint`
 
+## [0.7.1] - 2025-04-18
+
+### Fixed
+- Fixed batch issue creation payload structure in `batch_create_issues` to correctly pass list directly to Jira API without double-wrapping in `issueUpdates` (#273).
+- Fixed `jira_get_issue` tool to include comments when comment_limit>0 by correcting field name check from "comments" to "comment" in JiraIssue.to_simplified_dict() (#281, #275).
+- Fixed AttributeError in `jira_get_epic_issues` tool when processing results (#280, #277).
+
+## [0.7.0] - 2025-04-17
+
+### Removed (Breaking Change)
+- Removed `confluence_attach_content` tool due to usability and technical limitations, particularly with image uploads (#255, #242)
+
+### Added
+- Added Jira issue linking capabilities:
+    - New tool `jira_create_issue_link` to create links between issues.
+    - New tool `jira_remove_issue_link` to remove existing issue links.
+    - Implemented underlying `LinksMixin` for link operations (#266).
+- Added `jira_batch_create_issues` tool for creating multiple Jira issues efficiently via Jira's bulk API (#244).
+    - Implemented underlying `batch_create_issues` method in `jira.IssuesMixin`.
+- Added standard GitHub templates for Issues (Bug Report, Feature Request) and Pull Requests (#263, #265).
+
+### Changed
+- Enhanced `confluence_search` tool to use `siteSearch` by default for simple terms (improving relevance) with automatic fallback to `text` search for compatibility (#270).
+- Added pagination support (via `startAt` parameter) to the `jira_get_epic_issues` tool (#271, #268).
+
+### Docs
+- Significantly improved README clarity, structure, examples, and configuration instructions (#256).
+- Fixed minor typo in documentation (#258).
+
+### Fixed
+- (Internal fix related to pagination parameter handling in `get_epic_issues` logic, exposed via `jira_get_epic_issues` tool change) (#271, #268).
+- Fixed type ignore comments to resolve CI mypy errors (#271).
+
+## [0.6.5] - 2025-04-13
+
+### Added
+- Added content type inference for Confluence attachments (#252, #242)
+
+### Changed
+- Refactored Confluence models into modular directory structure (#251)
+- Refactored Jira pydantic models into dedicated package for improved organization (#249)
+- Added support for missing standard Jira fields in JiraIssue model (#250, #230)
+
+### Fixed
+- Fixed Jira Data Center/Server assignee lookup during issue creation (#248)
+- Fixed handling of fixVersions in additional_fields (#247, #241)
+
 ## [0.6.4] - 2025-04-09
 
 ### Fixed

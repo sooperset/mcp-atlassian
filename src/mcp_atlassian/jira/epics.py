@@ -152,7 +152,7 @@ class EpicsMixin(UsersMixin):
             comments = []
             if comment_limit_int is not None:
                 try:
-                    comments_data = self.jira.comments(
+                    comments_data = self.jira.comments(  # type: ignore[attr-defined]
                         issue_key, limit=comment_limit_int
                     )
                     comments = comments_data.get("comments", [])
@@ -671,12 +671,15 @@ class EpicsMixin(UsersMixin):
                 raise Exception(f"Error linking issue to epic: {str(e)}")
             raise
 
-    def get_epic_issues(self, epic_key: str, limit: int = 50) -> list[JiraIssue]:
+    def get_epic_issues(
+        self, epic_key: str, start: int = 0, limit: int = 50
+    ) -> list[JiraIssue]:
         """
         Get all issues linked to a specific epic.
 
         Args:
             epic_key: The key of the epic (e.g. 'PROJ-123')
+            start: Starting index for pagination
             limit: Maximum number of issues to return
 
         Returns:
@@ -721,12 +724,14 @@ class EpicsMixin(UsersMixin):
 
                     # If we have search_issues method available, use it
                     if hasattr(self, "search_issues") and callable(self.search_issues):
-                        issues = self.search_issues(jql, limit=limit)
-                        if issues:
+                        search_result = self.search_issues(
+                            jql, start=start, limit=limit
+                        )
+                        if search_result:
                             logger.info(
-                                f"Successfully found {len(issues)} issues for epic {epic_key} using issueFunction"
+                                f"Successfully found {len(search_result.issues)} issues for epic {epic_key} using issueFunction"
                             )
-                            return issues
+                            return search_result.issues
                 except Exception as e:
                     # Log exception but continue with fallback
                     logger.warning(
@@ -741,7 +746,7 @@ class EpicsMixin(UsersMixin):
                     logger.info(
                         f"Trying to get epic issues with parent relationship: {jql}"
                     )
-                    issues = self._get_epic_issues_by_jql(epic_key, jql, limit)
+                    issues = self._get_epic_issues_by_jql(epic_key, jql, start, limit)
                     if issues:
                         logger.info(
                             f"Successfully found {len(issues)} issues for epic {epic_key} using parent relationship"
@@ -760,7 +765,7 @@ class EpicsMixin(UsersMixin):
                     logger.info(
                         f"Trying to get epic issues with epic link field: {jql}"
                     )
-                    issues = self._get_epic_issues_by_jql(epic_key, jql, limit)
+                    issues = self._get_epic_issues_by_jql(epic_key, jql, start, limit)
                     if issues:
                         logger.info(
                             f"Successfully found {len(issues)} issues for epic {epic_key} using epic link field {epic_link_field}"
@@ -779,7 +784,7 @@ class EpicsMixin(UsersMixin):
                     logger.info(
                         f"Trying to get epic issues with 'Epic Link' field name: {jql}"
                     )
-                    issues = self._get_epic_issues_by_jql(epic_key, jql, limit)
+                    issues = self._get_epic_issues_by_jql(epic_key, jql, start, limit)
                     if issues:
                         logger.info(
                             f"Successfully found {len(issues)} issues for epic {epic_key} using 'Epic Link' field name"
@@ -800,7 +805,9 @@ class EpicsMixin(UsersMixin):
                             f"Trying to get epic issues with issue links: {jql}"
                         )
                         try:
-                            issues = self._get_epic_issues_by_jql(epic_key, jql, limit)
+                            issues = self._get_epic_issues_by_jql(
+                                epic_key, jql, start, limit
+                            )
                             if issues:
                                 logger.info(
                                     f"Successfully found {len(issues)} issues for epic {epic_key} using issue links with type '{link_type}'"
@@ -835,7 +842,9 @@ class EpicsMixin(UsersMixin):
                         logger.info(
                             f"Trying to get epic issues with common field ID: {jql}"
                         )
-                        issues = self._get_epic_issues_by_jql(epic_key, jql, limit)
+                        issues = self._get_epic_issues_by_jql(
+                            epic_key, jql, start, limit
+                        )
                         if issues:
                             logger.info(
                                 f"Successfully found {len(issues)} issues for epic {epic_key} using field ID {field_id}"
@@ -1022,7 +1031,7 @@ class EpicsMixin(UsersMixin):
         return []
 
     def _get_epic_issues_by_jql(
-        self, epic_key: str, jql: str, limit: int
+        self, epic_key: str, jql: str, start: int, limit: int
     ) -> list[JiraIssue]:
         """
         Helper method to get issues using a JQL query.
@@ -1030,6 +1039,7 @@ class EpicsMixin(UsersMixin):
         Args:
             epic_key: The key of the epic
             jql: JQL query to execute
+            start: Starting index for pagination
             limit: Maximum number of issues to return
 
         Returns:
@@ -1037,13 +1047,17 @@ class EpicsMixin(UsersMixin):
         """
         # Try to use search_issues if available
         if hasattr(self, "search_issues") and callable(self.search_issues):
-            issues = self.search_issues(jql, limit=limit)
-            if not issues:
+            search_result = self.search_issues(jql, start=start, limit=limit)
+            if not search_result:
                 logger.warning(f"No issues found for epic {epic_key} with query: {jql}")
-            return issues
+            return (
+                search_result.issues
+                if hasattr(search_result, "issues")
+                else search_result
+            )
         else:
             # Fallback if search_issues is not available
-            issues_data = self.jira.jql(jql, limit=limit)
+            issues_data = self.jira.jql(jql, start=start, limit=limit)
             issues = []
 
             # Create JiraIssue models from raw data
