@@ -520,6 +520,10 @@ async def list_tools() -> list[Tool]:
                                     "description": "Optional comment for this version",
                                     "default": "",
                                 },
+                                "parent_id": {
+                                    "type": "string",
+                                    "description": "Optional the new parent page ID",
+                                },
                             },
                             "required": ["page_id", "title", "content"],
                         },
@@ -1484,6 +1488,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             content = arguments.get("content")
             is_minor_edit = arguments.get("is_minor_edit", False)
             version_comment = arguments.get("version_comment", "")
+            parent_id = arguments.get("parent_id")
 
             if not page_id or not title or not content:
                 raise ValueError(
@@ -1498,6 +1503,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 is_minor_edit=is_minor_edit,
                 version_comment=version_comment,
                 is_markdown=True,
+                parent_id=parent_id,
             )
 
             # Format results

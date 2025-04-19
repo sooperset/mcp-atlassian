@@ -680,3 +680,49 @@ class TestPagesMixin:
                 version_comment="Updated test",
                 always_update=True,
             )
+
+    def test_update_page_with_parent_id(self, pages_mixin):
+        """Test updating a page and changing its parent."""
+        # Arrange
+        page_id = "987654321"
+        title = "Updated Page"
+        body = "<p>Updated content</p>"
+        parent_id = "123456789"
+        is_minor_edit = False
+        version_comment = "Parent changed"
+
+        # Mock get_page_content to return a document
+        mock_document = ConfluencePage(
+            id=page_id,
+            title=title,
+            content="Updated content",
+            space={"key": "PROJ", "name": "Project"},
+            version={"number": 2},
+        )
+        with patch.object(pages_mixin, "get_page_content", return_value=mock_document):
+            # Act
+            result = pages_mixin.update_page(
+                page_id=page_id,
+                title=title,
+                body=body,
+                is_minor_edit=is_minor_edit,
+                version_comment=version_comment,
+                is_markdown=False,
+                parent_id=parent_id,
+            )
+
+            # Assert
+            pages_mixin.confluence.update_page.assert_called_once_with(
+                page_id=page_id,
+                title=title,
+                body=body,
+                type="page",
+                representation="storage",
+                minor_edit=is_minor_edit,
+                version_comment=version_comment,
+                always_update=True,
+                parent_id=parent_id,
+            )
+            assert result.id == page_id
+            assert result.title == title
+            assert result.version.number == 2
