@@ -1,0 +1,77 @@
+name: Docker Publish
+
+on:
+  push:
+    tags:
+      - 'v*.*.*' # Trigger on version tag pushes (e.g., v0.7.1)
+  pull_request:
+    branches:
+      - main     # Trigger on PRs targeting main branch
+  workflow_dispatch: {} # Allow manual triggering from the Actions tab
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # Needed for checkout
+      packages: write # Needed to push packages to ghcr.io
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64,amd64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Extract metadata (tags, labels) for Docker
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # Create 'main' tag on push to main branch
+            type=ref,event=branch,branch=main
+            # Create 'X.Y.Z', 'X.Y', 'X' tags on tag push (e.g., v1.2.3 -> 1.2.3, 1.2, 1)
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            # Only create 'latest' tag if it's a tag push AND it's a non-prerelease version tag (no '-')
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
+            # Create a tag for PRs (e.g., pr-123) - useful for testing PR builds
+            type=ref,event=pr
+            # For manual workflow runs, use branch name with 'manual' suffix
+            type=raw,value={{branch}}-manual,enable=${{ github.event_name == 'workflow_dispatch' }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        # Only login for pushes and manual runs, not for PRs
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        id: docker_build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          # Only push for non-PR events
+          push: ${{ github.event_name != 'pull_request' }}
+          # Use tags and labels from metadata action
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Enable Docker layer caching
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

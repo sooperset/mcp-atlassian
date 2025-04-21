@@ -94,13 +94,16 @@ npx -y @smithery/cli install mcp-atlassian --client claude
 
 **Option 4: Using Docker**
 
-1. Clone the repository:
+1. Pull the Docker image:
+   ```bash
+   # Pull the docker image
+   docker pull ghcr.io/sooperset/mcp-atlassian:latest
+   ```
+
+   Alternatively, you can build it locally:
    ```bash
    git clone https://github.com/sooperset/mcp-atlassian.git
    cd mcp-atlassian
-   ```
-2. Build the Docker image:
-   ```bash
    docker build -t mcp/atlassian .
    ```
 
@@ -267,7 +270,7 @@ If you've installed mcp-atlassian with pip, use this configuration instead:
 
 <details> <summary>Using Docker</summary>
 
-If you've built the Docker image, use this configuration:
+If you're using the Docker image, use this configuration:
 
 **Method 1: Using Environment Variables**
 
@@ -280,7 +283,7 @@ If you've built the Docker image, use this configuration:
         "run",
         "--rm",
         "-i",
-        "mcp/atlassian",
+        "ghcr.io/sooperset/mcp-atlassian:latest",
         "--confluence-url=https://your-company.atlassian.net/wiki",
         "--confluence-username=your.email@company.com",
         "--confluence-token=your_api_token",
@@ -302,7 +305,7 @@ Create a `.env` file based on the `.env.example` template in the repository and 
   "mcpServers": {
     "mcp-atlassian": {
       "command": "docker",
-      "args": ["run", "--rm", "-i", "--env-file", "/path/to/your/.env", "mcp/atlassian"]
+      "args": ["run", "--rm", "-i", "--env-file", "/path/to/your/.env", "ghcr.io/sooperset/mcp-atlassian:latest"]
     }
   }
 }
