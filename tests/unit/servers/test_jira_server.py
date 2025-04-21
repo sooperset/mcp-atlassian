@@ -191,19 +191,19 @@ def test_jira_mcp(mock_jira_fetcher):
 
     # Import the tool functions we want to test
     from src.mcp_atlassian.servers.jira import (
-        jira_batch_create_issues,
-        jira_create_issue,
-        jira_get_epic_issues,
-        jira_get_issue,
-        jira_search,
+        batch_create_issues,
+        create_issue,
+        get_epic_issues,
+        get_issue,
+        search,
     )
 
     # Add the tools to our test FastMCP instance
-    test_mcp.tool()(jira_get_issue)
-    test_mcp.tool()(jira_search)
-    test_mcp.tool()(jira_create_issue)
-    test_mcp.tool()(jira_batch_create_issues)
-    test_mcp.tool()(jira_get_epic_issues)
+    test_mcp.tool()(get_issue)
+    test_mcp.tool()(search)
+    test_mcp.tool()(create_issue)
+    test_mcp.tool()(batch_create_issues)
+    test_mcp.tool()(get_epic_issues)
     return test_mcp
 
 
@@ -216,15 +216,15 @@ def jira_client(test_jira_mcp):
 
 
 @pytest.mark.anyio
-async def test_jira_get_issue(jira_client, mock_jira_fetcher):
-    """Test the jira_get_issue tool with fixture data."""
-    print("DEBUG: test_jira_get_issue started")
+async def test_get_issue(jira_client, mock_jira_fetcher):
+    """Test the get_issue tool with fixture data."""
+    print("DEBUG: test_get_issue started")
 
     # Call the tool through the FastMCP client
     async with jira_client as client:
         print("DEBUG: Inside client context manager, about to call tool")
         response = await client.call_tool(
-            "jira_get_issue",
+            "get_issue",
             {
                 "issue_key": "TEST-123",
                 "fields": "summary,description,status",
@@ -255,11 +255,11 @@ async def test_jira_get_issue(jira_client, mock_jira_fetcher):
 
 
 @pytest.mark.anyio
-async def test_jira_search(jira_client, mock_jira_fetcher):
-    """Test the jira_search tool with fixture data."""
+async def test_search(jira_client, mock_jira_fetcher):
+    """Test the search tool with fixture data."""
     async with jira_client as client:
         response = await client.call_tool(
-            "jira_search",
+            "search",
             {
                 "jql": "project = TEST",
                 "fields": "summary,status",
@@ -291,11 +291,11 @@ async def test_jira_search(jira_client, mock_jira_fetcher):
 
 
 @pytest.mark.anyio
-async def test_jira_create_issue(jira_client, mock_jira_fetcher):
-    """Test the jira_create_issue tool with fixture data."""
+async def test_create_issue(jira_client, mock_jira_fetcher):
+    """Test the create_issue tool with fixture data."""
     async with jira_client as client:
         response = await client.call_tool(
-            "jira_create_issue",
+            "create_issue",
             {
                 "project_key": "TEST",
                 "summary": "New Issue",
@@ -336,12 +336,12 @@ async def test_jira_create_issue(jira_client, mock_jira_fetcher):
 
 
 @pytest.mark.anyio
-async def test_jira_create_issue_with_components(jira_client, mock_jira_fetcher):
+async def test_create_issue_with_components(jira_client, mock_jira_fetcher):
     """Test creating a Jira issue with and without components."""
     # First test with components
     async with jira_client as client:
         response = await client.call_tool(
-            "jira_create_issue",
+            "create_issue",
             {
                 "project_key": "TEST",
                 "summary": "Issue with Components",
@@ -364,7 +364,7 @@ async def test_jira_create_issue_with_components(jira_client, mock_jira_fetcher)
     # Now test without components
     async with jira_client as client:
         response = await client.call_tool(
-            "jira_create_issue",
+            "create_issue",
             {
                 "project_key": "TEST",
                 "summary": "Issue without Components",
@@ -377,11 +377,11 @@ async def test_jira_create_issue_with_components(jira_client, mock_jira_fetcher)
     assert call_kwargs["components"] is None
 
 
-# The following tests require jira_batch_create_issues to be implemented in jira.py
+# The following tests require batch_create_issues to be implemented in jira.py
 
 
 @pytest.mark.anyio
-async def test_jira_batch_create_issues(jira_client, mock_jira_fetcher):
+async def test_batch_create_issues(jira_client, mock_jira_fetcher):
     """Test batch creation of Jira issues."""
     # Create test data
     test_issues = [
@@ -407,7 +407,7 @@ async def test_jira_batch_create_issues(jira_client, mock_jira_fetcher):
     # Call the tool with a JSON string as expected by the function
     async with jira_client as client:
         response = await client.call_tool(
-            "jira_batch_create_issues",
+            "batch_create_issues",
             {"issues": test_issues_json, "validate_only": False},
         )
 
@@ -432,11 +432,11 @@ async def test_jira_batch_create_issues(jira_client, mock_jira_fetcher):
 
 
 @pytest.mark.anyio
-async def test_jira_batch_create_issues_invalid_json(jira_client):
+async def test_batch_create_issues_invalid_json(jira_client):
     """Test error handling for invalid JSON in batch issue creation."""
     async with jira_client as client:
         response = await client.call_tool(
-            "jira_batch_create_issues",
+            "batch_create_issues",
             {"issues": "{invalid json", "validate_only": False},
         )
 
@@ -447,11 +447,11 @@ async def test_jira_batch_create_issues_invalid_json(jira_client):
 
 
 @pytest.mark.anyio
-async def test_jira_get_epic_issues(jira_client, mock_jira_fetcher):
+async def testjira_get_epic_issues(jira_client, mock_jira_fetcher):
     """Test getting issues from an epic."""
     async with jira_client as client:
         response = await client.call_tool(
-            "jira_get_epic_issues",
+            "get_epic_issues",
             {"epic_key": "TEST-100", "limit": 10, "startAt": 0},
         )
 

@@ -100,7 +100,7 @@ jira_mcp = FastMCP(
 
 # Tool implementations
 @jira_mcp.tool()
-async def jira_get_issue(
+async def get_issue(
     ctx: Context,
     issue_key: str,
     fields: Annotated[
@@ -170,7 +170,7 @@ async def jira_get_issue(
 
 
 @jira_mcp.tool()
-async def jira_search(
+async def search(
     ctx: Context,
     jql: str,
     fields: Annotated[
@@ -229,7 +229,7 @@ async def jira_search(
 
 
 @jira_mcp.tool()
-async def jira_get_project_issues(
+async def get_project_issues(
     ctx: Context,
     project_key: str,
     limit: Annotated[
@@ -273,7 +273,7 @@ async def jira_get_project_issues(
 
 
 @jira_mcp.tool()
-async def jira_get_epic_issues(
+async def get_epic_issues(
     ctx: Context,
     epic_key: str,
     limit: Annotated[
@@ -326,7 +326,7 @@ async def jira_get_epic_issues(
 
 
 @jira_mcp.tool()
-async def jira_get_transitions(
+async def get_transitions(
     ctx: Context,
     issue_key: str,
 ) -> Sequence[TextContent]:
@@ -348,7 +348,7 @@ async def jira_get_transitions(
 
 
 @jira_mcp.tool()
-async def jira_get_worklog(
+async def get_worklog(
     ctx: Context,
     issue_key: str,
 ) -> Sequence[TextContent]:
@@ -368,7 +368,7 @@ async def jira_get_worklog(
 
 
 @jira_mcp.tool()
-async def jira_download_attachments(
+async def download_attachments(
     ctx: Context,
     issue_key: str,
     target_dir: str,
@@ -398,7 +398,7 @@ async def jira_download_attachments(
 
 
 @jira_mcp.tool()
-async def jira_get_agile_boards(
+async def get_agile_boards(
     ctx: Context,
     board_name: Annotated[
         str | None,
@@ -457,7 +457,7 @@ async def jira_get_agile_boards(
 
 
 @jira_mcp.tool()
-async def jira_get_board_issues(
+async def get_board_issues(
     ctx: Context,
     board_id: str,
     jql: str,
@@ -515,7 +515,7 @@ async def jira_get_board_issues(
 
 
 @jira_mcp.tool()
-async def jira_get_sprints_from_board(
+async def get_sprints_from_board(
     ctx: Context,
     board_id: str,
     state: Annotated[
@@ -562,7 +562,7 @@ async def jira_get_sprints_from_board(
 
 
 @jira_mcp.tool()
-async def jira_get_sprint_issues(
+async def get_sprint_issues(
     ctx: Context,
     sprint_id: str,
     fields: Annotated[
@@ -614,7 +614,7 @@ async def jira_get_sprint_issues(
 
 
 @jira_mcp.tool()
-async def jira_update_sprint(
+async def update_sprint(
     ctx: Context,
     sprint_id: str,
     sprint_name: Annotated[
@@ -677,7 +677,7 @@ async def jira_update_sprint(
 
 
 @jira_mcp.tool()
-async def jira_create_issue(
+async def create_issue(
     ctx: Context,
     project_key: str,
     summary: str,
@@ -755,7 +755,7 @@ async def jira_create_issue(
 
 
 @jira_mcp.tool()
-async def jira_batch_create_issues(
+async def batch_create_issues(
     ctx: Context,
     issues: Annotated[
         str,
@@ -855,7 +855,7 @@ async def jira_batch_create_issues(
 
 
 @jira_mcp.tool()
-async def jira_update_issue(
+async def update_issue(
     ctx: Context,
     issue_key: str,
     fields: str,
@@ -908,7 +908,7 @@ async def jira_update_issue(
 
 
 @jira_mcp.tool()
-async def jira_delete_issue(
+async def delete_issue(
     ctx: Context,
     issue_key: str,
 ) -> Sequence[TextContent]:
@@ -937,7 +937,7 @@ async def jira_delete_issue(
 
 
 @jira_mcp.tool()
-async def jira_add_comment(
+async def add_comment(
     ctx: Context,
     issue_key: str,
     comment: str,
@@ -967,7 +967,7 @@ async def jira_add_comment(
 
 
 @jira_mcp.tool()
-async def jira_add_worklog(
+async def add_worklog(
     ctx: Context,
     issue_key: str,
     time_spent: str,
@@ -1015,7 +1015,7 @@ async def jira_add_worklog(
 
 
 @jira_mcp.tool()
-async def jira_link_to_epic(
+async def link_to_epic(
     ctx: Context,
     issue_key: str,
     epic_key: str,
@@ -1045,7 +1045,7 @@ async def jira_link_to_epic(
 
 
 @jira_mcp.tool()
-async def jira_create_issue_link(
+async def create_issue_link(
     ctx: Context,
     link_type: str,
     inward_issue_key: str,
@@ -1091,7 +1091,7 @@ async def jira_create_issue_link(
 
 
 @jira_mcp.tool()
-async def jira_remove_issue_link(
+async def remove_issue_link(
     ctx: Context,
     link_id: str,
 ) -> Sequence[TextContent]:
@@ -1120,7 +1120,7 @@ async def jira_remove_issue_link(
 
 
 @jira_mcp.tool()
-async def jira_transition_issue(
+async def transition_issue(
     ctx: Context,
     issue_key: str,
     transition_id: str,
