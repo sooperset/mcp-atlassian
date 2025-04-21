@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.8.1] - 2025-04-23
+
+### Fixed
+- Fixed Jira search pagination parameter mismatch by correctly passing 'start' instead of 'start_at' parameter
+- Fixed Jira search result handling by updating issue extraction logic
+
 ## [0.8.0] - 2025-04-22
 
 ### Added
