@@ -1169,3 +1169,49 @@ async def transition_issue(
     return [
         TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))
     ]
+
+
+@jira_mcp.tool()
+async def search_fields(
+    ctx: Context,
+    keyword: Annotated[
+        str,
+        Field(
+            description="Keyword for fuzzy search. If left empty, lists the first 'limit' available fields in their default order.",
+            default="",
+        ),
+    ] = "",
+    limit: Annotated[
+        int,
+        Field(
+            description="Maximum number of results",
+            ge=1,
+            default=10,
+        ),
+    ] = 10,
+    refresh: Annotated[
+        bool,
+        Field(
+            description="Whether to force refresh the field list",
+            default=False,
+        ),
+    ] = False,
+) -> Sequence[TextContent]:
+    """Search Jira fields by keyword with fuzzy match"""
+
+    # Get the JiraFetcher instance from the context
+    fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
+    if not fetcher:
+        raise ValueError("Jira is not configured. Please provide Jira credentials.")
+
+    # Search fields
+    result = fetcher.search_fields(
+        keyword=keyword,
+        limit=limit,
+        refresh=refresh,
+    )
+
+    # Format results
+    return [
+        TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))
+    ]

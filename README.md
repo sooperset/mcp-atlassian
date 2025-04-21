@@ -395,6 +395,7 @@ uvx mcp-atlassian --transport sse --port 9000 \
 ||`jira_update_sprint`|
 ||`jira_create_issue_link`|
 ||`jira_remove_issue_link`|
+||`jira_search_fields`|
 
 </details>
 

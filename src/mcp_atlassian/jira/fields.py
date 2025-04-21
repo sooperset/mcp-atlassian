@@ -3,6 +3,8 @@
 import logging
 from typing import Any
 
+from thefuzz import fuzz
+
 from .client import JiraClient
 
 logger = logging.getLogger("mcp-jira")
@@ -312,3 +314,52 @@ class FieldsMixin(JiraClient):
         except Exception as e:
             logger.warning(f"Error formatting field value for '{field_id}': {str(e)}")
             return value
+
+    def search_fields(
+        self, keyword: str, limit: int = 10, *, refresh: bool = False
+    ) -> list[dict[str, Any]]:
+        """
+        Search fields using fuzzy matching.
+
+        Args:
+            keyword: The search keyword
+            limit: Maximum number of results to return (default: 10)
+            refresh: When True, forces a refresh from the server
+
+        Returns:
+            List of matching field definitions, sorted by relevance
+        """
+        try:
+            # Get all fields
+            fields = self.get_fields(refresh=refresh)
+
+            # if keyword is empty, return `limit` fields
+            if not keyword:
+                return fields[:limit]
+
+            def similarity(keyword: str, field: dict) -> int:
+                """Calculate similarity score between keyword and field."""
+                name_candidates = [
+                    field.get("id", ""),
+                    field.get("key", ""),
+                    field.get("name", ""),
+                    *field.get("clauseNames", []),
+                ]
+
+                # Calculate the fuzzy match score
+                return max(
+                    fuzz.partial_ratio(keyword.lower(), name.lower())
+                    for name in name_candidates
+                )
+
+            # Sort by similarity
+            sorted_fields = sorted(
+                fields, key=lambda x: similarity(keyword, x), reverse=True
+            )
+
+            # Return the top limit results
+            return sorted_fields[:limit]
+
+        except Exception as e:
+            logger.error(f"Error searching fields: {str(e)}")
+            return []
