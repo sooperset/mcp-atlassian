@@ -16,6 +16,7 @@ from ..constants import (
     JIRA_DEFAULT_ID,
     JIRA_DEFAULT_KEY,
 )
+from .changelog import JiraChangelog
 from .comment import JiraComment
 from .common import (
     JiraAttachment,
@@ -84,6 +85,7 @@ class JiraIssue(ApiModel, TimestampMixin):
     subtasks: list[dict] = Field(default_factory=list)
     security: dict | None = None
     worklog: dict | None = None
+    changelogs: list[JiraChangelog] = Field(default_factory=list)
 
     def __getattribute__(self, name: str) -> Any:
         """
@@ -375,6 +377,15 @@ class JiraIssue(ApiModel, TimestampMixin):
                     if comment
                 ]
 
+        # Handling changelogs
+        changelogs = []
+        changelogs_data = data.get("changelog", {})
+        if isinstance(changelogs_data, dict) and "histories" in changelogs_data:
+            changelogs = [
+                JiraChangelog.from_api_response(history)
+                for history in changelogs_data["histories"]
+            ]
+
         # Handling attachments
         attachments = []
         attachments_data = fields.get("attachment", [])
@@ -466,11 +477,12 @@ class JiraIssue(ApiModel, TimestampMixin):
             fix_versions=fix_versions,
             custom_fields=custom_fields,
             requested_fields=requested_fields_param,
+            changelogs=changelogs,
         )
 
     def to_simplified_dict(self) -> dict[str, Any]:
         """Convert to simplified dictionary for API response."""
-        result = {
+        result: dict[str, Any] = {
             "id": self.id,
             "key": self.key,
         }
@@ -585,6 +597,13 @@ class JiraIssue(ApiModel, TimestampMixin):
         if self.attachments and should_include_field("attachment"):
             result["attachments"] = [
                 attachment.to_simplified_dict() for attachment in self.attachments
+            ]
+
+        # Not use should_include_field since you won't get changelogs
+        # if you don't ask for them
+        if self.changelogs:
+            result["changelogs"] = [
+                changelog.to_simplified_dict() for changelog in self.changelogs
             ]
 
         # Process custom fields

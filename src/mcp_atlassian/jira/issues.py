@@ -58,14 +58,6 @@ class IssuesMixin(UsersMixin):
                 default_fields_list = fields.split(",")
                 additional_fields = []
 
-                # Add 'comment' field if comment_limit is specified and non-zero
-                if (
-                    comment_limit
-                    and comment_limit != 0
-                    and "comment" not in default_fields_list
-                ):
-                    additional_fields.append("comment")
-
                 # Add appropriate fields based on expand parameter
                 if expand:
                     expand_params = expand.split(",")
@@ -94,29 +86,9 @@ class IssuesMixin(UsersMixin):
                 if additional_fields:
                     fields = fields + "," + ",".join(additional_fields)
             # Handle non-default fields string
-            elif comment_limit and comment_limit != 0:
-                if isinstance(fields, str):
-                    if fields != "*all" and "comment" not in fields:
-                        # Add comment to string fields
-                        fields += ",comment"
-                elif isinstance(fields, list) and "comment" not in fields:
-                    # Add comment to list fields
-                    fields = fields + ["comment"]
-                elif isinstance(fields, tuple) and "comment" not in fields:
-                    # Convert tuple to list, add comment, then convert back to tuple
-                    fields_list = list(fields)
-                    fields_list.append("comment")
-                    fields = tuple(fields_list)
-                elif isinstance(fields, set) and "comment" not in fields:
-                    # Add comment to set fields
-                    fields_copy = fields.copy()
-                    fields_copy.add("comment")
-                    fields = fields_copy
 
             # Build expand parameter if provided
-            expand_param = None
-            if expand:
-                expand_param = expand
+            expand_param = expand
 
             # Convert fields to proper format if it's a list/tuple/set
             fields_param = fields
@@ -143,17 +115,12 @@ class IssuesMixin(UsersMixin):
             fields_data = issue.get("fields", {}) or {}
 
             # Get comments if needed
-            comment_limit_int = self._normalize_comment_limit(comment_limit)
-            comments = []
-            if comment_limit_int is not None:
+            if "comment" in fields_data:
+                comment_limit_int = self._normalize_comment_limit(comment_limit)
                 comments = self._get_issue_comments_if_needed(
                     issue_key, comment_limit_int
                 )
-
-            # Add comments to the issue data for processing by the model
-            if comments:
-                if "comment" not in fields_data:
-                    fields_data["comment"] = {}
+                # Add comments to the issue data for processing by the model
                 fields_data["comment"]["comments"] = comments
 
             # Extract epic information

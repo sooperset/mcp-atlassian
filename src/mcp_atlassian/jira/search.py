@@ -108,26 +108,6 @@ class SearchMixin(JiraClient):
             logger.error(f"Error searching issues with JQL '{jql}': {str(e)}")
             raise Exception(f"Error searching issues: {str(e)}") from e
 
-    def get_project_issues(
-        self, project_key: str, start: int = 0, limit: int = 50
-    ) -> JiraSearchResult:
-        """
-        Get all issues for a project.
-
-        Args:
-            project_key: The project key
-            start: Starting index if results higher than the limit
-            limit: Maximum results to return
-
-        Returns:
-            JiraSearchResult object containing project issues and metadata
-
-        Raises:
-            Exception: If there is an error getting project issues
-        """
-        jql = f"project = {project_key} ORDER BY created DESC"
-        return self.search_issues(jql, start=start, limit=limit)
-
     def get_epic_issues(
         self, epic_key: str, start: int = 0, limit: int = 50
     ) -> JiraSearchResult:

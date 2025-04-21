@@ -281,25 +281,6 @@ class TestSearchMixin:
         assert len(result.issues) == 1
         assert result.total == 1
 
-    def test_get_project_issues(self, search_mixin):
-        """Test get_project_issues method."""
-        # Setup mock response
-        search_mixin.jira.jql.return_value = {"issues": []}
-
-        # Call the method
-        result = search_mixin.get_project_issues("TEST")
-
-        # Verify JQL query
-        search_mixin.jira.jql.assert_called_once_with(
-            "project = TEST ORDER BY created DESC",
-            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
-            start=0,
-            limit=50,
-            expand=None,
-        )
-        assert isinstance(result, JiraSearchResult)
-        assert len(result.issues) == 0
-
     def test_get_epic_issues_success(self, search_mixin):
         """Test get_epic_issues method."""
         # Setup mock response
@@ -514,41 +495,6 @@ class TestSearchMixin:
             expand=None,
         )
 
-    def test_get_project_issues_with_start(self, search_mixin: SearchMixin) -> None:
-        """Test getting project issues with a start index."""
-        search_mixin.jira.jql.return_value = {
-            "issues": [
-                {
-                    "key": "PROJ-2",
-                    "fields": {"summary": "Issue 2"},
-                    "self": "https://test.atlassian.net/rest/api/2/issue/10002",
-                }
-            ],
-            "total": 1,
-            "startAt": 3,
-            "maxResults": 5,
-        }
-        project_key = "PROJ"
-        start_index = 3
-
-        result = search_mixin.get_project_issues(
-            project_key, start=start_index, limit=5
-        )
-
-        assert len(result.issues) == 1
-        assert result.start_at == 3
-        assert result.max_results == 5
-        assert result.total == 1
-
-        expected_jql = f"project = {project_key} ORDER BY created DESC"
-        search_mixin.jira.jql.assert_called_once_with(
-            expected_jql,
-            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
-            start=start_index,
-            limit=5,
-            expand=None,
-        )
-
     def test_get_epic_issues_with_start(self, search_mixin: SearchMixin) -> None:
         """Test getting epic issues with a start index."""
         epic_key = "PROJ-100"
@@ -592,7 +538,7 @@ class TestSearchMixin:
         )
 
     def test_get_board_issues(self, search_mixin):
-        """Test get_project_issues method."""
+        """Test get_board_issues method."""
         mock_issues = {
             "issues": [
                 {
