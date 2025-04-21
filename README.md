@@ -342,16 +342,7 @@ uvx mcp-atlassian --transport sse --port 9000 \
 ```
 </details>
 
-## Resources and Tools
-
-### Resources
-
-- `confluence://{space_key}`: Access Confluence spaces
-- `jira://{project_key}`: Access Jira projects
-
-> **Note:** The MCP server filters resources to only show Confluence spaces and Jira projects that the user is actively interacting with, based on their contributions and assignments.
-
-### Key Tools
+## Tools
 
 #### Confluence Tools
 
