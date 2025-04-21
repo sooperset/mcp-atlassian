@@ -59,7 +59,7 @@ First, generate the necessary authentication tokens for Confluence & Jira:
 MCP Atlassian is distributed as a Docker image. This is the recommended way to run the server, especially for IDE integration. Ensure you have Docker installed.
 
 ```bash
-# Pull Pre-built Image (Recommended)
+# Pull Pre-built Image
 docker pull ghcr.io/sooperset/mcp-atlassian:latest
 ```
 
