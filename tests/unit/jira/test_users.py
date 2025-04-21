@@ -256,6 +256,7 @@ class TestUsersMixin:
         users_mixin.jira.user_find_by_user_string.return_value = [
             {
                 "key": "server-user-key",
+                "name": "server-user-name",
                 "displayName": "Test User",
                 "emailAddress": "test@example.com",
             }
@@ -268,7 +269,32 @@ class TestUsersMixin:
         # Call the method
         account_id = users_mixin._lookup_user_directly("Test User")
 
-        # Verify result
+        # Verify result - should now return name instead of key for Server/DC
+        assert account_id == "server-user-name"
+        # Verify API call with username parameter for Server/DC
+        users_mixin.jira.user_find_by_user_string.assert_called_once_with(
+            username="Test User", start=0, limit=1
+        )
+
+    def test_lookup_user_directly_server_dc_key_fallback(self, users_mixin):
+        """Test _lookup_user_directly for Server/DC falls back to key when name is not available."""
+        # Mock the API response
+        users_mixin.jira.user_find_by_user_string.return_value = [
+            {
+                "key": "server-user-key",  # Only key, no name
+                "displayName": "Test User",
+                "emailAddress": "test@example.com",
+            }
+        ]
+
+        # Mock config.is_cloud to return False for Server/DC
+        users_mixin.config = MagicMock()
+        users_mixin.config.is_cloud = False
+
+        # Call the method
+        account_id = users_mixin._lookup_user_directly("Test User")
+
+        # Verify result - should fallback to key when name is missing
         assert account_id == "server-user-key"
         # Verify API call with username parameter for Server/DC
         users_mixin.jira.user_find_by_user_string.assert_called_once_with(
@@ -301,6 +327,10 @@ class TestUsersMixin:
             }
         ]
 
+        # Mock config.is_cloud to return False for Server/DC
+        users_mixin.config = MagicMock()
+        users_mixin.config.is_cloud = False
+
         # Call the method
         account_id = users_mixin._lookup_user_directly("Test User")
 
@@ -308,7 +338,7 @@ class TestUsersMixin:
         assert account_id == "data-center-key"
         # Verify API call
         users_mixin.jira.user_find_by_user_string.assert_called_once_with(
-            query="Test User", start=0, limit=1
+            username="Test User", start=0, limit=1
         )
 
     def test_lookup_user_directly_jira_data_center_name(self, users_mixin):
@@ -322,6 +352,10 @@ class TestUsersMixin:
             }
         ]
 
+        # Mock config.is_cloud to return False for Server/DC
+        users_mixin.config = MagicMock()
+        users_mixin.config.is_cloud = False
+
         # Call the method
         account_id = users_mixin._lookup_user_directly("Test User")
 
@@ -329,7 +363,7 @@ class TestUsersMixin:
         assert account_id == "data-center-name"
         # Verify API call
         users_mixin.jira.user_find_by_user_string.assert_called_once_with(
-            query="Test User", start=0, limit=1
+            username="Test User", start=0, limit=1
         )
 
     def test_lookup_user_directly_error(self, users_mixin):
@@ -382,7 +416,42 @@ class TestUsersMixin:
             # Verify result
             assert account_id is None
 
-    def test_lookup_user_by_permissions_jira_data_center_key(self, users_mixin):
+    def test_lookup_user_by_permissions_jira_data_center(self, users_mixin):
+        """Test _lookup_user_by_permissions when both 'key' and 'name' are available (Data Center)."""
+        # Mock requests.get
+        with patch("requests.get") as mock_get:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {
+                "users": [
+                    {
+                        "key": "data-center-permissions-key",
+                        "name": "data-center-permissions-name",
+                    }
+                ]
+            }
+            mock_get.return_value = mock_response
+
+            # Mock config.is_cloud to return False for Server/DC
+            users_mixin.config = MagicMock()
+            users_mixin.config.is_cloud = False
+
+            # Call the method
+            account_id = users_mixin._lookup_user_by_permissions("username")
+
+            # Verify result - should prioritize name for Server/DC
+            assert account_id == "data-center-permissions-name"
+            # Verify API call
+            mock_get.assert_called_once()
+            assert mock_get.call_args[0][0].endswith("/user/permission/search")
+            assert mock_get.call_args[1]["params"] == {
+                "query": "username",
+                "permissions": "BROWSE",
+            }
+
+    def test_lookup_user_by_permissions_jira_data_center_key_fallback(
+        self, users_mixin
+    ):
         """Test _lookup_user_by_permissions when only 'key' is available (Data Center)."""
         # Mock requests.get
         with patch("requests.get") as mock_get:
@@ -393,35 +462,15 @@ class TestUsersMixin:
             }
             mock_get.return_value = mock_response
 
+            # Mock config.is_cloud to return False for Server/DC
+            users_mixin.config = MagicMock()
+            users_mixin.config.is_cloud = False
+
             # Call the method
             account_id = users_mixin._lookup_user_by_permissions("username")
 
-            # Verify result
+            # Verify result - should fallback to key when name is missing
             assert account_id == "data-center-permissions-key"
-            # Verify API call
-            mock_get.assert_called_once()
-            assert mock_get.call_args[0][0].endswith("/user/permission/search")
-            assert mock_get.call_args[1]["params"] == {
-                "query": "username",
-                "permissions": "BROWSE",
-            }
-
-    def test_lookup_user_by_permissions_jira_data_center_name(self, users_mixin):
-        """Test _lookup_user_by_permissions when only 'name' is available (Data Center)."""
-        # Mock requests.get
-        with patch("requests.get") as mock_get:
-            mock_response = MagicMock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = {
-                "users": [{"name": "data-center-permissions-name"}]
-            }
-            mock_get.return_value = mock_response
-
-            # Call the method
-            account_id = users_mixin._lookup_user_by_permissions("username")
-
-            # Verify result
-            assert account_id == "data-center-permissions-name"
             # Verify API call
             mock_get.assert_called_once()
             assert mock_get.call_args[0][0].endswith("/user/permission/search")
@@ -439,3 +488,31 @@ class TestUsersMixin:
 
             # Verify result
             assert account_id is None
+
+    def test_lookup_user_by_permissions_jira_data_center_name_only(self, users_mixin):
+        """Test _lookup_user_by_permissions when only 'name' is available (Data Center)."""
+        # Mock requests.get
+        with patch("requests.get") as mock_get:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {
+                "users": [{"name": "data-center-permissions-name"}]
+            }
+            mock_get.return_value = mock_response
+
+            # Mock config.is_cloud to return False for Server/DC
+            users_mixin.config = MagicMock()
+            users_mixin.config.is_cloud = False
+
+            # Call the method
+            account_id = users_mixin._lookup_user_by_permissions("username")
+
+            # Verify result - should use name when that's all that's available
+            assert account_id == "data-center-permissions-name"
+            # Verify API call
+            mock_get.assert_called_once()
+            assert mock_get.call_args[0][0].endswith("/user/permission/search")
+            assert mock_get.call_args[1]["params"] == {
+                "query": "username",
+                "permissions": "BROWSE",
+            }
