@@ -9,7 +9,6 @@ from typing import Any, cast
 from mcp.server import Server
 from mcp.types import Resource, TextContent, Tool
 from pydantic import AnyUrl
-from thefuzz import fuzz
 
 from .confluence import ConfluenceFetcher
 from .confluence.config import ConfluenceConfig
@@ -738,10 +737,9 @@ async def list_tools() -> list[Tool]:
                             },
                             "limit": {
                                 "type": "number",
-                                "description": "Maximum number of results (1-50)",
+                                "description": "Maximum number of results",
                                 "default": 10,
                                 "minimum": 1,
-                                "maximum": 50,
                             },
                             "refresh": {
                                 "type": "boolean",
@@ -1753,33 +1751,9 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 raise ValueError("Jira is not configured.")
 
             keyword = arguments.get("keyword")
-            limit = min(int(arguments.get("limit", 10)), 50)
-            refresh = arguments.get("refresh", False)
+            limit = int(arguments.get("limit", 10))
 
-            fields = ctx.jira.get_fields(refresh=refresh)
-
-            # fuzzy search
-            def similarity(keyword: str, field: dict) -> int:
-                name_candidates = [
-                    field.get("id", ""),
-                    field.get("key", ""),
-                    field.get("name", ""),
-                    *field.get("clauseNames", []),
-                ]
-
-                # calculate the fuzzy match score
-                return max(
-                    fuzz.partial_ratio(keyword.lower(), name.lower())
-                    for name in name_candidates
-                )
-
-            # sort by similarity
-            sorted_fields = sorted(
-                fields, key=lambda x: similarity(keyword, x), reverse=True
-            )
-
-            # return the top limit results
-            result = sorted_fields[:limit]
+            result = ctx.jira.search_fields(keyword, limit)
 
             return [
                 TextContent(
