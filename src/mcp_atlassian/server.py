@@ -678,7 +678,7 @@ async def list_tools() -> list[Tool]:
                         "properties": {
                             "keyword": {
                                 "type": "string",
-                                "description": "The keyword to search for",
+                                "description": "Keyword for fuzzy search. If left empty, lists the first 'limit' available fields in their default order.",
                                 "default": "",
                             },
                             "limit": {
