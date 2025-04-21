@@ -88,9 +88,7 @@ class IssuesMixin(UsersMixin):
             # Handle non-default fields string
 
             # Build expand parameter if provided
-            expand_param = None
-            if expand:
-                expand_param = expand
+            expand_param = expand
 
             # Convert fields to proper format if it's a list/tuple/set
             fields_param = fields
