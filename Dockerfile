@@ -22,7 +22,7 @@ COPY . .
 
 # Install the project itself, skipping already installed dependencies
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-editable --no-deps
+    uv sync --frozen --no-dev --no-editable
 
 FROM python:3.10-slim
 
