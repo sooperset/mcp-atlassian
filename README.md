@@ -206,7 +206,7 @@ For Server/Data Center deployments, use direct variable passing:
 
 <details> <summary>Single Service Configurations</summary>
 
-**For Confluence only:**
+**For Confluence Cloud only:**
 
 ```json
 {
@@ -255,7 +255,7 @@ For Confluence Server/DC, use:
 }
 ```
 
-**For Jira only:**
+**For Jira Cloud only:**
 
 ```json
 {
@@ -313,7 +313,6 @@ For Jira Server/DC, use:
 1.  Start the server manually in a terminal, mapping a host port (e.g., 9000) to the container's port 8000:
 
     ```bash
-    # Method 1: Using direct arguments
     docker run --rm -p 9000:8000 \
       -e CONFLUENCE_URL \
       -e CONFLUENCE_USERNAME \
@@ -325,54 +324,6 @@ For Jira Server/DC, use:
       -e PORT \
       ghcr.io/sooperset/mcp-atlassian:latest
     ```
-
-    With the corresponding environment variables in your IDE configuration:
-    ```json
-    {
-      "mcpServers": {
-        "mcp-atlassian": {
-          "command": "docker",
-          "args": [
-            "run",
-            "--rm",
-            "-i",
-            "-p", "9000:8000",
-            "-e", "CONFLUENCE_URL",
-            "-e", "CONFLUENCE_USERNAME",
-            "-e", "CONFLUENCE_API_TOKEN",
-            "-e", "JIRA_URL",
-            "-e", "JIRA_USERNAME",
-            "-e", "JIRA_API_TOKEN",
-            "-e", "TRANSPORT",
-            "-e", "PORT",
-            "ghcr.io/sooperset/mcp-atlassian:latest"
-          ],
-          "env": {
-            "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
-            "CONFLUENCE_USERNAME": "your.email@company.com",
-            "CONFLUENCE_API_TOKEN": "your_api_token",
-            "JIRA_URL": "https://your-company.atlassian.net",
-            "JIRA_USERNAME": "your.email@company.com",
-            "JIRA_API_TOKEN": "your_api_token",
-            "TRANSPORT": "sse",
-            "PORT": "9000"
-          }
-        }
-      }
-    }
-    ```
-
-    # Method 2: Using --env-file
-    docker run --rm -p 9000:8000 --env-file /path/to/your/.env \
-      ghcr.io/sooperset/mcp-atlassian:latest
-    ```
-
-    > [!TIP]
-    > Make sure your .env file includes:
-    > ```
-    > TRANSPORT=sse
-    > PORT=9000
-    > ```
 
 2.  Configure your IDE to connect to the running server via its URL:
 
