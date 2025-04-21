@@ -1,6 +1,5 @@
 """Unit tests for server"""
 
-import json
 import os
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -9,10 +8,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from mcp.shared.context import RequestContext
 from mcp.shared.session import BaseSession
-from mcp.types import Resource, Tool
+from mcp.types import Tool
 
 from mcp_atlassian.confluence import ConfluenceFetcher
-from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.server import (
     AppContext,
     call_tool,
@@ -49,7 +47,6 @@ def env_vars(new_env: dict[str, str | None]) -> Generator[None, None, None]:
 def test_no_service_available():
     with env_vars({"JIRA_URL": None, "CONFLUENCE_URL": None}):
         av = get_available_services()
-        assert not av["jira"]
         assert not av["confluence"]
 
 
@@ -65,7 +62,6 @@ def test_available_services_confluence():
         }
     ):
         av = get_available_services()
-        assert not av["jira"]
         assert av["confluence"]
 
     # On prem/DC confluence with just token authentication
@@ -79,7 +75,6 @@ def test_available_services_confluence():
         }
     ):
         av = get_available_services()
-        assert not av["jira"]
         assert av["confluence"]
 
     # On prem/DC confluence with username/api token basic authentication
@@ -93,69 +88,7 @@ def test_available_services_confluence():
         }
     ):
         av = get_available_services()
-        assert not av["jira"]
         assert av["confluence"]
-
-
-def test_available_services_jira():
-    """Test available services"""
-    # Cloud jira with username/api token authentication
-    with env_vars(
-        {
-            "JIRA_URL": "https://my-company.atlassian.net",
-            "JIRA_USERNAME": "john.doe@example.com",
-            "JIRA_API_TOKEN": "my_api_token",
-            "JIRA_PERSONAL_TOKEN": None,
-            "CONFLUENCE_URL": None,
-        }
-    ):
-        av = get_available_services()
-        assert av["jira"]
-        assert not av["confluence"]
-
-    # On-prem/DC jira with just token authentication
-    with env_vars(
-        {
-            "JIRA_URL": "https://jira.localnetwork.local",
-            "JIRA_USERNAME": None,
-            "JIRA_API_TOKEN": None,
-            "JIRA_PERSONAL_TOKEN": "my_personal_token",
-            "CONFLUENCE_URL": None,
-        }
-    ):
-        av = get_available_services()
-        assert av["jira"]
-        assert not av["confluence"]
-
-
-# Phase 1: Setup & Fixtures
-@pytest.fixture
-def mock_jira_client():
-    """Create a mock JiraFetcher with pre-configured return values."""
-    mock_jira = MagicMock(spec=JiraFetcher)
-    mock_jira.config = MagicMock()
-    mock_jira.config.url = "https://test.atlassian.net"
-
-    # Configure common methods
-    mock_jira.get_current_user_account_id.return_value = "test-account-id"
-
-    # Configure jira instance
-    mock_jira.jira = MagicMock()
-    mock_jira.jira.jql.return_value = {
-        "issues": [
-            {
-                "fields": {
-                    "project": {
-                        "key": "TEST",
-                        "name": "Test Project",
-                        "description": "Project for testing",
-                    }
-                }
-            }
-        ]
-    }
-
-    return mock_jira
 
 
 @pytest.fixture
@@ -178,10 +111,9 @@ def mock_confluence_client():
 
 
 @pytest.fixture
-def app_context(mock_jira_client, mock_confluence_client):
+def app_context(mock_confluence_client):
     """Create an AppContext with mock clients."""
     return AppContext(
-        jira=mock_jira_client,
         confluence=mock_confluence_client,
     )
 
@@ -221,22 +153,19 @@ def mock_env_vars_read_only():
             yield
 
 
-# Phase 2: Test Core Handler Functions
 @pytest.mark.anyio
 async def test_server_lifespan():
     """Test the server_lifespan context manager."""
     with (
         patch("mcp_atlassian.server.get_available_services") as mock_services,
         patch("mcp_atlassian.server.ConfluenceConfig") as mock_confluence_config_cls,
-        patch("mcp_atlassian.server.JiraConfig") as mock_jira_config_cls,
         patch("mcp_atlassian.server.ConfluenceFetcher") as mock_confluence_cls,
-        patch("mcp_atlassian.server.JiraFetcher") as mock_jira_cls,
         patch("mcp_atlassian.server.is_read_only_mode") as mock_read_only,
         patch("mcp_atlassian.server.logger") as mock_logger,
         patch("mcp_atlassian.server.log_config_param") as mock_log_config_param,
     ):
         # Configure mocks
-        mock_services.return_value = {"confluence": True, "jira": True}
+        mock_services.return_value = {"confluence": True}
 
         # Mock configs
         mock_confluence_config = MagicMock()
@@ -249,22 +178,9 @@ async def test_server_lifespan():
         mock_confluence_config.spaces_filter = "TEST,DEV"
         mock_confluence_config_cls.from_env.return_value = mock_confluence_config
 
-        mock_jira_config = MagicMock()
-        mock_jira_config.url = "https://test.atlassian.net"
-        mock_jira_config.auth_type = "basic"
-        mock_jira_config.username = "jira-user"
-        mock_jira_config.api_token = "jira-token"
-        mock_jira_config.personal_token = None
-        mock_jira_config.ssl_verify = True
-        mock_jira_config.projects_filter = "PROJ,TEST"
-        mock_jira_config_cls.from_env.return_value = mock_jira_config
-
         # Mock fetchers
         mock_confluence = MagicMock()
         mock_confluence_cls.return_value = mock_confluence
-
-        mock_jira = MagicMock()
-        mock_jira_cls.return_value = mock_jira
 
         mock_read_only.return_value = False
 
@@ -276,7 +192,6 @@ async def test_server_lifespan():
             # Verify context contains expected clients
             assert isinstance(ctx, AppContext)
             assert ctx.confluence is not None
-            assert ctx.jira is not None
 
             # Verify logging calls
             mock_logger.info.assert_any_call("Starting MCP Atlassian server")
@@ -287,13 +202,8 @@ async def test_server_lifespan():
             mock_logger.info.assert_any_call(
                 "Confluence client initialized successfully."
             )
-            mock_logger.info.assert_any_call("Attempting to initialize Jira client...")
-            mock_logger.info.assert_any_call("Jira client initialized successfully.")
 
-            # Verify config logging calls
-            assert (
-                mock_log_config_param.call_count >= 10
-            )  # At least 5 params for each service
+            # Verify config logging calls for Confluence only
             mock_log_config_param.assert_any_call(
                 mock_logger, "Confluence", "URL", mock_confluence_config.url
             )
@@ -323,32 +233,8 @@ async def test_server_lifespan():
                 mock_confluence_config.spaces_filter,
             )
 
-            mock_log_config_param.assert_any_call(
-                mock_logger, "Jira", "URL", mock_jira_config.url
-            )
-            mock_log_config_param.assert_any_call(
-                mock_logger, "Jira", "Auth Type", mock_jira_config.auth_type
-            )
-            mock_log_config_param.assert_any_call(
-                mock_logger, "Jira", "Username", mock_jira_config.username
-            )
-            mock_log_config_param.assert_any_call(
-                mock_logger,
-                "Jira",
-                "API Token",
-                mock_jira_config.api_token,
-                sensitive=True,
-            )
-            mock_log_config_param.assert_any_call(
-                mock_logger, "Jira", "SSL Verify", str(mock_jira_config.ssl_verify)
-            )
-            mock_log_config_param.assert_any_call(
-                mock_logger, "Jira", "Projects Filter", mock_jira_config.projects_filter
-            )
-
-            # Verify the fetchers were initialized with configs
+            # Verify the Confluence fetcher was initialized with config
             mock_confluence_cls.assert_called_once_with(config=mock_confluence_config)
-            mock_jira_cls.assert_called_once_with(config=mock_jira_config)
 
 
 @pytest.mark.anyio
@@ -357,20 +243,17 @@ async def test_server_lifespan_with_errors():
     with (
         patch("mcp_atlassian.server.get_available_services") as mock_services,
         patch("mcp_atlassian.server.ConfluenceConfig") as mock_confluence_config_cls,
-        patch("mcp_atlassian.server.JiraConfig") as mock_jira_config_cls,
         patch("mcp_atlassian.server.ConfluenceFetcher") as mock_confluence_cls,
-        patch("mcp_atlassian.server.JiraFetcher") as mock_jira_cls,
         patch("mcp_atlassian.server.is_read_only_mode") as mock_read_only,
         patch("mcp_atlassian.server.logger") as mock_logger,
     ):
-        # Configure mocks
-        mock_services.return_value = {"confluence": True, "jira": True}
+        # Configure mocks - only Confluence now
+        mock_services.return_value = {"confluence": True}
 
         # Mock errors
         mock_confluence_config_cls.from_env.side_effect = ValueError(
             "Missing CONFLUENCE_URL"
         )
-        mock_jira_config_cls.from_env.side_effect = ValueError("Missing JIRA_URL")
 
         mock_read_only.return_value = False
 
@@ -382,7 +265,6 @@ async def test_server_lifespan_with_errors():
             # Verify context contains no clients due to errors
             assert isinstance(ctx, AppContext)
             assert ctx.confluence is None
-            assert ctx.jira is None
 
             # Verify logging calls
             mock_logger.info.assert_any_call("Starting MCP Atlassian server")
@@ -390,74 +272,22 @@ async def test_server_lifespan_with_errors():
             mock_logger.info.assert_any_call(
                 "Attempting to initialize Confluence client..."
             )
-            mock_logger.info.assert_any_call("Attempting to initialize Jira client...")
 
             # Verify error logging
             mock_logger.error.assert_any_call(
                 "Failed to initialize Confluence client: Missing CONFLUENCE_URL",
                 exc_info=True,
             )
-            mock_logger.error.assert_any_call(
-                "Failed to initialize Jira client: Missing JIRA_URL", exc_info=True
-            )
 
 
 @pytest.mark.anyio
-async def test_list_resources_both_services(app_context):
-    """Test the list_resources handler with both services available."""
-    with mock_request_context(app_context):
-        # Call the handler directly
-        resources = await list_resources()
-
-        # Verify clients were called
-        app_context.jira.get_current_user_account_id.assert_called_once()
-        app_context.jira.jira.jql.assert_called_once()
-        app_context.confluence.get_user_contributed_spaces.assert_called_once()
-
-        # Verify returned resources
-        assert isinstance(resources, list)
-        assert len(resources) == 2  # One from Jira, one from Confluence
-
-        # Check structure of resources
-        for res in resources:
-            assert isinstance(res, Resource)
-            assert str(res.uri) in ("confluence://TEST", "jira://TEST")
-            assert hasattr(res, "name")
-            assert hasattr(res, "mimeType")
-            assert hasattr(res, "description")
-
-
-@pytest.mark.anyio
-async def test_list_resources_only_jira(app_context):
-    """Test the list_resources handler with only Jira available."""
-    # Modify the context to have only Jira
-    app_context.confluence = None
-
-    with mock_request_context(app_context):
-        # Call the handler directly
-        resources = await list_resources()
-
-        # Verify only Jira client was called
-        app_context.jira.get_current_user_account_id.assert_called_once()
-        app_context.jira.jira.jql.assert_called_once()
-
-        # Verify returned resources
-        assert isinstance(resources, list)
-        assert len(resources) == 1  # Only from Jira
-        assert str(resources[0].uri) == "jira://TEST"
-
-
-@pytest.mark.anyio
-async def test_list_resources_only_confluence(app_context):
+async def test_list_resources_confluence_only(app_context):
     """Test the list_resources handler with only Confluence available."""
-    # Modify the context to have only Confluence
-    app_context.jira = None
-
     with mock_request_context(app_context):
         # Call the handler directly
         resources = await list_resources()
 
-        # Verify only Confluence client was called
+        # Verify Confluence client was called
         app_context.confluence.get_user_contributed_spaces.assert_called_once()
 
         # Verify returned resources
@@ -470,7 +300,6 @@ async def test_list_resources_only_confluence(app_context):
 async def test_list_resources_no_services(app_context):
     """Test the list_resources handler with no services available."""
     # Modify the context to have no services
-    app_context.jira = None
     app_context.confluence = None
 
     with mock_request_context(app_context):
@@ -485,8 +314,7 @@ async def test_list_resources_no_services(app_context):
 @pytest.mark.anyio
 async def test_list_resources_client_error(app_context):
     """Test the list_resources handler when clients raise exceptions."""
-    # Configure clients to raise exceptions
-    app_context.jira.get_current_user_account_id.side_effect = Exception("Jira error")
+    # Configure client to raise exception
     app_context.confluence.get_user_contributed_spaces.side_effect = Exception(
         "Confluence error"
     )
@@ -539,70 +367,12 @@ async def test_list_resources_client_error(app_context):
                 MagicMock(return_value=MagicMock(page_content="Test page content")),
             ),
         ),
-        # Jira project
-        (
-            "jira://TEST",
-            "text/markdown",
-            lambda ctx: (
-                setattr(
-                    ctx.jira,
-                    "get_current_user_account_id",
-                    MagicMock(return_value="test-account-id"),
-                ),  # type: ignore
-                setattr(
-                    ctx.jira,
-                    "search_issues",
-                    MagicMock(
-                        return_value=[
-                            MagicMock(
-                                to_simplified_dict=MagicMock(
-                                    return_value={
-                                        "key": "TEST-123",
-                                        "summary": "Test Issue",
-                                        "url": "https://example.atlassian.net/browse/TEST-123",
-                                        "status": {"name": "Open"},
-                                        "description": "This is a test issue",
-                                    }
-                                )
-                            )
-                        ]
-                    ),
-                ),  # type: ignore
-            ),
-        ),
-        # Jira issue
-        (
-            "jira://TEST-123",
-            "text/markdown",
-            lambda ctx: setattr(
-                ctx.jira,
-                "get_issue",
-                MagicMock(
-                    return_value=MagicMock(
-                        to_simplified_dict=MagicMock(
-                            return_value={
-                                "key": "TEST-123",
-                                "summary": "Test Issue",
-                                "status": {"name": "Open"},
-                                "description": "This is a test issue",
-                            }
-                        ),
-                        # Add important fields that the formatter might access
-                        fields={
-                            "summary": "Test Issue",
-                            "description": "This is a test issue",
-                            "status": {"name": "Open"},
-                        },
-                    )
-                ),
-            ),
-        ),
     ],
 )
 async def test_read_resource_valid_uris(
     uri, expected_mime_type, mock_setup, app_context
 ):
-    """Test the read_resource handler with various valid URIs."""
+    """Test the read_resource handler with Confluence URIs."""
     # Configure the mocks as needed for the test case
     mock_setup(app_context)
 
@@ -629,12 +399,6 @@ async def test_read_resource_valid_uris(
                 MagicMock(side_effect=ValueError("Page not found")),
             ),
         ),
-        # For Jira tests, we'll check the returned content rather than expecting exceptions
-        (
-            "jira://NONEXISTENT-123",
-            "",
-            lambda ctx: setattr(ctx.jira, "get_issue", MagicMock(return_value=None)),
-        ),
     ],
 )
 async def test_read_resource_invalid_uris(uri, expected_error, mock_setup, app_context):
@@ -644,44 +408,18 @@ async def test_read_resource_invalid_uris(uri, expected_error, mock_setup, app_c
         mock_setup(app_context)
 
     with mock_request_context(app_context):
-        if "jira://" in uri and "-" in uri:
-            # For Jira issues, the server appears to handle None values in a special way
-            # Instead of raising, it might return empty content or format it differently
-            content = await read_resource(uri)
-            assert isinstance(content, str)  # It should still return a string
-        else:
-            # For other URIs, we still expect exceptions
-            try:
-                await read_resource(uri)
-                pytest.fail(f"Expected an exception for {uri}")
-            except (ValueError, Exception) as e:
-                assert expected_error in str(e)
-
-
-@pytest.mark.anyio
-async def test_read_resource_client_error(app_context):
-    """Test the read_resource handler when clients raise exceptions."""
-    # Configure clients to raise exceptions
-    app_context.jira.get_issue = MagicMock(side_effect=Exception("Jira error"))
-
-    with mock_request_context(app_context):
         try:
-            # With the new signature, this might raise an exception now
-            content = await read_resource("jira://TEST-123")
-            # If it doesn't raise, make sure we got a string
-            assert isinstance(content, str)
-        except Exception:
-            # We're just testing that the function handles errors somehow
-            pass
+            await read_resource(uri)
+            pytest.fail(f"Expected an exception for {uri}")
+        except (ValueError, Exception) as e:
+            assert expected_error in str(e)
 
 
 @pytest.mark.anyio
-async def test_list_tools_both_services():
-    """Test the list_tools handler with both services available."""
+async def test_list_tools_confluence_only():
+    """Test the list_tools handler with only Confluence available."""
     # Create a mock context
-    mock_context = AppContext(
-        jira=MagicMock(spec=JiraFetcher), confluence=MagicMock(spec=ConfluenceFetcher)
-    )
+    mock_context = AppContext(confluence=MagicMock(spec=ConfluenceFetcher))
 
     with (
         patch("mcp_atlassian.server.get_available_services") as mock_services,
@@ -689,7 +427,7 @@ async def test_list_tools_both_services():
         mock_request_context(mock_context),
     ):
         # Configure mocks
-        mock_services.return_value = {"confluence": True, "jira": True}
+        mock_services.return_value = {"confluence": True}
         mock_read_only.return_value = False
 
         # Call the handler directly
@@ -702,9 +440,9 @@ async def test_list_tools_both_services():
         # Check structure of tools
         for tool in tools:
             assert isinstance(tool, Tool)
-            assert tool.name.startswith(
-                ("jira_", "confluence_")
-            ) or tool.name.startswith(("mcp__jira_", "mcp__confluence_"))
+            assert tool.name.startswith("confluence_") or tool.name.startswith(
+                "mcp__confluence_"
+            )
             assert hasattr(tool, "description")
             assert hasattr(tool, "inputSchema")
 
@@ -713,9 +451,7 @@ async def test_list_tools_both_services():
 async def test_list_tools_read_only_mode():
     """Test the list_tools handler in read-only mode."""
     # Create a mock context
-    mock_context = AppContext(
-        jira=MagicMock(spec=JiraFetcher), confluence=MagicMock(spec=ConfluenceFetcher)
-    )
+    mock_context = AppContext(confluence=MagicMock(spec=ConfluenceFetcher))
 
     with (
         patch("mcp_atlassian.server.get_available_services") as mock_services,
@@ -723,7 +459,7 @@ async def test_list_tools_read_only_mode():
         mock_request_context(mock_context),
     ):
         # Configure mocks
-        mock_services.return_value = {"confluence": True, "jira": True}
+        mock_services.return_value = {"confluence": True}
         mock_read_only.return_value = True
 
         # Call the handler directly
@@ -738,8 +474,7 @@ async def test_list_tools_read_only_mode():
             tool
             for tool in tools
             if any(
-                tool.name.startswith(f"mcp__{service}_{action}")
-                for service in ["jira", "confluence"]
+                tool.name.startswith(f"mcp__confluence_{action}")
                 for action in ["create", "update", "delete", "add"]
             )
         ]
@@ -750,25 +485,6 @@ async def test_list_tools_read_only_mode():
 @pytest.mark.parametrize(
     "tool_name,arguments,mock_setup",
     [
-        # Jira search tool test
-        (
-            "jira_search",
-            {"jql": "project = TEST"},
-            lambda ctx: setattr(
-                ctx.jira,
-                "search_issues",
-                MagicMock(
-                    return_value=[
-                        {
-                            "key": "TEST-123",
-                            "fields": {
-                                "summary": "Test Issue",
-                            },
-                        }
-                    ]
-                ),
-            ),
-        ),
         # Confluence search tool test
         (
             "confluence_search",
@@ -879,11 +595,11 @@ async def test_call_tool_read_only_mode(app_context):
         # We can't predict exactly what error message will be returned,
         # but we can check that a result is returned (even if it's an error)
         result = await call_tool(
-            "jira_create_issue",
+            "confluence_create_page",
             {
-                "project_key": "TEST",
-                "summary": "Test Issue",
-                "issue_type": "Bug",
+                "space_key": "TEST",
+                "title": "Test Page",
+                "content": "Test content",
             },
         )
 
@@ -908,223 +624,9 @@ async def test_call_tool_invalid_arguments(app_context):
     with mock_request_context(app_context):
         # Try to call a tool with missing required arguments
         result = await call_tool(
-            "jira_search",
-            {},  # Missing required 'jql' argument
+            "confluence_search",
+            {},  # Missing required 'query' argument
         )
 
         # Just verify we got a result
         assert isinstance(result, list)
-
-
-@pytest.mark.anyio
-async def test_call_tool_jira_create_issue_with_components(app_context):
-    """Test calling jira_create_issue with components works correctly."""
-    # Setup mock
-    mock_issue = MagicMock()
-    mock_issue.key = "TEST-123"
-    mock_issue.to_simplified_dict.return_value = {
-        "key": "TEST-123",
-        "summary": "Test Issue with Components",
-    }
-    app_context.jira.create_issue.return_value = mock_issue
-
-    with (
-        patch("mcp_atlassian.server.is_read_only_mode", return_value=False),
-        mock_request_context(app_context),
-    ):
-        # Call the tool with components parameter
-        result = await call_tool(
-            "jira_create_issue",
-            {
-                "project_key": "TEST",
-                "summary": "Test Issue with Components",
-                "issue_type": "Bug",
-                "components": "UI,API",
-            },
-        )
-
-        # Verify the create_issue method was called with correct parameters
-        app_context.jira.create_issue.assert_called_once_with(
-            project_key="TEST",
-            summary="Test Issue with Components",
-            issue_type="Bug",
-            description="",
-            assignee=None,
-            components=["UI", "API"],
-        )
-
-        # Verify we got a result
-        assert isinstance(result, list)
-
-        # Reset the mock
-        app_context.jira.create_issue.reset_mock()
-
-        # Call the tool without components parameter
-        result = await call_tool(
-            "jira_create_issue",
-            {
-                "project_key": "TEST",
-                "summary": "Test Issue without Components",
-                "issue_type": "Bug",
-            },
-        )
-
-        # Verify the create_issue method was called with components=None
-        app_context.jira.create_issue.assert_called_once()
-        call_kwargs = app_context.jira.create_issue.call_args[1]
-        assert call_kwargs["components"] is None
-
-
-@pytest.mark.anyio
-async def test_call_tool_jira_batch_create_issues(app_context: AppContext) -> None:
-    """Test successful batch creation of Jira issues.
-
-    Args:
-        app_context: The application context fixture with mocked Jira client.
-    """
-    # Mock data for testing
-    test_issues = [
-        {
-            "project_key": "TEST",
-            "summary": "Test Issue 1",
-            "issue_type": "Task",
-            "description": "Test description 1",
-            "assignee": "test.user@example.com",
-            "components": ["Frontend", "API"],
-        },
-        {
-            "project_key": "TEST",
-            "summary": "Test Issue 2",
-            "issue_type": "Bug",
-            "description": "Test description 2",
-        },
-    ]
-
-    # Configure mock response for batch_create_issues
-    mock_created_issues = [
-        MagicMock(
-            to_simplified_dict=MagicMock(
-                return_value={
-                    "key": "TEST-1",
-                    "summary": "Test Issue 1",
-                    "type": "Task",
-                    "status": "To Do",
-                }
-            )
-        ),
-        MagicMock(
-            to_simplified_dict=MagicMock(
-                return_value={
-                    "key": "TEST-2",
-                    "summary": "Test Issue 2",
-                    "type": "Bug",
-                    "status": "To Do",
-                }
-            )
-        ),
-    ]
-    app_context.jira.batch_create_issues.return_value = mock_created_issues
-
-    # Test with JSON string input
-    with mock_request_context(app_context):
-        result = await call_tool(
-            "jira_batch_create_issues",
-            {"issues": json.dumps(test_issues), "validate_only": False},
-        )
-
-    # Verify the result
-    assert len(result) == 1
-    assert result[0].type == "text"
-
-    # Parse the response JSON
-    response = json.loads(result[0].text)
-    assert response["message"] == "Issues created successfully"
-    assert len(response["issues"]) == 2
-    assert response["issues"][0]["key"] == "TEST-1"
-    assert response["issues"][1]["key"] == "TEST-2"
-
-    # Verify the mock was called correctly
-    app_context.jira.batch_create_issues.assert_called_once_with(
-        test_issues, validate_only=False
-    )
-
-
-@pytest.mark.anyio
-async def test_call_tool_jira_batch_create_issues_invalid_json(
-    app_context: AppContext,
-) -> None:
-    """Test error handling for invalid JSON input in batch issue creation.
-
-    Args:
-        app_context: The application context fixture with mocked Jira client.
-    """
-    with mock_request_context(app_context):
-        result = await call_tool(
-            "jira_batch_create_issues",
-            {"issues": "{invalid json", "validate_only": False},
-        )
-
-        # Verify we got an error response
-        assert len(result) == 1
-        assert result[0].type == "text"
-        assert "Invalid JSON in issues" in result[0].text
-
-
-@pytest.mark.anyio
-async def test_call_tool_jira_get_epic_issues(app_context: AppContext) -> None:
-    """Test the jira_get_epic_issues tool correctly processes a list return value.
-
-    Args:
-        app_context: The application context fixture with mocked Jira client.
-    """
-    # Create mock issues to return
-    mock_issues = [
-        MagicMock(
-            to_simplified_dict=MagicMock(
-                return_value={
-                    "key": "TEST-1",
-                    "summary": "Epic Issue 1",
-                    "type": "Task",
-                    "status": "To Do",
-                }
-            )
-        ),
-        MagicMock(
-            to_simplified_dict=MagicMock(
-                return_value={
-                    "key": "TEST-2",
-                    "summary": "Epic Issue 2",
-                    "type": "Bug",
-                    "status": "In Progress",
-                }
-            )
-        ),
-    ]
-
-    # Configure mock for get_epic_issues to return a list of issues (not an object with .issues attribute)
-    app_context.jira.get_epic_issues.return_value = mock_issues
-
-    # Call the tool
-    with mock_request_context(app_context):
-        result = await call_tool(
-            "jira_get_epic_issues",
-            {"epic_key": "TEST-100", "limit": 10, "startAt": 0},
-        )
-
-    # Verify the result
-    assert len(result) == 1
-    assert result[0].type == "text"
-
-    # Parse the response JSON
-    response = json.loads(result[0].text)
-    assert response["total"] == 2  # Should be the length of the list
-    assert response["start_at"] == 0
-    assert response["max_results"] == 10
-    assert len(response["issues"]) == 2
-    assert response["issues"][0]["key"] == "TEST-1"
-    assert response["issues"][1]["key"] == "TEST-2"
-
-    # Verify the mock was called correctly
-    app_context.jira.get_epic_issues.assert_called_once_with(
-        "TEST-100", start=0, limit=10
-    )
