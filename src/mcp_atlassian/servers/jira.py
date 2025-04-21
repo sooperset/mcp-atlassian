@@ -227,7 +227,7 @@ async def search(
     )
 
     # Format results
-    search_results = [issue.to_simplified_dict() for issue in issues]
+    search_results = [issue.to_simplified_dict() for issue in issues.issues]
 
     return [
         TextContent(
