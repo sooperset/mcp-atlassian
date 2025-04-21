@@ -227,17 +227,45 @@ async def test_server_lifespan():
     """Test the server_lifespan context manager."""
     with (
         patch("mcp_atlassian.server.get_available_services") as mock_services,
+        patch("mcp_atlassian.server.ConfluenceConfig") as mock_confluence_config_cls,
+        patch("mcp_atlassian.server.JiraConfig") as mock_jira_config_cls,
         patch("mcp_atlassian.server.ConfluenceFetcher") as mock_confluence_cls,
         patch("mcp_atlassian.server.JiraFetcher") as mock_jira_cls,
         patch("mcp_atlassian.server.is_read_only_mode") as mock_read_only,
         patch("mcp_atlassian.server.logger") as mock_logger,
+        patch("mcp_atlassian.server.log_config_param") as mock_log_config_param,
     ):
         # Configure mocks
         mock_services.return_value = {"confluence": True, "jira": True}
-        mock_confluence_cls.return_value = MagicMock()
-        mock_confluence_cls.return_value.config.url = "https://test.atlassian.net/wiki"
-        mock_jira_cls.return_value = MagicMock()
-        mock_jira_cls.return_value.config.url = "https://test.atlassian.net"
+
+        # Mock configs
+        mock_confluence_config = MagicMock()
+        mock_confluence_config.url = "https://test.atlassian.net/wiki"
+        mock_confluence_config.auth_type = "basic"
+        mock_confluence_config.username = "confluence-user"
+        mock_confluence_config.api_token = "confluence-token"
+        mock_confluence_config.personal_token = None
+        mock_confluence_config.ssl_verify = True
+        mock_confluence_config.spaces_filter = "TEST,DEV"
+        mock_confluence_config_cls.from_env.return_value = mock_confluence_config
+
+        mock_jira_config = MagicMock()
+        mock_jira_config.url = "https://test.atlassian.net"
+        mock_jira_config.auth_type = "basic"
+        mock_jira_config.username = "jira-user"
+        mock_jira_config.api_token = "jira-token"
+        mock_jira_config.personal_token = None
+        mock_jira_config.ssl_verify = True
+        mock_jira_config.projects_filter = "PROJ,TEST"
+        mock_jira_config_cls.from_env.return_value = mock_jira_config
+
+        # Mock fetchers
+        mock_confluence = MagicMock()
+        mock_confluence_cls.return_value = mock_confluence
+
+        mock_jira = MagicMock()
+        mock_jira_cls.return_value = mock_jira
+
         mock_read_only.return_value = False
 
         # Mock the Server instance
@@ -254,9 +282,124 @@ async def test_server_lifespan():
             mock_logger.info.assert_any_call("Starting MCP Atlassian server")
             mock_logger.info.assert_any_call("Read-only mode: DISABLED")
             mock_logger.info.assert_any_call(
-                "Confluence URL: https://test.atlassian.net/wiki"
+                "Attempting to initialize Confluence client..."
             )
-            mock_logger.info.assert_any_call("Jira URL: https://test.atlassian.net")
+            mock_logger.info.assert_any_call(
+                "Confluence client initialized successfully."
+            )
+            mock_logger.info.assert_any_call("Attempting to initialize Jira client...")
+            mock_logger.info.assert_any_call("Jira client initialized successfully.")
+
+            # Verify config logging calls
+            assert (
+                mock_log_config_param.call_count >= 10
+            )  # At least 5 params for each service
+            mock_log_config_param.assert_any_call(
+                mock_logger, "Confluence", "URL", mock_confluence_config.url
+            )
+            mock_log_config_param.assert_any_call(
+                mock_logger, "Confluence", "Auth Type", mock_confluence_config.auth_type
+            )
+            mock_log_config_param.assert_any_call(
+                mock_logger, "Confluence", "Username", mock_confluence_config.username
+            )
+            mock_log_config_param.assert_any_call(
+                mock_logger,
+                "Confluence",
+                "API Token",
+                mock_confluence_config.api_token,
+                sensitive=True,
+            )
+            mock_log_config_param.assert_any_call(
+                mock_logger,
+                "Confluence",
+                "SSL Verify",
+                str(mock_confluence_config.ssl_verify),
+            )
+            mock_log_config_param.assert_any_call(
+                mock_logger,
+                "Confluence",
+                "Spaces Filter",
+                mock_confluence_config.spaces_filter,
+            )
+
+            mock_log_config_param.assert_any_call(
+                mock_logger, "Jira", "URL", mock_jira_config.url
+            )
+            mock_log_config_param.assert_any_call(
+                mock_logger, "Jira", "Auth Type", mock_jira_config.auth_type
+            )
+            mock_log_config_param.assert_any_call(
+                mock_logger, "Jira", "Username", mock_jira_config.username
+            )
+            mock_log_config_param.assert_any_call(
+                mock_logger,
+                "Jira",
+                "API Token",
+                mock_jira_config.api_token,
+                sensitive=True,
+            )
+            mock_log_config_param.assert_any_call(
+                mock_logger, "Jira", "SSL Verify", str(mock_jira_config.ssl_verify)
+            )
+            mock_log_config_param.assert_any_call(
+                mock_logger, "Jira", "Projects Filter", mock_jira_config.projects_filter
+            )
+
+            # Verify the fetchers were initialized with configs
+            mock_confluence_cls.assert_called_once_with(config=mock_confluence_config)
+            mock_jira_cls.assert_called_once_with(config=mock_jira_config)
+
+
+@pytest.mark.anyio
+async def test_server_lifespan_with_errors():
+    """Test the server_lifespan context manager with initialization errors."""
+    with (
+        patch("mcp_atlassian.server.get_available_services") as mock_services,
+        patch("mcp_atlassian.server.ConfluenceConfig") as mock_confluence_config_cls,
+        patch("mcp_atlassian.server.JiraConfig") as mock_jira_config_cls,
+        patch("mcp_atlassian.server.ConfluenceFetcher") as mock_confluence_cls,
+        patch("mcp_atlassian.server.JiraFetcher") as mock_jira_cls,
+        patch("mcp_atlassian.server.is_read_only_mode") as mock_read_only,
+        patch("mcp_atlassian.server.logger") as mock_logger,
+    ):
+        # Configure mocks
+        mock_services.return_value = {"confluence": True, "jira": True}
+
+        # Mock errors
+        mock_confluence_config_cls.from_env.side_effect = ValueError(
+            "Missing CONFLUENCE_URL"
+        )
+        mock_jira_config_cls.from_env.side_effect = ValueError("Missing JIRA_URL")
+
+        mock_read_only.return_value = False
+
+        # Mock the Server instance
+        mock_server = MagicMock()
+
+        # Call the lifespan context manager
+        async with server_lifespan(mock_server) as ctx:
+            # Verify context contains no clients due to errors
+            assert isinstance(ctx, AppContext)
+            assert ctx.confluence is None
+            assert ctx.jira is None
+
+            # Verify logging calls
+            mock_logger.info.assert_any_call("Starting MCP Atlassian server")
+            mock_logger.info.assert_any_call("Read-only mode: DISABLED")
+            mock_logger.info.assert_any_call(
+                "Attempting to initialize Confluence client..."
+            )
+            mock_logger.info.assert_any_call("Attempting to initialize Jira client...")
+
+            # Verify error logging
+            mock_logger.error.assert_any_call(
+                "Failed to initialize Confluence client: Missing CONFLUENCE_URL",
+                exc_info=True,
+            )
+            mock_logger.error.assert_any_call(
+                "Failed to initialize Jira client: Missing JIRA_URL", exc_info=True
+            )
 
 
 @pytest.mark.anyio
