@@ -227,17 +227,45 @@ async def test_server_lifespan():
     """Test the server_lifespan context manager."""
     with (
         patch("mcp_atlassian.server.get_available_services") as mock_services,
+        patch("mcp_atlassian.server.ConfluenceConfig") as mock_confluence_config_cls,
+        patch("mcp_atlassian.server.JiraConfig") as mock_jira_config_cls,
         patch("mcp_atlassian.server.ConfluenceFetcher") as mock_confluence_cls,
         patch("mcp_atlassian.server.JiraFetcher") as mock_jira_cls,
         patch("mcp_atlassian.server.is_read_only_mode") as mock_read_only,
         patch("mcp_atlassian.server.logger") as mock_logger,
+        patch("mcp_atlassian.server.log_config_param") as mock_log_config_param,
     ):
         # Configure mocks
         mock_services.return_value = {"confluence": True, "jira": True}
-        mock_confluence_cls.return_value = MagicMock()
-        mock_confluence_cls.return_value.config.url = "https://test.atlassian.net/wiki"
-        mock_jira_cls.return_value = MagicMock()
-        mock_jira_cls.return_value.config.url = "https://test.atlassian.net"
+
+        # Mock configs
+        mock_confluence_config = MagicMock()
+        mock_confluence_config.url = "https://test.atlassian.net/wiki"
+        mock_confluence_config.auth_type = "basic"
+        mock_confluence_config.username = "confluence-user"
+        mock_confluence_config.api_token = "confluence-token"
+        mock_confluence_config.personal_token = None
+        mock_confluence_config.ssl_verify = True
+        mock_confluence_config.spaces_filter = "TEST,DEV"
+        mock_confluence_config_cls.from_env.return_value = mock_confluence_config
+
+        mock_jira_config = MagicMock()
+        mock_jira_config.url = "https://test.atlassian.net"
+        mock_jira_config.auth_type = "basic"
+        mock_jira_config.username = "jira-user"
+        mock_jira_config.api_token = "jira-token"
+        mock_jira_config.personal_token = None
+        mock_jira_config.ssl_verify = True
+        mock_jira_config.projects_filter = "PROJ,TEST"
+        mock_jira_config_cls.from_env.return_value = mock_jira_config
+
+        # Mock fetchers
+        mock_confluence = MagicMock()
+        mock_confluence_cls.return_value = mock_confluence
+
+        mock_jira = MagicMock()
+        mock_jira_cls.return_value = mock_jira
+
         mock_read_only.return_value = False
 
         # Mock the Server instance
@@ -254,9 +282,124 @@ async def test_server_lifespan():
             mock_logger.info.assert_any_call("Starting MCP Atlassian server")
             mock_logger.info.assert_any_call("Read-only mode: DISABLED")
             mock_logger.info.assert_any_call(
-                "Confluence URL: https://test.atlassian.net/wiki"
+                "Attempting to initialize Confluence client..."
             )
-            mock_logger.info.assert_any_call("Jira URL: https://test.atlassian.net")
+            mock_logger.info.assert_any_call(
+                "Confluence client initialized successfully."
+            )
+            mock_logger.info.assert_any_call("Attempting to initialize Jira client...")
+            mock_logger.info.assert_any_call("Jira client initialized successfully.")
+
+            # Verify config logging calls
+            assert (
+                mock_log_config_param.call_count >= 10
+            )  # At least 5 params for each service
+            mock_log_config_param.assert_any_call(
+                mock_logger, "Confluence", "URL", mock_confluence_config.url
+            )
+            mock_log_config_param.assert_any_call(
+                mock_logger, "Confluence", "Auth Type", mock_confluence_config.auth_type
+            )
+            mock_log_config_param.assert_any_call(
+                mock_logger, "Confluence", "Username", mock_confluence_config.username
+            )
+            mock_log_config_param.assert_any_call(
+                mock_logger,
+                "Confluence",
+                "API Token",
+                mock_confluence_config.api_token,
+                sensitive=True,
+            )
+            mock_log_config_param.assert_any_call(
+                mock_logger,
+                "Confluence",
+                "SSL Verify",
+                str(mock_confluence_config.ssl_verify),
+            )
+            mock_log_config_param.assert_any_call(
+                mock_logger,
+                "Confluence",
+                "Spaces Filter",
+                mock_confluence_config.spaces_filter,
+            )
+
+            mock_log_config_param.assert_any_call(
+                mock_logger, "Jira", "URL", mock_jira_config.url
+            )
+            mock_log_config_param.assert_any_call(
+                mock_logger, "Jira", "Auth Type", mock_jira_config.auth_type
+            )
+            mock_log_config_param.assert_any_call(
+                mock_logger, "Jira", "Username", mock_jira_config.username
+            )
+            mock_log_config_param.assert_any_call(
+                mock_logger,
+                "Jira",
+                "API Token",
+                mock_jira_config.api_token,
+                sensitive=True,
+            )
+            mock_log_config_param.assert_any_call(
+                mock_logger, "Jira", "SSL Verify", str(mock_jira_config.ssl_verify)
+            )
+            mock_log_config_param.assert_any_call(
+                mock_logger, "Jira", "Projects Filter", mock_jira_config.projects_filter
+            )
+
+            # Verify the fetchers were initialized with configs
+            mock_confluence_cls.assert_called_once_with(config=mock_confluence_config)
+            mock_jira_cls.assert_called_once_with(config=mock_jira_config)
+
+
+@pytest.mark.anyio
+async def test_server_lifespan_with_errors():
+    """Test the server_lifespan context manager with initialization errors."""
+    with (
+        patch("mcp_atlassian.server.get_available_services") as mock_services,
+        patch("mcp_atlassian.server.ConfluenceConfig") as mock_confluence_config_cls,
+        patch("mcp_atlassian.server.JiraConfig") as mock_jira_config_cls,
+        patch("mcp_atlassian.server.ConfluenceFetcher") as mock_confluence_cls,
+        patch("mcp_atlassian.server.JiraFetcher") as mock_jira_cls,
+        patch("mcp_atlassian.server.is_read_only_mode") as mock_read_only,
+        patch("mcp_atlassian.server.logger") as mock_logger,
+    ):
+        # Configure mocks
+        mock_services.return_value = {"confluence": True, "jira": True}
+
+        # Mock errors
+        mock_confluence_config_cls.from_env.side_effect = ValueError(
+            "Missing CONFLUENCE_URL"
+        )
+        mock_jira_config_cls.from_env.side_effect = ValueError("Missing JIRA_URL")
+
+        mock_read_only.return_value = False
+
+        # Mock the Server instance
+        mock_server = MagicMock()
+
+        # Call the lifespan context manager
+        async with server_lifespan(mock_server) as ctx:
+            # Verify context contains no clients due to errors
+            assert isinstance(ctx, AppContext)
+            assert ctx.confluence is None
+            assert ctx.jira is None
+
+            # Verify logging calls
+            mock_logger.info.assert_any_call("Starting MCP Atlassian server")
+            mock_logger.info.assert_any_call("Read-only mode: DISABLED")
+            mock_logger.info.assert_any_call(
+                "Attempting to initialize Confluence client..."
+            )
+            mock_logger.info.assert_any_call("Attempting to initialize Jira client...")
+
+            # Verify error logging
+            mock_logger.error.assert_any_call(
+                "Failed to initialize Confluence client: Missing CONFLUENCE_URL",
+                exc_info=True,
+            )
+            mock_logger.error.assert_any_call(
+                "Failed to initialize Jira client: Missing JIRA_URL", exc_info=True
+            )
 
 
 @pytest.mark.anyio
@@ -664,6 +807,67 @@ async def test_call_tool_success(tool_name, arguments, mock_setup, app_context):
 
 
 @pytest.mark.anyio
+async def test_confluence_search_simple_term_uses_sitesearch(app_context):
+    """Test that a simple search term is converted to a siteSearch CQL query."""
+    # Setup
+    mock_confluence = app_context.confluence
+    mock_confluence.search.return_value = []
+
+    with mock_request_context(app_context):
+        # Execute
+        await call_tool("confluence_search", {"query": "simple term"})
+
+        # Verify
+        mock_confluence.search.assert_called_once()
+        args, kwargs = mock_confluence.search.call_args
+        assert args[0] == 'siteSearch ~ "simple term"'
+
+
+@pytest.mark.anyio
+async def test_confluence_search_fallback_to_text_search(app_context):
+    """Test fallback to text search when siteSearch fails."""
+    # Setup
+    mock_confluence = app_context.confluence
+
+    # Make the first call to search fail
+    mock_confluence.search.side_effect = [Exception("siteSearch not available"), []]
+
+    with mock_request_context(app_context):
+        # Execute
+        await call_tool("confluence_search", {"query": "simple term"})
+
+        # Verify
+        assert mock_confluence.search.call_count == 2
+        first_call = mock_confluence.search.call_args_list[0]
+        second_call = mock_confluence.search.call_args_list[1]
+
+        # First attempt should use siteSearch
+        assert first_call[0][0] == 'siteSearch ~ "simple term"'
+
+        # Second attempt (fallback) should use text search
+        assert second_call[0][0] == 'text ~ "simple term"'
+
+
+@pytest.mark.anyio
+async def test_confluence_search_direct_cql_not_modified(app_context):
+    """Test that a CQL query is not modified."""
+    # Setup
+    mock_confluence = app_context.confluence
+    mock_confluence.search.return_value = []
+
+    cql_query = 'space = DEV AND title ~ "Meeting"'
+
+    with mock_request_context(app_context):
+        # Execute
+        await call_tool("confluence_search", {"query": cql_query})
+
+        # Verify
+        mock_confluence.search.assert_called_once()
+        args, kwargs = mock_confluence.search.call_args
+        assert args[0] == cql_query
+
+
+@pytest.mark.anyio
 async def test_call_tool_read_only_mode(app_context):
     """Test the call_tool handler in read-only mode."""
     # Create a custom environment with read-only mode enabled
@@ -714,9 +918,10 @@ async def test_call_tool_invalid_arguments(app_context):
 
 @pytest.mark.anyio
 async def test_call_tool_jira_create_issue_with_components(app_context):
-    """Test the jira_create_issue tool with components parameter."""
-    # Mock JiraFetcher.create_issue to return a mock issue
+    """Test calling jira_create_issue with components works correctly."""
+    # Setup mock
     mock_issue = MagicMock()
+    mock_issue.key = "TEST-123"
     mock_issue.to_simplified_dict.return_value = {
         "key": "TEST-123",
         "summary": "Test Issue with Components",
@@ -865,58 +1070,61 @@ async def test_call_tool_jira_batch_create_issues_invalid_json(
         assert "Invalid JSON in issues" in result[0].text
 
 
-@pytest.mark.parametrize(
-    "filename,provided_content_type,expected_content_type",
-    [
-        # Test with explicit content type provided
-        ("image.jpg", "image/jpeg", "image/jpeg"),
-        # Test with inferring content type from common image types
-        ("image.png", None, "image/png"),
-        ("document.jpg", None, "image/jpeg"),
-        ("document.gif", None, "image/gif"),
-        # Test with inferring content type from other common types
-        ("document.pdf", None, "application/pdf"),
-        ("document.txt", None, "text/plain"),
-        # Test with unknown extension where type cannot be inferred
-        ("document.xyz", None, "chemical/x-xyz"),
-        # Test with a truly unknown extension
-        ("document.unknownext", None, "application/octet-stream"),
-    ],
-)
-async def test_confluence_attach_content_content_type(
-    filename, provided_content_type, expected_content_type, app_context
-):
-    """Test that confluence_attach_content correctly handles content type."""
+@pytest.mark.anyio
+async def test_call_tool_jira_get_epic_issues(app_context: AppContext) -> None:
+    """Test the jira_get_epic_issues tool correctly processes a list return value.
 
-    # Setup
-    mock_content = b"fake binary content"
-    mock_page_model = MagicMock()
-    mock_page_model.to_simplified_dict.return_value = {
-        "id": "12345",
-        "title": "Test Page",
-    }
+    Args:
+        app_context: The application context fixture with mocked Jira client.
+    """
+    # Create mock issues to return
+    mock_issues = [
+        MagicMock(
+            to_simplified_dict=MagicMock(
+                return_value={
+                    "key": "TEST-1",
+                    "summary": "Epic Issue 1",
+                    "type": "Task",
+                    "status": "To Do",
+                }
+            )
+        ),
+        MagicMock(
+            to_simplified_dict=MagicMock(
+                return_value={
+                    "key": "TEST-2",
+                    "summary": "Epic Issue 2",
+                    "type": "Bug",
+                    "status": "In Progress",
+                }
+            )
+        ),
+    ]
 
-    # Configure the mock
-    app_context.confluence.attach_content.return_value = mock_page_model
+    # Configure mock for get_epic_issues to return a list of issues (not an object with .issues attribute)
+    app_context.jira.get_epic_issues.return_value = mock_issues
 
-    # Prepare arguments
-    arguments = {"content": mock_content, "name": filename, "page_id": "12345"}
-
-    if provided_content_type:
-        arguments["content_type"] = provided_content_type
-
+    # Call the tool
     with mock_request_context(app_context):
-        # Execute
-        result = await call_tool("confluence_attach_content", arguments)
+        result = await call_tool(
+            "jira_get_epic_issues",
+            {"epic_key": "TEST-100", "limit": 10, "startAt": 0},
+        )
 
-        # Verify
-        assert len(result) == 1
-        assert result[0].type == "text"
+    # Verify the result
+    assert len(result) == 1
+    assert result[0].type == "text"
 
-        # Verify the content_type was correctly passed to the API
-        app_context.confluence.attach_content.assert_called_once()
-        call_args = app_context.confluence.attach_content.call_args[1]
-        assert call_args["content_type"] == expected_content_type
-        assert call_args["content"] == mock_content
-        assert call_args["name"] == filename
-        assert call_args["page_id"] == "12345"
+    # Parse the response JSON
+    response = json.loads(result[0].text)
+    assert response["total"] == 2  # Should be the length of the list
+    assert response["start_at"] == 0
+    assert response["max_results"] == 10
+    assert len(response["issues"]) == 2
+    assert response["issues"][0]["key"] == "TEST-1"
+    assert response["issues"][1]["key"] == "TEST-2"
+
+    # Verify the mock was called correctly
+    app_context.jira.get_epic_issues.assert_called_once_with(
+        "TEST-100", start=0, limit=10
+    )

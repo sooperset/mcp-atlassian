@@ -1,11 +1,8 @@
 """Unit tests for the PagesMixin class."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-import requests
-from atlassian.errors import ApiError
-from requests.exceptions import RequestException
 
 from mcp_atlassian.confluence.pages import PagesMixin
 from mcp_atlassian.models.confluence import ConfluencePage
@@ -395,86 +392,6 @@ class TestPagesMixin:
         with pytest.raises(Exception, match="Failed to delete page"):
             pages_mixin.delete_page(page_id)
 
-    def test_attach_content_success(self, pages_mixin):
-        """Test successfully attach content."""
-        # Arrange
-        page_id = "987654321"
-        content = b"Content to attach"
-        name = "test.pdf"
-        content_type = "application/pdf"  # Add content_type parameter
-
-        mock_response = MagicMock(spec=requests.Response)
-        mock_response.status_code = 200
-        pages_mixin.confluence.attach_content.return_value = mock_response
-
-        result = pages_mixin.attach_content(
-            content=content, name=name, page_id=page_id, content_type=content_type
-        )
-
-        # Assert
-        pages_mixin.confluence.attach_content.assert_called_once_with(
-            content=content,
-            name=name,
-            page_id=page_id,
-            content_type=content_type,
-            comment=None,
-        )
-
-        assert isinstance(result, ConfluencePage)
-        assert result.id == page_id
-
-    def test_attach_content_api_error(self, pages_mixin):
-        """Test error handling when attaching content."""
-        # Arrange
-        page_id = "987654321"
-        content = b"Content to attach"
-        name = "test.pdf"
-        content_type = "application/pdf"
-        exception_message = "Attachments are disabled or the calling user does not have permission to attach content."
-        pages_mixin.confluence.attach_content.side_effect = ApiError(exception_message)
-
-        # Act/Assert
-        with pytest.raises(ApiError, match=exception_message):
-            pages_mixin.attach_content(
-                content=content, name=name, page_id=page_id, content_type=content_type
-            )
-
-    def test_attach_content_network_error(self, pages_mixin):
-        """Test error handling when attaching content due to network error."""
-        # Arrange
-        page_id = "987654321"
-        content = b"Content to attach"
-        name = "test.pdf"
-        content_type = "application/pdf"
-        exception_message = "Network error"
-        pages_mixin.confluence.attach_content.side_effect = RequestException(
-            exception_message
-        )
-
-        # Act/Assert
-        with pytest.raises(RequestException, match=exception_message):
-            pages_mixin.attach_content(
-                content=content, name=name, page_id=page_id, content_type=content_type
-            )
-
-    def test_attach_content_unhandled_exception_propagates(self, pages_mixin):
-        """Test error handling when attaching content due to unexpected error."""
-        # Arrange
-        page_id = "987654321"
-        content = b"Content to attach"
-        name = "test.pdf"
-        content_type = "application/pdf"
-        exception_message = "Unexpected error"
-        pages_mixin.confluence.attach_content.side_effect = ValueError(
-            exception_message
-        )
-
-        # Act/Assert
-        with pytest.raises(ValueError, match=exception_message):
-            pages_mixin.attach_content(
-                content=content, name=name, page_id=page_id, content_type=content_type
-            )
-
     def test_get_page_children_success(self, pages_mixin):
         """Test successfully getting child pages."""
         # Arrange
@@ -763,3 +680,49 @@ class TestPagesMixin:
                 version_comment="Updated test",
                 always_update=True,
             )
+
+    def test_update_page_with_parent_id(self, pages_mixin):
+        """Test updating a page and changing its parent."""
+        # Arrange
+        page_id = "987654321"
+        title = "Updated Page"
+        body = "<p>Updated content</p>"
+        parent_id = "123456789"
+        is_minor_edit = False
+        version_comment = "Parent changed"
+
+        # Mock get_page_content to return a document
+        mock_document = ConfluencePage(
+            id=page_id,
+            title=title,
+            content="Updated content",
+            space={"key": "PROJ", "name": "Project"},
+            version={"number": 2},
+        )
+        with patch.object(pages_mixin, "get_page_content", return_value=mock_document):
+            # Act
+            result = pages_mixin.update_page(
+                page_id=page_id,
+                title=title,
+                body=body,
+                is_minor_edit=is_minor_edit,
+                version_comment=version_comment,
+                is_markdown=False,
+                parent_id=parent_id,
+            )
+
+            # Assert
+            pages_mixin.confluence.update_page.assert_called_once_with(
+                page_id=page_id,
+                title=title,
+                body=body,
+                type="page",
+                representation="storage",
+                minor_edit=is_minor_edit,
+                version_comment=version_comment,
+                always_update=True,
+                parent_id=parent_id,
+            )
+            assert result.id == page_id
+            assert result.title == title
+            assert result.version.number == 2

@@ -1,24 +1,24 @@
 import json
 import logging
-import mimetypes
 import os
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, cast
 
-from atlassian.errors import ApiError
 from mcp.server import Server
 from mcp.types import Resource, TextContent, Tool
 from pydantic import AnyUrl
-from requests.exceptions import RequestException
 from thefuzz import fuzz
 
 from .confluence import ConfluenceFetcher
+from .confluence.config import ConfluenceConfig
 from .confluence.utils import quote_cql_identifier_if_needed
 from .jira import JiraFetcher
+from .jira.config import JiraConfig
 from .jira.utils import escape_jql_string
 from .utils.io import is_read_only_mode
+from .utils.logging import log_config_param
 from .utils.urls import is_atlassian_cloud_url
 
 # Configure logging
@@ -94,10 +94,6 @@ async def server_lifespan(server: Server) -> AsyncIterator[AppContext]:
     services = get_available_services()
 
     try:
-        # Initialize services
-        confluence = ConfluenceFetcher() if services["confluence"] else None
-        jira = JiraFetcher() if services["jira"] else None
-
         # Log the startup information
         logger.info("Starting MCP Atlassian server")
 
@@ -105,12 +101,92 @@ async def server_lifespan(server: Server) -> AsyncIterator[AppContext]:
         read_only = is_read_only_mode()
         logger.info(f"Read-only mode: {'ENABLED' if read_only else 'DISABLED'}")
 
-        if confluence:
-            confluence_url = confluence.config.url
-            logger.info(f"Confluence URL: {confluence_url}")
-        if jira:
-            jira_url = jira.config.url
-            logger.info(f"Jira URL: {jira_url}")
+        confluence = None
+        jira = None
+
+        # Initialize Confluence if configured
+        if services["confluence"]:
+            logger.info("Attempting to initialize Confluence client...")
+            try:
+                confluence_config = ConfluenceConfig.from_env()
+                log_config_param(logger, "Confluence", "URL", confluence_config.url)
+                log_config_param(
+                    logger, "Confluence", "Auth Type", confluence_config.auth_type
+                )
+                if confluence_config.auth_type == "basic":
+                    log_config_param(
+                        logger, "Confluence", "Username", confluence_config.username
+                    )
+                    log_config_param(
+                        logger,
+                        "Confluence",
+                        "API Token",
+                        confluence_config.api_token,
+                        sensitive=True,
+                    )
+                else:
+                    log_config_param(
+                        logger,
+                        "Confluence",
+                        "Personal Token",
+                        confluence_config.personal_token,
+                        sensitive=True,
+                    )
+                log_config_param(
+                    logger,
+                    "Confluence",
+                    "SSL Verify",
+                    str(confluence_config.ssl_verify),
+                )
+                log_config_param(
+                    logger,
+                    "Confluence",
+                    "Spaces Filter",
+                    confluence_config.spaces_filter,
+                )
+
+                confluence = ConfluenceFetcher(config=confluence_config)
+                logger.info("Confluence client initialized successfully.")
+            except Exception as e:
+                logger.error(
+                    f"Failed to initialize Confluence client: {e}", exc_info=True
+                )
+
+        # Initialize Jira if configured
+        if services["jira"]:
+            logger.info("Attempting to initialize Jira client...")
+            try:
+                jira_config = JiraConfig.from_env()
+                log_config_param(logger, "Jira", "URL", jira_config.url)
+                log_config_param(logger, "Jira", "Auth Type", jira_config.auth_type)
+                if jira_config.auth_type == "basic":
+                    log_config_param(logger, "Jira", "Username", jira_config.username)
+                    log_config_param(
+                        logger,
+                        "Jira",
+                        "API Token",
+                        jira_config.api_token,
+                        sensitive=True,
+                    )
+                else:
+                    log_config_param(
+                        logger,
+                        "Jira",
+                        "Personal Token",
+                        jira_config.personal_token,
+                        sensitive=True,
+                    )
+                log_config_param(
+                    logger, "Jira", "SSL Verify", str(jira_config.ssl_verify)
+                )
+                log_config_param(
+                    logger, "Jira", "Projects Filter", jira_config.projects_filter
+                )
+
+                jira = JiraFetcher(config=jira_config)
+                logger.info("Jira client initialized successfully.")
+            except Exception as e:
+                logger.error(f"Failed to initialize Jira client: {e}", exc_info=True)
 
         # Provide context to the application
         yield AppContext(confluence=confluence, jira=jira)
@@ -341,10 +417,12 @@ async def list_tools() -> list[Tool]:
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "Search query - can be either a simple text (e.g. 'project documentation') or a CQL query string. Examples of CQL:\n"
+                                "description": "Search query - can be either a simple text (e.g. 'project documentation') or a CQL query string. Simple queries use 'siteSearch' by default, to mimic the WebUI search, with an automatic fallback to 'text' search if not supported. Examples of CQL:\n"
                                 "- Basic search: 'type=page AND space=DEV'\n"
                                 "- Personal space search: 'space=\"~username\"' (note: personal space keys starting with ~ must be quoted)\n"
                                 "- Search by title: 'title~\"Meeting Notes\"'\n"
+                                "- Use siteSearch: 'siteSearch ~ \"important concept\"'\n"
+                                "- Use text search: 'text ~ \"important concept\"'\n"
                                 "- Recent content: 'created >= \"2023-01-01\"'\n"
                                 "- Content with specific label: 'label=documentation'\n"
                                 "- Recently modified content: 'lastModified > startOfMonth(\"-1M\")'\n"
@@ -522,6 +600,10 @@ async def list_tools() -> list[Tool]:
                                     "description": "Optional comment for this version",
                                     "default": "",
                                 },
+                                "parent_id": {
+                                    "type": "string",
+                                    "description": "Optional the new parent page ID",
+                                },
                             },
                             "required": ["page_id", "title", "content"],
                         },
@@ -538,33 +620,6 @@ async def list_tools() -> list[Tool]:
                                 },
                             },
                             "required": ["page_id"],
-                        },
-                    ),
-                    Tool(
-                        name="confluence_attach_content",
-                        description="Attach content to a Confluence page",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "content": {
-                                    "type": "string",
-                                    "format": "binary",
-                                    "description": "The content to attach (bytes)",
-                                },
-                                "name": {
-                                    "type": "string",
-                                    "description": "The name of the attachment",
-                                },
-                                "page_id": {
-                                    "type": "string",
-                                    "description": "The ID of the page to attach the content to",
-                                },
-                                "content_type": {
-                                    "type": "string",
-                                    "description": "Optional: The MIME type of the content (e.g., 'image/png', 'application/pdf'). If omitted, it will be guessed from the filename.",
-                                },
-                            },
-                            "required": ["content", "name", "page_id"],
                         },
                     ),
                 ]
@@ -945,6 +1000,40 @@ async def list_tools() -> list[Tool]:
                         "required": ["sprint_id"],
                     },
                 ),
+                Tool(
+                    name="jira_update_sprint",
+                    description="Update jira sprint",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "sprint_id": {
+                                "type": "string",
+                                "description": "The id of sprint (e.g., '10001')",
+                            },
+                            "sprint_name": {
+                                "type": "string",
+                                "description": "Optional: New name for the sprint",
+                            },
+                            "state": {
+                                "type": "string",
+                                "description": "Optional: New state for the sprint (future|active|closed)",
+                            },
+                            "start_date": {
+                                "type": "string",
+                                "description": "Optional: New start date for the sprint",
+                            },
+                            "end_date": {
+                                "type": "string",
+                                "description": "Optional: New end date for the sprint",
+                            },
+                            "goal": {
+                                "type": "string",
+                                "description": "Optional: New goal for the sprint",
+                            },
+                        },
+                        "required": ["sprint_id"],
+                    },
+                ),
             ]
         )
 
@@ -1295,14 +1384,34 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 x in query
                 for x in ["=", "~", ">", "<", " AND ", " OR ", "currentUser()"]
             ):
-                # Convert simple search term to CQL text search
-                # This will search in all content (title, body, etc.)
-                query = f'text ~ "{query}"'
-                logger.info(f"Converting simple search term to CQL: {query}")
-
-            pages = ctx.confluence.search(
-                query, limit=limit, spaces_filter=spaces_filter
-            )
+                # Convert simple search term to CQL siteSearch (previously it was a 'text' search)
+                # This will use the same search mechanism as the WebUI and give much more relevant results
+                original_query = query  # Store the original query for fallback
+                try:
+                    # Try siteSearch first - it's available in newer versions and provides better results
+                    query = f'siteSearch ~ "{original_query}"'
+                    logger.info(
+                        f"Converting simple search term to CQL using siteSearch: {query}"
+                    )
+                    pages = ctx.confluence.search(
+                        query, limit=limit, spaces_filter=spaces_filter
+                    )
+                except Exception as e:
+                    # If siteSearch fails (possibly not supported in this Confluence version),
+                    # fall back to text search which is supported in all versions
+                    logger.warning(
+                        f"siteSearch failed, falling back to text search: {str(e)}"
+                    )
+                    query = f'text ~ "{original_query}"'
+                    logger.info(f"Falling back to text search with CQL: {query}")
+                    pages = ctx.confluence.search(
+                        query, limit=limit, spaces_filter=spaces_filter
+                    )
+            else:
+                # Using direct CQL query as provided
+                pages = ctx.confluence.search(
+                    query, limit=limit, spaces_filter=spaces_filter
+                )
 
             # Format results using the to_simplified_dict method
             search_results = [page.to_simplified_dict() for page in pages]
@@ -1486,6 +1595,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             content = arguments.get("content")
             is_minor_edit = arguments.get("is_minor_edit", False)
             version_comment = arguments.get("version_comment", "")
+            parent_id = arguments.get("parent_id")
 
             if not page_id or not title or not content:
                 raise ValueError(
@@ -1500,6 +1610,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 is_minor_edit=is_minor_edit,
                 version_comment=version_comment,
                 is_markdown=True,
+                parent_id=parent_id,
             )
 
             # Format results
@@ -1563,86 +1674,6 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                             indent=2,
                             ensure_ascii=False,
                         ),
-                    )
-                ]
-
-        elif name == "confluence_attach_content":
-            if not ctx or not ctx.confluence:
-                raise ValueError("Confluence is not configured.")
-
-            # Write operation - check read-only mode
-            if read_only:
-                return [
-                    TextContent(
-                        "Operation 'confluence_attach_content' is not available in read-only mode."
-                    )
-                ]
-
-            content = arguments.get("content")
-            name = arguments.get("name")
-            page_id = arguments.get("page_id")
-            content_type_arg = arguments.get("content_type")
-
-            if not content or not name or not page_id:
-                return [
-                    TextContent(
-                        type="text",
-                        text="Error: Missing required parameters: content, name, and page_id are required.",
-                    )
-                ]
-
-            try:
-                # Determine the content type
-                determined_content_type = None
-                if content_type_arg:
-                    determined_content_type = content_type_arg
-                    logger.info(
-                        f"Using provided content type: {determined_content_type}"
-                    )
-                else:
-                    # Guess type from filename if not provided
-                    guessed_type, _ = mimetypes.guess_type(name)
-                    if guessed_type:
-                        determined_content_type = guessed_type
-                        logger.info(
-                            f"Inferred content type '{determined_content_type}' from filename '{name}'"
-                        )
-                    else:
-                        # Fallback if guessing fails
-                        determined_content_type = "application/octet-stream"
-                        logger.warning(
-                            f"Could not guess MIME type for filename '{name}'. Defaulting to '{determined_content_type}'."
-                        )
-
-                page = ctx.confluence.attach_content(
-                    content=content,
-                    name=name,
-                    page_id=page_id,
-                    content_type=determined_content_type,
-                )
-                page_data = page.to_simplified_dict()
-                return [
-                    TextContent(
-                        type="text",
-                        text=json.dumps(
-                            page_data,
-                            indent=2,
-                            ensure_ascii=False,
-                        ),
-                    )
-                ]
-            except ApiError as e:
-                return [
-                    TextContent(
-                        type="text",
-                        text=f"Confluence API Error when trying to attach content {name} to page {page_id}: {str(e)}",
-                    )
-                ]
-            except RequestException as e:
-                return [
-                    TextContent(
-                        type="text",
-                        text=f"Network error when trying to attach content {name} to page {page_id}: {str(e)}",
                     )
                 ]
 
@@ -1800,14 +1831,14 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 epic_key, start=start_at, limit=limit
             )
 
-            # Format results
-            issues = [issue.to_simplified_dict() for issue in search_result.issues]
+            # Format results - iterate directly over the list
+            issues = [issue.to_simplified_dict() for issue in search_result]
 
             # Include metadata in the response
             response = {
-                "total": search_result.total,
-                "start_at": search_result.start_at,
-                "max_results": search_result.max_results,
+                "total": len(search_result),
+                "start_at": start_at,
+                "max_results": limit,
                 "issues": issues,
             }
 
@@ -2010,6 +2041,48 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 TextContent(
                     type="text",
                     text=json.dumps(response, indent=2, ensure_ascii=False),
+                )
+            ]
+
+        elif name == "jira_update_sprint" and ctx and ctx.jira:
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            sprint_id = arguments.get("sprint_id")
+            sprint_name = arguments.get("sprint_name")
+            goal = arguments.get("goal")
+            start_date = arguments.get("start_date")
+            end_date = arguments.get("end_date")
+            state = arguments.get("state")
+
+            sprint = ctx.jira.update_sprint(
+                sprint_id=sprint_id,
+                sprint_name=sprint_name,
+                goal=goal,
+                start_date=start_date,
+                end_date=end_date,
+                state=state,
+            )
+
+            if sprint is None:
+                # Handle the error case, e.g., return an error message
+                error_payload = {
+                    "error": f"Failed to update sprint {sprint_id}. Check logs for details."
+                }
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(error_payload, indent=2, ensure_ascii=False),
+                    )
+                ]
+
+            # If sprint is not None, proceed as before
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        sprint.to_simplified_dict(), indent=2, ensure_ascii=False
+                    ),
                 )
             ]
 
