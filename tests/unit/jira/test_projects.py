@@ -6,6 +6,8 @@ import pytest
 
 from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.jira.projects import ProjectsMixin
+from mcp_atlassian.jira.search import SearchMixin
+from mcp_atlassian.models.jira.search import JiraSearchResult
 
 
 @pytest.fixture
@@ -23,6 +25,20 @@ def mock_config():
 def projects_mixin(mock_config):
     """Fixture to create a ProjectsMixin instance for testing."""
     mixin = ProjectsMixin(config=mock_config)
+    mixin.jira = MagicMock()
+    return mixin
+
+
+@pytest.fixture
+def projects_mixin_with_search(mock_config):
+    """Fixture to create a ProjectsMixin | SearchMixin instance for testing."""
+
+    class ProjectSearchMixin(ProjectsMixin, SearchMixin):
+        """Mixin for testing ProjectsMixin and SearchMixin."""
+
+        pass
+
+    mixin = ProjectSearchMixin(config=mock_config)
     mixin.jira = MagicMock()
     return mixin
 
@@ -146,6 +162,61 @@ def test_get_project_exception(projects_mixin):
     result = projects_mixin.get_project("PROJ1")
     assert result is None
     projects_mixin.jira.project.assert_called_once()
+
+
+def test_get_project_issues(projects_mixin_with_search):
+    """Test get_project_issues method."""
+    # Setup mock response
+    projects_mixin_with_search.jira.jql.return_value = {"issues": []}
+
+    # Call the method
+    result = projects_mixin_with_search.get_project_issues("TEST")
+
+    # Verify JQL query
+    projects_mixin_with_search.jira.jql.assert_called_once_with(
+        "project = TEST",
+        fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
+        start=0,
+        limit=50,
+        expand=None,
+    )
+    assert isinstance(result, JiraSearchResult)
+    assert len(result.issues) == 0
+
+
+def test_get_project_issues_with_start(projects_mixin_with_search) -> None:
+    """Test getting project issues with a start index."""
+    projects_mixin_with_search.jira.jql.return_value = {
+        "issues": [
+            {
+                "key": "PROJ-2",
+                "fields": {"summary": "Issue 2"},
+                "self": "https://test.atlassian.net/rest/api/2/issue/10002",
+            }
+        ],
+        "total": 1,
+        "startAt": 3,
+        "maxResults": 5,
+    }
+    project_key = "PROJ"
+    start_index = 3
+
+    result = projects_mixin_with_search.get_project_issues(
+        project_key, start=start_index, limit=5
+    )
+
+    assert len(result.issues) == 1
+    assert result.start_at == 3
+    assert result.max_results == 5
+    assert result.total == 1
+
+    projects_mixin_with_search.jira.jql.assert_called_once_with(
+        f"project = {project_key}",
+        fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
+        start=start_index,
+        limit=5,
+        expand=None,
+    )
 
 
 def test_project_exists(projects_mixin, mock_projects):
@@ -439,72 +510,33 @@ def test_get_project_issues_with_search_mixin(projects_mixin):
     projects_mixin.jira.jql.assert_not_called()
 
 
-def test_get_project_issues_without_search_mixin(projects_mixin):
-    """Test get_project_issues method without search_issues available."""
-    # Remove search_issues attribute if it exists
-    if hasattr(projects_mixin, "search_issues"):
-        delattr(projects_mixin, "search_issues")
-
-    # Prepare mock response
-    jql_result = {
-        "issues": [
-            {
-                "key": "PROJ1-1",
-                "fields": {"summary": "Issue 1", "description": "Description 1"},
-            },
-            {
-                "key": "PROJ1-2",
-                "fields": {"summary": "Issue 2", "description": "Description 2"},
-            },
-        ]
-    }
-    projects_mixin.jira.jql.return_value = jql_result
-
-    result = projects_mixin.get_project_issues("PROJ1", start=10, limit=20)
-
-    # Check the result
-    assert len(result) == 2
-    assert result[0].key == "PROJ1-1"
-    assert result[0].description == "Description 1"
-
-    projects_mixin.jira.jql.assert_called_once_with(
-        jql="project = PROJ1", fields="*all", start=10, limit=20
-    )
-
-
-def test_get_project_issues_invalid_response(projects_mixin):
+def test_get_project_issues_invalid_response(projects_mixin_with_search):
     """Test get_project_issues method with invalid response."""
-    # Remove search_issues attribute if it exists
-    if hasattr(projects_mixin, "search_issues"):
-        delattr(projects_mixin, "search_issues")
 
     # No issues field
-    projects_mixin.jira.jql.return_value = {}
+    projects_mixin_with_search.jira.jql.return_value = {"issues": []}
 
-    result = projects_mixin.get_project_issues("PROJ1")
-    assert result == []
-    projects_mixin.jira.jql.assert_called_once()
+    result = projects_mixin_with_search.get_project_issues("PROJ1")
+    assert result.issues == []
+    projects_mixin_with_search.jira.jql.assert_called_once()
 
     # Non-dict response
-    projects_mixin.jira.jql.reset_mock()
-    projects_mixin.jira.jql.return_value = "not a dict"
+    projects_mixin_with_search.jira.jql.reset_mock()
+    projects_mixin_with_search.jira.jql.return_value = "not a dict"
 
-    result = projects_mixin.get_project_issues("PROJ1")
-    assert result == []
-    projects_mixin.jira.jql.assert_called_once()
+    result = projects_mixin_with_search.get_project_issues("PROJ1")
+    assert result.issues == []
+    projects_mixin_with_search.jira.jql.assert_called_once()
 
 
-def test_get_project_issues_exception(projects_mixin):
+def test_get_project_issues_exception(projects_mixin_with_search):
     """Test get_project_issues method with exception."""
-    # Remove search_issues attribute if it exists
-    if hasattr(projects_mixin, "search_issues"):
-        delattr(projects_mixin, "search_issues")
 
-    projects_mixin.jira.jql.side_effect = Exception("API error")
+    projects_mixin_with_search.jira.jql.side_effect = Exception("API error")
 
-    result = projects_mixin.get_project_issues("PROJ1")
+    result = projects_mixin_with_search.get_project_issues("PROJ1")
     assert result == []
-    projects_mixin.jira.jql.assert_called_once()
+    projects_mixin_with_search.jira.jql.assert_called_once()
 
 
 def test_get_project_keys(projects_mixin, mock_projects):
