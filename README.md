@@ -310,19 +310,13 @@ For Jira Server/DC, use:
 
 <details> <summary>Using SSE Instead of stdio</summary>
 
-1.  Start the server manually in a terminal, mapping a host port (e.g., 9000) to the container's port 8000:
+1.  Start the server manually in a terminal:
 
     ```bash
-    docker run --rm -p 9000:8000 \
-      -e CONFLUENCE_URL \
-      -e CONFLUENCE_USERNAME \
-      -e CONFLUENCE_API_TOKEN \
-      -e JIRA_URL \
-      -e JIRA_USERNAME \
-      -e JIRA_API_TOKEN \
-      -e TRANSPORT \
-      -e PORT \
-      ghcr.io/sooperset/mcp-atlassian:latest
+    docker run --rm -p 9000:9000 \
+      --env-file /path/to/your/.env \
+      ghcr.io/sooperset/mcp-atlassian:latest \
+      --transport sse --port 9000 -vv
     ```
 
 2.  Configure your IDE to connect to the running server via its URL:
