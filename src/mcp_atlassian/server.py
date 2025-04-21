@@ -11,10 +11,13 @@ from mcp.types import Resource, TextContent, Tool
 from pydantic import AnyUrl
 
 from .confluence import ConfluenceFetcher
+from .confluence.config import ConfluenceConfig
 from .confluence.utils import quote_cql_identifier_if_needed
 from .jira import JiraFetcher
+from .jira.config import JiraConfig
 from .jira.utils import escape_jql_string
 from .utils.io import is_read_only_mode
+from .utils.logging import log_config_param
 from .utils.urls import is_atlassian_cloud_url
 
 # Configure logging
@@ -90,10 +93,6 @@ async def server_lifespan(server: Server) -> AsyncIterator[AppContext]:
     services = get_available_services()
 
     try:
-        # Initialize services
-        confluence = ConfluenceFetcher() if services["confluence"] else None
-        jira = JiraFetcher() if services["jira"] else None
-
         # Log the startup information
         logger.info("Starting MCP Atlassian server")
 
@@ -101,12 +100,92 @@ async def server_lifespan(server: Server) -> AsyncIterator[AppContext]:
         read_only = is_read_only_mode()
         logger.info(f"Read-only mode: {'ENABLED' if read_only else 'DISABLED'}")
 
-        if confluence:
-            confluence_url = confluence.config.url
-            logger.info(f"Confluence URL: {confluence_url}")
-        if jira:
-            jira_url = jira.config.url
-            logger.info(f"Jira URL: {jira_url}")
+        confluence = None
+        jira = None
+
+        # Initialize Confluence if configured
+        if services["confluence"]:
+            logger.info("Attempting to initialize Confluence client...")
+            try:
+                confluence_config = ConfluenceConfig.from_env()
+                log_config_param(logger, "Confluence", "URL", confluence_config.url)
+                log_config_param(
+                    logger, "Confluence", "Auth Type", confluence_config.auth_type
+                )
+                if confluence_config.auth_type == "basic":
+                    log_config_param(
+                        logger, "Confluence", "Username", confluence_config.username
+                    )
+                    log_config_param(
+                        logger,
+                        "Confluence",
+                        "API Token",
+                        confluence_config.api_token,
+                        sensitive=True,
+                    )
+                else:
+                    log_config_param(
+                        logger,
+                        "Confluence",
+                        "Personal Token",
+                        confluence_config.personal_token,
+                        sensitive=True,
+                    )
+                log_config_param(
+                    logger,
+                    "Confluence",
+                    "SSL Verify",
+                    str(confluence_config.ssl_verify),
+                )
+                log_config_param(
+                    logger,
+                    "Confluence",
+                    "Spaces Filter",
+                    confluence_config.spaces_filter,
+                )
+
+                confluence = ConfluenceFetcher(config=confluence_config)
+                logger.info("Confluence client initialized successfully.")
+            except Exception as e:
+                logger.error(
+                    f"Failed to initialize Confluence client: {e}", exc_info=True
+                )
+
+        # Initialize Jira if configured
+        if services["jira"]:
+            logger.info("Attempting to initialize Jira client...")
+            try:
+                jira_config = JiraConfig.from_env()
+                log_config_param(logger, "Jira", "URL", jira_config.url)
+                log_config_param(logger, "Jira", "Auth Type", jira_config.auth_type)
+                if jira_config.auth_type == "basic":
+                    log_config_param(logger, "Jira", "Username", jira_config.username)
+                    log_config_param(
+                        logger,
+                        "Jira",
+                        "API Token",
+                        jira_config.api_token,
+                        sensitive=True,
+                    )
+                else:
+                    log_config_param(
+                        logger,
+                        "Jira",
+                        "Personal Token",
+                        jira_config.personal_token,
+                        sensitive=True,
+                    )
+                log_config_param(
+                    logger, "Jira", "SSL Verify", str(jira_config.ssl_verify)
+                )
+                log_config_param(
+                    logger, "Jira", "Projects Filter", jira_config.projects_filter
+                )
+
+                jira = JiraFetcher(config=jira_config)
+                logger.info("Jira client initialized successfully.")
+            except Exception as e:
+                logger.error(f"Failed to initialize Jira client: {e}", exc_info=True)
 
         # Provide context to the application
         yield AppContext(confluence=confluence, jira=jira)
