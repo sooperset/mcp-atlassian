@@ -83,8 +83,8 @@ class SprintsMixin(JiraClient):
         Create a new sprint.
 
         Args:
-            sprint_name: Sprint name
             board_id: Board ID
+            sprint_name: Sprint name
             start_date: Start date in ISO format
             end_date: End date in ISO format
             goal: Sprint goal
@@ -99,6 +99,9 @@ class SprintsMixin(JiraClient):
         # validate start date format
         parsed_start_date = parse_iso8601_date(start_date)
 
+        if parsed_start_date is None:
+            raise ValueError("Start date is required.")
+
         # validate start date is not in the past
         if parsed_start_date < datetime.datetime.now(datetime.timezone.utc):
             raise ValueError("Start date cannot be in the past.")
@@ -106,7 +109,7 @@ class SprintsMixin(JiraClient):
         # validate end date format
         if end_date:
             parsed_end_date = parse_iso8601_date(end_date)
-            if parsed_start_date >= parsed_end_date:
+            if parsed_end_date is not None and parsed_start_date >= parsed_end_date:
                 raise ValueError("Start date must be before end date.")
 
         try:
