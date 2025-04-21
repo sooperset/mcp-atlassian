@@ -3,13 +3,14 @@
 import logging
 from typing import Any
 
-from ..models import JiraIssue, JiraProject, JiraSearchResult
+from ..models import JiraIssue, JiraProject
 from .client import JiraClient
+from .protocols import SearchOperationsProto
 
 logger = logging.getLogger("mcp-jira")
 
 
-class ProjectsMixin(JiraClient):
+class ProjectsMixin(JiraClient, SearchOperationsProto):
     """Mixin for Jira project operations.
 
     This mixin provides methods for retrieving and working with Jira projects,
@@ -293,21 +294,7 @@ class ProjectsMixin(JiraClient):
             # Use JQL to get issues in the project
             jql = f"project = {project_key}"
 
-            # Use search_issues if available (delegate to SearchMixin)
-            if hasattr(self, "search_issues") and callable(self.search_issues):
-                # This assumes search_issues returns JiraIssue objects already
-                return self.search_issues(jql, start=start, limit=limit)
-
-            # Fallback implementation if search_issues is not available
-            result = self.jira.jql(jql=jql, fields="*all", start=start, limit=limit)
-
-            issues = []
-            if isinstance(result, dict) and "issues" in result:
-                # Create a JiraSearchResult and extract the issues
-                search_result = JiraSearchResult.from_api_response(result)
-                issues = search_result.issues
-
-            return issues
+            return self.search_issues(jql, start=start, limit=limit)
 
         except Exception as e:
             logger.error(f"Error getting issues for project {project_key}: {str(e)}")
