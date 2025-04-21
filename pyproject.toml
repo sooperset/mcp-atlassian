@@ -19,6 +19,8 @@ dependencies = [
     "uvicorn>=0.27.1",
     "starlette>=0.37.1",
     "thefuzz>=0.22.1",
+    "python-dateutil>=2.9.0.post0",
+    "types-python-dateutil>=2.9.0.20241206",
 ]
 [[project.authors]]
 name = "sooperset"

@@ -1,11 +1,13 @@
 """Module for Jira sprints operations."""
 
+import datetime
 import logging
 from typing import Any
 
 import requests
 
 from ..models.jira import JiraSprint
+from ..utils.dates import parse_iso8601_date
 from .client import JiraClient
 
 logger = logging.getLogger("mcp-jira")
@@ -90,6 +92,22 @@ class SprintsMixin(JiraClient):
         Returns:
             Created sprint details
         """
+
+        if not start_date:
+            raise ValueError("Start date is required.")
+
+        # validate start date format
+        parsed_start_date = parse_iso8601_date(start_date)
+
+        # validate start date is not in the past
+        if parsed_start_date < datetime.datetime.now(datetime.timezone.utc):
+            raise ValueError("Start date cannot be in the past.")
+
+        # validate end date format
+        if end_date:
+            parsed_end_date = parse_iso8601_date(end_date)
+            if parsed_start_date >= parsed_end_date:
+                raise ValueError("Start date must be before end date.")
 
         try:
             sprint = self.jira.create_sprint(
