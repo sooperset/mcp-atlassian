@@ -57,8 +57,8 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          # Push only on tag pushes or manual triggers, not on PRs for security
-          push: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+          # Allow pushing from PRs as well for testing
+          push: ${{ github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
           tags: |
             ghcr.io/${{ github.repository_owner }}/mcp-atlassian:latest
             ghcr.io/${{ github.repository_owner }}/mcp-atlassian:${{ steps.get_version.outputs.VERSION }}
