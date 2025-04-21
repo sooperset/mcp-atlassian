@@ -124,6 +124,34 @@ def main(
         logger.debug("Attempting to load environment from default .env file")
         load_dotenv()
 
+    # Check environment variables if CLI options were not used (or kept default)
+    # CLI arguments take precedence over environment variables
+
+    # Determine final transport mode
+    final_transport = transport
+    if transport == "stdio":  # Check if the default CLI value is still set
+        env_transport = os.getenv("TRANSPORT", "stdio").lower()
+        if env_transport in ["stdio", "sse"]:
+            final_transport = env_transport
+            logger.debug(
+                f"Using transport '{final_transport}' from environment variable."
+            )
+
+    # Determine final port only if transport is SSE
+    final_port = port
+    if final_transport == "sse":
+        if port == 8000:  # Check if the default CLI value is still set
+            env_port_str = os.getenv("PORT")
+            if env_port_str and env_port_str.isdigit():
+                final_port = int(env_port_str)
+                logger.debug(
+                    f"Using port '{final_port}' from environment variable for SSE transport."
+                )
+        else:  # Port was specified via CLI, log it
+            logger.debug(
+                f"Using port '{final_port}' from command line argument for SSE transport."
+            )
+
     # Set environment variables from command line arguments if provided
     if confluence_url:
         os.environ["CONFLUENCE_URL"] = confluence_url
@@ -163,7 +191,7 @@ def main(
     from . import server
 
     # Run the server with specified transport
-    asyncio.run(server.run_server(transport=transport, port=port))
+    asyncio.run(server.run_server(transport=final_transport, port=final_port))
 
 
 __all__ = ["main", "server", "__version__"]

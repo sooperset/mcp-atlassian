@@ -507,8 +507,9 @@ class IssuesMixin(UsersMixin):
             # Add assignee if provided
             if assignee:
                 try:
-                    account_id = self._get_account_id(assignee)
-                    self._add_assignee_to_fields(fields, account_id)
+                    # _get_account_id now returns the correct identifier (accountId for cloud, name for server)
+                    assignee_identifier = self._get_account_id(assignee)
+                    self._add_assignee_to_fields(fields, assignee_identifier)
                 except ValueError as e:
                     logger.warning(f"Could not assign issue: {str(e)}")
 
@@ -1254,8 +1255,9 @@ class IssuesMixin(UsersMixin):
                 # Add assignee if provided
                 if assignee:
                     try:
-                        account_id = self._get_account_id(assignee)
-                        self._add_assignee_to_fields(fields, account_id)
+                        # _get_account_id now returns the correct identifier (accountId for cloud, name for server)
+                        assignee_identifier = self._get_account_id(assignee)
+                        self._add_assignee_to_fields(fields, assignee_identifier)
                     except ValueError as e:
                         logger.warning(f"Could not assign issue: {str(e)}")
 

@@ -140,21 +140,25 @@ class UsersMixin(JiraClient):
                     or user.get("name", "").lower() == username.lower()
                     or user.get("emailAddress", "").lower() == username.lower()
                 ):
-                    # Jira Cloud uses accountId
-                    if "accountId" in user:
-                        return user["accountId"]
-                    # Jira Data Center/Server might use key
-                    elif "key" in user:
-                        logger.info(
-                            "Using 'key' instead of 'accountId' for Jira Data Center/Server"
-                        )
-                        return user["key"]
-                    # Last resort fallback to name
-                    elif "name" in user:
-                        logger.info(
-                            "Using 'name' instead of 'accountId' for Jira Data Center/Server"
-                        )
-                        return user["name"]
+                    # Prioritize based on Cloud vs Server/DC for assignee field compatibility
+                    if self.config.is_cloud:
+                        # Cloud requires accountId
+                        if "accountId" in user:
+                            return user["accountId"]
+                    else:
+                        # Server/DC requires 'name' for the assignee field { "name": ... }
+                        if "name" in user:
+                            logger.info(
+                                "Using 'name' for assignee field in Jira Data Center/Server"
+                            )
+                            return user["name"]
+                        # Fallback to key if name is somehow missing (less common)
+                        elif "key" in user:
+                            logger.info(
+                                "Using 'key' as fallback for assignee name in Jira Data Center/Server"
+                            )
+                            return user["key"]
+
             return None
         except Exception as e:
             logger.info(f"Error looking up user directly: {str(e)}")
@@ -195,21 +199,24 @@ class UsersMixin(JiraClient):
             if response.status_code == 200:
                 data = response.json()
                 for user in data.get("users", []):
-                    # Jira Cloud uses accountId
-                    if "accountId" in user:
-                        return user["accountId"]
-                    # Jira Data Center/Server might use key
-                    elif "key" in user:
-                        logger.info(
-                            "Using 'key' instead of 'accountId' for Jira Data Center/Server"
-                        )
-                        return user["key"]
-                    # Last resort fallback to name
-                    elif "name" in user:
-                        logger.info(
-                            "Using 'name' instead of 'accountId' for Jira Data Center/Server"
-                        )
-                        return user["name"]
+                    # Prioritize based on Cloud vs Server/DC for assignee field compatibility
+                    if self.config.is_cloud:
+                        # Cloud requires accountId
+                        if "accountId" in user:
+                            return user["accountId"]
+                    else:
+                        # Server/DC requires 'name' for the assignee field { "name": ... }
+                        if "name" in user:
+                            logger.info(
+                                "Using 'name' for assignee field in Jira Data Center/Server"
+                            )
+                            return user["name"]
+                        # Fallback to key if name is somehow missing (less common)
+                        elif "key" in user:
+                            logger.info(
+                                "Using 'key' as fallback for assignee name in Jira Data Center/Server"
+                            )
+                            return user["key"]
             return None
         except Exception as e:
             logger.info(f"Error looking up user by permissions: {str(e)}")
