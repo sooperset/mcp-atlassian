@@ -1,23 +1,70 @@
 """Main server implementation that mounts all service servers."""
 
 import logging
-import sys
-from typing import Literal
+from collections.abc import AsyncGenerator
+from contextlib import AsyncExitStack, asynccontextmanager
+from typing import Any, Literal
 
-import click
-import uvicorn
 from fastmcp import FastMCP
 
-from .confluence import confluence_mcp
-from .jira import jira_mcp
+from ..utils.io import is_read_only_mode
+from .confluence import confluence_lifespan, confluence_mcp
+from .jira import jira_lifespan, jira_mcp
 
 logger = logging.getLogger("mcp-atlassian")
+
+
+@asynccontextmanager
+async def main_lifespan(app: FastMCP) -> AsyncGenerator[dict[str, Any], None]:
+    """Manages lifespans of mounted Jira and Confluence servers."""
+    logger.info("Entering main application lifespan...")
+
+    # Determine global read-only status
+    global_read_only = is_read_only_mode()
+    logger.info(
+        f"Main Lifespan: Global Read-only mode is {'ENABLED' if global_read_only else 'DISABLED'}"
+    )
+
+    async with AsyncExitStack() as stack:
+        # Initialize Jira context
+        try:
+            jira_context = await stack.enter_async_context(jira_lifespan(jira_mcp))
+        except Exception as e:
+            logger.error(f"Error during Jira lifespan startup: {e}", exc_info=True)
+            jira_context = {"jira_fetcher": None, "read_only": global_read_only}
+
+        # Initialize Confluence context
+        try:
+            confluence_context = await stack.enter_async_context(
+                confluence_lifespan(confluence_mcp)
+            )
+        except Exception as e:
+            logger.error(
+                f"Error during Confluence lifespan startup: {e}", exc_info=True
+            )
+            confluence_context = {
+                "confluence_fetcher": None,
+                "read_only": global_read_only,
+            }
+
+        # Combine contexts and set global read-only
+        combined_context = {
+            **confluence_context,
+            **jira_context,
+            "read_only": global_read_only,
+        }
+
+        try:
+            yield combined_context
+        finally:
+            logger.info("Exiting main application lifespan...")
 
 
 # Create the main FastMCP instance
 main_mcp = FastMCP(
     "Atlassian MCP",
     description="Atlassian tools and resources for interacting with Jira and Confluence",
+    lifespan=main_lifespan,
 )
 
 # Mount service-specific FastMCP instances
@@ -26,60 +73,20 @@ main_mcp.mount("confluence", confluence_mcp)
 
 
 async def run_server(
-    transport: Literal["stdio", "websocket", "http"] = "stdio",
+    transport: Literal["stdio", "sse"] = "stdio",
     port: int = 8000,
-    host: str = "127.0.0.1",
 ) -> None:
     """Run the MCP Atlassian server.
 
     Args:
-        transport: The transport to use. One of "stdio", "websocket", or "http".
-        port: The port to use for websocket or http transports.
-        host: The host to bind to for http transport (default: localhost).
+        transport: The transport to use. One of "stdio" or "sse".
+        port: The port to use for SSE transport.
     """
     if transport == "stdio":
         # Use the built-in method if available, otherwise fallback
-        if hasattr(main_mcp, "run_stdio_async"):
-            await main_mcp.run_stdio_async()
-        else:
-            await main_mcp.run(transport="mcp.server.StdioTransport")
+        await main_mcp.run_stdio_async()
 
-    elif transport == "websocket":
-        await main_mcp.run(
-            transport="mcp.server.WebsocketTransport", transport_kwargs={"port": port}
-        )
-
-    elif transport == "http":
-        app = main_mcp.get_asgi_app()
-        uvicorn.run(app, host=host, port=port)
-
-    else:
-        raise ValueError(f"Unknown transport: {transport}")
-
-
-@click.command()
-@click.option(
-    "--transport",
-    type=click.Choice(["stdio", "websocket", "http"]),
-    default="stdio",
-    help="Transport to use",
-)
-@click.option(
-    "--port",
-    type=int,
-    default=8000,
-    help="Port to use (only for websocket/http transport)",
-)
-def cli(transport: str, port: int) -> None:
-    """CLI entry point for running the MCP Atlassian server."""
-    import asyncio
-
-    try:
-        asyncio.run(run_server(transport=transport, port=port))
-    except KeyboardInterrupt:
-        logger.info("Shutting down MCP Atlassian server...")
-        sys.exit(0)
-
-
-if __name__ == "__main__":
-    cli()
+    elif transport == "sse":
+        # Use FastMCP's built-in SSE runner
+        logger.info(f"Starting server with SSE transport on http://0.0.0.0:{port}")
+        await main_mcp.run_sse_async(host="0.0.0.0", port=port)  # noqa: S104
