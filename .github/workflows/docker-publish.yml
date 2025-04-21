@@ -1,0 +1,63 @@
+name: Docker Publish
+
+on:
+  push:
+    tags:
+      - 'v*.*.*' # Trigger on version tag pushes (e.g., v0.7.1)
+  workflow_dispatch: {} # Allow manual triggering from the Actions tab
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    # Define permissions required by the job to push to ghcr.io
+    permissions:
+      contents: read  # Needed for checkout
+      packages: write # Needed to push packages to ghcr.io
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Step to extract the version number from the Git tag
+      # Handles both tag pushes and manual dispatches differently
+      - name: Extract Version
+        id: get_version
+        run: |
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_type }}" == "tag" ]]; then
+            # For tag pushes (e.g., refs/tags/v1.2.3), remove 'v' prefix
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+            echo "IS_RELEASE_TAG=true" >> $GITHUB_OUTPUT
+          else
+            # For manual dispatch or other events, use branch name or default
+            # Sanitize branch name for Docker tag compatibility
+            BRANCH_NAME=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9_.-]/-/g')
+            echo "VERSION=${BRANCH_NAME}-manual" >> $GITHUB_OUTPUT
+            echo "IS_RELEASE_TAG=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }} # Use the GitHub actor running the action
+          password: ${{ secrets.GITHUB_TOKEN }} # Use the automatically generated token
+
+      - name: Build and push Docker image
+        id: docker_build # Added ID for potential metadata use
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          # Push only on tag pushes or manual triggers
+          push: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/mcp-atlassian:latest
+            ghcr.io/${{ github.repository_owner }}/mcp-atlassian:${{ steps.get_version.outputs.VERSION }}
+          # Add labels to the image
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.created=${{ github.event.repository.created_at }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.get_version.outputs.VERSION }}
