@@ -10,6 +10,7 @@ import re
 
 import pytest
 
+from mcp_atlassian.jira.search import SearchMixin
 from src.mcp_atlassian.models.constants import (
     EMPTY_STRING,
     JIRA_DEFAULT_ID,
@@ -1220,7 +1221,11 @@ class TestRealJiraData:
             return None
         try:
             config = JiraConfig.from_env()
-            return ProjectsMixin(config=config)
+
+            class ProjectsMixinWithSearch(ProjectsMixin, SearchMixin):
+                pass
+
+            return ProjectsMixinWithSearch(config=config)
         except ValueError:
             pytest.skip("Real Jira environment not configured")
             return None
