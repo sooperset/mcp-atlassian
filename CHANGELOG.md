@@ -1,7 +1,30 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.8.0] - 2025-04-22
+
+### Added
 - Added `jira_update_sprint`
+- Added `jira_search_fields` tool for fuzzy searching Jira fields
+
+### Changed
+- Migrated server architecture to FastMCP v2
+- Enabled setting transport mode (stdio/sse) via TRANSPORT env var
+- Added support for setting port number via PORT env var when using SSE transport
+- Implemented proper precedence: CLI arguments > environment variables > defaults
+- Enhanced startup with detailed connection feedback and sensitive data masking
+- Added optional parent_id parameter for Confluence page updates
+
+### Fixed
+- Fixed Jira Server/Data Center assignee field handling by prioritizing user name over key
+- Fixed issue with `jira_get_issue` and comments handling
+- Fixed duplicate functions and improved typing in Jira mixins
+
+### Other
+- Added Docker installation as primary method in README
+- Added version-specific tags for container images on ghcr.io
+- Added .dockerignore and updated Dockerfile for improved build process
 
 ## [0.7.1] - 2025-04-18
 
