@@ -576,7 +576,7 @@ class JiraIssue(ApiModel, TimestampMixin):
             result["updated"] = self.updated
 
         # Add comments if available and requested
-        if self.comments and should_include_field("comments"):
+        if self.comments and should_include_field("comment"):
             result["comments"] = [
                 comment.to_simplified_dict() for comment in self.comments
             ]

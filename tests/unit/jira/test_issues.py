@@ -1052,9 +1052,9 @@ class TestIssuesMixin:
         # Verify bulk create was called correctly
         issues_mixin.jira.create_issues.assert_called_once()
         call_args = issues_mixin.jira.create_issues.call_args[0][0]
-        assert len(call_args["issueUpdates"]) == 2
-        assert call_args["issueUpdates"][0]["fields"]["summary"] == "Test Issue 1"
-        assert call_args["issueUpdates"][1]["fields"]["summary"] == "Test Issue 2"
+        assert len(call_args) == 2
+        assert call_args[0]["fields"]["summary"] == "Test Issue 1"
+        assert call_args[1]["fields"]["summary"] == "Test Issue 2"
 
     def test_batch_create_issues_validate_only(self, issues_mixin):
         """Test batch_create_issues with validate_only=True."""
@@ -1185,7 +1185,8 @@ class TestIssuesMixin:
 
         # Verify components were properly formatted
         call_args = issues_mixin.jira.create_issues.call_args[0][0]
-        components = call_args["issueUpdates"][0]["fields"]["components"]
+        assert len(call_args) == 1
+        components = call_args[0]["fields"]["components"]
         assert len(components) == 2
         assert components[0]["name"] == "Frontend"
         assert components[1]["name"] == "Backend"

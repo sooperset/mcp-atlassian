@@ -65,7 +65,11 @@ Install uv first:
 **macOS/Linux:**
 
 ```bash
+# Using the official installer
 curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Alternatively, on macOS you can use Homebrew
+brew install uv
 ```
 
 **Windows:**
@@ -87,6 +91,18 @@ pip install mcp-atlassian
 ```bash
 npx -y @smithery/cli install mcp-atlassian --client claude
 ```
+
+**Option 4: Using Docker**
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/sooperset/mcp-atlassian.git
+   cd mcp-atlassian
+   ```
+2. Build the Docker image:
+   ```bash
+   docker build -t mcp/atlassian .
+   ```
 
 ### 3. Key Configuration Options
 
@@ -249,6 +265,51 @@ If you've installed mcp-atlassian with pip, use this configuration instead:
 ```
 </details>
 
+<details> <summary>Using Docker</summary>
+
+If you've built the Docker image, use this configuration:
+
+**Method 1: Using Environment Variables**
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "mcp/atlassian",
+        "--confluence-url=https://your-company.atlassian.net/wiki",
+        "--confluence-username=your.email@company.com",
+        "--confluence-token=your_api_token",
+        "--jira-url=https://your-company.atlassian.net",
+        "--jira-username=your.email@company.com",
+        "--jira-token=your_api_token"
+      ]
+    }
+  }
+}
+```
+
+**Method 2: Using an Environment File**
+
+Create a `.env` file based on the `.env.example` template in the repository and populate it with your variables, then use:
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "--env-file", "/path/to/your/.env", "mcp/atlassian"]
+    }
+  }
+}
+```
+
+</details>
+
 ### SSE Transport Configuration
 
 <details> <summary>Using SSE Instead of stdio</summary>
@@ -295,7 +356,6 @@ uvx mcp-atlassian --transport sse --port 9000 \
 - `confluence_get_page`: Get content of a specific page
 - `confluence_create_page`: Create a new page
 - `confluence_update_page`: Update an existing page
-- `confluence_attach_content`: Attach content to a page
 
 #### Jira Tools
 
@@ -318,7 +378,7 @@ uvx mcp-atlassian --transport sse --port 9000 \
 |`confluence_create_page`|`jira_batch_create_issues`|
 |`confluence_update_page`|`jira_update_issue`|
 |`confluence_delete_page`|`jira_delete_issue`|
-|`confluence_attach_content`|`jira_get_transitions`|
+||`jira_get_transitions`|
 ||`jira_transition_issue`|
 ||`jira_add_comment`|
 ||`jira_add_worklog`|
@@ -329,6 +389,7 @@ uvx mcp-atlassian --transport sse --port 9000 \
 ||`jira_get_board_issues`|
 ||`jira_get_sprints_from_board`|
 ||`jira_get_sprint_issues`|
+||`jira_update_sprint`|
 ||`jira_create_issue_link`|
 ||`jira_remove_issue_link`|
 
