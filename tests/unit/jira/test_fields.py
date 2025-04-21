@@ -400,3 +400,82 @@ class TestFieldsMixin:
 
         # Verify the value is returned as-is
         assert result == test_value
+
+    def test_search_fields_empty_keyword(self, fields_mixin, mock_fields):
+        """Test search_fields returns first N fields when keyword is empty."""
+        # Set up the fields
+        fields_mixin.get_fields = MagicMock(return_value=mock_fields)
+
+        # Call with empty keyword and limit=3
+        result = fields_mixin.search_fields("", limit=3)
+
+        # Verify first 3 fields are returned
+        assert len(result) == 3
+        assert result == mock_fields[:3]
+
+    def test_search_fields_exact_match(self, fields_mixin, mock_fields):
+        """Test search_fields finds exact matches with high relevance."""
+        # Set up the fields
+        fields_mixin.get_fields = MagicMock(return_value=mock_fields)
+
+        # Search for "Story Points"
+        result = fields_mixin.search_fields("Story Points")
+
+        # Verify Story Points field is first result
+        assert len(result) > 0
+        assert result[0]["name"] == "Story Points"
+        assert result[0]["id"] == "customfield_10012"
+
+    def test_search_fields_partial_match(self, fields_mixin, mock_fields):
+        """Test search_fields finds partial matches."""
+        # Set up the fields
+        fields_mixin.get_fields = MagicMock(return_value=mock_fields)
+
+        # Search for "Epic"
+        result = fields_mixin.search_fields("Epic")
+
+        # Verify Epic-related fields are in results
+        epic_fields = [field["name"] for field in result[:2]]  # Top 2 results
+        assert "Epic Link" in epic_fields
+        assert "Epic Name" in epic_fields
+
+    def test_search_fields_case_insensitive(self, fields_mixin, mock_fields):
+        """Test search_fields is case insensitive."""
+        # Set up the fields
+        fields_mixin.get_fields = MagicMock(return_value=mock_fields)
+
+        # Search with different cases
+        result_lower = fields_mixin.search_fields("story points")
+        result_upper = fields_mixin.search_fields("STORY POINTS")
+        result_mixed = fields_mixin.search_fields("Story Points")
+
+        # Verify all searches find the same field
+        assert len(result_lower) > 0
+        assert len(result_upper) > 0
+        assert len(result_mixed) > 0
+        assert result_lower[0]["id"] == result_upper[0]["id"] == result_mixed[0]["id"]
+        assert result_lower[0]["name"] == "Story Points"
+
+    def test_search_fields_with_limit(self, fields_mixin, mock_fields):
+        """Test search_fields respects the limit parameter."""
+        # Set up the fields
+        fields_mixin.get_fields = MagicMock(return_value=mock_fields)
+
+        # Search with limit=2
+        result = fields_mixin.search_fields("field", limit=2)
+
+        # Verify only 2 results are returned
+        assert len(result) == 2
+
+    def test_search_fields_error(self, fields_mixin):
+        """Test search_fields handles errors gracefully."""
+        # Make get_fields raise an exception
+        fields_mixin.get_fields = MagicMock(
+            side_effect=Exception("Error getting fields")
+        )
+
+        # Call the method
+        result = fields_mixin.search_fields("test")
+
+        # Verify empty list is returned on error
+        assert result == []

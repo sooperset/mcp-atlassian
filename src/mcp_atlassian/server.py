@@ -725,6 +725,32 @@ async def list_tools() -> list[Tool]:
                     },
                 ),
                 Tool(
+                    name="jira_search_fields",
+                    description="Search Jira fields by keyword with fuzzy match",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "keyword": {
+                                "type": "string",
+                                "description": "Keyword for fuzzy search. If left empty, lists the first 'limit' available fields in their default order.",
+                                "default": "",
+                            },
+                            "limit": {
+                                "type": "number",
+                                "description": "Maximum number of results",
+                                "default": 10,
+                                "minimum": 1,
+                            },
+                            "refresh": {
+                                "type": "boolean",
+                                "description": "Whether to force refresh the field list",
+                                "default": False,
+                            },
+                        },
+                        "required": [],
+                    },
+                ),
+                Tool(
                     name="jira_get_project_issues",
                     description="Get all issues for a specific Jira project",
                     inputSchema={
@@ -1717,6 +1743,22 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 TextContent(
                     type="text",
                     text=json.dumps(response, indent=2, ensure_ascii=False),
+                )
+            ]
+
+        elif name == "jira_search_fields" and ctx and ctx.jira:
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            keyword = arguments.get("keyword")
+            limit = int(arguments.get("limit", 10))
+
+            result = ctx.jira.search_fields(keyword, limit)
+
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(result, indent=2, ensure_ascii=False),
                 )
             ]
 
