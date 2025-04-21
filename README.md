@@ -96,11 +96,8 @@ npx -y @smithery/cli install mcp-atlassian --client claude
 
 1. Pull the Docker image:
    ```bash
-   # Pull the latest version
+   # Pull the docker image
    docker pull ghcr.io/sooperset/mcp-atlassian:latest
-
-   # Or pull a specific version (recommended for stability)
-   docker pull ghcr.io/sooperset/mcp-atlassian:0.7.1
    ```
 
    Alternatively, you can build it locally:
