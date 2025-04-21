@@ -102,7 +102,10 @@ jira_mcp = FastMCP(
 @jira_mcp.tool()
 async def get_issue(
     ctx: Context,
-    issue_key: str,
+    issue_key: Annotated[
+        str,
+        Field(description="Jira issue key (e.g., 'PROJ-123')"),
+    ],
     fields: Annotated[
         str,
         Field(
@@ -172,7 +175,12 @@ async def get_issue(
 @jira_mcp.tool()
 async def search(
     ctx: Context,
-    jql: str,
+    jql: Annotated[
+        str,
+        Field(
+            description='JQL query string (Jira Query Language). Examples:\n- Find Epics: "issuetype = Epic AND project = PROJ"\n- Find issues in Epic: "parent = PROJ-123"\n- Find by status: "status = \'In Progress\' AND project = PROJ"\n- Find by assignee: "assignee = currentUser()"\n- Find recently updated: "updated >= -7d AND project = PROJ"\n- Find by label: "labels = frontend AND project = PROJ"\n- Find by priority: "priority = High AND project = PROJ"'
+        ),
+    ],
     fields: Annotated[
         str,
         Field(
@@ -231,7 +239,10 @@ async def search(
 @jira_mcp.tool()
 async def get_project_issues(
     ctx: Context,
-    project_key: str,
+    project_key: Annotated[
+        str,
+        Field(description="The project key"),
+    ],
     limit: Annotated[
         int,
         Field(
@@ -275,7 +286,10 @@ async def get_project_issues(
 @jira_mcp.tool()
 async def get_epic_issues(
     ctx: Context,
-    epic_key: str,
+    epic_key: Annotated[
+        str,
+        Field(description="The key of the epic (e.g., 'PROJ-123')"),
+    ],
     limit: Annotated[
         int,
         Field(
@@ -328,7 +342,10 @@ async def get_epic_issues(
 @jira_mcp.tool()
 async def get_transitions(
     ctx: Context,
-    issue_key: str,
+    issue_key: Annotated[
+        str,
+        Field(description="Jira issue key (e.g., 'PROJ-123')"),
+    ],
 ) -> Sequence[TextContent]:
     """Get available status transitions for a Jira issue"""
 
@@ -350,7 +367,10 @@ async def get_transitions(
 @jira_mcp.tool()
 async def get_worklog(
     ctx: Context,
-    issue_key: str,
+    issue_key: Annotated[
+        str,
+        Field(description="Jira issue key (e.g., 'PROJ-123')"),
+    ],
 ) -> Sequence[TextContent]:
     """Get worklog entries for a Jira issue"""
 
@@ -370,8 +390,13 @@ async def get_worklog(
 @jira_mcp.tool()
 async def download_attachments(
     ctx: Context,
-    issue_key: str,
-    target_dir: str,
+    issue_key: Annotated[
+        str,
+        Field(description="Jira issue key (e.g., 'PROJ-123')"),
+    ],
+    target_dir: Annotated[
+        str, Field(description="Directory where attachments should be saved")
+    ],
 ) -> Sequence[TextContent]:
     """Download attachments from a Jira issue"""
 
@@ -459,8 +484,13 @@ async def get_agile_boards(
 @jira_mcp.tool()
 async def get_board_issues(
     ctx: Context,
-    board_id: str,
-    jql: str,
+    board_id: Annotated[str, Field(description="The id of the board (e.g., '1001')")],
+    jql: Annotated[
+        str,
+        Field(
+            description='JQL query string (Jira Query Language). Examples:\n- Find Epics: "issuetype = Epic AND project = PROJ"\n- Find issues in Epic: "parent = PROJ-123"\n- Find by status: "status = \'In Progress\' AND project = PROJ"\n- Find by assignee: "assignee = currentUser()"\n- Find recently updated: "updated >= -7d AND project = PROJ"\n- Find by label: "labels = frontend AND project = PROJ"\n- Find by priority: "priority = High AND project = PROJ"'
+        ),
+    ],
     fields: Annotated[
         str,
         Field(
@@ -517,7 +547,7 @@ async def get_board_issues(
 @jira_mcp.tool()
 async def get_sprints_from_board(
     ctx: Context,
-    board_id: str,
+    board_id: Annotated[str, Field(description="The id of board (e.g., '1000')")],
     state: Annotated[
         str | None,
         Field(
@@ -564,7 +594,7 @@ async def get_sprints_from_board(
 @jira_mcp.tool()
 async def get_sprint_issues(
     ctx: Context,
-    sprint_id: str,
+    sprint_id: Annotated[str, Field(description="The id of sprint (e.g., '10001')")],
     fields: Annotated[
         str,
         Field(
@@ -616,7 +646,7 @@ async def get_sprint_issues(
 @jira_mcp.tool()
 async def update_sprint(
     ctx: Context,
-    sprint_id: str,
+    sprint_id: Annotated[str, Field(description="The id of sprint (e.g., '10001')")],
     sprint_name: Annotated[
         str | None,
         Field(
@@ -679,9 +709,23 @@ async def update_sprint(
 @jira_mcp.tool()
 async def create_issue(
     ctx: Context,
-    project_key: str,
-    summary: str,
-    issue_type: str,
+    project_key: Annotated[
+        str,
+        Field(
+            description="The JIRA project key (e.g. 'PROJ', 'DEV', 'SUPPORT'). This is the prefix of issue keys in your project. Never assume what it might be, always ask the user."
+        ),
+    ],
+    summary: Annotated[str, Field(description="Summary/title of the issue")],
+    issue_type: Annotated[
+        str,
+        Field(
+            description=(
+                "Issue type (e.g. 'Task', 'Bug', 'Story', 'Epic', 'Subtask'). "
+                "The available types depend on your project configuration. "
+                "For subtasks, use 'Subtask' (not 'Sub-task') and include parent in additional_fields."
+            )
+        ),
+    ],
     description: Annotated[
         str,
         Field(
@@ -857,8 +901,16 @@ async def batch_create_issues(
 @jira_mcp.tool()
 async def update_issue(
     ctx: Context,
-    issue_key: str,
-    fields: str,
+    issue_key: Annotated[
+        str,
+        Field(description="Jira issue key (e.g., 'PROJ-123')"),
+    ],
+    fields: Annotated[
+        str,
+        Field(
+            description='A valid JSON object of fields to update as a string. Example: \'{"summary": "New title", "description": "Updated description", "priority": {"name": "High"}, "assignee": {"name": "john.doe"}}\''
+        ),
+    ],
     additional_fields: Annotated[
         str,
         Field(
@@ -910,7 +962,10 @@ async def update_issue(
 @jira_mcp.tool()
 async def delete_issue(
     ctx: Context,
-    issue_key: str,
+    issue_key: Annotated[
+        str,
+        Field(description="Jira issue key (e.g. PROJ-123)"),
+    ],
 ) -> Sequence[TextContent]:
     """Delete an existing Jira issue"""
 
@@ -939,8 +994,11 @@ async def delete_issue(
 @jira_mcp.tool()
 async def add_comment(
     ctx: Context,
-    issue_key: str,
-    comment: str,
+    issue_key: Annotated[
+        str,
+        Field(description="Jira issue key (e.g., 'PROJ-123')"),
+    ],
+    comment: Annotated[str, Field(description="Comment text in Markdown format")],
 ) -> Sequence[TextContent]:
     """Add a comment to a Jira issue"""
 
@@ -969,8 +1027,16 @@ async def add_comment(
 @jira_mcp.tool()
 async def add_worklog(
     ctx: Context,
-    issue_key: str,
-    time_spent: str,
+    issue_key: Annotated[
+        str,
+        Field(description="Jira issue key (e.g., 'PROJ-123')"),
+    ],
+    time_spent: Annotated[
+        str,
+        Field(
+            description="Time spent in Jira format. Examples: '1h 30m' (1 hour and 30 minutes), '1d' (1 day), '30m' (30 minutes), '4h' (4 hours)"
+        ),
+    ],
     comment: Annotated[
         str | None,
         Field(
@@ -1017,8 +1083,14 @@ async def add_worklog(
 @jira_mcp.tool()
 async def link_to_epic(
     ctx: Context,
-    issue_key: str,
-    epic_key: str,
+    issue_key: Annotated[
+        str,
+        Field(description="The key of the issue to link (e.g., 'PROJ-123')"),
+    ],
+    epic_key: Annotated[
+        str,
+        Field(description="The key of the epic to link to (e.g., 'PROJ-456')"),
+    ],
 ) -> Sequence[TextContent]:
     """Link an existing issue to an epic"""
 
@@ -1047,9 +1119,18 @@ async def link_to_epic(
 @jira_mcp.tool()
 async def create_issue_link(
     ctx: Context,
-    link_type: str,
-    inward_issue_key: str,
-    outward_issue_key: str,
+    link_type: Annotated[
+        str,
+        Field(
+            description="The type of link to create (e.g., 'Duplicate', 'Blocks', 'Relates to')"
+        ),
+    ],
+    inward_issue_key: Annotated[
+        str, Field(description="The key of the inward issue (e.g., 'PROJ-123')")
+    ],
+    outward_issue_key: Annotated[
+        str, Field(description="The key of the outward issue (e.g., 'PROJ-456')")
+    ],
     comment: Annotated[
         str | None,
         Field(
@@ -1093,7 +1174,10 @@ async def create_issue_link(
 @jira_mcp.tool()
 async def remove_issue_link(
     ctx: Context,
-    link_id: str,
+    link_id: Annotated[
+        str,
+        Field(description="The ID of the link to remove"),
+    ],
 ) -> Sequence[TextContent]:
     """Remove a link between two Jira issues"""
 
@@ -1122,8 +1206,16 @@ async def remove_issue_link(
 @jira_mcp.tool()
 async def transition_issue(
     ctx: Context,
-    issue_key: str,
-    transition_id: str,
+    issue_key: Annotated[
+        str,
+        Field(description="Jira issue key (e.g., 'PROJ-123')"),
+    ],
+    transition_id: Annotated[
+        str,
+        Field(
+            description="ID of the transition to perform. Use the jira_get_transitions tool first to get the available transition IDs for the issue. Example values: '11', '21', '31'"
+        ),
+    ],
     fields: Annotated[
         str,
         Field(

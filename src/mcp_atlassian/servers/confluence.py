@@ -126,7 +126,12 @@ confluence_mcp = FastMCP(
 @confluence_mcp.tool()
 async def search(
     ctx: Context,
-    query: str,
+    query: Annotated[
+        str,
+        Field(
+            description="Search query - can be either a simple text (e.g. 'project documentation') or a CQL query string. Simple queries use 'siteSearch' by default, to mimic the WebUI search, with an automatic fallback to 'text' search if not supported. Examples of CQL:\n- Basic search: 'type=page AND space=DEV'\n- Personal space search: 'space=\"~username\"' (note: personal space keys starting with ~ must be quoted)\n- Search by title: 'title~\"Meeting Notes\"'\n- Use siteSearch: 'siteSearch ~ \"important concept\"'\n- Use text search: 'text ~ \"important concept\"'\n- Recent content: 'created >= \"2023-01-01\"'\n- Content with specific label: 'label=documentation'\n- Recently modified content: 'lastModified > startOfMonth(\"-1M\")'\n- Content modified this year: 'creator = currentUser() AND lastModified > startOfYear()'\n- Content you contributed to recently: 'contributor = currentUser() AND lastModified > startOfWeek()'\n- Content watched by user: 'watcher = \"user@domain.com\" AND type = page'\n- Exact phrase in content: 'text ~ \"\\\"Urgent Review Required\\\"\" AND label = \"pending-approval\"'\n- Title wildcards: 'title ~ \"Minutes*\" AND (space = \"HR\" OR space = \"Marketing\")'\nNote: Special identifiers need proper quoting in CQL: personal space keys (e.g., \"~username\"), reserved words, numeric IDs, and identifiers with special characters."
+        ),
+    ],
     limit: Annotated[
         int,
         Field(
@@ -143,24 +148,7 @@ async def search(
         ),
     ] = None,
 ) -> Sequence[TextContent]:
-    """Search Confluence content using simple terms or CQL.
-
-    Search query - can be either a simple text (e.g. 'project documentation') or a CQL query string. Simple queries use 'siteSearch' by default, to mimic the WebUI search, with an automatic fallback to 'text' search if not supported. Examples of CQL:
-    - Basic search: 'type=page AND space=DEV'
-    - Personal space search: 'space="~username"' (note: personal space keys starting with ~ must be quoted)
-    - Search by title: 'title~"Meeting Notes"'
-    - Use siteSearch: 'siteSearch ~ "important concept"'
-    - Use text search: 'text ~ "important concept"'
-    - Recent content: 'created >= "2023-01-01"'
-    - Content with specific label: 'label=documentation'
-    - Recently modified content: 'lastModified > startOfMonth("-1M")'
-    - Content modified this year: 'creator = currentUser() AND lastModified > startOfYear()'
-    - Content you contributed to recently: 'contributor = currentUser() AND lastModified > startOfWeek()'
-    - Content watched by user: 'watcher = "user@domain.com" AND type = page'
-    - Exact phrase in content: 'text ~ "\"Urgent Review Required\"" AND label = "pending-approval"'
-    - Title wildcards: 'title ~ "Minutes*" AND (space = "HR" OR space = "Marketing")'
-    Note: Special identifiers need proper quoting in CQL: personal space keys (e.g., "~username"), reserved words, numeric IDs, and identifiers with special characters.
-    """
+    """Search Confluence content using simple terms or CQL"""
     # Get the ConfluenceFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("confluence_fetcher")
     if not fetcher:
@@ -207,7 +195,12 @@ async def search(
 @confluence_mcp.tool()
 async def get_page(
     ctx: Context,
-    page_id: str,
+    page_id: Annotated[
+        str,
+        Field(
+            description="Confluence page ID (numeric ID, can be found in the page URL). For example, in the URL 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', the page ID is '123456789'"
+        ),
+    ],
     include_metadata: Annotated[
         bool,
         Field(
@@ -223,10 +216,7 @@ async def get_page(
         ),
     ] = True,
 ) -> Sequence[TextContent]:
-    """Get content of a specific Confluence page by ID.
-
-    Confluence page ID (numeric ID, can be found in the page URL). For example, in the URL 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', the page ID is '123456789'
-    """
+    """Get content of a specific Confluence page by ID"""
     # Get the ConfluenceFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("confluence_fetcher")
     if not fetcher:
@@ -254,7 +244,12 @@ async def get_page(
 @confluence_mcp.tool()
 async def get_page_children(
     ctx: Context,
-    parent_id: str,
+    parent_id: Annotated[
+        str,
+        Field(
+            description="The ID of the parent page whose children you want to retrieve"
+        ),
+    ],
     expand: Annotated[
         str,
         Field(
@@ -332,7 +327,10 @@ async def get_page_children(
 @confluence_mcp.tool()
 async def get_page_ancestors(
     ctx: Context,
-    page_id: str,
+    page_id: Annotated[
+        str,
+        Field(description="The ID of the page whose ancestors you want to retrieve"),
+    ],
 ) -> Sequence[TextContent]:
     """Get ancestor (parent) pages of a specific Confluence page."""
     # Get the ConfluenceFetcher instance from the context
@@ -359,12 +357,14 @@ async def get_page_ancestors(
 @confluence_mcp.tool()
 async def get_comments(
     ctx: Context,
-    page_id: str,
+    page_id: Annotated[
+        str,
+        Field(
+            description="Confluence page ID (numeric ID, can be parsed from URL, e.g. from 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title' -> '123456789')"
+        ),
+    ],
 ) -> Sequence[TextContent]:
-    """Get comments for a specific Confluence page.
-
-    Confluence page ID (numeric ID, can be parsed from URL, e.g. from 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title' -> '123456789')
-    """
+    """Get comments for a specific Confluence page"""
     # Get the ConfluenceFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("confluence_fetcher")
     if not fetcher:
@@ -399,9 +399,19 @@ async def get_comments(
 @confluence_mcp.tool()
 async def create_page(
     ctx: Context,
-    space_key: str,
-    title: str,
-    content: str,
+    space_key: Annotated[
+        str,
+        Field(
+            description="The key of the space to create the page in (usually a short uppercase code like 'DEV', 'TEAM', or 'DOC')"
+        ),
+    ],
+    title: Annotated[str, Field(description="The title of the page")],
+    content: Annotated[
+        str,
+        Field(
+            description="The content of the page in Markdown format. Supports headings, lists, tables, code blocks, and other Markdown syntax"
+        ),
+    ],
     parent_id: Annotated[
         str | None,
         Field(
@@ -409,10 +419,7 @@ async def create_page(
         ),
     ] = None,
 ) -> Sequence[TextContent]:
-    """Create a new Confluence page.
-
-    The content of the page in Markdown format. Supports headings, lists, tables, code blocks, and other Markdown syntax.
-    """
+    """Create a new Confluence page"""
     # Get the ConfluenceFetcher instance and read-only mode from the context
     fetcher = ctx.request_context.lifespan_context.get("confluence_fetcher")
     read_only = ctx.request_context.lifespan_context.get("read_only", False)
@@ -454,9 +461,12 @@ async def create_page(
 @confluence_mcp.tool()
 async def update_page(
     ctx: Context,
-    page_id: str,
-    title: str,
-    content: str,
+    page_id: Annotated[str, Field(description="The ID of the page to update")],
+    title: Annotated[str, Field(description="The new title of the page")],
+    content: Annotated[
+        str,
+        Field(description="The new content of the page in Markdown format"),
+    ],
     is_minor_edit: Annotated[
         bool,
         Field(
@@ -522,7 +532,10 @@ async def update_page(
 @confluence_mcp.tool()
 async def delete_page(
     ctx: Context,
-    page_id: str,
+    page_id: Annotated[
+        str,
+        Field(description="The ID of the page to delete"),
+    ],
 ) -> Sequence[TextContent]:
     """Delete an existing Confluence page."""
     # Get the ConfluenceFetcher instance and read-only mode from the context
