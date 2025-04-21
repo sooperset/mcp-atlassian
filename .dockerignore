@@ -1,0 +1,53 @@
+# Version control
+.git
+.gitignore
+.github
+
+# Virtual environments
+.venv*
+venv*
+env*
+
+# Python bytecode/cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache
+.coverage
+.mypy_cache
+.ruff_cache
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Environment variables and secrets
+.env*
+*.env
+*.key
+
+# Logs
+*.log
+
+# Docker related
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Temporal and backup files
+*.tmp
+*.bak
+*.backup
