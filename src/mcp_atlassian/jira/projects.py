@@ -3,7 +3,8 @@
 import logging
 from typing import Any
 
-from ..models import JiraIssue, JiraProject
+from ..models import JiraProject
+from ..models.jira.search import JiraSearchResult
 from .client import JiraClient
 from .protocols import SearchOperationsProto
 
@@ -278,7 +279,7 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
 
     def get_project_issues(
         self, project_key: str, start: int = 0, limit: int = 50
-    ) -> list[JiraIssue]:
+    ) -> JiraSearchResult:
         """
         Get issues for a specific project.
 

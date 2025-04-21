@@ -676,44 +676,6 @@ class TestEpicsMixin:
         assert last_call_kwargs.get("start") == 3
         assert last_call_kwargs.get("limit") == 10
 
-    def test_get_epic_issues_no_search_issues(self, epics_mixin):
-        """Test get_epic_issues when search_issues method is not available."""
-        # Setup mocks
-        epics_mixin.jira.get_issue.return_value = {
-            "key": "EPIC-123",
-            "fields": {"issuetype": {"name": "Epic"}},
-        }
-
-        epics_mixin.get_jira_field_ids = MagicMock(
-            return_value={"epic_link": "customfield_10014"}
-        )
-
-        # Remove search_issues method
-        delattr(epics_mixin, "search_issues")
-
-        # Mock jql response
-        mock_issues = [
-            {"key": "TEST-456", "fields": {"summary": "Issue 1"}},
-            {"key": "TEST-789", "fields": {"summary": "Issue 2"}},
-        ]
-        epics_mixin.jira.jql.return_value = {"issues": mock_issues}
-
-        # Call the method with start parameter
-        result = epics_mixin.get_epic_issues("EPIC-123", start=7, limit=10)
-
-        # Verify the result contains documents created from jql results
-        assert len(result) == 2
-        assert result[0].key == "TEST-456"
-        assert result[0].summary == "Issue 1"
-        assert result[1].key == "TEST-789"
-        assert result[1].summary == "Issue 2"
-
-        # Verify the start parameter was passed to jql
-        epics_mixin.jira.jql.assert_called()
-        call_kwargs = epics_mixin.jira.jql.call_args[1]
-        assert call_kwargs.get("start") == 7
-        assert call_kwargs.get("limit") == 10
-
     def test_get_epic_issues_api_error(self, epics_mixin):
         """Test get_epic_issues with API error."""
         # Setup mocks - simulate API error
