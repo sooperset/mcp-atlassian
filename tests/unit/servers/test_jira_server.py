@@ -285,7 +285,7 @@ async def test_search(jira_client, mock_jira_fetcher):
         jql="project = TEST",
         fields="summary,status",
         limit=10,
-        start_at=0,
+        start=0,
         projects_filter=None,
     )
 

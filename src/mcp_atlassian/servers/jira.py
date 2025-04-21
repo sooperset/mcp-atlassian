@@ -221,7 +221,7 @@ async def search(
     issues = fetcher.search_issues(
         jql=jql,
         fields=fields,
-        start_at=start_at,
+        start=start_at,
         limit=limit,
         projects_filter=projects_filter,
     )
@@ -269,7 +269,7 @@ async def get_project_issues(
     # Get project issues
     issues = fetcher.get_project_issues(
         project_key=project_key,
-        start_at=start_at,
+        start=start_at,
         limit=limit,
     )
 
