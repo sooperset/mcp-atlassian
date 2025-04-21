@@ -201,6 +201,7 @@ For Server/Data Center deployments, use direct variable passing:
 
 > [!NOTE]
 > Set `CONFLUENCE_SSL_VERIFY` and `JIRA_SSL_VERIFY` to "false" only if you have self-signed certificates.
+
 </details>
 
 <details> <summary>Single Service Configurations</summary>
