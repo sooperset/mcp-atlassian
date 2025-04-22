@@ -8,7 +8,7 @@ import logging
 import re
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from ..base import ApiModel, TimestampMixin
 from ..constants import (
@@ -16,10 +16,10 @@ from ..constants import (
     JIRA_DEFAULT_ID,
     JIRA_DEFAULT_KEY,
 )
-from .changelog import JiraChangelog
 from .comment import JiraComment
 from .common import (
     JiraAttachment,
+    JiraChangelog,
     JiraIssueType,
     JiraPriority,
     JiraResolution,
@@ -86,6 +86,20 @@ class JiraIssue(ApiModel, TimestampMixin):
     security: dict | None = None
     worklog: dict | None = None
     changelogs: list[JiraChangelog] = Field(default_factory=list)
+
+    @field_validator("changelogs", mode="after")
+    @classmethod
+    def _validate_changelogs_sorted_by_id_asc(
+        cls, value: list[JiraChangelog]
+    ) -> list[JiraChangelog]:
+        """Check if the changelogs are sorted by id in ascending order.
+
+        Added for user's convenience."""
+
+        ids = [changelog.id for changelog in value]
+        if not all(ids[i] < ids[i + 1] for i in range(len(ids) - 1)):
+            raise ValueError("Changelogs are not sorted by id in ascending order")
+        return value
 
     def __getattribute__(self, name: str) -> Any:
         """
