@@ -391,6 +391,72 @@ async def get_worklog(
 
 
 @jira_mcp.tool()
+async def batch_get_changelogs(
+    ctx: Context,
+    issue_ids_or_keys: Annotated[
+        list[str],
+        Field(
+            description="List of Jira issue IDs or keys, e.g. ['PROJ-123', 'PROJ-124']"
+        ),
+    ],
+    fields: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "Filter the changelogs by fields, e.g. ['status', 'assignee']. "
+                "Default to None for all fields."
+            ),
+        ),
+    ] = None,
+    limit: Annotated[
+        int | None,
+        Field(
+            description=(
+                "Maximum number of changelogs to return in result for each issue. "
+                "Default to None for all changelogs. "
+                "Notice that it only limits the results in the response, "
+                "the function will still fetch all the data."
+            ),
+        ),
+    ] = None,
+) -> Sequence[TextContent]:
+    """Get changelogs for multiple Jira issues
+
+    Warning: this tool is available on Jira Cloud only.
+    """
+
+    fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
+    if not isinstance(fetcher, JiraFetcher):
+        raise ValueError("Jira is not configured. Please provide Jira credentials.")
+
+    if not fetcher.config.is_cloud:
+        raise NotImplementedError(
+            "Tool `batch_get_changelogs` is only available on Jira Cloud."
+        )
+
+    # Get changelogs
+    issues = fetcher.batch_get_changelogs(
+        issue_ids_or_keys=issue_ids_or_keys, fields=fields
+    )
+
+    results: list[dict] = []
+    for issue in issues:
+        results.append(
+            {
+                "issue_id": issue.id,
+                "changelogs": [
+                    changelog.to_simplified_dict()
+                    for changelog in issue.changelogs[:limit]
+                ],
+            }
+        )
+
+    return [
+        TextContent(type="text", text=json.dumps(results, indent=2, ensure_ascii=False))
+    ]
+
+
+@jira_mcp.tool()
 async def download_attachments(
     ctx: Context,
     issue_key: Annotated[
