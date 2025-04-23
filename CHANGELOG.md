@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+- added `jira_create_sprint`
 
 ## [0.8.3] - 2025-04-24
 
