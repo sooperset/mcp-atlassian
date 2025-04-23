@@ -806,7 +806,6 @@ async def create_issue(
         str,
         Field(
             description="Issue description",
-            default="",
         ),
     ] = "",
     assignee: Annotated[
@@ -819,11 +818,10 @@ async def create_issue(
         str | None,
         Field(
             description="Comma-separated list of component names to assign (e.g., 'Frontend,API')",
-            default=None,
         ),
     ] = None,
     additional_fields: Annotated[
-        str,
+        dict[str, Any] | None,
         Field(
             description=(
                 "Optional JSON string of additional fields to set. "
@@ -834,9 +832,8 @@ async def create_issue(
                 '- Set Fix Version/s: {"fixVersions": [{"id": "10020"}]}\n'
                 '- Custom fields: {"customfield_10010": "value"}'
             ),
-            default="{}",
         ),
-    ] = "{}",
+    ] = None,
 ) -> Sequence[TextContent]:
     """Create a new Jira issue with optional Epic link or parent for subtasks"""
 
@@ -858,7 +855,7 @@ async def create_issue(
         description=description,
         assignee=assignee,
         components=components.split(",") if components else None,
-        additional_fields=additional_fields,
+        **(additional_fields or {}),
     )
 
     # Format results
