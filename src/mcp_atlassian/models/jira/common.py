@@ -6,6 +6,7 @@ issue types, priorities, attachments, and time tracking.
 """
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import Field
@@ -516,7 +517,7 @@ class JiraChangelog(ApiModel, TimestampMixin):
 
     id: str = JIRA_DEFAULT_ID
     author: JiraUser | None = None
-    created: str = EMPTY_STRING
+    created: datetime | None = None
     items: list[JiraChangelogItem] = Field(default_factory=list)
 
     @classmethod
@@ -560,7 +561,9 @@ class JiraChangelog(ApiModel, TimestampMixin):
         return cls(
             id=changelog_id,
             author=author,
-            created=str(data.get("created", EMPTY_STRING)),
+            created=datetime.fromtimestamp(
+                float(data.get("created", "0")) / 1000, tz=timezone.utc
+            ),
             items=items,
         )
 
@@ -575,6 +578,6 @@ class JiraChangelog(ApiModel, TimestampMixin):
             result["author"] = self.author.to_simplified_dict()
 
         if self.created:
-            result["created"] = self.created
+            result["created"] = self.created.isoformat()
 
         return result
