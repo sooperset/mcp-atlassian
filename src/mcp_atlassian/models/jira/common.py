@@ -514,7 +514,7 @@ class JiraChangelog(ApiModel, TimestampMixin):
     including who made the changes and what was changed.
     """
 
-    id: int
+    id: str = JIRA_DEFAULT_ID
     author: JiraUser | None = None
     created: str = EMPTY_STRING
     items: list[JiraChangelogItem] = Field(default_factory=list)

@@ -97,7 +97,7 @@ class JiraIssue(ApiModel, TimestampMixin):
         Added for user's convenience."""
 
         ids = [changelog.id for changelog in value]
-        if not all(ids[i] < ids[i + 1] for i in range(len(ids) - 1)):
+        if not all(int(ids[i]) < int(ids[i + 1]) for i in range(len(ids) - 1)):
             raise ValueError("Changelogs are not sorted by id in ascending order")
         return value
 
