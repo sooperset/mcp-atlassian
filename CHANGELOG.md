@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.8.3] - 2025-04-24
+
+### Removed
+- Removed Resources functionality to resolve excessive startup API requests (#303)
+
 ## [0.8.2] - 2025-04-23
 
 ### Fixed
