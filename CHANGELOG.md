@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.8.2] - 2025-04-23
+
+### Fixed
+- Reverted the FastMCP v2 migration (commits `b434c1d`, `db5e7de`) to resolve critical errors introduced in v0.8.1, including issues with `jira_create_issue`, `get_issue`, `get_board_issues`, and `get_sprints_from_board`. This restores stability while the refactoring issues are investigated further. (Fixes #314, #315, #316, #318, #319)
+
 ## [0.8.1] - 2025-04-23
 
 ### Fixed
