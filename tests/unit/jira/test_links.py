@@ -10,9 +10,9 @@ from mcp_atlassian.models.jira import JiraIssueLinkType
 
 class TestLinksMixin:
     @pytest.fixture
-    def links_mixin(self):
-        mixin = LinksMixin()
-        mixin.jira = MagicMock()
+    def links_mixin(self, mock_config, mock_atlassian_jira):
+        mixin = LinksMixin(config=mock_config)
+        mixin.jira = mock_atlassian_jira
         return mixin
 
     def test_get_issue_link_types_success(self, links_mixin):
@@ -68,7 +68,7 @@ class TestLinksMixin:
 
         links_mixin.jira.create_issue_link.assert_called_once_with(data)
         assert response["success"] is True
-        assert response["message"] == "Link created between ISSUE-1 and ISSUE-2"
+        assert response["message"] == ("Link created between ISSUE-1 and ISSUE-2")
 
     def test_create_issue_link_missing_type(self, links_mixin):
         data = {
@@ -99,7 +99,7 @@ class TestLinksMixin:
 
         links_mixin.jira.remove_issue_link.assert_called_once_with(link_id)
         assert response["success"] is True
-        assert response["message"] == f"Link with ID {link_id} has been removed"
+        assert response["message"] == (f"Link with ID {link_id} has been removed")
 
     def test_remove_issue_link_missing_id(self, links_mixin):
         with pytest.raises(ValueError, match="Link ID is required"):
