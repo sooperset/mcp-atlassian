@@ -92,14 +92,25 @@ class JiraIssue(ApiModel, TimestampMixin):
     def _validate_changelogs_sorted_by_id_asc(
         cls, value: list[JiraChangelog]
     ) -> list[JiraChangelog]:
-        """Check if the changelogs are sorted by id in ascending order.
+        """Check if the changelogs are strictly sorted by id (no duplicates).
 
-        Added for user's convenience."""
+        If sorted, return the list in ascending order. Otherwise, raise a `ValueError`.
+
+        Returns:
+            The sorted changelogs in ascending order by id
+
+        Raises:
+            ValueError: If the changelogs are not strictly sorted by id or contains duplicate ids
+        """
 
         ids = [changelog.id for changelog in value]
-        if not all(int(ids[i]) < int(ids[i + 1]) for i in range(len(ids) - 1)):
-            raise ValueError("Changelogs are not sorted by id in ascending order")
-        return value
+        if all(int(ids[i]) < int(ids[i + 1]) for i in range(len(ids) - 1)):
+            return value
+        if all(int(ids[i]) > int(ids[i + 1]) for i in range(len(ids) - 1)):
+            return value[::-1]
+        raise ValueError(
+            "Changelogs are not strictly sorted by id or contains duplicate ids"
+        )
 
     def __getattribute__(self, name: str) -> Any:
         """
