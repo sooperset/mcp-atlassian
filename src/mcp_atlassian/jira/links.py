@@ -83,18 +83,19 @@ class LinksMixin(JiraClient):
             Dictionary with the created link information
 
         Raises:
+            ValueError: If required fields are missing
             MCPAtlassianAuthenticationError: If authentication fails with the Jira API (401/403)
             Exception: If there is an error creating the issue link
         """
-        try:
-            # Validate required fields
-            if not data.get("type"):
-                raise ValueError("Link type is required")
-            if not data.get("inwardIssue") or not data["inwardIssue"].get("key"):
-                raise ValueError("Inward issue key is required")
-            if not data.get("outwardIssue") or not data["outwardIssue"].get("key"):
-                raise ValueError("Outward issue key is required")
+        # Validate required fields
+        if not data.get("type"):
+            raise ValueError("Link type is required")
+        if not data.get("inwardIssue") or not data["inwardIssue"].get("key"):
+            raise ValueError("Inward issue key is required")
+        if not data.get("outwardIssue") or not data["outwardIssue"].get("key"):
+            raise ValueError("Outward issue key is required")
 
+        try:
             # Create the issue link
             self.jira.create_issue_link(data)
 
@@ -140,14 +141,15 @@ class LinksMixin(JiraClient):
             Dictionary with the result of the operation
 
         Raises:
+            ValueError: If link_id is empty
             MCPAtlassianAuthenticationError: If authentication fails with the Jira API (401/403)
             Exception: If there is an error removing the issue link
         """
-        try:
-            # Validate input
-            if not link_id:
-                raise ValueError("Link ID is required")
+        # Validate input
+        if not link_id:
+            raise ValueError("Link ID is required")
 
+        try:
             # Remove the issue link
             self.jira.remove_issue_link(link_id)
 
