@@ -299,7 +299,7 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
 
         except Exception as e:
             logger.error(f"Error getting issues for project {project_key}: {str(e)}")
-            return []
+            return JiraSearchResult(issues=[], total=0, start_at=0, max_results=0)
 
     def get_project_keys(self) -> list[str]:
         """

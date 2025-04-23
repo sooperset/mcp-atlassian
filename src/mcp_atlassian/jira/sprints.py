@@ -15,7 +15,7 @@ class SprintsMixin(JiraClient):
     """Mixin for Jira sprints operations."""
 
     def get_all_sprints_from_board(
-        self, board_id: str, state: str = None, start: int = 0, limit: int = 50
+        self, board_id: str, state: str | None = None, start: int = 0, limit: int = 50
     ) -> list[dict[str, Any]]:
         """
         Get all sprints from a board.
@@ -47,7 +47,7 @@ class SprintsMixin(JiraClient):
             return []
 
     def get_all_sprints_from_board_model(
-        self, board_id: str, state: str = None, start: int = 0, limit: int = 50
+        self, board_id: str, state: str | None = None, start: int = 0, limit: int = 50
     ) -> list[JiraSprint]:
         """
         Get all sprints as JiraSprint from a board.
@@ -114,7 +114,12 @@ class SprintsMixin(JiraClient):
                 sprint_id=sprint_id,
                 data=data,
             )
-            return JiraSprint.from_api_response(updated_sprint)
+            if isinstance(updated_sprint, dict):
+                return JiraSprint.from_api_response(updated_sprint)
+            else:
+                msg = f"Unexpected return value type from `SprintMixin.update_sprint`: {type(updated_sprint)}"
+                logger.error(msg)
+                raise TypeError(msg)
         except requests.HTTPError as e:
             logger.error(f"Error updating sprint: {str(e.response.content)}")
             return None

@@ -16,6 +16,7 @@ from pydantic import BeforeValidator, Field
 
 from ..jira import JiraFetcher
 from ..jira.config import JiraConfig
+from ..models.jira.comment import JiraComment
 from ..utils.io import is_read_only_mode
 from ..utils.logging import log_config_param
 from ..utils.urls import is_atlassian_cloud_url
@@ -144,7 +145,7 @@ async def get_issue(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Get issue details
@@ -160,7 +161,7 @@ async def get_issue(
     # Get comments if requested
     if comment_limit > 0:
         comments = fetcher.get_issue_comments(issue_key, limit=comment_limit)
-        issue.comments = comments
+        issue.comments = [JiraComment(**comment) for comment in comments]
 
     # Return issue as JSON
     issue_data = issue.to_simplified_dict()
@@ -214,7 +215,7 @@ async def search(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Search issues
@@ -263,7 +264,7 @@ async def get_project_issues(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Get project issues
@@ -274,7 +275,7 @@ async def get_project_issues(
     )
 
     # Format results
-    issues_data = [issue.to_simplified_dict() for issue in issues]
+    issues_data = [issue.to_simplified_dict() for issue in issues.issues]
 
     return [
         TextContent(
@@ -310,7 +311,7 @@ async def get_epic_issues(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     try:
@@ -351,7 +352,7 @@ async def get_transitions(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Get transitions
@@ -376,7 +377,7 @@ async def get_worklog(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Get worklog
@@ -402,7 +403,7 @@ async def download_attachments(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Check read-only mode for safety
@@ -411,7 +412,7 @@ async def download_attachments(
         raise ValueError("Cannot download attachments in read-only mode")
 
     # Download attachments
-    result = fetcher.download_attachments(
+    result = fetcher.download_issue_attachments(
         issue_key=issue_key,
         target_dir=target_dir,
     )
@@ -463,15 +464,15 @@ async def get_agile_boards(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Get boards
-    boards = fetcher.get_boards(
+    boards = fetcher.get_all_agile_boards(
         board_name=board_name,
         project_key=project_key,
         board_type=board_type,
-        start_at=start_at,
+        start=start_at,
         limit=limit,
     )
 
@@ -525,7 +526,7 @@ async def get_board_issues(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Get board issues
@@ -533,7 +534,7 @@ async def get_board_issues(
         board_id=board_id,
         jql=jql,
         fields=fields,
-        start_at=start_at,
+        start=start_at,
         limit=limit,
         expand=expand,
     )
@@ -574,14 +575,14 @@ async def get_sprints_from_board(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Get board sprints
-    sprints = fetcher.get_sprints(
+    sprints = fetcher.get_all_sprints_from_board(
         board_id=board_id,
         state=state,
-        start_at=start_at,
+        start=start_at,
         limit=limit,
     )
 
@@ -622,19 +623,19 @@ async def get_sprint_issues(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Get sprint issues
     issues = fetcher.get_sprint_issues(
         sprint_id=sprint_id,
         fields=fields,
-        start_at=start_at,
+        start=start_at,
         limit=limit,
     )
 
     # Format results
-    issues_data = [issue.to_simplified_dict() for issue in issues]
+    issues_data = [issue.to_simplified_dict() for issue in issues.issues]
 
     return [
         TextContent(
@@ -682,7 +683,7 @@ async def update_sprint(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Check read-only mode
@@ -693,7 +694,7 @@ async def update_sprint(
     # Update sprint
     result = fetcher.update_sprint(
         sprint_id=sprint_id,
-        name=sprint_name,
+        sprint_name=sprint_name,
         state=state,
         start_date=start_date,
         end_date=end_date,
@@ -766,7 +767,7 @@ async def create_issue(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Check read-only mode
@@ -781,7 +782,7 @@ async def create_issue(
         issue_type=issue_type,
         description=description,
         assignee=assignee,
-        components=components,
+        components=components.split(",") if components else None,
         additional_fields=additional_fields,
     )
 
@@ -830,7 +831,7 @@ async def batch_create_issues(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Check if read-only mode is enabled
@@ -930,7 +931,7 @@ async def update_issue(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Check read-only mode
@@ -941,7 +942,7 @@ async def update_issue(
     # Update issue
     issue = fetcher.update_issue(
         issue_key=issue_key,
-        fields=fields,
+        fields=json.loads(fields),
         additional_fields=additional_fields,
         attachments=attachments,
     )
@@ -971,7 +972,7 @@ async def delete_issue(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Check read-only mode
@@ -1004,7 +1005,7 @@ async def add_comment(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Check read-only mode
@@ -1058,7 +1059,7 @@ async def add_worklog(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Check read-only mode
@@ -1096,7 +1097,7 @@ async def link_to_epic(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Check read-only mode
@@ -1105,7 +1106,7 @@ async def link_to_epic(
         raise ValueError("Cannot link issue to epic in read-only mode")
 
     # Link issue to epic
-    result = fetcher.link_to_epic(
+    result = fetcher.link_issue_to_epic(
         issue_key=issue_key,
         epic_key=epic_key,
     )
@@ -1148,7 +1149,7 @@ async def create_issue_link(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Check read-only mode
@@ -1157,13 +1158,17 @@ async def create_issue_link(
         raise ValueError("Cannot create issue link in read-only mode")
 
     # Create issue link
-    result = fetcher.create_issue_link(
-        link_type=link_type,
-        inward_issue_key=inward_issue_key,
-        outward_issue_key=outward_issue_key,
-        comment=comment,
-        comment_visibility=comment_visibility,
-    )
+    data: dict[str, Any] = {
+        "type": {"name": link_type},
+        "inwardIssue": {"key": inward_issue_key},
+        "outwardIssue": {"key": outward_issue_key},
+    }
+    if comment:
+        if comment_visibility:
+            data["comment"] = {"body": comment, "visibility": comment_visibility}
+        else:
+            data["comment"] = {"body": comment}
+    result = fetcher.create_issue_link(data)
 
     # Format results
     return [
@@ -1183,7 +1188,7 @@ async def remove_issue_link(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Check read-only mode
@@ -1241,7 +1246,7 @@ async def transition_issue(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Check read-only mode
@@ -1253,7 +1258,7 @@ async def transition_issue(
     result = fetcher.transition_issue(
         issue_key=issue_key,
         transition_id=transition_id,
-        fields=fields,
+        fields=json.loads(fields),
         comment=comment,
     )
 
@@ -1293,7 +1298,7 @@ async def search_fields(
 
     # Get the JiraFetcher instance from the context
     fetcher = ctx.request_context.lifespan_context.get("jira_fetcher")
-    if not fetcher:
+    if not isinstance(fetcher, JiraFetcher):
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Search fields
