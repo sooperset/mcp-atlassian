@@ -1105,6 +1105,15 @@ async def list_tools() -> list[Tool]:
                         },
                     ),
                     Tool(
+                        name="jira_get_link_types",
+                        description="Get all available issue link types",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {},
+                            "required": [],
+                        },
+                    ),
+                    Tool(
                         name="jira_transition_issue",
                         description="Transition a Jira issue to a new status",
                         inputSchema={
@@ -2354,6 +2363,37 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 ]
             except Exception as e:
                 error_msg = f"Error removing issue link: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "jira_get_link_types" and ctx and ctx.jira:
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            try:
+                # Get all issue link types
+                link_types = ctx.jira.get_issue_link_types()
+
+                # Format the response
+                formatted_link_types = [
+                    link_type.to_simplified_dict() for link_type in link_types
+                ]
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(
+                            formatted_link_types, indent=2, ensure_ascii=False
+                        ),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error getting issue link types: {str(e)}"
                 logger.error(error_msg)
                 return [
                     TextContent(

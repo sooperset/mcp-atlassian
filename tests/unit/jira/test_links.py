@@ -6,6 +6,7 @@ import pytest
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.jira.links import LinksMixin
+from mcp_atlassian.models.jira import JiraIssueLinkType
 
 
 class TestLinksMixin:
@@ -173,3 +174,115 @@ class TestLinksMixin:
         # Call the method and verify it raises the expected exception
         with pytest.raises(Exception, match="Authentication failed for Jira API"):
             links_mixin.remove_issue_link("12345")
+
+    def test_get_issue_link_types_basic(self, links_mixin, monkeypatch):
+        """Test basic functionality of get_issue_link_types."""
+        # Setup mock response
+        mock_response = {
+            "issueLinkTypes": [
+                {
+                    "id": "10000",
+                    "name": "Blocks",
+                    "inward": "is blocked by",
+                    "outward": "blocks",
+                    "self": "https://example.atlassian.net/rest/api/3/issueLinkType/10000",
+                },
+                {
+                    "id": "10001",
+                    "name": "Duplicate",
+                    "inward": "is duplicated by",
+                    "outward": "duplicates",
+                    "self": "https://example.atlassian.net/rest/api/3/issueLinkType/10001",
+                },
+            ]
+        }
+
+        # Create a mock method to replace the internal _get_json method
+        def mock_get_json(endpoint):
+            if endpoint == "issueLinkType":
+                return mock_response
+            return {}
+
+        # Patch the internal method
+        monkeypatch.setattr(links_mixin.jira, "_get_json", mock_get_json)
+
+        # Call the method
+        result = links_mixin.get_issue_link_types()
+
+        # Verify result structure
+        assert len(result) == 2
+        assert isinstance(result[0], JiraIssueLinkType)
+        assert result[0].id == "10000"
+        assert result[0].name == "Blocks"
+        assert result[0].inward == "is blocked by"
+        assert result[0].outward == "blocks"
+        assert (
+            result[0].self_url
+            == "https://example.atlassian.net/rest/api/3/issueLinkType/10000"
+        )
+
+        assert isinstance(result[1], JiraIssueLinkType)
+        assert result[1].id == "10001"
+        assert result[1].name == "Duplicate"
+        assert result[1].inward == "is duplicated by"
+        assert result[1].outward == "duplicates"
+        assert (
+            result[1].self_url
+            == "https://example.atlassian.net/rest/api/3/issueLinkType/10001"
+        )
+
+    def test_get_issue_link_types_empty_response(self, links_mixin, monkeypatch):
+        """Test get_issue_link_types with empty response."""
+        # Setup mock with empty response
+        mock_response = {"issueLinkTypes": []}
+
+        # Create a mock method to replace the internal _get_json method
+        def mock_get_json(endpoint):
+            if endpoint == "issueLinkType":
+                return mock_response
+            return {}
+
+        # Patch the internal method
+        monkeypatch.setattr(links_mixin.jira, "_get_json", mock_get_json)
+
+        # Call the method
+        result = links_mixin.get_issue_link_types()
+
+        # Verify result is an empty list
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+    def test_get_issue_link_types_http_error(self, links_mixin, monkeypatch):
+        """Test HTTP error handling when getting issue link types."""
+        # Create a mock HTTP error with a 401 status code
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        http_error = HTTPError("Unauthorized")
+        http_error.response = mock_response
+
+        # Create a mock method that raises an HTTP error
+        def mock_get_json_error(endpoint):
+            raise http_error
+
+        # Patch the internal method
+        monkeypatch.setattr(links_mixin.jira, "_get_json", mock_get_json_error)
+
+        # Call the method and verify it raises the expected exception
+        with pytest.raises(Exception, match="Authentication failed for Jira API"):
+            links_mixin.get_issue_link_types()
+
+    def test_get_issue_link_types_api_error(self, links_mixin, monkeypatch):
+        """Test error handling when getting issue link types."""
+
+        # Create a mock method that raises a general exception
+        def mock_get_json_error(endpoint):
+            raise Exception("API error")
+
+        # Patch the internal method
+        monkeypatch.setattr(links_mixin.jira, "_get_json", mock_get_json_error)
+
+        # Call the method and verify it raises the expected exception
+        with pytest.raises(
+            Exception, match="Error getting issue link types: API error"
+        ):
+            links_mixin.get_issue_link_types()

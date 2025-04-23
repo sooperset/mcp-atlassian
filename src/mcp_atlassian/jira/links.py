@@ -6,6 +6,7 @@ from typing import Any
 from requests.exceptions import HTTPError
 
 from ..exceptions import MCPAtlassianAuthenticationError
+from ..models.jira import JiraIssueLinkType
 from .client import JiraClient
 
 logger = logging.getLogger("mcp-jira")
@@ -13,6 +14,51 @@ logger = logging.getLogger("mcp-jira")
 
 class LinksMixin(JiraClient):
     """Mixin for Jira issue link operations."""
+
+    def get_issue_link_types(self) -> list[JiraIssueLinkType]:
+        """
+        Get all available issue link types.
+
+        Returns:
+            List of JiraIssueLinkType objects
+
+        Raises:
+            MCPAtlassianAuthenticationError: If authentication fails with the Jira API
+                (401/403)
+            Exception: If there is an error retrieving issue link types
+        """
+        try:
+            link_types_response = self.jira.get("rest/api/2/issueLinkType")
+            link_types_data = link_types_response.get("issueLinkTypes", [])
+
+            link_types = [
+                JiraIssueLinkType.from_api_response(link_type)
+                for link_type in link_types_data
+            ]
+
+            return link_types
+
+        except HTTPError as http_err:
+            if http_err.response is not None and http_err.response.status_code in [
+                401,
+                403,
+            ]:
+                error_msg = (
+                    f"Authentication failed for Jira API "
+                    f"({http_err.response.status_code}). "
+                    "Token may be expired or invalid. Please verify credentials."
+                )
+                logger.error(error_msg)
+                raise MCPAtlassianAuthenticationError(error_msg) from http_err
+            else:
+                logger.error(f"HTTP error during API call: {http_err}", exc_info=True)
+                raise Exception(
+                    f"Error getting issue link types: {http_err}"
+                ) from http_err
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Error getting issue link types: {error_msg}", exc_info=True)
+            raise Exception(f"Error getting issue link types: {error_msg}") from e
 
     def create_issue_link(self, data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -50,7 +96,7 @@ class LinksMixin(JiraClient):
                 raise ValueError("Outward issue key is required")
 
             # Create the issue link
-            result = self.jira.create_issue_link(data)
+            self.jira.create_issue_link(data)
 
             # Return a response with the link information
             response = {
@@ -69,7 +115,8 @@ class LinksMixin(JiraClient):
                 403,
             ]:
                 error_msg = (
-                    f"Authentication failed for Jira API ({http_err.response.status_code}). "
+                    f"Authentication failed for Jira API "
+                    f"({http_err.response.status_code}). "
                     "Token may be expired or invalid. Please verify credentials."
                 )
                 logger.error(error_msg)
@@ -119,7 +166,8 @@ class LinksMixin(JiraClient):
                 403,
             ]:
                 error_msg = (
-                    f"Authentication failed for Jira API ({http_err.response.status_code}). "
+                    f"Authentication failed for Jira API "
+                    f"({http_err.response.status_code}). "
                     "Token may be expired or invalid. Please verify credentials."
                 )
                 logger.error(error_msg)
