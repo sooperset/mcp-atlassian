@@ -335,6 +335,22 @@ async def list_tools() -> list[Tool]:
                         "required": ["page_id"],
                     },
                 ),
+                Tool(
+                    name="confluence_get_labels",
+                    description="Get labels for a specific Confluence page",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "page_id": {
+                                "type": "string",
+                                "description": "Confluence page ID (numeric ID, can be parsed from URL, "
+                                "e.g. from 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title' "
+                                "-> '123456789')",
+                            }
+                        },
+                        "required": ["page_id"],
+                    },
+                ),
             ]
         )
 
@@ -420,6 +436,24 @@ async def list_tools() -> list[Tool]:
                                 },
                             },
                             "required": ["page_id"],
+                        },
+                    ),
+                    Tool(
+                        name="confluence_add_label",
+                        description="Add label to an existing Confluence page",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "page_id": {
+                                    "type": "string",
+                                    "description": "The ID of the page to update",
+                                },
+                                "name": {
+                                    "type": "string",
+                                    "description": "The name of the label",
+                                },
+                            },
+                            "required": ["page_id", "name"],
                         },
                     ),
                 ]
@@ -1169,6 +1203,15 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 "body": comment.get("body"),
             }
 
+        def format_label(label: Any) -> dict[str, Any]:
+            if hasattr(label, "to_simplified_dict"):
+                # Cast the return value to dict[str, Any] to satisfy the type checker
+                return cast(dict[str, Any], label.to_simplified_dict())
+            return {
+                "name": label.get("name", {}),
+                "prefix": comment.get("prefix"),
+            }
+
         # Confluence operations
         if name == "confluence_search" and ctx and ctx.confluence:
             if not ctx or not ctx.confluence:
@@ -1337,6 +1380,41 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 TextContent(
                     type="text",
                     text=json.dumps(formatted_comments, indent=2, ensure_ascii=False),
+                )
+            ]
+
+        elif name == "confluence_get_labels" and ctx and ctx.confluence:
+            if not ctx or not ctx.confluence:
+                raise ValueError("Confluence is not configured.")
+
+            page_id = arguments.get("page_id")
+            labels = ctx.confluence.get_page_labels(page_id)
+
+            # Format labels using their to_simplified_dict method if available
+            formatted_labels = [format_label(label) for label in labels]
+
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(formatted_labels, indent=2, ensure_ascii=False),
+                )
+            ]
+
+        elif name == "confluence_add_label" and ctx and ctx.confluence:
+            if not ctx or not ctx.confluence:
+                raise ValueError("Confluence is not configured.")
+
+            page_id = arguments.get("page_id")
+            label_name = arguments.get("name")
+            labels = ctx.confluence.add_page_label(page_id, label_name)
+
+            # Format labels using their to_simplified_dict method if available
+            formatted_labels = [format_label(label) for label in labels]
+
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(formatted_labels, indent=2, ensure_ascii=False),
                 )
             ]
 

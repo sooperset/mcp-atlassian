@@ -10,6 +10,7 @@ import pytest
 from src.mcp_atlassian.models import (
     ConfluenceAttachment,
     ConfluenceComment,
+    ConfluenceLabel,
     ConfluencePage,
     ConfluenceSearchResult,
     ConfluenceSpace,
@@ -314,6 +315,51 @@ class TestConfluenceComment:
         assert simplified["created"] == "2024-01-01 10:00:00"  # Formatted timestamp
         assert simplified["updated"] == "2024-01-01 10:00:00"  # Formatted timestamp
         assert simplified["author"] == "Comment Author"
+
+
+class TestConfluenceLabel:
+    """Tests for the ConfluenceLabel model."""
+
+    def test_from_api_response_with_valid_data(self, confluence_labels_data):
+        """Test creating a ConfluenceLabel from valid API data."""
+        label_data = confluence_labels_data["results"][0]
+
+        label = ConfluenceLabel.from_api_response(label_data)
+
+        assert label.id == "456789123"
+        assert label.name == "meeting-notes"
+        assert label.prefix == "global"
+        assert label.label == "meeting-notes"
+        assert label.type == "label"
+
+    def test_from_api_response_with_empty_data(self):
+        """Test creating a ConfluenceLabel from empty data."""
+        label = ConfluenceLabel.from_api_response({})
+
+        # Should use default values
+        assert label.id == "0"
+        assert label.name is None
+        assert label.prefix == ""
+        assert label.label == ""
+        assert label.type == "label"
+
+    def test_to_simplified_dict(self):
+        """Test converting ConfluenceLabel to a simplified dictionary."""
+        label = ConfluenceLabel(
+            id="456789123",
+            name="test",
+            prefix="my",
+            label="test",
+            type="label",
+        )
+
+        simplified = label.to_simplified_dict()
+
+        assert isinstance(simplified, dict)
+        assert simplified["id"] == "456789123"
+        assert simplified["name"] == "test"
+        assert simplified["prefix"] == "my"
+        assert simplified["label"] == "test"
 
 
 class TestConfluencePage:

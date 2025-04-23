@@ -6,12 +6,15 @@ This module provides access to Confluence content through the Model Context Prot
 from .client import ConfluenceClient
 from .comments import CommentsMixin
 from .config import ConfluenceConfig
+from .labels import LabelsMixin
 from .pages import PagesMixin
 from .search import SearchMixin
 from .spaces import SpacesMixin
 
 
-class ConfluenceFetcher(SearchMixin, SpacesMixin, PagesMixin, CommentsMixin):
+class ConfluenceFetcher(
+    SearchMixin, SpacesMixin, PagesMixin, CommentsMixin, LabelsMixin
+):
     """Main entry point for Confluence operations, providing backward compatibility.
 
     This class combines functionality from various mixins to maintain the same

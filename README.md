@@ -351,8 +351,8 @@ For Jira Server/DC, use:
 |`confluence_create_page`|`jira_batch_create_issues`|
 |`confluence_update_page`|`jira_update_issue`|
 |`confluence_delete_page`|`jira_delete_issue`|
-||`jira_get_transitions`|
-||`jira_transition_issue`|
+|`confluence_get_labels`|`jira_get_transitions`|
+|`confluence_add_label`|`jira_transition_issue`|
 ||`jira_add_comment`|
 ||`jira_add_worklog`|
 ||`jira_get_worklog`|
