@@ -598,7 +598,7 @@ async def get_board_issues(
         raise ValueError("Jira is not configured. Please provide Jira credentials.")
 
     # Get board issues
-    issues = fetcher.get_board_issues(
+    search_result = fetcher.get_board_issues(
         board_id=board_id,
         jql=jql,
         fields=fields,
@@ -609,7 +609,14 @@ async def get_board_issues(
 
     # Format results
     return [
-        TextContent(type="text", text=json.dumps(issues, indent=2, ensure_ascii=False))
+        TextContent(
+            type="text",
+            text=json.dumps(
+                [issue.to_simplified_dict() for issue in search_result.issues],
+                indent=2,
+                ensure_ascii=False,
+            ),
+        )
     ]
 
 
