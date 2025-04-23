@@ -130,7 +130,7 @@ class JiraClient:
             )
 
         all_results: list[dict] = []
-        current_data = params_or_json or {}
+        current_data = params_or_json.copy() if params_or_json else {}
 
         while True:
             if method == "get":
