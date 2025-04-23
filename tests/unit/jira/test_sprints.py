@@ -48,7 +48,7 @@ def mock_sprints():
                 "completeDate": "2024-05-20T05:17:24.302Z",
                 "activatedDate": "2024-05-07T01:22:45.128Z",
                 "originBoardId": 1000,
-                "goal": "your goal",
+                "goal": "",
                 "synced": False,
                 "autoStartStop": False,
             },
