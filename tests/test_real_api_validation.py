@@ -35,9 +35,10 @@ from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.comments import CommentsMixin as JiraCommentsMixin
 from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.jira.issues import IssuesMixin
+from mcp_atlassian.jira.links import LinksMixin
 from mcp_atlassian.jira.search import SearchMixin as JiraSearchMixin
 from mcp_atlassian.models.confluence import ConfluenceComment, ConfluencePage
-from mcp_atlassian.models.jira import JiraIssue
+from mcp_atlassian.models.jira import JiraIssue, JiraIssueLinkType
 from mcp_atlassian.server import call_tool
 
 
@@ -1305,3 +1306,261 @@ class TestRealToolValidation:
 
         assert isinstance(result_without_comments, dict)
         assert "comments" not in result_without_comments
+
+    @pytest.mark.anyio
+    async def test_jira_get_issue_link_types_tool(
+        self, use_real_jira_data: bool
+    ) -> None:
+        """Test the jira_get_issue_link_types tool."""
+        if not use_real_jira_data:
+            pytest.skip("Real Jira data testing is disabled")
+
+        # Call the tool to get issue link types
+        result_content: Sequence[TextContent] = await call_tool(
+            "jira_get_issue_link_types", {}
+        )
+
+        # Verify we got a valid response
+        assert result_content and isinstance(result_content[0], TextContent)
+        link_types = json.loads(result_content[0].text)
+
+        # Verify the response structure
+        assert isinstance(link_types, list)
+        assert len(link_types) > 0
+
+        # Check the first link type has the expected fields
+        first_link = link_types[0]
+        assert "id" in first_link
+        assert "name" in first_link
+        assert "inward" in first_link
+        assert "outward" in first_link
+
+    @pytest.mark.anyio
+    async def test_jira_create_issue_link_tool(
+        self, use_real_jira_data: bool, test_project_key: str
+    ) -> None:
+        """Test the jira_create_issue_link and jira_remove_issue_link tools."""
+        if not use_real_jira_data:
+            pytest.skip("Real Jira data testing is disabled")
+
+        # First create two test issues
+        test_id = str(uuid.uuid4())[:8]
+
+        # Create first issue
+        issue1_args = {
+            "project_key": test_project_key,
+            "summary": f"Link Test Source {test_id}",
+            "description": "Test issue for link testing via tool",
+            "issue_type": "Task",
+        }
+        issue1_content: Sequence[TextContent] = await call_tool(
+            "jira_create_issue", issue1_args
+        )
+        assert issue1_content and isinstance(issue1_content[0], TextContent)
+        issue1_data = json.loads(issue1_content[0].text)
+        issue1_key = issue1_data["key"]
+
+        # Create second issue
+        issue2_args = {
+            "project_key": test_project_key,
+            "summary": f"Link Test Target {test_id}",
+            "description": "Test issue for link testing via tool",
+            "issue_type": "Task",
+        }
+        issue2_content: Sequence[TextContent] = await call_tool(
+            "jira_create_issue", issue2_args
+        )
+        assert issue2_content and isinstance(issue2_content[0], TextContent)
+        issue2_data = json.loads(issue2_content[0].text)
+        issue2_key = issue2_data["key"]
+
+        try:
+            # Get link types
+            link_types_content: Sequence[TextContent] = await call_tool(
+                "jira_get_issue_link_types", {}
+            )
+            assert link_types_content and isinstance(link_types_content[0], TextContent)
+            link_types = json.loads(link_types_content[0].text)
+
+            # Find a suitable link type (preferably "relates to")
+            link_type_name = None
+            for lt in link_types:
+                if "relate" in lt["name"].lower():
+                    link_type_name = lt["name"]
+                    break
+
+            # If no "relates to" type found, use the first available type
+            if not link_type_name:
+                link_type_name = link_types[0]["name"]
+
+            # Create the link
+            link_args = {
+                "link_type": link_type_name,
+                "inward_issue_key": issue1_key,
+                "outward_issue_key": issue2_key,
+                "comment": f"Test link created by API validation test {test_id}",
+            }
+            link_content: Sequence[TextContent] = await call_tool(
+                "jira_create_issue_link", link_args
+            )
+
+            # Verify link creation was successful
+            assert link_content and isinstance(link_content[0], TextContent)
+            link_result = json.loads(link_content[0].text)
+            assert link_result["success"] is True
+
+            # Get the issue to verify the link exists and get the link ID
+            issue_content: Sequence[TextContent] = await call_tool(
+                "jira_get_issue", {"issue_key": issue1_key, "fields": "issuelinks"}
+            )
+            assert issue_content and isinstance(issue_content[0], TextContent)
+            issue_data = json.loads(issue_content[0].text)
+
+            # Find the link ID
+            link_id = None
+            if "issuelinks" in issue_data:
+                for link in issue_data["issuelinks"]:
+                    if link.get("outwardIssue", {}).get("key") == issue2_key:
+                        link_id = link.get("id")
+                        break
+
+            # If we found a link ID, test removing it
+            if link_id:
+                remove_args = {"link_id": link_id}
+                remove_content: Sequence[TextContent] = await call_tool(
+                    "jira_remove_issue_link", remove_args
+                )
+
+                # Verify link removal was successful
+                assert remove_content and isinstance(remove_content[0], TextContent)
+                remove_result = json.loads(remove_content[0].text)
+                assert remove_result["success"] is True
+                assert remove_result["link_id"] == link_id
+
+        finally:
+            # Clean up the test issues
+            await call_tool("jira_delete_issue", {"issue_key": issue1_key})
+            await call_tool("jira_delete_issue", {"issue_key": issue2_key})
+
+
+@pytest.mark.anyio
+async def test_jira_get_issue_link_types(jira_client: JiraFetcher) -> None:
+    """Test retrieving issue link types from Jira."""
+    # Initialize the LinksMixin
+    links_client = LinksMixin(config=jira_client.config)
+
+    # Get the issue link types
+    link_types = links_client.get_issue_link_types()
+
+    # Verify the response
+    assert isinstance(link_types, list)
+    assert len(link_types) > 0
+
+    # Verify each link type is a JiraIssueLinkType instance with expected properties
+    for link_type in link_types:
+        assert isinstance(link_type, JiraIssueLinkType)
+        assert link_type.id is not None
+        assert link_type.name is not None
+        assert link_type.inward is not None
+        assert link_type.outward is not None
+
+
+@pytest.mark.anyio
+async def test_jira_create_and_remove_issue_link(
+    jira_client: JiraFetcher,
+    test_project_key: str,
+    resource_tracker: ResourceTracker,
+    cleanup_resources: Callable[[], None],
+) -> None:
+    """Test creating and removing a link between two Jira issues."""
+    # Create two test issues to link
+    test_id = str(uuid.uuid4())[:8]
+    summary1 = f"Link Test Issue 1 {test_id}"
+    summary2 = f"Link Test Issue 2 {test_id}"
+
+    try:
+        # Create the first issue
+        issue1 = jira_client.create_issue(
+            project_key=test_project_key,
+            summary=summary1,
+            description="First test issue for link testing",
+            issue_type="Task",
+        )
+
+        # Create the second issue
+        issue2 = jira_client.create_issue(
+            project_key=test_project_key,
+            summary=summary2,
+            description="Second test issue for link testing",
+            issue_type="Task",
+        )
+
+        # Track the issues for cleanup
+        resource_tracker.add_jira_issue(issue1.key)
+        resource_tracker.add_jira_issue(issue2.key)
+
+        # Initialize the LinksMixin
+        links_client = LinksMixin(config=jira_client.config)
+
+        # Get available link types
+        link_types = links_client.get_issue_link_types()
+        assert len(link_types) > 0
+
+        # Select a link type (e.g., "Relates")
+        link_type_name = None
+        for lt in link_types:
+            if "relate" in lt.name.lower():
+                link_type_name = lt.name
+                break
+
+        # If no "Relates" type found, use the first available type
+        if not link_type_name:
+            link_type_name = link_types[0].name
+
+        # Create link data
+        link_data = {
+            "type": {"name": link_type_name},
+            "inwardIssue": {"key": issue1.key},
+            "outwardIssue": {"key": issue2.key},
+            "comment": {"body": f"Test link created by API validation test {test_id}"},
+        }
+
+        # Create the link
+        link_result = links_client.create_issue_link(link_data)
+
+        # Verify link creation was successful
+        assert link_result is not None
+        assert link_result["success"] is True
+        assert link_result["inward_issue"] == issue1.key
+        assert link_result["outward_issue"] == issue2.key
+
+        # Get the issue to verify the link exists
+        # This requires checking the raw API response as the link ID is needed for removal
+        raw_issue = jira_client.jira.issue(issue1.key, fields="issuelinks")
+
+        # Find the link ID
+        link_id = None
+        if hasattr(raw_issue, "fields") and hasattr(raw_issue.fields, "issuelinks"):
+            for link in raw_issue.fields.issuelinks:
+                if (
+                    hasattr(link, "outwardIssue")
+                    and link.outwardIssue.key == issue2.key
+                ):
+                    link_id = link.id
+                    break
+
+        # Skip link removal test if we couldn't find the link ID
+        if not link_id:
+            pytest.skip("Could not find link ID for removal test")
+
+        # Remove the link
+        remove_result = links_client.remove_issue_link(link_id)
+
+        # Verify link removal was successful
+        assert remove_result is not None
+        assert remove_result["success"] is True
+        assert remove_result["link_id"] == link_id
+
+    finally:
+        # Clean up resources even if the test fails
+        cleanup_resources()
