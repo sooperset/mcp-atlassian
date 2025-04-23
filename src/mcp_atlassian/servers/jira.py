@@ -161,7 +161,9 @@ async def get_issue(
     # Get comments if requested
     if comment_limit > 0:
         comments = fetcher.get_issue_comments(issue_key, limit=comment_limit)
-        issue.comments = [JiraComment(**comment) for comment in comments]
+        issue.comments = [
+            JiraComment.from_api_response(comment) for comment in comments
+        ]
 
     # Return issue as JSON
     issue_data = issue.to_simplified_dict()
