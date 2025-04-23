@@ -535,7 +535,7 @@ def test_get_project_issues_exception(projects_mixin_with_search):
     projects_mixin_with_search.jira.jql.side_effect = Exception("API error")
 
     result = projects_mixin_with_search.get_project_issues("PROJ1")
-    assert result == []
+    assert result.issues == []
     projects_mixin_with_search.jira.jql.assert_called_once()
 
 
