@@ -319,7 +319,16 @@ For Jira Server/DC, use:
     ```
 </details>
 
-## Tools
+## Resources and Tools
+
+### Resources
+
+- `confluence://{space_key}`: Access Confluence spaces
+- `jira://{project_key}`: Access Jira projects
+
+> **Note:** The MCP server filters resources to only show Confluence spaces and Jira projects that the user is actively interacting with, based on their contributions and assignments.
+
+### Key Tools
 
 #### Confluence Tools
 
@@ -363,7 +372,6 @@ For Jira Server/DC, use:
 ||`jira_update_sprint`|
 ||`jira_create_issue_link`|
 ||`jira_remove_issue_link`|
-||`jira_search_fields`|
 
 </details>
 

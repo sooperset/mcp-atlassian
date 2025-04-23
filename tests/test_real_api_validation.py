@@ -24,8 +24,6 @@ import uuid
 from collections.abc import Callable, Generator, Sequence
 
 import pytest
-from fastmcp import Client
-from fastmcp.client import FastMCPTransport
 from mcp.types import TextContent
 
 from mcp_atlassian.confluence import ConfluenceFetcher
@@ -40,17 +38,7 @@ from mcp_atlassian.jira.issues import IssuesMixin
 from mcp_atlassian.jira.search import SearchMixin as JiraSearchMixin
 from mcp_atlassian.models.confluence import ConfluenceComment, ConfluencePage
 from mcp_atlassian.models.jira import JiraIssue
-from mcp_atlassian.servers.confluence import confluence_mcp
-from mcp_atlassian.servers.jira import jira_mcp
-
-# Setup client for tool calls
-_client = Client(transport=FastMCPTransport([jira_mcp, confluence_mcp]))
-
-
-async def call_tool(tool_name: str, arguments: dict) -> list[TextContent]:
-    """Call a tool with the provided arguments and return the result content."""
-    async with _client as client:
-        return await client.call_tool(tool_name, arguments)
+from mcp_atlassian.server import call_tool
 
 
 # Resource tracking for cleanup

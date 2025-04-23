@@ -188,14 +188,13 @@ def main(
     if jira_projects_filter:
         os.environ["JIRA_PROJECTS_FILTER"] = jira_projects_filter
 
-    # Import the server modules using the new structure
-    from .servers.main import run_server
+    from . import server
 
     # Run the server with specified transport
-    asyncio.run(run_server(transport=final_transport, port=final_port))
+    asyncio.run(server.run_server(transport=final_transport, port=final_port))
 
 
-__all__ = ["main", "__version__"]
+__all__ = ["main", "server", "__version__"]
 
 if __name__ == "__main__":
     main()
