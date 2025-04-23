@@ -14,5 +14,5 @@ def is_read_only_mode() -> bool:
     Returns:
         True if read-only mode is enabled, False otherwise
     """
-    value = os.getenv("READ_ONLY_MODE", "false")
+    value = os.getenv("READ_ONLY_MODE", "true")
     return value.lower() in ("true", "1", "yes", "y", "on")
