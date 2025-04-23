@@ -377,7 +377,6 @@ async def test_create_issue(jira_client, mock_jira_fetcher):
         description="This is a new task",
         assignee=None,
         components=["Frontend", "API"],
-        additional_fields="{}",
     )
 
 
