@@ -2,8 +2,10 @@
 
 import logging
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, TypeVar
+
+import dateutil.parser
 
 logger = logging.getLogger("mcp-jira")
 
@@ -17,8 +19,13 @@ def parse_date(date_str: str | None, format_string: str = "%Y-%m-%d") -> str:
     This is a standalone utility function to be used by all mixins
     when consistent date formatting is needed.
 
+    The input string `date_str` accepts:
+    - None
+    - Epoch timestamp (only contains digits and is in milliseconds)
+    - Other formats supported by `dateutil.parser` (ISO 8601, RFC 3339, etc.)
+
     Args:
-        date_str: Date string in ISO format or None
+        date_str: Date string
         format_string: The output format (default: "%Y-%m-%d")
 
     Returns:
@@ -36,52 +43,11 @@ def parse_date(date_str: str | None, format_string: str = "%Y-%m-%d") -> str:
         return ""
 
     try:
-        # Handle Jira-specific ISO 8601 format with milliseconds
-        if isinstance(date_str, str) and "T" in date_str:
-            # Try direct parsing first
-            try:
-                # Replace Z with +00:00 for UTC timezone if present
-                cleaned_date_str = date_str.replace("Z", "+00:00")
-
-                # Handle milliseconds format with timezone
-                if "." in cleaned_date_str and "+" in cleaned_date_str:
-                    # Split at timezone marker
-                    date_part, tz_part = cleaned_date_str.split("+", 1)
-
-                    # If we have milliseconds with more than 6 digits, truncate to 6
-                    if "." in date_part:
-                        date_base, ms_part = date_part.split(".", 1)
-                        if len(ms_part) > 6:
-                            ms_part = ms_part[:6]
-                        date_part = f"{date_base}.{ms_part}"
-
-                    # Reconstruct with proper format
-                    cleaned_date_str = f"{date_part}+{tz_part}"
-
-                date_obj = datetime.fromisoformat(cleaned_date_str)
-                result = date_obj.strftime(format_string)
-                logger.debug(
-                    f"TRACE utils.parse_date - successfully parsed: '{date_str}' -> '{result}'"
-                )
-                return result
-            except (ValueError, TypeError) as e:
-                logger.debug(
-                    f"TRACE utils.parse_date - error in direct parsing: {str(e)}"
-                )
-
-            # Fallback: extract just the date part
-            try:
-                date_part = date_str.split("T")[0]
-                date_obj = datetime.fromisoformat(date_part)
-                result = date_obj.strftime(format_string)
-                logger.debug(
-                    f"TRACE utils.parse_date - fallback parsing succeeded: '{date_str}' -> '{result}'"
-                )
-                return result
-            except (ValueError, TypeError) as e:
-                logger.debug(
-                    f"TRACE utils.parse_date - error in fallback parsing: {str(e)}"
-                )
+        if date_str.isdigit():
+            date = datetime.fromtimestamp(int(date_str) / 1000, tz=timezone.utc)
+        else:
+            date = dateutil.parser.parse(date_str)
+        return date.strftime(format_string)
 
     except (ValueError, TypeError) as e:
         logger.debug(
