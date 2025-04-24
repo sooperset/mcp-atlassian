@@ -9,7 +9,7 @@ from mcp_atlassian.confluence.labels import LabelsMixin
 from mcp_atlassian.models.confluence import ConfluenceLabel
 
 
-class TestLabelssMixin:
+class TestLabelsMixin:
     """Tests for the LabelsMixin class."""
 
     @pytest.fixture
@@ -31,26 +31,6 @@ class TestLabelssMixin:
         """Test get_page_labels with success response."""
         # Setup
         page_id = "12345"
-        # Configure the mock to return a successful response
-        labels_mixin.confluence.get_page_labels.return_value = {
-            "results": [
-                {
-                    "id": "456789123",
-                    "prefix": "global",
-                    "name": "meeting-notes",
-                    "label": "meeting-notes",
-                },
-                {
-                    "id": "456789124",
-                    "prefix": "my",
-                    "name": "important",
-                },
-                {
-                    "id": "456789125",
-                    "name": "test",
-                },
-            ]
-        }
 
         # Call the method
         result = labels_mixin.get_page_labels(page_id)
@@ -58,7 +38,14 @@ class TestLabelssMixin:
         # Verify
         labels_mixin.confluence.get_page_labels.assert_called_once_with(page_id=page_id)
         assert len(result) == 3
-        # assert result[0].body == "Processed Markdown"
+        assert result[0].id == "456789123"
+        assert result[0].prefix == "global"
+        assert result[0].label == "meeting-notes"
+        assert result[1].id == "456789124"
+        assert result[1].prefix == "my"
+        assert result[1].name == "important"
+        assert result[2].id == "456789125"
+        assert result[2].name == "test"
 
     def test_get_page_labels_api_error(self, labels_mixin):
         """Test handling of API errors."""
@@ -89,7 +76,7 @@ class TestLabelssMixin:
     def test_get_page_labels_value_error(self, labels_mixin):
         """Test handling of unexpected data types."""
         # Cause a value error by returning a string where a dict is expected
-        labels_mixin.confluence.get_page_by_id.return_value = "invalid"
+        labels_mixin.confluence.get_page_labels.return_value = "invalid"
 
         # Act
         result = labels_mixin.get_page_labels("987654321")

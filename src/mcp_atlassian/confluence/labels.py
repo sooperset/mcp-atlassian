@@ -24,10 +24,6 @@ class LabelsMixin(ConfluenceClient):
             List of ConfluenceLabel models containing label content and metadata
         """
         try:
-            # Get page info to extract space details
-            page = self.confluence.get_page_by_id(page_id=page_id, expand="space")
-            space_key = page.get("space", {}).get("key", "")
-
             # Get labels with expanded content
             labels_response = self.confluence.get_page_labels(page_id=page_id)
 

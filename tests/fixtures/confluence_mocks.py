@@ -303,7 +303,7 @@ MOCK_LABELS_RESPONSE = {
     ],
     "start": 0,
     "limit": 200,
-    "size": 2,
+    "size": 3,
     "_links": {
         "self": "https://company.atlassian.net/wiki/rest/api/content/456789123",
         "base": "https://company.atlassian.net",

@@ -6,7 +6,7 @@ This module provides Pydantic models for Confluence page labels.
 import logging
 from typing import Any
 
-from ..base import ApiModel, TimestampMixin
+from ..base import ApiModel
 from ..constants import (
     CONFLUENCE_DEFAULT_ID,
     EMPTY_STRING,
@@ -15,7 +15,7 @@ from ..constants import (
 logger = logging.getLogger(__name__)
 
 
-class ConfluenceLabel(ApiModel, TimestampMixin):
+class ConfluenceLabel(ApiModel):
     """
     Model representing a Confluence label.
     """

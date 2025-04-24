@@ -1204,13 +1204,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             }
 
         def format_label(label: Any) -> dict[str, Any]:
-            if hasattr(label, "to_simplified_dict"):
-                # Cast the return value to dict[str, Any] to satisfy the type checker
-                return cast(dict[str, Any], label.to_simplified_dict())
-            return {
-                "name": label.get("name", {}),
-                "prefix": comment.get("prefix"),
-            }
+            return cast(dict[str, Any], label.to_simplified_dict())
 
         # Confluence operations
         if name == "confluence_search" and ctx and ctx.confluence:
