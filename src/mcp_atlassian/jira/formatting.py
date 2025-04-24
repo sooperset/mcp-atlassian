@@ -7,8 +7,8 @@ from datetime import datetime
 from typing import Any
 
 from ..preprocessing.jira import JiraPreprocessor
+from ..utils import parse_date_human_readable
 from .client import JiraClient
-from .utils import parse_date_human_readable
 
 logger = logging.getLogger("mcp-jira")
 

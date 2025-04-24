@@ -9,8 +9,8 @@ from requests.exceptions import HTTPError
 from ..exceptions import MCPAtlassianAuthenticationError
 from ..models.jira import JiraIssue
 from ..models.jira.common import JiraChangelog
+from ..utils import parse_date_human_readable
 from .users import UsersMixin
-from .utils import parse_date_human_readable
 
 logger = logging.getLogger("mcp-jira")
 

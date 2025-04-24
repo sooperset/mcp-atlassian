@@ -3,8 +3,8 @@
 import logging
 from typing import Any
 
+from ..utils import parse_date_ymd
 from .client import JiraClient
-from .utils import parse_date_ymd
 
 logger = logging.getLogger("mcp-jira")
 
@@ -36,8 +36,8 @@ class CommentsMixin(JiraClient):
                 processed_comment = {
                     "id": comment.get("id"),
                     "body": self._clean_text(comment.get("body", "")),
-                    "created": self._parse_date(comment.get("created")),
-                    "updated": self._parse_date(comment.get("updated")),
+                    "created": parse_date_ymd(comment.get("created")),
+                    "updated": parse_date_ymd(comment.get("updated")),
                     "author": comment.get("author", {}).get("displayName", "Unknown"),
                 }
                 processed_comments.append(processed_comment)
@@ -69,7 +69,7 @@ class CommentsMixin(JiraClient):
             return {
                 "id": result.get("id"),
                 "body": self._clean_text(result.get("body", "")),
-                "created": self._parse_date(result.get("created")),
+                "created": parse_date_ymd(result.get("created")),
                 "author": result.get("author", {}).get("displayName", "Unknown"),
             }
         except Exception as e:
@@ -99,21 +99,3 @@ class CommentsMixin(JiraClient):
             logger.warning(f"Error converting markdown to Jira format: {str(e)}")
             # Return the original text if conversion fails
             return markdown_text
-
-    def _parse_date(self, date_str: str | None) -> str:
-        """
-        Parse a date string from ISO format to a more readable format.
-
-        Args:
-            date_str: Date string in ISO format or None
-
-        Returns:
-            Formatted date string or empty string if date_str is None
-        """
-        logger.debug(f"CommentsMixin._parse_date called with: '{date_str}'")
-
-        # Call the utility function and capture the result
-        result = parse_date_ymd(date_str)
-
-        logger.debug(f"CommentsMixin._parse_date returning: '{result}'")
-        return result

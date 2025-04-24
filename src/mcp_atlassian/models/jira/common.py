@@ -10,7 +10,7 @@ from typing import Any
 
 from pydantic import Field
 
-from ...jira.utils import parse_date_ymd
+from ...utils import parse_date_ymd
 from ..base import ApiModel, TimestampMixin
 from ..constants import (
     EMPTY_STRING,

@@ -7,8 +7,8 @@ from requests.exceptions import HTTPError
 
 from ..exceptions import MCPAtlassianAuthenticationError
 from ..models.jira import JiraSearchResult
+from ..utils import parse_date_ymd
 from .client import JiraClient
-from .utils import parse_date_ymd
 
 logger = logging.getLogger("mcp-jira")
 
