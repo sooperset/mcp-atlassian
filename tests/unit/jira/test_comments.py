@@ -1,6 +1,6 @@
 """Tests for the Jira Comments mixin."""
 
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
@@ -27,7 +27,7 @@ class TestCommentsMixin:
 
         return mixin
 
-    def test_get_issue_comments_basic(self, comments_mixin):
+    def test_get_issue_comments_basic(self, comments_mixin: CommentsMixin):
         """Test get_issue_comments with basic data."""
         # Setup mock response
         comments_mixin.jira.issue_get_comments.return_value = {
@@ -42,24 +42,18 @@ class TestCommentsMixin:
             ]
         }
 
-        # Mock the _parse_date method for this test
-        with patch.object(
-            comments_mixin,
-            "_parse_date",
-            side_effect=lambda x: x.split("T")[0] if x and "T" in x else x,
-        ):
-            # Call the method
-            result = comments_mixin.get_issue_comments("TEST-123")
+        # Call the method
+        result = comments_mixin.get_issue_comments("TEST-123")
 
-            # Verify
-            comments_mixin.jira.issue_get_comments.assert_called_once_with("TEST-123")
-            assert len(result) == 1
-            assert result[0]["id"] == "10001"
-            assert result[0]["body"] == "This is a comment"
-            assert result[0]["created"] == "2024-01-01"  # Parsed date
-            assert result[0]["author"] == "John Doe"
+        # Verify
+        comments_mixin.jira.issue_get_comments.assert_called_once_with("TEST-123")
+        assert len(result) == 1
+        assert result[0]["id"] == "10001"
+        assert result[0]["body"] == "This is a comment"
+        assert result[0]["created"] == "2024-01-01"  # Parsed date
+        assert result[0]["author"] == "John Doe"
 
-    def test_get_issue_comments_with_limit(self, comments_mixin):
+    def test_get_issue_comments_with_limit(self, comments_mixin: CommentsMixin):
         """Test get_issue_comments with limit parameter."""
         # Setup mock response with multiple comments
         comments_mixin.jira.issue_get_comments.return_value = {
@@ -95,7 +89,9 @@ class TestCommentsMixin:
         assert result[1]["id"] == "10002"
         # Third comment shouldn't be included due to limit
 
-    def test_get_issue_comments_with_missing_fields(self, comments_mixin):
+    def test_get_issue_comments_with_missing_fields(
+        self, comments_mixin: CommentsMixin
+    ):
         """Test get_issue_comments with missing fields in the response."""
         # Setup mock response with missing fields
         comments_mixin.jira.issue_get_comments.return_value = {
@@ -139,7 +135,9 @@ class TestCommentsMixin:
             result[2]["author"] == "Unknown"
         )  # Should use Unknown when only name is available
 
-    def test_get_issue_comments_with_empty_response(self, comments_mixin):
+    def test_get_issue_comments_with_empty_response(
+        self, comments_mixin: CommentsMixin
+    ):
         """Test get_issue_comments with an empty response."""
         # Setup mock response with no comments
         comments_mixin.jira.issue_get_comments.return_value = {"comments": []}
@@ -150,7 +148,7 @@ class TestCommentsMixin:
         # Verify
         assert len(result) == 0  # Should return an empty list
 
-    def test_get_issue_comments_with_error(self, comments_mixin):
+    def test_get_issue_comments_with_error(self, comments_mixin: CommentsMixin):
         """Test get_issue_comments with an error response."""
         # Setup mock to raise exception
         comments_mixin.jira.issue_get_comments.side_effect = Exception("API Error")
@@ -159,7 +157,7 @@ class TestCommentsMixin:
         with pytest.raises(Exception, match="Error getting comments"):
             comments_mixin.get_issue_comments("TEST-123")
 
-    def test_add_comment_basic(self, comments_mixin):
+    def test_add_comment_basic(self, comments_mixin: CommentsMixin):
         """Test add_comment with basic data."""
         # Setup mock response
         comments_mixin.jira.issue_add_comment.return_value = {
@@ -184,7 +182,7 @@ class TestCommentsMixin:
         assert result["created"] == "2024-01-01"  # Parsed date
         assert result["author"] == "John Doe"
 
-    def test_add_comment_with_markdown_conversion(self, comments_mixin):
+    def test_add_comment_with_markdown_conversion(self, comments_mixin: CommentsMixin):
         """Test add_comment with markdown conversion."""
         # Setup mock response
         comments_mixin.jira.issue_add_comment.return_value = {
@@ -221,7 +219,7 @@ class TestCommentsMixin:
         )
         assert result["body"] == "*This* is _Jira_ formatted"
 
-    def test_add_comment_with_empty_comment(self, comments_mixin):
+    def test_add_comment_with_empty_comment(self, comments_mixin: CommentsMixin):
         """Test add_comment with an empty comment."""
         # Setup mock response
         comments_mixin.jira.issue_add_comment.return_value = {
@@ -239,7 +237,7 @@ class TestCommentsMixin:
         comments_mixin.jira.issue_add_comment.assert_called_once_with("TEST-123", "")
         assert result["body"] == ""
 
-    def test_add_comment_with_error(self, comments_mixin):
+    def test_add_comment_with_error(self, comments_mixin: CommentsMixin):
         """Test add_comment with an error response."""
         # Setup mock to raise exception
         comments_mixin.jira.issue_add_comment.side_effect = Exception("API Error")
@@ -248,7 +246,7 @@ class TestCommentsMixin:
         with pytest.raises(Exception, match="Error adding comment"):
             comments_mixin.add_comment("TEST-123", "Test comment")
 
-    def test_markdown_to_jira(self, comments_mixin):
+    def test_markdown_to_jira(self, comments_mixin: CommentsMixin):
         """Test markdown to Jira conversion."""
         # Setup - need to replace the mock entirely
         comments_mixin.preprocessor.markdown_to_jira = MagicMock(
@@ -264,7 +262,7 @@ class TestCommentsMixin:
             "Markdown text"
         )
 
-    def test_markdown_to_jira_with_empty_text(self, comments_mixin):
+    def test_markdown_to_jira_with_empty_text(self, comments_mixin: CommentsMixin):
         """Test markdown to Jira conversion with empty text."""
         # Call the method with empty text
         result = comments_mixin._markdown_to_jira("")
@@ -273,17 +271,3 @@ class TestCommentsMixin:
         assert result == ""
         # The preprocessor should not be called with empty text
         comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
-
-    def test_parse_date(self, comments_mixin):
-        """Test the actual implementation of _parse_date."""
-        # Test ISO format
-        result = comments_mixin._parse_date("2024-01-01T10:00:00.000+0000")
-        assert result == "2024-01-01", f"Expected '2024-01-01' but got '{result}'"
-
-        # Test invalid format
-        result = comments_mixin._parse_date("invalid date")
-        assert result == "invalid date", f"Expected 'invalid date' but got '{result}'"
-
-        # Test None value
-        result = comments_mixin._parse_date(None)
-        assert result == "", f"Expected empty string but got '{result}'"
