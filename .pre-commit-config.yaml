@@ -49,6 +49,7 @@ repos:
             'types-requests',
             'types-setuptools',
             'types-urllib3',
+            'types-python-dateutil',
             'atlassian-python-api',
             'beautifulsoup4',
             'httpx',
