@@ -136,7 +136,7 @@ class AtlassianSseServerTransport(SseServerTransport):
             dict[str, Any]
         ](0)
 
-        async def sse_writer():
+        async def sse_writer() -> None:
             logger.debug("Starting SSE writer")
             async with sse_stream_writer, write_stream_reader:
                 await sse_stream_writer.send(
@@ -160,7 +160,7 @@ class AtlassianSseServerTransport(SseServerTransport):
                         }
                     )
 
-        async def sse_generator():
+        async def sse_generator() -> AsyncGenerator[str, None]:
             async with sse_stream_reader:
                 async for event in sse_stream_reader:
                     yield f"event: {event['event']}\ndata: {event['data']}\n\n"
@@ -311,7 +311,7 @@ class AtlassianServer(Server):
         write_stream: MemoryObjectSendStream[JSONRPCMessage],
         initialization_options: InitializationOptions,
         raise_exceptions: bool = False,
-    ):
+    ) -> None:
         if not self._transport:
             raise ValueError("Transport not set. Call set_transport() before run()")
 
@@ -1572,7 +1572,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 }
             else:
                 # For backward compatibility, keep returning content directly
-                result = {"content": page.content}
+                result = {"content": page.content}  # type: ignore
 
             return [
                 TextContent(
@@ -1609,10 +1609,10 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 child_pages = [page.to_simplified_dict() for page in pages]
 
                 result = {
-                    "parent_id": parent_id,
-                    "total": len(child_pages),
-                    "limit": limit,
-                    "results": child_pages,
+                    "parent_id": parent_id,  # type: ignore
+                    "total": len(child_pages),  # type: ignore
+                    "limit": limit,  # type: ignore
+                    "results": child_pages,  # type: ignore
                 }
 
             except Exception as e:
@@ -1621,7 +1621,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                     f"Error getting/processing children for page ID {parent_id}: {e}",
                     exc_info=True,
                 )
-                result = {"error": f"Failed to get child pages: {e}"}
+                result = {"error": f"Failed to get child pages: {e}"}  # type: ignore
 
             return [
                 TextContent(
@@ -1990,7 +1990,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             # Get worklogs
             worklogs = jira.get_worklogs(issue_key)
 
-            result = {"worklogs": worklogs}
+            result = {"worklogs": worklogs}  # type: ignore
 
             return [
                 TextContent(
@@ -2276,8 +2276,8 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
 
             # Format the response
             result = {
-                "message": "Issues created successfully",
-                "issues": [issue.to_simplified_dict() for issue in created_issues],
+                "message": "Issues created successfully",  # type: ignore
+                "issues": [issue.to_simplified_dict() for issue in created_issues],  # type: ignore
             }
 
             return [
@@ -2405,7 +2405,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             # Delete the issue
             deleted = jira.delete_issue(issue_key)
 
-            result = {"message": f"Issue {issue_key} has been deleted successfully."}
+            result = {"message": f"Issue {issue_key} has been deleted successfully."}  # type: ignore
 
             return [
                 TextContent(
@@ -2463,7 +2463,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 started=started,
             )
 
-            result = {"message": "Worklog added successfully", "worklog": worklog}
+            result = {"message": "Worklog added successfully", "worklog": worklog}  # type: ignore
 
             return [
                 TextContent(
@@ -2491,8 +2491,8 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             issue = jira.link_issue_to_epic(issue_key, epic_key)
 
             result = {
-                "message": f"Issue {issue_key} has been linked to epic {epic_key}.",
-                "issue": issue.to_simplified_dict(),
+                "message": f"Issue {issue_key} has been linked to epic {epic_key}.",  # type: ignore
+                "issue": issue.to_simplified_dict(),  # type: ignore
             }
 
             return [
@@ -2550,8 +2550,8 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
 
                 result = {
-                    "message": f"Issue {issue_key} transitioned successfully",
-                    "issue": issue.to_simplified_dict() if issue else None,
+                    "message": f"Issue {issue_key} transitioned successfully",  # type: ignore
+                    "issue": issue.to_simplified_dict() if issue else None,  # type: ignore
                 }
 
                 return [
