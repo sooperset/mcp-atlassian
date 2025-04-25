@@ -944,7 +944,7 @@ async def list_tools() -> list[Tool]:
                                     "description": (
                                         "A valid JSON object of fields to update as a string. "
                                         'Example: \'{"summary": "New title", "description": "Updated description", '
-                                        '"priority": {"name": "High"}, "assignee": {"name": "john.doe"}}\''
+                                        '"priority": {"name": "High"}, "assignee": "john.doe"}\''
                                     ),
                                 },
                                 "additional_fields": {
