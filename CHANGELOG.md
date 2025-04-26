@@ -1,10 +1,22 @@
 # Changelog
 
 ## [Unreleased]
-- added `jira_create_sprint`
+
+## [0.8.4] - 2025-04-26
 
 ### Added
+- Added `jira_create_sprint` tool for programmatically creating Jira sprints
 - Added `get_issue_link_types()` method to retrieve all available issue link types
+- Added corresponding MCP tool interfaces for link operations
+
+### Changed
+- Refactored `create_issue_link(data)` method to create links between issues
+- Refactored `remove_issue_link(link_id)` method to remove existing links
+- Updated project dependencies with `python-dateutil` and `types-python-dateutil`
+
+### Fixed
+- Fixed SSL verification environment variables being overwritten in Docker (#340)
+- Corrected jira_update_issue example for assignee format (#339)
 
 ## [0.8.3] - 2025-04-24
 
