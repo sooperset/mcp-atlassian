@@ -2371,7 +2371,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                     )
                 ]
 
-        elif name == "jira_get_link_types" and ctx and ctx.jira:
+        elif name == "jira_get_link_types":
             if not ctx or not ctx.jira:
                 raise ValueError("Jira is not configured.")
 
