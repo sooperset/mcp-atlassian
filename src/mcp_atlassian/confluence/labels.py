@@ -2,8 +2,6 @@
 
 import logging
 
-import requests
-
 from ..models.confluence import ConfluenceLabel
 from .client import ConfluenceClient
 
@@ -22,6 +20,9 @@ class LabelsMixin(ConfluenceClient):
 
         Returns:
             List of ConfluenceLabel models containing label content and metadata
+
+        Raises:
+            Exception: If there is an error getting the label
         """
         try:
             # Get labels with expanded content
@@ -29,7 +30,7 @@ class LabelsMixin(ConfluenceClient):
 
             # Process each label
             label_models = []
-            for label_data in labels_response.get("results", []):
+            for label_data in labels_response.get("results"):
                 # Create the model with the processed content
                 label_model = ConfluenceLabel.from_api_response(
                     label_data,
@@ -40,16 +41,11 @@ class LabelsMixin(ConfluenceClient):
 
             return label_models
 
-        except requests.RequestException as e:
-            logger.error(f"Network error when fetching labels: {str(e)}")
-            return []
-        except (ValueError, TypeError) as e:
-            logger.error(f"Error processing label data: {str(e)}")
-            return []
-        except Exception as e:  # noqa: BLE001 - Intentional fallback with full logging
-            logger.error(f"Unexpected error fetching labels: {str(e)}")
-            logger.debug("Full exception details for labels:", exc_info=True)
-            return []
+        except Exception as e:
+            logger.error(f"Failed fetching labels from page {page_id}: {str(e)}")
+            raise Exception(
+                f"Failed fetching labels from page {page_id}: {str(e)}"
+            ) from e
 
     def add_page_label(self, page_id: str, name: str) -> list[ConfluenceLabel]:
         """

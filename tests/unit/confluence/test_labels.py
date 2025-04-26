@@ -54,36 +54,27 @@ class TestLabelsMixin:
             "API error"
         )
 
-        # Act
-        result = labels_mixin.get_page_labels("987654321")
-
-        # Assert
-        assert isinstance(result, list)
-        assert len(result) == 0  # Empty list on error
+        # Act/Assert
+        with pytest.raises(Exception, match="Failed fetching labels"):
+            labels_mixin.get_page_labels("987654321")
 
     def test_get_page_labels_key_error(self, labels_mixin):
         """Test handling of missing keys in API response."""
         # Mock the response to be missing expected keys
         labels_mixin.confluence.get_page_labels.return_value = {"invalid": "data"}
 
-        # Act
-        result = labels_mixin.get_page_labels("987654321")
-
-        # Assert
-        assert isinstance(result, list)
-        assert len(result) == 0  # Empty list on error
+        # Act/Assert
+        with pytest.raises(Exception, match="Failed fetching labels"):
+            labels_mixin.get_page_labels("987654321")
 
     def test_get_page_labels_value_error(self, labels_mixin):
         """Test handling of unexpected data types."""
         # Cause a value error by returning a string where a dict is expected
         labels_mixin.confluence.get_page_labels.return_value = "invalid"
 
-        # Act
-        result = labels_mixin.get_page_labels("987654321")
-
-        # Assert
-        assert isinstance(result, list)
-        assert len(result) == 0  # Empty list on error
+        # Act/Assert
+        with pytest.raises(Exception, match="Failed fetching labels"):
+            labels_mixin.get_page_labels("987654321")
 
     def test_get_page_labels_with_empty_results(self, labels_mixin):
         """Test handling of empty results."""
