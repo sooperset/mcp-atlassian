@@ -22,7 +22,7 @@ class ConfluenceLabel(ApiModel):
 
     id: str = CONFLUENCE_DEFAULT_ID
     name: str | None = None
-    prefix: str = EMPTY_STRING
+    prefix: str = "global"
     label: str = EMPTY_STRING
     type: str = "label"
 

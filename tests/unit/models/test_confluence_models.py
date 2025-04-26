@@ -339,7 +339,7 @@ class TestConfluenceLabel:
         # Should use default values
         assert label.id == "0"
         assert label.name is None
-        assert label.prefix == ""
+        assert label.prefix == "global"
         assert label.label == ""
         assert label.type == "label"
 
