@@ -116,6 +116,11 @@ def main(
     global logger
     logger = setup_logging(logging_level)
 
+    def was_option_provided(ctx: click.Context, param_name: str) -> bool:
+        return (
+            ctx.get_parameter_source(param_name) != click.core.ParameterSource.DEFAULT
+        )
+
     # Load environment variables from file if specified, otherwise try default .env
     if env_file:
         logger.debug(f"Loading environment from file: {env_file}")
@@ -174,15 +179,22 @@ def main(
     if read_only:
         os.environ["READ_ONLY_MODE"] = "true"
 
-    # Set SSL verification for Confluence Server/Data Center
-    os.environ["CONFLUENCE_SSL_VERIFY"] = str(confluence_ssl_verify).lower()
+    # Get the current click context to check parameter sources
+    click_ctx = click.get_current_context()
+
+    # Set SSL verification for Confluence Server/Data Center, respecting env if CLI flag is default
+    if was_option_provided(click_ctx, "confluence_ssl_verify"):
+        os.environ["CONFLUENCE_SSL_VERIFY"] = str(confluence_ssl_verify).lower()
+    # else: environment variable (if set) will be used by ConfluenceConfig.from_env()
 
     # Set spaces filter for Confluence
     if confluence_spaces_filter:
         os.environ["CONFLUENCE_SPACES_FILTER"] = confluence_spaces_filter
 
-    # Set SSL verification for Jira Server/Data Center
-    os.environ["JIRA_SSL_VERIFY"] = str(jira_ssl_verify).lower()
+    # Set SSL verification for Jira Server/Data Center, respecting env if CLI flag is default
+    if was_option_provided(click_ctx, "jira_ssl_verify"):
+        os.environ["JIRA_SSL_VERIFY"] = str(jira_ssl_verify).lower()
+    # else: environment variable (if set) will be used by JiraConfig.from_env()
 
     # Set projects filter for Jira
     if jira_projects_filter:
