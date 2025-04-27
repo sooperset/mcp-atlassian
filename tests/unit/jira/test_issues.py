@@ -1450,7 +1450,7 @@ class TestIssuesMixin:
         ]
 
         # Mock the get_paged method
-        issues_mixin.get_paged.return_value = mock_get_paged_result
+        issues_mixin.get_paged = MagicMock(return_value=mock_get_paged_result)
 
         # Call the method
         result = issues_mixin.batch_get_changelogs(
