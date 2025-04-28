@@ -16,6 +16,12 @@ logger = logging.getLogger("mcp-jira")
 class JiraClient:
     """Base client for Jira API interactions."""
 
+    _field_ids_cache: dict[str, str] | None
+    _current_user_account_id: str | None
+
+    config: JiraConfig
+    preprocessor: JiraPreprocessor
+
     def __init__(self, config: JiraConfig | None = None) -> None:
         """Initialize the Jira client with configuration options.
 
@@ -55,10 +61,8 @@ class JiraClient:
 
         # Initialize the text preprocessor for text processing capabilities
         self.preprocessor = JiraPreprocessor(base_url=self.config.url)
-
-        # Cache for frequently used data
-        self._field_ids: dict[str, str] | None = None
-        self._current_user_account_id: str | None = None
+        self._field_ids_cache = None
+        self._current_user_account_id = None
 
     def _clean_text(self, text: str) -> str:
         """Clean text content by:
