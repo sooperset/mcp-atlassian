@@ -1,12 +1,13 @@
 """Tests for the Jira ProjectsMixin."""
 
+from typing import Any
 from unittest.mock import MagicMock, call, patch
 
 import pytest
 
+from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.jira.projects import ProjectsMixin
-from mcp_atlassian.jira.search import SearchMixin
 from mcp_atlassian.models.jira.search import JiraSearchResult
 
 
@@ -22,24 +23,9 @@ def mock_config():
 
 
 @pytest.fixture
-def projects_mixin(mock_config):
+def projects_mixin(jira_fetcher: JiraFetcher) -> ProjectsMixin:
     """Fixture to create a ProjectsMixin instance for testing."""
-    mixin = ProjectsMixin(config=mock_config)
-    mixin.jira = MagicMock()
-    return mixin
-
-
-@pytest.fixture
-def projects_mixin_with_search(mock_config):
-    """Fixture to create a ProjectsMixin | SearchMixin instance for testing."""
-
-    class ProjectSearchMixin(ProjectsMixin, SearchMixin):
-        """Mixin for testing ProjectsMixin and SearchMixin."""
-
-        pass
-
-    mixin = ProjectSearchMixin(config=mock_config)
-    mixin.jira = MagicMock()
+    mixin = jira_fetcher
     return mixin
 
 
@@ -109,7 +95,7 @@ def mock_issue_types():
     ]
 
 
-def test_get_all_projects(projects_mixin, mock_projects):
+def test_get_all_projects(projects_mixin: ProjectsMixin, mock_projects: list[dict]):
     """Test get_all_projects method."""
     projects_mixin.jira.projects.return_value = mock_projects
 
@@ -127,7 +113,7 @@ def test_get_all_projects(projects_mixin, mock_projects):
     projects_mixin.jira.projects.assert_called_once_with(included_archived=True)
 
 
-def test_get_all_projects_exception(projects_mixin):
+def test_get_all_projects_exception(projects_mixin: ProjectsMixin):
     """Test get_all_projects method with exception."""
     projects_mixin.jira.projects.side_effect = Exception("API error")
 
@@ -136,7 +122,7 @@ def test_get_all_projects_exception(projects_mixin):
     projects_mixin.jira.projects.assert_called_once()
 
 
-def test_get_all_projects_non_list_response(projects_mixin):
+def test_get_all_projects_non_list_response(projects_mixin: ProjectsMixin):
     """Test get_all_projects method with non-list response."""
     projects_mixin.jira.projects.return_value = "not a list"
 
@@ -145,7 +131,7 @@ def test_get_all_projects_non_list_response(projects_mixin):
     projects_mixin.jira.projects.assert_called_once()
 
 
-def test_get_project(projects_mixin, mock_projects):
+def test_get_project(projects_mixin: ProjectsMixin, mock_projects: list[dict]):
     """Test get_project method."""
     project = mock_projects[0]
     projects_mixin.jira.project.return_value = project
@@ -155,7 +141,7 @@ def test_get_project(projects_mixin, mock_projects):
     projects_mixin.jira.project.assert_called_once_with("PROJ1")
 
 
-def test_get_project_exception(projects_mixin):
+def test_get_project_exception(projects_mixin: ProjectsMixin):
     """Test get_project method with exception."""
     projects_mixin.jira.project.side_effect = Exception("API error")
 
@@ -164,16 +150,16 @@ def test_get_project_exception(projects_mixin):
     projects_mixin.jira.project.assert_called_once()
 
 
-def test_get_project_issues(projects_mixin_with_search):
+def test_get_project_issues(projects_mixin: ProjectsMixin):
     """Test get_project_issues method."""
     # Setup mock response
-    projects_mixin_with_search.jira.jql.return_value = {"issues": []}
+    projects_mixin.jira.jql.return_value = {"issues": []}
 
     # Call the method
-    result = projects_mixin_with_search.get_project_issues("TEST")
+    result = projects_mixin.get_project_issues("TEST")
 
     # Verify JQL query
-    projects_mixin_with_search.jira.jql.assert_called_once_with(
+    projects_mixin.jira.jql.assert_called_once_with(
         "project = TEST",
         fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
         start=0,
@@ -184,9 +170,9 @@ def test_get_project_issues(projects_mixin_with_search):
     assert len(result.issues) == 0
 
 
-def test_get_project_issues_with_start(projects_mixin_with_search) -> None:
+def test_get_project_issues_with_start(projects_mixin: ProjectsMixin) -> None:
     """Test getting project issues with a start index."""
-    projects_mixin_with_search.jira.jql.return_value = {
+    projects_mixin.jira.jql.return_value = {
         "issues": [
             {
                 "key": "PROJ-2",
@@ -201,16 +187,14 @@ def test_get_project_issues_with_start(projects_mixin_with_search) -> None:
     project_key = "PROJ"
     start_index = 3
 
-    result = projects_mixin_with_search.get_project_issues(
-        project_key, start=start_index, limit=5
-    )
+    result = projects_mixin.get_project_issues(project_key, start=start_index, limit=5)
 
     assert len(result.issues) == 1
     assert result.start_at == 3
     assert result.max_results == 5
     assert result.total == 1
 
-    projects_mixin_with_search.jira.jql.assert_called_once_with(
+    projects_mixin.jira.jql.assert_called_once_with(
         f"project = {project_key}",
         fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
         start=start_index,
@@ -219,7 +203,7 @@ def test_get_project_issues_with_start(projects_mixin_with_search) -> None:
     )
 
 
-def test_project_exists(projects_mixin, mock_projects):
+def test_project_exists(projects_mixin: ProjectsMixin, mock_projects: list[dict]):
     """Test project_exists method."""
     # Test with existing project
     project = mock_projects[0]
@@ -238,7 +222,7 @@ def test_project_exists(projects_mixin, mock_projects):
     projects_mixin.jira.project.assert_called_once()
 
 
-def test_project_exists_exception(projects_mixin):
+def test_project_exists_exception(projects_mixin: ProjectsMixin):
     """Test project_exists method with exception."""
     projects_mixin.jira.project.side_effect = Exception("API error")
 
@@ -247,7 +231,9 @@ def test_project_exists_exception(projects_mixin):
     projects_mixin.jira.project.assert_called_once()
 
 
-def test_get_project_components(projects_mixin, mock_components):
+def test_get_project_components(
+    projects_mixin: ProjectsMixin, mock_components: list[dict]
+):
     """Test get_project_components method."""
     projects_mixin.jira.get_project_components.return_value = mock_components
 
@@ -256,7 +242,7 @@ def test_get_project_components(projects_mixin, mock_components):
     projects_mixin.jira.get_project_components.assert_called_once_with(key="PROJ1")
 
 
-def test_get_project_components_exception(projects_mixin):
+def test_get_project_components_exception(projects_mixin: ProjectsMixin):
     """Test get_project_components method with exception."""
     projects_mixin.jira.get_project_components.side_effect = Exception("API error")
 
@@ -265,7 +251,7 @@ def test_get_project_components_exception(projects_mixin):
     projects_mixin.jira.get_project_components.assert_called_once()
 
 
-def test_get_project_components_non_list_response(projects_mixin):
+def test_get_project_components_non_list_response(projects_mixin: ProjectsMixin):
     """Test get_project_components method with non-list response."""
     projects_mixin.jira.get_project_components.return_value = "not a list"
 
@@ -274,7 +260,7 @@ def test_get_project_components_non_list_response(projects_mixin):
     projects_mixin.jira.get_project_components.assert_called_once()
 
 
-def test_get_project_versions(projects_mixin, mock_versions):
+def test_get_project_versions(projects_mixin: ProjectsMixin, mock_versions: list[dict]):
     """Test get_project_versions method."""
     projects_mixin.jira.get_project_versions.return_value = mock_versions
 
@@ -283,7 +269,7 @@ def test_get_project_versions(projects_mixin, mock_versions):
     projects_mixin.jira.get_project_versions.assert_called_once_with(key="PROJ1")
 
 
-def test_get_project_versions_exception(projects_mixin):
+def test_get_project_versions_exception(projects_mixin: ProjectsMixin):
     """Test get_project_versions method with exception."""
     projects_mixin.jira.get_project_versions.side_effect = Exception("API error")
 
@@ -292,7 +278,7 @@ def test_get_project_versions_exception(projects_mixin):
     projects_mixin.jira.get_project_versions.assert_called_once()
 
 
-def test_get_project_versions_non_list_response(projects_mixin):
+def test_get_project_versions_non_list_response(projects_mixin: ProjectsMixin):
     """Test get_project_versions method with non-list response."""
     projects_mixin.jira.get_project_versions.return_value = "not a list"
 
@@ -301,7 +287,9 @@ def test_get_project_versions_non_list_response(projects_mixin):
     projects_mixin.jira.get_project_versions.assert_called_once()
 
 
-def test_get_project_roles(projects_mixin, mock_roles):
+def test_get_project_roles(
+    projects_mixin: ProjectsMixin, mock_roles: dict[str, dict[str, str]]
+):
     """Test get_project_roles method."""
     projects_mixin.jira.get_project_roles.return_value = mock_roles
 
@@ -310,7 +298,7 @@ def test_get_project_roles(projects_mixin, mock_roles):
     projects_mixin.jira.get_project_roles.assert_called_once_with(project_key="PROJ1")
 
 
-def test_get_project_roles_exception(projects_mixin):
+def test_get_project_roles_exception(projects_mixin: ProjectsMixin):
     """Test get_project_roles method with exception."""
     projects_mixin.jira.get_project_roles.side_effect = Exception("API error")
 
@@ -319,7 +307,7 @@ def test_get_project_roles_exception(projects_mixin):
     projects_mixin.jira.get_project_roles.assert_called_once()
 
 
-def test_get_project_roles_non_dict_response(projects_mixin):
+def test_get_project_roles_non_dict_response(projects_mixin: ProjectsMixin):
     """Test get_project_roles method with non-dict response."""
     projects_mixin.jira.get_project_roles.return_value = "not a dict"
 
@@ -328,7 +316,9 @@ def test_get_project_roles_non_dict_response(projects_mixin):
     projects_mixin.jira.get_project_roles.assert_called_once()
 
 
-def test_get_project_role_members(projects_mixin, mock_role_members):
+def test_get_project_role_members(
+    projects_mixin: ProjectsMixin, mock_role_members: dict[str, list[dict[str, str]]]
+):
     """Test get_project_role_members method."""
     projects_mixin.jira.get_project_actors_for_role_project.return_value = (
         mock_role_members
@@ -341,7 +331,7 @@ def test_get_project_role_members(projects_mixin, mock_role_members):
     )
 
 
-def test_get_project_role_members_exception(projects_mixin):
+def test_get_project_role_members_exception(projects_mixin: ProjectsMixin):
     """Test get_project_role_members method with exception."""
     projects_mixin.jira.get_project_actors_for_role_project.side_effect = Exception(
         "API error"
@@ -352,7 +342,7 @@ def test_get_project_role_members_exception(projects_mixin):
     projects_mixin.jira.get_project_actors_for_role_project.assert_called_once()
 
 
-def test_get_project_role_members_invalid_response(projects_mixin):
+def test_get_project_role_members_invalid_response(projects_mixin: ProjectsMixin):
     """Test get_project_role_members method with invalid response."""
     # Response without actors
     projects_mixin.jira.get_project_actors_for_role_project.return_value = {}
@@ -369,7 +359,7 @@ def test_get_project_role_members_invalid_response(projects_mixin):
     assert result == []
 
 
-def test_get_project_permission_scheme(projects_mixin):
+def test_get_project_permission_scheme(projects_mixin: ProjectsMixin):
     """Test get_project_permission_scheme method."""
     scheme = {"id": "10000", "name": "Default Permission Scheme"}
     projects_mixin.jira.get_project_permission_scheme.return_value = scheme
@@ -381,7 +371,7 @@ def test_get_project_permission_scheme(projects_mixin):
     )
 
 
-def test_get_project_permission_scheme_exception(projects_mixin):
+def test_get_project_permission_scheme_exception(projects_mixin: ProjectsMixin):
     """Test get_project_permission_scheme method with exception."""
     projects_mixin.jira.get_project_permission_scheme.side_effect = Exception(
         "API error"
@@ -392,7 +382,7 @@ def test_get_project_permission_scheme_exception(projects_mixin):
     projects_mixin.jira.get_project_permission_scheme.assert_called_once()
 
 
-def test_get_project_notification_scheme(projects_mixin):
+def test_get_project_notification_scheme(projects_mixin: ProjectsMixin):
     """Test get_project_notification_scheme method."""
     scheme = {"id": "10000", "name": "Default Notification Scheme"}
     projects_mixin.jira.get_project_notification_scheme.return_value = scheme
@@ -404,7 +394,7 @@ def test_get_project_notification_scheme(projects_mixin):
     )
 
 
-def test_get_project_notification_scheme_exception(projects_mixin):
+def test_get_project_notification_scheme_exception(projects_mixin: ProjectsMixin):
     """Test get_project_notification_scheme method with exception."""
     projects_mixin.jira.get_project_notification_scheme.side_effect = Exception(
         "API error"
@@ -415,7 +405,9 @@ def test_get_project_notification_scheme_exception(projects_mixin):
     projects_mixin.jira.get_project_notification_scheme.assert_called_once()
 
 
-def test_get_project_issue_types(projects_mixin, mock_issue_types):
+def test_get_project_issue_types(
+    projects_mixin: ProjectsMixin, mock_issue_types: list[dict]
+):
     """Test get_project_issue_types method."""
     createmeta = {
         "projects": [
@@ -429,7 +421,7 @@ def test_get_project_issue_types(projects_mixin, mock_issue_types):
     projects_mixin.jira.issue_createmeta.assert_called_once_with(project="PROJ1")
 
 
-def test_get_project_issue_types_empty_response(projects_mixin):
+def test_get_project_issue_types_empty_response(projects_mixin: ProjectsMixin):
     """Test get_project_issue_types method with empty response."""
     # Empty projects list
     projects_mixin.jira.issue_createmeta.return_value = {"projects": []}
@@ -448,7 +440,7 @@ def test_get_project_issue_types_empty_response(projects_mixin):
     assert result == []
 
 
-def test_get_project_issue_types_exception(projects_mixin):
+def test_get_project_issue_types_exception(projects_mixin: ProjectsMixin):
     """Test get_project_issue_types method with exception."""
     projects_mixin.jira.issue_createmeta.side_effect = Exception("API error")
 
@@ -457,7 +449,7 @@ def test_get_project_issue_types_exception(projects_mixin):
     projects_mixin.jira.issue_createmeta.assert_called_once()
 
 
-def test_get_project_issues_count(projects_mixin):
+def test_get_project_issues_count(projects_mixin: ProjectsMixin):
     """Test get_project_issues_count method."""
     jql_result = {"total": 42}
     projects_mixin.jira.jql.return_value = jql_result
@@ -465,11 +457,11 @@ def test_get_project_issues_count(projects_mixin):
     result = projects_mixin.get_project_issues_count("PROJ1")
     assert result == 42
     projects_mixin.jira.jql.assert_called_once_with(
-        jql="project = PROJ1", fields=["key"], limit=1
+        jql="project = PROJ1", fields="key", limit=1
     )
 
 
-def test_get_project_issues_count_invalid_response(projects_mixin):
+def test_get_project_issues_count_invalid_response(projects_mixin: ProjectsMixin):
     """Test get_project_issues_count method with invalid response."""
     # No total field
     projects_mixin.jira.jql.return_value = {}
@@ -487,7 +479,7 @@ def test_get_project_issues_count_invalid_response(projects_mixin):
     projects_mixin.jira.jql.assert_called_once()
 
 
-def test_get_project_issues_count_exception(projects_mixin):
+def test_get_project_issues_count_exception(projects_mixin: ProjectsMixin):
     """Test get_project_issues_count method with exception."""
     projects_mixin.jira.jql.side_effect = Exception("API error")
 
@@ -496,7 +488,7 @@ def test_get_project_issues_count_exception(projects_mixin):
     projects_mixin.jira.jql.assert_called_once()
 
 
-def test_get_project_issues_with_search_mixin(projects_mixin):
+def test_get_project_issues_with_search_mixin(projects_mixin: ProjectsMixin):
     """Test get_project_issues method with search_issues available."""
     # Mock the search_issues method
     mock_search_result = [MagicMock(), MagicMock()]
@@ -510,36 +502,38 @@ def test_get_project_issues_with_search_mixin(projects_mixin):
     projects_mixin.jira.jql.assert_not_called()
 
 
-def test_get_project_issues_invalid_response(projects_mixin_with_search):
+def test_get_project_issues_invalid_response(projects_mixin: ProjectsMixin):
     """Test get_project_issues method with invalid response."""
 
     # No issues field
-    projects_mixin_with_search.jira.jql.return_value = {"issues": []}
+    projects_mixin.jira.jql.return_value = {"issues": []}
 
-    result = projects_mixin_with_search.get_project_issues("PROJ1")
+    result = projects_mixin.get_project_issues("PROJ1")
     assert result.issues == []
-    projects_mixin_with_search.jira.jql.assert_called_once()
+    projects_mixin.jira.jql.assert_called_once()
 
     # Non-dict response
-    projects_mixin_with_search.jira.jql.reset_mock()
-    projects_mixin_with_search.jira.jql.return_value = "not a dict"
+    projects_mixin.jira.jql.reset_mock()
+    projects_mixin.jira.jql.return_value = "not a dict"
 
-    result = projects_mixin_with_search.get_project_issues("PROJ1")
+    result = projects_mixin.get_project_issues("PROJ1")
     assert result.issues == []
-    projects_mixin_with_search.jira.jql.assert_called_once()
+    projects_mixin.jira.jql.assert_called_once()
 
 
-def test_get_project_issues_exception(projects_mixin_with_search):
+def test_get_project_issues_exception(projects_mixin: ProjectsMixin):
     """Test get_project_issues method with exception."""
 
-    projects_mixin_with_search.jira.jql.side_effect = Exception("API error")
+    projects_mixin.jira.jql.side_effect = Exception("API error")
 
-    result = projects_mixin_with_search.get_project_issues("PROJ1")
-    assert result == []
-    projects_mixin_with_search.jira.jql.assert_called_once()
+    result = projects_mixin.get_project_issues("PROJ1")
+    assert result.issues == []
+    projects_mixin.jira.jql.assert_called_once()
 
 
-def test_get_project_keys(projects_mixin, mock_projects):
+def test_get_project_keys(
+    projects_mixin: ProjectsMixin, mock_projects: list[dict[str, Any]]
+):
     """Test get_project_keys method."""
     # Mock the get_all_projects method
     with patch.object(projects_mixin, "get_all_projects", return_value=mock_projects):
@@ -548,7 +542,7 @@ def test_get_project_keys(projects_mixin, mock_projects):
         projects_mixin.get_all_projects.assert_called_once()
 
 
-def test_get_project_keys_exception(projects_mixin):
+def test_get_project_keys_exception(projects_mixin: ProjectsMixin):
     """Test get_project_keys method with exception."""
     # Mock the get_all_projects method to raise an exception
     with patch.object(
@@ -559,7 +553,9 @@ def test_get_project_keys_exception(projects_mixin):
         projects_mixin.get_all_projects.assert_called_once()
 
 
-def test_get_project_leads(projects_mixin, mock_projects):
+def test_get_project_leads(
+    projects_mixin: ProjectsMixin, mock_projects: list[dict[str, Any]]
+):
     """Test get_project_leads method."""
     # Mock the get_all_projects method
     with patch.object(projects_mixin, "get_all_projects", return_value=mock_projects):
@@ -568,7 +564,9 @@ def test_get_project_leads(projects_mixin, mock_projects):
         projects_mixin.get_all_projects.assert_called_once()
 
 
-def test_get_project_leads_with_different_lead_formats(projects_mixin):
+def test_get_project_leads_with_different_lead_formats(
+    projects_mixin: ProjectsMixin, mock_projects: list[dict[str, Any]]
+):
     """Test get_project_leads method with different lead formats."""
     mixed_projects = [
         # Project with lead as dictionary with name
@@ -588,7 +586,7 @@ def test_get_project_leads_with_different_lead_formats(projects_mixin):
         projects_mixin.get_all_projects.assert_called_once()
 
 
-def test_get_project_leads_exception(projects_mixin):
+def test_get_project_leads_exception(projects_mixin: ProjectsMixin):
     """Test get_project_leads method with exception."""
     # Mock the get_all_projects method to raise an exception
     with patch.object(
@@ -599,7 +597,9 @@ def test_get_project_leads_exception(projects_mixin):
         projects_mixin.get_all_projects.assert_called_once()
 
 
-def test_get_user_accessible_projects(projects_mixin, mock_projects):
+def test_get_user_accessible_projects(
+    projects_mixin: ProjectsMixin, mock_projects: list[dict[str, Any]]
+):
     """Test get_user_accessible_projects method."""
     # Mock the get_all_projects method
     with patch.object(projects_mixin, "get_all_projects", return_value=mock_projects):
@@ -630,7 +630,7 @@ def test_get_user_accessible_projects(projects_mixin, mock_projects):
 
 
 def test_get_user_accessible_projects_with_permissions_exception(
-    projects_mixin, mock_projects
+    projects_mixin: ProjectsMixin, mock_projects: list[dict[str, Any]]
 ):
     """Test get_user_accessible_projects method with exception in permissions check."""
     # Mock the get_all_projects method
@@ -648,7 +648,7 @@ def test_get_user_accessible_projects_with_permissions_exception(
         assert result[0]["key"] == "PROJ1"
 
 
-def test_get_user_accessible_projects_exception(projects_mixin):
+def test_get_user_accessible_projects_exception(projects_mixin: ProjectsMixin):
     """Test get_user_accessible_projects method with main exception."""
     # Mock the get_all_projects method to raise an exception
     with patch.object(

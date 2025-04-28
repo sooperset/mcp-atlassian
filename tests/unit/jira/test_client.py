@@ -41,7 +41,7 @@ def test_init_with_basic_auth():
         )
 
         assert client.config == config
-        assert client._field_ids is None
+        assert client._field_ids_cache is None
         assert client._current_user_account_id is None
 
 
@@ -118,9 +118,6 @@ def test_clean_text():
 
         # Test with empty string
         assert client._clean_text("") == ""
-
-        # Test with None
-        assert client._clean_text(None) == ""
 
         # Test with spaces and newlines
         assert client._clean_text("  \n  Test with spaces  \n  ") == "Test with spaces"

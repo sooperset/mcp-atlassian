@@ -4,19 +4,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.formatting import FormattingMixin
 from mcp_atlassian.preprocessing import JiraPreprocessor
 
 
 @pytest.fixture
-def formatting_mixin():
+def formatting_mixin(jira_fetcher: JiraFetcher) -> FormattingMixin:
     """Fixture to create a FormattingMixin instance for testing."""
     # Create the mixin without calling its __init__ to avoid config dependencies
-    with patch.object(FormattingMixin, "__init__", return_value=None):
-        mixin = FormattingMixin()
-
+    mixin = jira_fetcher
     # Set up necessary mocks
-    mixin.jira = MagicMock()
     mixin.preprocessor = MagicMock(spec=JiraPreprocessor)
     return mixin
 
@@ -241,55 +239,6 @@ def test_create_issue_metadata_with_epic(formatting_mixin):
     assert result["epic_name"] == "Test Epic"
 
 
-def test_format_date_valid(formatting_mixin):
-    """Test format_date method with valid date."""
-    result = formatting_mixin.format_date("2023-01-01T12:00:00.000Z")
-
-    assert result == "2023-01-01 12:00:00"
-
-
-def test_format_date_invalid(formatting_mixin):
-    """Test format_date method with invalid date."""
-    result = formatting_mixin.format_date("invalid-date")
-
-    assert result == "invalid-date"  # Should return original on error
-
-
-def test_format_jira_date_valid(formatting_mixin):
-    """Test format_jira_date method with valid date."""
-    result = formatting_mixin.format_jira_date("2023-01-01T12:00:00.000Z")
-
-    assert result == "2023-01-01 12:00:00"
-
-
-def test_format_jira_date_none(formatting_mixin):
-    """Test format_jira_date method with None input."""
-    result = formatting_mixin.format_jira_date(None)
-
-    assert result == ""
-
-
-def test_format_jira_date_invalid(formatting_mixin):
-    """Test format_jira_date method with invalid date."""
-    result = formatting_mixin.format_jira_date("invalid-date")
-
-    assert result == "invalid-date"  # Should return original on error
-
-
-def test_parse_date_for_api_valid(formatting_mixin):
-    """Test parse_date_for_api method with valid date."""
-    result = formatting_mixin.parse_date_for_api("2023-01-01T12:00:00.000Z")
-
-    assert result == "2023-01-01"
-
-
-def test_parse_date_for_api_invalid(formatting_mixin):
-    """Test parse_date_for_api method with invalid date."""
-    result = formatting_mixin.parse_date_for_api("invalid-date")
-
-    assert result == "invalid-date"  # Should return original on error
-
-
 def test_extract_epic_information_no_fields(formatting_mixin):
     """Test extract_epic_information method with issue having no fields."""
     issue = {}
@@ -303,9 +252,9 @@ def test_extract_epic_information_with_field_ids(formatting_mixin):
     """Test extract_epic_information method with field IDs available."""
     issue = {"fields": {"customfield_10001": "EPIC-1"}}
 
-    # Mock get_jira_field_ids method
+    # Mock get_field_ids_to_epic method
     field_ids = {"Epic Link": "customfield_10001", "Epic Name": "customfield_10002"}
-    formatting_mixin.get_jira_field_ids = MagicMock(return_value=field_ids)
+    formatting_mixin.get_field_ids_to_epic = MagicMock(return_value=field_ids)
 
     # Mock get_issue method
     epic_issue = {"fields": {"customfield_10002": "Test Epic"}}
@@ -314,35 +263,17 @@ def test_extract_epic_information_with_field_ids(formatting_mixin):
     result = formatting_mixin.extract_epic_information(issue)
 
     assert result == {"epic_key": "EPIC-1", "epic_name": "Test Epic"}
-    formatting_mixin.get_jira_field_ids.assert_called_once()
+    formatting_mixin.get_field_ids_to_epic.assert_called_once()
     formatting_mixin.get_issue.assert_called_once_with("EPIC-1")
-
-
-def test_extract_epic_information_without_get_issue(formatting_mixin):
-    """Test extract_epic_information method without get_issue method."""
-    issue = {"fields": {"customfield_10001": "EPIC-1"}}
-
-    # Mock get_jira_field_ids method
-    field_ids = {"Epic Link": "customfield_10001", "Epic Name": "customfield_10002"}
-    formatting_mixin.get_jira_field_ids = MagicMock(return_value=field_ids)
-
-    # Remove get_issue attribute if exists
-    if hasattr(formatting_mixin, "get_issue"):
-        delattr(formatting_mixin, "get_issue")
-
-    result = formatting_mixin.extract_epic_information(issue)
-
-    assert result == {"epic_key": "EPIC-1", "epic_name": None}
-    formatting_mixin.get_jira_field_ids.assert_called_once()
 
 
 def test_extract_epic_information_get_issue_exception(formatting_mixin):
     """Test extract_epic_information method with get_issue exception."""
     issue = {"fields": {"customfield_10001": "EPIC-1"}}
 
-    # Mock get_jira_field_ids method
+    # Mock get_field_ids_to_epic method
     field_ids = {"Epic Link": "customfield_10001", "Epic Name": "customfield_10002"}
-    formatting_mixin.get_jira_field_ids = MagicMock(return_value=field_ids)
+    formatting_mixin.get_field_ids_to_epic = MagicMock(return_value=field_ids)
 
     # Mock get_issue method to raise exception
     formatting_mixin.get_issue = MagicMock(side_effect=Exception("API error"))
@@ -350,7 +281,7 @@ def test_extract_epic_information_get_issue_exception(formatting_mixin):
     result = formatting_mixin.extract_epic_information(issue)
 
     assert result == {"epic_key": "EPIC-1", "epic_name": None}
-    formatting_mixin.get_jira_field_ids.assert_called_once()
+    formatting_mixin.get_field_ids_to_epic.assert_called_once()
     formatting_mixin.get_issue.assert_called_once()
 
 
@@ -437,20 +368,6 @@ def test_sanitize_transition_fields_with_reporter(formatting_mixin):
     assert result["summary"] == "Test issue"
     assert result["reporter"] == {"accountId": "account-456"}
     formatting_mixin._get_account_id.assert_called_once_with("jsmith")
-
-
-def test_sanitize_transition_fields_without_get_account_id(formatting_mixin):
-    """Test sanitize_transition_fields method without _get_account_id method."""
-    fields = {"summary": "Test issue", "assignee": "jdoe"}
-
-    # Remove _get_account_id attribute if exists
-    if hasattr(formatting_mixin, "_get_account_id"):
-        delattr(formatting_mixin, "_get_account_id")
-
-    result = formatting_mixin.sanitize_transition_fields(fields)
-
-    assert result["summary"] == "Test issue"
-    assert "assignee" not in result
 
 
 def test_sanitize_transition_fields_with_none_value(formatting_mixin):

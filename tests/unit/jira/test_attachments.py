@@ -2,8 +2,10 @@
 
 from unittest.mock import MagicMock, mock_open, patch
 
+import pytest
+
+from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.attachments import AttachmentsMixin
-from mcp_atlassian.jira.config import JiraConfig
 
 # Test scenarios for AttachmentsMixin
 #
@@ -47,30 +49,22 @@ from mcp_atlassian.jira.config import JiraConfig
 class TestAttachmentsMixin:
     """Tests for the AttachmentsMixin class."""
 
-    def setup_method(self):
+    @pytest.fixture
+    def attachments_mixin(self, jira_fetcher: JiraFetcher) -> AttachmentsMixin:
         """Set up test fixtures before each test method."""
         # Create a mock Jira client
-        with (
-            patch("mcp_atlassian.jira.client.Jira"),
-            patch("mcp_atlassian.jira.client.configure_ssl_verification"),
-        ):
-            config = JiraConfig(
-                url="https://test.atlassian.net",
-                auth_type="basic",
-                username="test_username",
-                api_token="test_token",
-            )
-            self.client = AttachmentsMixin(config=config)
-            self.client.jira = MagicMock()
-            self.client.jira._session = MagicMock()
+        attachments_mixin = jira_fetcher
+        attachments_mixin.jira = MagicMock()
+        attachments_mixin.jira._session = MagicMock()
+        return attachments_mixin
 
-    def test_download_attachment_success(self):
+    def test_download_attachment_success(self, attachments_mixin: AttachmentsMixin):
         """Test successful attachment download."""
         # Mock the response
         mock_response = MagicMock()
         mock_response.iter_content.return_value = [b"test content"]
         mock_response.raise_for_status = MagicMock()
-        self.client.jira._session.get.return_value = mock_response
+        attachments_mixin.jira._session.get.return_value = mock_response
 
         # Mock file operations
         with (
@@ -83,26 +77,28 @@ class TestAttachmentsMixin:
             mock_getsize.return_value = 12  # Length of "test content"
 
             # Call the method
-            result = self.client.download_attachment(
+            result = attachments_mixin.download_attachment(
                 "https://test.url/attachment", "/tmp/test_file.txt"
             )
 
             # Assertions
             assert result is True
-            self.client.jira._session.get.assert_called_once_with(
+            attachments_mixin.jira._session.get.assert_called_once_with(
                 "https://test.url/attachment", stream=True
             )
             mock_file.assert_called_once_with("/tmp/test_file.txt", "wb")
             mock_file().write.assert_called_once_with(b"test content")
             mock_makedirs.assert_called_once()
 
-    def test_download_attachment_relative_path(self):
+    def test_download_attachment_relative_path(
+        self, attachments_mixin: AttachmentsMixin
+    ):
         """Test attachment download with a relative path."""
         # Mock the response
         mock_response = MagicMock()
         mock_response.iter_content.return_value = [b"test content"]
         mock_response.raise_for_status = MagicMock()
-        self.client.jira._session.get.return_value = mock_response
+        attachments_mixin.jira._session.get.return_value = mock_response
 
         # Mock file operations and os.path.abspath
         with (
@@ -119,7 +115,7 @@ class TestAttachmentsMixin:
             mock_abspath.return_value = "/absolute/path/test_file.txt"
 
             # Call the method with a relative path
-            result = self.client.download_attachment(
+            result = attachments_mixin.download_attachment(
                 "https://test.url/attachment", "test_file.txt"
             )
 
@@ -129,30 +125,32 @@ class TestAttachmentsMixin:
             mock_abspath.assert_called_once_with("test_file.txt")
             mock_file.assert_called_once_with("/absolute/path/test_file.txt", "wb")
 
-    def test_download_attachment_no_url(self):
+    def test_download_attachment_no_url(self, attachments_mixin: AttachmentsMixin):
         """Test attachment download with no URL."""
-        result = self.client.download_attachment("", "/tmp/test_file.txt")
+        result = attachments_mixin.download_attachment("", "/tmp/test_file.txt")
         assert result is False
 
-    def test_download_attachment_http_error(self):
+    def test_download_attachment_http_error(self, attachments_mixin: AttachmentsMixin):
         """Test attachment download with an HTTP error."""
         # Mock the response to raise an HTTP error
         mock_response = MagicMock()
         mock_response.raise_for_status.side_effect = Exception("HTTP Error")
-        self.client.jira._session.get.return_value = mock_response
+        attachments_mixin.jira._session.get.return_value = mock_response
 
-        result = self.client.download_attachment(
+        result = attachments_mixin.download_attachment(
             "https://test.url/attachment", "/tmp/test_file.txt"
         )
         assert result is False
 
-    def test_download_attachment_file_write_error(self):
+    def test_download_attachment_file_write_error(
+        self, attachments_mixin: AttachmentsMixin
+    ):
         """Test attachment download with a file write error."""
         # Mock the response
         mock_response = MagicMock()
         mock_response.iter_content.return_value = [b"test content"]
         mock_response.raise_for_status = MagicMock()
-        self.client.jira._session.get.return_value = mock_response
+        attachments_mixin.jira._session.get.return_value = mock_response
 
         # Mock file operations to raise an exception during write
         with (
@@ -161,18 +159,20 @@ class TestAttachmentsMixin:
         ):
             mock_file().write.side_effect = OSError("Write error")
 
-            result = self.client.download_attachment(
+            result = attachments_mixin.download_attachment(
                 "https://test.url/attachment", "/tmp/test_file.txt"
             )
             assert result is False
 
-    def test_download_attachment_file_not_created(self):
+    def test_download_attachment_file_not_created(
+        self, attachments_mixin: AttachmentsMixin
+    ):
         """Test attachment download when file is not created."""
         # Mock the response
         mock_response = MagicMock()
         mock_response.iter_content.return_value = [b"test content"]
         mock_response.raise_for_status = MagicMock()
-        self.client.jira._session.get.return_value = mock_response
+        attachments_mixin.jira._session.get.return_value = mock_response
 
         # Mock file operations
         with (
@@ -182,12 +182,14 @@ class TestAttachmentsMixin:
         ):
             mock_exists.return_value = False  # File doesn't exist after write
 
-            result = self.client.download_attachment(
+            result = attachments_mixin.download_attachment(
                 "https://test.url/attachment", "/tmp/test_file.txt"
             )
             assert result is False
 
-    def test_download_issue_attachments_success(self):
+    def test_download_issue_attachments_success(
+        self, attachments_mixin: AttachmentsMixin
+    ):
         """Test successful download of all issue attachments."""
         # Mock the issue data
         mock_issue = {
@@ -206,7 +208,7 @@ class TestAttachmentsMixin:
                 ]
             }
         }
-        self.client.jira.issue.return_value = mock_issue
+        attachments_mixin.jira.issue.return_value = mock_issue
 
         # Mock JiraAttachment.from_api_response
         mock_attachment1 = MagicMock()
@@ -222,7 +224,7 @@ class TestAttachmentsMixin:
         # Mock the download_attachment method
         with (
             patch.object(
-                self.client, "download_attachment", return_value=True
+                attachments_mixin, "download_attachment", return_value=True
             ) as mock_download,
             patch("pathlib.Path.mkdir") as mock_mkdir,
             patch(
@@ -230,7 +232,7 @@ class TestAttachmentsMixin:
                 side_effect=[mock_attachment1, mock_attachment2],
             ),
         ):
-            result = self.client.download_issue_attachments(
+            result = attachments_mixin.download_issue_attachments(
                 "TEST-123", "/tmp/attachments"
             )
 
@@ -243,7 +245,9 @@ class TestAttachmentsMixin:
             assert mock_download.call_count == 2
             mock_mkdir.assert_called_once()
 
-    def test_download_issue_attachments_relative_path(self):
+    def test_download_issue_attachments_relative_path(
+        self, attachments_mixin: AttachmentsMixin
+    ):
         """Test download issue attachments with a relative path."""
         # Mock the issue data
         mock_issue = {
@@ -257,7 +261,7 @@ class TestAttachmentsMixin:
                 ]
             }
         }
-        self.client.jira.issue.return_value = mock_issue
+        attachments_mixin.jira.issue.return_value = mock_issue
 
         # Mock attachment
         mock_attachment = MagicMock()
@@ -268,7 +272,7 @@ class TestAttachmentsMixin:
         # Mock path operations
         with (
             patch.object(
-                self.client, "download_attachment", return_value=True
+                attachments_mixin, "download_attachment", return_value=True
             ) as mock_download,
             patch("pathlib.Path.mkdir") as mock_mkdir,
             patch(
@@ -281,21 +285,25 @@ class TestAttachmentsMixin:
             mock_isabs.return_value = False
             mock_abspath.return_value = "/absolute/path/attachments"
 
-            result = self.client.download_issue_attachments("TEST-123", "attachments")
+            result = attachments_mixin.download_issue_attachments(
+                "TEST-123", "attachments"
+            )
 
             # Assertions
             assert result["success"] is True
             mock_isabs.assert_called_once_with("attachments")
             mock_abspath.assert_called_once_with("attachments")
 
-    def test_download_issue_attachments_no_attachments(self):
+    def test_download_issue_attachments_no_attachments(
+        self, attachments_mixin: AttachmentsMixin
+    ):
         """Test download when issue has no attachments."""
         # Mock the issue data with no attachments
         mock_issue = {"fields": {"attachment": []}}
-        self.client.jira.issue.return_value = mock_issue
+        attachments_mixin.jira.issue.return_value = mock_issue
 
         with patch("pathlib.Path.mkdir") as mock_mkdir:
-            result = self.client.download_issue_attachments(
+            result = attachments_mixin.download_issue_attachments(
                 "TEST-123", "/tmp/attachments"
             )
 
@@ -306,29 +314,37 @@ class TestAttachmentsMixin:
             assert len(result["failed"]) == 0
             mock_mkdir.assert_called_once()
 
-    def test_download_issue_attachments_issue_not_found(self):
+    def test_download_issue_attachments_issue_not_found(
+        self, attachments_mixin: AttachmentsMixin
+    ):
         """Test download when issue cannot be retrieved."""
-        self.client.jira.issue.return_value = None
+        attachments_mixin.jira.issue.return_value = None
 
-        result = self.client.download_issue_attachments("TEST-123", "/tmp/attachments")
+        with pytest.raises(
+            TypeError,
+            match="Unexpected return value type from `jira.issue`: <class 'NoneType'>",
+        ):
+            attachments_mixin.download_issue_attachments("TEST-123", "/tmp/attachments")
 
-        # Assertions
-        assert result["success"] is False
-        assert "Could not retrieve issue" in result["error"]
-
-    def test_download_issue_attachments_no_fields(self):
+    def test_download_issue_attachments_no_fields(
+        self, attachments_mixin: AttachmentsMixin
+    ):
         """Test download when issue has no fields."""
         # Mock the issue data with no fields
         mock_issue = {}  # Missing 'fields' key
-        self.client.jira.issue.return_value = mock_issue
+        attachments_mixin.jira.issue.return_value = mock_issue
 
-        result = self.client.download_issue_attachments("TEST-123", "/tmp/attachments")
+        result = attachments_mixin.download_issue_attachments(
+            "TEST-123", "/tmp/attachments"
+        )
 
         # Assertions
         assert result["success"] is False
         assert "Could not retrieve issue" in result["error"]
 
-    def test_download_issue_attachments_some_failures(self):
+    def test_download_issue_attachments_some_failures(
+        self, attachments_mixin: AttachmentsMixin
+    ):
         """Test download when some attachments fail to download."""
         # Mock the issue data
         mock_issue = {
@@ -347,7 +363,7 @@ class TestAttachmentsMixin:
                 ]
             }
         }
-        self.client.jira.issue.return_value = mock_issue
+        attachments_mixin.jira.issue.return_value = mock_issue
 
         # Mock attachments
         mock_attachment1 = MagicMock()
@@ -363,7 +379,7 @@ class TestAttachmentsMixin:
         # Mock the download_attachment method to succeed for first attachment and fail for second
         with (
             patch.object(
-                self.client, "download_attachment", side_effect=[True, False]
+                attachments_mixin, "download_attachment", side_effect=[True, False]
             ) as mock_download,
             patch("pathlib.Path.mkdir") as mock_mkdir,
             patch(
@@ -371,7 +387,7 @@ class TestAttachmentsMixin:
                 side_effect=[mock_attachment1, mock_attachment2],
             ),
         ):
-            result = self.client.download_issue_attachments(
+            result = attachments_mixin.download_issue_attachments(
                 "TEST-123", "/tmp/attachments"
             )
 
@@ -383,7 +399,9 @@ class TestAttachmentsMixin:
             assert result["failed"][0]["filename"] == "test2.txt"
             assert mock_download.call_count == 2
 
-    def test_download_issue_attachments_missing_url(self):
+    def test_download_issue_attachments_missing_url(
+        self, attachments_mixin: AttachmentsMixin
+    ):
         """Test download when an attachment has no URL."""
         # Mock the issue data
         mock_issue = {
@@ -397,7 +415,7 @@ class TestAttachmentsMixin:
                 ]
             }
         }
-        self.client.jira.issue.return_value = mock_issue
+        attachments_mixin.jira.issue.return_value = mock_issue
 
         # Mock attachment with no URL
         mock_attachment = MagicMock()
@@ -413,7 +431,7 @@ class TestAttachmentsMixin:
                 return_value=mock_attachment,
             ),
         ):
-            result = self.client.download_issue_attachments(
+            result = attachments_mixin.download_issue_attachments(
                 "TEST-123", "/tmp/attachments"
             )
 
@@ -426,7 +444,7 @@ class TestAttachmentsMixin:
 
     # Tests for upload_attachment method
 
-    def test_upload_attachment_success(self):
+    def test_upload_attachment_success(self, attachments_mixin: AttachmentsMixin):
         """Test successful attachment upload."""
         # Mock the Jira API response
         mock_attachment_response = {
@@ -434,7 +452,7 @@ class TestAttachmentsMixin:
             "filename": "test_file.txt",
             "size": 100,
         }
-        self.client.jira.add_attachment.return_value = mock_attachment_response
+        attachments_mixin.jira.add_attachment.return_value = mock_attachment_response
 
         # Mock file operations
         with (
@@ -452,7 +470,7 @@ class TestAttachmentsMixin:
             mock_basename.return_value = "test_file.txt"
 
             # Call the method
-            result = self.client.upload_attachment(
+            result = attachments_mixin.upload_attachment(
                 "TEST-123", "/absolute/path/test_file.txt"
             )
 
@@ -462,11 +480,11 @@ class TestAttachmentsMixin:
             assert result["filename"] == "test_file.txt"
             assert result["size"] == 100
             assert result["id"] == "12345"
-            self.client.jira.add_attachment.assert_called_once_with(
+            attachments_mixin.jira.add_attachment.assert_called_once_with(
                 issue_key="TEST-123", filename="/absolute/path/test_file.txt"
             )
 
-    def test_upload_attachment_relative_path(self):
+    def test_upload_attachment_relative_path(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with a relative path."""
         # Mock the Jira API response
         mock_attachment_response = {
@@ -474,7 +492,7 @@ class TestAttachmentsMixin:
             "filename": "test_file.txt",
             "size": 100,
         }
-        self.client.jira.add_attachment.return_value = mock_attachment_response
+        attachments_mixin.jira.add_attachment.return_value = mock_attachment_response
 
         # Mock file operations
         with (
@@ -492,35 +510,37 @@ class TestAttachmentsMixin:
             mock_basename.return_value = "test_file.txt"
 
             # Call the method with a relative path
-            result = self.client.upload_attachment("TEST-123", "test_file.txt")
+            result = attachments_mixin.upload_attachment("TEST-123", "test_file.txt")
 
             # Assertions
             assert result["success"] is True
             mock_isabs.assert_called_once_with("test_file.txt")
             mock_abspath.assert_called_once_with("test_file.txt")
-            self.client.jira.add_attachment.assert_called_once_with(
+            attachments_mixin.jira.add_attachment.assert_called_once_with(
                 issue_key="TEST-123", filename="/absolute/path/test_file.txt"
             )
 
-    def test_upload_attachment_no_issue_key(self):
+    def test_upload_attachment_no_issue_key(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with no issue key."""
-        result = self.client.upload_attachment("", "/path/to/file.txt")
+        result = attachments_mixin.upload_attachment("", "/path/to/file.txt")
 
         # Assertions
         assert result["success"] is False
         assert "No issue key provided" in result["error"]
-        self.client.jira.add_attachment.assert_not_called()
+        attachments_mixin.jira.add_attachment.assert_not_called()
 
-    def test_upload_attachment_no_file_path(self):
+    def test_upload_attachment_no_file_path(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with no file path."""
-        result = self.client.upload_attachment("TEST-123", "")
+        result = attachments_mixin.upload_attachment("TEST-123", "")
 
         # Assertions
         assert result["success"] is False
         assert "No file path provided" in result["error"]
-        self.client.jira.add_attachment.assert_not_called()
+        attachments_mixin.jira.add_attachment.assert_not_called()
 
-    def test_upload_attachment_file_not_found(self):
+    def test_upload_attachment_file_not_found(
+        self, attachments_mixin: AttachmentsMixin
+    ):
         """Test attachment upload when file doesn't exist."""
         # Mock file operations
         with (
@@ -533,19 +553,19 @@ class TestAttachmentsMixin:
             mock_isabs.return_value = True
             mock_abspath.return_value = "/absolute/path/test_file.txt"
 
-            result = self.client.upload_attachment(
+            result = attachments_mixin.upload_attachment(
                 "TEST-123", "/absolute/path/test_file.txt"
             )
 
             # Assertions
             assert result["success"] is False
             assert "File not found" in result["error"]
-            self.client.jira.add_attachment.assert_not_called()
+            attachments_mixin.jira.add_attachment.assert_not_called()
 
-    def test_upload_attachment_api_error(self):
+    def test_upload_attachment_api_error(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with an API error."""
         # Mock the Jira API to raise an exception
-        self.client.jira.add_attachment.side_effect = Exception("API Error")
+        attachments_mixin.jira.add_attachment.side_effect = Exception("API Error")
 
         # Mock file operations
         with (
@@ -560,7 +580,7 @@ class TestAttachmentsMixin:
             mock_abspath.return_value = "/absolute/path/test_file.txt"
             mock_basename.return_value = "test_file.txt"
 
-            result = self.client.upload_attachment(
+            result = attachments_mixin.upload_attachment(
                 "TEST-123", "/absolute/path/test_file.txt"
             )
 
@@ -568,10 +588,10 @@ class TestAttachmentsMixin:
             assert result["success"] is False
             assert "API Error" in result["error"]
 
-    def test_upload_attachment_no_response(self):
+    def test_upload_attachment_no_response(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload when API returns no response."""
         # Mock the Jira API to return None
-        self.client.jira.add_attachment.return_value = None
+        attachments_mixin.jira.add_attachment.return_value = None
 
         # Mock file operations
         with (
@@ -586,7 +606,7 @@ class TestAttachmentsMixin:
             mock_abspath.return_value = "/absolute/path/test_file.txt"
             mock_basename.return_value = "test_file.txt"
 
-            result = self.client.upload_attachment(
+            result = attachments_mixin.upload_attachment(
                 "TEST-123", "/absolute/path/test_file.txt"
             )
 
@@ -596,7 +616,7 @@ class TestAttachmentsMixin:
 
     # Tests for upload_attachments method
 
-    def test_upload_attachments_success(self):
+    def test_upload_attachments_success(self, attachments_mixin: AttachmentsMixin):
         """Test successful upload of multiple attachments."""
         # Set up mock for upload_attachment method to simulate successful uploads
         file_paths = [
@@ -618,10 +638,10 @@ class TestAttachmentsMixin:
         ]
 
         with patch.object(
-            self.client, "upload_attachment", side_effect=mock_results
+            attachments_mixin, "upload_attachment", side_effect=mock_results
         ) as mock_upload:
             # Call the method
-            result = self.client.upload_attachments("TEST-123", file_paths)
+            result = attachments_mixin.upload_attachments("TEST-123", file_paths)
 
             # Assertions
             assert result["success"] is True
@@ -647,7 +667,9 @@ class TestAttachmentsMixin:
             assert result["uploaded"][1]["id"] == "id2"
             assert result["uploaded"][2]["id"] == "id3"
 
-    def test_upload_attachments_mixed_results(self):
+    def test_upload_attachments_mixed_results(
+        self, attachments_mixin: AttachmentsMixin
+    ):
         """Test upload of multiple attachments with mixed success and failure."""
         # Set up mock for upload_attachment method to simulate mixed results
         file_paths = [
@@ -676,10 +698,10 @@ class TestAttachmentsMixin:
         ]
 
         with patch.object(
-            self.client, "upload_attachment", side_effect=mock_results
+            attachments_mixin, "upload_attachment", side_effect=mock_results
         ) as mock_upload:
             # Call the method
-            result = self.client.upload_attachments("TEST-123", file_paths)
+            result = attachments_mixin.upload_attachments("TEST-123", file_paths)
 
             # Assertions
             assert (
@@ -705,19 +727,19 @@ class TestAttachmentsMixin:
             assert result["failed"][0]["filename"] == "file2.pdf"
             assert "File not found" in result["failed"][0]["error"]
 
-    def test_upload_attachments_empty_list(self):
+    def test_upload_attachments_empty_list(self, attachments_mixin: AttachmentsMixin):
         """Test upload with an empty list of file paths."""
         # Call the method with an empty list
-        result = self.client.upload_attachments("TEST-123", [])
+        result = attachments_mixin.upload_attachments("TEST-123", [])
 
         # Assertions
         assert result["success"] is False
         assert "No file paths provided" in result["error"]
 
-    def test_upload_attachments_no_issue_key(self):
+    def test_upload_attachments_no_issue_key(self, attachments_mixin: AttachmentsMixin):
         """Test upload with no issue key provided."""
         # Call the method with no issue key
-        result = self.client.upload_attachments("", ["/path/to/file.txt"])
+        result = attachments_mixin.upload_attachments("", ["/path/to/file.txt"])
 
         # Assertions
         assert result["success"] is False

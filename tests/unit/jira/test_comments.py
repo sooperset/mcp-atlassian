@@ -1,6 +1,6 @@
 """Tests for the Jira Comments mixin."""
 
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
@@ -42,22 +42,16 @@ class TestCommentsMixin:
             ]
         }
 
-        # Mock the _parse_date method for this test
-        with patch.object(
-            comments_mixin,
-            "_parse_date",
-            side_effect=lambda x: x.split("T")[0] if x and "T" in x else x,
-        ):
-            # Call the method
-            result = comments_mixin.get_issue_comments("TEST-123")
+        # Call the method
+        result = comments_mixin.get_issue_comments("TEST-123")
 
-            # Verify
-            comments_mixin.jira.issue_get_comments.assert_called_once_with("TEST-123")
-            assert len(result) == 1
-            assert result[0]["id"] == "10001"
-            assert result[0]["body"] == "This is a comment"
-            assert result[0]["created"] == "2024-01-01"  # Parsed date
-            assert result[0]["author"] == "John Doe"
+        # Verify
+        comments_mixin.jira.issue_get_comments.assert_called_once_with("TEST-123")
+        assert len(result) == 1
+        assert result[0]["id"] == "10001"
+        assert result[0]["body"] == "This is a comment"
+        assert result[0]["created"] == "2024-01-01 10:00:00+00:00"  # Parsed date
+        assert result[0]["author"] == "John Doe"
 
     def test_get_issue_comments_with_limit(self, comments_mixin):
         """Test get_issue_comments with limit parameter."""
@@ -181,7 +175,7 @@ class TestCommentsMixin:
         )
         assert result["id"] == "10001"
         assert result["body"] == "This is a comment"
-        assert result["created"] == "2024-01-01"  # Parsed date
+        assert result["created"] == "2024-01-01 10:00:00+00:00"  # Parsed date
         assert result["author"] == "John Doe"
 
     def test_add_comment_with_markdown_conversion(self, comments_mixin):
@@ -273,17 +267,3 @@ class TestCommentsMixin:
         assert result == ""
         # The preprocessor should not be called with empty text
         comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
-
-    def test_parse_date(self, comments_mixin):
-        """Test the actual implementation of _parse_date."""
-        # Test ISO format
-        result = comments_mixin._parse_date("2024-01-01T10:00:00.000+0000")
-        assert result == "2024-01-01", f"Expected '2024-01-01' but got '{result}'"
-
-        # Test invalid format
-        result = comments_mixin._parse_date("invalid date")
-        assert result == "invalid date", f"Expected 'invalid date' but got '{result}'"
-
-        # Test None value
-        result = comments_mixin._parse_date(None)
-        assert result == "", f"Expected empty string but got '{result}'"

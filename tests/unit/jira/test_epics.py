@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
+from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.epics import EpicsMixin
 from mcp_atlassian.models.jira import JiraIssue
 
@@ -12,10 +13,9 @@ class TestEpicsMixin:
     """Tests for the EpicsMixin class."""
 
     @pytest.fixture
-    def epics_mixin(self, jira_client):
+    def epics_mixin(self, jira_fetcher: JiraFetcher) -> EpicsMixin:
         """Create an EpicsMixin instance with mocked dependencies."""
-        mixin = EpicsMixin(config=jira_client.config)
-        mixin.jira = jira_client.jira
+        mixin = jira_fetcher
 
         # Add a mock for get_issue to use when returning models
         mixin.get_issue = MagicMock(
@@ -37,139 +37,7 @@ class TestEpicsMixin:
 
         return mixin
 
-    def test_get_jira_field_ids_cached(self, epics_mixin):
-        """Test get_jira_field_ids returns cached values if available."""
-        # Setup cached field IDs
-        epics_mixin._field_ids_cache = {
-            "epic_link": "customfield_10014",
-            "epic_name": "customfield_10011",
-        }
-
-        # Call the method
-        field_ids = epics_mixin.get_jira_field_ids()
-
-        # Verify the cache was used (jira.get_all_fields should not be called)
-        epics_mixin.jira.get_all_fields.assert_not_called()
-        assert field_ids == epics_mixin._field_ids_cache
-
-    def test_get_jira_field_ids_from_server(self, epics_mixin):
-        """Test get_jira_field_ids fetches from server if cache is empty."""
-        # Ensure there's no cache
-        if hasattr(epics_mixin, "_field_ids_cache"):
-            delattr(epics_mixin, "_field_ids_cache")
-
-        # Mock the server response
-        mock_fields = [
-            {
-                "id": "customfield_10014",
-                "name": "Epic Link",
-                "schema": {"custom": "com.pyxis.greenhopper.jira:gh-epic-link"},
-            },
-            {
-                "id": "customfield_10011",
-                "name": "Epic Name",
-                "schema": {"custom": "com.pyxis.greenhopper.jira:gh-epic-label"},
-            },
-        ]
-        epics_mixin.jira.get_all_fields.return_value = mock_fields
-
-        # Call the method
-        field_ids = epics_mixin.get_jira_field_ids()
-
-        # Verify the server was queried
-        epics_mixin.jira.get_all_fields.assert_called_once()
-        assert "epic_link" in field_ids
-        assert field_ids["epic_link"] == "customfield_10014"
-        assert "epic_name" in field_ids
-        assert field_ids["epic_name"] == "customfield_10011"
-
-    def test_get_jira_field_ids_discovers_epic_link(self, epics_mixin):
-        """Test get_jira_field_ids identifies Epic Link field."""
-        # Setup mock field data
-        epics_mixin.jira.get_all_fields.return_value = [
-            {
-                "id": "customfield_10014",
-                "name": "Epic Link",
-                "schema": {"custom": "com.pyxis.greenhopper.jira:gh-epic-link"},
-            }
-        ]
-
-        # Call the method
-        field_ids = epics_mixin.get_jira_field_ids()
-
-        # Verify the field was identified
-        assert "epic_link" in field_ids
-        assert field_ids["epic_link"] == "customfield_10014"
-
-    def test_get_jira_field_ids_discovers_epic_name(self, epics_mixin):
-        """Test get_jira_field_ids identifies Epic Name field."""
-        # Setup mock field data
-        epics_mixin.jira.get_all_fields.return_value = [
-            {
-                "id": "customfield_10011",
-                "name": "Epic Name",
-                "schema": {"custom": "com.pyxis.greenhopper.jira:gh-epic-label"},
-            }
-        ]
-
-        # Call the method
-        field_ids = epics_mixin.get_jira_field_ids()
-
-        # Verify the field was identified
-        assert "epic_name" in field_ids
-        assert field_ids["epic_name"] == "customfield_10011"
-
-    def test_get_jira_field_ids_discovers_parent(self, epics_mixin):
-        """Test get_jira_field_ids identifies Parent field."""
-        # Setup mock field data
-        epics_mixin.jira.get_all_fields.return_value = [
-            {"id": "parent", "name": "Parent", "schema": {"type": "issuelink"}}
-        ]
-
-        # Call the method
-        field_ids = epics_mixin.get_jira_field_ids()
-
-        # Verify the field was identified
-        assert "parent" in field_ids
-        assert field_ids["parent"] == "parent"
-
-    def test_get_jira_field_ids_discovers_epic_color(self, epics_mixin):
-        """Test get_jira_field_ids identifies Epic Color field."""
-        # Setup mock field data
-        epics_mixin.jira.get_all_fields.return_value = [
-            {
-                "id": "customfield_10010",
-                "name": "Epic Color",
-                "schema": {"custom": "com.pyxis.greenhopper.jira:gh-epic-color"},
-            }
-        ]
-
-        # Call the method
-        field_ids = epics_mixin.get_jira_field_ids()
-
-        # Verify the field was identified
-        assert "epic_color" in field_ids
-        assert field_ids["epic_color"] == "customfield_10010"
-
-    def test_get_jira_field_ids_discovers_other_epic_fields(self, epics_mixin):
-        """Test get_jira_field_ids identifies other Epic-related fields."""
-        # Setup mock field data
-        epics_mixin.jira.get_all_fields.return_value = [
-            {
-                "id": "customfield_10012",
-                "name": "Epic Team",
-                "schema": {"type": "string"},
-            }
-        ]
-
-        # Call the method
-        field_ids = epics_mixin.get_jira_field_ids()
-
-        # Verify the field was identified
-        assert "epic_epic_team" in field_ids
-        assert field_ids["epic_epic_team"] == "customfield_10012"
-
-    def test_try_discover_fields_from_existing_epic(self, epics_mixin):
+    def test_try_discover_fields_from_existing_epic(self, epics_mixin: EpicsMixin):
         """Test _try_discover_fields_from_existing_epic with a successful discovery."""
         # Skip if we already have both required fields
         field_ids = {"epic_link": "customfield_10014"}  # Missing epic_name
@@ -194,7 +62,9 @@ class TestEpicsMixin:
         assert "epic_name" in field_ids
         assert field_ids["epic_name"] == "customfield_10011"
 
-    def test_try_discover_fields_from_existing_epic_no_epics(self, epics_mixin):
+    def test_try_discover_fields_from_existing_epic_no_epics(
+        self, epics_mixin: EpicsMixin
+    ):
         """Test _try_discover_fields_from_existing_epic when no epics exist."""
         field_ids = {}
 
@@ -208,7 +78,9 @@ class TestEpicsMixin:
         # Verify no fields were discovered
         assert not field_ids
 
-    def test_try_discover_fields_from_existing_epic_with_both_fields(self, epics_mixin):
+    def test_try_discover_fields_from_existing_epic_with_both_fields(
+        self, epics_mixin: EpicsMixin
+    ):
         """Test _try_discover_fields_from_existing_epic when both fields already exist."""
         field_ids = {"epic_link": "customfield_10014", "epic_name": "customfield_10011"}
 
@@ -218,10 +90,10 @@ class TestEpicsMixin:
         # Verify jql was not called
         epics_mixin.jira.jql.assert_not_called()
 
-    def test_prepare_epic_fields_basic(self, epics_mixin):
+    def test_prepare_epic_fields_basic(self, epics_mixin: EpicsMixin):
         """Test prepare_epic_fields with basic epic name and color."""
-        # Mock get_jira_field_ids
-        epics_mixin.get_jira_field_ids = MagicMock(
+        # Mock get_field_ids_to_epic
+        epics_mixin.get_field_ids_to_epic = MagicMock(
             return_value={
                 "epic_name": "customfield_10011",
                 "epic_color": "customfield_10010",
@@ -245,10 +117,10 @@ class TestEpicsMixin:
         # Verify fields dict remains empty
         assert fields == {}
 
-    def test_prepare_epic_fields_with_user_values(self, epics_mixin):
+    def test_prepare_epic_fields_with_user_values(self, epics_mixin: EpicsMixin):
         """Test prepare_epic_fields with user-provided values."""
-        # Mock get_jira_field_ids
-        epics_mixin.get_jira_field_ids = MagicMock(
+        # Mock get_field_ids_to_epic
+        epics_mixin.get_field_ids_to_epic = MagicMock(
             return_value={
                 "epic_name": "customfield_10011",
                 "epic_color": "customfield_10010",
@@ -276,10 +148,10 @@ class TestEpicsMixin:
         # Verify fields dict remains empty
         assert fields == {}
 
-    def test_prepare_epic_fields_missing_epic_name(self, epics_mixin):
+    def test_prepare_epic_fields_missing_epic_name(self, epics_mixin: EpicsMixin):
         """Test prepare_epic_fields with missing epic_name field."""
-        # Mock get_jira_field_ids
-        epics_mixin.get_jira_field_ids = MagicMock(
+        # Mock get_field_ids_to_epic
+        epics_mixin.get_field_ids_to_epic = MagicMock(
             return_value={"epic_color": "customfield_10010"}
         )
 
@@ -300,10 +172,12 @@ class TestEpicsMixin:
         # Verify fields dict remains empty
         assert fields == {}
 
-    def test_prepare_epic_fields_with_error(self, epics_mixin):
+    def test_prepare_epic_fields_with_error(self, epics_mixin: EpicsMixin):
         """Test prepare_epic_fields catches and logs errors."""
-        # Mock get_jira_field_ids to raise an exception
-        epics_mixin.get_jira_field_ids = MagicMock(side_effect=Exception("Field error"))
+        # Mock get_field_ids_to_epic to raise an exception
+        epics_mixin.get_field_ids_to_epic = MagicMock(
+            side_effect=Exception("Field error")
+        )
 
         # Create the fields dict and call the method
         fields = {}
@@ -312,9 +186,9 @@ class TestEpicsMixin:
         # Verify that fields didn't get updated
         assert fields == {}
         # Verify the error was logged
-        epics_mixin.get_jira_field_ids.assert_called_once()
+        epics_mixin.get_field_ids_to_epic.assert_called_once()
 
-    def test_prepare_epic_fields_with_non_standard_ids(self, epics_mixin):
+    def test_prepare_epic_fields_with_non_standard_ids(self, epics_mixin: EpicsMixin):
         """Test that prepare_epic_fields correctly handles non-standard field IDs."""
         # Mock field IDs with non-standard custom field IDs
         mock_field_ids = {
@@ -322,8 +196,8 @@ class TestEpicsMixin:
             "epic_color": "customfield_98765",
         }
 
-        # Mock the get_jira_field_ids method to return our custom field IDs
-        epics_mixin.get_jira_field_ids = MagicMock(return_value=mock_field_ids)
+        # Mock the get_field_ids_to_epic method to return our custom field IDs
+        epics_mixin.get_field_ids_to_epic = MagicMock(return_value=mock_field_ids)
 
         # Create the fields dict and call the method with basic values
         fields = {}
@@ -357,10 +231,10 @@ class TestEpicsMixin:
         # Verify fields dict remains empty
         assert fields == {}
 
-    def test_dynamic_epic_field_discovery(self, epics_mixin):
+    def test_dynamic_epic_field_discovery(self, epics_mixin: EpicsMixin):
         """Test the dynamic discovery of Epic fields with pattern matching."""
-        # Mock get_jira_field_ids with no epic-related fields
-        epics_mixin.get_jira_field_ids = MagicMock(
+        # Mock get_field_ids_to_epic with no epic-related fields
+        epics_mixin.get_field_ids_to_epic = MagicMock(
             return_value={
                 "random_field": "customfield_12345",
                 "some_other_field": "customfield_67890",
@@ -403,7 +277,7 @@ class TestEpicsMixin:
         epics_mixin._get_epic_name_field_id = original_get_name
         epics_mixin._get_epic_color_field_id = original_get_color
 
-    def test_link_issue_to_epic_success(self, epics_mixin):
+    def test_link_issue_to_epic_success(self, epics_mixin: EpicsMixin):
         """Test link_issue_to_epic with successful linking."""
         # Setup mocks
         # - issue exists
@@ -421,7 +295,7 @@ class TestEpicsMixin:
         )
 
         # - epic link field discovered
-        epics_mixin.get_jira_field_ids = MagicMock(
+        epics_mixin.get_field_ids_to_epic = MagicMock(
             return_value={"epic_link": "customfield_10014"}
         )
 
@@ -452,7 +326,7 @@ class TestEpicsMixin:
         assert isinstance(result, JiraIssue)
         assert result.key == "TEST-123"
 
-    def test_link_issue_to_epic_parent_field_success(self, epics_mixin):
+    def test_link_issue_to_epic_parent_field_success(self, epics_mixin: EpicsMixin):
         """Test link_issue_to_epic succeeding with parent field."""
         # Setup mocks
         epics_mixin.jira.get_issue.side_effect = [
@@ -469,7 +343,7 @@ class TestEpicsMixin:
         )
 
         # - No epic_link field (forces parent usage)
-        epics_mixin.get_jira_field_ids = MagicMock(return_value={})
+        epics_mixin.get_field_ids_to_epic = MagicMock(return_value={})
 
         # Parent field update succeeds
         epics_mixin.jira.update_issue.return_value = None
@@ -486,7 +360,7 @@ class TestEpicsMixin:
         assert isinstance(result, JiraIssue)
         assert result.key == "TEST-123"
 
-    def test_link_issue_to_epic_not_epic(self, epics_mixin):
+    def test_link_issue_to_epic_not_epic(self, epics_mixin: EpicsMixin):
         """Test link_issue_to_epic when the target is not an epic."""
         # Setup mocks
         epics_mixin.jira.get_issue.side_effect = [
@@ -503,7 +377,7 @@ class TestEpicsMixin:
         ):
             epics_mixin.link_issue_to_epic("TEST-123", "TEST-456")
 
-    def test_link_issue_to_epic_all_methods_fail(self, epics_mixin):
+    def test_link_issue_to_epic_all_methods_fail(self, epics_mixin: EpicsMixin):
         """Test link_issue_to_epic when all linking methods fail."""
         # Setup mocks
         epics_mixin.jira.get_issue.side_effect = [
@@ -515,7 +389,7 @@ class TestEpicsMixin:
         ]
 
         # No epic link fields found
-        epics_mixin.get_jira_field_ids = MagicMock(return_value={})
+        epics_mixin.get_field_ids_to_epic = MagicMock(return_value={})
 
         # All update attempts fail
         epics_mixin.jira.update_issue.side_effect = Exception("Update failed")
@@ -528,7 +402,7 @@ class TestEpicsMixin:
         ):
             epics_mixin.link_issue_to_epic("TEST-123", "EPIC-456")
 
-    def test_link_issue_to_epic_api_error(self, epics_mixin):
+    def test_link_issue_to_epic_api_error(self, epics_mixin: EpicsMixin):
         """Test link_issue_to_epic with API error in the epic retrieval."""
         # Setup mocks to fail at epic retrieval
         epics_mixin.jira.get_issue.side_effect = [
@@ -548,7 +422,7 @@ class TestEpicsMixin:
             "fields": {"issuetype": {"name": "Epic"}},
         }
 
-        epics_mixin.get_jira_field_ids = MagicMock(
+        epics_mixin.get_field_ids_to_epic = MagicMock(
             return_value={"epic_link": "customfield_10014"}
         )
 
@@ -608,7 +482,7 @@ class TestEpicsMixin:
             "fields": {"issuetype": {"name": "Epic"}},
         }
 
-        epics_mixin.get_jira_field_ids = MagicMock(
+        epics_mixin.get_field_ids_to_epic = MagicMock(
             return_value={"epic_link": "customfield_10014"}
         )
 
@@ -630,13 +504,13 @@ class TestEpicsMixin:
             "fields": {"issuetype": {"name": "Epic"}},
         }
 
-        epics_mixin.get_jira_field_ids = MagicMock(
+        epics_mixin.get_field_ids_to_epic = MagicMock(
             return_value={"epic_link": "customfield_10014", "parent": "parent"}
         )
 
         # Create a mock class for SearchResult
         class MockSearchResult:
-            def __init__(self, issues):
+            def __init__(self, issues: list[JiraIssue]):
                 self.issues = issues
 
             def __bool__(self):
@@ -649,7 +523,7 @@ class TestEpicsMixin:
         def search_side_effect(jql, **kwargs):
             if "issueFunction" in jql:
                 return MockSearchResult([])  # No results for issueFunction
-            elif "customfield_10014" in jql:
+            if "customfield_10014" in jql:
                 # Return results for customfield query
                 return MockSearchResult(
                     [
@@ -657,7 +531,8 @@ class TestEpicsMixin:
                         JiraIssue(key="CHILD-2", summary="Child 2"),
                     ]
                 )
-            return MockSearchResult([])
+            msg = f"Unexpected JQL query as {jql}"
+            raise KeyError(msg)
 
         epics_mixin.search_issues = MagicMock(side_effect=search_side_effect)
 
@@ -676,11 +551,14 @@ class TestEpicsMixin:
         assert last_call_kwargs.get("start") == 3
         assert last_call_kwargs.get("limit") == 10
 
-    def test_get_epic_issues_api_error(self, epics_mixin):
+    def test_get_epic_issues_api_error(self, epics_mixin: EpicsMixin):
         """Test get_epic_issues with API error."""
         # Setup mocks - simulate API error
         epics_mixin.jira.get_issue.side_effect = Exception("API error")
 
         # Call the method and expect an error
-        with pytest.raises(Exception, match="Error getting epic issues: API error"):
+        with pytest.raises(
+            Exception,
+            match="Error getting epic issues: API error",
+        ):
             epics_mixin.get_epic_issues("EPIC-123")

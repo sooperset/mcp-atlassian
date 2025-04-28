@@ -10,7 +10,6 @@ import re
 
 import pytest
 
-from mcp_atlassian.jira.search import SearchMixin
 from src.mcp_atlassian.models.constants import (
     EMPTY_STRING,
     JIRA_DEFAULT_ID,
@@ -816,19 +815,17 @@ class TestJiraIssue:
         assert issue.epic_key == "EPIC-456"
         assert issue.epic_name == "Epic Name Value"
 
-    def test_fields_with_names_method(self):
-        """Test using the names() method to find fields."""
+    def test_fields_with_names(self):
+        """Test using the names to find fields."""
 
-        class MockFields(dict):
-            def names(self):
-                return {
-                    "customfield_55555": "Epic Link",
-                    "customfield_66666": "Epic Name",
-                }
-
-        fields = MockFields(
-            {"customfield_55555": "EPIC-789", "customfield_66666": "Special Epic Name"}
-        )
+        fields = {
+            "customfield_55555": "EPIC-789",
+            "customfield_66666": "Special Epic Name",
+            "names": {
+                "customfield_55555": "Epic Link",
+                "customfield_66666": "Epic Name",
+            },
+        }
 
         result = JiraIssue._find_custom_field_in_api_response(fields, ["Epic Link"])
         assert result == "EPIC-789"
@@ -1274,7 +1271,7 @@ class TestRealJiraData:
             return None
         try:
             config = JiraConfig.from_env()
-            return IssuesMixin(config=config)
+            return JiraFetcher(config=config)
         except ValueError:
             pytest.skip("Real Jira environment not configured")
             return None
@@ -1285,10 +1282,7 @@ class TestRealJiraData:
         try:
             config = JiraConfig.from_env()
 
-            class ProjectsMixinWithSearch(ProjectsMixin, SearchMixin):
-                pass
-
-            return ProjectsMixinWithSearch(config=config)
+            return JiraFetcher(config=config)
         except ValueError:
             pytest.skip("Real Jira environment not configured")
             return None
@@ -1298,7 +1292,7 @@ class TestRealJiraData:
             return None
         try:
             config = JiraConfig.from_env()
-            return TransitionsMixin(config=config)
+            return JiraFetcher(config=config)
         except ValueError:
             pytest.skip("Real Jira environment not configured")
             return None
@@ -1308,7 +1302,7 @@ class TestRealJiraData:
             return None
         try:
             config = JiraConfig.from_env()
-            return WorklogMixin(config=config)
+            return JiraFetcher(config=config)
         except ValueError:
             pytest.skip("Real Jira environment not configured")
             return None
