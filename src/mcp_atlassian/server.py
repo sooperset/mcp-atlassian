@@ -1214,7 +1214,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             }
 
         # Confluence operations
-        if name == "confluence_search" and ctx and ctx.confluence:
+        if name == "confluence_search":
             if not ctx or not ctx.confluence:
                 raise ValueError("Confluence is not configured.")
 
@@ -1266,7 +1266,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "confluence_get_page" and ctx and ctx.confluence:
+        elif name == "confluence_get_page":
             if not ctx or not ctx.confluence:
                 raise ValueError("Confluence is not configured.")
 
@@ -1294,7 +1294,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "confluence_get_page_children" and ctx and ctx.confluence:
+        elif name == "confluence_get_page_children":
             if not ctx or not ctx.confluence:
                 raise ValueError("Confluence is not configured.")
 
@@ -1348,7 +1348,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "confluence_get_page_ancestors" and ctx and ctx.confluence:
+        elif name == "confluence_get_page_ancestors":
             if not ctx or not ctx.confluence:
                 raise ValueError("Confluence is not configured.")
 
@@ -1367,7 +1367,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "confluence_get_comments" and ctx and ctx.confluence:
+        elif name == "confluence_get_comments":
             if not ctx or not ctx.confluence:
                 raise ValueError("Confluence is not configured.")
 
