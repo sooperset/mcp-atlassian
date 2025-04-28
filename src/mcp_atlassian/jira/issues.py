@@ -7,13 +7,27 @@ from requests.exceptions import HTTPError
 
 from ..exceptions import MCPAtlassianAuthenticationError
 from ..models.jira import JiraIssue
-from .users import UsersMixin
-from .utils import parse_date_human_readable
+from ..utils import parse_date
+from .client import JiraClient
+from .protocols import (
+    AttachmentsOperationsProto,
+    EpicOperationsProto,
+    FieldsOperationsProto,
+    IssueOperationsProto,
+    UsersOperationsProto,
+)
 
 logger = logging.getLogger("mcp-jira")
 
 
-class IssuesMixin(UsersMixin):
+class IssuesMixin(
+    JiraClient,
+    AttachmentsOperationsProto,
+    EpicOperationsProto,
+    FieldsOperationsProto,
+    IssueOperationsProto,
+    UsersOperationsProto,
+):
     """Mixin for Jira issue operations."""
 
     def get_issue(
@@ -109,7 +123,14 @@ class IssuesMixin(UsersMixin):
                 update_history=update_history,
             )
             if not issue:
-                raise ValueError(f"Issue {issue_key} not found")
+                msg = f"Issue {issue_key} not found"
+                raise ValueError(msg)
+            if not isinstance(issue, dict):
+                msg = (
+                    f"Unexpected return value type from `jira.get_issue`: {type(issue)}"
+                )
+                logger.error(msg)
+                raise TypeError(msg)
 
             # Extract fields data, safely handling None
             fields_data = issue.get("fields", {}) or {}
@@ -134,7 +155,7 @@ class IssuesMixin(UsersMixin):
             if epic_info.get("epic_key"):
                 try:
                     # Get field IDs for epic fields
-                    field_ids = self.get_jira_field_ids()
+                    field_ids = self.get_field_ids_to_epic()
 
                     # Add epic link field if it doesn't exist
                     if (
@@ -222,9 +243,13 @@ class IssuesMixin(UsersMixin):
         """
         if comment_limit is None or comment_limit > 0:
             try:
-                comments = self.jira.issue_get_comments(issue_key)
-                if isinstance(comments, dict) and "comments" in comments:
-                    comments = comments["comments"]
+                response = self.jira.issue_get_comments(issue_key)
+                if not isinstance(response, dict):
+                    msg = f"Unexpected return value type from `jira.issue_get_comments`: {type(response)}"
+                    logger.error(msg)
+                    raise TypeError(msg)
+
+                comments = response["comments"]
 
                 # Limit comments if needed
                 if comment_limit is not None:
@@ -260,7 +285,7 @@ class IssuesMixin(UsersMixin):
 
             # Get field IDs for epic fields
             try:
-                field_ids = self.get_jira_field_ids()
+                field_ids = self.get_field_ids_to_epic()
             except Exception as e:
                 logger.warning(f"Error getting Jira fields: {str(e)}")
                 field_ids = {}
@@ -290,6 +315,11 @@ class IssuesMixin(UsersMixin):
                             properties=None,
                             update_history=True,
                         )
+                        if not isinstance(epic, dict):
+                            msg = f"Unexpected return value type from `jira.get_issue`: {type(epic)}"
+                            logger.error(msg)
+                            raise TypeError(msg)
+
                         epic_fields = epic.get("fields", {}) or {}
 
                         # Get epic name using the discovered field ID
@@ -307,19 +337,6 @@ class IssuesMixin(UsersMixin):
             logger.warning(f"Error extracting epic information: {str(e)}")
 
         return epic_info
-
-    def _parse_date(self, date_str: str) -> str:
-        """
-        Parse a date string to a formatted date.
-
-        Args:
-            date_str: The date string to parse
-
-        Returns:
-            Formatted date string
-        """
-        # Use the common utility function for consistent formatting
-        return parse_date_human_readable(date_str)
 
     def _format_issue_content(
         self,
@@ -393,7 +410,7 @@ class IssuesMixin(UsersMixin):
                 if author_name and comment_body:
                     comment_date = comment.get("created", "")
                     if comment_date:
-                        comment_date = self._parse_date(comment_date)
+                        comment_date = parse_date(comment_date)
                         content.append(f"**{author_name}** ({comment_date}):")
                     else:
                         content.append(f"**{author_name}**:")
@@ -548,6 +565,10 @@ class IssuesMixin(UsersMixin):
 
             # Create the issue
             response = self.jira.create_issue(fields=fields)
+            if not isinstance(response, dict):
+                msg = f"Unexpected return value type from `jira.create_issue`: {type(response)}"
+                logger.error(msg)
+                raise TypeError(msg)
 
             # Get the created issue key
             issue_key = response.get("key")
@@ -564,10 +585,7 @@ class IssuesMixin(UsersMixin):
                         f"Performing post-creation update for Epic {issue_key} with Epic-specific fields"
                     )
                     try:
-                        # Delegate to EpicsMixin.update_epic_fields
-                        from mcp_atlassian.jira.epics import EpicsMixin
-
-                        return EpicsMixin.update_epic_fields(self, issue_key, kwargs)
+                        return self.update_epic_fields(issue_key, kwargs)
                     except Exception as update_error:
                         logger.error(
                             f"Error during post-creation update of Epic {issue_key}: {str(update_error)}"
@@ -578,6 +596,10 @@ class IssuesMixin(UsersMixin):
 
             # Get the full issue data and convert to JiraIssue model
             issue_data = self.jira.get_issue(issue_key)
+            if not isinstance(issue_data, dict):
+                msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
+                logger.error(msg)
+                raise TypeError(msg)
             return JiraIssue.from_api_response(issue_data)
 
         except Exception as e:
@@ -601,9 +623,7 @@ class IssuesMixin(UsersMixin):
         # Since JiraFetcher inherits from both IssuesMixin and EpicsMixin,
         # this will correctly use the prepare_epic_fields method from EpicsMixin
         # which implements the two-step Epic creation approach
-        from mcp_atlassian.jira.epics import EpicsMixin
-
-        EpicsMixin.prepare_epic_fields(self, fields, summary, kwargs)
+        self.prepare_epic_fields(fields, summary, kwargs)
 
     def _prepare_parent_fields(
         self, fields: dict[str, Any], kwargs: dict[str, Any]
@@ -658,7 +678,7 @@ class IssuesMixin(UsersMixin):
             fields: The fields dictionary to update
             kwargs: Additional fields from the user
         """
-        field_ids = self.get_jira_field_ids()
+        field_ids = self.get_field_ids_to_epic()
 
         # Process each kwarg
         for key, value in kwargs.items():
@@ -764,11 +784,7 @@ class IssuesMixin(UsersMixin):
 
                 elif key == "attachments":
                     # Handle attachments separately - they're not part of fields update
-                    if (
-                        value
-                        and isinstance(value, list | tuple)
-                        and hasattr(self, "upload_attachments")
-                    ):
+                    if value and isinstance(value, list | tuple):
                         # We'll process attachments after updating fields
                         pass
                     else:
@@ -783,7 +799,7 @@ class IssuesMixin(UsersMixin):
                         logger.warning(f"Could not update assignee: {str(e)}")
                 else:
                     # Process regular fields
-                    field_ids = self.get_jira_field_ids()
+                    field_ids = self.get_field_ids_to_epic()
                     if key in field_ids:
                         update_fields[field_ids[key]] = value
                     elif key.startswith("customfield_"):
@@ -798,11 +814,7 @@ class IssuesMixin(UsersMixin):
                 )
 
             # Handle attachments if provided
-            if (
-                "attachments" in kwargs
-                and kwargs["attachments"]
-                and hasattr(self, "upload_attachments")
-            ):
+            if "attachments" in kwargs and kwargs["attachments"]:
                 try:
                     attachments_result = self.upload_attachments(
                         issue_key, kwargs["attachments"]
@@ -818,6 +830,10 @@ class IssuesMixin(UsersMixin):
 
             # Get the updated issue data and convert to JiraIssue model
             issue_data = self.jira.get_issue(issue_key)
+            if not isinstance(issue_data, dict):
+                msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
+                logger.error(msg)
+                raise TypeError(msg)
             issue = JiraIssue.from_api_response(issue_data)
 
             # Add attachment results to the response if available
@@ -857,6 +873,10 @@ class IssuesMixin(UsersMixin):
         # If no status change is requested, return the issue
         if not status:
             issue_data = self.jira.get_issue(issue_key)
+            if not isinstance(issue_data, dict):
+                msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
+                logger.error(msg)
+                raise TypeError(msg)
             return JiraIssue.from_api_response(issue_data)
 
         # Get available transitions
@@ -954,6 +974,10 @@ class IssuesMixin(UsersMixin):
 
         # Get the updated issue data
         issue_data = self.jira.get_issue(issue_key)
+        if not isinstance(issue_data, dict):
+            msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
+            logger.error(msg)
+            raise TypeError(msg)
         return JiraIssue.from_api_response(issue_data)
 
     def delete_issue(self, issue_key: str) -> bool:
@@ -973,71 +997,9 @@ class IssuesMixin(UsersMixin):
             self.jira.delete_issue(issue_key)
             return True
         except Exception as e:
-            logger.error(f"Error deleting issue {issue_key}: {str(e)}")
-            raise Exception(f"Error deleting issue {issue_key}: {str(e)}") from e
-
-    def get_jira_field_ids(self) -> dict[str, str]:
-        """
-        Get mappings of field names to IDs.
-
-        Returns:
-            Dictionary mapping field names to their IDs
-        """
-        # Use cached field IDs if available
-        if hasattr(self, "_field_ids_cache") and self._field_ids_cache:
-            return self._field_ids_cache
-
-        # Get cached field IDs or fetch from server
-        return self._get_cached_field_ids()
-
-    def _get_cached_field_ids(self) -> dict[str, str]:
-        """
-        Get cached field IDs or fetch from server.
-
-        Returns:
-            Dictionary mapping field names to their IDs
-        """
-        # Initialize cache if needed
-        if not hasattr(self, "_field_ids_cache"):
-            self._field_ids_cache = {}
-
-        # Return cache if not empty
-        if self._field_ids_cache:
-            return self._field_ids_cache
-
-        # Fetch field IDs from server
-        try:
-            # Check if get_all_fields method exists before calling it
-            if not hasattr(self.jira, "get_all_fields"):
-                logger.warning("Jira object does not have 'get_all_fields' method")
-                return {}
-
-            fields = self.jira.get_all_fields()
-            field_ids = {}
-
-            for field in fields:
-                name = field.get("name")
-                field_id = field.get("id")
-                if name and field_id:
-                    field_ids[name] = field_id
-
-            # Log available fields to help with debugging
-            self._log_available_fields(fields)
-
-            # Try to discover EPIC field IDs
-            for field in fields:
-                self._process_field_for_epic_data(field, field_ids)
-
-            # Call the method from EpicsMixin through inheritance
-            self._try_discover_fields_from_existing_epic(field_ids)
-
-            # Cache the results
-            self._field_ids_cache = field_ids
-            return field_ids
-
-        except Exception as e:
-            logger.warning(f"Error getting field IDs: {str(e)}")
-            return {}
+            msg = f"Error deleting issue {issue_key}: {str(e)}"
+            logger.error(msg)
+            raise Exception(msg) from e
 
     def _log_available_fields(self, fields: list[dict]) -> None:
         """
@@ -1084,70 +1046,6 @@ class IssuesMixin(UsersMixin):
         except Exception as e:
             logger.warning(f"Error processing field for epic data: {str(e)}")
 
-    def _try_discover_fields_from_existing_epic(
-        self, field_ids: dict[str, str]
-    ) -> None:
-        """
-        Try to discover epic fields by analyzing existing epics and linked issues.
-
-        Args:
-            field_ids: Dictionary of field IDs to update
-        """
-        try:
-            # Try to find an epic using JQL search
-            jql = "issuetype = Epic ORDER BY created DESC"
-            try:
-                results = self.jira.jql(jql, limit=1)
-            except AttributeError:
-                # If jql method doesn't exist, try another approach or skip
-                logger.debug("JQL method not available on this Jira instance")
-                return
-
-            if not results or not results.get("issues"):
-                return
-
-            # Get the first epic
-            epic = results["issues"][0]
-            epic_key = epic.get("key")
-
-            if not epic_key:
-                return
-
-            # Try to find issues linked to this epic using JQL
-            linked_jql = f'issue in linkedIssues("{epic_key}") ORDER BY created DESC'
-            try:
-                results = self.jira.jql(linked_jql, limit=10)
-            except Exception as e:
-                logger.debug(f"Error querying linked issues: {str(e)}")
-                return
-
-            if not results or not results.get("issues"):
-                return
-
-            # Check issues for potential epic link fields
-            issues = results.get("issues", [])
-
-            for issue in issues:
-                fields = issue.get("fields", {})
-                if not fields or not isinstance(fields, dict):
-                    continue
-
-                # Check each field for a potential epic link
-                for field_id, value in fields.items():
-                    if (
-                        field_id.startswith("customfield_")
-                        and value
-                        and isinstance(value, str)
-                    ):
-                        # If it looks like a key (e.g., PRJ-123), it might be an epic link
-                        if "-" in value and any(c.isdigit() for c in value):
-                            field_ids["Epic Link"] = field_id
-                            break
-
-        except Exception as e:
-            logger.debug(f"Error discovering epic fields: {str(e)}")
-            # Continue with existing field_ids
-
     def get_available_transitions(self, issue_key: str) -> list[dict]:
         """
         Get all available transitions for an issue.
@@ -1162,9 +1060,7 @@ class IssuesMixin(UsersMixin):
             Exception: If there is an error getting transitions
         """
         try:
-            transitions = self.jira.issue_get_transitions(issue_key)  # type: ignore[attr-defined]
-            if isinstance(transitions, dict) and "transitions" in transitions:
-                return transitions["transitions"]
+            transitions = self.jira.get_issue_transitions(issue_key)
             return transitions
         except Exception as e:
             logger.error(f"Error getting transitions for issue {issue_key}: {str(e)}")
@@ -1298,6 +1194,10 @@ class IssuesMixin(UsersMixin):
         try:
             # Call Jira's bulk create endpoint
             response = self.jira.create_issues(issue_updates)
+            if not isinstance(response, dict):
+                msg = f"Unexpected return value type from `jira.create_issues`: {type(response)}"
+                logger.error(msg)
+                raise TypeError(msg)
 
             # Process results
             created_issues = []
@@ -1307,6 +1207,11 @@ class IssuesMixin(UsersMixin):
                     try:
                         # Fetch the full issue data
                         issue_data = self.jira.get_issue(issue_key)
+                        if not isinstance(issue_data, dict):
+                            msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
+                            logger.error(msg)
+                            raise TypeError(msg)
+
                         created_issues.append(
                             JiraIssue.from_api_response(
                                 issue_data,
