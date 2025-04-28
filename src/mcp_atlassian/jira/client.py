@@ -1,7 +1,7 @@
 """Base client module for Jira API interactions."""
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from atlassian import Jira
 
@@ -103,3 +103,62 @@ class JiraClient:
         # Otherwise create a temporary one
         _ = self.config.url if hasattr(self, "config") else ""
         return self.preprocessor.markdown_to_jira(markdown_text)
+
+    def get_paged(
+        self,
+        method: Literal["get", "post"],
+        url: str,
+        params_or_json: dict | None = None,
+        *,
+        absolute: bool = False,
+    ) -> list[dict]:
+        """
+        Repeatly fetch paged data from Jira API using `nextPageToken` to paginate.
+
+        Args:
+            method: The HTTP method to use
+            url: The URL to retrieve data from
+            params_or_json: Optional query parameters or JSON data to send
+            absolute: Whether to use absolute URL
+
+        Returns:
+            List of requested json data
+
+        Raises:
+            ValueError: If using paged request on non-cloud Jira
+        """
+
+        if not self.config.is_cloud:
+            raise ValueError(
+                "Paged requests are only available for Jira Cloud platform"
+            )
+
+        all_results: list[dict] = []
+        current_data = params_or_json or {}
+
+        while True:
+            if method == "get":
+                api_result = self.jira.get(
+                    path=url, params=current_data, absolute=absolute
+                )
+            else:
+                api_result = self.jira.post(
+                    path=url, json=current_data, absolute=absolute
+                )
+
+            if not isinstance(api_result, dict):
+                error_message = f"API result is not a dictionary: {api_result}"
+                logger.error(error_message)
+                raise ValueError(error_message)
+
+            # Extract values from response
+            all_results.append(api_result)
+
+            # Check if this is the last page
+            if "nextPageToken" not in api_result:
+                break
+
+            # Update for next iteration
+            current_data["nextPageToken"] = api_result["nextPageToken"]
+
+        return all_results
