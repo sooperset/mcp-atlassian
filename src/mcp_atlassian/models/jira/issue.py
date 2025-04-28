@@ -16,10 +16,10 @@ from ..constants import (
     JIRA_DEFAULT_ID,
     JIRA_DEFAULT_KEY,
 )
-from .changelog import JiraChangelog
 from .comment import JiraComment
 from .common import (
     JiraAttachment,
+    JiraChangelog,
     JiraIssueType,
     JiraPriority,
     JiraResolution,
@@ -157,21 +157,19 @@ class JiraIssue(ApiModel, TimestampMixin):
 
         custom_field_id = None
 
-        # Check if fields has a names() method
-        if hasattr(fields, "names") and callable(fields.names):
-            try:
-                names_dict = fields.names()
-                if isinstance(names_dict, dict):
-                    for field_id, field_name in names_dict.items():
-                        field_name_norm = re.sub(r"[_\-\s]", "", field_name.lower())
-                        for norm_pattern in normalized_patterns:
-                            if norm_pattern in field_name_norm:
-                                custom_field_id = field_id
-                                break
-                        if custom_field_id:
-                            break
-            except Exception:
-                logger.debug("Error accessing names() method", exc_info=True)
+        # Check if fields has a names fields
+        names_dict = fields.get("names", {})
+        if isinstance(names_dict, dict):
+            for field_id, field_name in names_dict.items():
+                field_name_norm = re.sub(r"[_\-\s]", "", field_name.lower())
+                for norm_pattern in normalized_patterns:
+                    if norm_pattern in field_name_norm:
+                        custom_field_id = field_id
+                        break
+                if custom_field_id:
+                    break
+        else:
+            logger.debug("No names dict found in fields", exc_info=True)
 
         # Look at field metadata if name method didn't work
         if not custom_field_id:
@@ -688,14 +686,15 @@ class JiraIssue(ApiModel, TimestampMixin):
             return None, None
 
         # Check if fields has a names() method (some implementations have this)
-        if hasattr(self.custom_fields, "names") and callable(self.custom_fields.names):
-            names_dict = self.custom_fields.names()
-            if names_dict:
-                for field_id, field_name in names_dict.items():
-                    if (pattern and re.search(name, field_name, re.IGNORECASE)) or (
-                        not pattern and field_name.lower() == name.lower()
-                    ):
-                        return field_id, self.custom_fields.get(field_id)
+        names_dict = self.custom_fields.get("names", {})
+        if isinstance(names_dict, dict):
+            for field_id, field_name in names_dict.items():
+                if (pattern and re.search(name, field_name, re.IGNORECASE)) or (
+                    not pattern and field_name.lower() == name.lower()
+                ):
+                    return field_id, self.custom_fields.get(field_id)
+        else:
+            logger.debug("No names dict found in custom fields", exc_info=True)
 
         # Check field metadata for name (custom fields usually have a name)
         for field_id, field_value in self.custom_fields.items():
@@ -705,8 +704,9 @@ class JiraIssue(ApiModel, TimestampMixin):
             # Custom fields can have a schema with a name
             if isinstance(field_value, dict) and field_value.get("name"):
                 field_name = field_value.get("name")
-                if (pattern and re.search(name, field_name, re.IGNORECASE)) or (
-                    not pattern and field_name.lower() == name.lower()
+                if field_name and (
+                    (pattern and re.search(name, field_name, re.IGNORECASE))
+                    or (not pattern and field_name.lower() == name.lower())
                 ):
                     return field_id, field_value
 
