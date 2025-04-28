@@ -4,149 +4,25 @@ import logging
 from typing import Any
 
 from ..models.jira import JiraIssue
-from .protocols import IssueOperationsProto, SearchOperationsProto
-from .users import UsersMixin
+from .client import JiraClient
+from .protocols import (
+    FieldsOperationsProto,
+    IssueOperationsProto,
+    SearchOperationsProto,
+    UsersOperationsProto,
+)
 
 logger = logging.getLogger("mcp-jira")
 
 
-class EpicsMixin(UsersMixin, IssueOperationsProto, SearchOperationsProto):
+class EpicsMixin(
+    JiraClient,
+    FieldsOperationsProto,
+    IssueOperationsProto,
+    SearchOperationsProto,
+    UsersOperationsProto,
+):
     """Mixin for Jira epic operations."""
-
-    def __init__(self: "EpicsMixin", *args: Any, **kwargs: Any) -> None:
-        """Initialize the mixin."""
-        super().__init__(*args, **kwargs)
-
-        # check if the class implements the IssueOperations and SearchOperations protocols
-        if not isinstance(self, IssueOperationsProto | SearchOperationsProto):
-            msg = f"{self.__class__.__name__} must implement IssueOperations and SearchOperations"
-            raise TypeError(msg)
-
-    def get_jira_field_ids(self) -> dict[str, str]:
-        """
-        Dynamically discover Jira field IDs relevant to Epic linking.
-        This method queries the Jira API to find the correct custom field IDs
-        for Epic-related fields, which can vary between different Jira instances.
-
-        Returns:
-            Dictionary mapping field names to their IDs
-            (e.g., {'epic_link': 'customfield_10014', 'epic_name': 'customfield_10011'})
-        """
-        try:
-            # Check if we've already cached the field IDs
-            if hasattr(self, "_field_ids_cache") and self._field_ids_cache:
-                return self._field_ids_cache
-
-            # Fetch all fields from Jira API
-            fields = self.jira.get_all_fields()
-            field_ids = {}
-
-            # Log the complete list of fields for debugging
-            all_field_names = [field.get("name", "").lower() for field in fields]
-            logger.debug(f"All field names: {all_field_names}")
-
-            # Enhanced logging for debugging
-            custom_fields = {
-                field.get("id", ""): field.get("name", "")
-                for field in fields
-                if field.get("id", "").startswith("customfield_")
-            }
-            logger.debug(f"Custom fields: {custom_fields}")
-
-            # Look for Epic-related fields - use multiple strategies to identify them
-            for field in fields:
-                field_name = field.get("name", "").lower()
-                original_name = field.get("name", "")
-                field_id = field.get("id", "")
-                field_schema = field.get("schema", {})
-                field_type = field_schema.get("type", "")
-                field_custom = field_schema.get("custom", "")
-
-                # Epic Link field - used to link issues to epics
-                if (
-                    field_name == "epic link"
-                    or field_name == "epic"
-                    or "epic link" in field_name
-                    or field_custom == "com.pyxis.greenhopper.jira:gh-epic-link"
-                    or field_id == "customfield_10014"
-                ):  # Common in Jira Cloud
-                    field_ids["epic_link"] = field_id
-                    # For backward compatibility
-                    field_ids["Epic Link"] = field_id
-                    logger.debug(f"Found Epic Link field: {field_id} ({original_name})")
-
-                # Epic Name field - used when creating epics
-                elif (
-                    field_name == "epic name"
-                    or field_name == "epic title"
-                    or "epic name" in field_name
-                    or field_custom == "com.pyxis.greenhopper.jira:gh-epic-label"
-                    or field_id == "customfield_10011"
-                ):  # Common in Jira Cloud
-                    field_ids["epic_name"] = field_id
-                    # For backward compatibility
-                    field_ids["Epic Name"] = field_id
-                    logger.debug(f"Found Epic Name field: {field_id} ({original_name})")
-
-                # Epic Status field
-                elif (
-                    field_name == "epic status"
-                    or "epic status" in field_name
-                    or field_custom == "com.pyxis.greenhopper.jira:gh-epic-status"
-                ):
-                    field_ids["epic_status"] = field_id
-                    logger.debug(
-                        f"Found Epic Status field: {field_id} ({original_name})"
-                    )
-
-                # Epic Color field
-                elif (
-                    field_name == "epic color"
-                    or field_name == "epic colour"
-                    or "epic color" in field_name
-                    or "epic colour" in field_name
-                    or field_custom == "com.pyxis.greenhopper.jira:gh-epic-color"
-                ):
-                    field_ids["epic_color"] = field_id
-                    logger.debug(
-                        f"Found Epic Color field: {field_id} ({original_name})"
-                    )
-
-                # Parent field - sometimes used instead of Epic Link
-                elif (
-                    field_name == "parent"
-                    or field_name == "parent issue"
-                    or "parent issue" in field_name
-                ):
-                    field_ids["parent"] = field_id
-                    logger.debug(f"Found Parent field: {field_id} ({original_name})")
-
-                # Try to detect any other fields that might be related to Epics
-                elif "epic" in field_name and field_id.startswith("customfield_"):
-                    key = f"epic_{field_name.replace(' ', '_').replace('-', '_')}"
-                    field_ids[key] = field_id
-                    logger.debug(
-                        f"Found potential Epic-related field: {field_id} ({original_name})"
-                    )
-
-            # Cache the results for future use
-            self._field_ids_cache = field_ids
-
-            # If we couldn't find certain key fields, try alternative approaches
-            if "epic_name" not in field_ids or "epic_link" not in field_ids:
-                logger.debug(
-                    "Standard field search didn't find all Epic fields, trying alternative approaches"
-                )
-                self._try_discover_fields_from_existing_epic(field_ids)
-
-            logger.debug(f"Discovered field IDs: {field_ids}")
-
-            return field_ids
-
-        except Exception as e:
-            logger.error(f"Error discovering Jira field IDs: {str(e)}")
-            # Return an empty dict as fallback
-            return {}
 
     def _try_discover_fields_from_existing_epic(
         self, field_ids: dict[str, str]
@@ -169,6 +45,10 @@ class EpicsMixin(UsersMixin, IssueOperationsProto, SearchOperationsProto):
             # Find an Epic in the system
             epics_jql = "issuetype = Epic ORDER BY created DESC"
             results = self.jira.jql(epics_jql, fields="*all", limit=1)
+            if not isinstance(results, dict):
+                msg = f"Unexpected return value type from `jira.jql`: {type(results)}"
+                logger.error(msg)
+                raise TypeError(msg)
 
             # If no epics found, we can't use this method
             if not results or not results.get("issues"):
@@ -243,7 +123,7 @@ class EpicsMixin(UsersMixin, IssueOperationsProto, SearchOperationsProto):
         """
         try:
             # Get all field IDs
-            field_ids = self.get_jira_field_ids()
+            field_ids = self.get_field_ids_to_epic()
             logger.info(f"Discovered Jira field IDs for Epic creation: {field_ids}")
 
             # Store Epic-specific fields in kwargs for later update
@@ -315,7 +195,7 @@ class EpicsMixin(UsersMixin, IssueOperationsProto, SearchOperationsProto):
         Returns:
             The field ID for Epic Name if found, None otherwise
         """
-        # Strategy 1: Check if already discovered by get_jira_field_ids
+        # Strategy 1: Check if already discovered by get_field_ids_to_epic
         if "epic_name" in field_ids:
             return field_ids["epic_name"]
         if "Epic Name" in field_ids:
@@ -349,7 +229,7 @@ class EpicsMixin(UsersMixin, IssueOperationsProto, SearchOperationsProto):
         Returns:
             The field ID for Epic Color if found, None otherwise
         """
-        # Strategy 1: Check if already discovered by get_jira_field_ids
+        # Strategy 1: Check if already discovered by get_field_ids_to_epic
         if "epic_color" in field_ids:
             return field_ids["epic_color"]
         if "epic_colour" in field_ids:
@@ -392,6 +272,18 @@ class EpicsMixin(UsersMixin, IssueOperationsProto, SearchOperationsProto):
             # Verify that both issue and epic exist
             issue = self.jira.get_issue(issue_key)
             epic = self.jira.get_issue(epic_key)
+            if not isinstance(issue, dict):
+                msg = (
+                    f"Unexpected return value type from `jira.get_issue`: {type(issue)}"
+                )
+                logger.error(msg)
+                raise TypeError(msg)
+            if not isinstance(epic, dict):
+                msg = (
+                    f"Unexpected return value type from `jira.get_issue`: {type(epic)}"
+                )
+                logger.error(msg)
+                raise TypeError(msg)
 
             # Check if the epic key corresponds to an actual epic
             fields = epic.get("fields", {})
@@ -402,7 +294,7 @@ class EpicsMixin(UsersMixin, IssueOperationsProto, SearchOperationsProto):
                 raise ValueError(error_msg)
 
             # Get the dynamic field IDs for this Jira instance
-            field_ids = self.get_jira_field_ids()
+            field_ids = self.get_field_ids_to_epic()
 
             # Try the parent field first (if discovered or natively supported)
             if "parent" in field_ids or "parent" not in field_ids:
@@ -458,9 +350,9 @@ class EpicsMixin(UsersMixin, IssueOperationsProto, SearchOperationsProto):
                     )
 
                     # If we get here, it worked - update our cached field ID
-                    if not hasattr(self, "_field_ids_cache"):
-                        self._field_ids_cache = {}
-                    self._field_ids_cache["epic_link"] = field_id
+                    if self._field_ids_cache is None:
+                        self._field_ids_cache = []
+                    self._field_ids_cache.append({"id": field_id, "name": "epic_link"})
                     return self.get_issue(issue_key)
                 except Exception as e:
                     logger.info(f"Couldn't link using fields {fields}: {str(e)}")
@@ -520,6 +412,12 @@ class EpicsMixin(UsersMixin, IssueOperationsProto, SearchOperationsProto):
         try:
             # First, check if the issue is an Epic
             epic = self.jira.get_issue(epic_key)
+            if not isinstance(epic, dict):
+                msg = (
+                    f"Unexpected return value type from `jira.get_issue`: {type(epic)}"
+                )
+                logger.error(msg)
+                raise TypeError(msg)
             fields_data = epic.get("fields", {})
 
             # Safely check if the issue is an Epic
@@ -540,7 +438,7 @@ class EpicsMixin(UsersMixin, IssueOperationsProto, SearchOperationsProto):
             issues = []
 
             # Find the Epic Link field
-            field_ids = self.get_jira_field_ids()
+            field_ids = self.get_field_ids_to_epic()
             epic_link_field = self._find_epic_link_field(field_ids)
 
             # METHOD 1: Try with 'issueFunction in issuesScopedToEpic' - this works in many Jira instances
@@ -674,9 +572,11 @@ class EpicsMixin(UsersMixin, IssueOperationsProto, SearchOperationsProto):
                                 f"Successfully found {len(issues)} issues for epic {epic_key} using field ID {field_id}"
                             )
                             # Cache this successful field ID for future use
-                            if not hasattr(self, "_field_ids_cache"):
-                                self._field_ids_cache = {}
-                            self._field_ids_cache["epic_link"] = field_id
+                            if self._field_ids_cache is None:
+                                self._field_ids_cache = []
+                            self._field_ids_cache.append(
+                                {"id": field_id, "name": "epic_link"}
+                            )
                             return issues
                     except Exception:
                         # Just try the next field ID
@@ -764,6 +664,11 @@ class EpicsMixin(UsersMixin, IssueOperationsProto, SearchOperationsProto):
             epics = self._find_sample_epic()
             if epics:
                 epic_key = epics[0].get("key")
+                if not isinstance(epic_key, str):
+                    msg = f"Unexpected return value type from `_find_sample_epic`: {type(epic_key)}"
+                    logger.error(msg)
+                    raise TypeError(msg)
+
                 # Try to find issues linked to this epic
                 issues = self._find_issues_linked_to_epic(epic_key)
                 for issue in issues:
@@ -786,6 +691,11 @@ class EpicsMixin(UsersMixin, IssueOperationsProto, SearchOperationsProto):
         # and has "epic" in its schema name or description
         try:
             all_fields = self.jira.get_all_fields()
+            if not isinstance(all_fields, list):
+                msg = f"Unexpected return value type from `jira.get_all_fields`: {type(all_fields)}"
+                logger.error(msg)
+                raise TypeError(msg)
+
             for field in all_fields:
                 field_id = field.get("id", "")
                 schema = field.get("schema", {})
@@ -819,6 +729,11 @@ class EpicsMixin(UsersMixin, IssueOperationsProto, SearchOperationsProto):
             # Search for issues with type=Epic
             jql = "issuetype = Epic ORDER BY updated DESC"
             response = self.jira.jql(jql, limit=1)
+            if not isinstance(response, dict):
+                msg = f"Unexpected return value type from `jira.jql`: {type(response)}"
+                logger.error(msg)
+                raise TypeError(msg)
+
             if response and "issues" in response and response["issues"]:
                 return response["issues"]
         except Exception as e:
@@ -845,7 +760,11 @@ class EpicsMixin(UsersMixin, IssueOperationsProto, SearchOperationsProto):
             ]:
                 try:
                     response = self.jira.jql(query, limit=5)
-                    if response and "issues" in response and response["issues"]:
+                    if not isinstance(response, dict):
+                        msg = f"Unexpected return value type from `jira.jql`: {type(response)}"
+                        logger.error(msg)
+                        raise TypeError(msg)
+                    if response.get("issues"):
                         return response["issues"]
                 except Exception:
                     # Try next query format
@@ -873,9 +792,7 @@ class EpicsMixin(UsersMixin, IssueOperationsProto, SearchOperationsProto):
         search_result = self.search_issues(jql, start=start, limit=limit)
         if not search_result:
             logger.warning(f"No issues found for epic {epic_key} with query: {jql}")
-        return (
-            search_result.issues if hasattr(search_result, "issues") else search_result
-        )
+        return search_result.issues
 
     def update_epic_fields(self, issue_key: str, kwargs: dict[str, Any]) -> JiraIssue:
         """

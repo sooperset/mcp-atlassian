@@ -1,6 +1,7 @@
 """Base client module for Jira API interactions."""
 
 import logging
+from typing import Any
 
 from atlassian import Jira
 
@@ -16,7 +17,7 @@ logger = logging.getLogger("mcp-jira")
 class JiraClient:
     """Base client for Jira API interactions."""
 
-    _field_ids_cache: dict[str, str] | None
+    _field_ids_cache: list[dict[str, Any]] | None
     _current_user_account_id: str | None
 
     config: JiraConfig

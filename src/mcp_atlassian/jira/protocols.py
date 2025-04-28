@@ -122,7 +122,7 @@ class FieldsOperationsProto(Protocol):
     """Protocol defining fields operations interface."""
 
     @abstractmethod
-    def get_jira_field_ids(self) -> dict[str, str]:
+    def get_field_ids_to_epic(self) -> dict[str, str]:
         """
         Dynamically discover Jira field IDs relevant to Epic linking.
         This method queries the Jira API to find the correct custom field IDs

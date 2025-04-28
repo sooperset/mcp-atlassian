@@ -6,11 +6,12 @@ from typing import Any
 from thefuzz import fuzz
 
 from .client import JiraClient
+from .protocols import EpicOperationsProto, UsersOperationsProto
 
 logger = logging.getLogger("mcp-jira")
 
 
-class FieldsMixin(JiraClient):
+class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
     """Mixin for Jira field operations.
 
     This mixin provides methods for discovering, caching, and working with Jira fields.
@@ -30,14 +31,18 @@ class FieldsMixin(JiraClient):
         """
         try:
             # Use cached field data if available and refresh is not requested
-            if hasattr(self, "_fields_cache") and self._fields_cache and not refresh:
-                return self._fields_cache
+            if self._field_ids_cache is not None and not refresh:
+                return self._field_ids_cache
 
             # Fetch fields from Jira API
             fields = self.jira.get_all_fields()
+            if not isinstance(fields, list):
+                msg = f"Unexpected return value type from `jira.get_all_fields`: {type(fields)}"
+                logger.error(msg)
+                raise TypeError(msg)
 
             # Cache the fields
-            self._fields_cache = fields
+            self._field_ids_cache = fields
 
             # Log available fields for debugging
             self._log_available_fields(fields)
@@ -149,9 +154,14 @@ class FieldsMixin(JiraClient):
         Returns:
             Dictionary mapping required field names to their definitions
         """
+        # FIXME: There is no `Jira.createmeta` method in the `atlassian` package.
+        raise NotImplementedError(
+            "`FieldsMixin.get_required_fields` needs to be fixed."
+        )
+
         try:
             # Create meta provides field requirements for different issue types
-            create_meta = self.jira.createmeta(  # type: ignore[attr-defined]
+            create_meta = self.jira.createmeta(
                 projectKeys=project_key,
                 issuetypeNames=issue_type,
                 expand="projects.issuetypes.fields",
@@ -187,42 +197,143 @@ class FieldsMixin(JiraClient):
             )
             return {}
 
-    def get_jira_field_ids(self) -> dict[str, str]:
+    def get_field_ids_to_epic(self) -> dict[str, str]:
         """
-        Get a mapping of field names to their IDs.
-
-        This method is maintained for backward compatibility and is used
-        by multiple other mixins like EpicsMixin.
+        Dynamically discover Jira field IDs relevant to Epic linking.
+        This method queries the Jira API to find the correct custom field IDs
+        for Epic-related fields, which can vary between different Jira instances.
 
         Returns:
             Dictionary mapping field names to their IDs
+            (e.g., {'epic_link': 'customfield_10014', 'epic_name': 'customfield_10011'})
         """
-        # Check if we've already cached the field_ids
-        if hasattr(self, "_field_ids_cache") and self._field_ids_cache:
-            return self._field_ids_cache
-
-        # Initialize cache if needed
-        if not hasattr(self, "_field_ids_cache"):
-            self._field_ids_cache = {}
-
         try:
+            # Check if we've already cached the field IDs
+            if self._field_ids_cache:
+                result = {field["name"]: field["id"] for field in self._field_ids_cache}
+                return result
+
+            # Initialize cache if needed
+            self._field_ids_cache = []
+
+            # Fetch all fields from Jira API
+            fields = self.get_fields()
+            field_ids = {}
+
+            # Log the complete list of fields for debugging
+            all_field_names = [field.get("name", "").lower() for field in fields]
+            logger.debug(f"All field names: {all_field_names}")
+
+            # Enhanced logging for debugging
+            custom_fields = {
+                field.get("id", ""): field.get("name", "")
+                for field in fields
+                if field.get("id", "").startswith("customfield_")
+            }
+            logger.debug(f"Custom fields: {custom_fields}")
+
             # Get all fields
             fields = self.get_fields()
             field_ids = {}
 
-            # Extract field IDs
+            # Look for Epic-related fields - use multiple strategies to identify them
             for field in fields:
-                name = field.get("name")
-                field_id = field.get("id")
-                if name and field_id:
-                    field_ids[name] = field_id
+                field_name = field.get("name", "").lower()
+                original_name = field.get("name", "")
+                field_id = field.get("id", "")
+                field_schema = field.get("schema", {})
+                field_custom = field_schema.get("custom", "")
 
-            # Cache the results
-            self._field_ids_cache = field_ids
+                if original_name and field_id:
+                    field_ids[original_name] = field_id
+
+                # Epic Link field - used to link issues to epics
+                if (
+                    field_name == "epic link"
+                    or field_name == "epic"
+                    or "epic link" in field_name
+                    or field_custom == "com.pyxis.greenhopper.jira:gh-epic-link"
+                    or field_id == "customfield_10014"
+                ):  # Common in Jira Cloud
+                    field_ids["epic_link"] = field_id
+                    # For backward compatibility
+                    field_ids["Epic Link"] = field_id
+                    logger.debug(f"Found Epic Link field: {field_id} ({original_name})")
+
+                # Epic Name field - used when creating epics
+                elif (
+                    field_name == "epic name"
+                    or field_name == "epic title"
+                    or "epic name" in field_name
+                    or field_custom == "com.pyxis.greenhopper.jira:gh-epic-label"
+                    or field_id == "customfield_10011"
+                ):  # Common in Jira Cloud
+                    field_ids["epic_name"] = field_id
+                    # For backward compatibility
+                    field_ids["Epic Name"] = field_id
+                    logger.debug(f"Found Epic Name field: {field_id} ({original_name})")
+
+                # Epic Status field
+                elif (
+                    field_name == "epic status"
+                    or "epic status" in field_name
+                    or field_custom == "com.pyxis.greenhopper.jira:gh-epic-status"
+                ):
+                    field_ids["epic_status"] = field_id
+                    logger.debug(
+                        f"Found Epic Status field: {field_id} ({original_name})"
+                    )
+
+                # Epic Color field
+                elif (
+                    field_name == "epic color"
+                    or field_name == "epic colour"
+                    or "epic color" in field_name
+                    or "epic colour" in field_name
+                    or field_custom == "com.pyxis.greenhopper.jira:gh-epic-color"
+                ):
+                    field_ids["epic_color"] = field_id
+                    logger.debug(
+                        f"Found Epic Color field: {field_id} ({original_name})"
+                    )
+
+                # Parent field - sometimes used instead of Epic Link
+                elif (
+                    field_name == "parent"
+                    or field_name == "parent issue"
+                    or "parent issue" in field_name
+                ):
+                    field_ids["parent"] = field_id
+                    logger.debug(f"Found Parent field: {field_id} ({original_name})")
+
+                # Try to detect any other fields that might be related to Epics
+                elif "epic" in field_name and field_id.startswith("customfield_"):
+                    key = f"epic_{field_name.replace(' ', '_').replace('-', '_')}"
+                    field_ids[key] = field_id
+                    logger.debug(
+                        f"Found potential Epic-related field: {field_id} ({original_name})"
+                    )
+
+            # Cache the results for future use
+            self._field_ids_cache = [
+                {"id": field_id, "name": field_name}
+                for field_name, field_id in field_ids.items()
+            ]
+
+            # If we couldn't find certain key fields, try alternative approaches
+            if "epic_name" not in field_ids or "epic_link" not in field_ids:
+                logger.debug(
+                    "Standard field search didn't find all Epic fields, trying alternative approaches"
+                )
+                self._try_discover_fields_from_existing_epic(field_ids)
+
+            logger.debug(f"Discovered field IDs: {field_ids}")
+
             return field_ids
 
         except Exception as e:
-            logger.error(f"Error getting field IDs: {str(e)}")
+            logger.error(f"Error discovering Jira field IDs: {str(e)}")
+            # Return an empty dict as fallback
             return {}
 
     def _log_available_fields(self, fields: list[dict]) -> None:
@@ -251,7 +362,7 @@ class FieldsMixin(JiraClient):
         """
         return field_id.startswith("customfield_")
 
-    def format_field_value(self, field_id: str, value: Any) -> dict[str, Any]:
+    def format_field_value(self, field_id: str, value: Any) -> Any:
         """
         Format a field value based on its type for update operations.
 
@@ -279,20 +390,12 @@ class FieldsMixin(JiraClient):
             if field_type == "user":
                 # Handle user fields - need accountId for cloud or name for server
                 if isinstance(value, str):
-                    if hasattr(self, "_get_account_id") and callable(
-                        self._get_account_id
-                    ):
-                        try:
-                            account_id = self._get_account_id(value)
-                            return {"accountId": account_id}
-                        except Exception as e:
-                            logger.warning(
-                                f"Could not resolve user '{value}': {str(e)}"
-                            )
-                            return value
-                    else:
-                        # For server/DC, just use the name
-                        return {"name": value}
+                    try:
+                        account_id = self._get_account_id(value)
+                        return {"accountId": account_id}
+                    except Exception as e:
+                        logger.warning(f"Could not resolve user '{value}': {str(e)}")
+                        return value
                 else:
                     return value
 
