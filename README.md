@@ -341,6 +341,8 @@ For Jira Server/DC, use:
 
 <details> <summary>View All Tools</summary>
 
+*Tools marked with * are only available on Jira Cloud.*
+
 |Confluence Tools|Jira Tools|
 |---|---|
 |`confluence_search`|`jira_get_issue`|
@@ -356,6 +358,7 @@ For Jira Server/DC, use:
 ||`jira_add_comment`|
 ||`jira_add_worklog`|
 ||`jira_get_worklog`|
+||`jira_batch_get_changelogs`*|
 ||`jira_download_attachments`|
 ||`jira_link_to_epic`|
 ||`jira_get_agile_boards`|
