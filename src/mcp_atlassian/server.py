@@ -965,6 +965,37 @@ async def list_tools() -> list[Tool]:
                         },
                     ),
                     Tool(
+                        name="jira_batch_get_changelogs",
+                        description="Get changelogs for multiple Jira issues (Cloud only)",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "issue_ids_or_keys": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "List of Jira issue IDs or keys, e.g. ['PROJ-123', 'PROJ-124']",
+                                },
+                                "fields": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "Filter the changelogs by fields, e.g. ['status', 'assignee']. Default to [] for all fields.",
+                                    "default": [],
+                                },
+                                "limit": {
+                                    "type": "integer",
+                                    "description": (
+                                        "Maximum number of changelogs to return in result for each issue. "
+                                        "Default to -1 for all changelogs. "
+                                        "Notice that it only limits the results in the response, "
+                                        "the function will still fetch all the data."
+                                    ),
+                                    "default": -1,
+                                },
+                            },
+                            "required": ["issue_ids_or_keys"],
+                        },
+                    ),
+                    Tool(
                         name="jira_update_issue",
                         description="Update an existing Jira issue including changing status, adding Epic links, updating fields, etc.",
                         inputSchema={
@@ -2027,6 +2058,53 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 TextContent(
                     type="text",
                     text=json.dumps(result, indent=2, ensure_ascii=False),
+                )
+            ]
+
+        elif name == "jira_batch_get_changelogs":
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            # Extract arguments
+            issue_ids_or_keys = arguments.get("issue_ids_or_keys")
+            fields = arguments.get("fields")
+            limit = arguments.get("limit")
+
+            # Validate types
+            if not isinstance(issue_ids_or_keys, list):
+                raise ValueError("issue_ids_or_keys must be a list")
+            if not isinstance(fields, list):
+                raise ValueError("fields must be a list or None")
+            if not isinstance(limit, int):
+                raise ValueError("limit must be an integer or None")
+
+            # Update for calling
+            if fields == []:
+                fields = None
+            if limit == -1:
+                limit = None
+
+            # Get changelogs
+            issues = ctx.jira.batch_get_changelogs(
+                issue_ids_or_keys=issue_ids_or_keys, fields=fields
+            )
+
+            # Format the response
+            results = []
+            for issue in issues:
+                results.append(
+                    {
+                        "issue_id": issue.id,
+                        "changelogs": [
+                            changelog.to_simplified_dict()
+                            for changelog in issue.changelogs[:limit]
+                        ],
+                    }
+                )
+
+            return [
+                TextContent(
+                    type="text", text=json.dumps(results, indent=2, ensure_ascii=False)
                 )
             ]
 

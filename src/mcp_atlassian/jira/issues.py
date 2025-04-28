@@ -1,12 +1,14 @@
 """Module for Jira issue operations."""
 
 import logging
+from collections import defaultdict
 from typing import Any
 
 from requests.exceptions import HTTPError
 
 from ..exceptions import MCPAtlassianAuthenticationError
 from ..models.jira import JiraIssue
+from ..models.jira.common import JiraChangelog
 from ..utils import parse_date
 from .client import JiraClient
 from .protocols import (
@@ -1236,3 +1238,57 @@ class IssuesMixin(
         except Exception as e:
             logger.error(f"Error in bulk issue creation: {str(e)}")
             raise
+
+    def batch_get_changelogs(
+        self, issue_ids_or_keys: list[str], fields: list[str] | None = None
+    ) -> list[JiraIssue]:
+        """
+        Get changelogs for multiple issues in a batch. Repeatly fetch data if necessary.
+
+        Warning:
+            This function is only avaiable on Jira Cloud.
+
+        Args:
+            issue_ids_or_keys: List of issue IDs or keys
+            fields: Filter the changelogs by fields, e.g. ['status', 'assignee']. Default to None for all fields.
+
+        Returns:
+            List of JiraIssue objects that only contain changelogs and id
+        """
+
+        if not self.config.is_cloud:
+            error_msg = "Batch get issue changelogs is only available on Jira Cloud."
+            logger.error(error_msg)
+            raise NotImplementedError(error_msg)
+
+        # Get paged api results
+        paged_api_results = self.get_paged(
+            method="post",
+            url=self.jira.resource_url("changelog/bulkfetch"),
+            params_or_json={
+                "fieldIds": fields,
+                "issueIdsOrKeys": issue_ids_or_keys,
+            },
+        )
+
+        # Save (issue_id, changelogs)
+        issue_changelog_results: defaultdict[str, list[JiraChangelog]] = defaultdict(
+            list
+        )
+
+        for api_result in paged_api_results:
+            for data in api_result.get("issueChangeLogs", []):
+                issue_id = data.get("issueId", "")
+                changelogs = [
+                    JiraChangelog.from_api_response(changelog_data)
+                    for changelog_data in data.get("changeHistories", [])
+                ]
+
+                issue_changelog_results[issue_id].extend(changelogs)
+
+        issues = [
+            JiraIssue(id=issue_id, changelogs=changelogs)
+            for issue_id, changelogs in issue_changelog_results.items()
+        ]
+
+        return issues
