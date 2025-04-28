@@ -3,17 +3,27 @@
 import html
 import logging
 import re
-from datetime import datetime
 from typing import Any
 
 from ..preprocessing.jira import JiraPreprocessor
 from .client import JiraClient
-from .utils import parse_date_human_readable
+from .protocols import (
+    EpicOperationsProto,
+    FieldsOperationsProto,
+    IssueOperationsProto,
+    UsersOperationsProto,
+)
 
 logger = logging.getLogger("mcp-jira")
 
 
-class FormattingMixin(JiraClient):
+class FormattingMixin(
+    JiraClient,
+    EpicOperationsProto,
+    FieldsOperationsProto,
+    IssueOperationsProto,
+    UsersOperationsProto,
+):
     """Mixin for Jira content formatting operations.
 
     This mixin provides utilities for converting between different formats,
@@ -176,68 +186,9 @@ Description:
 
         return metadata
 
-    def format_date(self, date_str: str) -> str:
-        """
-        Parse a date string from ISO format to a more readable format.
-
-        Args:
-            date_str: Date string in ISO format
-
-        Returns:
-            Formatted date string
-        """
-        try:
-            # Handle ISO format with timezone
-            date_obj = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-            return date_obj.strftime("%Y-%m-%d %H:%M:%S")
-
-        except Exception as e:
-            logger.warning(f"Invalid date format for {date_str}: {e}")
-            return date_str
-
-    def format_jira_date(self, date_str: str | None) -> str:
-        """
-        Parse a date string from ISO format to a more readable format.
-
-        Args:
-            date_str: Date string in ISO format or None
-
-        Returns:
-            Formatted date string or empty string if date_str is None
-        """
-        if not date_str:
-            return ""
-
-        try:
-            # Handle ISO format with timezone
-            date_obj = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-            return date_obj.strftime("%Y-%m-%d %H:%M:%S")
-
-        except Exception as e:
-            logger.warning(f"Invalid date format for {date_str}: {e}")
-            return date_str or ""
-
-    def parse_date_for_api(self, date_str: str) -> str:
-        """
-        Parse a date string into a consistent format (YYYY-MM-DD).
-
-        Args:
-            date_str: Date string in various formats
-
-        Returns:
-            Formatted date string
-        """
-        try:
-            # Handle various formats of date strings from Jira
-            date = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-            return date.strftime("%Y-%m-%d")
-
-        except ValueError as e:
-            # This handles parsing errors in the date format
-            logger.warning(f"Invalid date format for {date_str}: {e}")
-            return date_str
-
-    def extract_epic_information(self, issue: dict[str, Any]) -> dict[str, str | None]:
+    def extract_epic_information(
+        self, issue: dict[str, Any]
+    ) -> dict[str, None] | dict[str, str]:
         """
         Extract epic information from issue data.
 
@@ -257,36 +208,35 @@ Description:
 
         # Try to get the epic link from issue
         # (requires the correct field ID which varies across instances)
-        if hasattr(self, "get_jira_field_ids"):
-            # Use the field discovery mechanism if available
-            try:
-                field_ids = self.get_jira_field_ids()
+        # Use the field discovery mechanism if available
+        try:
+            field_ids = self.get_field_ids_to_epic()
 
-                # Get the epic link field ID
-                epic_link_field = field_ids.get("Epic Link")
-                if (
-                    epic_link_field
-                    and epic_link_field in fields
-                    and fields[epic_link_field]
-                ):
-                    epic_info["epic_key"] = fields[epic_link_field]
+            # Get the epic link field ID
+            epic_link_field = field_ids.get("Epic Link")
+            if (
+                epic_link_field
+                and epic_link_field in fields
+                and fields[epic_link_field]
+            ):
+                epic_info["epic_key"] = fields[epic_link_field]
 
-                    # If the issue is linked to an epic, try to get the epic name
-                    if epic_info["epic_key"] and hasattr(self, "get_issue"):
-                        try:
-                            epic_issue = self.get_issue(epic_info["epic_key"])
-                            epic_fields = epic_issue.get("fields", {})
+                # If the issue is linked to an epic, try to get the epic name
+                if epic_info["epic_key"] and hasattr(self, "get_issue"):
+                    try:
+                        epic_issue = self.get_issue(epic_info["epic_key"])
+                        epic_fields = epic_issue.get("fields", {})
 
-                            # Get the epic name field ID
-                            epic_name_field = field_ids.get("Epic Name")
-                            if epic_name_field and epic_name_field in epic_fields:
-                                epic_info["epic_name"] = epic_fields[epic_name_field]
+                        # Get the epic name field ID
+                        epic_name_field = field_ids.get("Epic Name")
+                        if epic_name_field and epic_name_field in epic_fields:
+                            epic_info["epic_name"] = epic_fields[epic_name_field]
 
-                        except Exception as e:
-                            logger.warning(f"Error getting epic details: {str(e)}")
+                    except Exception as e:
+                        logger.warning(f"Error getting epic details: {str(e)}")
 
-            except Exception as e:
-                logger.warning(f"Error extracting epic information: {str(e)}")
+        except Exception as e:
+            logger.warning(f"Error extracting epic information: {str(e)}")
 
         return epic_info
 
@@ -343,15 +293,18 @@ Description:
                     sanitized_fields[key] = value
                 else:
                     # Otherwise, look up the account ID
-                    if hasattr(self, "_get_account_id"):
-                        try:
-                            account_id = self._get_account_id(value)
-                            if account_id:
-                                sanitized_fields[key] = {"accountId": account_id}
-                        except Exception as e:
-                            logger.warning(
-                                f"Error getting account ID for {value}: {str(e)}"
-                            )
+                    if not isinstance(value, str):
+                        logger.warning(f"Invalid assignee value: {value}")
+                        continue
+
+                    try:
+                        account_id = self._get_account_id(value)
+                        if account_id:
+                            sanitized_fields[key] = {"accountId": account_id}
+                    except Exception as e:
+                        logger.warning(
+                            f"Error getting account ID for {value}: {str(e)}"
+                        )
             # All other fields pass through as is
             else:
                 sanitized_fields[key] = value
@@ -383,19 +336,3 @@ Description:
         }
 
         return transition_data
-
-    def _parse_date(self, date_str: str) -> str:
-        """
-        Parse a date string to a formatted date.
-
-        Args:
-            date_str: The date string to parse
-
-        Returns:
-            Formatted date string
-        """
-        if not date_str:
-            return ""
-
-        # Use the common utility function for consistent formatting with human-readable format
-        return parse_date_human_readable(date_str)

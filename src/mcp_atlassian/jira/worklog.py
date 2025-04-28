@@ -5,8 +5,8 @@ import re
 from typing import Any
 
 from ..models import JiraWorklog
+from ..utils import parse_date
 from .client import JiraClient
-from .utils import parse_date_ymd
 
 logger = logging.getLogger("mcp-jira")
 
@@ -113,7 +113,7 @@ class WorklogMixin(JiraClient):
                     # Continue with worklog creation even if estimate update fails
 
             # Step 2: Prepare worklog data
-            worklog_data = {"timeSpentSeconds": time_spent_seconds}
+            worklog_data: dict[str, Any] = {"timeSpentSeconds": time_spent_seconds}
             if comment:
                 worklog_data["comment"] = comment
             if started:
@@ -130,15 +130,20 @@ class WorklogMixin(JiraClient):
             # Step 4: Add the worklog with remaining estimate adjustment
             base_url = self.jira.resource_url("issue")
             url = f"{base_url}/{issue_key}/worklog"
+
             result = self.jira.post(url, data=worklog_data, params=params)
+            if not isinstance(result, dict):
+                msg = f"Unexpected return value type from `jira.post`: {type(result)}"
+                logger.error(msg)
+                raise TypeError(msg)
 
             # Format and return the result
             return {
                 "id": result.get("id"),
                 "comment": self._clean_text(result.get("comment", "")),
-                "created": self._parse_date(result.get("created", "")),
-                "updated": self._parse_date(result.get("updated", "")),
-                "started": self._parse_date(result.get("started", "")),
+                "created": str(parse_date(result.get("created", ""))),
+                "updated": str(parse_date(result.get("updated", ""))),
+                "started": str(parse_date(result.get("started", ""))),
                 "timeSpent": result.get("timeSpent", ""),
                 "timeSpentSeconds": result.get("timeSpentSeconds", 0),
                 "author": result.get("author", {}).get("displayName", "Unknown"),
@@ -200,6 +205,10 @@ class WorklogMixin(JiraClient):
         """
         try:
             result = self.jira.issue_get_worklog(issue_key)
+            if not isinstance(result, dict):
+                msg = f"Unexpected return value type from `jira.issue_get_worklog`: {type(result)}"
+                logger.error(msg)
+                raise TypeError(msg)
 
             # Process the worklogs
             worklogs = []
@@ -208,9 +217,9 @@ class WorklogMixin(JiraClient):
                     {
                         "id": worklog.get("id"),
                         "comment": self._clean_text(worklog.get("comment", "")),
-                        "created": self._parse_date(worklog.get("created", "")),
-                        "updated": self._parse_date(worklog.get("updated", "")),
-                        "started": self._parse_date(worklog.get("started", "")),
+                        "created": str(parse_date(worklog.get("created", ""))),
+                        "updated": str(parse_date(worklog.get("updated", ""))),
+                        "started": str(parse_date(worklog.get("started", ""))),
                         "timeSpent": worklog.get("timeSpent", ""),
                         "timeSpentSeconds": worklog.get("timeSpentSeconds", 0),
                         "author": worklog.get("author", {}).get(
@@ -223,16 +232,3 @@ class WorklogMixin(JiraClient):
         except Exception as e:
             logger.error(f"Error getting worklogs for issue {issue_key}: {str(e)}")
             raise Exception(f"Error getting worklogs: {str(e)}") from e
-
-    def _parse_date(self, date_str: str | None) -> str:
-        """
-        Parse a date string from ISO format to a more readable format.
-
-        Args:
-            date_str: Date string in ISO format or None
-
-        Returns:
-            Formatted date string or empty string if date_str is None
-        """
-        # Use the common utility function for consistent formatting
-        return parse_date_ymd(date_str)

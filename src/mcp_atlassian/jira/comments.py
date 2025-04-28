@@ -3,8 +3,8 @@
 import logging
 from typing import Any
 
+from ..utils import parse_date
 from .client import JiraClient
-from .utils import parse_date_ymd
 
 logger = logging.getLogger("mcp-jira")
 
@@ -30,14 +30,19 @@ class CommentsMixin(JiraClient):
         """
         try:
             comments = self.jira.issue_get_comments(issue_key)
-            processed_comments = []
 
+            if not isinstance(comments, dict):
+                msg = f"Unexpected return value type from `jira.issue_get_comments`: {type(comments)}"
+                logger.error(msg)
+                raise TypeError(msg)
+
+            processed_comments = []
             for comment in comments.get("comments", [])[:limit]:
                 processed_comment = {
                     "id": comment.get("id"),
                     "body": self._clean_text(comment.get("body", "")),
-                    "created": self._parse_date(comment.get("created")),
-                    "updated": self._parse_date(comment.get("updated")),
+                    "created": str(parse_date(comment.get("created"))),
+                    "updated": str(parse_date(comment.get("updated"))),
                     "author": comment.get("author", {}).get("displayName", "Unknown"),
                 }
                 processed_comments.append(processed_comment)
@@ -66,10 +71,15 @@ class CommentsMixin(JiraClient):
             jira_formatted_comment = self._markdown_to_jira(comment)
 
             result = self.jira.issue_add_comment(issue_key, jira_formatted_comment)
+            if not isinstance(result, dict):
+                msg = f"Unexpected return value type from `jira.issue_add_comment`: {type(result)}"
+                logger.error(msg)
+                raise TypeError(msg)
+
             return {
                 "id": result.get("id"),
                 "body": self._clean_text(result.get("body", "")),
-                "created": self._parse_date(result.get("created")),
+                "created": str(parse_date(result.get("created"))),
                 "author": result.get("author", {}).get("displayName", "Unknown"),
             }
         except Exception as e:
@@ -99,21 +109,3 @@ class CommentsMixin(JiraClient):
             logger.warning(f"Error converting markdown to Jira format: {str(e)}")
             # Return the original text if conversion fails
             return markdown_text
-
-    def _parse_date(self, date_str: str | None) -> str:
-        """
-        Parse a date string from ISO format to a more readable format.
-
-        Args:
-            date_str: Date string in ISO format or None
-
-        Returns:
-            Formatted date string or empty string if date_str is None
-        """
-        logger.debug(f"CommentsMixin._parse_date called with: '{date_str}'")
-
-        # Call the utility function and capture the result
-        result = parse_date_ymd(date_str)
-
-        logger.debug(f"CommentsMixin._parse_date returning: '{result}'")
-        return result

@@ -52,6 +52,10 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
         """
         try:
             project_data = self.jira.project(project_key)
+            if not isinstance(project_data, dict):
+                msg = f"Unexpected return value type from `jira.project`: {type(project_data)}"
+                logger.error(msg)
+                raise TypeError(msg)
             return project_data
         except Exception as e:
             logger.warning(f"Error getting project {project_key}: {e}")
@@ -189,6 +193,10 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             scheme = self.jira.get_project_permission_scheme(
                 project_id_or_key=project_key
             )
+            if not isinstance(scheme, dict):
+                msg = f"Unexpected return value type from `jira.get_project_permission_scheme`: {type(scheme)}"
+                logger.error(msg)
+                raise TypeError(msg)
             return scheme
 
         except Exception as e:
@@ -213,6 +221,10 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             scheme = self.jira.get_project_notification_scheme(
                 project_id_or_key=project_key
             )
+            if not isinstance(scheme, dict):
+                msg = f"Unexpected return value type from `jira.get_project_notification_scheme`: {type(scheme)}"
+                logger.error(msg)
+                raise TypeError(msg)
             return scheme
 
         except Exception as e:
@@ -233,6 +245,10 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
         """
         try:
             meta = self.jira.issue_createmeta(project=project_key)
+            if not isinstance(meta, dict):
+                msg = f"Unexpected return value type from `jira.issue_createmeta`: {type(meta)}"
+                logger.error(msg)
+                raise TypeError(msg)
 
             issue_types = []
             # Extract issue types from createmeta response
@@ -262,7 +278,11 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
         try:
             # Use JQL to count issues in the project
             jql = f"project = {project_key}"
-            result = self.jira.jql(jql=jql, fields=["key"], limit=1)
+            result = self.jira.jql(jql=jql, fields="key", limit=1)
+            if not isinstance(result, dict):
+                msg = f"Unexpected return value type from `jira.jql`: {type(result)}"
+                logger.error(msg)
+                raise TypeError(msg)
 
             # Extract total from the response
             total = 0
@@ -299,7 +319,7 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
 
         except Exception as e:
             logger.error(f"Error getting issues for project {project_key}: {str(e)}")
-            return []
+            return JiraSearchResult(issues=[], total=0)
 
     def get_project_keys(self) -> list[str]:
         """
@@ -310,7 +330,15 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
         """
         try:
             projects = self.get_all_projects()
-            return [project.get("key") for project in projects if "key" in project]
+            project_keys: list[str] = []
+            for project in projects:
+                key = project.get("key")
+                if not isinstance(key, str):
+                    msg = f"Unexpected return value type from `get_all_projects`: {type(key)}"
+                    logger.error(msg)
+                    raise TypeError(msg)
+                project_keys.append(key)
+            return project_keys
 
         except Exception as e:
             logger.error(f"Error getting project keys: {str(e)}")

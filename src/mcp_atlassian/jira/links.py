@@ -29,6 +29,11 @@ class LinksMixin(JiraClient):
         """
         try:
             link_types_response = self.jira.get("rest/api/2/issueLinkType")
+            if not isinstance(link_types_response, dict):
+                msg = f"Unexpected return value type from `jira.get`: {type(link_types_response)}"
+                logger.error(msg)
+                raise TypeError(msg)
+
             link_types_data = link_types_response.get("issueLinkTypes", [])
 
             link_types = [

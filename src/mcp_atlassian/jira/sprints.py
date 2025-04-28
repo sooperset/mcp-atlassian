@@ -7,7 +7,7 @@ from typing import Any
 import requests
 
 from ..models.jira import JiraSprint
-from ..utils.dates import parse_iso8601_date
+from ..utils import parse_date
 from .client import JiraClient
 
 logger = logging.getLogger("mcp-jira")
@@ -17,7 +17,7 @@ class SprintsMixin(JiraClient):
     """Mixin for Jira sprints operations."""
 
     def get_all_sprints_from_board(
-        self, board_id: str, state: str = None, start: int = 0, limit: int = 50
+        self, board_id: str, state: str | None = None, start: int = 0, limit: int = 50
     ) -> list[dict[str, Any]]:
         """
         Get all sprints from a board.
@@ -49,7 +49,7 @@ class SprintsMixin(JiraClient):
             return []
 
     def get_all_sprints_from_board_model(
-        self, board_id: str, state: str = None, start: int = 0, limit: int = 50
+        self, board_id: str, state: str | None = None, start: int = 0, limit: int = 50
     ) -> list[JiraSprint]:
         """
         Get all sprints as JiraSprint from a board.
@@ -116,6 +116,12 @@ class SprintsMixin(JiraClient):
                 sprint_id=sprint_id,
                 data=data,
             )
+
+            if not isinstance(updated_sprint, dict):
+                msg = f"Unexpected return value type from `SprintMixin.update_sprint`: {type(updated_sprint)}"
+                logger.error(msg)
+                raise TypeError(msg)
+
             return JiraSprint.from_api_response(updated_sprint)
         except requests.HTTPError as e:
             logger.error(f"Error updating sprint: {str(e.response.content)}")
@@ -130,7 +136,7 @@ class SprintsMixin(JiraClient):
         sprint_name: str,
         start_date: str,
         end_date: str,
-        goal: str = None,
+        goal: str | None = None,
     ) -> JiraSprint:
         """
         Create a new sprint.
@@ -150,7 +156,7 @@ class SprintsMixin(JiraClient):
             raise ValueError("Start date is required.")
 
         # validate start date format
-        parsed_start_date = parse_iso8601_date(start_date)
+        parsed_start_date = parse_date(start_date)
 
         if parsed_start_date is None:
             raise ValueError("Start date is required.")
@@ -161,7 +167,7 @@ class SprintsMixin(JiraClient):
 
         # validate end date format
         if end_date:
-            parsed_end_date = parse_iso8601_date(end_date)
+            parsed_end_date = parse_date(end_date)
             if parsed_end_date is not None and parsed_start_date >= parsed_end_date:
                 raise ValueError("Start date must be before end date.")
 
@@ -176,7 +182,13 @@ class SprintsMixin(JiraClient):
 
             logger.info(f"Sprint created: {sprint}")
 
+            if not isinstance(sprint, dict):
+                msg = f"Unexpected return value type from `SprintMixin.create_sprint`: {type(sprint)}"
+                logger.error(msg)
+                raise TypeError(msg)
+
             return JiraSprint.from_api_response(sprint)
+
         except requests.HTTPError as e:
             logger.error(f"Error creating sprint: {str(e.response.content)}")
             raise

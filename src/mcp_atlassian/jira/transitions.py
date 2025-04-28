@@ -8,11 +8,12 @@ from requests.exceptions import HTTPError
 from ..exceptions import MCPAtlassianAuthenticationError
 from ..models import JiraIssue, JiraTransition
 from .client import JiraClient
+from .protocols import IssueOperationsProto, UsersOperationsProto
 
 logger = logging.getLogger("mcp-jira")
 
 
-class TransitionsMixin(JiraClient):
+class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
     """Mixin for Jira transition operations."""
 
     def get_available_transitions(self, issue_key: str) -> list[dict[str, Any]]:
@@ -33,17 +34,7 @@ class TransitionsMixin(JiraClient):
             transitions_data = self.jira.get_issue_transitions(issue_key)
             result: list[dict[str, Any]] = []
 
-            # Handle different response formats
-            transitions = []
-
-            # The API might return transitions inside a 'transitions' key
-            if isinstance(transitions_data, dict) and "transitions" in transitions_data:
-                transitions = transitions_data["transitions"]
-            # Or it might return transitions directly as a list
-            elif isinstance(transitions_data, list):
-                transitions = transitions_data
-
-            for transition in transitions:
+            for transition in transitions_data:
                 # Skip non-dict transitions
                 if not isinstance(transition, dict):
                     continue
@@ -92,7 +83,7 @@ class TransitionsMixin(JiraClient):
             logger.error(error_msg)
             raise Exception(f"Error getting transitions: {str(e)}") from e
 
-    def get_transitions(self, issue_key: str) -> dict[str, Any]:
+    def get_transitions(self, issue_key: str) -> list[dict[str, Any]]:
         """
         Get the raw transitions data for an issue.
 
@@ -117,11 +108,9 @@ class TransitionsMixin(JiraClient):
         transitions_data = self.get_transitions(issue_key)
         result: list[JiraTransition] = []
 
-        # The API returns transitions inside a 'transitions' key
-        if "transitions" in transitions_data:
-            for transition_data in transitions_data["transitions"]:
-                transition = JiraTransition.from_api_response(transition_data)
-                result.append(transition)
+        for transition_data in transitions_data:
+            transition = JiraTransition.from_api_response(transition_data)
+            result.append(transition)
 
         return result
 
@@ -244,19 +233,7 @@ class TransitionsMixin(JiraClient):
                         self.jira.put(url, data=payload)
 
             # Return the updated issue
-            # Using get_issue from the base class or IssuesMixin if available
-            if hasattr(self, "get_issue") and callable(self.get_issue):
-                return self.get_issue(issue_key)
-            else:
-                # Fallback to using jira.get_issue directly
-                issue = self.jira.get_issue(issue_key)
-                if not issue:
-                    raise ValueError(f"Issue {issue_key} not found after transition")
-
-                # Create and return the JiraIssue model
-                return JiraIssue.from_api_response(
-                    issue, base_url=self.config.url if hasattr(self, "config") else None
-                )
+            return self.get_issue(issue_key)
         except HTTPError as http_err:
             if http_err.response is not None and http_err.response.status_code in [
                 401,
@@ -397,15 +374,8 @@ class TransitionsMixin(JiraClient):
             if key == "assignee" and isinstance(value, str):
                 try:
                     # Check if _get_account_id is available (from UsersMixin)
-                    if hasattr(self, "_get_account_id"):
-                        account_id = self._get_account_id(value)
-                        sanitized_fields[key] = {"accountId": account_id}
-                    else:
-                        # If _get_account_id is not available, log warning and skip
-                        logger.warning(
-                            f"Cannot resolve assignee '{value}' without _get_account_id method"
-                        )
-                        continue
+                    account_id = self._get_account_id(value)
+                    sanitized_fields[key] = {"accountId": account_id}
                 except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
                     error_msg = f"Could not resolve assignee '{value}': {str(e)}"
                     logger.warning(error_msg)

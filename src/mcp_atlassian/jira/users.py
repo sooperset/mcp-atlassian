@@ -57,27 +57,30 @@ class UsersMixin(JiraClient):
                 raise Exception(error_msg)
 
             # Original logic to extract the ID
-            if "accountId" in myself:
-                self._current_user_account_id = myself["accountId"]
-                return self._current_user_account_id
+            account_id = None
+            if isinstance(myself.get("accountId"), str):
+                account_id = myself["accountId"]
 
             # Handle Jira Data Center/Server which may not have accountId
             # but has "key" or "name" instead
-            if "key" in myself:
+            elif isinstance(myself.get("key"), str):
                 logger.info(
                     "Using 'key' instead of 'accountId' for Jira Data Center/Server"
                 )
-                self._current_user_account_id = myself["key"]
-                return self._current_user_account_id
-            elif "name" in myself:
+                account_id = myself["key"]
+
+            elif isinstance(myself.get("name"), str):
                 logger.info(
                     "Using 'name' instead of 'accountId' for Jira Data Center/Server"
                 )
-                self._current_user_account_id = myself["name"]
-                return self._current_user_account_id
+                account_id = myself["name"]
 
-            error_msg = "Could not find accountId, key, or name in user data"
-            raise ValueError(error_msg)
+            if account_id is None:
+                error_msg = "Could not find accountId, key, or name in user data"
+                raise ValueError(error_msg)
+
+            self._current_user_account_id = account_id
+            return account_id
         except Exception as e:
             logger.error(f"Error getting current user account ID: {str(e)}")
             error_msg = f"Unable to get current user account ID: {str(e)}"
@@ -130,7 +133,9 @@ class UsersMixin(JiraClient):
                 params["username"] = username  # Use 'username' for Server/DC
 
             response = self.jira.user_find_by_user_string(**params, start=0, limit=1)
-            if not response:
+            if not isinstance(response, list):
+                msg = f"Unexpected return value type from `jira.user_find_by_user_string`: {type(response)}"
+                logger.error(msg)
                 return None
 
             for user in response:

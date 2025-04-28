@@ -7,12 +7,13 @@ from typing import Any
 
 from ..models.jira import JiraAttachment
 from .client import JiraClient
+from .protocols import AttachmentsOperationsProto
 
 # Configure logging
 logger = logging.getLogger("mcp-jira")
 
 
-class AttachmentsMixin(JiraClient):
+class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
     """Mixin for Jira attachment operations."""
 
     def download_attachment(self, url: str, target_path: str) -> bool:
@@ -93,7 +94,12 @@ class AttachmentsMixin(JiraClient):
         logger.info(f"Fetching issue {issue_key} with attachments")
         issue_data = self.jira.issue(issue_key, fields="attachment")
 
-        if not issue_data or "fields" not in issue_data:
+        if not isinstance(issue_data, dict):
+            msg = f"Unexpected return value type from `jira.issue`: {type(issue_data)}"
+            logger.error(msg)
+            raise TypeError(msg)
+
+        if "fields" not in issue_data:
             logger.error(f"Could not retrieve issue {issue_key}")
             return {"success": False, "error": f"Could not retrieve issue {issue_key}"}
 
