@@ -16,9 +16,14 @@ def test_parse_date_valid():
     assert str(parse_date("2021-01-01")) == "2021-01-01 00:00:00"
 
 
-def test_parse_date_epoch():
-    """Test that parse_date returns the correct date for epoch timestamps."""
+def test_parse_date_epoch_as_str():
+    """Test that parse_date returns the correct date for epoch timestamps as str."""
     assert str(parse_date("1612156800000")) == "2021-02-01 05:20:00+00:00"
+
+
+def test_parse_date_epoch_as_int():
+    """Test that parse_date returns the correct date for epoch timestamps as int."""
+    assert str(parse_date(1612156800000)) == "2021-02-01 05:20:00+00:00"
 
 
 def test_parse_date_iso8601():
