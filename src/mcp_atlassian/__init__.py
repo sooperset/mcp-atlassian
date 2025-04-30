@@ -82,6 +82,10 @@ logger = setup_logging(logging_level)
     is_flag=True,
     help="Run in read-only mode (disables all write operations)",
 )
+@click.option(
+    "--enabled-tools",
+    help="Comma-separated list of tools to enable (enables all if not specified)",
+)
 def main(
     verbose: bool,
     env_file: str | None,
@@ -100,6 +104,7 @@ def main(
     jira_ssl_verify: bool,
     jira_projects_filter: str | None,
     read_only: bool = False,
+    enabled_tools: str | None = None,
 ) -> None:
     """MCP Atlassian Server - Jira and Confluence functionality for MCP
 
@@ -156,6 +161,14 @@ def main(
             logger.debug(
                 f"Using port '{final_port}' from command line argument for SSE transport."
             )
+
+    # Handle enabled tools from CLI or environment
+    if enabled_tools:
+        os.environ["ENABLED_TOOLS"] = enabled_tools
+    elif os.getenv("ENABLED_TOOLS"):
+        logger.debug("Using enabled tools from environment variable")
+    else:
+        logger.debug("No tool filtering specified, all tools will be enabled")
 
     # Set environment variables from command line arguments if provided
     if confluence_url:
