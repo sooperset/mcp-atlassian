@@ -21,7 +21,7 @@ class ConfluenceLabel(ApiModel):
     """
 
     id: str = CONFLUENCE_DEFAULT_ID
-    name: str | None = None
+    name: str = EMPTY_STRING
     prefix: str = "global"
     label: str = EMPTY_STRING
     type: str = "label"
@@ -45,7 +45,7 @@ class ConfluenceLabel(ApiModel):
         return cls(
             id=str(data.get("id", CONFLUENCE_DEFAULT_ID)),
             name=data.get("name", EMPTY_STRING),
-            prefix=data.get("prefix", EMPTY_STRING),
+            prefix=data.get("prefix", "global"),
             label=data.get("label", EMPTY_STRING),
             type=data.get("type", "label"),
         )

@@ -17,6 +17,7 @@ from src.mcp_atlassian.models import (
     ConfluenceUser,
     ConfluenceVersion,
 )
+from src.mcp_atlassian.models.constants import EMPTY_STRING
 
 # Optional: Import real API client for optional real-data testing
 try:
@@ -338,9 +339,9 @@ class TestConfluenceLabel:
 
         # Should use default values
         assert label.id == "0"
-        assert label.name is None
+        assert label.name == EMPTY_STRING
         assert label.prefix == "global"
-        assert label.label == ""
+        assert label.label == EMPTY_STRING
         assert label.type == "label"
 
     def test_to_simplified_dict(self):
