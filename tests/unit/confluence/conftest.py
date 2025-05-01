@@ -12,6 +12,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 from fixtures.confluence_mocks import (
     MOCK_COMMENTS_RESPONSE,
     MOCK_CQL_SEARCH_RESPONSE,
+    MOCK_LABELS_RESPONSE,
     MOCK_PAGE_RESPONSE,
     MOCK_PAGES_FROM_SPACE_RESPONSE,
     MOCK_SPACES_RESPONSE,
@@ -60,6 +61,7 @@ def mock_atlassian_confluence():
             MOCK_PAGES_FROM_SPACE_RESPONSE
         )
         confluence_instance.get_page_comments.return_value = MOCK_COMMENTS_RESPONSE
+        confluence_instance.get_page_labels.return_value = MOCK_LABELS_RESPONSE
         confluence_instance.cql.return_value = MOCK_CQL_SEARCH_RESPONSE
 
         # Mock create_page to return a page with the given title

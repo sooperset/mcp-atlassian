@@ -154,33 +154,47 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
         Returns:
             Dictionary mapping required field names to their definitions
         """
-        # FIXME: There is no `Jira.createmeta` method in the `atlassian` package.
-        raise NotImplementedError(
-            "`FieldsMixin.get_required_fields` needs to be fixed."
-        )
-
         try:
-            # Create meta provides field requirements for different issue types
-            create_meta = self.jira.createmeta(
-                projectKeys=project_key,
-                issuetypeNames=issue_type,
-                expand="projects.issuetypes.fields",
+            # Step 1: Get the ID for the given issue type name within the project
+            if not hasattr(self, "get_project_issue_types"):
+                logger.error(
+                    "get_project_issue_types method not available. Cannot resolve issue type ID."
+                )
+                return {}
+
+            all_issue_types = self.get_project_issue_types(project_key)
+            issue_type_id = None
+            for it in all_issue_types:
+                if it.get("name", "").lower() == issue_type.lower():
+                    issue_type_id = it.get("id")
+                    break
+
+            if not issue_type_id:
+                logger.warning(
+                    f"Issue type '{issue_type}' not found in project '{project_key}'"
+                )
+                return {}
+
+            # Step 2: Call the correct API method to get field metadata
+            meta = self.jira.issue_createmeta_fieldtypes(
+                project=project_key, issue_type_id=issue_type_id
             )
 
             required_fields = {}
-
-            # Navigate the nested structure to find required fields
-            if "projects" in create_meta:
-                for project in create_meta["projects"]:
-                    if project.get("key") == project_key:
-                        if "issuetypes" in project:
-                            for issuetype in project["issuetypes"]:
-                                if issuetype.get("name") == issue_type:
-                                    fields = issuetype.get("fields", {})
-                                    # Extract required fields
-                                    for field_id, field_meta in fields.items():
-                                        if field_meta.get("required", False):
-                                            required_fields[field_id] = field_meta
+            # Step 3: Parse the response and extract required fields
+            if isinstance(meta, dict) and "fields" in meta:
+                if isinstance(meta["fields"], list):
+                    for field_meta in meta["fields"]:
+                        if isinstance(field_meta, dict) and field_meta.get(
+                            "required", False
+                        ):
+                            field_id = field_meta.get("fieldId")
+                            if field_id:
+                                required_fields[field_id] = field_meta
+                else:
+                    logger.warning(
+                        "Unexpected format for 'fields' in createmeta response."
+                    )
 
             if not required_fields:
                 logger.warning(

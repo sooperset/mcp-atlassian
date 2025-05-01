@@ -54,6 +54,7 @@ class PagesMixin(ConfluenceClient):
                 # Override content with our processed version
                 content_override=page_content,
                 content_format="storage" if not convert_to_markdown else "markdown",
+                is_cloud=self.config.is_cloud,
             )
         except HTTPError as http_err:
             if http_err.response is not None and http_err.response.status_code in [
@@ -178,6 +179,7 @@ class PagesMixin(ConfluenceClient):
                 # Override content with our processed version
                 content_override=page_content,
                 content_format="storage" if not convert_to_markdown else "markdown",
+                is_cloud=self.config.is_cloud,
             )
 
         except KeyError as e:
@@ -245,6 +247,7 @@ class PagesMixin(ConfluenceClient):
                 # Override content with our processed version
                 content_override=page_content,
                 content_format="storage" if not convert_to_markdown else "markdown",
+                is_cloud=self.config.is_cloud,
             )
 
             page_models.append(page_model)

@@ -66,7 +66,10 @@ class SearchMixin(ConfluenceClient):
 
             # Convert the response to a search result model
             search_result = ConfluenceSearchResult.from_api_response(
-                results, base_url=self.config.url, cql_query=cql
+                results,
+                base_url=self.config.url,
+                cql_query=cql,
+                is_cloud=self.config.is_cloud,
             )
 
             # Process result excerpts as content

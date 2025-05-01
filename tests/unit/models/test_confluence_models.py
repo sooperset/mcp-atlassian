@@ -10,12 +10,14 @@ import pytest
 from src.mcp_atlassian.models import (
     ConfluenceAttachment,
     ConfluenceComment,
+    ConfluenceLabel,
     ConfluencePage,
     ConfluenceSearchResult,
     ConfluenceSpace,
     ConfluenceUser,
     ConfluenceVersion,
 )
+from src.mcp_atlassian.models.constants import EMPTY_STRING
 
 # Optional: Import real API client for optional real-data testing
 try:
@@ -316,6 +318,51 @@ class TestConfluenceComment:
         assert simplified["author"] == "Comment Author"
 
 
+class TestConfluenceLabel:
+    """Tests for the ConfluenceLabel model."""
+
+    def test_from_api_response_with_valid_data(self, confluence_labels_data):
+        """Test creating a ConfluenceLabel from valid API data."""
+        label_data = confluence_labels_data["results"][0]
+
+        label = ConfluenceLabel.from_api_response(label_data)
+
+        assert label.id == "456789123"
+        assert label.name == "meeting-notes"
+        assert label.prefix == "global"
+        assert label.label == "meeting-notes"
+        assert label.type == "label"
+
+    def test_from_api_response_with_empty_data(self):
+        """Test creating a ConfluenceLabel from empty data."""
+        label = ConfluenceLabel.from_api_response({})
+
+        # Should use default values
+        assert label.id == "0"
+        assert label.name == EMPTY_STRING
+        assert label.prefix == "global"
+        assert label.label == EMPTY_STRING
+        assert label.type == "label"
+
+    def test_to_simplified_dict(self):
+        """Test converting ConfluenceLabel to a simplified dictionary."""
+        label = ConfluenceLabel(
+            id="456789123",
+            name="test",
+            prefix="my",
+            label="test",
+            type="label",
+        )
+
+        simplified = label.to_simplified_dict()
+
+        assert isinstance(simplified, dict)
+        assert simplified["id"] == "456789123"
+        assert simplified["name"] == "test"
+        assert simplified["prefix"] == "my"
+        assert simplified["label"] == "test"
+
+
 class TestConfluencePage:
     """Tests for the ConfluencePage model."""
 
@@ -412,6 +459,96 @@ class TestConfluencePage:
 
         # URL should be included
         assert "url" in simplified
+
+    def test_from_api_response_with_expandable_space(self):
+        """Test creating a ConfluencePage from data with space info in _expandable."""
+        page_data = {
+            "id": "123456",
+            "title": "Test Page",
+            "_expandable": {"space": "/rest/api/space/TEST"},
+        }
+
+        page = ConfluencePage.from_api_response(
+            page_data, base_url="https://confluence.example.com", is_cloud=True
+        )
+
+        assert page.space is not None
+        assert page.space.key == "TEST"
+        assert page.space.name == "Space TEST"
+        assert page.url == "https://confluence.example.com/spaces/TEST/pages/123456"
+
+    def test_from_api_response_with_missing_space(self):
+        """Test creating a ConfluencePage with no space information."""
+        page_data = {"id": "123456", "title": "Test Page"}
+
+        page = ConfluencePage.from_api_response(
+            page_data, base_url="https://confluence.example.com", is_cloud=True
+        )
+
+        assert page.space is not None
+        assert page.space.key == ""  # Default from ConfluenceSpace
+        assert page.url == "https://confluence.example.com/spaces/unknown/pages/123456"
+
+    def test_from_api_response_with_empty_space_data(self):
+        """Test creating a ConfluencePage with empty space data."""
+        page_data = {
+            "id": "123456",
+            "title": "Test Page",
+            "space": {},  # Empty space data
+        }
+
+        page = ConfluencePage.from_api_response(
+            page_data, base_url="https://confluence.example.com", is_cloud=True
+        )
+
+        assert page.space is not None
+        assert page.space.key == ""  # Default from ConfluenceSpace
+        assert page.url == "https://confluence.example.com/spaces/unknown/pages/123456"
+
+    def test_from_api_response_url_construction_without_base_url(self):
+        """Test that URL is None when base_url is not provided."""
+        page_data = {
+            "id": "123456",
+            "title": "Test Page",
+            "space": {"key": "TEST", "name": "Test Space"},
+        }
+
+        page = ConfluencePage.from_api_response(page_data)  # No base_url provided
+
+        assert page.url is None
+        assert page.space is not None
+        assert page.space.key == "TEST"
+
+    def test_url_construction_cloud_format(self):
+        """Test URL construction in cloud format."""
+        page_data = {
+            "id": "123456",
+            "title": "Test Page",
+            "space": {"key": "TEST", "name": "Test Space"},
+        }
+
+        page = ConfluencePage.from_api_response(
+            page_data, base_url="https://example.atlassian.net/wiki", is_cloud=True
+        )
+
+        assert page.url == "https://example.atlassian.net/wiki/spaces/TEST/pages/123456"
+
+    def test_url_construction_server_format(self):
+        """Test URL construction in server format."""
+        page_data = {
+            "id": "123456",
+            "title": "Test Page",
+            "space": {"key": "TEST", "name": "Test Space"},
+        }
+
+        page = ConfluencePage.from_api_response(
+            page_data, base_url="https://wiki.corp.example.com", is_cloud=False
+        )
+
+        assert (
+            page.url
+            == "https://wiki.corp.example.com/pages/viewpage.action?pageId=123456"
+        )
 
 
 class TestConfluenceSearchResult:

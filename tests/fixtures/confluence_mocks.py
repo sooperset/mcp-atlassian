@@ -282,6 +282,35 @@ MOCK_COMMENTS_RESPONSE = {
         }
     ]
 }
+
+MOCK_LABELS_RESPONSE = {
+    "results": [
+        {
+            "id": "456789123",
+            "prefix": "global",
+            "name": "meeting-notes",
+            "label": "meeting-notes",
+        },
+        {
+            "id": "456789124",
+            "prefix": "my",
+            "name": "important",
+        },
+        {
+            "id": "456789125",
+            "name": "test",
+        },
+    ],
+    "start": 0,
+    "limit": 200,
+    "size": 3,
+    "_links": {
+        "self": "https://company.atlassian.net/wiki/rest/api/content/456789123",
+        "base": "https://company.atlassian.net",
+        "context": "",
+    },
+}
+
 MOCK_SPACES_RESPONSE = {
     "results": [
         {

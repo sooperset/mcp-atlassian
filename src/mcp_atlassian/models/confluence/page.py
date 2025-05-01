@@ -117,17 +117,32 @@ class ConfluencePage(ApiModel, TimestampMixin):
 
         Args:
             data: The page data from the Confluence API
-            **kwargs: Additional context parameters, including:
-                - base_url: Base URL for constructing the page URL
-                - include_body: Whether to include the page body (defaults to True)
-                - content_format: Content format to use (defaults to "view")
-                - content_override: Optional content to use instead of extracting from API response
+            **kwargs: Additional keyword arguments
+                base_url: Base URL for constructing page URLs
+                include_body: Whether to include body content
+                content_override: Override the content value
+                content_format: Override the content format
+                is_cloud: Whether this is a cloud instance (affects URL format)
 
         Returns:
             A ConfluencePage instance
         """
         if not data:
             return cls()
+
+        # Extract space information first to ensure it's available for URL construction
+        space_data = data.get("space", {})
+        if not space_data:
+            # Try to extract space info from _expandable if available
+            if expandable := data.get("_expandable", {}):
+                if space_path := expandable.get("space"):
+                    # Extract space key from REST API path
+                    if space_path.startswith("/rest/api/space/"):
+                        space_key = space_path.split("/rest/api/space/")[1]
+                        space_data = {"key": space_key, "name": f"Space {space_key}"}
+
+        # Create space model
+        space = ConfluenceSpace.from_api_response(space_data)
 
         # Extract content based on format or use override if provided
         content = EMPTY_STRING
@@ -141,11 +156,6 @@ class ConfluencePage(ApiModel, TimestampMixin):
             body = data.get("body", {})
             if content_format in body:
                 content = body.get(content_format, {}).get("value", EMPTY_STRING)
-
-        # Process space
-        space = None
-        if space_data := data.get("space"):
-            space = ConfluenceSpace.from_api_response(space_data)
 
         # Process author/creator
         author = None
@@ -184,8 +194,17 @@ class ConfluencePage(ApiModel, TimestampMixin):
         # Construct URL if base_url is provided
         url = None
         if base_url := kwargs.get("base_url"):
-            url = f"{base_url}/spaces/{data.get('space', {}).get('key')}/"
-            url += f"pages/{data.get('id')}"
+            page_id = data.get("id")
+
+            # Use different URL format based on whether it's cloud or server
+            is_cloud = kwargs.get("is_cloud", False)
+            if is_cloud:
+                # Cloud format: {base_url}/spaces/{space_key}/pages/{page_id}
+                space_key = space.key if space and space.key else "unknown"
+                url = f"{base_url}/spaces/{space_key}/pages/{page_id}"
+            else:
+                # Server format: {base_url}/pages/viewpage.action?pageId={page_id}
+                url = f"{base_url}/pages/viewpage.action?pageId={page_id}"
 
         return cls(
             id=str(data.get("id", CONFLUENCE_DEFAULT_ID)),

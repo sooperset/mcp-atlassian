@@ -10,6 +10,7 @@ import pytest
 from tests.fixtures.confluence_mocks import (
     MOCK_COMMENTS_RESPONSE,
     MOCK_CQL_SEARCH_RESPONSE,
+    MOCK_LABELS_RESPONSE,
     MOCK_PAGE_RESPONSE,
 )
 
@@ -55,6 +56,12 @@ def confluence_page_data() -> dict[str, Any]:
 def confluence_comments_data() -> dict[str, Any]:
     """Return mock Confluence comments data."""
     return MOCK_COMMENTS_RESPONSE
+
+
+@pytest.fixture
+def confluence_labels_data() -> dict[str, Any]:
+    """Return mock Confluence labels data."""
+    return MOCK_LABELS_RESPONSE
 
 
 # Conditional fixtures for accessing real data if the user wants to use it

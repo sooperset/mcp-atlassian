@@ -14,6 +14,7 @@ Key models:
 
 from .comment import ConfluenceComment
 from .common import ConfluenceAttachment, ConfluenceUser
+from .label import ConfluenceLabel
 from .page import ConfluencePage, ConfluenceVersion
 from .search import ConfluenceSearchResult
 from .space import ConfluenceSpace
@@ -24,6 +25,7 @@ __all__ = [
     "ConfluenceSpace",
     "ConfluenceVersion",
     "ConfluenceComment",
+    "ConfluenceLabel",
     "ConfluencePage",
     "ConfluenceSearchResult",
 ]
