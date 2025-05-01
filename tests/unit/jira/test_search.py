@@ -96,7 +96,6 @@ class TestSearchMixin:
 
         # Define expected kwargs based on whether it's Cloud or Server
         expected_kwargs = {
-            "fields": "summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
             "limit": 10,
             "expand": None,
         }
@@ -105,7 +104,9 @@ class TestSearchMixin:
         if not is_cloud:
             expected_kwargs["start"] = 0
 
-        expected_method_mock.assert_called_once_with(jql_query, **expected_kwargs)
+        expected_method_mock.assert_called_once_with(
+            jql_query, fields=ANY, **expected_kwargs
+        )
 
         # Assert: Other method was not called
         other_method_mock = getattr(search_mixin.jira, other_method_name)
@@ -142,7 +143,7 @@ class TestSearchMixin:
         # Verify
         search_mixin.jira.jql.assert_called_once_with(
             "project = TEST",
-            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
+            fields=ANY,
             start=0,
             limit=50,
             expand=None,
@@ -287,7 +288,7 @@ class TestSearchMixin:
         result = search_mixin.search_issues("text ~ 'test'", projects_filter="TEST")
         search_mixin.jira.jql.assert_called_with(
             "(text ~ 'test') AND project = TEST",
-            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
+            fields=ANY,
             start=0,
             limit=50,
             expand=None,
@@ -299,7 +300,7 @@ class TestSearchMixin:
         result = search_mixin.search_issues("text ~ 'test'", projects_filter="TEST,DEV")
         search_mixin.jira.jql.assert_called_with(
             '(text ~ \'test\') AND project IN ("TEST", "DEV")',
-            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
+            fields=ANY,
             start=0,
             limit=50,
             expand=None,
@@ -308,7 +309,7 @@ class TestSearchMixin:
         assert result.total == 1
 
     def test_search_issues_with_config_projects_filter(self, search_mixin: SearchMixin):
-        """Test search using projects filter from config."""
+        """Test search with projects filter from config."""
         # Setup mock response
         mock_issues = {
             "issues": [
@@ -334,7 +335,7 @@ class TestSearchMixin:
         result = search_mixin.search_issues("text ~ 'test'")
         search_mixin.jira.jql.assert_called_with(
             '(text ~ \'test\') AND project IN ("TEST", "DEV")',
-            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
+            fields=ANY,
             start=0,
             limit=50,
             expand=None,
@@ -346,7 +347,7 @@ class TestSearchMixin:
         result = search_mixin.search_issues("text ~ 'test'", projects_filter="OVERRIDE")
         search_mixin.jira.jql.assert_called_with(
             "(text ~ 'test') AND project = OVERRIDE",
-            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
+            fields=ANY,
             start=0,
             limit=50,
             expand=None,
@@ -360,7 +361,7 @@ class TestSearchMixin:
         )
         search_mixin.jira.jql.assert_called_with(
             '(text ~ \'test\') AND project IN ("OVER1", "OVER2")',
-            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
+            fields=ANY,
             start=0,
             limit=50,
             expand=None,

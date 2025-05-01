@@ -40,6 +40,49 @@ def mock_atlassian_jira():
     """Mock the Atlassian Jira client."""
     mock_jira = MagicMock()
 
+    mock_jira.get_all_fields.return_value = [
+        {"id": "summary", "name": "Summary", "schema": {"type": "string"}},
+        {"id": "description", "name": "Description", "schema": {"type": "string"}},
+        {"id": "issuetype", "name": "Issue Type", "schema": {"type": "issuetype"}},
+        {"id": "status", "name": "Status", "schema": {"type": "status"}},
+        {"id": "priority", "name": "Priority", "schema": {"type": "priority"}},
+        {
+            "id": "labels",
+            "name": "Labels",
+            "schema": {"type": "array", "items": "string"},
+        },
+        {"id": "assignee", "name": "Assignee", "schema": {"type": "user"}},
+        {"id": "reporter", "name": "Reporter", "schema": {"type": "user"}},
+        {"id": "created", "name": "Created", "schema": {"type": "datetime"}},
+        {"id": "updated", "name": "Updated", "schema": {"type": "datetime"}},
+        {
+            "id": "fixVersions",
+            "name": "Fix Version/s",
+            "schema": {"type": "array", "items": "version"},
+        },
+        {
+            "id": "customfield_10010",
+            "name": "Epic Link",
+            "schema": {
+                "type": "string",
+                "custom": "com.pyxis.greenhopper.jira:gh-epic-link",
+            },
+        },
+        {
+            "id": "customfield_10011",
+            "name": "Epic Name",
+            "schema": {
+                "type": "string",
+                "custom": "com.pyxis.greenhopper.jira:gh-epic-label",
+            },
+        },
+        {
+            "id": "customfield_10012",
+            "name": "Story Points",
+            "schema": {"type": "number"},
+        },
+    ]
+
     # Set up common method returns
     mock_jira.myself.return_value = {"accountId": "test-account-id"}
     mock_jira.get_issue.return_value = {

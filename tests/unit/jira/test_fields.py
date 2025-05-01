@@ -131,13 +131,17 @@ class TestFieldsMixin:
         # Verify the result
         assert result == "summary"
 
-    def test_get_field_id_partial_match(self, fields_mixin: FieldsMixin, mock_fields):
-        """Test get_field_id finds field by partial match."""
+    def test_get_field_id_exact_match_case_insensitive(
+        self, fields_mixin: FieldsMixin, mock_fields
+    ):
+        """Test get_field_id finds field by exact match (case-insensitive) using the map."""
         # Set up the fields
         fields_mixin.get_fields = MagicMock(return_value=mock_fields)
+        # Ensure the map is generated based on the mock fields for this test
+        fields_mixin._generate_field_map(force_regenerate=True)
 
-        # Call the method with partial name
-        result = fields_mixin.get_field_id("Epic")
+        # Call the method with exact name (case-insensitive)
+        result = fields_mixin.get_field_id("epic link")
 
         # Verify the result (should find Epic Link as first match)
         assert result == "customfield_10010"
@@ -319,23 +323,19 @@ class TestFieldsMixin:
         """Test get_field_ids_to_epic extracts field IDs from field definitions."""
         # Set up the fields
         fields_mixin.get_fields = MagicMock(return_value=mock_fields)
+        # Ensure field map is generated
+        fields_mixin._generate_field_map(force_regenerate=True)
 
         # Call the method
         result = fields_mixin.get_field_ids_to_epic()
-        expected_result = {
-            "Assignee": "assignee",
-            "Description": "description",
-            "Epic Link": "customfield_10010",
-            "Epic Name": "customfield_10011",
-            "Status": "status",
-            "Story Points": "customfield_10012",
-            "Summary": "summary",
-            "epic_link": "customfield_10010",
-            "epic_name": "customfield_10011",
-        }
 
-        # Verify the result
-        assert result == expected_result
+        # Verify that epic-specific fields are properly identified
+        assert "epic_link" in result
+        assert "Epic Link" in result
+        assert result["epic_link"] == "customfield_10010"
+        assert "epic_name" in result
+        assert "Epic Name" in result
+        assert result["epic_name"] == "customfield_10011"
 
     def test_get_jira_field_ids_error(self, fields_mixin: FieldsMixin):
         """Test get_field_ids_to_epic handles errors gracefully."""

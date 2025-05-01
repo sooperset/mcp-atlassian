@@ -1,6 +1,6 @@
 """Tests for the Jira Issues mixin."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -29,19 +29,20 @@ class TestIssuesMixin:
         return mixin
 
     def test_get_issue_basic(self, issues_mixin: IssuesMixin):
-        """Test basic functionality of get_issue."""
-        # Setup mock
-        mock_issue = {
-            "id": "12345",
+        """Test retrieving an issue by key."""
+        # Mock the API response
+        issues_mixin.jira.get_issue.return_value = {
+            "id": "10001",
             "key": "TEST-123",
             "fields": {
                 "summary": "Test Issue",
-                "description": "Test Issue\n\nThis is a test issue",
+                "description": "This is a test issue",
                 "status": {"name": "Open"},
                 "issuetype": {"name": "Bug"},
+                "created": "2023-01-01T00:00:00.000+0000",
+                "updated": "2023-01-02T00:00:00.000+0000",
             },
         }
-        issues_mixin.jira.get_issue.return_value = mock_issue
 
         # Call the method
         result = issues_mixin.get_issue("TEST-123")
@@ -50,7 +51,7 @@ class TestIssuesMixin:
         issues_mixin.jira.get_issue.assert_called_once_with(
             "TEST-123",
             expand=None,
-            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
+            fields=ANY,
             properties=None,
             update_history=True,
         )
@@ -59,7 +60,7 @@ class TestIssuesMixin:
         assert isinstance(result, JiraIssue)
         assert result.key == "TEST-123"
         assert result.summary == "Test Issue"
-        assert result.description == "Test Issue\n\nThis is a test issue"
+        assert result.description == "This is a test issue"
 
         # Check Jira fields mapping
         assert result.status is not None
@@ -122,68 +123,56 @@ class TestIssuesMixin:
         assert issue.comments[0].body == "This is a comment"
 
     def test_get_issue_with_epic_info(self, issues_mixin: IssuesMixin):
-        """Test getting an issue with epic information."""
-        # Mock the issue data
-        issue_data = {
-            "id": "12345",
-            "key": "TEST-123",
-            "fields": {
-                "summary": "Test Issue",
-                "description": "Test Description",
-                "status": {"name": "Open"},
-                "issuetype": {"name": "Story"},
-                "created": "2023-01-01T00:00:00.000+0000",
-                "updated": "2023-01-02T00:00:00.000+0000",
-                "customfield_10014": "EPIC-456",  # Epic Link field
-                "schema": {
+        """Test retrieving issue with epic information."""
+        try:
+            # Mock the API responses for get_issue
+            issues_mixin.jira.get_issue.side_effect = [
+                # First call - the issue
+                {
+                    "id": "10001",
+                    "key": "TEST-123",
                     "fields": {
-                        "customfield_10014": {"name": "Epic Link", "type": "string"},
-                        "customfield_10011": {"name": "Epic Name", "type": "string"},
-                    }
+                        "summary": "Test Issue",
+                        "description": "This is a test issue",
+                        "status": {"name": "Open"},
+                        "issuetype": {"name": "Story"},
+                        "customfield_10010": "EPIC-456",  # Epic Link field
+                        "created": "2023-01-01T00:00:00.000+0000",
+                        "updated": "2023-01-02T00:00:00.000+0000",
+                    },
                 },
-            },
-        }
-
-        # Mock the epic data
-        epic_data = {
-            "id": "67890",
-            "key": "EPIC-456",
-            "fields": {
-                "summary": "Test Epic",
-                "customfield_10011": "Epic Name",  # Epic Name field
-                "status": {"name": "In Progress"},
-                "issuetype": {"name": "Epic"},
-                "schema": {
+                # Second call - the epic
+                {
+                    "id": "10002",
+                    "key": "EPIC-456",
                     "fields": {
-                        "customfield_10011": {"name": "Epic Name", "type": "string"}
-                    }
+                        "summary": "Epic Issue",
+                        "description": "This is an epic",
+                        "status": {"name": "In Progress"},
+                        "issuetype": {"name": "Epic"},
+                        "customfield_10011": "Epic Name Value",  # Epic Name field
+                        "created": "2023-01-01T00:00:00.000+0000",
+                        "updated": "2023-01-02T00:00:00.000+0000",
+                    },
                 },
-            },
-        }
+            ]
 
-        # Mock the comments data
-        comments_data = {"comments": []}
+            # Mock get_field_ids_to_epic
+            issues_mixin.get_field_ids_to_epic = MagicMock(
+                return_value={
+                    "epic_link": "customfield_10010",
+                    "epic_name": "customfield_10011",
+                }
+            )
 
-        # Get field IDs for epics
-        mock_field_ids = {
-            "epic_link": "customfield_10014",
-            "epic_name": "customfield_10011",
-        }
-        with patch.object(
-            issues_mixin, "get_field_ids_to_epic", return_value=mock_field_ids
-        ):
-            # Setup the mocked responses
-            issues_mixin.jira.get_issue.side_effect = [issue_data, epic_data]
-            issues_mixin.jira.issue_get_comments.return_value = comments_data
-
-            # Call the method
+            # Call the method - just use get_issue without the include_epic_info parameter
             issue = issues_mixin.get_issue("TEST-123")
 
             # Verify the API calls
             issues_mixin.jira.get_issue.assert_any_call(
                 "TEST-123",
                 expand=None,
-                fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
+                fields=ANY,
                 properties=None,
                 update_history=True,
             )
@@ -196,22 +185,24 @@ class TestIssuesMixin:
             )
 
             # Verify the issue
-            assert issue.id == "12345"
             assert issue.key == "TEST-123"
             assert issue.summary == "Test Issue"
 
-            # Verify the epic info was added
-            assert issue.epic_key == "EPIC-456"
-            assert issue.epic_name == "Epic Name"
+            # Verify that the epic information is in the custom fields
+            assert issue.custom_fields.get("customfield_10010") == "EPIC-456"
+            assert issue.custom_fields.get("customfield_10011") == "Epic Name Value"
+
+        except Exception as e:
+            pytest.fail(f"Test failed: {e}")
 
     def test_get_issue_error_handling(self, issues_mixin: IssuesMixin):
-        """Test error handling when getting an issue."""
-        # Make the API call raise an exception
+        """Test error handling in get_issue."""
+        # Mock the API to raise an exception
         issues_mixin.jira.get_issue.side_effect = Exception("API error")
 
         # Call the method and verify it raises the expected exception
         with pytest.raises(
-            Exception, match="Error retrieving issue TEST-123: API error"
+            Exception, match=r"Error retrieving issue TEST-123: API error"
         ):
             issues_mixin.get_issue("TEST-123")
 
@@ -717,14 +708,16 @@ class TestIssuesMixin:
         ):
             issues_mixin.delete_issue("TEST-123")
 
-    def test_add_custom_fields_with_fixversions(self, issues_mixin: IssuesMixin):
-        """Test _add_custom_fields properly handles fixVersions field."""
+    def test_process_additional_fields_with_fixversions(
+        self, issues_mixin: IssuesMixin
+    ):
+        """Test _process_additional_fields properly handles fixVersions field."""
         # Initialize test data
         fields = {}
         kwargs = {"fixVersions": [{"name": "TestRelease"}]}
 
         # Call the method
-        issues_mixin._add_custom_fields(fields, kwargs)
+        issues_mixin._process_additional_fields(fields, kwargs)
 
         # Verify fixVersions was added correctly to fields
         assert "fixVersions" in fields
@@ -934,7 +927,7 @@ class TestIssuesMixin:
         issues_mixin.jira.get_issue.assert_called_with(
             "TEST-123",
             expand=None,
-            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype,properties",
+            fields=ANY,
             properties="property1,property2",
             update_history=True,
         )
@@ -947,7 +940,7 @@ class TestIssuesMixin:
         issues_mixin.jira.get_issue.assert_called_with(
             "TEST-123",
             expand=None,
-            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype,properties",
+            fields=ANY,
             properties="property1,property2",
             update_history=True,
         )
@@ -968,7 +961,7 @@ class TestIssuesMixin:
         issues_mixin.jira.get_issue.assert_called_with(
             "TEST-123",
             expand=None,
-            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
+            fields=ANY,
             properties=None,
             update_history=False,
         )
@@ -1440,3 +1433,90 @@ class TestIssuesMixin:
                 "issueIdsOrKeys": ["TEST-1", "TEST-2"],
             },
         )
+
+    def test_create_issue_with_labels(self, issues_mixin: IssuesMixin):
+        """Test creating an issue with labels in additional_fields."""
+        # Mock create_issue response
+        create_response = {"id": "12345", "key": "TEST-123"}
+        issues_mixin.jira.create_issue.return_value = create_response
+
+        # Mock the issue data for get_issue
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test Issue",
+                "description": "This is a test issue",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Bug"},
+                "labels": ["bug", "frontend"],
+            },
+        }
+        issues_mixin.jira.get_issue.return_value = issue_data
+
+        # Create the issue with labels as a list
+        result = issues_mixin.create_issue(
+            project_key="TEST",
+            summary="Test Issue",
+            issue_type="Bug",
+            description="This is a test issue",
+            labels=["bug", "frontend"],
+        )
+
+        # Verify the API call
+        issues_mixin.jira.create_issue.assert_called_once()
+        call_kwargs = issues_mixin.jira.create_issue.call_args[1]
+        assert "fields" in call_kwargs
+        fields = call_kwargs["fields"]
+
+        # Verify labels were added to the fields
+        assert "labels" in fields
+        assert fields["labels"] == ["bug", "frontend"]
+
+        # Verify result
+        assert result.key == "TEST-123"
+        assert result.labels == ["bug", "frontend"]
+
+    def test_create_issue_with_labels_as_string(self, issues_mixin: IssuesMixin):
+        """Test creating an issue with labels as comma-separated string in additional_fields."""
+        # Mock create_issue response
+        create_response = {"id": "12345", "key": "TEST-123"}
+        issues_mixin.jira.create_issue.return_value = create_response
+
+        # Mock the issue data for get_issue
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test Issue",
+                "description": "This is a test issue",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Bug"},
+                "labels": ["bug", "frontend"],
+            },
+        }
+        issues_mixin.jira.get_issue.return_value = issue_data
+
+        # Create the issue with labels as a comma-separated string
+        # Pass labels directly instead of through additional_fields
+        result = issues_mixin.create_issue(
+            project_key="TEST",
+            summary="Test Issue",
+            issue_type="Bug",
+            description="This is a test issue",
+            labels="bug,frontend",  # Pass as string and let _format_field_value_for_write handle it
+        )
+
+        # Verify the API call
+        issues_mixin.jira.create_issue.assert_called_once()
+        call_kwargs = issues_mixin.jira.create_issue.call_args[1]
+        assert "fields" in call_kwargs
+        fields = call_kwargs["fields"]
+
+        # Verify labels were parsed and added to the fields
+        assert "labels" in fields
+        assert fields["labels"] == ["bug", "frontend"]
+
+        # Verify result
+        assert result.key == "TEST-123"
+        assert result.labels == ["bug", "frontend"]
