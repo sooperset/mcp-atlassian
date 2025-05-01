@@ -317,9 +317,10 @@ class TestAttachmentsMixin:
     def test_download_issue_attachments_issue_not_found(
         self, attachments_mixin: AttachmentsMixin
     ):
-        """Test download when issue cannot be retrieved."""
+        """Test download when issue cannot be retrieved (should raise TypeError)."""
         attachments_mixin.jira.issue.return_value = None
 
+        # The refactored code now includes type checks and raises TypeError if jira.issue returns None
         with pytest.raises(
             TypeError,
             match="Unexpected return value type from `jira.issue`: <class 'NoneType'>",
