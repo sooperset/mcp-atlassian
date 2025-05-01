@@ -418,12 +418,12 @@ class TestConfluencePage:
         page_data = {
             "id": "123456",
             "title": "Test Page",
-            "_expandable": {
-                "space": "/rest/api/space/TEST"
-            }
+            "_expandable": {"space": "/rest/api/space/TEST"},
         }
 
-        page = ConfluencePage.from_api_response(page_data, base_url="https://confluence.example.com")
+        page = ConfluencePage.from_api_response(
+            page_data, base_url="https://confluence.example.com", is_cloud=True
+        )
 
         assert page.space is not None
         assert page.space.key == "TEST"
@@ -432,12 +432,11 @@ class TestConfluencePage:
 
     def test_from_api_response_with_missing_space(self):
         """Test creating a ConfluencePage with no space information."""
-        page_data = {
-            "id": "123456",
-            "title": "Test Page"
-        }
+        page_data = {"id": "123456", "title": "Test Page"}
 
-        page = ConfluencePage.from_api_response(page_data, base_url="https://confluence.example.com")
+        page = ConfluencePage.from_api_response(
+            page_data, base_url="https://confluence.example.com", is_cloud=True
+        )
 
         assert page.space is not None
         assert page.space.key == ""  # Default from ConfluenceSpace
@@ -448,10 +447,12 @@ class TestConfluencePage:
         page_data = {
             "id": "123456",
             "title": "Test Page",
-            "space": {}  # Empty space data
+            "space": {},  # Empty space data
         }
 
-        page = ConfluencePage.from_api_response(page_data, base_url="https://confluence.example.com")
+        page = ConfluencePage.from_api_response(
+            page_data, base_url="https://confluence.example.com", is_cloud=True
+        )
 
         assert page.space is not None
         assert page.space.key == ""  # Default from ConfluenceSpace
@@ -462,7 +463,7 @@ class TestConfluencePage:
         page_data = {
             "id": "123456",
             "title": "Test Page",
-            "space": {"key": "TEST", "name": "Test Space"}
+            "space": {"key": "TEST", "name": "Test Space"},
         }
 
         page = ConfluencePage.from_api_response(page_data)  # No base_url provided
@@ -476,13 +477,11 @@ class TestConfluencePage:
         page_data = {
             "id": "123456",
             "title": "Test Page",
-            "space": {"key": "TEST", "name": "Test Space"}
+            "space": {"key": "TEST", "name": "Test Space"},
         }
 
         page = ConfluencePage.from_api_response(
-            page_data, 
-            base_url="https://example.atlassian.net/wiki",
-            is_cloud=True
+            page_data, base_url="https://example.atlassian.net/wiki", is_cloud=True
         )
 
         assert page.url == "https://example.atlassian.net/wiki/spaces/TEST/pages/123456"
@@ -492,16 +491,17 @@ class TestConfluencePage:
         page_data = {
             "id": "123456",
             "title": "Test Page",
-            "space": {"key": "TEST", "name": "Test Space"}
+            "space": {"key": "TEST", "name": "Test Space"},
         }
 
         page = ConfluencePage.from_api_response(
-            page_data, 
-            base_url="https://wiki.corp.example.com",
-            is_cloud=False
+            page_data, base_url="https://wiki.corp.example.com", is_cloud=False
         )
 
-        assert page.url == "https://wiki.corp.example.com/pages/viewpage.action?pageId=123456"
+        assert (
+            page.url
+            == "https://wiki.corp.example.com/pages/viewpage.action?pageId=123456"
+        )
 
 
 class TestConfluenceSearchResult:
