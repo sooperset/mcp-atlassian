@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 from .utils.logging import setup_logging
 
-__version__ = "0.8.4"
+__version__ = "0.9.0"
 
 # Initialize logging with appropriate level
 logging_level = logging.WARNING

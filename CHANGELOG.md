@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## [0.9.0] - 2025-05-01
+
+### Added
+- Added tool filtering capability via `--enabled-tools` flag and `ENABLED_TOOLS` environment variable (#354)
+- Added Confluence page labels support with new tools: `confluence_get_labels` and `confluence_add_label` (#328)
+- Added `jira_batch_get_changelogs` tool and pagination helper for efficiently fetching issue changelog data (#346)
+
+### Changed
+- Improved on-premise Confluence URL handling based on whether the instance is Cloud or Server/Data Center (#350)
+- Refactored Jira code to improve quality and reduce technical debt, including better type safety and code organization (#345)
+- Adopted centralized field formatting with new `_format_field_value_for_write` mechanism for Jira issue field handling (#357)
+
+### Fixed
+- Fixed labels not being correctly applied during Jira issue creation with improved field handling (#357)
+- Fixed Jira Cloud searches by using `enhanced_jql` for Cloud and fixing startAt TypeErrors in pagination (#356)
+- Fixed SSL verification environment variables being respected in Docker environment (#340)
+- Corrected jira_update_issue example for assignee format (#339)
+
 ## [0.8.4] - 2025-04-26
 
 ### Added
