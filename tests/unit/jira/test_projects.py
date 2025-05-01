@@ -8,6 +8,7 @@ import pytest
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.jira.projects import ProjectsMixin
+from mcp_atlassian.models.jira.issue import JiraIssue
 from mcp_atlassian.models.jira.search import JiraSearchResult
 
 
@@ -153,18 +154,21 @@ def test_get_project_exception(projects_mixin: ProjectsMixin):
 def test_get_project_issues(projects_mixin: ProjectsMixin):
     """Test get_project_issues method."""
     # Setup mock response
-    projects_mixin.jira.jql.return_value = {"issues": []}
+    # Mock the method that is actually called: search_issues
+    # It should return a JiraSearchResult object
+    mock_search_result = JiraSearchResult(
+        issues=[], total=0, start_at=0, max_results=50
+    )
+    projects_mixin.search_issues = MagicMock(return_value=mock_search_result)
 
     # Call the method
     result = projects_mixin.get_project_issues("TEST")
 
-    # Verify JQL query
-    projects_mixin.jira.jql.assert_called_once_with(
+    # Verify search_issues was called, not jira.jql
+    projects_mixin.search_issues.assert_called_once_with(
         "project = TEST",
-        fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
         start=0,
         limit=50,
-        expand=None,
     )
     assert isinstance(result, JiraSearchResult)
     assert len(result.issues) == 0
@@ -172,34 +176,34 @@ def test_get_project_issues(projects_mixin: ProjectsMixin):
 
 def test_get_project_issues_with_start(projects_mixin: ProjectsMixin) -> None:
     """Test getting project issues with a start index."""
-    projects_mixin.jira.jql.return_value = {
-        "issues": [
-            {
-                "key": "PROJ-2",
-                "fields": {"summary": "Issue 2"},
-                "self": "https://test.atlassian.net/rest/api/2/issue/10002",
-            }
-        ],
-        "total": 1,
-        "startAt": 3,
-        "maxResults": 5,
-    }
+    # Mock search_issues to return a result reflecting pagination
+    mock_issue = JiraIssue(key="PROJ-2", summary="Issue 2", id="10002")
+    mock_search_result = JiraSearchResult(
+        issues=[mock_issue],
+        total=1,
+        start_at=3,
+        max_results=5,
+    )
+    projects_mixin.search_issues = MagicMock(return_value=mock_search_result)
+
     project_key = "PROJ"
     start_index = 3
 
+    # Call the method
     result = projects_mixin.get_project_issues(project_key, start=start_index, limit=5)
 
     assert len(result.issues) == 1
-    assert result.start_at == 3
-    assert result.max_results == 5
-    assert result.total == 1
+    # Note: Assertions on start_at, max_results, total should be based on the
+    # JiraSearchResult object returned by the mocked search_issues
+    assert result.start_at == 3  # Comes from the mocked JiraSearchResult
+    assert result.max_results == 5  # Comes from the mocked JiraSearchResult
+    assert result.total == 1  # Comes from the mocked JiraSearchResult
 
-    projects_mixin.jira.jql.assert_called_once_with(
+    # Verify search_issues was called with the correct arguments
+    projects_mixin.search_issues.assert_called_once_with(
         f"project = {project_key}",
-        fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
         start=start_index,
         limit=5,
-        expand=None,
     )
 
 
@@ -505,30 +509,38 @@ def test_get_project_issues_with_search_mixin(projects_mixin: ProjectsMixin):
 def test_get_project_issues_invalid_response(projects_mixin: ProjectsMixin):
     """Test get_project_issues method with invalid response."""
 
-    # No issues field
-    projects_mixin.jira.jql.return_value = {"issues": []}
+    # Mock search_issues to simulate an empty result scenario
+    mock_search_result = JiraSearchResult(
+        issues=[], total=0, start_at=0, max_results=50
+    )
+    projects_mixin.search_issues = MagicMock(return_value=mock_search_result)
 
     result = projects_mixin.get_project_issues("PROJ1")
     assert result.issues == []
-    projects_mixin.jira.jql.assert_called_once()
+    projects_mixin.search_issues.assert_called_once()
 
-    # Non-dict response
-    projects_mixin.jira.jql.reset_mock()
-    projects_mixin.jira.jql.return_value = "not a dict"
+    # Reset mock and test with non-JiraSearchResult response (this would be handled by the except block)
+    projects_mixin.search_issues.reset_mock()
+    projects_mixin.search_issues = MagicMock(
+        side_effect=TypeError("Not a JiraSearchResult")
+    )
 
     result = projects_mixin.get_project_issues("PROJ1")
     assert result.issues == []
-    projects_mixin.jira.jql.assert_called_once()
+    projects_mixin.search_issues.assert_called_once()
 
 
 def test_get_project_issues_exception(projects_mixin: ProjectsMixin):
     """Test get_project_issues method with exception."""
 
-    projects_mixin.jira.jql.side_effect = Exception("API error")
+    # Mock search_issues to raise an exception, simulating an API error during the search
+    projects_mixin.search_issues = MagicMock(side_effect=Exception("API error"))
 
     result = projects_mixin.get_project_issues("PROJ1")
     assert result.issues == []
-    projects_mixin.jira.jql.assert_called_once()
+    # Verify that search_issues was called, even though it raised an exception
+    # The except block in get_project_issues catches it and returns an empty result
+    projects_mixin.search_issues.assert_called_once()
 
 
 def test_get_project_keys(

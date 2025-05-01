@@ -1,6 +1,6 @@
 """Tests for the Jira Search mixin."""
 
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import pytest
 import requests
@@ -21,7 +21,95 @@ class TestSearchMixin:
         # Mock methods that are typically provided by other mixins
         mixin._clean_text = MagicMock(side_effect=lambda text: text if text else "")
 
+        # Set config with is_cloud=False by default (Server/DC)
+        mixin.config = MagicMock()
+        mixin.config.is_cloud = False
+        mixin.config.projects_filter = None
+        mixin.config.url = "https://example.atlassian.net"
+
         return mixin
+
+    @pytest.fixture
+    def mock_issues_response(self) -> dict:
+        """Create a mock Jira issues response for testing."""
+        return {
+            "issues": [
+                {
+                    "id": "10001",
+                    "key": "TEST-123",
+                    "fields": {
+                        "summary": "Test issue",
+                        "issuetype": {"name": "Bug"},
+                        "status": {"name": "Open"},
+                        "description": "Test description",
+                        "created": "2024-01-01T10:00:00.000+0000",
+                        "updated": "2024-01-01T11:00:00.000+0000",
+                    },
+                }
+            ],
+            "total": 1,
+            "startAt": 0,
+            "maxResults": 50,
+        }
+
+    @pytest.mark.parametrize(
+        "is_cloud, expected_method_name",
+        [
+            (True, "enhanced_jql"),  # Cloud scenario
+            (False, "jql"),  # Server/DC scenario
+        ],
+    )
+    def test_search_issues_calls_correct_method(
+        self,
+        search_mixin: SearchMixin,
+        mock_issues_response,
+        is_cloud,
+        expected_method_name,
+    ):
+        """Test that the correct Jira API method is called based on Cloud/Server setting."""
+        # Setup: Mock config.is_cloud
+        search_mixin.config.is_cloud = is_cloud
+        search_mixin.config.projects_filter = None  # No filter for this test
+        search_mixin.config.url = (
+            "https://test.example.com"  # Model creation needs this
+        )
+
+        # Setup: Mock response for both API methods
+        search_mixin.jira.enhanced_jql = MagicMock(return_value=mock_issues_response)
+        search_mixin.jira.jql = MagicMock(return_value=mock_issues_response)
+
+        # Determine other method name for assertion
+        other_method_name = (
+            "jql" if expected_method_name == "enhanced_jql" else "enhanced_jql"
+        )
+
+        # Act
+        jql_query = "project = TEST"
+        result = search_mixin.search_issues(jql_query, limit=10, start=0)
+
+        # Assert: Basic result verification
+        assert isinstance(result, JiraSearchResult)
+        assert len(result.issues) > 0  # Based on mocked response
+
+        # Assert: Correct method call verification
+        expected_method_mock = getattr(search_mixin.jira, expected_method_name)
+
+        # Define expected kwargs based on whether it's Cloud or Server
+        expected_kwargs = {
+            "fields": "summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
+            "limit": 10,
+            "expand": None,
+        }
+
+        # Add start param only for Server/DC
+        if not is_cloud:
+            expected_kwargs["start"] = 0
+
+        expected_method_mock.assert_called_once_with(jql_query, **expected_kwargs)
+
+        # Assert: Other method was not called
+        other_method_mock = getattr(search_mixin.jira, other_method_name)
+        other_method_mock.assert_not_called()
 
     def test_search_issues_basic(self, search_mixin: SearchMixin):
         """Test basic search functionality."""
@@ -47,7 +135,6 @@ class TestSearchMixin:
             "maxResults": 50,
         }
         search_mixin.jira.jql.return_value = mock_issues
-        search_mixin.config.url = "https://example.atlassian.net"
 
         # Call the method
         result = search_mixin.search_issues("project = TEST")
@@ -346,38 +433,6 @@ class TestSearchMixin:
         assert "assignee" in simplified
         assert simplified["assignee"]["display_name"] == "Test User"
 
-    def test_search_issues_with_start(self, search_mixin: SearchMixin) -> None:
-        """Test searching issues with a start index."""
-        search_mixin.jira.jql.return_value = {
-            "issues": [
-                {
-                    "key": "PROJ-1",
-                    "fields": {"summary": "Issue 1"},
-                    "self": "https://test.atlassian.net/rest/api/2/issue/10001",
-                }
-            ],
-            "total": 1,
-            "startAt": 5,
-            "maxResults": 10,
-        }
-        jql = "project = PROJ"
-        start_index = 5
-
-        result = search_mixin.search_issues(jql, start=start_index, limit=10)
-
-        assert len(result.issues) == 1
-        assert result.start_at == 5
-        assert result.max_results == 10
-        assert result.total == 1
-
-        search_mixin.jira.jql.assert_called_once_with(
-            jql,
-            fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
-            start=start_index,
-            limit=10,
-            expand=None,
-        )
-
     def test_get_board_issues(self, search_mixin: SearchMixin):
         """Test get_board_issues method."""
         mock_issues = {
@@ -507,3 +562,104 @@ class TestSearchMixin:
         with pytest.raises(Exception) as e:
             search_mixin.get_sprint_issues("10001")
         assert "API Error content" in str(e.value)
+
+    @pytest.mark.parametrize("is_cloud", [True, False])
+    def test_search_issues_with_projects_filter_jql_construction(
+        self, search_mixin: SearchMixin, mock_issues_response, is_cloud
+    ):
+        """Test that JQL string is correctly constructed when projects_filter is provided."""
+        # Setup
+        search_mixin.config.is_cloud = is_cloud
+        search_mixin.config.projects_filter = (
+            None  # Don't use config filter for this test
+        )
+        search_mixin.config.url = "https://test.example.com"
+
+        # Setup mock response for both API methods
+        search_mixin.jira.enhanced_jql = MagicMock(return_value=mock_issues_response)
+        search_mixin.jira.jql = MagicMock(return_value=mock_issues_response)
+        api_method_mock = getattr(
+            search_mixin.jira, "enhanced_jql" if is_cloud else "jql"
+        )
+
+        # Act: Single project filter
+        search_mixin.search_issues("text ~ 'test'", projects_filter="TEST")
+
+        # Define expected kwargs based on is_cloud
+        expected_kwargs = {
+            "fields": ANY,
+            "limit": ANY,
+            "expand": ANY,
+        }
+        # Add start parameter only for Server/DC
+        if not is_cloud:
+            expected_kwargs["start"] = ANY
+
+        # Assert: JQL verification
+        api_method_mock.assert_called_with(
+            "(text ~ 'test') AND project = TEST",  # Check constructed JQL
+            **expected_kwargs,
+        )
+
+        # Reset mock for next call
+        api_method_mock.reset_mock()
+
+        # Act: Multiple projects filter
+        search_mixin.search_issues("text ~ 'test'", projects_filter="TEST, DEV")
+        # Assert: JQL verification
+        api_method_mock.assert_called_with(
+            '(text ~ \'test\') AND project IN ("TEST", "DEV")',  # Check constructed JQL
+            **expected_kwargs,
+        )
+
+        # Reset mock for next call
+        api_method_mock.reset_mock()
+
+        # Act: Call with both JQL and filter
+        search_mixin.search_issues("project = OTHER", projects_filter="TEST")
+        # Assert: JQL verification (existing JQL has priority)
+        api_method_mock.assert_called_with("project = OTHER", **expected_kwargs)
+
+    @pytest.mark.parametrize("is_cloud", [True, False])
+    def test_search_issues_with_config_projects_filter_jql_construction(
+        self, search_mixin: SearchMixin, mock_issues_response, is_cloud
+    ):
+        """Test that JQL string is correctly constructed when config.projects_filter is used."""
+        # Setup
+        search_mixin.config.is_cloud = is_cloud
+        search_mixin.config.projects_filter = "CONF1,CONF2"  # Set config filter
+        search_mixin.config.url = "https://test.example.com"
+
+        # Setup mock response for both API methods
+        search_mixin.jira.enhanced_jql = MagicMock(return_value=mock_issues_response)
+        search_mixin.jira.jql = MagicMock(return_value=mock_issues_response)
+        api_method_mock = getattr(
+            search_mixin.jira, "enhanced_jql" if is_cloud else "jql"
+        )
+
+        # Define expected kwargs based on is_cloud
+        expected_kwargs = {
+            "fields": ANY,
+            "limit": ANY,
+            "expand": ANY,
+        }
+        # Add start parameter only for Server/DC
+        if not is_cloud:
+            expected_kwargs["start"] = ANY
+
+        # Act: Use config filter
+        search_mixin.search_issues("text ~ 'test'")
+        # Assert: JQL verification
+        api_method_mock.assert_called_with(
+            '(text ~ \'test\') AND project IN ("CONF1", "CONF2")', **expected_kwargs
+        )
+
+        # Reset mock for next call
+        api_method_mock.reset_mock()
+
+        # Act: Override config filter with parameter
+        search_mixin.search_issues("text ~ 'test'", projects_filter="OVERRIDE")
+        # Assert: JQL verification
+        api_method_mock.assert_called_with(
+            "(text ~ 'test') AND project = OVERRIDE", **expected_kwargs
+        )
