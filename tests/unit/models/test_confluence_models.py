@@ -460,6 +460,96 @@ class TestConfluencePage:
         # URL should be included
         assert "url" in simplified
 
+    def test_from_api_response_with_expandable_space(self):
+        """Test creating a ConfluencePage from data with space info in _expandable."""
+        page_data = {
+            "id": "123456",
+            "title": "Test Page",
+            "_expandable": {"space": "/rest/api/space/TEST"},
+        }
+
+        page = ConfluencePage.from_api_response(
+            page_data, base_url="https://confluence.example.com", is_cloud=True
+        )
+
+        assert page.space is not None
+        assert page.space.key == "TEST"
+        assert page.space.name == "Space TEST"
+        assert page.url == "https://confluence.example.com/spaces/TEST/pages/123456"
+
+    def test_from_api_response_with_missing_space(self):
+        """Test creating a ConfluencePage with no space information."""
+        page_data = {"id": "123456", "title": "Test Page"}
+
+        page = ConfluencePage.from_api_response(
+            page_data, base_url="https://confluence.example.com", is_cloud=True
+        )
+
+        assert page.space is not None
+        assert page.space.key == ""  # Default from ConfluenceSpace
+        assert page.url == "https://confluence.example.com/spaces/unknown/pages/123456"
+
+    def test_from_api_response_with_empty_space_data(self):
+        """Test creating a ConfluencePage with empty space data."""
+        page_data = {
+            "id": "123456",
+            "title": "Test Page",
+            "space": {},  # Empty space data
+        }
+
+        page = ConfluencePage.from_api_response(
+            page_data, base_url="https://confluence.example.com", is_cloud=True
+        )
+
+        assert page.space is not None
+        assert page.space.key == ""  # Default from ConfluenceSpace
+        assert page.url == "https://confluence.example.com/spaces/unknown/pages/123456"
+
+    def test_from_api_response_url_construction_without_base_url(self):
+        """Test that URL is None when base_url is not provided."""
+        page_data = {
+            "id": "123456",
+            "title": "Test Page",
+            "space": {"key": "TEST", "name": "Test Space"},
+        }
+
+        page = ConfluencePage.from_api_response(page_data)  # No base_url provided
+
+        assert page.url is None
+        assert page.space is not None
+        assert page.space.key == "TEST"
+
+    def test_url_construction_cloud_format(self):
+        """Test URL construction in cloud format."""
+        page_data = {
+            "id": "123456",
+            "title": "Test Page",
+            "space": {"key": "TEST", "name": "Test Space"},
+        }
+
+        page = ConfluencePage.from_api_response(
+            page_data, base_url="https://example.atlassian.net/wiki", is_cloud=True
+        )
+
+        assert page.url == "https://example.atlassian.net/wiki/spaces/TEST/pages/123456"
+
+    def test_url_construction_server_format(self):
+        """Test URL construction in server format."""
+        page_data = {
+            "id": "123456",
+            "title": "Test Page",
+            "space": {"key": "TEST", "name": "Test Space"},
+        }
+
+        page = ConfluencePage.from_api_response(
+            page_data, base_url="https://wiki.corp.example.com", is_cloud=False
+        )
+
+        assert (
+            page.url
+            == "https://wiki.corp.example.com/pages/viewpage.action?pageId=123456"
+        )
+
 
 class TestConfluenceSearchResult:
     """Tests for the ConfluenceSearchResult model."""

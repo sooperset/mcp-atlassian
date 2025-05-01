@@ -362,7 +362,9 @@ For Jira Server/DC, use:
 ||`jira_get_board_issues`|
 ||`jira_get_sprints_from_board`|
 ||`jira_get_sprint_issues`|
+||`jira_create_sprint`|
 ||`jira_update_sprint`|
+||`jira_get_issue_link_types`|
 ||`jira_create_issue_link`|
 ||`jira_remove_issue_link`|
 

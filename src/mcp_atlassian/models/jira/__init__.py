@@ -18,6 +18,7 @@ from .common import (
     JiraUser,
 )
 from .issue import JiraIssue
+from .link import JiraIssueLinkType
 from .project import JiraProject
 from .search import JiraSearchResult
 from .workflow import JiraTransition
@@ -42,4 +43,5 @@ __all__ = [
     "JiraSprint",
     "JiraIssue",
     "JiraSearchResult",
+    "JiraIssueLinkType",
 ]

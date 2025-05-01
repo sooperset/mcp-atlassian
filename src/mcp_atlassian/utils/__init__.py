@@ -5,6 +5,7 @@ This package provides various utility functions used throughout the codebase.
 
 # Re-export from ssl module
 # Re-export from io module
+from .dates import parse_iso8601_date
 from .io import is_read_only_mode
 
 # Export new logging utilities
@@ -21,4 +22,5 @@ __all__ = [
     "is_atlassian_cloud_url",
     "is_read_only_mode",
     "setup_logging",
+    "parse_iso8601_date",
 ]

@@ -53,5 +53,7 @@ repos:
             'beautifulsoup4',
             'httpx',
             'python-dotenv',
-            'markdownify'
+            'markdownify',
+            'python-dateutil',
+            'types-python-dateutil',
         ]

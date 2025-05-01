@@ -799,6 +799,41 @@ async def list_tools() -> list[Tool]:
                     },
                 ),
                 Tool(
+                    name="jira_create_sprint",
+                    description="Create Jira sprint for a board",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "board_id": {
+                                "type": "string",
+                                "description": "The id of board (e.g., '1000')",
+                            },
+                            "sprint_name": {
+                                "type": "string",
+                                "description": "Name of the sprint (e.g., 'Sprint 1')",
+                            },
+                            "start_date": {
+                                "type": "string",
+                                "description": "Start time for sprint (ISO 8601 format)",
+                            },
+                            "end_date": {
+                                "type": "string",
+                                "description": "End time for sprint (ISO 8601 format)",
+                            },
+                            "goal": {
+                                "type": "string",
+                                "description": "Goal of the sprint",
+                            },
+                        },
+                        "required": [
+                            "board_id",
+                            "sprint_name",
+                            "start_date",
+                            "end_date",
+                        ],
+                    },
+                ),
+                Tool(
                     name="jira_get_sprint_issues",
                     description="Get jira issues from sprint",
                     inputSchema={
@@ -978,7 +1013,7 @@ async def list_tools() -> list[Tool]:
                                     "description": (
                                         "A valid JSON object of fields to update as a string. "
                                         'Example: \'{"summary": "New title", "description": "Updated description", '
-                                        '"priority": {"name": "High"}, "assignee": {"name": "john.doe"}}\''
+                                        '"priority": {"name": "High"}, "assignee": "john.doe"}\''
                                     ),
                                 },
                                 "additional_fields": {
@@ -1136,6 +1171,15 @@ async def list_tools() -> list[Tool]:
                                 },
                             },
                             "required": ["link_id"],
+                        },
+                    ),
+                    Tool(
+                        name="jira_get_link_types",
+                        description="Get all available issue link types",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {},
+                            "required": [],
                         },
                     ),
                     Tool(
@@ -1549,7 +1593,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 ]
 
         # Jira operations
-        elif name == "jira_get_issue" and ctx and ctx.jira:
+        elif name == "jira_get_issue":
             if not ctx or not ctx.jira:
                 raise ValueError("Jira is not configured.")
 
@@ -1580,7 +1624,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "jira_search" and ctx and ctx.jira:
+        elif name == "jira_search":
             if not ctx or not ctx.jira:
                 raise ValueError("Jira is not configured.")
 
@@ -1665,7 +1709,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "jira_get_epic_issues" and ctx and ctx.jira:
+        elif name == "jira_get_epic_issues":
             if not ctx or not ctx.jira:
                 raise ValueError("Jira is not configured.")
 
@@ -1696,7 +1740,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "jira_get_transitions" and ctx and ctx.jira:
+        elif name == "jira_get_transitions":
             if not ctx or not ctx.jira:
                 raise ValueError("Jira is not configured.")
 
@@ -1725,7 +1769,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "jira_get_worklog" and ctx and ctx.jira:
+        elif name == "jira_get_worklog":
             if not ctx or not ctx.jira:
                 raise ValueError("Jira is not configured.")
 
@@ -1742,7 +1786,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "jira_download_attachments" and ctx and ctx.jira:
+        elif name == "jira_download_attachments":
             if not ctx or not ctx.jira:
                 raise ValueError("Jira is not configured.")
 
@@ -1765,7 +1809,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "jira_get_agile_boards" and ctx and ctx.jira:
+        elif name == "jira_get_agile_boards":
             if not ctx or not ctx.jira:
                 raise ValueError("Jira is not configured.")
 
@@ -1794,7 +1838,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "jira_get_board_issues" and ctx and ctx.jira:
+        elif name == "jira_get_board_issues":
             if not ctx or not ctx.jira:
                 raise ValueError("Jira is not configured.")
 
@@ -1833,7 +1877,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "jira_get_sprints_from_board" and ctx and ctx.jira:
+        elif name == "jira_get_sprints_from_board":
             if not ctx or not ctx.jira:
                 raise ValueError("Jira is not configured.")
 
@@ -1857,7 +1901,34 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
 
-        elif name == "jira_get_sprint_issues" and ctx and ctx.jira:
+        elif name == "jira_create_sprint":
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            board_id = arguments.get("board_id")
+            sprint_name = arguments.get("sprint_name")
+            goal = arguments.get("goal")
+            start_date = arguments.get("start_date")
+            end_date = arguments.get("end_date")
+
+            sprint = ctx.jira.create_sprint(
+                board_id=board_id,
+                sprint_name=sprint_name,
+                goal=goal,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        sprint.to_simplified_dict(), indent=2, ensure_ascii=False
+                    ),
+                )
+            ]
+
+        elif name == "jira_get_sprint_issues":
             if not ctx or not ctx.jira:
                 raise ValueError("Jira is not configured.")
 
@@ -2426,6 +2497,37 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 ]
             except Exception as e:
                 error_msg = f"Error removing issue link: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "jira_get_link_types":
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            try:
+                # Get all issue link types
+                link_types = ctx.jira.get_issue_link_types()
+
+                # Format the response
+                formatted_link_types = [
+                    link_type.to_simplified_dict() for link_type in link_types
+                ]
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(
+                            formatted_link_types, indent=2, ensure_ascii=False
+                        ),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error getting issue link types: {str(e)}"
                 logger.error(error_msg)
                 return [
                     TextContent(

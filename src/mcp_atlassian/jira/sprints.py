@@ -1,11 +1,13 @@
 """Module for Jira sprints operations."""
 
+import datetime
 import logging
 from typing import Any
 
 import requests
 
 from ..models.jira import JiraSprint
+from ..utils.dates import parse_iso8601_date
 from .client import JiraClient
 
 logger = logging.getLogger("mcp-jira")
@@ -121,3 +123,63 @@ class SprintsMixin(JiraClient):
         except Exception as e:
             logger.error(f"Error updating sprint: {str(e)}")
             return None
+
+    def create_sprint(
+        self,
+        board_id: str,
+        sprint_name: str,
+        start_date: str,
+        end_date: str,
+        goal: str = None,
+    ) -> JiraSprint:
+        """
+        Create a new sprint.
+
+        Args:
+            board_id: Board ID
+            sprint_name: Sprint name
+            start_date: Start date in ISO format
+            end_date: End date in ISO format
+            goal: Sprint goal
+
+        Returns:
+            Created sprint details
+        """
+
+        if not start_date:
+            raise ValueError("Start date is required.")
+
+        # validate start date format
+        parsed_start_date = parse_iso8601_date(start_date)
+
+        if parsed_start_date is None:
+            raise ValueError("Start date is required.")
+
+        # validate start date is not in the past
+        if parsed_start_date < datetime.datetime.now(datetime.timezone.utc):
+            raise ValueError("Start date cannot be in the past.")
+
+        # validate end date format
+        if end_date:
+            parsed_end_date = parse_iso8601_date(end_date)
+            if parsed_end_date is not None and parsed_start_date >= parsed_end_date:
+                raise ValueError("Start date must be before end date.")
+
+        try:
+            sprint = self.jira.create_sprint(
+                name=sprint_name,
+                board_id=board_id,
+                start_date=start_date,
+                end_date=end_date,
+                goal=goal,
+            )
+
+            logger.info(f"Sprint created: {sprint}")
+
+            return JiraSprint.from_api_response(sprint)
+        except requests.HTTPError as e:
+            logger.error(f"Error creating sprint: {str(e.response.content)}")
+            raise
+        except Exception as e:
+            logger.error(f"Error creating sprint: {str(e)}")
+            raise

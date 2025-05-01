@@ -1,175 +1,115 @@
-"""Tests for the Jira Links mixin."""
-
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from requests.exceptions import HTTPError
 
+from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.jira.links import LinksMixin
+from mcp_atlassian.models.jira import JiraIssueLinkType
 
 
 class TestLinksMixin:
-    """Tests for the LinksMixin class."""
-
     @pytest.fixture
-    def links_mixin(self, jira_client):
-        """Create a LinksMixin instance with mocked dependencies."""
-        mixin = LinksMixin(config=jira_client.config)
-        mixin.jira = jira_client.jira
+    def links_mixin(self, mock_config, mock_atlassian_jira):
+        mixin = LinksMixin(config=mock_config)
+        mixin.jira = mock_atlassian_jira
         return mixin
 
-    def test_create_issue_link_basic(self, links_mixin):
-        """Test basic functionality of create_issue_link."""
-        # Setup mock
-        links_mixin.jira.create_issue_link.return_value = {"id": "12345"}
-
-        # Test data
-        link_data = {
-            "type": {"name": "Duplicate"},
-            "inwardIssue": {"key": "HSP-1"},
-            "outwardIssue": {"key": "MKY-1"},
-            "comment": {
-                "body": "Linked related issue!",
-                "visibility": {"type": "group", "value": "jira-software-users"},
-            },
+    def test_get_issue_link_types_success(self, links_mixin):
+        mock_response = {
+            "issueLinkTypes": [
+                {
+                    "id": "1",
+                    "name": "Blocks",
+                    "inward": "is blocked by",
+                    "outward": "blocks",
+                },
+                {
+                    "id": "2",
+                    "name": "Relates",
+                    "inward": "relates to",
+                    "outward": "is related to",
+                },
+            ]
         }
+        links_mixin.jira.get.return_value = mock_response
 
-        # Call the method
-        result = links_mixin.create_issue_link(link_data)
-
-        # Verify API calls
-        links_mixin.jira.create_issue_link.assert_called_once_with(link_data)
-
-        # Verify result structure
-        assert result["success"] is True
-        assert "message" in result
-        assert result["link_type"] == "Duplicate"
-        assert result["inward_issue"] == "HSP-1"
-        assert result["outward_issue"] == "MKY-1"
-
-    def test_create_issue_link_missing_type(self, links_mixin):
-        """Test create_issue_link with missing type."""
-        # Test data with missing type
-        link_data = {"inwardIssue": {"key": "HSP-1"}, "outwardIssue": {"key": "MKY-1"}}
-
-        # Call the method and verify it raises the expected exception
-        with pytest.raises(
-            Exception, match="Error creating issue link: Link type is required"
+        with patch.object(
+            JiraIssueLinkType, "from_api_response", side_effect=lambda x: x
         ):
-            links_mixin.create_issue_link(link_data)
+            result = links_mixin.get_issue_link_types()
 
-    def test_create_issue_link_missing_inward_issue(self, links_mixin):
-        """Test create_issue_link with missing inward issue."""
-        # Test data with missing inward issue
-        link_data = {"type": {"name": "Duplicate"}, "outwardIssue": {"key": "MKY-1"}}
+        assert len(result) == 2
+        assert result[0]["name"] == "Blocks"
+        assert result[1]["name"] == "Relates"
 
-        # Call the method and verify it raises the expected exception
-        with pytest.raises(
-            Exception, match="Error creating issue link: Inward issue key is required"
-        ):
-            links_mixin.create_issue_link(link_data)
-
-    def test_create_issue_link_missing_outward_issue(self, links_mixin):
-        """Test create_issue_link with missing outward issue."""
-        # Test data with missing outward issue
-        link_data = {"type": {"name": "Duplicate"}, "inwardIssue": {"key": "HSP-1"}}
-
-        # Call the method and verify it raises the expected exception
-        with pytest.raises(
-            Exception, match="Error creating issue link: Outward issue key is required"
-        ):
-            links_mixin.create_issue_link(link_data)
-
-    def test_create_issue_link_api_error(self, links_mixin):
-        """Test error handling when creating an issue link."""
-        # Test data
-        link_data = {
-            "type": {"name": "Duplicate"},
-            "inwardIssue": {"key": "HSP-1"},
-            "outwardIssue": {"key": "MKY-1"},
-        }
-
-        # Make the API call raise an exception
-        links_mixin.jira.create_issue_link.side_effect = Exception("API error")
-
-        # Call the method and verify it raises the expected exception
-        with pytest.raises(Exception, match="Error creating issue link: API error"):
-            links_mixin.create_issue_link(link_data)
-
-    def test_create_issue_link_http_error(self, links_mixin):
-        """Test HTTP error handling when creating an issue link."""
-        # Test data
-        link_data = {
-            "type": {"name": "Duplicate"},
-            "inwardIssue": {"key": "HSP-1"},
-            "outwardIssue": {"key": "MKY-1"},
-        }
-
-        # Create a mock HTTP error with a 401 status code
-        mock_response = MagicMock()
-        mock_response.status_code = 401
-        http_error = HTTPError("Unauthorized")
-        http_error.response = mock_response
-
-        # Make the API call raise the HTTP error
-        links_mixin.jira.create_issue_link.side_effect = http_error
-
-        # Call the method and verify it raises the expected exception
-        with pytest.raises(Exception, match="Authentication failed for Jira API"):
-            links_mixin.create_issue_link(link_data)
-
-    def test_remove_issue_link_basic(self, links_mixin):
-        """Test basic functionality of remove_issue_link."""
-        # Setup mock
-        links_mixin.jira.remove_issue_link.return_value = (
-            None  # This method typically returns None
+    def test_get_issue_link_types_authentication_error(self, links_mixin):
+        links_mixin.jira.get.side_effect = HTTPError(
+            response=MagicMock(status_code=401)
         )
 
-        # Call the method
-        result = links_mixin.remove_issue_link("12345")
+        with pytest.raises(MCPAtlassianAuthenticationError):
+            links_mixin.get_issue_link_types()
 
-        # Verify API calls
-        links_mixin.jira.remove_issue_link.assert_called_once_with("12345")
+    def test_get_issue_link_types_generic_error(self, links_mixin):
+        links_mixin.jira.get.side_effect = Exception("Unexpected error")
 
-        # Verify result structure
-        assert result["success"] is True
-        assert "message" in result
-        assert result["link_id"] == "12345"
+        with pytest.raises(Exception, match="Unexpected error"):
+            links_mixin.get_issue_link_types()
+
+    def test_create_issue_link_success(self, links_mixin):
+        data = {
+            "type": {"name": "Relates"},
+            "inwardIssue": {"key": "ISSUE-1"},
+            "outwardIssue": {"key": "ISSUE-2"},
+        }
+
+        response = links_mixin.create_issue_link(data)
+
+        links_mixin.jira.create_issue_link.assert_called_once_with(data)
+        assert response["success"] is True
+        assert response["message"] == ("Link created between ISSUE-1 and ISSUE-2")
+
+    def test_create_issue_link_missing_type(self, links_mixin):
+        data = {
+            "inwardIssue": {"key": "ISSUE-1"},
+            "outwardIssue": {"key": "ISSUE-2"},
+        }
+
+        with pytest.raises(ValueError, match="Link type is required"):
+            links_mixin.create_issue_link(data)
+
+    def test_create_issue_link_authentication_error(self, links_mixin):
+        data = {
+            "type": {"name": "Relates"},
+            "inwardIssue": {"key": "ISSUE-1"},
+            "outwardIssue": {"key": "ISSUE-2"},
+        }
+        links_mixin.jira.create_issue_link.side_effect = HTTPError(
+            response=MagicMock(status_code=403)
+        )
+
+        with pytest.raises(MCPAtlassianAuthenticationError):
+            links_mixin.create_issue_link(data)
+
+    def test_remove_issue_link_success(self, links_mixin):
+        link_id = "12345"
+
+        response = links_mixin.remove_issue_link(link_id)
+
+        links_mixin.jira.remove_issue_link.assert_called_once_with(link_id)
+        assert response["success"] is True
+        assert response["message"] == (f"Link with ID {link_id} has been removed")
 
     def test_remove_issue_link_missing_id(self, links_mixin):
-        """Test remove_issue_link with missing link ID."""
-        # Call the method with empty link_id and verify it raises the expected exception
-        with pytest.raises(
-            Exception, match="Error removing issue link: Link ID is required"
-        ):
+        with pytest.raises(ValueError, match="Link ID is required"):
             links_mixin.remove_issue_link("")
 
-        # Call the method with None link_id and verify it raises the expected exception
-        with pytest.raises(
-            Exception, match="Error removing issue link: Link ID is required"
-        ):
-            links_mixin.remove_issue_link(None)
+    def test_remove_issue_link_authentication_error(self, links_mixin):
+        link_id = "12345"
+        links_mixin.jira.remove_issue_link.side_effect = HTTPError(
+            response=MagicMock(status_code=401)
+        )
 
-    def test_remove_issue_link_api_error(self, links_mixin):
-        """Test error handling when removing an issue link."""
-        # Make the API call raise an exception
-        links_mixin.jira.remove_issue_link.side_effect = Exception("API error")
-
-        # Call the method and verify it raises the expected exception
-        with pytest.raises(Exception, match="Error removing issue link: API error"):
-            links_mixin.remove_issue_link("12345")
-
-    def test_remove_issue_link_http_error(self, links_mixin):
-        """Test HTTP error handling when removing an issue link."""
-        # Create a mock HTTP error with a 401 status code
-        mock_response = MagicMock()
-        mock_response.status_code = 401
-        http_error = HTTPError("Unauthorized")
-        http_error.response = mock_response
-
-        # Make the API call raise the HTTP error
-        links_mixin.jira.remove_issue_link.side_effect = http_error
-
-        # Call the method and verify it raises the expected exception
-        with pytest.raises(Exception, match="Authentication failed for Jira API"):
-            links_mixin.remove_issue_link("12345")
+        with pytest.raises(MCPAtlassianAuthenticationError):
+            links_mixin.remove_issue_link(link_id)

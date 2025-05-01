@@ -43,8 +43,8 @@ def mock_sprints():
                 "self": "https://test.atlassian.net/rest/agile/1.0/sprint/10000",
                 "state": "closed",
                 "name": "Sprint 0",
-                "startDate": "2024-05-06T02:00:00.000Z",
-                "endDate": "2024-05-17T10:00:00.000Z",
+                "startDate": "2099-05-06T02:00:00.000Z",
+                "endDate": "2100-05-17T10:00:00.000Z",
                 "completeDate": "2024-05-20T05:17:24.302Z",
                 "activatedDate": "2024-05-07T01:22:45.128Z",
                 "originBoardId": 1000,
@@ -57,8 +57,8 @@ def mock_sprints():
                 "self": "https://test.atlassian.net/rest/agile/1.0/sprint/10001",
                 "state": "active",
                 "name": "Sprint 1",
-                "startDate": "2025-03-24T06:13:00.000Z",
-                "endDate": "2025-04-07T06:13:00.000Z",
+                "startDate": "2099-03-24T06:13:00.000Z",
+                "endDate": "2100-04-07T06:13:00.000Z",
                 "activatedDate": "2025-03-24T06:13:20.729Z",
                 "originBoardId": 1000,
                 "goal": "",
@@ -122,6 +122,130 @@ def test_get_all_sprints_from_board_model(sprints_mixin, mock_sprints):
     assert result == [
         JiraSprint.from_api_response(value) for value in mock_sprints["values"]
     ]
+
+
+def test_create_sprint(sprints_mixin, mock_sprints):
+    """Test create_sprint method."""
+    sprints_mixin.jira.create_sprint.return_value = mock_sprints["values"][1]
+
+    result = sprints_mixin.create_sprint(
+        sprint_name="Sprint 1",
+        board_id="10001",
+        start_date="2099-05-01T00:00:00.000Z",
+        end_date="2100-05-01T00:00:00.000Z",
+        goal="Your goal",
+    )
+    assert result == JiraSprint.from_api_response(mock_sprints["values"][1])
+
+
+def test_create_sprint_http_exception(sprints_mixin, mock_sprints):
+    """Test create_sprint method."""
+    sprints_mixin.jira.create_sprint.side_effect = requests.HTTPError(
+        response=MagicMock(content="API Error content")
+    )
+
+    with pytest.raises(requests.HTTPError):
+        sprints_mixin.create_sprint(
+            sprint_name="Sprint 1",
+            board_id="10001",
+            start_date="2099-05-01T00:00:00.000Z",
+            end_date="2100-05-15T00:00:00.000Z",
+            goal="Your goal",
+        )
+
+
+def test_create_sprint_exception(sprints_mixin, mock_sprints):
+    """Test create_sprint method throws general Exception."""
+    sprints_mixin.jira.create_sprint.side_effect = Exception
+
+    with pytest.raises(Exception):
+        sprints_mixin.create_sprint(
+            sprint_name="Sprint 1",
+            board_id="10001",
+            start_date="2099-05-01T00:00:00.000Z",
+            end_date="2100-05-15T00:00:00.000Z",
+            goal="Your goal",
+        )
+
+
+def test_create_sprint_test_missing_startdate(sprints_mixin, mock_sprints):
+    """Test create_sprint method."""
+    sprints_mixin.jira.create_sprint.return_value = mock_sprints["values"][1]
+
+    with pytest.raises(ValueError) as excinfo:
+        sprints_mixin.create_sprint(
+            sprint_name="Sprint 1",
+            board_id="10001",
+            start_date="",
+            end_date="2100-05-15T00:00:00.000Z",
+            goal="Your goal",
+        )
+    assert str(excinfo.value) == "Start date is required."
+
+
+def test_create_sprint_test_invalid_startdate(sprints_mixin, mock_sprints):
+    """Test create_sprint method."""
+    sprints_mixin.jira.create_sprint.return_value = mock_sprints["values"][1]
+
+    with pytest.raises(ValueError) as excinfo:
+        sprints_mixin.create_sprint(
+            sprint_name="Sprint 1",
+            board_id="10001",
+            start_date="IAMNOTADATE!",
+            end_date="2100-05-15T00:00:00.000Z",
+            goal="Your goal",
+        )
+    assert (
+        str(excinfo.value)
+        == "Incorrect data format, should be YYYY-MM-DDThh:mm:ss.sssZ"
+    )
+
+
+def test_create_sprint_test_no_enddate(sprints_mixin, mock_sprints):
+    """Test create_sprint method."""
+    sprints_mixin.jira.create_sprint.return_value = mock_sprints["values"][1]
+
+    result = sprints_mixin.create_sprint(
+        sprint_name="Sprint 1",
+        board_id="10001",
+        start_date="2099-05-15T00:00:00.000Z",
+        end_date=None,
+        goal="Your goal",
+    )
+    assert result == JiraSprint.from_api_response(mock_sprints["values"][1])
+
+
+def test_create_sprint_test_invalid_enddate(sprints_mixin, mock_sprints):
+    """Test create_sprint method."""
+    sprints_mixin.jira.create_sprint.return_value = mock_sprints["values"][1]
+
+    with pytest.raises(ValueError) as excinfo:
+        sprints_mixin.create_sprint(
+            sprint_name="Sprint 1",
+            board_id="10001",
+            start_date="2099-05-15T00:00:00.000Z",
+            end_date="IAMNOTADATE!",
+            goal="Your goal",
+        )
+    assert (
+        str(excinfo.value)
+        == "Incorrect data format, should be YYYY-MM-DDThh:mm:ss.sssZ"
+    )
+
+
+def test_create_sprint_test_startdate_after_enddate(sprints_mixin, mock_sprints):
+    """Test create_sprint method."""
+    sprints_mixin.jira.create_sprint.return_value = mock_sprints["values"][1]
+
+    with pytest.raises(ValueError) as excinfo:
+        sprints_mixin.create_sprint(
+            sprint_name="Sprint 1",
+            board_id="10001",
+            start_date="2100-05-15T00:00:00.000Z",
+            end_date="2099-05-15T00:00:00.000Z",
+            goal="Your goal",
+        )
+    assert str(excinfo.value) == "Start date must be before end date."
 
 
 def test_update_sprint_success(sprints_mixin, mock_sprints):
