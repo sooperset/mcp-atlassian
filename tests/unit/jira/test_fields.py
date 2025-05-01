@@ -206,31 +206,41 @@ class TestFieldsMixin:
 
     def test_get_required_fields(self, fields_mixin: FieldsMixin):
         """Test get_required_fields retrieves required fields correctly."""
-        # Mock the createmeta response
-        mock_meta = {
-            "projects": [
+        # Mock the response for get_project_issue_types
+        mock_issue_types = [
+            {"id": "10001", "name": "Bug"},
+            {"id": "10002", "name": "Task"},
+        ]
+        fields_mixin.get_project_issue_types = MagicMock(return_value=mock_issue_types)
+
+        # Mock the response for issue_createmeta_fieldtypes based on API docs
+        mock_field_meta = {
+            "fields": [
                 {
-                    "key": "TEST",
-                    "issuetypes": [
-                        {
-                            "name": "Bug",
-                            "fields": {
-                                "summary": {"required": True, "name": "Summary"},
-                                "description": {
-                                    "required": False,
-                                    "name": "Description",
-                                },
-                                "customfield_10010": {
-                                    "required": True,
-                                    "name": "Epic Link",
-                                },
-                            },
-                        }
-                    ],
-                }
+                    "required": True,
+                    "schema": {"type": "string", "system": "summary"},
+                    "name": "Summary",
+                    "fieldId": "summary",
+                    "autoCompleteUrl": "",
+                    "hasDefaultValue": False,
+                    "operations": ["set"],
+                    "allowedValues": [],
+                },
+                {
+                    "required": False,
+                    "schema": {"type": "string", "system": "description"},
+                    "name": "Description",
+                    "fieldId": "description",
+                },
+                {
+                    "required": True,
+                    "schema": {"type": "string", "custom": "some.custom.type"},
+                    "name": "Epic Link",
+                    "fieldId": "customfield_10010",
+                },
             ]
         }
-        fields_mixin.jira.createmeta.return_value = mock_meta
+        fields_mixin.jira.issue_createmeta_fieldtypes.return_value = mock_field_meta
 
         # Call the method
         result = fields_mixin.get_required_fields("Bug", "TEST")
@@ -238,30 +248,53 @@ class TestFieldsMixin:
         # Verify the result
         assert len(result) == 2
         assert "summary" in result
+        assert result["summary"]["required"] is True
         assert "customfield_10010" in result
+        assert result["customfield_10010"]["required"] is True
         assert "description" not in result
+        # Verify the correct API was called
+        fields_mixin.get_project_issue_types.assert_called_once_with("TEST")
+        fields_mixin.jira.issue_createmeta_fieldtypes.assert_called_once_with(
+            project="TEST", issue_type_id="10001"
+        )
 
     def test_get_required_fields_not_found(self, fields_mixin: FieldsMixin):
         """Test get_required_fields handles project/issue type not found."""
-        # Mock empty createmeta response
-        fields_mixin.jira.createmeta.return_value = {"projects": []}
+        # Scenario 1: Issue type not found in project
+        mock_issue_types = [{"id": "10002", "name": "Task"}]  # "Bug" is missing
+        fields_mixin.get_project_issue_types = MagicMock(return_value=mock_issue_types)
+        fields_mixin.jira.issue_createmeta_fieldtypes = MagicMock()
 
         # Call the method
         result = fields_mixin.get_required_fields("Bug", "TEST")
+        # Verify issue type lookup was attempted, but field meta was not called
+        fields_mixin.get_project_issue_types.assert_called_once_with("TEST")
+        fields_mixin.jira.issue_createmeta_fieldtypes.assert_not_called()
 
         # Verify the result
         assert result == {}
 
     def test_get_required_fields_error(self, fields_mixin: FieldsMixin):
         """Test get_required_fields handles errors gracefully."""
-        # Mock API error
-        fields_mixin.jira.createmeta.side_effect = Exception("API error")
+        # Mock the response for get_project_issue_types
+        mock_issue_types = [
+            {"id": "10001", "name": "Bug"},
+        ]
+        fields_mixin.get_project_issue_types = MagicMock(return_value=mock_issue_types)
+        # Mock issue_createmeta_fieldtypes to raise an error
+        fields_mixin.jira.issue_createmeta_fieldtypes.side_effect = Exception(
+            "API error"
+        )
 
         # Call the method
         result = fields_mixin.get_required_fields("Bug", "TEST")
 
         # Verify the result
         assert result == {}
+        # Verify the correct API was called (which then raised the error)
+        fields_mixin.jira.issue_createmeta_fieldtypes.assert_called_once_with(
+            project="TEST", issue_type_id="10001"
+        )
 
     def test_get_jira_field_ids_cached(self, fields_mixin: FieldsMixin):
         """Test get_field_ids_to_epic returns cached field IDs."""
