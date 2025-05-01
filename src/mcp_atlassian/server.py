@@ -13,6 +13,7 @@ from .confluence import ConfluenceFetcher
 from .confluence.config import ConfluenceConfig
 from .jira import JiraFetcher
 from .jira.config import JiraConfig
+from .jira.constants import DEFAULT_READ_JIRA_FIELDS
 from .utils.io import is_read_only_mode
 from .utils.logging import log_config_param
 from .utils.urls import is_atlassian_cloud_url
@@ -477,7 +478,7 @@ async def list_tools() -> list[Tool]:
                             "fields": {
                                 "type": "string",
                                 "description": "Fields to return. Can be a comma-separated list (e.g., 'summary,status,customfield_10010'), '*all' for all fields (including custom fields), or omitted for essential fields only",
-                                "default": "summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
+                                "default": ",".join(DEFAULT_READ_JIRA_FIELDS),
                             },
                             "expand": {
                                 "type": "string",
@@ -536,7 +537,7 @@ async def list_tools() -> list[Tool]:
                                     "Use '*all' for all fields, or specify individual "
                                     "fields like 'summary,status,assignee,priority'"
                                 ),
-                                "default": "summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
+                                "default": ",".join(DEFAULT_READ_JIRA_FIELDS),
                             },
                             "limit": {
                                 "type": "number",
@@ -746,7 +747,7 @@ async def list_tools() -> list[Tool]:
                                     "Use '*all' for all fields, or specify individual "
                                     "fields like 'summary,status,assignee,priority'"
                                 ),
-                                "default": "*all",
+                                "default": ",".join(DEFAULT_READ_JIRA_FIELDS),
                             },
                             "startAt": {
                                 "type": "number",
@@ -850,7 +851,7 @@ async def list_tools() -> list[Tool]:
                                     "Use '*all' for all fields, or specify individual "
                                     "fields like 'summary,status,assignee,priority'"
                                 ),
-                                "default": "*all",
+                                "default": ",".join(DEFAULT_READ_JIRA_FIELDS),
                             },
                             "startAt": {
                                 "type": "number",
@@ -1628,18 +1629,17 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             if not ctx or not ctx.jira:
                 raise ValueError("Jira is not configured.")
 
+            # Extract arguments
             issue_key = arguments.get("issue_key")
-            fields = arguments.get(
-                "fields",
-                "summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
-            )
+            fields = arguments.get("fields", ",".join(DEFAULT_READ_JIRA_FIELDS))
             expand = arguments.get("expand")
             comment_limit = arguments.get("comment_limit", 10)
             properties = arguments.get("properties")
             update_history = arguments.get("update_history", True)
 
+            # Get the issue
             issue = ctx.jira.get_issue(
-                issue_key,
+                issue_key=issue_key,
                 fields=fields,
                 expand=expand,
                 comment_limit=comment_limit,
@@ -1647,7 +1647,8 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 update_history=update_history,
             )
 
-            result = {"content": issue.to_simplified_dict()}
+            # Convert the issue data to a simplified dict
+            result = issue.to_simplified_dict()
 
             return [
                 TextContent(
@@ -1659,38 +1660,30 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             if not ctx or not ctx.jira:
                 raise ValueError("Jira is not configured.")
 
+            # Extract arguments
             jql = arguments.get("jql")
-            fields = arguments.get(
-                "fields",
-                "summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
-            )
+            fields = arguments.get("fields", ",".join(DEFAULT_READ_JIRA_FIELDS))
             limit = min(int(arguments.get("limit", 10)), 50)
             projects_filter = arguments.get("projects_filter")
-            start_at = int(arguments.get("startAt", 0))  # Get startAt
+            start_at = arguments.get("startAt", 0)
+            expand = arguments.get("expand")
 
+            # Perform the search
             search_result = ctx.jira.search_issues(
-                jql,
+                jql=jql,
                 fields=fields,
                 limit=limit,
-                start=start_at,  # Pass start_at here
+                start=start_at,
+                expand=expand,
                 projects_filter=projects_filter,
             )
 
-            # Format results using the to_simplified_dict method
-            issues = [issue.to_simplified_dict() for issue in search_result.issues]
-
-            # Include metadata in the response
-            response = {
-                "total": search_result.total,
-                "start_at": search_result.start_at,
-                "max_results": search_result.max_results,
-                "issues": issues,
-            }
+            # Convert to simplified dict and return
+            result = search_result.to_simplified_dict()
 
             return [
                 TextContent(
-                    type="text",
-                    text=json.dumps(response, indent=2, ensure_ascii=False),
+                    type="text", text=json.dumps(result, indent=2, ensure_ascii=False)
                 )
             ]
 
@@ -1873,14 +1866,15 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             if not ctx or not ctx.jira:
                 raise ValueError("Jira is not configured.")
 
+            # Extract arguments
             board_id = arguments.get("board_id")
             jql = arguments.get("jql")
-            fields = arguments.get("fields", "*all")
-
-            start_at = int(arguments.get("startAt", 0))
+            fields = arguments.get("fields", ",".join(DEFAULT_READ_JIRA_FIELDS))
+            start_at = arguments.get("startAt", 0)
             limit = min(int(arguments.get("limit", 10)), 50)
-            expand = arguments.get("expand", "version")
+            expand = arguments.get("expand")
 
+            # Get board issues
             search_result = ctx.jira.get_board_issues(
                 board_id=board_id,
                 jql=jql,
@@ -1890,21 +1884,12 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 expand=expand,
             )
 
-            # Format results
-            issues = [issue.to_simplified_dict() for issue in search_result.issues]
-
-            # Include metadata in the response
-            response = {
-                "total": search_result.total,
-                "start_at": search_result.start_at,
-                "max_results": search_result.max_results,
-                "issues": issues,
-            }
+            # Convert to simplified dict
+            result = search_result.to_simplified_dict()
 
             return [
                 TextContent(
-                    type="text",
-                    text=json.dumps(response, indent=2, ensure_ascii=False),
+                    type="text", text=json.dumps(result, indent=2, ensure_ascii=False)
                 )
             ]
 
@@ -1963,11 +1948,13 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             if not ctx or not ctx.jira:
                 raise ValueError("Jira is not configured.")
 
+            # Extract arguments
             sprint_id = arguments.get("sprint_id")
-            fields = arguments.get("fields", "*all")
-            start_at = int(arguments.get("startAt", 0))
+            fields = arguments.get("fields", ",".join(DEFAULT_READ_JIRA_FIELDS))
+            start_at = arguments.get("startAt", 0)
             limit = min(int(arguments.get("limit", 10)), 50)
 
+            # Get sprint issues
             search_result = ctx.jira.get_sprint_issues(
                 sprint_id=sprint_id,
                 fields=fields,
@@ -1975,21 +1962,12 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 limit=limit,
             )
 
-            # Format results
-            issues = [issue.to_simplified_dict() for issue in search_result.issues]
-
-            # Include metadata in the response
-            response = {
-                "total": search_result.total,
-                "start_at": search_result.start_at,
-                "max_results": search_result.max_results,
-                "issues": issues,
-            }
+            # Convert to simplified dict
+            result = search_result.to_simplified_dict()
 
             return [
                 TextContent(
-                    type="text",
-                    text=json.dumps(response, indent=2, ensure_ascii=False),
+                    type="text", text=json.dumps(result, indent=2, ensure_ascii=False)
                 )
             ]
 
@@ -2071,6 +2049,9 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                     additional_fields = json.loads(arguments.get("additional_fields"))
                 except json.JSONDecodeError:
                     raise ValueError("Invalid JSON in additional_fields")
+                except TypeError:
+                    # Handle case where additional_fields might be None
+                    pass
 
             # Create the issue
             issue = ctx.jira.create_issue(

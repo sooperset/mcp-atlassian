@@ -19,6 +19,8 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
     different Jira instances, especially for custom fields.
     """
 
+    _field_name_to_id_map: dict[str, str] | None = None  # Cache for name -> id mapping
+
     def get_fields(self, refresh: bool = False) -> list[dict[str, Any]]:
         """
         Get all available fields from Jira.
@@ -34,6 +36,11 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
             if self._field_ids_cache is not None and not refresh:
                 return self._field_ids_cache
 
+            if refresh:
+                self._field_name_to_id_map = (
+                    None  # Clear name map cache if refreshing fields
+                )
+
             # Fetch fields from Jira API
             fields = self.jira.get_all_fields()
             if not isinstance(fields, list):
@@ -44,6 +51,9 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
             # Cache the fields
             self._field_ids_cache = fields
 
+            # Regenerate the name map upon fetching new fields
+            self._generate_field_map(force_regenerate=True)
+
             # Log available fields for debugging
             self._log_available_fields(fields)
 
@@ -52,6 +62,37 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
         except Exception as e:
             logger.error(f"Error getting Jira fields: {str(e)}")
             return []
+
+    def _generate_field_map(self, force_regenerate: bool = False) -> dict[str, str]:
+        """Generates and caches a map of lowercase field names to field IDs."""
+        if self._field_name_to_id_map is not None and not force_regenerate:
+            return self._field_name_to_id_map
+
+        # Ensure fields are loaded into cache first
+        fields = (
+            self.get_fields()
+        )  # Uses cache if available unless force_regenerate was True
+        if not fields:
+            self._field_name_to_id_map = {}
+            return {}
+
+        name_map: dict[str, str] = {}
+        id_map: dict[str, str] = {}  # Also map ID to ID for consistency
+        for field in fields:
+            field_id = field.get("id")
+            field_name = field.get("name")
+            if field_id:
+                id_map[field_id] = field_id  # Map ID to itself
+                if field_name:
+                    # Store lowercase name -> ID. Handle potential name collisions if necessary.
+                    name_map.setdefault(field_name.lower(), field_id)
+
+        # Combine maps, ensuring IDs can also be looked up directly
+        self._field_name_to_id_map = name_map | id_map
+        logger.debug(
+            f"Generated/Updated field name map: {len(self._field_name_to_id_map)} entries"
+        )
+        return self._field_name_to_id_map
 
     def get_field_id(self, field_name: str, refresh: bool = False) -> str | None:
         """
@@ -65,28 +106,21 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
             Field ID if found, None otherwise
         """
         try:
-            # Normalize the field name to lowercase for case-insensitive matching
+            # Ensure the map is generated/cached
+            field_map = self._generate_field_map(force_regenerate=refresh)
+            if not field_map:
+                logger.error("Field map could not be generated.")
+                return None
+
             normalized_name = field_name.lower()
-
-            # Get all fields and search for the requested field
-            fields = self.get_fields(refresh=refresh)
-
-            for field in fields:
-                name = field.get("name", "")
-                if name and name.lower() == normalized_name:
-                    return field.get("id")
-
-            # If not found by exact match, try partial match
-            for field in fields:
-                name = field.get("name", "")
-                if name and normalized_name in name.lower():
-                    logger.info(
-                        f"Found field '{name}' as partial match for '{field_name}'"
-                    )
-                    return field.get("id")
-
-            logger.warning(f"Field '{field_name}' not found")
-            return None
+            if normalized_name in field_map:
+                return field_map[normalized_name]
+            # Fallback: Check if the input IS an ID (using original casing)
+            elif field_name in field_map:  # Checks the id_map part
+                return field_map[field_name]
+            else:
+                logger.warning(f"Field '{field_name}' not found in generated map.")
+                return None
 
         except Exception as e:
             logger.error(f"Error getting field ID for '{field_name}': {str(e)}")
@@ -222,16 +256,17 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
             (e.g., {'epic_link': 'customfield_10014', 'epic_name': 'customfield_10011'})
         """
         try:
-            # Check if we've already cached the field IDs
-            if self._field_ids_cache:
-                result = {field["name"]: field["id"] for field in self._field_ids_cache}
-                return result
+            # Ensure field list and map are cached/generated
+            self._generate_field_map()  # Generates map and ensures fields are cached
 
-            # Initialize cache if needed
-            self._field_ids_cache = []
-
-            # Fetch all fields from Jira API
+            # Get all fields (uses cache if available)
             fields = self.get_fields()
+            if not fields:  # Check if get_fields failed or returned empty
+                logger.error(
+                    "Could not load field definitions for epic field discovery."
+                )
+                return {}
+
             field_ids = {}
 
             # Log the complete list of fields for debugging
@@ -245,10 +280,6 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
                 if field.get("id", "").startswith("customfield_")
             }
             logger.debug(f"Custom fields: {custom_fields}")
-
-            # Get all fields
-            fields = self.get_fields()
-            field_ids = {}
 
             # Look for Epic-related fields - use multiple strategies to identify them
             for field in fields:
@@ -327,12 +358,6 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
                     logger.debug(
                         f"Found potential Epic-related field: {field_id} ({original_name})"
                     )
-
-            # Cache the results for future use
-            self._field_ids_cache = [
-                {"id": field_id, "name": field_name}
-                for field_name, field_id in field_ids.items()
-            ]
 
             # If we couldn't find certain key fields, try alternative approaches
             if "epic_name" not in field_ids or "epic_link" not in field_ids:

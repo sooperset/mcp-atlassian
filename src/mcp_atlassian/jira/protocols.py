@@ -122,6 +122,26 @@ class FieldsOperationsProto(Protocol):
     """Protocol defining fields operations interface."""
 
     @abstractmethod
+    def _generate_field_map(self, force_regenerate: bool = False) -> dict[str, str]:
+        """
+        Generates and caches a map of lowercase field names to field IDs.
+
+        Args:
+            force_regenerate: If True, forces regeneration even if cache exists.
+
+        Returns:
+            A dictionary mapping lowercase field names and field IDs to actual field IDs.
+        """
+
+    @abstractmethod
+    def get_field_by_id(
+        self, field_id: str, refresh: bool = False
+    ) -> dict[str, Any] | None:
+        """
+        Get field definition by ID.
+        """
+
+    @abstractmethod
     def get_field_ids_to_epic(self) -> dict[str, str]:
         """
         Dynamically discover Jira field IDs relevant to Epic linking.

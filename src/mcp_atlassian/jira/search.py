@@ -8,6 +8,7 @@ from requests.exceptions import HTTPError
 from ..exceptions import MCPAtlassianAuthenticationError
 from ..models.jira import JiraSearchResult
 from .client import JiraClient
+from .constants import DEFAULT_READ_JIRA_FIELDS
 from .protocols import IssueOperationsProto
 
 logger = logging.getLogger("mcp-jira")
@@ -19,10 +20,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
     def search_issues(
         self,
         jql: str,
-        fields: list[str]
-        | tuple[str, ...]
-        | set[str]
-        | str = "summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
+        fields: list[str] | tuple[str, ...] | set[str] | str | None = None,
         start: int = 0,
         limit: int = 50,
         expand: str | None = None,
@@ -76,7 +74,10 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                 logger.info(f"Applied projects filter to query: {jql}")
 
             # Convert fields to proper format if it's a list/tuple/set
-            if isinstance(fields, list | tuple | set):
+            fields_param: str | None
+            if fields is None:  # Use default if None
+                fields_param = ",".join(DEFAULT_READ_JIRA_FIELDS)
+            elif isinstance(fields, list | tuple | set):
                 fields_param = ",".join(fields)
             else:
                 fields_param = fields
@@ -97,7 +98,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
 
             # Convert the response to a search result model
             search_result = JiraSearchResult.from_api_response(
-                response, base_url=self.config.url, requested_fields=fields
+                response, base_url=self.config.url, requested_fields=fields_param
             )
 
             # Return the full search result object
@@ -124,7 +125,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
         self,
         board_id: str,
         jql: str,
-        fields: str = "*all",
+        fields: str | None = None,
         start: int = 0,
         limit: int = 50,
         expand: str | None = None,
@@ -147,10 +148,15 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             Exception: If there is an error getting board issues
         """
         try:
+            # Determine fields_param
+            fields_param = fields
+            if fields_param is None:
+                fields_param = ",".join(DEFAULT_READ_JIRA_FIELDS)
+
             response = self.jira.get_issues_for_board(
                 board_id=board_id,
                 jql=jql,
-                fields=fields,
+                fields=fields_param,
                 start=start,
                 limit=limit,
                 expand=expand,
@@ -162,7 +168,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
 
             # Convert the response to a search result model
             search_result = JiraSearchResult.from_api_response(
-                response, base_url=self.config.url, requested_fields=fields
+                response, base_url=self.config.url, requested_fields=fields_param
             )
             return search_result
         except requests.HTTPError as e:
@@ -181,7 +187,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
     def get_sprint_issues(
         self,
         sprint_id: str,
-        fields: str = "*all",
+        fields: str | None = None,
         start: int = 0,
         limit: int = 50,
     ) -> JiraSearchResult:
@@ -201,6 +207,11 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             Exception: If there is an error getting board issues
         """
         try:
+            # Determine fields_param
+            fields_param = fields
+            if fields_param is None:
+                fields_param = ",".join(DEFAULT_READ_JIRA_FIELDS)
+
             response = self.jira.get_sprint_issues(
                 sprint_id=sprint_id,
                 start=start,
@@ -213,7 +224,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
 
             # Convert the response to a search result model
             search_result = JiraSearchResult.from_api_response(
-                response, base_url=self.config.url, requested_fields=fields
+                response, base_url=self.config.url, requested_fields=fields_param
             )
             return search_result
         except requests.HTTPError as e:

@@ -11,6 +11,7 @@ from ..models.jira import JiraIssue
 from ..models.jira.common import JiraChangelog
 from ..utils import parse_date
 from .client import JiraClient
+from .constants import DEFAULT_READ_JIRA_FIELDS
 from .protocols import (
     AttachmentsOperationsProto,
     EpicOperationsProto,
@@ -37,11 +38,7 @@ class IssuesMixin(
         issue_key: str,
         expand: str | None = None,
         comment_limit: int | str | None = 10,
-        fields: str
-        | list[str]
-        | tuple[str, ...]
-        | set[str]
-        | None = "summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
+        fields: str | list[str] | tuple[str, ...] | set[str] | None = None,
         properties: str | list[str] | None = None,
         update_history: bool = True,
     ) -> JiraIssue:
@@ -64,14 +61,24 @@ class IssuesMixin(
             Exception: If there is an error retrieving the issue
         """
         try:
+            # Determine fields_param: use provided fields or default from constant
+            fields_param = fields
+            if fields_param is None:
+                fields_param = ",".join(DEFAULT_READ_JIRA_FIELDS)
+            elif isinstance(fields_param, list | tuple | set):
+                fields_param = ",".join(fields_param)
+
             # Ensure necessary fields are included based on special parameters
             if (
-                isinstance(fields, str)
-                and fields
-                == "summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype"
+                fields_param == ",".join(DEFAULT_READ_JIRA_FIELDS)
+                or fields_param == "*all"
             ):
                 # Default fields are being used - preserve the order
-                default_fields_list = fields.split(",")
+                default_fields_list = (
+                    fields_param.split(",")
+                    if fields_param != "*all"
+                    else list(DEFAULT_READ_JIRA_FIELDS)
+                )
                 additional_fields = []
 
                 # Add appropriate fields based on expand parameter
@@ -100,16 +107,11 @@ class IssuesMixin(
 
                 # Combine default fields with additional fields, preserving order
                 if additional_fields:
-                    fields = fields + "," + ",".join(additional_fields)
+                    fields_param = ",".join(default_fields_list + additional_fields)
             # Handle non-default fields string
 
             # Build expand parameter if provided
             expand_param = expand
-
-            # Convert fields to proper format if it's a list/tuple/set
-            fields_param = fields
-            if fields and isinstance(fields, list | tuple | set):
-                fields_param = ",".join(fields)
 
             # Convert properties to proper format if it's a list
             properties_param = properties
@@ -198,7 +200,7 @@ class IssuesMixin(
                 raise MCPAtlassianAuthenticationError(error_msg) from http_err
             else:
                 logger.error(f"HTTP error during API call: {http_err}", exc_info=False)
-                raise http_err
+                raise
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Error retrieving issue {issue_key}: {error_msg}")
@@ -562,8 +564,8 @@ class IssuesMixin(
             elif "parent" in kwargs:
                 self._prepare_parent_fields(fields, kwargs)
 
-            # Add custom fields
-            self._add_custom_fields(fields, kwargs)
+            # Process **kwargs using the dynamic field map
+            self._process_additional_fields(fields, kwargs_copy)
 
             # Create the issue
             response = self.jira.create_issue(fields=fields)
@@ -670,56 +672,173 @@ class IssuesMixin(
             # Server/DC might use name instead of accountId
             fields["assignee"] = {"name": assignee}
 
-    def _add_custom_fields(
+    def _process_additional_fields(
         self, fields: dict[str, Any], kwargs: dict[str, Any]
     ) -> None:
         """
-        Add custom fields to issue.
+        Processes keyword arguments to add standard or custom fields to the issue fields dictionary.
+        Uses the dynamic field map from FieldsMixin to identify field IDs.
 
         Args:
             fields: The fields dictionary to update
-            kwargs: Additional fields from the user
+            kwargs: Additional fields provided via **kwargs
         """
-        field_ids = self.get_field_ids_to_epic()
+        # Ensure field map is loaded/cached
+        field_map = (
+            self._generate_field_map()
+        )  # Ensure map is ready (method from FieldsMixin)
+        if not field_map:
+            logger.error(
+                "Could not generate field map. Cannot process additional fields."
+            )
+            return
 
         # Process each kwarg
-        for key, value in kwargs.items():
-            # Handle fixVersions specifically as it's a standard field often required
-            if key.lower() == "fixversions":
-                fields["fixVersions"] = value
-                logger.debug("Added fixVersions from additional_fields: %s", value)
-                continue  # Handled fixVersions
+        # Iterate over a copy to allow modification of the original kwargs if needed elsewhere
+        for key, value in kwargs.copy().items():
+            # Skip keys used internally for epic/parent handling or explicitly handled args like assignee/components
+            if key.startswith("__epic_") or key in ("parent", "assignee", "components"):
+                continue
 
-            # Explicitly handle components field
-            if key.lower() == "components":
-                # Assuming the value is already in the correct format e.g., [{'name': 'Vortex'}] or [{'id': '11004'}]
-                # We need the actual field ID for components. Let's try the common one, but this might need adjustment.
-                # If 'Components' field ID is known, use it directly. Otherwise, try a common default or log a warning.
-                component_field_id = field_ids.get(
-                    "Components", field_ids.get("components")
-                )  # Try both cases
-                if component_field_id:
-                    fields[component_field_id] = value
+            normalized_key = key.lower()
+            api_field_id = None
+
+            # 1. Check if key is a known field name in the map
+            if normalized_key in field_map:
+                api_field_id = field_map[normalized_key]
+                logger.debug(
+                    f"Identified field '{key}' as '{api_field_id}' via name map."
+                )
+
+            # 2. Check if key is a direct custom field ID
+            elif key.startswith("customfield_"):
+                api_field_id = key
+                logger.debug(f"Identified field '{key}' as direct custom field ID.")
+
+            # 3. Check if key is a standard system field ID (like 'summary', 'priority')
+            elif key in field_map:  # Check original case for system fields
+                api_field_id = field_map[key]
+                logger.debug(f"Identified field '{key}' as standard system field ID.")
+
+            if api_field_id:
+                # Get the full field definition for formatting context if needed
+                field_definition = self.get_field_by_id(
+                    api_field_id
+                )  # From FieldsMixin
+                formatted_value = self._format_field_value_for_write(
+                    api_field_id, value, field_definition
+                )
+                if formatted_value is not None:  # Only add if formatting didn't fail
+                    fields[api_field_id] = formatted_value
                     logger.debug(
-                        f"Explicitly added components using field ID: {component_field_id}"
+                        f"Added field '{api_field_id}' from kwarg '{key}': {formatted_value}"
                     )
                 else:
-                    # Fallback or warning if component ID not found
                     logger.warning(
-                        "Could not find field ID for 'Components'. Components may not be set."
+                        f"Skipping field '{key}' due to formatting error or invalid value."
                     )
-                continue  # Skip further processing for components
+            else:
+                # 4. Unrecognized key - log a warning and skip
+                logger.warning(
+                    f"Ignoring unrecognized field '{key}' passed via kwargs."
+                )
 
-            if key in ("epic_name", "epic_link", "parent"):
-                continue  # Handled separately
+    def _format_field_value_for_write(
+        self, field_id: str, value: Any, field_definition: dict | None
+    ) -> Any:
+        """Formats field values for the Jira API."""
+        # Get schema type if definition is available
+        schema_type = (
+            field_definition.get("schema", {}).get("type") if field_definition else None
+        )
+        # Prefer name from definition if available, else use ID for logging/lookup
+        field_name_for_format = (
+            field_definition.get("name", field_id) if field_definition else field_id
+        )
 
-            # Check if this is a known field
-            # Use case-insensitive check for field names if needed, but rely on field_ids map primarily
-            if key in field_ids:
-                fields[field_ids[key]] = value
-            elif key.startswith("customfield_"):
-                # Direct custom field reference
-                fields[key] = value
+        # Example formatting rules based on standard field names (use lowercase for comparison)
+        normalized_name = field_name_for_format.lower()
+
+        if normalized_name == "priority":
+            if isinstance(value, str):
+                return {"name": value}
+            elif isinstance(value, dict) and ("name" in value or "id" in value):
+                return value  # Assume pre-formatted
+            else:
+                logger.warning(
+                    f"Invalid format for priority field: {value}. Expected string name or dict."
+                )
+                return None  # Or raise error
+        elif normalized_name == "labels":
+            if isinstance(value, list) and all(isinstance(item, str) for item in value):
+                return value
+            # Allow comma-separated string if passed via additional_fields JSON string
+            elif isinstance(value, str):
+                return [label.strip() for label in value.split(",") if label.strip()]
+            else:
+                logger.warning(
+                    f"Invalid format for labels field: {value}. Expected list of strings or comma-separated string."
+                )
+                return None
+        elif normalized_name in ["fixversions", "versions", "components"]:
+            # These expect lists of objects, typically {"name": "..."} or {"id": "..."}
+            if isinstance(value, list):
+                formatted_list = []
+                for item in value:
+                    if isinstance(item, str):
+                        formatted_list.append({"name": item})  # Convert simple strings
+                    elif isinstance(item, dict) and ("name" in item or "id" in item):
+                        formatted_list.append(item)  # Keep pre-formatted dicts
+                    else:
+                        logger.warning(
+                            f"Invalid item format in {normalized_name} list: {item}"
+                        )
+                return formatted_list
+            else:
+                logger.warning(
+                    f"Invalid format for {normalized_name} field: {value}. Expected list."
+                )
+                return None
+        elif normalized_name == "reporter":
+            if isinstance(value, str):
+                try:
+                    reporter_identifier = self._get_account_id(value)
+                    if self.config.is_cloud:
+                        return {"accountId": reporter_identifier}
+                    else:
+                        return {"name": reporter_identifier}
+                except ValueError as e:
+                    logger.warning(f"Could not format reporter field: {str(e)}")
+                    return None
+            elif isinstance(value, dict) and ("name" in value or "accountId" in value):
+                return value  # Assume pre-formatted
+            else:
+                logger.warning(f"Invalid format for reporter field: {value}")
+                return None
+        # Add more formatting rules for other standard fields based on schema_type or field_id
+        elif normalized_name == "duedate":
+            if isinstance(value, str):  # Basic check, could add date validation
+                return value
+            else:
+                logger.warning(
+                    f"Invalid format for duedate field: {value}. Expected YYYY-MM-DD string."
+                )
+                return None
+        elif schema_type == "datetime" and isinstance(value, str):
+            # Example: Ensure datetime fields are in ISO format if needed by API
+            try:
+                dt = parse_date(value)  # Assuming parse_date handles various inputs
+                return (
+                    dt.isoformat() if dt else value
+                )  # Return ISO or original if parse fails
+            except Exception:
+                logger.warning(
+                    f"Could not parse datetime for field {field_id}: {value}"
+                )
+                return value  # Return original on error
+
+        # Default: return value as is if no specific formatting needed/identified
+        return value
 
     def _handle_create_issue_error(self, exception: Exception, issue_type: str) -> None:
         """
@@ -800,14 +919,10 @@ class IssuesMixin(
                     except ValueError as e:
                         logger.warning(f"Could not update assignee: {str(e)}")
                 else:
-                    # Process regular fields
-                    field_ids = self.get_field_ids_to_epic()
-                    if key in field_ids:
-                        update_fields[field_ids[key]] = value
-                    elif key.startswith("customfield_"):
-                        update_fields[key] = value
-                    else:
-                        update_fields[key] = value
+                    # Process regular fields using _process_additional_fields
+                    # Create a temporary dict with just this field
+                    field_kwargs = {key: value}
+                    self._process_additional_fields(update_fields, field_kwargs)
 
             # Update the issue fields
             if update_fields:
@@ -1173,7 +1288,7 @@ class IssuesMixin(
                             ]
 
                 # Add any remaining custom fields
-                self._add_custom_fields(fields, issue_data)
+                self._process_additional_fields(fields, issue_data)
 
                 if validate_only:
                     # For validation, just log the issue that would be created
