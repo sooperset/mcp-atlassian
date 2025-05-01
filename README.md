@@ -93,6 +93,7 @@ There are two main approaches to configure the Docker container:
 > - `JIRA_PROJECTS_FILTER`: Filter by project keys (e.g., "PROJ,DEV,SUPPORT")
 > - `READ_ONLY_MODE`: Set to "true" to disable write operations
 > - `MCP_VERBOSE`: Set to "true" for more detailed logging
+> - `ENABLED_TOOLS`: Comma-separated list of tool names to enable (e.g., "confluence_search,jira_get_issue")
 >
 > See the [.env.example](https://github.com/sooperset/mcp-atlassian/blob/main/.env.example) file for all available options.
 
@@ -372,6 +373,22 @@ For Jira Server/DC, use:
 ||`jira_remove_issue_link`|
 
 </details>
+
+### Tool Filtering and Access Control
+
+The server provides two ways to control tool access:
+
+1. **Tool Filtering**: Use `--enabled-tools` flag or `ENABLED_TOOLS` environment variable to specify which tools should be available:
+
+   ```bash
+   # Via environment variable
+   ENABLED_TOOLS="confluence_search,jira_get_issue,jira_search"
+
+   # Or via command line flag
+   docker run ... --enabled-tools "confluence_search,jira_get_issue,jira_search" ...
+   ```
+
+2. **Read/Write Control**: Tools are categorized as read or write operations. When `READ_ONLY_MODE` is enabled, only read operations are available regardless of `ENABLED_TOOLS` setting.
 
 ## Troubleshooting & Debugging
 
