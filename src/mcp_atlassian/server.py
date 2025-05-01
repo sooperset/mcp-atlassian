@@ -15,26 +15,11 @@ from .jira import JiraFetcher
 from .jira.config import JiraConfig
 from .utils.io import is_read_only_mode
 from .utils.logging import log_config_param
+from .utils.tools import get_enabled_tools, should_include_tool
 from .utils.urls import is_atlassian_cloud_url
 
 # Configure logging
 logger = logging.getLogger("mcp-atlassian")
-
-
-def get_enabled_tools() -> list[str] | None:
-    """Get the list of enabled tools from environment variable."""
-    enabled_tools_str = os.getenv("ENABLED_TOOLS")
-    if enabled_tools_str:
-        # Split by commas and strip whitespace
-        return [tool.strip() for tool in enabled_tools_str.split(",")]
-    return None
-
-
-def should_include_tool(tool_name: str, enabled_tools: list[str] | None) -> bool:
-    """Check if a tool should be included based on the enabled tools list."""
-    if enabled_tools is None:
-        return True
-    return tool_name in enabled_tools
 
 
 @dataclass
