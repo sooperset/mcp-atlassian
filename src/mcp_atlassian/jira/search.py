@@ -35,6 +35,8 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             jql: JQL query string
             fields: Fields to return (comma-separated string, list, tuple, set, or "*all")
             start: Starting index if number of issues is greater than the limit
+                  Note: This parameter is ignored in Cloud environments and results will always
+                  start from the first page.
             limit: Maximum issues to return
             expand: Optional items to expand (comma-separated)
             projects_filter: Optional comma-separated list of project keys to filter by, overrides config
@@ -79,9 +81,15 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             else:
                 fields_param = fields
 
-            response = self.jira.jql(
-                jql, fields=fields_param, start=start, limit=limit, expand=expand
-            )
+            if self.config.is_cloud:
+                response = self.jira.enhanced_jql(
+                    jql, fields=fields_param, limit=limit, expand=expand
+                )
+            else:
+                response = self.jira.jql(
+                    jql, fields=fields_param, start=start, limit=limit, expand=expand
+                )
+
             if not isinstance(response, dict):
                 msg = f"Unexpected return value type from `jira.jql`: {type(response)}"
                 logger.error(msg)
