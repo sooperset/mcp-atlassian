@@ -320,6 +320,49 @@ For Jira Server/DC, use:
     ```
 </details>
 
+## Proxy Configuration
+
+mcp-atlassian supports routing Jira and Confluence API requests through HTTP, HTTPS, and SOCKS proxies. You can configure proxies using environment variables:
+
+- `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`: Standard proxy variables often automatically recognized by libraries like `requests`.
+- `SOCKS_PROXY`: SOCKS proxy URL (e.g., `socks5://user:pass@host:port`).
+- `JIRA_HTTP_PROXY`, `JIRA_HTTPS_PROXY`, `JIRA_SOCKS_PROXY`, `JIRA_NO_PROXY`: Jira-specific overrides.
+- `CONFLUENCE_HTTP_PROXY`, `CONFLUENCE_HTTPS_PROXY`, `CONFLUENCE_SOCKS_PROXY`, `CONFLUENCE_NO_PROXY`: Confluence-specific overrides.
+
+**Note:** Service-specific variables (e.g., `JIRA_HTTPS_PROXY`) will override the corresponding global variables (e.g., `HTTPS_PROXY`) for that specific service.
+
+<details> <summary>Example Usage</summary>
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e", "... existing Confluence/Jira vars",
+        "-e", "HTTP_PROXY",
+        "-e", "HTTPS_PROXY",
+        "-e", "NO_PROXY",
+        "ghcr.io/sooperset/mcp-atlassian:latest"
+      ],
+      "env": {
+        "... existing Confluence/Jira vars": "...",
+        "HTTP_PROXY": "http://proxy.internal:8080",
+        "HTTPS_PROXY": "http://proxy.internal:8080",
+        "NO_PROXY": "localhost,.your-company.com"
+      }
+    }
+  }
+}
+```
+
+Credentials in proxy URLs are masked in logs. If you set `NO_PROXY`, it will be respected for requests to matching hosts.
+
+</details>
+
 ## Tools
 
 ### Key Tools
