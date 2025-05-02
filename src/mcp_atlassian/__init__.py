@@ -86,6 +86,26 @@ logger = setup_logging(logging_level)
     "--enabled-tools",
     help="Comma-separated list of tools to enable (enables all if not specified)",
 )
+@click.option(
+    "--oauth-client-id",
+    help="OAuth 2.0 client ID for Atlassian Cloud",
+)
+@click.option(
+    "--oauth-client-secret",
+    help="OAuth 2.0 client secret for Atlassian Cloud",
+)
+@click.option(
+    "--oauth-redirect-uri",
+    help="OAuth 2.0 redirect URI for Atlassian Cloud",
+)
+@click.option(
+    "--oauth-scope",
+    help="OAuth 2.0 scopes (space-separated) for Atlassian Cloud",
+)
+@click.option(
+    "--oauth-cloud-id",
+    help="Atlassian Cloud ID for OAuth 2.0 authentication",
+)
 def main(
     verbose: bool,
     env_file: str | None,
@@ -105,10 +125,19 @@ def main(
     jira_projects_filter: str | None,
     read_only: bool = False,
     enabled_tools: str | None = None,
+    oauth_client_id: str | None = None,
+    oauth_client_secret: str | None = None,
+    oauth_redirect_uri: str | None = None,
+    oauth_scope: str | None = None,
+    oauth_cloud_id: str | None = None,
 ) -> None:
     """MCP Atlassian Server - Jira and Confluence functionality for MCP
 
     Supports both Atlassian Cloud and Jira Server/Data Center deployments.
+    Authentication methods supported:
+    - Username and API token (Cloud)
+    - Personal Access Token (Server/Data Center)
+    - OAuth 2.0 (Cloud only)
     """
     # Configure logging based on verbosity
     logging_level = logging.WARNING
@@ -187,6 +216,18 @@ def main(
         os.environ["JIRA_API_TOKEN"] = jira_token
     if jira_personal_token:
         os.environ["JIRA_PERSONAL_TOKEN"] = jira_personal_token
+
+    # Set OAuth configuration if provided
+    if oauth_client_id:
+        os.environ["ATLASSIAN_OAUTH_CLIENT_ID"] = oauth_client_id
+    if oauth_client_secret:
+        os.environ["ATLASSIAN_OAUTH_CLIENT_SECRET"] = oauth_client_secret
+    if oauth_redirect_uri:
+        os.environ["ATLASSIAN_OAUTH_REDIRECT_URI"] = oauth_redirect_uri
+    if oauth_scope:
+        os.environ["ATLASSIAN_OAUTH_SCOPE"] = oauth_scope
+    if oauth_cloud_id:
+        os.environ["ATLASSIAN_OAUTH_CLOUD_ID"] = oauth_cloud_id
 
     # Set read-only mode from CLI flag
     if read_only:

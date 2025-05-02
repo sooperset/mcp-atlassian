@@ -4,8 +4,11 @@ import logging
 from typing import Any
 
 from atlassian import Confluence
+from requests import Session
 
-from ..utils import configure_ssl_verification
+from ..exceptions import MCPAtlassianAuthenticationError
+from ..utils.oauth import configure_oauth_session
+from ..utils.ssl import configure_ssl_verification
 from .config import ConfluenceConfig
 
 # Configure logging
@@ -24,11 +27,35 @@ class ConfluenceClient:
 
         Raises:
             ValueError: If configuration is invalid or environment variables are missing
+            MCPAtlassianAuthenticationError: If OAuth authentication fails
         """
         self.config = config or ConfluenceConfig.from_env()
 
         # Initialize the Confluence client based on auth type
-        if self.config.auth_type == "token":
+        if self.config.auth_type == "oauth":
+            if not self.config.oauth_config or not self.config.oauth_config.cloud_id:
+                error_msg = "OAuth authentication requires a valid cloud_id"
+                raise ValueError(error_msg)
+
+            # Create a session for OAuth
+            session = Session()
+
+            # Configure the session with OAuth authentication
+            if not configure_oauth_session(session, self.config.oauth_config):
+                error_msg = "Failed to configure OAuth session"
+                raise MCPAtlassianAuthenticationError(error_msg)
+
+            # The Confluence API URL with OAuth is different
+            api_url = f"https://api.atlassian.com/ex/confluence/{self.config.oauth_config.cloud_id}"
+
+            # Initialize Confluence with the session
+            self.confluence = Confluence(
+                url=api_url,
+                session=session,
+                cloud=True,  # OAuth is only for Cloud
+                verify_ssl=self.config.ssl_verify,
+            )
+        elif self.config.auth_type == "token":
             self.confluence = Confluence(
                 url=self.config.url,
                 token=self.config.personal_token,
@@ -41,6 +68,7 @@ class ConfluenceClient:
                 username=self.config.username,
                 password=self.config.api_token,  # API token is used as password
                 cloud=self.config.is_cloud,
+                verify_ssl=self.config.ssl_verify,
             )
 
         # Configure SSL verification using the shared utility
