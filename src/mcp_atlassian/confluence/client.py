@@ -1,9 +1,12 @@
 """Base client module for Confluence API interactions."""
 
 import logging
+import os
 from typing import Any
 
 from atlassian import Confluence
+
+from mcp_atlassian.utils.logging import log_config_param
 
 from ..utils import configure_ssl_verification
 from .config import ConfluenceConfig
@@ -50,6 +53,24 @@ class ConfluenceClient:
             session=self.confluence._session,
             ssl_verify=self.config.ssl_verify,
         )
+
+        # Proxy configuration
+        proxies = {}
+        if self.config.http_proxy:
+            proxies["http"] = self.config.http_proxy
+        if self.config.https_proxy:
+            proxies["https"] = self.config.https_proxy
+        if self.config.socks_proxy:
+            proxies["socks"] = self.config.socks_proxy
+        if proxies:
+            self.confluence._session.proxies.update(proxies)
+            for k, v in proxies.items():
+                log_config_param(
+                    logger, "Confluence", f"{k.upper()}_PROXY", v, sensitive=True
+                )
+        if self.config.no_proxy and isinstance(self.config.no_proxy, str):
+            os.environ["NO_PROXY"] = self.config.no_proxy
+            log_config_param(logger, "Confluence", "NO_PROXY", self.config.no_proxy)
 
         # Import here to avoid circular imports
         from ..preprocessing.confluence import ConfluencePreprocessor

@@ -1,11 +1,13 @@
 """Base client module for Jira API interactions."""
 
 import logging
+import os
 from typing import Any, Literal
 
 from atlassian import Jira
 
 from mcp_atlassian.preprocessing import JiraPreprocessor
+from mcp_atlassian.utils.logging import log_config_param
 from mcp_atlassian.utils.ssl import configure_ssl_verification
 
 from .config import JiraConfig
@@ -59,6 +61,24 @@ class JiraClient:
             session=self.jira._session,
             ssl_verify=self.config.ssl_verify,
         )
+
+        # Proxy configuration
+        proxies = {}
+        if self.config.http_proxy:
+            proxies["http"] = self.config.http_proxy
+        if self.config.https_proxy:
+            proxies["https"] = self.config.https_proxy
+        if self.config.socks_proxy:
+            proxies["socks"] = self.config.socks_proxy
+        if proxies:
+            self.jira._session.proxies.update(proxies)
+            for k, v in proxies.items():
+                log_config_param(
+                    logger, "Jira", f"{k.upper()}_PROXY", v, sensitive=True
+                )
+        if self.config.no_proxy and isinstance(self.config.no_proxy, str):
+            os.environ["NO_PROXY"] = self.config.no_proxy
+            log_config_param(logger, "Jira", "NO_PROXY", self.config.no_proxy)
 
         # Initialize the text preprocessor for text processing capabilities
         self.preprocessor = JiraPreprocessor(base_url=self.config.url)
