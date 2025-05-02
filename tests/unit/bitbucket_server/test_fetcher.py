@@ -1,56 +1,29 @@
 """Tests for Bitbucket Server fetcher."""
 
-from unittest.mock import Mock
-
-import pytest
+from unittest.mock import MagicMock
 
 from mcp_atlassian.bitbucket_server import BitbucketServerFetcher
-from mcp_atlassian.bitbucket_server.config import BitbucketServerConfig
-
-
-@pytest.fixture
-def mock_config():
-    """Create a mock Bitbucket Server configuration."""
-    config = Mock(spec=BitbucketServerConfig)
-    config.url = "https://bitbucket.example.com"
-    config.auth_type = "token"
-    config.personal_token = "test-token"
-    config.ssl_verify = True
-    config.projects_filter = "TEST,PROJECT"
-    return config
-
-
-@pytest.fixture
-def mock_fetcher(mock_config):
-    """Create a mock Bitbucket Server fetcher with mocked components."""
-    fetcher = BitbucketServerFetcher(config=mock_config)
-
-    # Mock all the components
-    fetcher.branches = Mock()
-    fetcher.builds = Mock()
-    fetcher.commits = Mock()
-    fetcher.pull_requests = Mock()
-    fetcher.comments = Mock()
-    fetcher.diffs = Mock()
-    fetcher.activities = Mock()
-    fetcher.search = Mock()
-    fetcher.files = Mock()
-
-    return fetcher
 
 
 class TestBitbucketServerFetcher:
     """Tests for BitbucketServerFetcher class."""
 
-    def test_get_branches(self, mock_fetcher):
+    def test_get_branches(self):
         """Test that get_branches delegates to the branches component."""
-        # Set up mock return value
-        mock_fetcher.branches.get_branches.return_value = {
-            "values": [{"displayId": "master"}]
-        }
+        # Create mocks for all needed components
+        mock_branches = MagicMock()
+        mock_branches.get_branches.return_value = {"values": [{"displayId": "master"}]}
 
-        # Call the method
-        result = mock_fetcher.get_branches(
+        # Create a fetcher with mocked components
+        fetcher = MagicMock(spec=BitbucketServerFetcher)
+        fetcher.branches = mock_branches
+
+        # Store the original method to call it directly
+        original_method = BitbucketServerFetcher.get_branches
+
+        # Call the method directly (this is not ideal but works for testing)
+        result = original_method(
+            fetcher,
             repository="test-repo",
             project="TEST",
             filter_text="master",
@@ -59,7 +32,7 @@ class TestBitbucketServerFetcher:
         )
 
         # Verify the branches component was called correctly
-        mock_fetcher.branches.get_branches.assert_called_once_with(
+        mock_branches.get_branches.assert_called_once_with(
             repository="test-repo",
             project="TEST",
             filter_text="master",
@@ -70,15 +43,24 @@ class TestBitbucketServerFetcher:
         # Verify the result
         assert result == {"values": [{"displayId": "master"}]}
 
-    def test_get_branch_commits(self, mock_fetcher):
+    def test_get_branch_commits(self):
         """Test that get_branch_commits delegates to the branches component."""
-        # Set up mock return value
-        mock_fetcher.branches.get_branch_commits.return_value = {
+        # Create mocks for all needed components
+        mock_branches = MagicMock()
+        mock_branches.get_branch_commits.return_value = {
             "values": [{"displayId": "a1234567"}]
         }
 
-        # Call the method
-        result = mock_fetcher.get_branch_commits(
+        # Create a fetcher with mocked components
+        fetcher = MagicMock(spec=BitbucketServerFetcher)
+        fetcher.branches = mock_branches
+
+        # Store the original method to call it directly
+        original_method = BitbucketServerFetcher.get_branch_commits
+
+        # Call the method directly
+        result = original_method(
+            fetcher,
             repository="test-repo",
             branch="master",
             project="TEST",
@@ -87,7 +69,7 @@ class TestBitbucketServerFetcher:
         )
 
         # Verify the branches component was called correctly
-        mock_fetcher.branches.get_branch_commits.assert_called_once_with(
+        mock_branches.get_branch_commits.assert_called_once_with(
             repository="test-repo",
             branch="master",
             project="TEST",
@@ -98,20 +80,29 @@ class TestBitbucketServerFetcher:
         # Verify the result
         assert result == {"values": [{"displayId": "a1234567"}]}
 
-    def test_get_commit(self, mock_fetcher):
+    def test_get_commit(self):
         """Test that get_commit delegates to the commits component."""
-        # Set up mock return value
-        mock_fetcher.commits.get_commit.return_value = {"displayId": "a1234567"}
+        # Create mocks for all needed components
+        mock_commits = MagicMock()
+        mock_commits.get_commit.return_value = {"displayId": "a1234567"}
 
-        # Call the method
-        result = mock_fetcher.get_commit(
+        # Create a fetcher with mocked components
+        fetcher = MagicMock(spec=BitbucketServerFetcher)
+        fetcher.commits = mock_commits
+
+        # Store the original method to call it directly
+        original_method = BitbucketServerFetcher.get_commit
+
+        # Call the method directly
+        result = original_method(
+            fetcher,
             repository="test-repo",
             commit_id="a123456789",
             project="TEST",
         )
 
         # Verify the commits component was called correctly
-        mock_fetcher.commits.get_commit.assert_called_once_with(
+        mock_commits.get_commit.assert_called_once_with(
             repository="test-repo",
             commit_id="a123456789",
             project="TEST",
@@ -120,22 +111,31 @@ class TestBitbucketServerFetcher:
         # Verify the result
         assert result == {"displayId": "a1234567"}
 
-    def test_get_commit_changes(self, mock_fetcher):
+    def test_get_commit_changes(self):
         """Test that get_commit_changes delegates to the commits component."""
-        # Set up mock return value
-        mock_fetcher.commits.get_commit_changes.return_value = {
+        # Create mocks for all needed components
+        mock_commits = MagicMock()
+        mock_commits.get_commit_changes.return_value = {
             "values": [{"path": {"toString": "test.java"}}]
         }
 
-        # Call the method
-        result = mock_fetcher.get_commit_changes(
+        # Create a fetcher with mocked components
+        fetcher = MagicMock(spec=BitbucketServerFetcher)
+        fetcher.commits = mock_commits
+
+        # Store the original method to call it directly
+        original_method = BitbucketServerFetcher.get_commit_changes
+
+        # Call the method directly
+        result = original_method(
+            fetcher,
             repository="test-repo",
             commit_id="a123456789",
             project="TEST",
         )
 
         # Verify the commits component was called correctly
-        mock_fetcher.commits.get_commit_changes.assert_called_once_with(
+        mock_commits.get_commit_changes.assert_called_once_with(
             repository="test-repo",
             commit_id="a123456789",
             project="TEST",
@@ -144,18 +144,26 @@ class TestBitbucketServerFetcher:
         # Verify the result
         assert result == {"values": [{"path": {"toString": "test.java"}}]}
 
-    def test_get_build_status(self, mock_fetcher):
+    def test_get_build_status(self):
         """Test that get_build_status delegates to the builds component."""
-        # Set up mock return value
-        mock_fetcher.builds.get_build_status.return_value = {
+        # Create mocks for all needed components
+        mock_builds = MagicMock()
+        mock_builds.get_build_status.return_value = {
             "values": [{"state": "SUCCESSFUL"}]
         }
 
-        # Call the method
-        result = mock_fetcher.get_build_status(commit_id="a123456789")
+        # Create a fetcher with mocked components
+        fetcher = MagicMock(spec=BitbucketServerFetcher)
+        fetcher.builds = mock_builds
+
+        # Store the original method to call it directly
+        original_method = BitbucketServerFetcher.get_build_status
+
+        # Call the method directly
+        result = original_method(fetcher, commit_id="a123456789")
 
         # Verify the builds component was called correctly
-        mock_fetcher.builds.get_build_status.assert_called_once_with(
+        mock_builds.get_build_status.assert_called_once_with(
             commit_id="a123456789",
         )
 
