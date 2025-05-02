@@ -1020,7 +1020,7 @@ async def list_tools() -> list[Tool]:
         bitbucket_server_read_tools = [
             Tool(
                 name="bitbucket_get_pull_request",
-                description="Get pull request details from Bitbucket Server",
+                description="Get detailed information about a pull request in Bitbucket Server. Use this to view PR details, then use bitbucket_get_diff to see code changes or bitbucket_get_reviews to see reviews.",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -1042,7 +1042,7 @@ async def list_tools() -> list[Tool]:
             ),
             Tool(
                 name="bitbucket_get_diff",
-                description="Get diff for a pull request showing code changes",
+                description="Get the code changes (diff) for a specific pull request. Use after bitbucket_get_pull_request to view what code changes are included in the PR.",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -1076,7 +1076,7 @@ async def list_tools() -> list[Tool]:
             ),
             Tool(
                 name="bitbucket_get_reviews",
-                description="Get reviews for a pull request",
+                description="Get all reviews for a specific pull request. Use this to check feedback and approval status for a PR that you found with bitbucket_get_pull_request.",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -1106,7 +1106,7 @@ async def list_tools() -> list[Tool]:
             ),
             Tool(
                 name="bitbucket_get_activities",
-                description="Get activities for a pull request",
+                description="Get the activity history for a pull request, including comments, approvals, and updates. Use this to see the full timeline of events on a pull request.",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -1134,6 +1134,88 @@ async def list_tools() -> list[Tool]:
                     "required": ["repository", "prId", "project"],
                 },
             ),
+            Tool(
+                name="bitbucket_search_code",
+                description="Search code content in Bitbucket Server repositories. The results include file paths that can be used with bitbucket_get_file_content to retrieve complete files.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query (supports searching for text, file extensions with '*.ext', or project:KEY repo:REPO syntax)",
+                        },
+                        "project_key": {
+                            "type": "string",
+                            "description": "Optional project key to limit search to a specific project",
+                        },
+                        "repository_slug": {
+                            "type": "string",
+                            "description": "Optional repository slug to limit search to a specific repository",
+                        },
+                        "page": {
+                            "type": "number",
+                            "description": "Page number to start from (1-based indexing, default 1)",
+                        },
+                        "limit": {
+                            "type": "number",
+                            "description": "Maximum number of results to return per page (max 50, default 10)",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            ),
+            Tool(
+                name="bitbucket_search_repositories",
+                description="Search for repositories in Bitbucket Server",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query. Either this or project_key must be provided.",
+                        },
+                        "project_key": {
+                            "type": "string",
+                            "description": "Project key to search for repositories. Either this or query must be provided.",
+                        },
+                        "page": {
+                            "type": "number",
+                            "description": "Page number to start from (1-based indexing, default 1)",
+                        },
+                        "limit": {
+                            "type": "number",
+                            "description": "Maximum number of results to return per page (max 50, default 10)",
+                        },
+                    },
+                    "anyOf": [{"required": ["query"]}, {"required": ["project_key"]}],
+                },
+            ),
+            Tool(
+                name="bitbucket_get_file_content",
+                description="Get the content of a file from Bitbucket Server. Use with file_path values from bitbucket_search_code results.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "repository": {
+                            "type": "string",
+                            "description": "Repository slug. You can get this from the 'repository_slug' field in bitbucket_search_code results.",
+                        },
+                        "file_path": {
+                            "type": "string",
+                            "description": "Path to the file within the repository. You can get this from the 'file_path' field in bitbucket_search_code results.",
+                        },
+                        "project": {
+                            "type": "string",
+                            "description": "Project key (optional if provided in config). You can get this from the 'project' field in bitbucket_search_code results.",
+                        },
+                        "at": {
+                            "type": "string",
+                            "description": "Branch or commit to get the file from (optional, defaults to default branch)",
+                        },
+                    },
+                    "required": ["repository", "file_path"],
+                },
+            ),
         ]
 
         # Filter and add read-only tools
@@ -1147,7 +1229,7 @@ async def list_tools() -> list[Tool]:
             bitbucket_server_write_tools = [
                 Tool(
                     name="bitbucket_add_comment",
-                    description="Add a comment to a pull request",
+                    description="Add a new comment to a specific pull request. Use this to provide feedback on a PR after viewing it with bitbucket_get_pull_request and reviewing changes with bitbucket_get_diff.",
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -3101,6 +3183,192 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 ]
             except Exception as e:
                 error_msg = f"Error adding comment: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "bitbucket_search_code":
+            if not ctx or not ctx.bitbucket_server:
+                raise ValueError("Bitbucket Server is not configured.")
+
+            # Extract arguments
+            query = arguments.get("query")
+            project_key = arguments.get("project_key")
+            repository_slug = arguments.get("repository_slug")
+            page = int(arguments.get("page", 1))
+            limit = min(int(arguments.get("limit", 10)), 50)
+
+            # Validate required parameters
+            if not query:
+                raise ValueError("Missing required parameter: query")
+
+            try:
+                # Search code
+                raw_result = ctx.bitbucket_server.search_code(
+                    query=query,
+                    project_key=project_key,
+                    repository_slug=repository_slug,
+                    page=page,
+                    limit=limit,
+                )
+
+                # Extract and format the results to better highlight file locations
+                formatted_result = {
+                    "total_count": raw_result.get("code", {}).get("count", 0),
+                    "page": page,
+                    "limit": limit,
+                    "is_last_page": raw_result.get("code", {}).get("isLastPage", True),
+                    "results": [],
+                }
+
+                # Extract each search result with file location
+                if "code" in raw_result and "values" in raw_result["code"]:
+                    for item in raw_result["code"]["values"]:
+                        file_result = {
+                            "project": item.get("repository", {})
+                            .get("project", {})
+                            .get("key"),
+                            "repository": item.get("repository", {}).get("slug"),
+                            "file_path": item.get("file"),
+                            "hit_count": item.get("hitCount", 0),
+                            "contexts": [],
+                        }
+
+                        # Include context snippets for each hit
+                        if "hitContexts" in item:
+                            for context in item["hitContexts"]:
+                                context_lines = []
+                                for line in context:
+                                    # Remove HTML tags from line text for cleaner display
+                                    text = line.get("text", "")
+                                    text = text.replace("<em>", "").replace("</em>", "")
+                                    context_lines.append(
+                                        {"line": line.get("line"), "text": text}
+                                    )
+                                file_result["contexts"].append(context_lines)
+
+                        formatted_result["results"].append(file_result)
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(formatted_result, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error searching code: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "bitbucket_search_repositories":
+            if not ctx or not ctx.bitbucket_server:
+                raise ValueError("Bitbucket Server is not configured.")
+
+            # Extract arguments
+            query = arguments.get("query")
+            project_key = arguments.get("project_key")
+            page = int(arguments.get("page", 1))
+            limit = min(int(arguments.get("limit", 10)), 50)
+
+            # Either query or project_key must be provided
+            if not query and not project_key:
+                raise ValueError("Either query or project_key must be provided")
+
+            try:
+                # Search repositories
+                raw_result = ctx.bitbucket_server.search_repositories(
+                    query=query,
+                    project_key=project_key,
+                    page=page,
+                    limit=limit,
+                )
+
+                # Extract and format the repository results
+                formatted_result = {
+                    "total_count": raw_result.get("repositories", {}).get("count", 0),
+                    "page": page,
+                    "limit": limit,
+                    "is_last_page": raw_result.get("repositories", {}).get(
+                        "isLastPage", True
+                    ),
+                    "repositories": [],
+                }
+
+                # Extract each repository result
+                if (
+                    "repositories" in raw_result
+                    and "values" in raw_result["repositories"]
+                ):
+                    for repo in raw_result["repositories"]["values"]:
+                        repo_result = {
+                            "project_key": repo.get("project", {}).get("key"),
+                            "project_name": repo.get("project", {}).get("name"),
+                            "repository_slug": repo.get("slug"),
+                            "repository_name": repo.get("name"),
+                            "description": repo.get("description"),
+                            "state": repo.get("state"),
+                            "archived": repo.get("archived", False),
+                        }
+                        formatted_result["repositories"].append(repo_result)
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(formatted_result, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error searching repositories: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "bitbucket_get_file_content":
+            if not ctx or not ctx.bitbucket_server:
+                raise ValueError("Bitbucket Server is not configured.")
+
+            # Extract arguments
+            repository = arguments.get("repository")
+            file_path = arguments.get("file_path")
+            project = arguments.get("project")
+            at = arguments.get("at")
+
+            # Validate required parameters
+            if not repository:
+                raise ValueError("Missing required parameter: repository")
+            if not file_path:
+                raise ValueError("Missing required parameter: file_path")
+
+            try:
+                # Get file content
+                content = ctx.bitbucket_server.get_file_content(
+                    repository=repository,
+                    file_path=file_path,
+                    project=project,
+                    at=at,
+                )
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=content,
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error getting file content: {str(e)}"
                 logger.error(error_msg)
                 return [
                     TextContent(

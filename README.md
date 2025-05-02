@@ -35,7 +35,7 @@ https://github.com/user-attachments/assets/7fe9c488-ad0c-4876-9b54-120b666bb785
 |**Confluence**|Server/Data Center|✅ Supported (version 6.0+)|
 |**Jira**|Cloud|✅ Fully supported|
 |**Jira**|Server/Data Center|✅ Supported (version 8.14+)|
-|**Bitbucket**|Server/Data Center|⚠️ Basic support (pull requests only)|
+|**Bitbucket**|Server/Data Center|⚠️ Basic support (pull requests and search)|
 
 ## Quick Start Guide
 
@@ -350,6 +350,32 @@ For Jira Server/DC, use:
 - `bitbucket_add_comment`: Add a comment to a pull request
 - `bitbucket_get_diff`: Get diff for a pull request showing code changes
 - `bitbucket_get_reviews`: Get reviews for a pull request
+- `bitbucket_search_code`: Search code content in repositories
+- `bitbucket_search_repositories`: Search for repositories
+- `bitbucket_get_file_content`: Get the content of a file from a repository
+
+<details>
+<summary>Bitbucket Server Tools Guide</summary>
+
+The Bitbucket Server integration provides several tools that work together to help you navigate code repositories and review pull requests:
+
+**Pull Request Workflow:**
+1. Use `bitbucket_get_pull_request` to fetch details about a specific PR
+2. View the code changes with `bitbucket_get_diff`
+3. Check review status with `bitbucket_get_reviews`
+4. Add your feedback with `bitbucket_add_comment`
+
+**Code Search Workflow:**
+1. Find files with `bitbucket_search_code` using patterns like `*.js` or specific text
+2. From the search results, note the `project`, `repository_slug`, and `file_path` fields
+3. Retrieve the complete file content with `bitbucket_get_file_content`
+
+**Repository Search Workflow:**
+1. Find repositories with `bitbucket_search_repositories` (use project key for more focused results)
+2. Browse files in those repositories using the code search workflow
+
+Each tool returns structured data that can be used as input for subsequent tool calls, creating a seamless workflow for code exploration and review.
+</details>
 
 <details> <summary>View All Tools</summary>
 
@@ -361,9 +387,9 @@ For Jira Server/DC, use:
 |`confluence_get_page`|`jira_search`|`bitbucket_add_comment`|
 |`confluence_get_page_children`|`jira_get_project_issues`|`bitbucket_get_diff`|
 |`confluence_get_page_ancestors`|`jira_get_epic_issues`|`bitbucket_get_reviews`|
-|`confluence_get_comments`|`jira_create_issue`||
-|`confluence_create_page`|`jira_batch_create_issues`||
-|`confluence_update_page`|`jira_update_issue`||
+|`confluence_get_comments`|`jira_create_issue`|`bitbucket_search_code`|
+|`confluence_create_page`|`jira_batch_create_issues`|`bitbucket_search_repositories`|
+|`confluence_update_page`|`jira_update_issue`|`bitbucket_get_file_content`|
 |`confluence_delete_page`|`jira_delete_issue`||
 |`confluence_get_labels`|`jira_get_transitions`||
 |`confluence_add_label`|`jira_transition_issue`||

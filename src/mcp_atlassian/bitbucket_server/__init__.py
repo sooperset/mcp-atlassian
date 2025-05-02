@@ -12,7 +12,9 @@ from .client import BitbucketServerClient
 from .comments import BitbucketServerComments
 from .config import BitbucketServerConfig
 from .diffs import BitbucketServerDiffs
+from .files import BitbucketServerFiles
 from .pull_requests import BitbucketServerPullRequests
+from .search import BitbucketServerSearch
 
 logger = logging.getLogger("mcp-atlassian.bitbucket_server")
 
@@ -32,6 +34,8 @@ class BitbucketServerFetcher:
         self.comments = BitbucketServerComments(self.client)
         self.diffs = BitbucketServerDiffs(self.client)
         self.activities = BitbucketServerActivities(self.client)
+        self.search = BitbucketServerSearch(self.client, config)
+        self.files = BitbucketServerFiles(self.client)
 
     def get_pull_request(
         self, repository: str, pr_id: int, project: str | None = None
@@ -163,6 +167,84 @@ class BitbucketServerFetcher:
             project=project,
             start=start,
             limit=limit,
+        )
+
+    def search_code(
+        self,
+        query: str,
+        project_key: str | None = None,
+        repository_slug: str | None = None,
+        page: int = 1,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        """Search code content in repositories.
+
+        Args:
+            query: The search query
+            project_key: Project key to limit search to a specific project
+            repository_slug: Repository slug to limit search to a specific repository
+            page: Page number to start from (1-based indexing)
+            limit: Maximum number of results to return per page
+
+        Returns:
+            Search results
+        """
+        return self.search.search_code(
+            query=query,
+            project_key=project_key,
+            repository_slug=repository_slug,
+            page=page,
+            limit=limit,
+        )
+
+    def search_repositories(
+        self,
+        query: str,
+        project_key: str | None = None,
+        page: int = 1,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        """Search for repositories.
+
+        Args:
+            query: The search query
+            project_key: Project key to limit search to a specific project
+            page: Page number to start from (1-based indexing)
+            limit: Maximum number of results to return per page
+
+        Returns:
+            Search results
+        """
+        return self.search.search_repositories(
+            query=query,
+            project_key=project_key,
+            page=page,
+            limit=limit,
+        )
+
+    def get_file_content(
+        self,
+        repository: str,
+        file_path: str,
+        project: str | None = None,
+        at: str | None = None,
+    ) -> str:
+        """Get the content of a file from Bitbucket Server.
+
+        Args:
+            repository: Repository slug
+            file_path: Path to the file within the repository
+            project: Project key (optional if provided in config)
+            at: Branch or commit to get the file from (optional, defaults to default branch)
+
+        Returns:
+            Raw content of the file as a string
+        """
+        return self.files.get_file_content(
+            repository=repository,
+            file_path=file_path,
+            project=project,
+            at=at,
         )
 
     def close(self) -> None:

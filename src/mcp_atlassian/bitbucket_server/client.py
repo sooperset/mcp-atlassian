@@ -23,6 +23,7 @@ class BitbucketServerClient:
         """
         self.config = config
         self.base_url = f"{config.url}{API_BASE_PATH}"
+        self.root_url = config.url
         self.session = self._create_session()
 
     def _create_session(self) -> httpx.Client:
@@ -100,6 +101,55 @@ class BitbucketServerClient:
 
         try:
             response = self.session.post(url, json=json, params=params)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"HTTP error {e.response.status_code} for {url}: {e.response.text}"
+            )
+            raise BitbucketServerApiError(
+                f"HTTP error: {e.response.status_code} - {e.response.text}"
+            )
+        except httpx.RequestError as e:
+            logger.error(f"Request error for {url}: {str(e)}")
+            raise BitbucketServerApiError(f"Request error: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error for {url}: {str(e)}")
+            raise BitbucketServerApiError(f"Unexpected error: {str(e)}")
+
+    def post_url(
+        self,
+        url: str,
+        data: str | None = None,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Send POST request to a full URL.
+
+        This method is useful for endpoints outside the standard API base path.
+
+        Args:
+            url: Full URL for the request
+            data: Request body as string (usually JSON)
+            params: Query parameters
+            headers: Additional headers
+
+        Returns:
+            JSON response data
+
+        Raises:
+            BitbucketServerApiError: If the request fails
+        """
+        logger.debug(f"Sending POST request to full URL: {url}")
+
+        request_headers = {"Content-Type": "application/json"}
+        if headers:
+            request_headers.update(headers)
+
+        try:
+            response = self.session.post(
+                url, content=data, params=params, headers=request_headers
+            )
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:
