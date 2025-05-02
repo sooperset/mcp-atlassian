@@ -251,7 +251,7 @@ class TestSearchMixin:
         # Verify results
         assert isinstance(result, JiraSearchResult)
         assert len(result.issues) == 0
-        assert result.total == 0
+        assert result.total == -1
 
     def test_search_issues_with_error(self, search_mixin: SearchMixin):
         """Test search with API error."""
