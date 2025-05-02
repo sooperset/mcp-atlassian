@@ -1019,6 +1019,124 @@ async def list_tools() -> list[Tool]:
         # Add read operations
         bitbucket_server_read_tools = [
             Tool(
+                name="bitbucket_get_branches",
+                description="Get all branches for a repository. Use this to list branches in a repo and find branch names for other operations.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "repository": {
+                            "type": "string",
+                            "description": "Repository slug",
+                        },
+                        "project": {
+                            "type": "string",
+                            "description": "Bitbucket project key",
+                        },
+                        "filter_text": {
+                            "type": "string",
+                            "description": "Optional text to filter branches by name",
+                        },
+                        "limit": {
+                            "type": "number",
+                            "description": "Maximum number of branches to return (default 25)",
+                        },
+                        "start": {
+                            "type": "number",
+                            "description": "Starting index for pagination (0-based, default 0)",
+                        },
+                    },
+                    "required": ["repository", "project"],
+                },
+            ),
+            Tool(
+                name="bitbucket_get_branch_commits",
+                description="Get commits for a specific branch. Defaults to returning just the latest commit on the branch, useful for getting the current state.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "repository": {
+                            "type": "string",
+                            "description": "Repository slug",
+                        },
+                        "branch": {
+                            "type": "string",
+                            "description": "Branch name (e.g., 'master', 'develop')",
+                        },
+                        "project": {
+                            "type": "string",
+                            "description": "Bitbucket project key",
+                        },
+                        "limit": {
+                            "type": "number",
+                            "description": "Maximum number of commits to return (default 1 for just the latest commit)",
+                        },
+                        "start": {
+                            "type": "number",
+                            "description": "Starting index for pagination (0-based, default 0)",
+                        },
+                    },
+                    "required": ["repository", "branch", "project"],
+                },
+            ),
+            Tool(
+                name="bitbucket_get_commit",
+                description="Get detailed information about a specific commit.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "repository": {
+                            "type": "string",
+                            "description": "Repository slug",
+                        },
+                        "commit_id": {
+                            "type": "string",
+                            "description": "Commit ID (SHA)",
+                        },
+                        "project": {
+                            "type": "string",
+                            "description": "Bitbucket project key",
+                        },
+                    },
+                    "required": ["repository", "commit_id", "project"],
+                },
+            ),
+            Tool(
+                name="bitbucket_get_commit_changes",
+                description="Get the changes (files modified, added, deleted) in a specific commit.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "repository": {
+                            "type": "string",
+                            "description": "Repository slug",
+                        },
+                        "commit_id": {
+                            "type": "string",
+                            "description": "Commit ID (SHA)",
+                        },
+                        "project": {
+                            "type": "string",
+                            "description": "Bitbucket project key",
+                        },
+                    },
+                    "required": ["repository", "commit_id", "project"],
+                },
+            ),
+            Tool(
+                name="bitbucket_get_build_status",
+                description="Get the CI build status for a specific commit.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "commit_id": {
+                            "type": "string",
+                            "description": "Commit ID (SHA)",
+                        },
+                    },
+                    "required": ["commit_id"],
+                },
+            ),
+            Tool(
                 name="bitbucket_get_pull_request",
                 description="Get detailed information about a pull request in Bitbucket Server. Use this to view PR details, then use bitbucket_get_diff to see code changes or bitbucket_get_reviews to see reviews.",
                 inputSchema={
@@ -3129,6 +3247,209 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 ]
             except Exception as e:
                 error_msg = f"Error getting activities: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "bitbucket_get_branches":
+            if not ctx or not ctx.bitbucket_server:
+                raise ValueError("Bitbucket Server is not configured.")
+
+            # Extract arguments
+            repository = arguments.get("repository")
+            project = arguments.get("project")
+            filter_text = arguments.get("filter_text")
+            start = arguments.get("start", 0)
+            limit = arguments.get("limit", 25)
+
+            # Validate required parameters
+            if not repository:
+                raise ValueError("repository is required")
+            if not project:
+                raise ValueError("project is required")
+
+            try:
+                # Get the branches
+                branches = ctx.bitbucket_server.get_branches(
+                    repository=repository,
+                    project=project,
+                    filter_text=filter_text,
+                    start=start,
+                    limit=limit,
+                )
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(branches, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error getting branches: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "bitbucket_get_branch_commits":
+            if not ctx or not ctx.bitbucket_server:
+                raise ValueError("Bitbucket Server is not configured.")
+
+            # Extract arguments
+            repository = arguments.get("repository")
+            branch = arguments.get("branch")
+            project = arguments.get("project")
+            start = arguments.get("start", 0)
+            limit = arguments.get("limit", 1)
+
+            # Validate required parameters
+            if not repository:
+                raise ValueError("repository is required")
+            if not branch:
+                raise ValueError("branch is required")
+            if not project:
+                raise ValueError("project is required")
+
+            try:
+                # Get the commits
+                commits = ctx.bitbucket_server.get_branch_commits(
+                    repository=repository,
+                    branch=branch,
+                    project=project,
+                    start=start,
+                    limit=limit,
+                )
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(commits, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error getting branch commits: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "bitbucket_get_commit":
+            if not ctx or not ctx.bitbucket_server:
+                raise ValueError("Bitbucket Server is not configured.")
+
+            # Extract arguments
+            repository = arguments.get("repository")
+            commit_id = arguments.get("commit_id")
+            project = arguments.get("project")
+
+            # Validate required parameters
+            if not repository:
+                raise ValueError("repository is required")
+            if not commit_id:
+                raise ValueError("commit_id is required")
+            if not project:
+                raise ValueError("project is required")
+
+            try:
+                # Get the commit
+                commit = ctx.bitbucket_server.get_commit(
+                    repository=repository,
+                    commit_id=commit_id,
+                    project=project,
+                )
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(commit, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error getting commit: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "bitbucket_get_commit_changes":
+            if not ctx or not ctx.bitbucket_server:
+                raise ValueError("Bitbucket Server is not configured.")
+
+            # Extract arguments
+            repository = arguments.get("repository")
+            commit_id = arguments.get("commit_id")
+            project = arguments.get("project")
+
+            # Validate required parameters
+            if not repository:
+                raise ValueError("repository is required")
+            if not commit_id:
+                raise ValueError("commit_id is required")
+            if not project:
+                raise ValueError("project is required")
+
+            try:
+                # Get the commit changes
+                changes = ctx.bitbucket_server.get_commit_changes(
+                    repository=repository,
+                    commit_id=commit_id,
+                    project=project,
+                )
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(changes, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error getting commit changes: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "bitbucket_get_build_status":
+            if not ctx or not ctx.bitbucket_server:
+                raise ValueError("Bitbucket Server is not configured.")
+
+            # Extract arguments
+            commit_id = arguments.get("commit_id")
+
+            # Validate required parameters
+            if not commit_id:
+                raise ValueError("commit_id is required")
+
+            try:
+                # Get the build status
+                build_status = ctx.bitbucket_server.get_build_status(
+                    commit_id=commit_id,
+                )
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(build_status, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error getting build status: {str(e)}"
                 logger.error(error_msg)
                 return [
                     TextContent(

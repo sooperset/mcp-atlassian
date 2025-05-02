@@ -8,8 +8,11 @@ from ..models.bitbucket_server import (
     BitbucketServerPullRequest,
 )
 from .activities import BitbucketServerActivities
+from .branches import BitbucketServerBranches
+from .builds import BitbucketServerBuilds
 from .client import BitbucketServerClient
 from .comments import BitbucketServerComments
+from .commits import BitbucketServerCommits
 from .config import BitbucketServerConfig
 from .diffs import BitbucketServerDiffs
 from .files import BitbucketServerFiles
@@ -36,6 +39,9 @@ class BitbucketServerFetcher:
         self.activities = BitbucketServerActivities(self.client)
         self.search = BitbucketServerSearch(self.client, config)
         self.files = BitbucketServerFiles(self.client)
+        self.branches = BitbucketServerBranches(self.client)
+        self.builds = BitbucketServerBuilds(self.client)
+        self.commits = BitbucketServerCommits(self.client)
 
     def get_pull_request(
         self, repository: str, pr_id: int, project: str | None = None
@@ -246,6 +252,107 @@ class BitbucketServerFetcher:
             project=project,
             at=at,
         )
+
+    def get_branches(
+        self,
+        repository: str,
+        project: str | None = None,
+        filter_text: str | None = None,
+        start: int = 0,
+        limit: int = 25,
+    ) -> dict[str, Any]:
+        """Get branches for a repository.
+
+        Args:
+            repository: Repository slug
+            project: Project key (can be omitted if provided in config)
+            filter_text: Optional text to filter branches by name
+            start: Starting index for pagination
+            limit: Maximum number of branches to return
+
+        Returns:
+            Branch data
+        """
+        return self.branches.get_branches(
+            repository=repository,
+            project=project,
+            filter_text=filter_text,
+            start=start,
+            limit=limit,
+        )
+
+    def get_branch_commits(
+        self,
+        repository: str,
+        branch: str,
+        project: str | None = None,
+        start: int = 0,
+        limit: int = 1,
+    ) -> dict[str, Any]:
+        """Get commits for a branch.
+
+        Args:
+            repository: Repository slug
+            branch: Branch name or ref (e.g., 'master', 'develop', 'refs/heads/master')
+            project: Project key (can be omitted if provided in config)
+            start: Starting index for pagination
+            limit: Maximum number of commits to return (default 1 for last commit)
+
+        Returns:
+            Commit data
+        """
+        return self.branches.get_branch_commits(
+            repository=repository,
+            branch=branch,
+            project=project,
+            start=start,
+            limit=limit,
+        )
+
+    def get_commit(
+        self, repository: str, commit_id: str, project: str | None = None
+    ) -> dict[str, Any]:
+        """Get a commit by ID.
+
+        Args:
+            repository: Repository slug
+            commit_id: Commit ID (SHA)
+            project: Project key (can be omitted if provided in config)
+
+        Returns:
+            Commit data
+        """
+        return self.commits.get_commit(
+            repository=repository, commit_id=commit_id, project=project
+        )
+
+    def get_commit_changes(
+        self, repository: str, commit_id: str, project: str | None = None
+    ) -> dict[str, Any]:
+        """Get the changes made in a commit.
+
+        Args:
+            repository: Repository slug
+            commit_id: Commit ID (SHA)
+            project: Project key (can be omitted if provided in config)
+
+        Returns:
+            Changes made in the commit
+        """
+        return self.commits.get_commit_changes(
+            repository=repository, commit_id=commit_id, project=project
+        )
+
+    def get_build_status(self, commit_id: str) -> dict[str, Any]:
+        """Get build status for a commit.
+
+        Args:
+            commit_id: Commit ID (SHA)
+
+        Returns:
+            Build status data
+        """
+        return self.builds.get_build_status(commit_id=commit_id)
 
     def close(self) -> None:
         """Close the client connection."""
