@@ -1,5 +1,6 @@
 """Tests for the Jira client module."""
 
+import os
 from copy import deepcopy
 from typing import Literal
 from unittest.mock import MagicMock, call, patch
@@ -234,3 +235,57 @@ def test_get_paged_without_cloud():
             match="Paged requests are only available for Jira Cloud platform",
         ):
             client.get_paged("get", "/test/url")
+
+
+def test_init_sets_proxies_and_no_proxy(monkeypatch):
+    """Test that JiraClient sets session proxies and NO_PROXY env var from config."""
+    # Patch Jira and its _session
+    mock_jira = MagicMock()
+    mock_session = MagicMock()
+    mock_session.proxies = {}  # Use a real dict for proxies
+    mock_jira._session = mock_session
+    monkeypatch.setattr("mcp_atlassian.jira.client.Jira", lambda **kwargs: mock_jira)
+    monkeypatch.setattr(
+        "mcp_atlassian.jira.client.configure_ssl_verification", lambda **kwargs: None
+    )
+
+    # Patch environment
+    monkeypatch.setenv("NO_PROXY", "")
+
+    config = JiraConfig(
+        url="https://test.atlassian.net",
+        auth_type="basic",
+        username="user",
+        api_token="token",
+        http_proxy="http://proxy:8080",
+        https_proxy="https://proxy:8443",
+        socks_proxy="socks5://user:pass@proxy:1080",
+        no_proxy="localhost,127.0.0.1",
+    )
+    client = JiraClient(config=config)
+    assert mock_session.proxies["http"] == "http://proxy:8080"
+    assert mock_session.proxies["https"] == "https://proxy:8443"
+    assert mock_session.proxies["socks"] == "socks5://user:pass@proxy:1080"
+    assert os.environ["NO_PROXY"] == "localhost,127.0.0.1"
+
+
+def test_init_no_proxies(monkeypatch):
+    """Test that JiraClient does not set proxies if not configured."""
+    # Patch Jira and its _session
+    mock_jira = MagicMock()
+    mock_session = MagicMock()
+    mock_session.proxies = {}  # Use a real dict for proxies
+    mock_jira._session = mock_session
+    monkeypatch.setattr("mcp_atlassian.jira.client.Jira", lambda **kwargs: mock_jira)
+    monkeypatch.setattr(
+        "mcp_atlassian.jira.client.configure_ssl_verification", lambda **kwargs: None
+    )
+
+    config = JiraConfig(
+        url="https://test.atlassian.net",
+        auth_type="basic",
+        username="user",
+        api_token="token",
+    )
+    client = JiraClient(config=config)
+    assert mock_session.proxies == {}

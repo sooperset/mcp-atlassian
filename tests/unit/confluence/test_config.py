@@ -115,3 +115,47 @@ def test_is_cloud():
 
     # Assert
     assert config.is_cloud is False
+
+
+def test_from_env_proxy_settings():
+    """Test that from_env correctly loads proxy environment variables."""
+    with patch.dict(
+        os.environ,
+        {
+            "CONFLUENCE_URL": "https://test.atlassian.net/wiki",
+            "CONFLUENCE_USERNAME": "test_username",
+            "CONFLUENCE_API_TOKEN": "test_token",
+            "HTTP_PROXY": "http://proxy.example.com:8080",
+            "HTTPS_PROXY": "https://proxy.example.com:8443",
+            "SOCKS_PROXY": "socks5://user:pass@proxy.example.com:1080",
+            "NO_PROXY": "localhost,127.0.0.1",
+        },
+        clear=True,
+    ):
+        config = ConfluenceConfig.from_env()
+        assert config.http_proxy == "http://proxy.example.com:8080"
+        assert config.https_proxy == "https://proxy.example.com:8443"
+        assert config.socks_proxy == "socks5://user:pass@proxy.example.com:1080"
+        assert config.no_proxy == "localhost,127.0.0.1"
+
+    # Service-specific overrides
+    with patch.dict(
+        os.environ,
+        {
+            "CONFLUENCE_URL": "https://test.atlassian.net/wiki",
+            "CONFLUENCE_USERNAME": "test_username",
+            "CONFLUENCE_API_TOKEN": "test_token",
+            "CONFLUENCE_HTTP_PROXY": "http://confluence-proxy.example.com:8080",
+            "CONFLUENCE_HTTPS_PROXY": "https://confluence-proxy.example.com:8443",
+            "CONFLUENCE_SOCKS_PROXY": "socks5://user:pass@confluence-proxy.example.com:1080",
+            "CONFLUENCE_NO_PROXY": "localhost,127.0.0.1,.internal.example.com",
+        },
+        clear=True,
+    ):
+        config = ConfluenceConfig.from_env()
+        assert config.http_proxy == "http://confluence-proxy.example.com:8080"
+        assert config.https_proxy == "https://confluence-proxy.example.com:8443"
+        assert (
+            config.socks_proxy == "socks5://user:pass@confluence-proxy.example.com:1080"
+        )
+        assert config.no_proxy == "localhost,127.0.0.1,.internal.example.com"

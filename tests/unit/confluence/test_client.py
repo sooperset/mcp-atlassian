@@ -1,5 +1,6 @@
 """Unit tests for the ConfluenceClient class."""
 
+import os
 from unittest.mock import MagicMock, patch
 
 from mcp_atlassian.confluence.client import ConfluenceClient
@@ -189,3 +190,71 @@ def test_get_user_details_by_accountid():
             "123456", "status"
         )
         assert user_details["status"] == "active"
+
+
+def test_init_sets_proxies_and_no_proxy(monkeypatch):
+    """Test that ConfluenceClient sets session proxies and NO_PROXY env var from config."""
+    # Patch Confluence and its _session
+    mock_confluence = MagicMock()
+    mock_session = MagicMock()
+    mock_session.proxies = {}  # Use a real dict for proxies
+    mock_confluence._session = mock_session
+    monkeypatch.setattr(
+        "mcp_atlassian.confluence.client.Confluence", lambda **kwargs: mock_confluence
+    )
+    monkeypatch.setattr(
+        "mcp_atlassian.confluence.client.configure_ssl_verification",
+        lambda **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor",
+        lambda **kwargs: MagicMock(),
+    )
+
+    # Patch environment
+    monkeypatch.setenv("NO_PROXY", "")
+
+    config = ConfluenceConfig(
+        url="https://test.atlassian.net/wiki",
+        auth_type="basic",
+        username="user",
+        api_token="token",
+        http_proxy="http://proxy:8080",
+        https_proxy="https://proxy:8443",
+        socks_proxy="socks5://user:pass@proxy:1080",
+        no_proxy="localhost,127.0.0.1",
+    )
+    client = ConfluenceClient(config=config)
+    assert mock_session.proxies["http"] == "http://proxy:8080"
+    assert mock_session.proxies["https"] == "https://proxy:8443"
+    assert mock_session.proxies["socks"] == "socks5://user:pass@proxy:1080"
+    assert os.environ["NO_PROXY"] == "localhost,127.0.0.1"
+
+
+def test_init_no_proxies(monkeypatch):
+    """Test that ConfluenceClient does not set proxies if not configured."""
+    # Patch Confluence and its _session
+    mock_confluence = MagicMock()
+    mock_session = MagicMock()
+    mock_session.proxies = {}  # Use a real dict for proxies
+    mock_confluence._session = mock_session
+    monkeypatch.setattr(
+        "mcp_atlassian.confluence.client.Confluence", lambda **kwargs: mock_confluence
+    )
+    monkeypatch.setattr(
+        "mcp_atlassian.confluence.client.configure_ssl_verification",
+        lambda **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor",
+        lambda **kwargs: MagicMock(),
+    )
+
+    config = ConfluenceConfig(
+        url="https://test.atlassian.net/wiki",
+        auth_type="basic",
+        username="user",
+        api_token="token",
+    )
+    client = ConfluenceClient(config=config)
+    assert mock_session.proxies == {}
