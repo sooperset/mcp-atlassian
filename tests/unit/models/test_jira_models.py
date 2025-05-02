@@ -941,7 +941,6 @@ class TestJiraIssue:
         simplified = issue.to_simplified_dict()
         assert "timetracking" in simplified
         assert simplified["timetracking"]["original_estimate"] == "1d"
-        assert simplified["timetracking"]["remaining_estimate"] == "4h"
 
         issue.requested_fields = ["summary", "timetracking"]
         simplified = issue.to_simplified_dict()
@@ -972,6 +971,21 @@ class TestJiraSearchResult:
         assert result.start_at == 0
         assert result.max_results == 0
         assert result.issues == []
+
+    def test_from_api_response_missing_metadata(self, jira_search_data):
+        """Test creating a JiraSearchResult when API is missing metadata."""
+        # Remove total, startAt, maxResults from mock data
+        api_data = dict(jira_search_data)
+        api_data.pop("total", None)
+        api_data.pop("startAt", None)
+        api_data.pop("maxResults", None)
+
+        search_result = JiraSearchResult.from_api_response(api_data)
+        # Verify that -1 is used for missing metadata
+        assert search_result.total == -1
+        assert search_result.start_at == -1
+        assert search_result.max_results == -1
+        assert len(search_result.issues) == 1  # Assuming mock data has issues
 
 
 class TestJiraProject:

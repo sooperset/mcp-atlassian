@@ -483,14 +483,31 @@ async def test_list_tools_read_only_mode():
                 ctx.jira,
                 "search_issues",
                 MagicMock(
-                    return_value=[
-                        {
-                            "key": "TEST-123",
-                            "fields": {
-                                "summary": "Test Issue",
-                            },
-                        }
-                    ]
+                    return_value=MagicMock(
+                        total=-1,
+                        start_at=-1,
+                        max_results=-1,
+                        issues=[
+                            MagicMock(
+                                to_simplified_dict=MagicMock(
+                                    return_value={
+                                        "key": "TEST-123",
+                                        "summary": "Test Issue",
+                                    }
+                                )
+                            )
+                        ],
+                        to_simplified_dict=MagicMock(
+                            return_value={
+                                "total": -1,
+                                "start_at": -1,
+                                "max_results": -1,
+                                "issues": [
+                                    {"key": "TEST-123", "summary": "Test Issue"}
+                                ],
+                            }
+                        ),
+                    )
                 ),
             ),
         ),
@@ -529,6 +546,18 @@ async def test_call_tool_success(tool_name, arguments, mock_setup, app_context):
         # Basic verification that we got a result
         assert isinstance(result, list)
         assert len(result) > 0
+
+        if tool_name == "jira_search":
+            import json
+
+            from mcp.types import TextContent
+
+            assert isinstance(result[0], TextContent)
+            response_data = json.loads(result[0].text)
+            assert "total" in response_data and response_data["total"] == -1
+            assert "start_at" in response_data and response_data["start_at"] == -1
+            assert "max_results" in response_data and response_data["max_results"] == -1
+            assert "issues" in response_data and len(response_data["issues"]) == 1
 
 
 @pytest.mark.anyio
