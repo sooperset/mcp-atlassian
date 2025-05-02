@@ -21,6 +21,60 @@ from tests.fixtures.jira_mocks import (
     MOCK_JIRA_JQL_RESPONSE,
 )
 
+# Bitbucket Server mock data
+MOCK_PULL_REQUEST_RESPONSE = {
+    "id": 101,
+    "version": 1,
+    "title": "Add new feature",
+    "description": "This PR adds a new feature",
+    "state": "OPEN",
+    "open": True,
+    "closed": False,
+    "createdDate": 1617293932000,
+    "updatedDate": 1617293932000,
+    "fromRef": {
+        "id": "refs/heads/feature/new-feature",
+        "displayId": "feature/new-feature",
+        "latestCommit": "abc123",
+        "repository": {
+            "id": 1,
+            "slug": "test-repo",
+            "name": "Test Repository",
+            "project": {"key": "PROJ", "name": "Project"},
+        },
+    },
+    "toRef": {
+        "id": "refs/heads/main",
+        "displayId": "main",
+        "latestCommit": "def456",
+        "repository": {
+            "id": 1,
+            "slug": "test-repo",
+            "name": "Test Repository",
+            "project": {"key": "PROJ", "name": "Project"},
+        },
+    },
+    "author": {
+        "id": 1,
+        "name": "user123",
+        "displayName": "Test User",
+        "emailAddress": "user@example.com",
+        "active": True,
+    },
+    "reviewers": [
+        {
+            "user": {
+                "id": 2,
+                "name": "reviewer1",
+                "displayName": "Reviewer One",
+                "emailAddress": "reviewer1@example.com",
+                "active": True,
+            },
+            "status": "NEEDS_WORK",
+        }
+    ],
+}
+
 
 @pytest.fixture
 def jira_issue_data() -> dict[str, Any]:
@@ -121,3 +175,9 @@ def default_jira_issue_key() -> str:
     if not issue_key:
         pytest.skip("JIRA_TEST_ISSUE_KEY environment variable not set")
     return issue_key
+
+
+@pytest.fixture
+def mock_pull_request_response() -> dict[str, Any]:
+    """Return mock Bitbucket Server pull request data."""
+    return MOCK_PULL_REQUEST_RESPONSE

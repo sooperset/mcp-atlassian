@@ -35,6 +35,7 @@ https://github.com/user-attachments/assets/7fe9c488-ad0c-4876-9b54-120b666bb785
 |**Confluence**|Server/Data Center|✅ Supported (version 6.0+)|
 |**Jira**|Cloud|✅ Fully supported|
 |**Jira**|Server/Data Center|✅ Supported (version 8.14+)|
+|**Bitbucket**|Server/Data Center|⚠️ Basic support (pull requests and search)|
 
 ## Quick Start Guide
 
@@ -91,9 +92,10 @@ There are two main approaches to configure the Docker container:
 >
 > - `CONFLUENCE_SPACES_FILTER`: Filter by space keys (e.g., "DEV,TEAM,DOC")
 > - `JIRA_PROJECTS_FILTER`: Filter by project keys (e.g., "PROJ,DEV,SUPPORT")
+> - `BITBUCKET_PROJECTS_FILTER`: Filter by project keys for Bitbucket Server (e.g., "PROJ,DEV")
 > - `READ_ONLY_MODE`: Set to "true" to disable write operations
 > - `MCP_VERBOSE`: Set to "true" for more detailed logging
-> - `ENABLED_TOOLS`: Comma-separated list of tool names to enable (e.g., "confluence_search,jira_get_issue")
+> - `ENABLED_TOOLS`: Comma-separated list of tool names to enable (e.g., "confluence_search,jira_get_issue,bitbucket_get_pull_request")
 >
 > See the [.env.example](https://github.com/sooperset/mcp-atlassian/blob/main/.env.example) file for all available options.
 
@@ -123,7 +125,9 @@ There are two main approaches to configure the Docker container:
         "CONFLUENCE_API_TOKEN": "your_confluence_api_token",
         "JIRA_URL": "https://your-company.atlassian.net",
         "JIRA_USERNAME": "your.email@company.com",
-        "JIRA_API_TOKEN": "your_jira_api_token"
+        "JIRA_API_TOKEN": "your_jira_api_token",
+        "BITBUCKET_URL": "https://bitbucket.your-company.com",
+        "BITBUCKET_PERSONAL_TOKEN": "your_bitbucket_token"
       }
     }
   }
@@ -340,37 +344,84 @@ For Jira Server/DC, use:
 - `jira_transition_issue`: Transition an issue to a new status
 - `jira_add_comment`: Add a comment to an issue
 
+#### Bitbucket Server Tools
+
+- `bitbucket_get_pull_request`: Get details of a specific pull request
+- `bitbucket_add_comment`: Add a comment to a pull request
+- `bitbucket_get_diff`: Get diff for a pull request showing code changes
+- `bitbucket_get_reviews`: Get reviews for a pull request
+- `bitbucket_get_activities`: View pull request activities history
+- `bitbucket_get_branches`: List all branches in a repository with filtering options
+- `bitbucket_get_branch_commits`: Retrieve commits from a specific branch
+- `bitbucket_get_commit`: Get detailed information about a specific commit
+- `bitbucket_get_commit_changes`: View file changes in a specific commit
+- `bitbucket_get_build_status`: Check CI build status for commits
+- `bitbucket_search_code`: Search code content in repositories
+- `bitbucket_search_repositories`: Search for repositories
+- `bitbucket_get_file_content`: Get the content of a file from a repository
+
+<details>
+<summary>Bitbucket Server Tools Guide</summary>
+
+The Bitbucket Server integration provides several tools that work together to help you navigate code repositories and review pull requests:
+
+**Pull Request Workflow:**
+1. Use `bitbucket_get_pull_request` to fetch details about a specific PR
+2. View the code changes with `bitbucket_get_diff`
+3. Check review status with `bitbucket_get_reviews`
+4. Monitor PR history with `bitbucket_get_activities`
+5. Add your feedback with `bitbucket_add_comment`
+
+**Branch and Commit Workflow:**
+1. List all branches in a repository with `bitbucket_get_branches`
+2. View commit history for a branch with `bitbucket_get_branch_commits`
+3. Get details about a specific commit with `bitbucket_get_commit`
+4. See all file changes in a commit with `bitbucket_get_commit_changes`
+5. Check build/CI status for a commit with `bitbucket_get_build_status`
+
+**Code Search Workflow:**
+1. Find files with `bitbucket_search_code` using patterns like `*.js` or specific text
+2. From the search results, note the `project`, `repository_slug`, and `file_path` fields
+3. Retrieve the complete file content with `bitbucket_get_file_content`
+
+**Repository Search Workflow:**
+1. Find repositories with `bitbucket_search_repositories` (use project key for more focused results)
+2. Browse files in those repositories using the code search workflow
+
+Each tool returns structured data that can be used as input for subsequent tool calls, creating a seamless workflow for code exploration and review.
+</details>
+
 <details> <summary>View All Tools</summary>
 
 *Tools marked with * are only available on Jira Cloud.*
 
-|Confluence Tools|Jira Tools|
-|---|---|
-|`confluence_search`|`jira_get_issue`|
-|`confluence_get_page`|`jira_search`|
-|`confluence_get_page_children`|`jira_get_project_issues`|
-|`confluence_get_page_ancestors`|`jira_get_epic_issues`|
-|`confluence_get_comments`|`jira_create_issue`|
-|`confluence_create_page`|`jira_batch_create_issues`|
-|`confluence_update_page`|`jira_update_issue`|
-|`confluence_delete_page`|`jira_delete_issue`|
-|`confluence_get_labels`|`jira_get_transitions`|
-|`confluence_add_label`|`jira_transition_issue`|
-||`jira_add_comment`|
-||`jira_add_worklog`|
-||`jira_get_worklog`|
-||`jira_batch_get_changelogs`*|
-||`jira_download_attachments`|
-||`jira_link_to_epic`|
-||`jira_get_agile_boards`|
-||`jira_get_board_issues`|
-||`jira_get_sprints_from_board`|
-||`jira_get_sprint_issues`|
-||`jira_create_sprint`|
-||`jira_update_sprint`|
-||`jira_get_issue_link_types`|
-||`jira_create_issue_link`|
-||`jira_remove_issue_link`|
+|Confluence Tools|Jira Tools|Bitbucket Server Tools|
+|---|---|---|
+|`confluence_search`|`jira_get_issue`|`bitbucket_get_pull_request`|
+|`confluence_get_page`|`jira_search`|`bitbucket_add_comment`|
+|`confluence_get_page_children`|`jira_get_project_issues`|`bitbucket_get_diff`|
+|`confluence_get_page_ancestors`|`jira_get_epic_issues`|`bitbucket_get_reviews`|
+|`confluence_get_comments`|`jira_create_issue`|`bitbucket_get_activities`|
+|`confluence_create_page`|`jira_batch_create_issues`|`bitbucket_get_branches`|
+|`confluence_update_page`|`jira_update_issue`|`bitbucket_get_branch_commits`|
+|`confluence_delete_page`|`jira_delete_issue`|`bitbucket_get_commit`|
+|`confluence_get_labels`|`jira_get_transitions`|`bitbucket_get_commit_changes`|
+|`confluence_add_label`|`jira_transition_issue`|`bitbucket_get_build_status`|
+||`jira_add_comment`|`bitbucket_search_code`|
+||`jira_add_worklog`|`bitbucket_search_repositories`|
+||`jira_get_worklog`|`bitbucket_get_file_content`|
+||`jira_batch_get_changelogs`*||
+||`jira_download_attachments`||
+||`jira_link_to_epic`||
+||`jira_get_agile_boards`||
+||`jira_get_board_issues`||
+||`jira_get_sprints_from_board`||
+||`jira_get_sprint_issues`||
+||`jira_create_sprint`||
+||`jira_update_sprint`||
+||`jira_get_issue_link_types`||
+||`jira_create_issue_link`||
+||`jira_remove_issue_link`||
 
 </details>
 

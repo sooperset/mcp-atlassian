@@ -71,6 +71,8 @@ playground/
 
 # rules
 CLAUDE.md
+**/.claude/settings.local.json
+bitbucket.log
 
 # cursor
 .cursor*

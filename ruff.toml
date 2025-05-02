@@ -46,6 +46,7 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 "tests/**/*.py" = ["S", "ANN", "B017"]  # Ignore security assertions, annotations, and blind exception checks in tests
 "tests/fixtures/*.py" = ["E501"]  # Ignore line-too-long errors in test fixture mocks
 "src/mcp_atlassian/server.py" = ["E501"]  # Ignore line-too-long errors in servers
+"src/mcp_atlassian/bitbucket_server/constants.py" = ["S105"]  # Ignore hardcoded password false positives in constants
 
 [format]
 # Like Black, use double quotes for strings.

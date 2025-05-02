@@ -234,7 +234,11 @@ async def test_server_lifespan():
         patch("mcp_atlassian.server.log_config_param") as mock_log_config_param,
     ):
         # Configure mocks
-        mock_services.return_value = {"confluence": True, "jira": True}
+        mock_services.return_value = {
+            "confluence": True,
+            "jira": True,
+            "bitbucket_server": False,
+        }
 
         # Mock configs
         mock_confluence_config = MagicMock()
@@ -362,7 +366,11 @@ async def test_server_lifespan_with_errors():
         patch("mcp_atlassian.server.logger") as mock_logger,
     ):
         # Configure mocks
-        mock_services.return_value = {"confluence": True, "jira": True}
+        mock_services.return_value = {
+            "confluence": True,
+            "jira": True,
+            "bitbucket_server": False,
+        }
 
         # Mock errors
         mock_confluence_config_cls.from_env.side_effect = ValueError(
@@ -414,7 +422,11 @@ async def test_list_tools_both_services():
         mock_request_context(mock_context),
     ):
         # Configure mocks
-        mock_services.return_value = {"confluence": True, "jira": True}
+        mock_services.return_value = {
+            "confluence": True,
+            "jira": True,
+            "bitbucket_server": False,
+        }
         mock_read_only.return_value = False
 
         # Call the handler directly
@@ -448,7 +460,11 @@ async def test_list_tools_read_only_mode():
         mock_request_context(mock_context),
     ):
         # Configure mocks
-        mock_services.return_value = {"confluence": True, "jira": True}
+        mock_services.return_value = {
+            "confluence": True,
+            "jira": True,
+            "bitbucket_server": False,
+        }
         mock_read_only.return_value = True
 
         # Call the handler directly

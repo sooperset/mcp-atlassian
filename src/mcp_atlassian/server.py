@@ -9,6 +9,8 @@ from typing import Any, cast
 from mcp.server import Server
 from mcp.types import TextContent, Tool
 
+from .bitbucket_server import BitbucketServerFetcher
+from .bitbucket_server.config import BitbucketServerConfig
 from .confluence import ConfluenceFetcher
 from .confluence.config import ConfluenceConfig
 from .jira import JiraFetcher
@@ -29,6 +31,7 @@ class AppContext:
 
     confluence: ConfluenceFetcher | None = None
     jira: JiraFetcher | None = None
+    bitbucket_server: BitbucketServerFetcher | None = None
     enabled_tools: list[str] | None = None
 
 
@@ -83,7 +86,28 @@ def get_available_services() -> dict[str, bool | None]:
     else:
         jira_is_setup = False
 
-    return {"confluence": confluence_is_setup, "jira": jira_is_setup}
+    # Check for Bitbucket Server authentication
+    bitbucket_url = os.getenv("BITBUCKET_URL")
+    if bitbucket_url:
+        # Check if using personal token auth
+        if os.getenv("BITBUCKET_PERSONAL_TOKEN"):
+            bitbucket_server_is_setup = True
+            logger.info("Using Bitbucket Server personal token authentication")
+        # Check if using basic auth
+        elif os.getenv("BITBUCKET_USERNAME") and os.getenv("BITBUCKET_API_TOKEN"):
+            bitbucket_server_is_setup = True
+            logger.info("Using Bitbucket Server basic authentication")
+        else:
+            bitbucket_server_is_setup = False
+            logger.warning("Bitbucket URL is set but no valid authentication found")
+    else:
+        bitbucket_server_is_setup = False
+
+    return {
+        "confluence": confluence_is_setup,
+        "jira": jira_is_setup,
+        "bitbucket_server": bitbucket_server_is_setup,
+    }
 
 
 @asynccontextmanager
@@ -102,6 +126,7 @@ async def server_lifespan(server: Server) -> AsyncIterator[AppContext]:
 
         confluence = None
         jira = None
+        bitbucket_server = None
 
         # Initialize Confluence if configured
         if services["confluence"]:
@@ -187,16 +212,83 @@ async def server_lifespan(server: Server) -> AsyncIterator[AppContext]:
             except Exception as e:
                 logger.error(f"Failed to initialize Jira client: {e}", exc_info=True)
 
+        # Initialize Bitbucket Server if configured
+        if services["bitbucket_server"]:
+            logger.info("Attempting to initialize Bitbucket Server client...")
+            try:
+                bitbucket_server_config = BitbucketServerConfig.from_env()
+                log_config_param(
+                    logger, "Bitbucket Server", "URL", bitbucket_server_config.url
+                )
+                log_config_param(
+                    logger,
+                    "Bitbucket Server",
+                    "Auth Type",
+                    bitbucket_server_config.auth_type,
+                )
+                if bitbucket_server_config.auth_type == "basic":
+                    log_config_param(
+                        logger,
+                        "Bitbucket Server",
+                        "Username",
+                        bitbucket_server_config.username,
+                    )
+                    log_config_param(
+                        logger,
+                        "Bitbucket Server",
+                        "API Token",
+                        bitbucket_server_config.api_token,
+                        sensitive=True,
+                    )
+                else:
+                    log_config_param(
+                        logger,
+                        "Bitbucket Server",
+                        "Personal Token",
+                        bitbucket_server_config.personal_token,
+                        sensitive=True,
+                    )
+                log_config_param(
+                    logger,
+                    "Bitbucket Server",
+                    "SSL Verify",
+                    str(bitbucket_server_config.ssl_verify),
+                )
+                log_config_param(
+                    logger,
+                    "Bitbucket Server",
+                    "Projects Filter",
+                    bitbucket_server_config.projects_filter,
+                )
+
+                bitbucket_server = BitbucketServerFetcher(
+                    config=bitbucket_server_config
+                )
+                logger.info("Bitbucket Server client initialized successfully.")
+            except Exception as e:
+                logger.error(
+                    f"Failed to initialize Bitbucket Server client: {e}", exc_info=True
+                )
+
         # Get the list of enabled tools
         enabled_tools = get_enabled_tools()
         if enabled_tools:
             logger.debug(f"Filtering tools to: {', '.join(enabled_tools)}")
 
         # Provide context to the application
-        yield AppContext(confluence=confluence, jira=jira, enabled_tools=enabled_tools)
+        yield AppContext(
+            confluence=confluence,
+            jira=jira,
+            bitbucket_server=bitbucket_server,
+            enabled_tools=enabled_tools,
+        )
     finally:
         # Cleanup resources if needed
-        pass
+        if "bitbucket_server" in locals() and bitbucket_server is not None:
+            try:
+                bitbucket_server.close()
+            except Exception as e:
+                logger.error(f"Error closing Bitbucket client: {e}", exc_info=True)
 
 
 # Create server instance
@@ -205,7 +297,7 @@ app = Server("mcp-atlassian", lifespan=server_lifespan)
 
 @app.list_tools()
 async def list_tools() -> list[Tool]:
-    """List available Confluence and Jira tools."""
+    """List available Confluence, Jira, and Bitbucket tools."""
     tools = []
     ctx = app.request_context.lifespan_context
 
@@ -922,8 +1014,375 @@ async def list_tools() -> list[Tool]:
             if should_include_tool(tool.name, ctx.enabled_tools):
                 tools.append(tool)
 
-        # Only add write operations if not in read-only mode
-        if not read_only:
+    # Add Bitbucket tools if Bitbucket is configured
+    if ctx and ctx.bitbucket_server:
+        # Add read operations
+        bitbucket_server_read_tools = [
+            Tool(
+                name="bitbucket_get_branches",
+                description="Get all branches for a repository. Use this to list branches in a repo and find branch names for other operations.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "repository": {
+                            "type": "string",
+                            "description": "Repository slug",
+                        },
+                        "project": {
+                            "type": "string",
+                            "description": "Bitbucket project key",
+                        },
+                        "filter_text": {
+                            "type": "string",
+                            "description": "Optional text to filter branches by name",
+                        },
+                        "limit": {
+                            "type": "number",
+                            "description": "Maximum number of branches to return (default 25)",
+                        },
+                        "start": {
+                            "type": "number",
+                            "description": "Starting index for pagination (0-based, default 0)",
+                        },
+                    },
+                    "required": ["repository", "project"],
+                },
+            ),
+            Tool(
+                name="bitbucket_get_branch_commits",
+                description="Get commits for a specific branch. Defaults to returning just the latest commit on the branch, useful for getting the current state.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "repository": {
+                            "type": "string",
+                            "description": "Repository slug",
+                        },
+                        "branch": {
+                            "type": "string",
+                            "description": "Branch name (e.g., 'master', 'develop')",
+                        },
+                        "project": {
+                            "type": "string",
+                            "description": "Bitbucket project key",
+                        },
+                        "limit": {
+                            "type": "number",
+                            "description": "Maximum number of commits to return (default 1 for just the latest commit)",
+                        },
+                        "start": {
+                            "type": "number",
+                            "description": "Starting index for pagination (0-based, default 0)",
+                        },
+                    },
+                    "required": ["repository", "branch", "project"],
+                },
+            ),
+            Tool(
+                name="bitbucket_get_commit",
+                description="Get detailed information about a specific commit.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "repository": {
+                            "type": "string",
+                            "description": "Repository slug",
+                        },
+                        "commit_id": {
+                            "type": "string",
+                            "description": "Commit ID (SHA)",
+                        },
+                        "project": {
+                            "type": "string",
+                            "description": "Bitbucket project key",
+                        },
+                    },
+                    "required": ["repository", "commit_id", "project"],
+                },
+            ),
+            Tool(
+                name="bitbucket_get_commit_changes",
+                description="Get the changes (files modified, added, deleted) in a specific commit.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "repository": {
+                            "type": "string",
+                            "description": "Repository slug",
+                        },
+                        "commit_id": {
+                            "type": "string",
+                            "description": "Commit ID (SHA)",
+                        },
+                        "project": {
+                            "type": "string",
+                            "description": "Bitbucket project key",
+                        },
+                    },
+                    "required": ["repository", "commit_id", "project"],
+                },
+            ),
+            Tool(
+                name="bitbucket_get_build_status",
+                description="Get the CI build status for a specific commit.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "commit_id": {
+                            "type": "string",
+                            "description": "Commit ID (SHA)",
+                        },
+                    },
+                    "required": ["commit_id"],
+                },
+            ),
+            Tool(
+                name="bitbucket_get_pull_request",
+                description="Get detailed information about a pull request in Bitbucket Server. Use this to view PR details, then use bitbucket_get_diff to see code changes or bitbucket_get_reviews to see reviews.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "repository": {
+                            "type": "string",
+                            "description": "Repository slug",
+                        },
+                        "prId": {
+                            "type": "number",
+                            "description": "Pull request ID",
+                        },
+                        "project": {
+                            "type": "string",
+                            "description": "Bitbucket project key",
+                        },
+                    },
+                    "required": ["repository", "prId", "project"],
+                },
+            ),
+            Tool(
+                name="bitbucket_get_diff",
+                description="Get the code changes (diff) for a specific pull request. Use after bitbucket_get_pull_request to view what code changes are included in the PR.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "repository": {
+                            "type": "string",
+                            "description": "Repository slug",
+                        },
+                        "prId": {
+                            "type": "number",
+                            "description": "Pull request ID",
+                        },
+                        "project": {
+                            "type": "string",
+                            "description": "Bitbucket project key",
+                        },
+                        "contextLines": {
+                            "type": "number",
+                            "description": "Number of context lines to include in the diff (default 10)",
+                        },
+                        "sinceRevision": {
+                            "type": "string",
+                            "description": "Only show changes since this revision",
+                        },
+                        "whitespace": {
+                            "type": "boolean",
+                            "description": "Whether to ignore whitespace changes",
+                        },
+                    },
+                    "required": ["repository", "prId", "project"],
+                },
+            ),
+            Tool(
+                name="bitbucket_get_reviews",
+                description="Get all reviews for a specific pull request. Use this to check feedback and approval status for a PR that you found with bitbucket_get_pull_request.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "repository": {
+                            "type": "string",
+                            "description": "Repository slug",
+                        },
+                        "prId": {
+                            "type": "number",
+                            "description": "Pull request ID",
+                        },
+                        "project": {
+                            "type": "string",
+                            "description": "Bitbucket project key",
+                        },
+                        "limit": {
+                            "type": "number",
+                            "description": "Maximum number of reviews to return (default 25)",
+                        },
+                        "start": {
+                            "type": "number",
+                            "description": "Starting index for pagination (0-based, default 0)",
+                        },
+                    },
+                    "required": ["repository", "prId", "project"],
+                },
+            ),
+            Tool(
+                name="bitbucket_get_activities",
+                description="Get the activity history for a pull request, including comments, approvals, and updates. Use this to see the full timeline of events on a pull request.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "repository": {
+                            "type": "string",
+                            "description": "Repository slug",
+                        },
+                        "prId": {
+                            "type": "number",
+                            "description": "Pull request ID",
+                        },
+                        "project": {
+                            "type": "string",
+                            "description": "Bitbucket project key",
+                        },
+                        "limit": {
+                            "type": "number",
+                            "description": "Maximum number of activities to return (default 25)",
+                        },
+                        "start": {
+                            "type": "number",
+                            "description": "Starting index for pagination (0-based, default 0)",
+                        },
+                    },
+                    "required": ["repository", "prId", "project"],
+                },
+            ),
+            Tool(
+                name="bitbucket_search_code",
+                description="Search code content in Bitbucket Server repositories. The results include file paths that can be used with bitbucket_get_file_content to retrieve complete files.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query (supports searching for text, file extensions with '*.ext', or project:KEY repo:REPO syntax)",
+                        },
+                        "project_key": {
+                            "type": "string",
+                            "description": "Optional project key to limit search to a specific project",
+                        },
+                        "repository_slug": {
+                            "type": "string",
+                            "description": "Optional repository slug to limit search to a specific repository",
+                        },
+                        "page": {
+                            "type": "number",
+                            "description": "Page number to start from (1-based indexing, default 1)",
+                        },
+                        "limit": {
+                            "type": "number",
+                            "description": "Maximum number of results to return per page (max 50, default 10)",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            ),
+            Tool(
+                name="bitbucket_search_repositories",
+                description="Search for repositories in Bitbucket Server",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query. Either this or project_key must be provided.",
+                        },
+                        "project_key": {
+                            "type": "string",
+                            "description": "Project key to search for repositories. Either this or query must be provided.",
+                        },
+                        "page": {
+                            "type": "number",
+                            "description": "Page number to start from (1-based indexing, default 1)",
+                        },
+                        "limit": {
+                            "type": "number",
+                            "description": "Maximum number of results to return per page (max 50, default 10)",
+                        },
+                    },
+                    "anyOf": [{"required": ["query"]}, {"required": ["project_key"]}],
+                },
+            ),
+            Tool(
+                name="bitbucket_get_file_content",
+                description="Get the content of a file from Bitbucket Server. Use with file_path values from bitbucket_search_code results.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "repository": {
+                            "type": "string",
+                            "description": "Repository slug. You can get this from the 'repository_slug' field in bitbucket_search_code results.",
+                        },
+                        "file_path": {
+                            "type": "string",
+                            "description": "Path to the file within the repository. You can get this from the 'file_path' field in bitbucket_search_code results.",
+                        },
+                        "project": {
+                            "type": "string",
+                            "description": "Project key (optional if provided in config). You can get this from the 'project' field in bitbucket_search_code results.",
+                        },
+                        "at": {
+                            "type": "string",
+                            "description": "Branch or commit to get the file from (optional, defaults to default branch)",
+                        },
+                    },
+                    "required": ["repository", "file_path"],
+                },
+            ),
+        ]
+
+        # Filter and add read-only tools
+        for tool in bitbucket_server_read_tools:
+            if should_include_tool(tool.name, ctx.enabled_tools):
+                tools.append(tool)
+
+    # Only add write operations if not in read-only mode
+    if not read_only:
+        if ctx and ctx.bitbucket_server:
+            bitbucket_server_write_tools = [
+                Tool(
+                    name="bitbucket_add_comment",
+                    description="Add a new comment to a specific pull request. Use this to provide feedback on a PR after viewing it with bitbucket_get_pull_request and reviewing changes with bitbucket_get_diff.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "repository": {
+                                "type": "string",
+                                "description": "Repository slug",
+                            },
+                            "prId": {
+                                "type": "number",
+                                "description": "Pull request ID",
+                            },
+                            "text": {
+                                "type": "string",
+                                "description": "Comment text",
+                            },
+                            "project": {
+                                "type": "string",
+                                "description": "Bitbucket project key",
+                            },
+                            "parentId": {
+                                "type": "number",
+                                "description": "Parent comment ID for replies",
+                            },
+                        },
+                        "required": ["repository", "prId", "text", "project"],
+                    },
+                ),
+            ]
+
+            # Filter and add write tools
+            for tool in bitbucket_server_write_tools:
+                if should_include_tool(tool.name, ctx.enabled_tools):
+                    tools.append(tool)
+
+        if ctx and ctx.jira:
             jira_write_tools = [
                 Tool(
                     name="jira_create_issue",
@@ -2606,6 +3065,631 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 ]
             except Exception as e:
                 error_msg = f"Error getting issue link types: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        # Bitbucket operations
+        elif name == "bitbucket_get_pull_request":
+            if not ctx or not ctx.bitbucket_server:
+                raise ValueError("Bitbucket Server is not configured.")
+
+            # Extract arguments
+            repository = arguments.get("repository")
+            pr_id = arguments.get("prId")
+            project = arguments.get("project")
+
+            # Validate required parameters
+            if not repository:
+                raise ValueError("repository is required")
+            if not pr_id:
+                raise ValueError("prId is required")
+            if not project:
+                raise ValueError("project is required")
+
+            try:
+                # Get the pull request
+                pr = ctx.bitbucket_server.get_pull_request(
+                    repository=repository,
+                    pr_id=pr_id,
+                    project=project,
+                )
+
+                # Convert to simplified dict and return
+                result = pr.to_simplified_dict()
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(result, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error getting pull request: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "bitbucket_get_diff":
+            if not ctx or not ctx.bitbucket_server:
+                raise ValueError("Bitbucket Server is not configured.")
+
+            # Extract arguments
+            repository = arguments.get("repository")
+            pr_id = arguments.get("prId")
+            project = arguments.get("project")
+            context_lines = arguments.get("contextLines", 10)
+            since_revision = arguments.get("sinceRevision")
+            whitespace = arguments.get("whitespace", False)
+
+            # Validate required parameters
+            if not repository:
+                raise ValueError("repository is required")
+            if not pr_id:
+                raise ValueError("prId is required")
+            if not project:
+                raise ValueError("project is required")
+
+            try:
+                # Get the diff
+                diff = ctx.bitbucket_server.get_diff(
+                    repository=repository,
+                    pr_id=pr_id,
+                    project=project,
+                    context_lines=context_lines,
+                    since_revision=since_revision,
+                    whitespace=whitespace,
+                )
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(diff, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error getting diff: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "bitbucket_get_reviews":
+            if not ctx or not ctx.bitbucket_server:
+                raise ValueError("Bitbucket Server is not configured.")
+
+            # Extract arguments
+            repository = arguments.get("repository")
+            pr_id = arguments.get("prId")
+            project = arguments.get("project")
+            start = arguments.get("start", 0)
+            limit = arguments.get("limit", 25)
+
+            # Validate required parameters
+            if not repository:
+                raise ValueError("repository is required")
+            if not pr_id:
+                raise ValueError("prId is required")
+            if not project:
+                raise ValueError("project is required")
+
+            try:
+                # Get the reviews
+                reviews = ctx.bitbucket_server.get_reviews(
+                    repository=repository,
+                    pr_id=pr_id,
+                    project=project,
+                    start=start,
+                    limit=limit,
+                )
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(reviews, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error getting reviews: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "bitbucket_get_activities":
+            if not ctx or not ctx.bitbucket_server:
+                raise ValueError("Bitbucket Server is not configured.")
+
+            # Extract arguments
+            repository = arguments.get("repository")
+            pr_id = arguments.get("prId")
+            project = arguments.get("project")
+            start = arguments.get("start", 0)
+            limit = arguments.get("limit", 25)
+
+            # Validate required parameters
+            if not repository:
+                raise ValueError("repository is required")
+            if not pr_id:
+                raise ValueError("prId is required")
+            if not project:
+                raise ValueError("project is required")
+
+            try:
+                # Get the activities
+                activities = ctx.bitbucket_server.get_activities(
+                    repository=repository,
+                    pr_id=pr_id,
+                    project=project,
+                    start=start,
+                    limit=limit,
+                )
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(activities, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error getting activities: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "bitbucket_get_branches":
+            if not ctx or not ctx.bitbucket_server:
+                raise ValueError("Bitbucket Server is not configured.")
+
+            # Extract arguments
+            repository = arguments.get("repository")
+            project = arguments.get("project")
+            filter_text = arguments.get("filter_text")
+            start = arguments.get("start", 0)
+            limit = arguments.get("limit", 25)
+
+            # Validate required parameters
+            if not repository:
+                raise ValueError("repository is required")
+            if not project:
+                raise ValueError("project is required")
+
+            try:
+                # Get the branches
+                branches = ctx.bitbucket_server.get_branches(
+                    repository=repository,
+                    project=project,
+                    filter_text=filter_text,
+                    start=start,
+                    limit=limit,
+                )
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(branches, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error getting branches: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "bitbucket_get_branch_commits":
+            if not ctx or not ctx.bitbucket_server:
+                raise ValueError("Bitbucket Server is not configured.")
+
+            # Extract arguments
+            repository = arguments.get("repository")
+            branch = arguments.get("branch")
+            project = arguments.get("project")
+            start = arguments.get("start", 0)
+            limit = arguments.get("limit", 1)
+
+            # Validate required parameters
+            if not repository:
+                raise ValueError("repository is required")
+            if not branch:
+                raise ValueError("branch is required")
+            if not project:
+                raise ValueError("project is required")
+
+            try:
+                # Get the commits
+                commits = ctx.bitbucket_server.get_branch_commits(
+                    repository=repository,
+                    branch=branch,
+                    project=project,
+                    start=start,
+                    limit=limit,
+                )
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(commits, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error getting branch commits: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "bitbucket_get_commit":
+            if not ctx or not ctx.bitbucket_server:
+                raise ValueError("Bitbucket Server is not configured.")
+
+            # Extract arguments
+            repository = arguments.get("repository")
+            commit_id = arguments.get("commit_id")
+            project = arguments.get("project")
+
+            # Validate required parameters
+            if not repository:
+                raise ValueError("repository is required")
+            if not commit_id:
+                raise ValueError("commit_id is required")
+            if not project:
+                raise ValueError("project is required")
+
+            try:
+                # Get the commit
+                commit = ctx.bitbucket_server.get_commit(
+                    repository=repository,
+                    commit_id=commit_id,
+                    project=project,
+                )
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(commit, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error getting commit: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "bitbucket_get_commit_changes":
+            if not ctx or not ctx.bitbucket_server:
+                raise ValueError("Bitbucket Server is not configured.")
+
+            # Extract arguments
+            repository = arguments.get("repository")
+            commit_id = arguments.get("commit_id")
+            project = arguments.get("project")
+
+            # Validate required parameters
+            if not repository:
+                raise ValueError("repository is required")
+            if not commit_id:
+                raise ValueError("commit_id is required")
+            if not project:
+                raise ValueError("project is required")
+
+            try:
+                # Get the commit changes
+                changes = ctx.bitbucket_server.get_commit_changes(
+                    repository=repository,
+                    commit_id=commit_id,
+                    project=project,
+                )
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(changes, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error getting commit changes: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "bitbucket_get_build_status":
+            if not ctx or not ctx.bitbucket_server:
+                raise ValueError("Bitbucket Server is not configured.")
+
+            # Extract arguments
+            commit_id = arguments.get("commit_id")
+
+            # Validate required parameters
+            if not commit_id:
+                raise ValueError("commit_id is required")
+
+            try:
+                # Get the build status
+                build_status = ctx.bitbucket_server.get_build_status(
+                    commit_id=commit_id,
+                )
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(build_status, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error getting build status: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "bitbucket_add_comment":
+            if not ctx or not ctx.bitbucket_server:
+                raise ValueError("Bitbucket Server is not configured.")
+
+            # Check if read-only mode is enabled
+            if is_read_only_mode():
+                raise ValueError("Cannot add comment in read-only mode")
+
+            # Extract arguments
+            repository = arguments.get("repository")
+            pr_id = arguments.get("prId")
+            text = arguments.get("text")
+            project = arguments.get("project")
+            parent_id = arguments.get("parentId")
+
+            # Validate required parameters
+            if not repository:
+                raise ValueError("repository is required")
+            if not pr_id:
+                raise ValueError("prId is required")
+            if not text:
+                raise ValueError("text is required")
+            if not project:
+                raise ValueError("project is required")
+
+            try:
+                # Add the comment
+                comment = ctx.bitbucket_server.add_comment(
+                    repository=repository,
+                    pr_id=pr_id,
+                    text=text,
+                    project=project,
+                    parent_id=parent_id,
+                )
+
+                # Convert to simplified dict and return
+                result = comment.to_simplified_dict()
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(result, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error adding comment: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "bitbucket_search_code":
+            if not ctx or not ctx.bitbucket_server:
+                raise ValueError("Bitbucket Server is not configured.")
+
+            # Extract arguments
+            query = arguments.get("query")
+            project_key = arguments.get("project_key")
+            repository_slug = arguments.get("repository_slug")
+            page = int(arguments.get("page", 1))
+            limit = min(int(arguments.get("limit", 10)), 50)
+
+            # Validate required parameters
+            if not query:
+                raise ValueError("Missing required parameter: query")
+
+            try:
+                # Search code
+                raw_result = ctx.bitbucket_server.search_code(
+                    query=query,
+                    project_key=project_key,
+                    repository_slug=repository_slug,
+                    page=page,
+                    limit=limit,
+                )
+
+                # Extract and format the results to better highlight file locations
+                formatted_result = {
+                    "total_count": raw_result.get("code", {}).get("count", 0),
+                    "page": page,
+                    "limit": limit,
+                    "is_last_page": raw_result.get("code", {}).get("isLastPage", True),
+                    "results": [],
+                }
+
+                # Extract each search result with file location
+                if "code" in raw_result and "values" in raw_result["code"]:
+                    for item in raw_result["code"]["values"]:
+                        file_result = {
+                            "project": item.get("repository", {})
+                            .get("project", {})
+                            .get("key"),
+                            "repository": item.get("repository", {}).get("slug"),
+                            "file_path": item.get("file"),
+                            "hit_count": item.get("hitCount", 0),
+                            "contexts": [],
+                        }
+
+                        # Include context snippets for each hit
+                        if "hitContexts" in item:
+                            for context in item["hitContexts"]:
+                                context_lines = []
+                                for line in context:
+                                    # Remove HTML tags from line text for cleaner display
+                                    text = line.get("text", "")
+                                    text = text.replace("<em>", "").replace("</em>", "")
+                                    context_lines.append(
+                                        {"line": line.get("line"), "text": text}
+                                    )
+                                file_result["contexts"].append(context_lines)
+
+                        formatted_result["results"].append(file_result)
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(formatted_result, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error searching code: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "bitbucket_search_repositories":
+            if not ctx or not ctx.bitbucket_server:
+                raise ValueError("Bitbucket Server is not configured.")
+
+            # Extract arguments
+            query = arguments.get("query")
+            project_key = arguments.get("project_key")
+            page = int(arguments.get("page", 1))
+            limit = min(int(arguments.get("limit", 10)), 50)
+
+            # Either query or project_key must be provided
+            if not query and not project_key:
+                raise ValueError("Either query or project_key must be provided")
+
+            try:
+                # Search repositories
+                raw_result = ctx.bitbucket_server.search_repositories(
+                    query=query,
+                    project_key=project_key,
+                    page=page,
+                    limit=limit,
+                )
+
+                # Extract and format the repository results
+                formatted_result = {
+                    "total_count": raw_result.get("repositories", {}).get("count", 0),
+                    "page": page,
+                    "limit": limit,
+                    "is_last_page": raw_result.get("repositories", {}).get(
+                        "isLastPage", True
+                    ),
+                    "repositories": [],
+                }
+
+                # Extract each repository result
+                if (
+                    "repositories" in raw_result
+                    and "values" in raw_result["repositories"]
+                ):
+                    for repo in raw_result["repositories"]["values"]:
+                        repo_result = {
+                            "project_key": repo.get("project", {}).get("key"),
+                            "project_name": repo.get("project", {}).get("name"),
+                            "repository_slug": repo.get("slug"),
+                            "repository_name": repo.get("name"),
+                            "description": repo.get("description"),
+                            "state": repo.get("state"),
+                            "archived": repo.get("archived", False),
+                        }
+                        formatted_result["repositories"].append(repo_result)
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(formatted_result, indent=2, ensure_ascii=False),
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error searching repositories: {str(e)}"
+                logger.error(error_msg)
+                return [
+                    TextContent(
+                        type="text",
+                        text=error_msg,
+                    )
+                ]
+
+        elif name == "bitbucket_get_file_content":
+            if not ctx or not ctx.bitbucket_server:
+                raise ValueError("Bitbucket Server is not configured.")
+
+            # Extract arguments
+            repository = arguments.get("repository")
+            file_path = arguments.get("file_path")
+            project = arguments.get("project")
+            at = arguments.get("at")
+
+            # Validate required parameters
+            if not repository:
+                raise ValueError("Missing required parameter: repository")
+            if not file_path:
+                raise ValueError("Missing required parameter: file_path")
+
+            try:
+                # Get file content
+                content = ctx.bitbucket_server.get_file_content(
+                    repository=repository,
+                    file_path=file_path,
+                    project=project,
+                    at=at,
+                )
+
+                return [
+                    TextContent(
+                        type="text",
+                        text=content,
+                    )
+                ]
+            except Exception as e:
+                error_msg = f"Error getting file content: {str(e)}"
                 logger.error(error_msg)
                 return [
                     TextContent(
