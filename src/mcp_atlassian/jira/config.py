@@ -22,6 +22,10 @@ class JiraConfig:
     personal_token: str | None = None  # Personal access token (Server/DC)
     ssl_verify: bool = True  # Whether to verify SSL certificates
     projects_filter: str | None = None  # List of project keys to filter searches
+    http_proxy: str | None = None  # HTTP proxy URL
+    https_proxy: str | None = None  # HTTPS proxy URL
+    no_proxy: str | None = None  # Comma-separated list of hosts to bypass proxy
+    socks_proxy: str | None = None  # SOCKS proxy URL (optional)
 
     @property
     def is_cloud(self) -> bool:
@@ -92,6 +96,12 @@ class JiraConfig:
         # Get the projects filter if provided
         projects_filter = os.getenv("JIRA_PROJECTS_FILTER")
 
+        # Proxy settings
+        http_proxy = os.getenv("JIRA_HTTP_PROXY", os.getenv("HTTP_PROXY"))
+        https_proxy = os.getenv("JIRA_HTTPS_PROXY", os.getenv("HTTPS_PROXY"))
+        no_proxy = os.getenv("JIRA_NO_PROXY", os.getenv("NO_PROXY"))
+        socks_proxy = os.getenv("JIRA_SOCKS_PROXY", os.getenv("SOCKS_PROXY"))
+
         return cls(
             url=url,
             auth_type=auth_type,
@@ -100,4 +110,8 @@ class JiraConfig:
             personal_token=personal_token,
             ssl_verify=ssl_verify,
             projects_filter=projects_filter,
+            http_proxy=http_proxy,
+            https_proxy=https_proxy,
+            no_proxy=no_proxy,
+            socks_proxy=socks_proxy,
         )
