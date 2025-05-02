@@ -1622,3 +1622,27 @@ async def test_jira_create_and_remove_issue_link(
     finally:
         # Clean up resources even if the test fails
         cleanup_resources()
+
+
+@pytest.mark.skipif(not os.getenv("TEST_PROXY_URL"), reason="TEST_PROXY_URL not set")
+def test_jira_client_real_proxy(jira_config: JiraConfig) -> None:
+    """Test JiraClient with a real proxy if TEST_PROXY_URL is set."""
+    import requests
+
+    proxy_url = os.environ["TEST_PROXY_URL"]
+    os.environ["HTTP_PROXY"] = proxy_url
+    os.environ["HTTPS_PROXY"] = proxy_url
+    # Use a simple API call to verify proxy is used and no connection error
+    client = JiraFetcher(config=JiraConfig.from_env())
+    try:
+        issue_key = os.environ.get("JIRA_TEST_ISSUE_KEY")
+        if not issue_key:
+            pytest.skip("JIRA_TEST_ISSUE_KEY not set")
+        result = client.get_issue(issue_key)
+        assert result is not None
+    except requests.exceptions.ProxyError:
+        pytest.fail("Proxy connection failed - check TEST_PROXY_URL and network setup.")
+    finally:
+        # Clean up env
+        del os.environ["HTTP_PROXY"]
+        del os.environ["HTTPS_PROXY"]
