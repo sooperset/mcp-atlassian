@@ -2627,6 +2627,7 @@ async def run_server(transport: str = "stdio", port: int = 8000) -> None:
         from mcp.server.sse import SseServerTransport
         from starlette.applications import Starlette
         from starlette.requests import Request
+        from starlette.responses import Response
         from starlette.routing import Mount, Route
 
         sse = SseServerTransport("/messages/")
@@ -2639,10 +2640,22 @@ async def run_server(transport: str = "stdio", port: int = 8000) -> None:
                     streams[0], streams[1], app.create_initialization_options()
                 )
 
+        async def health_check(request: Request) -> Response:
+            """Health check endpoint for Kubernetes probes.
+
+            Args:
+                request (Request): The incoming HTTP request.
+
+            Returns:
+                Response: HTTP 200 OK with body 'OK'.
+            """
+            return Response(status_code=200, content="OK")
+
         starlette_app = Starlette(
             debug=True,
             routes=[
                 Route("/sse", endpoint=handle_sse),
+                Route("/healthz", endpoint=health_check),
                 Mount("/messages/", app=sse.handle_post_message),
             ],
         )
