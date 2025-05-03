@@ -1682,7 +1682,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             # Extract arguments
             jql = arguments.get("jql")
             fields = arguments.get("fields", ",".join(DEFAULT_READ_JIRA_FIELDS))
-            limit = min(int(arguments.get("limit", 10)), 50)
+            limit = int(arguments.get("limit", 10))
             projects_filter = arguments.get("projects_filter")
             start_at = arguments.get("startAt", 0)
             expand = arguments.get("expand")
