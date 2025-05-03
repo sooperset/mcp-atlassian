@@ -10,6 +10,11 @@ import pytest
 from mcp.shared.context import RequestContext
 from mcp.shared.session import BaseSession
 from mcp.types import Tool
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Mount, Route
+from starlette.testclient import TestClient
 
 from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.jira import JiraFetcher
@@ -853,3 +858,39 @@ async def test_call_tool_jira_get_epic_issues(app_context: AppContext) -> None:
     app_context.jira.get_epic_issues.assert_called_once_with(
         "TEST-100", start=0, limit=10
     )
+
+
+def build_sse_starlette_app():
+    """Helper to build the Starlette app as in run_server for SSE transport."""
+
+    async def handle_sse(request: Request):
+        return Response(status_code=200, content="SSE")
+
+    async def health_check(request: Request) -> Response:
+        """Health check endpoint for Kubernetes probes.
+
+        Args:
+            request (Request): The incoming HTTP request.
+
+        Returns:
+            Response: HTTP 200 OK with body 'OK'.
+        """
+        return Response(status_code=200, content="OK")
+
+    return Starlette(
+        debug=True,
+        routes=[
+            Route("/sse", endpoint=handle_sse),
+            Route("/healthz", endpoint=health_check),
+            Mount("/messages/", app=Starlette()),
+        ],
+    )
+
+
+def test_sse_healthz_endpoint():
+    """Test that the /healthz endpoint returns 200 OK and 'OK' body for SSE Starlette app."""
+    app = build_sse_starlette_app()
+    client = TestClient(app)
+    response = client.get("/healthz")
+    assert response.status_code == 200
+    assert response.text == "OK"
