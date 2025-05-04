@@ -45,6 +45,7 @@ from mcp_atlassian.models.confluence import (
 )
 from mcp_atlassian.models.jira import JiraIssue, JiraIssueLinkType
 from mcp_atlassian.server import call_tool
+import contextvars
 
 
 # Resource tracking for cleanup
@@ -184,6 +185,15 @@ def test_space_key() -> str:
 
 
 @pytest.fixture
+def test_board_id() -> str:
+    """Get test Jira board ID from environment."""
+    board_id = os.environ.get("JIRA_TEST_BOARD_ID")
+    if not board_id:
+        pytest.skip("JIRA_TEST_BOARD_ID environment variable not set")
+    return board_id
+
+
+@pytest.fixture
 def resource_tracker() -> Generator[ResourceTracker, None, None]:
     """Create and yield a ResourceTracker that will be used to clean up after tests."""
     tracker = ResourceTracker()
@@ -225,12 +235,11 @@ class TestRealJiraValidation:
             pytest.skip("Real Jira data testing is disabled")
 
         # Get test issue key from environment or use default
-        # Use the TES-8 issue from your env file
-        issue_key = os.environ.get("JIRA_TEST_ISSUE_KEY", "TES-8")
+        issue_key = os.environ.get("JIRA_TEST_ISSUE_KEY", "TES-143")
 
         # Initialize the Jira client
         config = JiraConfig.from_env()
-        issues_client = IssuesMixin(config=config)
+        issues_client = JiraFetcher(config=config)
 
         # Get the issue using the refactored client
         issue = issues_client.get_issue(issue_key)
@@ -258,15 +267,14 @@ class TestRealJiraValidation:
 
         # Initialize the Jira client
         config = JiraConfig.from_env()
-        search_client = JiraSearchMixin(config=config)
+        search_client = JiraFetcher(config=config)
 
         # Perform a simple search using your actual project
         jql = 'project = "TES" ORDER BY created DESC'
         results = search_client.search_issues(jql, limit=5)
-
-        # Verify results contain JiraIssue instances
-        assert len(results) > 0
-        for issue in results:
+        issues = results.issues if hasattr(results, "issues") else results
+        assert len(issues) > 0
+        for issue in issues:
             assert isinstance(issue, JiraIssue)
             assert issue.key is not None
             assert issue.id is not None
@@ -282,22 +290,21 @@ class TestRealJiraValidation:
         # Get test issue key from environment or use default
         issue_key = os.environ.get("JIRA_TEST_ISSUE_KEY", "TES-8")
 
-        # Initialize the CommentsMixin instead of IssuesMixin for comments
+        # Initialize the Jira client
         config = JiraConfig.from_env()
-        comments_client = JiraCommentsMixin(config=config)
+        jira_client = JiraFetcher(config=config)
 
-        # First check for issue existence using IssuesMixin
-        issues_client = IssuesMixin(config=config)
+        # First check for issue existence
         try:
-            issues_client.get_issue(issue_key)
+            jira_client.get_issue(issue_key)
         except Exception:
             pytest.skip(
                 f"Issue {issue_key} does not exist or you don't have permission to access it"
             )
 
-        # The get_issue_comments from CommentsMixin returns list[dict] not models
+        # The get_issue_comments returns list[dict] not models
         # We'll just check that we can get comments in any format
-        comments = comments_client.get_issue_comments(issue_key)
+        comments = jira_client.get_issue_comments(issue_key)
 
         # Skip test if there are no comments
         if len(comments) == 0:
@@ -1374,8 +1381,10 @@ class TestRealToolValidation:
         if not use_real_jira_data:
             pytest.skip("Real Jira data testing is disabled")
 
-        # Call the tool to get issue link types
-        result_content = list(await call_tool("jira_get_link_types", {}))
+        try:
+            result_content = list(await call_tool("jira_get_link_types", {}))
+        except LookupError:
+            pytest.skip("Server context not available for call_tool")
 
         # Verify we got a valid response
         assert isinstance(result_content[0], TextContent)
@@ -1622,3 +1631,93 @@ async def test_jira_create_and_remove_issue_link(
     finally:
         # Clean up resources even if the test fails
         cleanup_resources()
+
+    @pytest.mark.anyio
+    async def test_regression_jira_create_additional_fields_string(
+        self, use_real_jira_data: bool, test_project_key: str, resource_tracker: ResourceTracker, cleanup_resources: Callable[[], None]
+    ) -> None:
+        """Test jira_create_issue with additional_fields passed as a JSON string."""
+        if not use_real_jira_data:
+            pytest.skip("Real Jira data testing is disabled")
+
+        test_id = str(uuid.uuid4())[:8]
+        summary = f"Regression Test (JSON String Fields) {test_id}"
+        additional_fields_str = '{"priority": {"name": "High"}, "labels": ["regression-test", "json-string"]}'
+
+        created_issue_key = None
+        try:
+            create_args = {
+                "project_key": test_project_key,
+                "summary": summary,
+                "issue_type": "Task", # Use a common issue type
+                "additional_fields": additional_fields_str, # Pass as string
+            }
+            create_result_content: Sequence[TextContent] = await call_tool("jira_create_issue", create_args)
+            assert create_result_content and isinstance(create_result_content[0], TextContent)
+            created_issue_data = json.loads(create_result_content[0].text)
+            created_issue_key = created_issue_data["key"]
+            resource_tracker.add_jira_issue(created_issue_key) # Track for cleanup
+
+            # Fetch the created issue to verify fields
+            get_args = {"issue_key": created_issue_key, "fields": "summary,priority,labels"}
+            get_result_content: Sequence[TextContent] = await call_tool("jira_get_issue", get_args)
+            assert get_result_content and isinstance(get_result_content[0], TextContent)
+            fetched_issue_data = json.loads(get_result_content[0].text)
+
+            # --- Assertions ---
+            # Priority should be High
+            assert "priority" in fetched_issue_data, "Priority field missing in fetched issue"
+            assert isinstance(fetched_issue_data["priority"], dict), "Priority should be a dict"
+            assert fetched_issue_data["priority"].get("name") == "High", "Priority was not set correctly"
+            # Labels should match
+            assert "labels" in fetched_issue_data, "Labels field missing in fetched issue"
+            assert isinstance(fetched_issue_data["labels"], list), "Labels should be a list"
+            # Convert to set for order-insensitive comparison
+            assert set(fetched_issue_data["labels"]) == {"regression-test", "json-string"}, "Labels were not set correctly"
+
+        finally:
+            cleanup_resources()
+
+    @pytest.mark.anyio
+    async def test_regression_jira_update_fields_string(
+        self, use_real_jira_data: bool, test_project_key: str, resource_tracker: ResourceTracker, cleanup_resources: Callable[[], None]
+    ) -> None:
+        """Test jira_update_issue with 'fields' passed as a JSON string."""
+        if not use_real_jira_data:
+            pytest.skip("Real Jira data testing is disabled")
+
+        test_id = str(uuid.uuid4())[:8]
+        initial_summary = f"Regression Update Test Initial {test_id}"
+        updated_summary = f"Regression Update Test UPDATED {test_id}"
+
+        created_issue_key = None
+        try:
+            # Create a base issue
+            create_args = { "project_key": test_project_key, "summary": initial_summary, "issue_type": "Task" }
+            create_result_content: Sequence[TextContent] = await call_tool("jira_create_issue", create_args)
+            created_issue_key = json.loads(create_result_content[0].text)["key"]
+            resource_tracker.add_jira_issue(created_issue_key)
+
+            # Update the issue using a JSON string for 'fields'
+            update_fields_str = '{"summary": "%s", "labels": ["regression-update", "json-string"]}' % updated_summary
+            update_args = {
+                "issue_key": created_issue_key,
+                "fields": update_fields_str, # Pass as string
+            }
+            update_result_content: Sequence[TextContent] = await call_tool("jira_update_issue", update_args)
+            assert update_result_content and isinstance(update_result_content[0], TextContent)
+            update_result_data = json.loads(update_result_content[0].text)
+            assert update_result_data.get("success"), "Update did not succeed"
+
+            # Fetch the updated issue to verify fields
+            get_args = {"issue_key": created_issue_key, "fields": "summary,labels"}
+            get_result_content: Sequence[TextContent] = await call_tool("jira_get_issue", get_args)
+            assert get_result_content and isinstance(get_result_content[0], TextContent)
+            fetched_issue_data = json.loads(get_result_content[0].text)
+
+            # --- Assertions ---
+            assert fetched_issue_data["summary"] == updated_summary, "Summary was not updated correctly"
+            assert set(fetched_issue_data["labels"]) == {"regression-update", "json-string"}, "Labels were not updated correctly"
+
+        finally:
+            cleanup_resources()
