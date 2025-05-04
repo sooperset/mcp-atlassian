@@ -213,10 +213,13 @@ def main(
     if jira_projects_filter:
         os.environ["JIRA_PROJECTS_FILTER"] = jira_projects_filter
 
-    from . import server
+    from .servers import main_mcp
 
     # Run the server with specified transport
-    asyncio.run(server.run_server(transport=final_transport, port=final_port))
+    if final_transport == "sse":
+        asyncio.run(main_mcp.run_async(transport=final_transport, port=final_port))
+    else:
+        asyncio.run(main_mcp.run_async(transport=final_transport))
 
 
 __all__ = ["main", "server", "__version__"]

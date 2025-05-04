@@ -33,11 +33,8 @@ from mcp_atlassian.confluence.labels import LabelsMixin as ConfluenceLabelsMixin
 from mcp_atlassian.confluence.pages import PagesMixin
 from mcp_atlassian.confluence.search import SearchMixin as ConfluenceSearchMixin
 from mcp_atlassian.jira import JiraFetcher
-from mcp_atlassian.jira.comments import CommentsMixin as JiraCommentsMixin
 from mcp_atlassian.jira.config import JiraConfig
-from mcp_atlassian.jira.issues import IssuesMixin
 from mcp_atlassian.jira.links import LinksMixin
-from mcp_atlassian.jira.search import SearchMixin as JiraSearchMixin
 from mcp_atlassian.models.confluence import (
     ConfluenceComment,
     ConfluenceLabel,
@@ -45,7 +42,6 @@ from mcp_atlassian.models.confluence import (
 )
 from mcp_atlassian.models.jira import JiraIssue, JiraIssueLinkType
 from mcp_atlassian.server import call_tool
-import contextvars
 
 
 # Resource tracking for cleanup
@@ -1634,7 +1630,11 @@ async def test_jira_create_and_remove_issue_link(
 
     @pytest.mark.anyio
     async def test_regression_jira_create_additional_fields_string(
-        self, use_real_jira_data: bool, test_project_key: str, resource_tracker: ResourceTracker, cleanup_resources: Callable[[], None]
+        self,
+        use_real_jira_data: bool,
+        test_project_key: str,
+        resource_tracker: ResourceTracker,
+        cleanup_resources: Callable[[], None],
     ) -> None:
         """Test jira_create_issue with additional_fields passed as a JSON string."""
         if not use_real_jira_data:
@@ -1649,38 +1649,64 @@ async def test_jira_create_and_remove_issue_link(
             create_args = {
                 "project_key": test_project_key,
                 "summary": summary,
-                "issue_type": "Task", # Use a common issue type
-                "additional_fields": additional_fields_str, # Pass as string
+                "issue_type": "Task",  # Use a common issue type
+                "additional_fields": additional_fields_str,  # Pass as string
             }
-            create_result_content: Sequence[TextContent] = await call_tool("jira_create_issue", create_args)
-            assert create_result_content and isinstance(create_result_content[0], TextContent)
+            create_result_content: Sequence[TextContent] = await call_tool(
+                "jira_create_issue", create_args
+            )
+            assert create_result_content and isinstance(
+                create_result_content[0], TextContent
+            )
             created_issue_data = json.loads(create_result_content[0].text)
             created_issue_key = created_issue_data["key"]
-            resource_tracker.add_jira_issue(created_issue_key) # Track for cleanup
+            resource_tracker.add_jira_issue(created_issue_key)  # Track for cleanup
 
             # Fetch the created issue to verify fields
-            get_args = {"issue_key": created_issue_key, "fields": "summary,priority,labels"}
-            get_result_content: Sequence[TextContent] = await call_tool("jira_get_issue", get_args)
+            get_args = {
+                "issue_key": created_issue_key,
+                "fields": "summary,priority,labels",
+            }
+            get_result_content: Sequence[TextContent] = await call_tool(
+                "jira_get_issue", get_args
+            )
             assert get_result_content and isinstance(get_result_content[0], TextContent)
             fetched_issue_data = json.loads(get_result_content[0].text)
 
             # --- Assertions ---
             # Priority should be High
-            assert "priority" in fetched_issue_data, "Priority field missing in fetched issue"
-            assert isinstance(fetched_issue_data["priority"], dict), "Priority should be a dict"
-            assert fetched_issue_data["priority"].get("name") == "High", "Priority was not set correctly"
+            assert "priority" in fetched_issue_data, (
+                "Priority field missing in fetched issue"
+            )
+            assert isinstance(fetched_issue_data["priority"], dict), (
+                "Priority should be a dict"
+            )
+            assert fetched_issue_data["priority"].get("name") == "High", (
+                "Priority was not set correctly"
+            )
             # Labels should match
-            assert "labels" in fetched_issue_data, "Labels field missing in fetched issue"
-            assert isinstance(fetched_issue_data["labels"], list), "Labels should be a list"
+            assert "labels" in fetched_issue_data, (
+                "Labels field missing in fetched issue"
+            )
+            assert isinstance(fetched_issue_data["labels"], list), (
+                "Labels should be a list"
+            )
             # Convert to set for order-insensitive comparison
-            assert set(fetched_issue_data["labels"]) == {"regression-test", "json-string"}, "Labels were not set correctly"
+            assert set(fetched_issue_data["labels"]) == {
+                "regression-test",
+                "json-string",
+            }, "Labels were not set correctly"
 
         finally:
             cleanup_resources()
 
     @pytest.mark.anyio
     async def test_regression_jira_update_fields_string(
-        self, use_real_jira_data: bool, test_project_key: str, resource_tracker: ResourceTracker, cleanup_resources: Callable[[], None]
+        self,
+        use_real_jira_data: bool,
+        test_project_key: str,
+        resource_tracker: ResourceTracker,
+        cleanup_resources: Callable[[], None],
     ) -> None:
         """Test jira_update_issue with 'fields' passed as a JSON string."""
         if not use_real_jira_data:
@@ -1693,31 +1719,49 @@ async def test_jira_create_and_remove_issue_link(
         created_issue_key = None
         try:
             # Create a base issue
-            create_args = { "project_key": test_project_key, "summary": initial_summary, "issue_type": "Task" }
-            create_result_content: Sequence[TextContent] = await call_tool("jira_create_issue", create_args)
+            create_args = {
+                "project_key": test_project_key,
+                "summary": initial_summary,
+                "issue_type": "Task",
+            }
+            create_result_content: Sequence[TextContent] = await call_tool(
+                "jira_create_issue", create_args
+            )
             created_issue_key = json.loads(create_result_content[0].text)["key"]
             resource_tracker.add_jira_issue(created_issue_key)
 
             # Update the issue using a JSON string for 'fields'
-            update_fields_str = '{"summary": "%s", "labels": ["regression-update", "json-string"]}' % updated_summary
+            # Use f-string for formatting as suggested by UP031
+            update_fields_str = f'{{"summary": "{updated_summary}", "labels": ["regression-update", "json-string"]}}'
             update_args = {
                 "issue_key": created_issue_key,
-                "fields": update_fields_str, # Pass as string
+                "fields": update_fields_str,  # Pass as string
             }
-            update_result_content: Sequence[TextContent] = await call_tool("jira_update_issue", update_args)
-            assert update_result_content and isinstance(update_result_content[0], TextContent)
+            update_result_content: Sequence[TextContent] = await call_tool(
+                "jira_update_issue", update_args
+            )
+            assert update_result_content and isinstance(
+                update_result_content[0], TextContent
+            )
             update_result_data = json.loads(update_result_content[0].text)
             assert update_result_data.get("success"), "Update did not succeed"
 
             # Fetch the updated issue to verify fields
             get_args = {"issue_key": created_issue_key, "fields": "summary,labels"}
-            get_result_content: Sequence[TextContent] = await call_tool("jira_get_issue", get_args)
+            get_result_content: Sequence[TextContent] = await call_tool(
+                "jira_get_issue", get_args
+            )
             assert get_result_content and isinstance(get_result_content[0], TextContent)
             fetched_issue_data = json.loads(get_result_content[0].text)
 
             # --- Assertions ---
-            assert fetched_issue_data["summary"] == updated_summary, "Summary was not updated correctly"
-            assert set(fetched_issue_data["labels"]) == {"regression-update", "json-string"}, "Labels were not updated correctly"
+            assert fetched_issue_data["summary"] == updated_summary, (
+                "Summary was not updated correctly"
+            )
+            assert set(fetched_issue_data["labels"]) == {
+                "regression-update",
+                "json-string",
+            }, "Labels were not updated correctly"
 
         finally:
             cleanup_resources()
