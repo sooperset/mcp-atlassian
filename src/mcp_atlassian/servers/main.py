@@ -4,7 +4,6 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any
 
 from fastmcp import FastMCP
 
@@ -13,7 +12,6 @@ from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.utils import is_read_only_mode
-from mcp_atlassian.utils.logging import log_config_param
 from mcp_atlassian.utils.tools import get_enabled_tools
 
 from ..server import get_available_services  # Import from the old server.py initially
@@ -22,13 +20,16 @@ from .jira import jira_mcp  # Import the instance
 
 logger = logging.getLogger("mcp-atlassian.server.main")
 
+
 @dataclass
 class MainAppContext:
     """Context holding initialized fetchers and server settings."""
+
     jira_fetcher: JiraFetcher | None = None
     confluence_fetcher: ConfluenceFetcher | None = None
     read_only: bool = False
     enabled_tools: list[str] | None = None
+
 
 @asynccontextmanager
 async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[MainAppContext]:
@@ -74,9 +75,10 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[MainAppCo
     yield app_context
     logger.info("Main Atlassian MCP server lifespan shutting down.")
 
+
 # Initialize the main MCP server instance
 main_mcp = FastMCP(name="Atlassian MCP", lifespan=main_lifespan)
 
 # Mount the Jira and Confluence sub-servers
 main_mcp.mount("jira", jira_mcp)
-main_mcp.mount("confluence", confluence_mcp) 
+main_mcp.mount("confluence", confluence_mcp)
