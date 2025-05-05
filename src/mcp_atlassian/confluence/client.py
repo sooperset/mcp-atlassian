@@ -8,9 +8,9 @@ from atlassian import Confluence
 from requests import Session
 
 from ..exceptions import MCPAtlassianAuthenticationError
+from ..utils.logging import log_config_param
 from ..utils.oauth import configure_oauth_session
 from ..utils.ssl import configure_ssl_verification
-from ..utils.logging import log_config_param
 from .config import ConfluenceConfig
 
 # Configure logging
