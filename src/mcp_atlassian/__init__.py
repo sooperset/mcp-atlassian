@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import sys
 
 import click
 from dotenv import load_dotenv
@@ -27,6 +28,11 @@ logger = setup_logging(logging_level)
 )
 @click.option(
     "--env-file", type=click.Path(exists=True, dir_okay=False), help="Path to .env file"
+)
+@click.option(
+    "--oauth-setup",
+    is_flag=True,
+    help="Run OAuth 2.0 setup wizard for Atlassian Cloud",
 )
 @click.option(
     "--transport",
@@ -109,6 +115,7 @@ logger = setup_logging(logging_level)
 def main(
     verbose: bool,
     env_file: str | None,
+    oauth_setup: bool,
     transport: str,
     port: int,
     confluence_url: str | None,
@@ -163,8 +170,21 @@ def main(
         logger.debug("Attempting to load environment from default .env file")
         load_dotenv()
 
+    # Handle the OAuth setup wizard if requested
+    if oauth_setup:
+        logger.info("Starting OAuth 2.0 setup wizard")
+        # Import the oauth_authorize module functionality
+        try:
+            from .utils.oauth_setup import run_oauth_setup
+
+            sys.exit(run_oauth_setup())
+        except ImportError:
+            logger.error(
+                "Failed to import OAuth setup module. Make sure you have the required dependencies installed."
+            )
+            sys.exit(1)
+
     # Check environment variables if CLI options were not used (or kept default)
-    # CLI arguments take precedence over environment variables
 
     # Determine final transport mode
     final_transport = transport

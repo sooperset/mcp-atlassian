@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+import keyring
 import requests
 
 # Configure logging
@@ -26,6 +27,7 @@ TOKEN_URL = "https://auth.atlassian.com/oauth/token"  # noqa: S105 - This is a p
 AUTHORIZE_URL = "https://auth.atlassian.com/authorize"
 CLOUD_ID_URL = "https://api.atlassian.com/oauth/token/accessible-resources"
 TOKEN_EXPIRY_MARGIN = 300  # 5 minutes in seconds
+KEYRING_SERVICE_NAME = "mcp-atlassian-oauth"
 
 
 @dataclass
@@ -195,11 +197,53 @@ class OAuthConfig:
         except Exception as e:
             logger.error(f"Failed to get cloud ID: {e}")
 
+    def _get_keyring_username(self) -> str:
+        """Get the keyring username for storing tokens.
+
+        The username is based on the client ID to allow multiple OAuth apps.
+
+        Returns:
+            A username string for keyring
+        """
+        return f"oauth-{self.client_id}"
+
     def _save_tokens(self) -> None:
-        """Save the tokens to a file for later use.
+        """Save the tokens securely using keyring for later use.
 
         This allows the tokens to be reused between runs without requiring
         the user to go through the authorization flow again.
+        """
+        try:
+            username = self._get_keyring_username()
+
+            # Store token data as JSON string in keyring
+            token_data = {
+                "refresh_token": self.refresh_token,
+                "access_token": self.access_token,
+                "expires_at": self.expires_at,
+                "cloud_id": self.cloud_id,
+            }
+
+            # Store the token data in the system keyring
+            keyring.set_password(KEYRING_SERVICE_NAME, username, json.dumps(token_data))
+
+            logger.debug(f"Saved OAuth tokens to keyring for {username}")
+
+            # Also maintain backwards compatibility with file storage
+            # for environments where keyring might not work
+            self._save_tokens_to_file(token_data)
+
+        except Exception as e:
+            logger.error(f"Failed to save tokens to keyring: {e}")
+            # Fall back to file storage if keyring fails
+            self._save_tokens_to_file()
+
+    def _save_tokens_to_file(self, token_data: dict = None) -> None:
+        """Save the tokens to a file as fallback storage.
+
+        Args:
+            token_data: Optional dict with token data. If not provided,
+                        will use the current object attributes.
         """
         try:
             # Create the directory if it doesn't exist
@@ -208,23 +252,51 @@ class OAuthConfig:
 
             # Save the tokens to a file
             token_path = token_dir / f"oauth-{self.client_id}.json"
-            token_data = {
-                "refresh_token": self.refresh_token,
-                "access_token": self.access_token,
-                "expires_at": self.expires_at,
-                "cloud_id": self.cloud_id,
-            }
+
+            if token_data is None:
+                token_data = {
+                    "refresh_token": self.refresh_token,
+                    "access_token": self.access_token,
+                    "expires_at": self.expires_at,
+                    "cloud_id": self.cloud_id,
+                }
 
             with open(token_path, "w") as f:
                 json.dump(token_data, f)
 
-            logger.debug(f"Saved OAuth tokens to {token_path}")
+            logger.debug(f"Saved OAuth tokens to file {token_path} (fallback storage)")
         except Exception as e:
-            logger.error(f"Failed to save tokens: {e}")
+            logger.error(f"Failed to save tokens to file: {e}")
 
     @staticmethod
     def load_tokens(client_id: str) -> dict[str, Any]:
-        """Load tokens from a file.
+        """Load tokens securely from keyring.
+
+        Args:
+            client_id: The OAuth client ID
+
+        Returns:
+            Dict with the token data or empty dict if no tokens found
+        """
+        username = f"oauth-{client_id}"
+
+        # Try to load tokens from keyring first
+        try:
+            token_json = keyring.get_password(KEYRING_SERVICE_NAME, username)
+            if token_json:
+                logger.debug(f"Loaded OAuth tokens from keyring for {username}")
+                return json.loads(token_json)
+        except Exception as e:
+            logger.warning(
+                f"Failed to load tokens from keyring: {e}. Trying file fallback."
+            )
+
+        # Fall back to loading from file if keyring fails or returns None
+        return OAuthConfig._load_tokens_from_file(client_id)
+
+    @staticmethod
+    def _load_tokens_from_file(client_id: str) -> dict[str, Any]:
+        """Load tokens from a file as fallback.
 
         Args:
             client_id: The OAuth client ID
@@ -239,9 +311,13 @@ class OAuthConfig:
 
         try:
             with open(token_path) as f:
-                return json.load(f)
+                token_data = json.load(f)
+                logger.debug(
+                    f"Loaded OAuth tokens from file {token_path} (fallback storage)"
+                )
+                return token_data
         except Exception as e:
-            logger.error(f"Failed to load tokens: {e}")
+            logger.error(f"Failed to load tokens from file: {e}")
             return {}
 
     @classmethod

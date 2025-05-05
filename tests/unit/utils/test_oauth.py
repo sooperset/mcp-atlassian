@@ -1,5 +1,6 @@
 """Tests for the OAuth utilities."""
 
+import json
 import time
 import urllib.parse
 from unittest.mock import MagicMock, patch
@@ -7,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import requests
 
 from mcp_atlassian.utils.oauth import (
+    KEYRING_SERVICE_NAME,
     TOKEN_EXPIRY_MARGIN,
     OAuthConfig,
     configure_oauth_session,
@@ -134,7 +136,7 @@ class TestOAuthConfig:
         }
         mock_post.return_value = mock_response
 
-        # Mock cloud ID retrieval
+        # Mock cloud ID retrieval and token saving
         with patch.object(OAuthConfig, "_get_cloud_id") as mock_get_cloud_id:
             with patch.object(OAuthConfig, "_save_tokens") as mock_save_tokens:
                 config = OAuthConfig(
@@ -317,10 +319,78 @@ class TestOAuthConfig:
         mock_get.assert_not_called()
         assert config.cloud_id is None
 
+    def test_get_keyring_username(self):
+        """Test _get_keyring_username method."""
+        config = OAuthConfig(
+            client_id="test-client-id",
+            client_secret="test-client-secret",
+            redirect_uri="https://example.com/callback",
+            scope="read:jira-work write:jira-work",
+        )
+        username = config._get_keyring_username()
+
+        # Check the keyring username format
+        assert username == "oauth-test-client-id"
+
+    @patch("keyring.set_password")
+    @patch.object(OAuthConfig, "_save_tokens_to_file")
+    def test_save_tokens_keyring_success(self, mock_save_to_file, mock_set_password):
+        """Test _save_tokens with successful keyring storage."""
+        config = OAuthConfig(
+            client_id="test-client-id",
+            client_secret="test-client-secret",
+            redirect_uri="https://example.com/callback",
+            scope="read:jira-work write:jira-work",
+            cloud_id="test-cloud-id",
+            refresh_token="test-refresh-token",
+            access_token="test-access-token",
+            expires_at=1234567890,
+        )
+        config._save_tokens()
+
+        # Verify keyring was used
+        mock_set_password.assert_called_once()
+        service_name = mock_set_password.call_args[0][0]
+        username = mock_set_password.call_args[0][1]
+        token_json = mock_set_password.call_args[0][2]
+
+        assert service_name == KEYRING_SERVICE_NAME
+        assert username == "oauth-test-client-id"
+        assert "test-refresh-token" in token_json
+        assert "test-access-token" in token_json
+
+        # Verify file backup was created
+        mock_save_to_file.assert_called_once()
+
+    @patch("keyring.set_password")
+    @patch.object(OAuthConfig, "_save_tokens_to_file")
+    def test_save_tokens_keyring_failure(self, mock_save_to_file, mock_set_password):
+        """Test _save_tokens with keyring failure fallback."""
+        # Make keyring fail
+        mock_set_password.side_effect = Exception("Keyring error")
+
+        config = OAuthConfig(
+            client_id="test-client-id",
+            client_secret="test-client-secret",
+            redirect_uri="https://example.com/callback",
+            scope="read:jira-work write:jira-work",
+            cloud_id="test-cloud-id",
+            refresh_token="test-refresh-token",
+            access_token="test-access-token",
+            expires_at=1234567890,
+        )
+        config._save_tokens()
+
+        # Verify keyring was attempted
+        mock_set_password.assert_called_once()
+
+        # Verify fallback to file was used
+        mock_save_to_file.assert_called_once()
+
     @patch("pathlib.Path.mkdir")
     @patch("json.dump")
-    def test_save_tokens(self, mock_dump, mock_mkdir):
-        """Test _save_tokens method."""
+    def test_save_tokens_to_file(self, mock_dump, mock_mkdir):
+        """Test _save_tokens_to_file method."""
         # Mock open
         mock_open = MagicMock()
         with patch("builtins.open", mock_open):
@@ -334,7 +404,7 @@ class TestOAuthConfig:
                 access_token="test-access-token",
                 expires_at=1234567890,
             )
-            config._save_tokens()
+            config._save_tokens_to_file()
 
             # Should create directory and save tokens
             mock_mkdir.assert_called_once()
@@ -348,10 +418,97 @@ class TestOAuthConfig:
             assert saved_data["expires_at"] == 1234567890
             assert saved_data["cloud_id"] == "test-cloud-id"
 
+    @patch("keyring.get_password")
+    @patch.object(OAuthConfig, "_load_tokens_from_file")
+    def test_load_tokens_keyring_success(self, mock_load_from_file, mock_get_password):
+        """Test load_tokens with successful keyring retrieval."""
+        # Setup keyring to return token data
+        token_data = {
+            "refresh_token": "keyring-refresh-token",
+            "access_token": "keyring-access-token",
+            "expires_at": 1234567890,
+            "cloud_id": "keyring-cloud-id",
+        }
+        mock_get_password.return_value = json.dumps(token_data)
+
+        result = OAuthConfig.load_tokens("test-client-id")
+
+        # Should have used keyring
+        mock_get_password.assert_called_once_with(
+            KEYRING_SERVICE_NAME, "oauth-test-client-id"
+        )
+
+        # Should not fall back to file
+        mock_load_from_file.assert_not_called()
+
+        # Check result contains keyring data
+        assert result["refresh_token"] == "keyring-refresh-token"
+        assert result["access_token"] == "keyring-access-token"
+        assert result["expires_at"] == 1234567890
+        assert result["cloud_id"] == "keyring-cloud-id"
+
+    @patch("keyring.get_password")
+    @patch.object(OAuthConfig, "_load_tokens_from_file")
+    def test_load_tokens_keyring_failure(self, mock_load_from_file, mock_get_password):
+        """Test load_tokens with keyring failure fallback."""
+        # Make keyring fail
+        mock_get_password.side_effect = Exception("Keyring error")
+
+        # Setup file fallback to return token data
+        file_token_data = {
+            "refresh_token": "file-refresh-token",
+            "access_token": "file-access-token",
+            "expires_at": 9876543210,
+            "cloud_id": "file-cloud-id",
+        }
+        mock_load_from_file.return_value = file_token_data
+
+        result = OAuthConfig.load_tokens("test-client-id")
+
+        # Should have tried keyring
+        mock_get_password.assert_called_once()
+
+        # Should have fallen back to file
+        mock_load_from_file.assert_called_once_with("test-client-id")
+
+        # Check result contains file data
+        assert result["refresh_token"] == "file-refresh-token"
+        assert result["access_token"] == "file-access-token"
+        assert result["expires_at"] == 9876543210
+        assert result["cloud_id"] == "file-cloud-id"
+
+    @patch("keyring.get_password")
+    @patch.object(OAuthConfig, "_load_tokens_from_file")
+    def test_load_tokens_keyring_empty(self, mock_load_from_file, mock_get_password):
+        """Test load_tokens with empty keyring result."""
+        # Setup keyring to return None (no saved token)
+        mock_get_password.return_value = None
+
+        # Setup file fallback to return token data
+        file_token_data = {
+            "refresh_token": "file-refresh-token",
+            "access_token": "file-access-token",
+            "expires_at": 9876543210,
+        }
+        mock_load_from_file.return_value = file_token_data
+
+        result = OAuthConfig.load_tokens("test-client-id")
+
+        # Should have tried keyring
+        mock_get_password.assert_called_once()
+
+        # Should have fallen back to file
+        mock_load_from_file.assert_called_once_with("test-client-id")
+
+        # Check result contains file data
+        assert result["refresh_token"] == "file-refresh-token"
+        assert result["access_token"] == "file-access-token"
+        assert result["expires_at"] == 9876543210
+
     @patch("pathlib.Path.exists")
     @patch("json.load")
-    def test_load_tokens_success(self, mock_load, mock_exists):
-        """Test load_tokens success case."""
+    def test_load_tokens_from_file_success(self, mock_load, mock_exists):
+        """Test _load_tokens_from_file success case."""
         mock_exists.return_value = True
         mock_load.return_value = {
             "refresh_token": "test-refresh-token",
@@ -363,7 +520,7 @@ class TestOAuthConfig:
         # Mock open
         mock_open = MagicMock()
         with patch("builtins.open", mock_open):
-            result = OAuthConfig.load_tokens("test-client-id")
+            result = OAuthConfig._load_tokens_from_file("test-client-id")
 
             # Check result
             assert result["refresh_token"] == "test-refresh-token"
@@ -372,11 +529,11 @@ class TestOAuthConfig:
             assert result["cloud_id"] == "test-cloud-id"
 
     @patch("pathlib.Path.exists")
-    def test_load_tokens_file_not_found(self, mock_exists):
-        """Test load_tokens when file doesn't exist."""
+    def test_load_tokens_from_file_not_found(self, mock_exists):
+        """Test _load_tokens_from_file when file doesn't exist."""
         mock_exists.return_value = False
 
-        result = OAuthConfig.load_tokens("test-client-id")
+        result = OAuthConfig._load_tokens_from_file("test-client-id")
 
         # Should return empty dict
         assert result == {}
