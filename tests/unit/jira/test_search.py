@@ -55,7 +55,7 @@ class TestSearchMixin:
     @pytest.mark.parametrize(
         "is_cloud, expected_method_name",
         [
-            (True, "enhanced_jql"),  # Cloud scenario
+            (True, "enhanced_jql_get_list_of_tickets"),  # Cloud scenario
             (False, "jql"),  # Server/DC scenario
         ],
     )
@@ -75,12 +75,16 @@ class TestSearchMixin:
         )
 
         # Setup: Mock response for both API methods
-        search_mixin.jira.enhanced_jql = MagicMock(return_value=mock_issues_response)
+        search_mixin.jira.enhanced_jql_get_list_of_tickets = MagicMock(
+            return_value=mock_issues_response["issues"]
+        )
         search_mixin.jira.jql = MagicMock(return_value=mock_issues_response)
 
         # Determine other method name for assertion
         other_method_name = (
-            "jql" if expected_method_name == "enhanced_jql" else "enhanced_jql"
+            "jql"
+            if expected_method_name == "enhanced_jql_get_list_of_tickets"
+            else "enhanced_jql_get_list_of_tickets"
         )
 
         # Act
@@ -577,10 +581,12 @@ class TestSearchMixin:
         search_mixin.config.url = "https://test.example.com"
 
         # Setup mock response for both API methods
-        search_mixin.jira.enhanced_jql = MagicMock(return_value=mock_issues_response)
+        search_mixin.jira.enhanced_jql_get_list_of_tickets = MagicMock(
+            return_value=mock_issues_response["issues"]
+        )
         search_mixin.jira.jql = MagicMock(return_value=mock_issues_response)
         api_method_mock = getattr(
-            search_mixin.jira, "enhanced_jql" if is_cloud else "jql"
+            search_mixin.jira, "enhanced_jql_get_list_of_tickets" if is_cloud else "jql"
         )
 
         # Act: Single project filter
@@ -632,10 +638,12 @@ class TestSearchMixin:
         search_mixin.config.url = "https://test.example.com"
 
         # Setup mock response for both API methods
-        search_mixin.jira.enhanced_jql = MagicMock(return_value=mock_issues_response)
+        search_mixin.jira.enhanced_jql_get_list_of_tickets = MagicMock(
+            return_value=mock_issues_response["issues"]
+        )
         search_mixin.jira.jql = MagicMock(return_value=mock_issues_response)
         api_method_mock = getattr(
-            search_mixin.jira, "enhanced_jql" if is_cloud else "jql"
+            search_mixin.jira, "enhanced_jql_get_list_of_tickets" if is_cloud else "jql"
         )
 
         # Define expected kwargs based on is_cloud

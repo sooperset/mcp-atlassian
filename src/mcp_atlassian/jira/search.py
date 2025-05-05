@@ -83,26 +83,42 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                 fields_param = fields
 
             if self.config.is_cloud:
-                response = self.jira.enhanced_jql(
+                response = self.jira.enhanced_jql_get_list_of_tickets(
                     jql, fields=fields_param, limit=limit, expand=expand
                 )
+
+                if not isinstance(response, list):
+                    msg = f"Unexpected return value type from `jira.jql`: {type(response)}"
+                    logger.error(msg)
+                    raise TypeError(msg)
+
+                # Convert the response to a search result model
+                search_result = JiraSearchResult.from_api_response(
+                    {"issues": response[0:limit], "total": len(response[0:limit])},
+                    base_url=self.config.url,
+                    requested_fields=fields_param,
+                )
+
+                # Return the full search result object
+                return search_result
             else:
+                limit = min(limit, 50)
                 response = self.jira.jql(
                     jql, fields=fields_param, start=start, limit=limit, expand=expand
                 )
+                if not isinstance(response, dict):
+                    msg = f"Unexpected return value type from `jira.jql`: {type(response)}"
+                    logger.error(msg)
+                    raise TypeError(msg)
 
-            if not isinstance(response, dict):
-                msg = f"Unexpected return value type from `jira.jql`: {type(response)}"
-                logger.error(msg)
-                raise TypeError(msg)
+                # Convert the response to a search result model
+                search_result = JiraSearchResult.from_api_response(
+                    response, base_url=self.config.url, requested_fields=fields_param
+                )
 
-            # Convert the response to a search result model
-            search_result = JiraSearchResult.from_api_response(
-                response, base_url=self.config.url, requested_fields=fields_param
-            )
+                # Return the full search result object
+                return search_result
 
-            # Return the full search result object
-            return search_result
         except HTTPError as http_err:
             if http_err.response is not None and http_err.response.status_code in [
                 401,
