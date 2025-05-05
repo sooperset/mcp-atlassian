@@ -40,19 +40,45 @@ https://github.com/user-attachments/assets/7fe9c488-ad0c-4876-9b54-120b666bb785
 
 ### 1. Authentication Setup
 
-First, generate the necessary authentication tokens for Confluence & Jira:
+MCP Atlassian supports three authentication methods:
 
-#### For Cloud
+#### A. API Token Authentication (Cloud)
 
 1. Go to https://id.atlassian.com/manage-profile/security/api-tokens
 2. Click **Create API token**, name it
 3. Copy the token immediately
 
-#### For Server/Data Center
+#### B. Personal Access Token (Server/Data Center)
 
 1. Go to your profile (avatar) → **Profile** → **Personal Access Tokens**
 2. Click **Create token**, name it, set expiry
 3. Copy the token immediately
+
+#### C. OAuth 2.0 Authentication (Cloud only)
+
+1. Create an OAuth 2.0 integration in Atlassian:
+   - Go to https://developer.atlassian.com/console/myapps/
+   - Click "Create" and select "OAuth 2.0 integration"
+   - Follow the wizard to create your app
+   - Configure permissions for both Jira and Confluence as needed
+   - Add a callback URL (e.g., http://localhost:8080/callback)
+
+2. Run the OAuth authorization helper:
+   ```bash
+   # Clone the repository if you haven't already
+   git clone https://github.com/sooperset/mcp-atlassian.git
+   cd mcp-atlassian
+
+   # Run the OAuth authorization script
+   python scripts/oauth_authorize.py \
+     --client-id YOUR_CLIENT_ID \
+     --client-secret YOUR_CLIENT_SECRET \
+     --redirect-uri "http://localhost:8080/callback" \
+     --scope "read:jira-work write:jira-work read:confluence-space.summary write:confluence-content"
+   ```
+
+3. Follow the browser prompt to authorize the application
+4. After successful authorization, add the displayed environment variables to your .env file
 
 ### 2. Installation
 
@@ -189,6 +215,49 @@ For Server/Data Center deployments, use direct variable passing:
 
 > [!NOTE]
 > Set `CONFLUENCE_SSL_VERIFY` and `JIRA_SSL_VERIFY` to "false" only if you have self-signed certificates.
+
+</details>
+
+<details>
+<summary>OAuth 2.0 Authentication Configuration</summary>
+
+For Atlassian Cloud with OAuth 2.0:
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-e", "CONFLUENCE_URL",
+        "-e", "JIRA_URL",
+        "-e", "ATLASSIAN_OAUTH_CLIENT_ID",
+        "-e", "ATLASSIAN_OAUTH_CLIENT_SECRET",
+        "-e", "ATLASSIAN_OAUTH_REDIRECT_URI",
+        "-e", "ATLASSIAN_OAUTH_SCOPE",
+        "-e", "ATLASSIAN_OAUTH_CLOUD_ID",
+        "ghcr.io/sooperset/mcp-atlassian:latest"
+      ],
+      "env": {
+        "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
+        "JIRA_URL": "https://your-company.atlassian.net",
+        "ATLASSIAN_OAUTH_CLIENT_ID": "your_client_id",
+        "ATLASSIAN_OAUTH_CLIENT_SECRET": "your_client_secret",
+        "ATLASSIAN_OAUTH_REDIRECT_URI": "http://localhost:8080/callback",
+        "ATLASSIAN_OAUTH_SCOPE": "read:jira-work write:jira-work read:confluence-space.summary write:confluence-content",
+        "ATLASSIAN_OAUTH_CLOUD_ID": "your_cloud_id"
+      }
+    }
+  }
+}
+```
+
+> [!TIP]
+> Run the `scripts/oauth_authorize.py` script to get your access token and cloud ID.
+> OAuth 2.0 authentication takes precedence over other authentication methods if configured.
 
 </details>
 

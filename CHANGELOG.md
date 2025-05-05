@@ -17,8 +17,6 @@
 ### Fixed
 - Fixed labels not being correctly applied during Jira issue creation with improved field handling (#357)
 - Fixed Jira Cloud searches by using `enhanced_jql` for Cloud and fixing startAt TypeErrors in pagination (#356)
-- Fixed SSL verification environment variables being respected in Docker environment (#340)
-- Corrected jira_update_issue example for assignee format (#339)
 
 ## [0.8.4] - 2025-04-26
 
