@@ -2,7 +2,14 @@
 
 ## [Unreleased]
 
+## [0.10.2] - 2025-05-06
+
+### Fixed
+- SSE server now binds to "0.0.0.0" for broader network access.
+
 ## [0.10.1] - 2025-05-05
+
+### Fixed
 - Re-added the `/healthz` endpoint for Kubernetes health probes, which was accidentally removed during the FastMCP v2 migration (#371). This restores the fix for #359.
 
 ## [0.10.0] - 2025-05-05
