@@ -267,57 +267,6 @@ async def get_project_issues(
 
 
 @jira_mcp.tool(tags={"jira", "read"})
-async def get_epic_issues(
-    ctx: Context[Any, MainAppContext],
-    epic_key: Annotated[
-        str, Field(description="The key of the epic (e.g., 'PROJ-123')")
-    ],
-    limit: Annotated[
-        int,
-        Field(
-            description="Maximum number of issues to return (1-50)",
-            default=10,
-            ge=1,
-            le=50,
-        ),
-    ] = 10,
-    start_at: Annotated[
-        int,
-        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
-    ] = 0,
-) -> str:
-    """Get all issues linked to a specific epic.
-
-    Args:
-        ctx: The FastMCP context.
-        epic_key: The key of the epic.
-        limit: Maximum number of issues to return.
-        start_at: Starting index for pagination.
-
-    Returns:
-        JSON string representing the search results including pagination info.
-    """
-    lifespan_ctx = ctx.request_context.lifespan_context
-    if not lifespan_ctx or not lifespan_ctx.jira:
-        raise ValueError("Jira client is not configured or available.")
-    jira = lifespan_ctx.jira
-
-    # Note: Underlying jira.get_epic_issues returns list[JiraIssue]
-    issues_list = jira.get_epic_issues(epic_key=epic_key, start=start_at, limit=limit)
-
-    # Manually construct the response format expected by the original server
-    issues_simplified = [issue.to_simplified_dict() for issue in issues_list]
-    # Since the underlying method doesn't return total count, we can only report what we fetched
-    result = {
-        "total": len(issues_simplified),
-        "start_at": start_at,
-        "max_results": limit,
-        "issues": issues_simplified,
-    }
-    return json.dumps(result, indent=2, ensure_ascii=False)
-
-
-@jira_mcp.tool(tags={"jira", "read"})
 async def get_transitions(
     ctx: Context[Any, MainAppContext],
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],

@@ -40,9 +40,6 @@ def mock_confluence_fetcher():
     # Mock get_page_children method
     mock_fetcher.get_page_children.return_value = [mock_page]
 
-    # Mock get_page_ancestors method
-    mock_fetcher.get_page_ancestors.return_value = [mock_page]
-
     # Mock get_page_comments method
     mock_comment = MagicMock()
     mock_comment.to_simplified_dict.return_value = {
@@ -106,7 +103,6 @@ def test_confluence_mcp(mock_confluence_fetcher):
         get_comments,
         get_labels,
         get_page,  # Renamed from get_page_content
-        get_page_ancestors,
         get_page_children,
         search,
         update_page,
@@ -116,7 +112,6 @@ def test_confluence_mcp(mock_confluence_fetcher):
     test_mcp.tool()(search)
     test_mcp.tool(name="get_page")(get_page)  # Explicitly name the tool
     test_mcp.tool()(get_page_children)
-    test_mcp.tool()(get_page_ancestors)
     test_mcp.tool()(get_comments)
     test_mcp.tool()(get_labels)
     test_mcp.tool()(add_label)
@@ -156,7 +151,6 @@ def read_only_test_confluence_mcp(mock_confluence_fetcher):
         get_comments,
         get_labels,
         get_page,
-        get_page_ancestors,
         get_page_children,
         search,
         update_page,
@@ -165,7 +159,6 @@ def read_only_test_confluence_mcp(mock_confluence_fetcher):
     test_mcp.tool()(search)
     test_mcp.tool(name="get_page")(get_page)
     test_mcp.tool()(get_page_children)
-    test_mcp.tool()(get_page_ancestors)
     test_mcp.tool()(get_comments)
     test_mcp.tool()(get_labels)
     test_mcp.tool()(add_label)
@@ -203,7 +196,6 @@ def no_fetcher_test_confluence_mcp():
         get_comments,
         get_labels,
         get_page,
-        get_page_ancestors,
         get_page_children,
         search,
         update_page,
@@ -212,7 +204,6 @@ def no_fetcher_test_confluence_mcp():
     test_mcp.tool()(search)
     test_mcp.tool(name="get_page")(get_page)
     test_mcp.tool()(get_page_children)
-    test_mcp.tool()(get_page_ancestors)
     test_mcp.tool()(get_comments)
     test_mcp.tool()(get_labels)
     test_mcp.tool()(add_label)
@@ -341,19 +332,6 @@ async def test_get_page_children(client, mock_confluence_fetcher):
     assert "results" in result_data
     assert len(result_data["results"]) > 0
     assert result_data["results"][0]["title"] == "Test Page Mock Title"
-
-
-@pytest.mark.anyio
-async def test_get_page_ancestors(client, mock_confluence_fetcher):
-    """Test the get_page_ancestors tool."""
-    response = await client.call_tool("get_page_ancestors", {"page_id": "123456"})
-
-    mock_confluence_fetcher.get_page_ancestors.assert_called_once_with("123456")
-
-    result_data = json.loads(response[0].text)
-    assert isinstance(result_data, list)
-    assert len(result_data) > 0
-    assert result_data[0]["title"] == "Test Page Mock Title"
 
 
 @pytest.mark.anyio

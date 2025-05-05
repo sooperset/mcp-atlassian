@@ -418,7 +418,6 @@ For Jira Server/DC, use:
 |`confluence_search`|`jira_get_issue`|
 |`confluence_get_page`|`jira_search`|
 |`confluence_get_page_children`|`jira_get_project_issues`|
-|`confluence_get_page_ancestors`|`jira_get_epic_issues`|
 |`confluence_get_comments`|`jira_create_issue`|
 |`confluence_create_page`|`jira_batch_create_issues`|
 |`confluence_update_page`|`jira_update_issue`|

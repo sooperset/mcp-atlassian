@@ -254,33 +254,6 @@ async def get_page_children(
 
 
 @confluence_mcp.tool(tags={"confluence", "read"})
-async def get_page_ancestors(
-    ctx: Context[Any, MainAppContext],
-    page_id: Annotated[
-        str,
-        Field(description="The ID of the page whose ancestors you want to retrieve"),
-    ],
-) -> str:
-    """Get ancestor (parent) pages of a specific Confluence page.
-
-    Args:
-        ctx: The FastMCP context.
-        page_id: The ID of the page.
-
-    Returns:
-        JSON string representing a list of ancestor page objects.
-    """
-    lifespan_ctx = ctx.request_context.lifespan_context
-    if not lifespan_ctx or not lifespan_ctx.confluence:
-        raise ValueError("Confluence client is not configured or available.")
-    confluence = lifespan_ctx.confluence
-
-    ancestors = confluence.get_page_ancestors(page_id)
-    ancestor_pages = [page.to_simplified_dict() for page in ancestors]
-    return json.dumps(ancestor_pages, indent=2, ensure_ascii=False)
-
-
-@confluence_mcp.tool(tags={"confluence", "read"})
 async def get_comments(
     ctx: Context[Any, MainAppContext],
     page_id: Annotated[

@@ -228,7 +228,6 @@ def test_jira_mcp(mock_jira_fetcher):
         download_attachments,
         get_agile_boards,
         get_board_issues,
-        get_epic_issues,
         get_issue,
         get_link_types,
         get_project_issues,
@@ -250,7 +249,6 @@ def test_jira_mcp(mock_jira_fetcher):
     test_mcp.tool()(search)
     test_mcp.tool()(search_fields)
     test_mcp.tool()(get_project_issues)
-    test_mcp.tool()(get_epic_issues)
     test_mcp.tool()(get_transitions)
     test_mcp.tool()(get_worklog)
     test_mcp.tool()(download_attachments)
@@ -476,32 +474,3 @@ async def test_batch_create_issues_invalid_json(jira_client):
 
     # Check error message comes from Pydantic/FastMCP validation
     assert "invalid json in issues" in str(excinfo.value).lower()
-
-
-@pytest.mark.anyio
-async def test_get_epic_issues(jira_client, mock_jira_fetcher):
-    """Test getting issues from an epic."""
-    response = await jira_client.call_tool(
-        "get_epic_issues",
-        {"epic_key": "TEST-100", "limit": 10, "start_at": 0},
-    )
-
-    # Verify the response
-    assert len(response) == 1
-    text_content = response[0]
-    assert text_content.type == "text"
-
-    # Parse the response JSON
-    content = json.loads(text_content.text)
-    assert "total" in content
-    assert "issues" in content
-    assert content["total"] == 3  # Based on mock setup
-    assert len(content["issues"]) == 3
-    assert "key" in content["issues"][0]
-    assert "summary" in content["issues"][0]
-    assert content["issues"][0]["key"] == "TEST-1"  # Based on mock setup
-
-    # Verify the mock was called correctly
-    mock_jira_fetcher.get_epic_issues.assert_called_once_with(
-        epic_key="TEST-100", start=0, limit=10
-    )
