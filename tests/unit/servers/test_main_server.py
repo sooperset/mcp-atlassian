@@ -2,10 +2,8 @@
 
 from unittest.mock import patch
 
-import pytest
 import httpx
-from starlette.testclient import TestClient
-from starlette.routing import ASGIApp
+import pytest
 
 from mcp_atlassian.servers.main import main_mcp
 
@@ -47,6 +45,6 @@ async def test_health_check_endpoint():
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/healthz")
-        
+
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
