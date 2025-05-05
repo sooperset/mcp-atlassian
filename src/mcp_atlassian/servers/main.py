@@ -31,6 +31,9 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[MainAppCo
     read_only = is_read_only_mode()
     enabled_tools = get_enabled_tools()
 
+    logger.debug(f"Lifespan start: read_only={read_only}")
+    logger.debug(f"Lifespan start: enabled_tools={enabled_tools}")
+
     jira: JiraFetcher | None = None
     confluence: ConfluenceFetcher | None = None
 
@@ -66,93 +69,77 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[MainAppCo
     logger.info("Main Atlassian MCP server lifespan shutting down.")
 
 
-# Initialize the main MCP server instance
-main_mcp = FastMCP(name="Atlassian MCP", lifespan=main_lifespan)
+class AtlassianMCP(FastMCP[MainAppContext]):
+    """Custom FastMCP server class for Atlassian integration with tool filtering."""
+
+    async def _mcp_list_tools(self) -> list[MCPTool]:
+        """Override: List tools, applying filtering based on context.
+
+        List tools, applying filtering based on enabled_tools and read_only mode from the lifespan context.
+        Tools with the 'write' tag are excluded in read-only mode.
+        """
+        # Access lifespan_context through the request_context
+        req_context = self._mcp_server.request_context
+        if req_context is None or req_context.lifespan_context is None:
+            logger.warning(
+                "Lifespan context not available via request_context during _main_mcp_list_tools call."
+            )
+            return []
+
+        lifespan_ctx = req_context.lifespan_context
+        read_only = getattr(lifespan_ctx, "read_only", False)
+        enabled_tools_filter = getattr(lifespan_ctx, "enabled_tools", None)
+        logger.debug(
+            f"_main_mcp_list_tools: read_only={read_only}, enabled_tools_filter={enabled_tools_filter}"
+        )
+
+        # 1. Get the full, potentially unfiltered list of tools from the base implementation
+        all_tools: dict[str, FastMCPTool] = await self.get_tools()
+        logger.debug(
+            f"Aggregated {len(all_tools)} tools before filtering: {list(all_tools.keys())}"
+        )
+
+        # 2. Filter the aggregated list based on the context
+        filtered_tools: list[MCPTool] = []
+        for registered_name, tool_obj in all_tools.items():
+            original_tool_name = tool_obj.name
+            tool_tags = tool_obj.tags
+            logger.debug(
+                f"Checking tool: registered_name='{registered_name}', original_name='{original_tool_name}', tags={tool_tags}"
+            )
+
+            # Check against enabled_tools filter using the *registered* tool name
+            if not should_include_tool(registered_name, enabled_tools_filter):
+                logger.debug(
+                    f"Excluding tool '{registered_name}' because it's not in the enabled_tools list: {enabled_tools_filter}"
+                )
+                continue
+
+            # Check read-only status and 'write' tag
+            if tool_obj and read_only and "write" in tool_tags:
+                logger.debug(
+                    f"Excluding tool '{registered_name}' (original: '{original_tool_name}') because it has tag 'write' and read_only is True."
+                )
+                continue
+
+            # Convert the filtered Tool object to MCPTool using the registered name
+            logger.debug(
+                f"Including tool '{registered_name}' (original: '{original_tool_name}')"
+            )
+            filtered_tools.append(tool_obj.to_mcp_tool(name=registered_name))
+
+        logger.debug(
+            f"_main_mcp_list_tools: Total tools after filtering: {len(filtered_tools)}"
+        )
+        logger.debug(
+            f"_main_mcp_list_tools: Included tools: {[tool.name for tool in filtered_tools]}"
+        )
+        return filtered_tools
+
+
+# Initialize the main MCP server using the custom class
+main_mcp = AtlassianMCP(name="Atlassian MCP", lifespan=main_lifespan)
 
 # Mount the Jira and Confluence sub-servers
 main_mcp.mount("jira", jira_mcp)
 main_mcp.mount("confluence", confluence_mcp)
-
-
-async def _main_mcp_list_tools(self: FastMCP[MainAppContext]) -> list[MCPTool]:
-    """
-    List tools, applying filtering based on enabled_tools and read_only mode from the lifespan context.
-    Tools with the 'write' tag are excluded in read-only mode.
-    """
-    if self._mcp_server.lifespan_context is None:
-        logger.warning(
-            "Lifespan context not available during _main_mcp_list_tools call."
-        )
-        return []
-
-    lifespan_ctx = self._mcp_server.lifespan_context
-    read_only = getattr(lifespan_ctx, "read_only", False)
-    enabled_tools_filter = getattr(lifespan_ctx, "enabled_tools", None)
-    logger.debug(
-        f"_main_mcp_list_tools: read_only={read_only}, enabled_tools_filter={enabled_tools_filter}"
-    )
-
-    local_tools = self._tool_manager.list_tools()
-    logger.debug(f"_main_mcp_list_tools: Found {len(local_tools)} local tools.")
-
-    mounted_tools_prefixed: dict[str, FastMCPTool] = {}
-    for mount_prefix, mount_info in self._mounted_servers.items():
-        try:
-            server_tools = await mount_info.get_tools()
-            mounted_tools_prefixed.update(server_tools)
-            logger.debug(
-                f"_main_mcp_list_tools: Found {len(server_tools)} tools from mounted server '{mount_prefix}'."
-            )
-        except Exception as e:
-            logger.error(
-                f"Error fetching tools from mounted server '{mount_prefix}': {e}",
-                exc_info=True,
-            )
-
-    logger.debug(
-        f"_main_mcp_list_tools: Total tools before filtering: {len(local_tools) + len(mounted_tools_prefixed)}"
-    )
-
-    all_tool_items: list[FastMCPTool | tuple[str, FastMCPTool]] = list(
-        local_tools
-    ) + list(mounted_tools_prefixed.items())
-    filtered_tools: list[tuple[str, FastMCPTool]] = []
-
-    for item in all_tool_items:
-        if isinstance(item, tuple):
-            tool_name_registered = item[0]
-            tool_obj = item[1]
-            tool_name_original = tool_obj.name
-        else:
-            tool_name_registered = item.name
-            tool_obj = item
-            tool_name_original = item.name
-
-        if not should_include_tool(tool_name_original, enabled_tools_filter):
-            logger.debug(
-                f"_main_mcp_list_tools: Excluding tool '{tool_name_original}' (registered as '{tool_name_registered}') due to ENABLED_TOOLS filter."
-            )
-            continue
-
-        if read_only and "write" in tool_obj.tags:
-            logger.debug(
-                f"_main_mcp_list_tools: Excluding write tool '{tool_name_registered}' (tagged 'write') in read-only mode."
-            )
-            continue
-
-        filtered_tools.append((tool_name_registered, tool_obj))
-
-    logger.debug(
-        f"_main_mcp_list_tools: Total tools after filtering: {len(filtered_tools)}"
-    )
-
-    mcp_tools = [
-        tool_obj.to_mcp_tool(name=registered_name)
-        for registered_name, tool_obj in filtered_tools
-    ]
-
-    return mcp_tools
-
-
-# Bind the override to the main_mcp instance
-main_mcp._mcp_list_tools = _main_mcp_list_tools.__get__(main_mcp, FastMCP)  # type: ignore
