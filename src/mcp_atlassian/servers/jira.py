@@ -132,7 +132,7 @@ async def search(
     ] = ",".join(DEFAULT_READ_JIRA_FIELDS),
     limit: Annotated[
         int,
-        Field(description="Maximum number of results (1-50)", default=10, ge=1, le=50),
+        Field(description="Maximum number of results (1-50)", default=10, ge=1),
     ] = 10,
     start_at: Annotated[
         int,

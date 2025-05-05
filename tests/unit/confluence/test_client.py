@@ -35,6 +35,7 @@ def test_init_with_basic_auth():
             username="test_user",
             password="test_token",
             cloud=True,
+            verify_ssl=True,
         )
         assert client.config == config
         assert client.confluence == mock_confluence.return_value
