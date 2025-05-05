@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2025-05-05
+
+### Added
+-   **OAuth 2.0 Authentication:** Added support for OAuth 2.0 (3LO) for Jira and Confluence Cloud, including an interactive `--oauth-setup` wizard for easier configuration. Uses `keyring` for secure token storage. (Fixes #238)
+-   **Health Check Endpoint:** Introduced a `/healthz` endpoint for Kubernetes readiness/liveness probes when using the SSE transport mode. (Fixes #359)
+
+### Changed
+-   **Server Framework:** Migrated the core server implementation from the legacy `mcp` library to the modern `fastmcp>=2.2.5` framework. This includes a new server structure under `src/mcp_atlassian/servers/` and centralized context management. (Fixes #371)
+-   **Jira Cloud Search Limit:** Updated Jira Cloud search to use `enhanced_jql_get_list_of_tickets`, allowing retrieval of more than the previous 50-issue limit per request. (Fixes #369)
+-   **Docker:** Optimized Docker image build process for smaller size (using Alpine base images) and improved security (running as non-root user).
+
+### Fixed
+-   **Jira Cloud Search Count:** Corrected the `total` count reported in `jira_search` results for Jira Cloud instances, which was previously limited by the pagination size. (Refs #333)
+
+### Removed
+-   **Tools:** Removed the `jira_get_epic_issues` and `confluence_get_page_ancestors` tools. Their functionality can be achieved using the respective `search` tools with appropriate JQL/CQL queries. (Fixes #372)
+
+### Internal
+-   **Configuration:** Consolidated `ruff` and `mypy` configurations into `pyproject.toml`, removing legacy config files.
+
+### Documentation
+-   Simplified setup and usage instructions in the README, adding guidance for the new OAuth setup command (`uvx mcp-atlassian --oauth-setup`).
+
 ## [0.9.0] - 2025-05-01
 
 ### Added
