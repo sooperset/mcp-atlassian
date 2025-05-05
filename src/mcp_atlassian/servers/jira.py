@@ -9,7 +9,7 @@ from pydantic import Field
 
 from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 
-from .main import MainAppContext
+from .context import MainAppContext
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +81,10 @@ async def get_issue(
     Returns:
         JSON string representing the Jira issue object.
     """
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     # Convert fields string to list if necessary
     fields_list: str | list[str] | None = fields
@@ -171,9 +172,10 @@ async def search(
     Returns:
         JSON string representing the search results including pagination info.
     """
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     # Convert fields string to list if necessary
     fields_list: str | list[str] | None = fields
@@ -221,9 +223,10 @@ async def search_fields(
     Returns:
         JSON string representing a list of matching field definitions.
     """
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     result = jira.search_fields(keyword, limit=limit, refresh=refresh)
     return json.dumps(result, indent=2, ensure_ascii=False)
@@ -253,9 +256,10 @@ async def get_project_issues(
     Returns:
         JSON string representing the search results including pagination info.
     """
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     search_result = jira.get_project_issues(
         project_key=project_key, start=start_at, limit=limit
@@ -295,9 +299,10 @@ async def get_epic_issues(
     Returns:
         JSON string representing the search results including pagination info.
     """
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     # Note: Underlying jira.get_epic_issues returns list[JiraIssue]
     issues_list = jira.get_epic_issues(epic_key=epic_key, start=start_at, limit=limit)
@@ -328,9 +333,10 @@ async def get_transitions(
     Returns:
         JSON string representing a list of available transitions.
     """
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     # Underlying method returns list[dict] in the desired format
     transitions = jira.get_available_transitions(issue_key)
@@ -351,9 +357,10 @@ async def get_worklog(
     Returns:
         JSON string representing the worklog entries.
     """
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     worklogs = jira.get_worklogs(issue_key)
     result = {"worklogs": worklogs}
@@ -378,9 +385,10 @@ async def download_attachments(
     Returns:
         JSON string indicating the result of the download operation.
     """
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     result = jira.download_issue_attachments(issue_key=issue_key, target_dir=target_dir)
     return json.dumps(result, indent=2, ensure_ascii=False)
@@ -421,9 +429,10 @@ async def get_agile_boards(
     Returns:
         JSON string representing a list of board objects.
     """
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     boards = jira.get_all_agile_boards_model(
         board_name=board_name,
@@ -496,9 +505,10 @@ async def get_board_issues(
     Returns:
         JSON string representing the search results including pagination info.
     """
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     # Convert fields string to list if not '*all' or None
     fields_list: str | list[str] | None = fields
@@ -546,9 +556,10 @@ async def get_sprints_from_board(
     Returns:
         JSON string representing a list of sprint objects.
     """
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     sprints = jira.get_all_sprints_from_board_model(
         board_id=board_id, state=state, start=start_at, limit=limit
@@ -593,9 +604,10 @@ async def get_sprint_issues(
     Returns:
         JSON string representing the search results including pagination info.
     """
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     # Convert fields string to list if not '*all' or None
     fields_list: str | list[str] | None = fields
@@ -619,9 +631,10 @@ async def get_link_types(ctx: Context[Any, MainAppContext]) -> str:
     Returns:
         JSON string representing a list of issue link type objects.
     """
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     link_types = jira.get_issue_link_types()
     formatted_link_types = [link_type.to_simplified_dict() for link_type in link_types]
@@ -705,12 +718,13 @@ async def create_issue(
     Raises:
         ValueError: If in read-only mode or Jira client is unavailable.
     """
-    if ctx.fastmcp.lifespan_context.read_only:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if lifespan_ctx.read_only:
         logger.warning("Attempted to call create_issue in read-only mode.")
         raise ValueError("Cannot create issue in read-only mode.")
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     # Parse components from comma-separated string to list
     components_list = None
@@ -783,12 +797,13 @@ async def batch_create_issues(
     Raises:
         ValueError: If in read-only mode, Jira client unavailable, or invalid JSON.
     """
-    if ctx.fastmcp.lifespan_context.read_only:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if lifespan_ctx.read_only:
         logger.warning("Attempted to call batch_create_issues in read-only mode.")
         raise ValueError("Cannot create issues in read-only mode.")
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     # Parse issues from JSON string
     try:
@@ -797,7 +812,10 @@ async def batch_create_issues(
             raise ValueError("Input 'issues' must be a JSON array string.")
     except json.JSONDecodeError:
         raise ValueError("Invalid JSON in issues")
+    except Exception as e:
+        raise ValueError(f"Invalid input for issues: {e}") from e
 
+    # Create issues in batch
     created_issues = jira.batch_create_issues(issues_list, validate_only=validate_only)
 
     message = (
@@ -856,9 +874,10 @@ async def batch_get_changelogs(
         NotImplementedError: If run on Jira Server/Data Center.
         ValueError: If Jira client is unavailable.
     """
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     # Ensure this runs only on Cloud, as per original function docstring
     if not jira.config.is_cloud:
@@ -934,12 +953,13 @@ async def update_issue(
     Raises:
         ValueError: If in read-only mode, Jira client unavailable, or invalid input.
     """
-    if ctx.fastmcp.lifespan_context.read_only:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if lifespan_ctx.read_only:
         logger.warning("Attempted to call update_issue in read-only mode.")
         raise ValueError("Cannot update issue in read-only mode.")
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     # Use fields directly as dict
     if not isinstance(fields, dict):
@@ -1011,12 +1031,13 @@ async def delete_issue(
     Raises:
         ValueError: If in read-only mode or Jira client unavailable.
     """
-    if ctx.fastmcp.lifespan_context.read_only:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if lifespan_ctx.read_only:
         logger.warning("Attempted to call delete_issue in read-only mode.")
         raise ValueError("Cannot delete issue in read-only mode.")
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     deleted = jira.delete_issue(issue_key)
     result = {"message": f"Issue {issue_key} has been deleted successfully."}
@@ -1043,12 +1064,13 @@ async def add_comment(
     Raises:
         ValueError: If in read-only mode or Jira client unavailable.
     """
-    if ctx.fastmcp.lifespan_context.read_only:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if lifespan_ctx.read_only:
         logger.warning("Attempted to call add_comment in read-only mode.")
         raise ValueError("Cannot add comment in read-only mode.")
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     # add_comment returns dict
     result = jira.add_comment(issue_key, comment)
@@ -1107,12 +1129,13 @@ async def add_worklog(
     Raises:
         ValueError: If in read-only mode or Jira client unavailable.
     """
-    if ctx.fastmcp.lifespan_context.read_only:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if lifespan_ctx.read_only:
         logger.warning("Attempted to call add_worklog in read-only mode.")
         raise ValueError("Cannot add worklog in read-only mode.")
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     # add_worklog returns dict
     worklog_result = jira.add_worklog(
@@ -1150,12 +1173,13 @@ async def link_to_epic(
     Raises:
         ValueError: If in read-only mode or Jira client unavailable.
     """
-    if ctx.fastmcp.lifespan_context.read_only:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if lifespan_ctx.read_only:
         logger.warning("Attempted to call link_to_epic in read-only mode.")
         raise ValueError("Cannot link issue to epic in read-only mode.")
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     issue = jira.link_issue_to_epic(issue_key, epic_key)
     result = {
@@ -1207,12 +1231,13 @@ async def create_issue_link(
     Raises:
         ValueError: If required fields are missing, invalid input, in read-only mode, or Jira client unavailable.
     """
-    if ctx.fastmcp.lifespan_context.read_only:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if lifespan_ctx.read_only:
         logger.warning("Attempted to call create_issue_link in read-only mode.")
         raise ValueError("Cannot create issue link in read-only mode.")
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     if not all([link_type, inward_issue_key, outward_issue_key]):
         raise ValueError(
@@ -1255,12 +1280,13 @@ async def remove_issue_link(
     Raises:
         ValueError: If link_id is missing, in read-only mode, or Jira client unavailable.
     """
-    if ctx.fastmcp.lifespan_context.read_only:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if lifespan_ctx.read_only:
         logger.warning("Attempted to call remove_issue_link in read-only mode.")
         raise ValueError("Cannot remove issue link in read-only mode.")
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     if not link_id:
         raise ValueError("link_id is required")
@@ -1318,12 +1344,13 @@ async def transition_issue(
     Raises:
         ValueError: If required fields missing, invalid input, in read-only mode, or Jira client unavailable.
     """
-    if ctx.fastmcp.lifespan_context.read_only:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if lifespan_ctx.read_only:
         logger.warning("Attempted to call transition_issue in read-only mode.")
         raise ValueError("Cannot transition issue in read-only mode.")
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     if not issue_key or not transition_id:
         raise ValueError("issue_key and transition_id are required.")
@@ -1378,12 +1405,13 @@ async def create_sprint(
     Raises:
         ValueError: If in read-only mode or Jira client unavailable.
     """
-    if ctx.fastmcp.lifespan_context.read_only:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if lifespan_ctx.read_only:
         logger.warning("Attempted to call create_sprint in read-only mode.")
         raise ValueError("Cannot create sprint in read-only mode.")
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     sprint = jira.create_sprint(
         board_id=board_id,
@@ -1433,12 +1461,13 @@ async def update_sprint(
     Raises:
         ValueError: If in read-only mode or Jira client unavailable.
     """
-    if ctx.fastmcp.lifespan_context.read_only:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if lifespan_ctx.read_only:
         logger.warning("Attempted to call update_sprint in read-only mode.")
         raise ValueError("Cannot update sprint in read-only mode.")
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.jira:
+    if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = ctx.fastmcp.lifespan_context.jira
+    jira = lifespan_ctx.jira
 
     sprint = jira.update_sprint(
         sprint_id=sprint_id,

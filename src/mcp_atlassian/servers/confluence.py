@@ -7,7 +7,7 @@ from typing import Annotated, Any
 from fastmcp import Context, FastMCP
 from pydantic import Field
 
-from .main import MainAppContext
+from .context import MainAppContext
 
 logger = logging.getLogger(__name__)
 
@@ -75,9 +75,10 @@ async def search(
     Returns:
         JSON string representing a list of simplified Confluence page objects.
     """
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.confluence:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if not lifespan_ctx or not lifespan_ctx.confluence:
         raise ValueError("Confluence client is not configured or available.")
-    confluence = ctx.fastmcp.lifespan_context.confluence
+    confluence = lifespan_ctx.confluence
 
     # Check if the query is a simple search term or already a CQL query
     if query and not any(
@@ -103,7 +104,7 @@ async def search(
 
 
 @confluence_mcp.tool(tags={"confluence", "read"})
-async def get_page_content(
+async def get_page(
     ctx: Context[Any, MainAppContext],
     page_id: Annotated[
         str,
@@ -145,9 +146,10 @@ async def get_page_content(
     Returns:
         JSON string representing the page content and/or metadata.
     """
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.confluence:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if not lifespan_ctx or not lifespan_ctx.confluence:
         raise ValueError("Confluence client is not configured or available.")
-    confluence = ctx.fastmcp.lifespan_context.confluence
+    confluence = lifespan_ctx.confluence
 
     page = confluence.get_page_content(page_id, convert_to_markdown=convert_to_markdown)
 
@@ -217,9 +219,10 @@ async def get_page_children(
     Returns:
         JSON string representing a list of child page objects.
     """
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.confluence:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if not lifespan_ctx or not lifespan_ctx.confluence:
         raise ValueError("Confluence client is not configured or available.")
-    confluence = ctx.fastmcp.lifespan_context.confluence
+    confluence = lifespan_ctx.confluence
 
     if include_content and "body" not in expand:
         expand = f"{expand},body.storage" if expand else "body.storage"
@@ -267,9 +270,10 @@ async def get_page_ancestors(
     Returns:
         JSON string representing a list of ancestor page objects.
     """
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.confluence:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if not lifespan_ctx or not lifespan_ctx.confluence:
         raise ValueError("Confluence client is not configured or available.")
-    confluence = ctx.fastmcp.lifespan_context.confluence
+    confluence = lifespan_ctx.confluence
 
     ancestors = confluence.get_page_ancestors(page_id)
     ancestor_pages = [page.to_simplified_dict() for page in ancestors]
@@ -299,9 +303,10 @@ async def get_comments(
     Returns:
         JSON string representing a list of comment objects.
     """
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.confluence:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if not lifespan_ctx or not lifespan_ctx.confluence:
         raise ValueError("Confluence client is not configured or available.")
-    confluence = ctx.fastmcp.lifespan_context.confluence
+    confluence = lifespan_ctx.confluence
 
     comments = confluence.get_page_comments(page_id)
     formatted_comments = [comment.to_simplified_dict() for comment in comments]
@@ -331,9 +336,10 @@ async def get_labels(
     Returns:
         JSON string representing a list of label objects.
     """
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.confluence:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if not lifespan_ctx or not lifespan_ctx.confluence:
         raise ValueError("Confluence client is not configured or available.")
-    confluence = ctx.fastmcp.lifespan_context.confluence
+    confluence = lifespan_ctx.confluence
 
     labels = confluence.get_page_labels(page_id)
     formatted_labels = [label.to_simplified_dict() for label in labels]
@@ -359,12 +365,13 @@ async def add_label(
     Raises:
         ValueError: If in read-only mode or Confluence client is unavailable.
     """
-    if ctx.fastmcp.lifespan_context.read_only:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if lifespan_ctx.read_only:
         logger.warning("Attempted to call add_label in read-only mode.")
         raise ValueError("Cannot add label in read-only mode.")
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.confluence:
+    if not lifespan_ctx or not lifespan_ctx.confluence:
         raise ValueError("Confluence client is not configured or available.")
-    confluence = ctx.fastmcp.lifespan_context.confluence
+    confluence = lifespan_ctx.confluence
 
     labels = confluence.add_page_label(page_id, name)
     formatted_labels = [label.to_simplified_dict() for label in labels]
@@ -409,12 +416,13 @@ async def create_page(
     Raises:
         ValueError: If in read-only mode or Confluence client is unavailable.
     """
-    if ctx.fastmcp.lifespan_context.read_only:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if lifespan_ctx.read_only:
         logger.warning("Attempted to call create_page in read-only mode.")
         raise ValueError("Cannot create page in read-only mode.")
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.confluence:
+    if not lifespan_ctx or not lifespan_ctx.confluence:
         raise ValueError("Confluence client is not configured or available.")
-    confluence = ctx.fastmcp.lifespan_context.confluence
+    confluence = lifespan_ctx.confluence
 
     page = confluence.create_page(
         space_key=space_key,
@@ -466,12 +474,13 @@ async def update_page(
     Raises:
         ValueError: If in read-only mode or Confluence client is unavailable.
     """
-    if ctx.fastmcp.lifespan_context.read_only:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if lifespan_ctx.read_only:
         logger.warning("Attempted to call update_page in read-only mode.")
         raise ValueError("Cannot update page in read-only mode.")
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.confluence:
+    if not lifespan_ctx or not lifespan_ctx.confluence:
         raise ValueError("Confluence client is not configured or available.")
-    confluence = ctx.fastmcp.lifespan_context.confluence
+    confluence = lifespan_ctx.confluence
 
     updated_page = confluence.update_page(
         page_id=page_id,
@@ -507,12 +516,13 @@ async def delete_page(
     Raises:
         ValueError: If in read-only mode or Confluence client is unavailable.
     """
-    if ctx.fastmcp.lifespan_context.read_only:
+    lifespan_ctx = ctx.request_context.lifespan_context
+    if lifespan_ctx.read_only:
         logger.warning("Attempted to call delete_page in read-only mode.")
         raise ValueError("Cannot delete page in read-only mode.")
-    if not ctx.fastmcp.lifespan_context or not ctx.fastmcp.lifespan_context.confluence:
+    if not lifespan_ctx or not lifespan_ctx.confluence:
         raise ValueError("Confluence client is not configured or available.")
-    confluence = ctx.fastmcp.lifespan_context.confluence
+    confluence = lifespan_ctx.confluence
 
     try:
         result = confluence.delete_page(page_id=page_id)

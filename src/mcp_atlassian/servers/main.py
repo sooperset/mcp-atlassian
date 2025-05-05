@@ -3,7 +3,6 @@
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 
 from fastmcp import FastMCP
 from fastmcp.tools import Tool as FastMCPTool
@@ -18,19 +17,10 @@ from mcp_atlassian.utils.environment import get_available_services
 from mcp_atlassian.utils.tools import get_enabled_tools, should_include_tool
 
 from .confluence import confluence_mcp
+from .context import MainAppContext
 from .jira import jira_mcp
 
 logger = logging.getLogger("mcp-atlassian.server.main")
-
-
-@dataclass(frozen=True)
-class MainAppContext:
-    """Context holding initialized fetchers and server settings."""
-
-    jira: JiraFetcher | None = None
-    confluence: ConfluenceFetcher | None = None
-    read_only: bool = False
-    enabled_tools: list[str] | None = None
 
 
 @asynccontextmanager

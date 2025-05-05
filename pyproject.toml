@@ -110,15 +110,6 @@ strict_optional = true
 disallow_subclassing_any = true
 warn_incomplete_stub = true
 exclude = "^src/"
-namespace_packages = true
-explicit_package_bases = true
-
-[[tool.mypy.overrides]]
-module = "plugins.pydantic.*"
-init_forbid_extra = true
-init_typed = true
-warn_required_dynamic_aliases = true
-warn_untyped_fields = true
 
 [[tool.mypy.overrides]]
 module = "tests.*"

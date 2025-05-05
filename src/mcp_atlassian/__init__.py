@@ -222,7 +222,7 @@ def main(
         asyncio.run(main_mcp.run_async(transport=final_transport))
 
 
-__all__ = ["main", "server", "__version__"]
+__all__ = ["main", "__version__"]
 
 if __name__ == "__main__":
     main()
