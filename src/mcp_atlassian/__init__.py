@@ -278,7 +278,13 @@ def main(
 
     # Run the server with specified transport
     if final_transport == "sse":
-        asyncio.run(main_mcp.run_async(transport=final_transport, port=final_port))
+        asyncio.run(
+            main_mcp.run_async(
+                transport=final_transport,
+                host="0.0.0.0",  # noqa: S104
+                port=final_port,
+            )
+        )
     else:
         asyncio.run(main_mcp.run_async(transport=final_transport))
 
