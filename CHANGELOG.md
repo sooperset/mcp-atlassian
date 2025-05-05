@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+## [0.10.1] - 2025-05-05
+- Re-added the `/healthz` endpoint for Kubernetes health probes, which was accidentally removed during the FastMCP v2 migration (#371). This restores the fix for #359.
+
 ## [0.10.0] - 2025-05-05
 
 ### Added
