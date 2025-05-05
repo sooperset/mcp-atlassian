@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/sooperset-mcp-atlassian-badge.png)](https://mseep.ai/app/sooperset-mcp-atlassian)
+
 # MCP Atlassian
 
 ![PyPI Version](https://img.shields.io/pypi/v/mcp-atlassian)
