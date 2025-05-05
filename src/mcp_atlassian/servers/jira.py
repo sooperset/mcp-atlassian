@@ -306,9 +306,7 @@ async def get_epic_issues(
     issues_simplified = [issue.to_simplified_dict() for issue in issues_list]
     # Since the underlying method doesn't return total count, we can only report what we fetched
     result = {
-        "total": len(
-            issues_simplified
-        ),
+        "total": len(issues_simplified),
         "start_at": start_at,
         "max_results": limit,
         "issues": issues_simplified,
