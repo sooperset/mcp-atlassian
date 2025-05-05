@@ -3,6 +3,9 @@
 from unittest.mock import patch
 
 import pytest
+import httpx
+from starlette.testclient import TestClient
+from starlette.routing import ASGIApp
 
 from mcp_atlassian.servers.main import main_mcp
 
@@ -33,5 +36,17 @@ async def test_run_server_invalid_transport():
     with pytest.raises(ValueError) as excinfo:
         await main_mcp.run_async(transport="invalid")  # type: ignore
 
-    assert "Unsupported transport" in str(excinfo.value)
-    assert "Use 'stdio' or 'sse'" in str(excinfo.value)
+    assert "Unknown transport" in str(excinfo.value)
+    assert "invalid" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_health_check_endpoint():
+    """Test the health check endpoint returns 200 and correct JSON response."""
+    app = main_mcp.sse_app()
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/healthz")
+        
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}

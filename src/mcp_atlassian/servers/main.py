@@ -7,6 +7,8 @@ from contextlib import asynccontextmanager
 from fastmcp import FastMCP
 from fastmcp.tools import Tool as FastMCPTool
 from mcp.types import Tool as MCPTool
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.confluence.config import ConfluenceConfig
@@ -21,6 +23,12 @@ from .context import MainAppContext
 from .jira import jira_mcp
 
 logger = logging.getLogger("mcp-atlassian.server.main")
+
+
+async def health_check(request: Request) -> JSONResponse:
+    """Simple health check endpoint for Kubernetes probes."""
+    logger.debug("Received health check request.")
+    return JSONResponse({"status": "ok"})
 
 
 @asynccontextmanager
@@ -143,3 +151,12 @@ main_mcp = AtlassianMCP(name="Atlassian MCP", lifespan=main_lifespan)
 # Mount the Jira and Confluence sub-servers
 main_mcp.mount("jira", jira_mcp)
 main_mcp.mount("confluence", confluence_mcp)
+
+# Add the health check endpoint using the decorator
+@main_mcp.custom_route(
+    "/healthz", methods=["GET"], include_in_schema=False
+)
+async def _health_check_route(request: Request) -> JSONResponse:
+    return await health_check(request)
+
+logger.info("Added /healthz endpoint for Kubernetes probes")
