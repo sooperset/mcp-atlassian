@@ -86,7 +86,6 @@ async def get_issue(
         raise ValueError("Jira client is not configured or available.")
     jira = lifespan_ctx.jira
 
-    # Convert fields string to list if necessary
     fields_list: str | list[str] | None = fields
     if fields and fields != "*all":
         fields_list = [f.strip() for f in fields.split(",")]
@@ -177,7 +176,6 @@ async def search(
         raise ValueError("Jira client is not configured or available.")
     jira = lifespan_ctx.jira
 
-    # Convert fields string to list if necessary
     fields_list: str | list[str] | None = fields
     if fields and fields != "*all":
         fields_list = [f.strip() for f in fields.split(",")]
@@ -510,7 +508,6 @@ async def get_board_issues(
         raise ValueError("Jira client is not configured or available.")
     jira = lifespan_ctx.jira
 
-    # Convert fields string to list if not '*all' or None
     fields_list: str | list[str] | None = fields
     if fields and fields != "*all":
         fields_list = [f.strip() for f in fields.split(",")]
@@ -609,7 +606,6 @@ async def get_sprint_issues(
         raise ValueError("Jira client is not configured or available.")
     jira = lifespan_ctx.jira
 
-    # Convert fields string to list if not '*all' or None
     fields_list: str | list[str] | None = fields
     if fields and fields != "*all":
         fields_list = [f.strip() for f in fields.split(",")]
@@ -639,9 +635,6 @@ async def get_link_types(ctx: Context[Any, MainAppContext]) -> str:
     link_types = jira.get_issue_link_types()
     formatted_link_types = [link_type.to_simplified_dict() for link_type in link_types]
     return json.dumps(formatted_link_types, indent=2, ensure_ascii=False)
-
-
-# --- Write Tools ---
 
 
 @jira_mcp.tool(tags={"jira", "write"})

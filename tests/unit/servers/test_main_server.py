@@ -31,7 +31,7 @@ async def test_run_server_invalid_transport():
     """Test that run_server raises ValueError for invalid transport."""
     # We don't need to patch run_async here as the error occurs before it's called
     with pytest.raises(ValueError) as excinfo:
-        await main_mcp.run_async(transport="invalid") # type: ignore
+        await main_mcp.run_async(transport="invalid")  # type: ignore
 
     assert "Unsupported transport" in str(excinfo.value)
     assert "Use 'stdio' or 'sse'" in str(excinfo.value)

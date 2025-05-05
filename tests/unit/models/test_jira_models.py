@@ -573,7 +573,6 @@ class TestJiraIssue:
 
     def test_to_simplified_dict(self, jira_issue_data):
         """Test converting a JiraIssue to a simplified dictionary."""
-        # --- Test default (essential fields) ---
         issue = JiraIssue.from_api_response(jira_issue_data)
         simplified = issue.to_simplified_dict()
 

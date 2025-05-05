@@ -110,6 +110,7 @@ strict_optional = true
 disallow_subclassing_any = true
 warn_incomplete_stub = true
 exclude = "^src/"
+explicit_package_bases = true
 
 [[tool.mypy.overrides]]
 module = "tests.*"

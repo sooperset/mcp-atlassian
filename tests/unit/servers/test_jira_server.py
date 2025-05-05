@@ -3,7 +3,6 @@
 import json
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -11,12 +10,12 @@ from fastmcp import Client, FastMCP
 from fastmcp.client import FastMCPTransport
 
 from src.mcp_atlassian.jira import JiraFetcher
+from src.mcp_atlassian.servers.context import MainAppContext
 from tests.fixtures.jira_mocks import (
     MOCK_JIRA_COMMENTS_SIMPLIFIED,
     MOCK_JIRA_ISSUE_RESPONSE_SIMPLIFIED,
     MOCK_JIRA_JQL_RESPONSE_SIMPLIFIED,
 )
-from src.mcp_atlassian.servers.context import MainAppContext
 
 
 @pytest.fixture
@@ -46,14 +45,18 @@ def mock_jira_fetcher():
         mock_issue = MagicMock()
         response_data = MOCK_JIRA_ISSUE_RESPONSE_SIMPLIFIED.copy()
         response_data["key"] = issue_key
-        response_data["fields_queried"] = fields # Store for assertion
+        response_data["fields_queried"] = fields  # Store for assertion
         response_data["expand_param"] = expand
         response_data["comment_limit"] = comment_limit
         response_data["properties_param"] = properties
         response_data["update_history"] = update_history
         response_data["id"] = MOCK_JIRA_ISSUE_RESPONSE_SIMPLIFIED["id"]
-        response_data["summary"] = MOCK_JIRA_ISSUE_RESPONSE_SIMPLIFIED["fields"]["summary"]
-        response_data["status"] = {"name": MOCK_JIRA_ISSUE_RESPONSE_SIMPLIFIED["fields"]["status"]["name"]}
+        response_data["summary"] = MOCK_JIRA_ISSUE_RESPONSE_SIMPLIFIED["fields"][
+            "summary"
+        ]
+        response_data["status"] = {
+            "name": MOCK_JIRA_ISSUE_RESPONSE_SIMPLIFIED["fields"]["status"]["name"]
+        }
         mock_issue.to_simplified_dict.return_value = response_data
         return mock_issue
 
@@ -76,13 +79,13 @@ def mock_jira_fetcher():
         # Mock the JiraSearchResult object returned by search_issues
         mock_search_result.issues = issues
         mock_search_result.total = len(issues)
-        mock_search_result.start_at = kwargs.get('start', 0)
-        mock_search_result.max_results = kwargs.get('limit', 50)
+        mock_search_result.start_at = kwargs.get("start", 0)
+        mock_search_result.max_results = kwargs.get("limit", 50)
         mock_search_result.to_simplified_dict.return_value = {
             "total": len(issues),
-            "start_at": kwargs.get('start', 0),
-            "max_results": kwargs.get('limit', 50),
-            "issues": [issue.to_simplified_dict() for issue in issues]
+            "start_at": kwargs.get("start", 0),
+            "max_results": kwargs.get("limit", 50),
+            "issues": [issue.to_simplified_dict() for issue in issues],
         }
         return mock_search_result
 
@@ -96,7 +99,7 @@ def mock_jira_fetcher():
         description=None,
         assignee=None,
         components=None,
-        **additional_fields, # Capture additional fields
+        **additional_fields,  # Capture additional fields
     ):
         if not project_key or project_key.strip() == "":
             raise ValueError("valid project is required")
@@ -107,7 +110,7 @@ def mock_jira_fetcher():
             if isinstance(components, str):
                 components_list = components.split(",")
             elif isinstance(components, list):
-                 components_list = components
+                components_list = components
 
         mock_issue = MagicMock()
         response_data = {
@@ -119,7 +122,7 @@ def mock_jira_fetcher():
             "components": [{"name": comp} for comp in components_list]
             if components_list
             else [],
-            **additional_fields # Include additional fields in the mock response
+            **additional_fields,  # Include additional fields in the mock response
         }
         mock_issue.to_simplified_dict.return_value = response_data
         return mock_issue
@@ -129,14 +132,16 @@ def mock_jira_fetcher():
     # Configure batch_create_issues
     def mock_batch_create_issues(issues, validate_only=False):
         if not isinstance(issues, list):
-             # Handle case where JSON string might be passed and parsed earlier
+            # Handle case where JSON string might be passed and parsed earlier
             try:
                 parsed_issues = json.loads(issues)
                 if not isinstance(parsed_issues, list):
-                    raise ValueError("Issues must be a list or a valid JSON array string.")
+                    raise ValueError(
+                        "Issues must be a list or a valid JSON array string."
+                    )
                 issues = parsed_issues
             except (json.JSONDecodeError, TypeError):
-                 raise ValueError("Issues must be a list or a valid JSON array string.")
+                raise ValueError("Issues must be a list or a valid JSON array string.")
 
         mock_issues = []
         for idx, issue_data in enumerate(issues, 1):
@@ -144,7 +149,9 @@ def mock_jira_fetcher():
             mock_issue.to_simplified_dict.return_value = {
                 "key": f"{issue_data['project_key']}-{idx}",
                 "summary": issue_data["summary"],
-                "issue_type": {"name": issue_data["issue_type"]}, # Corrected field name
+                "issue_type": {
+                    "name": issue_data["issue_type"]
+                },  # Corrected field name
                 "status": {"name": "To Do"},
             }
             mock_issues.append(mock_issue)
@@ -161,7 +168,9 @@ def mock_jira_fetcher():
             mock_issue.to_simplified_dict.return_value = {
                 "key": f"TEST-{i}",
                 "summary": f"Epic Issue {i}",
-                "issue_type": {"name": "Task" if i % 2 == 0 else "Bug"}, # Corrected field name
+                "issue_type": {
+                    "name": "Task" if i % 2 == 0 else "Bug"
+                },  # Corrected field name
                 "status": {"name": "To Do" if i % 2 == 0 else "In Progress"},
             }
             mock_issues.append(mock_issue)
@@ -209,7 +218,7 @@ def test_jira_mcp(mock_jira_fetcher):
 
     # Import the actual tool functions we want to test
     from src.mcp_atlassian.servers.jira import (
-        add_comment, # Add other tools as needed
+        add_comment,  # Add other tools as needed
         add_worklog,
         batch_create_issues,
         batch_get_changelogs,
@@ -253,7 +262,9 @@ def test_jira_mcp(mock_jira_fetcher):
     # Write tools
     test_mcp.tool()(create_issue)
     test_mcp.tool()(batch_create_issues)
-    test_mcp.tool()(batch_get_changelogs) # Note: Cloud only, might need specific test setup
+    test_mcp.tool()(
+        batch_get_changelogs
+    )  # Note: Cloud only, might need specific test setup
     test_mcp.tool()(update_issue)
     test_mcp.tool()(delete_issue)
     test_mcp.tool()(add_comment)
@@ -303,12 +314,12 @@ async def test_get_issue(jira_client, mock_jira_fetcher):
     content = json.loads(text_content.text)
     print(f"DEBUG: Response content keys: {content.keys()}")
     assert content["key"] == "TEST-123"
-    assert content["summary"] == "Test Issue Summary" # From fixture
+    assert content["summary"] == "Test Issue Summary"  # From fixture
 
     # Verify the mock was called with correct parameters
     mock_jira_fetcher.get_issue.assert_called_once_with(
         issue_key="TEST-123",
-        fields=["summary", "description", "status"], # Expect list now
+        fields=["summary", "description", "status"],  # Expect list now
         expand=None,
         comment_limit=10,
         properties=None,
@@ -325,7 +336,7 @@ async def test_search(jira_client, mock_jira_fetcher):
             "jql": "project = TEST",
             "fields": "summary,status",
             "limit": 10,
-            "start_at": 0, # Corrected parameter name
+            "start_at": 0,  # Corrected parameter name
         },
     )
 
@@ -342,17 +353,17 @@ async def test_search(jira_client, mock_jira_fetcher):
     assert "issues" in content
     assert isinstance(content["issues"], list)
     assert len(content["issues"]) >= 1
-    assert content["issues"][0]["key"] == "PROJ-123" # From fixture
-    assert content["total"] > 0 # From fixture logic
+    assert content["issues"][0]["key"] == "PROJ-123"  # From fixture
+    assert content["total"] > 0  # From fixture logic
     assert content["start_at"] == 0
     assert content["max_results"] == 10
 
     # Verify the fetcher was called with the correct parameters
     mock_jira_fetcher.search_issues.assert_called_once_with(
         jql="project = TEST",
-        fields=["summary", "status"], # Expect list
+        fields=["summary", "status"],  # Expect list
         limit=10,
-        start=0, # start, not start_at for the fetcher method
+        start=0,  # start, not start_at for the fetcher method
         projects_filter=None,
         expand=None,
     )
@@ -368,8 +379,8 @@ async def test_create_issue(jira_client, mock_jira_fetcher):
             "summary": "New Issue",
             "issue_type": "Task",
             "description": "This is a new task",
-            "components": "Frontend,API", # Pass as comma-separated string
-            "additional_fields": {"priority": {"name": "Medium"}}, # Pass as dict
+            "components": "Frontend,API",  # Pass as comma-separated string
+            "additional_fields": {"priority": {"name": "Medium"}},  # Pass as dict
         },
     )
 
@@ -390,7 +401,7 @@ async def test_create_issue(jira_client, mock_jira_fetcher):
     component_names = [comp["name"] for comp in content["issue"]["components"]]
     assert "Frontend" in component_names
     assert "API" in component_names
-    assert content["issue"]["priority"] == {"name": "Medium"} # Check additional field
+    assert content["issue"]["priority"] == {"name": "Medium"}  # Check additional field
 
     # Verify the fetcher was called with the correct parameters
     mock_jira_fetcher.create_issue.assert_called_once_with(
@@ -399,10 +410,11 @@ async def test_create_issue(jira_client, mock_jira_fetcher):
         issue_type="Task",
         description="This is a new task",
         assignee=None,
-        components=["Frontend", "API"], # Expect list here
+        components=["Frontend", "API"],  # Expect list here
         # additional_fields are passed as **kwargs to the fetcher
         priority={"name": "Medium"},
     )
+
 
 @pytest.mark.anyio
 async def test_batch_create_issues(jira_client, mock_jira_fetcher):
@@ -449,14 +461,14 @@ async def test_batch_create_issues(jira_client, mock_jira_fetcher):
     # This can sometimes help with complex argument comparison issues in mocks
     call_args, call_kwargs = mock_jira_fetcher.batch_create_issues.call_args
     assert call_args[0] == test_issues
-    assert 'validate_only' in call_kwargs
-    assert call_kwargs['validate_only'] is False
+    assert "validate_only" in call_kwargs
+    assert call_kwargs["validate_only"] is False
 
 
 @pytest.mark.anyio
 async def test_batch_create_issues_invalid_json(jira_client):
     """Test error handling for invalid JSON in batch issue creation."""
-    with pytest.raises(Exception) as excinfo: # FastMCP raises Validation Error
+    with pytest.raises(Exception) as excinfo:  # FastMCP raises Validation Error
         await jira_client.call_tool(
             "batch_create_issues",
             {"issues": "{invalid json", "validate_only": False},
@@ -483,13 +495,13 @@ async def test_get_epic_issues(jira_client, mock_jira_fetcher):
     content = json.loads(text_content.text)
     assert "total" in content
     assert "issues" in content
-    assert content["total"] == 3 # Based on mock setup
+    assert content["total"] == 3  # Based on mock setup
     assert len(content["issues"]) == 3
     assert "key" in content["issues"][0]
     assert "summary" in content["issues"][0]
-    assert content["issues"][0]["key"] == "TEST-1" # Based on mock setup
+    assert content["issues"][0]["key"] == "TEST-1"  # Based on mock setup
 
     # Verify the mock was called correctly
     mock_jira_fetcher.get_epic_issues.assert_called_once_with(
         epic_key="TEST-100", start=0, limit=10
-    ) 
+    )
