@@ -749,7 +749,7 @@ cli = [
 
 [[package]]
 name = "mcp-atlassian"
-version = "0.10.2"
+version = "0.10.3"
 source = { editable = "." }
 dependencies = [
     { name = "atlassian-python-api" },
@@ -790,7 +790,7 @@ requires-dist = [
     { name = "atlassian-python-api", specifier = ">=4.0.0" },
     { name = "beautifulsoup4", specifier = ">=4.12.3" },
     { name = "click", specifier = ">=8.1.7" },
-    { name = "fastmcp", specifier = ">=2.2.5" },
+    { name = "fastmcp", specifier = ">=2.2.5,<2.2.8" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "keyring", specifier = ">=25.6.0" },
     { name = "markdown", specifier = ">=3.7.0" },

@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+
+## [0.10.3] - 2025-05-06
+
+### Added
+- **Proxy Support:** Added support for HTTP/S and SOCKS proxies. Configure globally using `HTTP_PROXY`, `HTTPS_PROXY`, `SOCKS_PROXY`, `NO_PROXY` environment variables, or use service-specific overrides like `JIRA_HTTPS_PROXY`, `CONFLUENCE_NO_PROXY`. (#260, #361)
+
+### Fixed
+- Fixed `Context is not available outside of a request` error occurring when running via `uvx` due to incompatibility with `fastmcp>=2.2.8`. Pinned `fastmcp` dependency to `<2.2.8` to ensure compatibility with the latest `mcp-atlassian` release when installed via `uvx`. (#383)
+
 ## [0.10.2] - 2025-05-06
 
 ### Fixed
