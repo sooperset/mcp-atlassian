@@ -1,6 +1,9 @@
 """Tool-related utility functions for MCP Atlassian."""
 
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 
 
 def get_enabled_tools() -> list[str] | None:
@@ -25,12 +28,15 @@ def get_enabled_tools() -> list[str] | None:
     """
     enabled_tools_str = os.getenv("ENABLED_TOOLS")
     if not enabled_tools_str:
+        logger.debug("ENABLED_TOOLS environment variable not set or empty.")
         return None
 
     # Split by comma and strip whitespace
     tools = [tool.strip() for tool in enabled_tools_str.split(",")]
     # Filter out empty strings
     tools = [tool for tool in tools if tool]
+
+    logger.debug(f"Parsed enabled tools from environment: {tools}")
 
     return tools if tools else None
 
@@ -46,5 +52,12 @@ def should_include_tool(tool_name: str, enabled_tools: list[str] | None) -> bool
         True if the tool should be included, False otherwise.
     """
     if enabled_tools is None:
+        logger.debug(
+            f"Including tool '{tool_name}' because enabled_tools filter is None."
+        )
         return True
-    return tool_name in enabled_tools
+    should_include = tool_name in enabled_tools
+    logger.debug(
+        f"Tool '{tool_name}' included: {should_include} (based on enabled_tools: {enabled_tools})"
+    )
+    return should_include

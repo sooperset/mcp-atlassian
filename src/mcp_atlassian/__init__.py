@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 from .utils.logging import setup_logging
 
-__version__ = "0.9.0"
+__version__ = "0.10.2"
 
 # Initialize logging with appropriate level
 logging_level = logging.WARNING
@@ -274,13 +274,22 @@ def main(
     if jira_projects_filter:
         os.environ["JIRA_PROJECTS_FILTER"] = jira_projects_filter
 
-    from . import server
+    from .servers import main_mcp
 
     # Run the server with specified transport
-    asyncio.run(server.run_server(transport=final_transport, port=final_port))
+    if final_transport == "sse":
+        asyncio.run(
+            main_mcp.run_async(
+                transport=final_transport,
+                host="0.0.0.0",  # noqa: S104
+                port=final_port,
+            )
+        )
+    else:
+        asyncio.run(main_mcp.run_async(transport=final_transport))
 
 
-__all__ = ["main", "server", "__version__"]
+__all__ = ["main", "__version__"]
 
 if __name__ == "__main__":
     main()

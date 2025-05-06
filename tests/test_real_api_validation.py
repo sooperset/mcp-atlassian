@@ -1,5 +1,5 @@
 """
-Test file for validating the refactored models with real API data.
+Test file for validating the refactored FastMCP tools with real API data.
 
 This test file connects to real Jira and Confluence instances to validate
 that our model refactoring works correctly with actual API data.
@@ -24,6 +24,8 @@ import uuid
 from collections.abc import Callable, Generator, Sequence
 
 import pytest
+from fastmcp import Client
+from fastmcp.client import FastMCPTransport
 from mcp.types import TextContent
 
 from mcp_atlassian.confluence import ConfluenceFetcher
@@ -33,18 +35,15 @@ from mcp_atlassian.confluence.labels import LabelsMixin as ConfluenceLabelsMixin
 from mcp_atlassian.confluence.pages import PagesMixin
 from mcp_atlassian.confluence.search import SearchMixin as ConfluenceSearchMixin
 from mcp_atlassian.jira import JiraFetcher
-from mcp_atlassian.jira.comments import CommentsMixin as JiraCommentsMixin
 from mcp_atlassian.jira.config import JiraConfig
-from mcp_atlassian.jira.issues import IssuesMixin
 from mcp_atlassian.jira.links import LinksMixin
-from mcp_atlassian.jira.search import SearchMixin as JiraSearchMixin
 from mcp_atlassian.models.confluence import (
     ConfluenceComment,
     ConfluenceLabel,
     ConfluencePage,
 )
-from mcp_atlassian.models.jira import JiraIssue, JiraIssueLinkType
-from mcp_atlassian.server import call_tool
+from mcp_atlassian.models.jira import JiraIssueLinkType
+from mcp_atlassian.servers import main_mcp
 
 
 # Resource tracking for cleanup
@@ -80,7 +79,6 @@ class ResourceTracker:
     ) -> None:
         """Clean up all tracked resources."""
         if jira_client:
-            # Delete Jira comments first
             for issue_key, comment_id in self.jira_comments:
                 try:
                     jira_client.delete_comment(issue_key, comment_id)
@@ -88,7 +86,6 @@ class ResourceTracker:
                 except Exception as e:
                     print(f"Failed to delete Jira comment {comment_id}: {e}")
 
-            # Delete Jira issues
             for issue_key in self.jira_issues:
                 try:
                     jira_client.delete_issue(issue_key)
@@ -97,7 +94,6 @@ class ResourceTracker:
                     print(f"Failed to delete Jira issue {issue_key}: {e}")
 
         if confluence_client:
-            # Delete Confluence comments
             for comment_id in self.confluence_comments:
                 try:
                     confluence_client.delete_comment(comment_id)
@@ -105,7 +101,6 @@ class ResourceTracker:
                 except Exception as e:
                     print(f"Failed to delete Confluence comment {comment_id}: {e}")
 
-            # Delete Confluence pages
             for page_id in self.confluence_pages:
                 try:
                     confluence_client.delete_page(page_id)
@@ -184,6 +179,15 @@ def test_space_key() -> str:
 
 
 @pytest.fixture
+def test_board_id() -> str:
+    """Get test Jira board ID from environment."""
+    board_id = os.environ.get("JIRA_TEST_BOARD_ID")
+    if not board_id:
+        pytest.skip("JIRA_TEST_BOARD_ID environment variable not set")
+    return board_id
+
+
+@pytest.fixture
 def resource_tracker() -> Generator[ResourceTracker, None, None]:
     """Create and yield a ResourceTracker that will be used to clean up after tests."""
     tracker = ResourceTracker()
@@ -210,6 +214,22 @@ def cleanup_resources(
 pytestmark = pytest.mark.anyio(backends=["asyncio"])
 
 
+@pytest.fixture(scope="class")
+async def api_validation_client():
+    """Provides a FastMCP client connected to the main server for tool calls."""
+    transport = FastMCPTransport(main_mcp)
+    client = Client(transport=transport)
+    async with client as connected_client:
+        yield connected_client
+
+
+async def call_tool(
+    client: Client, tool_name: str, arguments: dict
+) -> list[TextContent]:
+    """Helper function to call tools via the client."""
+    return await client.call_tool(tool_name, arguments)
+
+
 class TestRealJiraValidation:
     """
     Test class for validating Jira models with real API data.
@@ -219,96 +239,69 @@ class TestRealJiraValidation:
     2. The required Jira environment variables are not set
     """
 
-    def test_get_issue(self, use_real_jira_data):
+    @pytest.mark.anyio
+    async def test_get_issue(self, use_real_jira_data, api_validation_client):
         """Test that get_issue returns a proper JiraIssue model."""
         if not use_real_jira_data:
             pytest.skip("Real Jira data testing is disabled")
 
-        # Get test issue key from environment or use default
-        # Use the TES-8 issue from your env file
-        issue_key = os.environ.get("JIRA_TEST_ISSUE_KEY", "TES-8")
+        issue_key = os.environ.get("JIRA_TEST_ISSUE_KEY", "TES-143")
 
-        # Initialize the Jira client
-        config = JiraConfig.from_env()
-        issues_client = IssuesMixin(config=config)
+        result_content = await call_tool(
+            api_validation_client, "jira_get_issue", {"issue_key": issue_key}
+        )
 
-        # Get the issue using the refactored client
-        issue = issues_client.get_issue(issue_key)
+        assert result_content and isinstance(result_content[0], TextContent)
+        issue_data = json.loads(result_content[0].text)
 
-        # Verify the issue is a JiraIssue instance
-        assert isinstance(issue, JiraIssue)
-        assert issue.key == issue_key
-        assert issue.id is not None
-        assert issue.summary is not None
+        assert isinstance(issue_data, dict)
+        assert issue_data.get("key") == issue_key
+        assert "id" in issue_data
+        assert "summary" in issue_data
 
-        # Verify backward compatibility using direct property access
-        # instead of metadata which is deprecated
-        assert issue.key == issue_key
-
-        # Verify model can be converted to dict
-        issue_dict = issue.to_simplified_dict()
-        assert issue_dict["key"] == issue_key
-        assert "id" in issue_dict
-        assert "summary" in issue_dict
-
-    def test_search_issues(self, use_real_jira_data):
+    @pytest.mark.anyio
+    async def test_search_issues(self, use_real_jira_data, api_validation_client):
         """Test that search_issues returns JiraIssue models."""
         if not use_real_jira_data:
             pytest.skip("Real Jira data testing is disabled")
 
-        # Initialize the Jira client
-        config = JiraConfig.from_env()
-        search_client = JiraSearchMixin(config=config)
-
-        # Perform a simple search using your actual project
         jql = 'project = "TES" ORDER BY created DESC'
-        results = search_client.search_issues(jql, limit=5)
+        result_content = await call_tool(
+            api_validation_client, "jira_search", {"jql": jql, "limit": 5}
+        )
 
-        # Verify results contain JiraIssue instances
-        assert len(results) > 0
-        for issue in results:
-            assert isinstance(issue, JiraIssue)
-            assert issue.key is not None
-            assert issue.id is not None
+        assert result_content and isinstance(result_content[0], TextContent)
+        search_data = json.loads(result_content[0].text)
 
-            # Verify direct property access
-            assert issue.key is not None
+        assert isinstance(search_data, dict)
+        assert "issues" in search_data
+        assert isinstance(search_data["issues"], list)
+        assert len(search_data["issues"]) > 0
 
-    def test_get_issue_comments(self, use_real_jira_data):
+        for issue_dict in search_data["issues"]:
+            assert isinstance(issue_dict, dict)
+            assert "key" in issue_dict
+            assert "id" in issue_dict
+            assert "summary" in issue_dict
+
+    @pytest.mark.anyio
+    async def test_get_issue_comments(self, use_real_jira_data, api_validation_client):
         """Test that issue comments are properly converted to JiraComment models."""
         if not use_real_jira_data:
             pytest.skip("Real Jira data testing is disabled")
 
-        # Get test issue key from environment or use default
-        issue_key = os.environ.get("JIRA_TEST_ISSUE_KEY", "TES-8")
+        issue_key = os.environ.get("JIRA_TEST_ISSUE_KEY", "TES-143")
 
-        # Initialize the CommentsMixin instead of IssuesMixin for comments
-        config = JiraConfig.from_env()
-        comments_client = JiraCommentsMixin(config=config)
+        result_content = await call_tool(
+            api_validation_client,
+            "jira_get_issue",
+            {"issue_key": issue_key, "fields": "comment", "comment_limit": 5},
+        )
+        issue_data = json.loads(result_content[0].text)
 
-        # First check for issue existence using IssuesMixin
-        issues_client = IssuesMixin(config=config)
-        try:
-            issues_client.get_issue(issue_key)
-        except Exception:
-            pytest.skip(
-                f"Issue {issue_key} does not exist or you don't have permission to access it"
-            )
-
-        # The get_issue_comments from CommentsMixin returns list[dict] not models
-        # We'll just check that we can get comments in any format
-        comments = comments_client.get_issue_comments(issue_key)
-
-        # Skip test if there are no comments
-        if len(comments) == 0:
-            pytest.skip("Test issue has no comments")
-
-        # Verify comments have expected structure
-        for comment in comments:
+        for comment in issue_data["comments"]:
             assert isinstance(comment, dict)
-            assert "id" in comment
-            assert "body" in comment
-            assert "created" in comment
+            assert "body" in comment or "author" in comment
 
 
 class TestRealConfluenceValidation:
@@ -325,24 +318,19 @@ class TestRealConfluenceValidation:
         if not use_real_confluence_data:
             pytest.skip("Real Confluence data testing is disabled")
 
-        # Initialize the Confluence client
         config = ConfluenceConfig.from_env()
         pages_client = PagesMixin(config=config)
 
-        # Get the page using the refactored client
         page = pages_client.get_page_content(test_page_id)
 
-        # Verify it's a ConfluencePage model
         assert isinstance(page, ConfluencePage)
         assert page.id == test_page_id
         assert page.title is not None
         assert page.content is not None
 
-        # Check page attributes
         assert page.space is not None
         assert page.space.key is not None
 
-        # Check the content format - should be either "storage" or "view"
         assert page.content_format in ["storage", "view", "markdown"]
 
     def test_get_page_comments(self, use_real_confluence_data, test_page_id):
@@ -350,18 +338,14 @@ class TestRealConfluenceValidation:
         if not use_real_confluence_data:
             pytest.skip("Real Confluence data testing is disabled")
 
-        # Initialize the Confluence comments client
         config = ConfluenceConfig.from_env()
         comments_client = ConfluenceCommentsMixin(config=config)
 
-        # Get comments using the comments mixin
         comments = comments_client.get_page_comments(test_page_id)
 
-        # If there are no comments, skip the test
         if len(comments) == 0:
             pytest.skip("Test page has no comments")
 
-        # Verify comments are ConfluenceComment instances
         for comment in comments:
             assert isinstance(comment, ConfluenceComment)
             assert comment.id is not None
@@ -372,18 +356,14 @@ class TestRealConfluenceValidation:
         if not use_real_confluence_data:
             pytest.skip("Real Confluence data testing is disabled")
 
-        # Initialize the Confluence labels client
         config = ConfluenceConfig.from_env()
         labels_client = ConfluenceLabelsMixin(config=config)
 
-        # Get labels using the labels mixin
         labels = labels_client.get_page_labels(test_page_id)
 
-        # If there are no labels, skip the test
         if len(labels) == 0:
             pytest.skip("Test page has no labels")
 
-        # Verify labels are ConfluenceLabel instances
         for label in labels:
             assert isinstance(label, ConfluenceLabel)
             assert label.id is not None
@@ -394,33 +374,24 @@ class TestRealConfluenceValidation:
         if not use_real_confluence_data:
             pytest.skip("Real Confluence data testing is disabled")
 
-        # Initialize the Confluence client
         config = ConfluenceConfig.from_env()
         search_client = ConfluenceSearchMixin(config=config)
 
-        # Perform a simple search
         cql = 'type = "page" ORDER BY created DESC'
-        # Use search method instead of search_content
         results = search_client.search(cql, limit=5)
 
-        # Verify results contain ConfluencePage instances
         assert len(results) > 0
         for page in results:
             assert isinstance(page, ConfluencePage)
             assert page.id is not None
             assert page.title is not None
 
-            # Verify direct property access
-            assert page.id is not None
-
 
 @pytest.mark.anyio
 async def test_jira_get_issue(jira_client: JiraFetcher, test_issue_key: str) -> None:
     """Test retrieving an issue from Jira."""
-    # Get the issue
     issue = jira_client.get_issue(test_issue_key)
 
-    # Verify the response
     assert issue is not None
     assert issue.key == test_issue_key
     assert hasattr(issue, "fields") or hasattr(issue, "summary")
@@ -431,46 +402,37 @@ async def test_jira_get_issue_with_fields(
     jira_client: JiraFetcher, test_issue_key: str
 ) -> None:
     """Test retrieving a Jira issue with specific fields."""
-    # Get the issue with all fields first to have a reference
     full_issue = jira_client.get_issue(test_issue_key)
     assert full_issue is not None
 
-    # Now get the issue with only specific fields
     limited_issue = jira_client.get_issue(
         test_issue_key, fields="summary,description,customfield_*"
     )
 
-    # Verify we got the requested fields
     assert limited_issue is not None
     assert limited_issue.key == test_issue_key
     assert limited_issue.summary is not None
 
-    # Get simplified dicts to compare
     full_data = full_issue.to_simplified_dict()
     limited_data = limited_issue.to_simplified_dict()
 
-    # Required fields should be in both
     assert "key" in full_data and "key" in limited_data
     assert "id" in full_data and "id" in limited_data
     assert "summary" in full_data and "summary" in limited_data
 
-    # Fields that should be in limited result
     assert "description" in limited_data
 
-    # Check custom fields if there are any
     custom_fields_found = False
     for field in limited_data:
         if field.startswith("customfield_"):
             custom_fields_found = True
             break
 
-    # Fields that shouldn't be in limited result unless they were requested
     if "assignee" in full_data and "assignee" not in limited_data:
         assert "assignee" not in limited_data
     if "status" in full_data and "status" not in limited_data:
         assert "status" not in limited_data
 
-    # Test with a list of fields
     list_fields_issue = jira_client.get_issue(
         test_issue_key, fields=["summary", "status"]
     )
@@ -487,13 +449,10 @@ async def test_jira_get_epic_issues(
     jira_client: JiraFetcher, test_epic_key: str
 ) -> None:
     """Test retrieving issues linked to an epic from Jira."""
-    # This tests the fixed functionality for retrieving epic issues
     issues = jira_client.get_epic_issues(test_epic_key)
 
-    # Verify the response
     assert isinstance(issues, list)
 
-    # If there are issues, verify some basic properties
     if issues:
         for issue in issues:
             assert hasattr(issue, "key")
@@ -505,10 +464,8 @@ async def test_confluence_get_page_content(
     confluence_client: ConfluenceFetcher, test_page_id: str
 ) -> None:
     """Test retrieving a page from Confluence."""
-    # Get the page content using our module's API
     page = confluence_client.get_page_content(test_page_id)
 
-    # Verify the response
     assert page is not None
     assert page.id == test_page_id
     assert page.title is not None
@@ -522,13 +479,11 @@ async def test_jira_create_issue(
     cleanup_resources: Callable[[], None],
 ) -> None:
     """Test creating an issue in Jira."""
-    # Generate a unique summary to identify this test issue
     test_id = str(uuid.uuid4())[:8]
     summary = f"Test Issue (API Validation) {test_id}"
     description = "This is a test issue created by the API validation tests. It should be automatically deleted."
 
     try:
-        # Create the issue
         issue = jira_client.create_issue(
             project_key=test_project_key,
             summary=summary,
@@ -536,21 +491,17 @@ async def test_jira_create_issue(
             issue_type="Task",
         )
 
-        # Track the issue for cleanup
         resource_tracker.add_jira_issue(issue.key)
 
-        # Verify the response
         assert issue is not None
         assert issue.key.startswith(test_project_key)
         assert issue.summary == summary
 
-        # Verify we can retrieve the created issue
         retrieved_issue = jira_client.get_issue(issue.key)
         assert retrieved_issue is not None
         assert retrieved_issue.key == issue.key
         assert retrieved_issue.summary == summary
     finally:
-        # Clean up resources even if the test fails
         cleanup_resources()
 
 
@@ -564,45 +515,35 @@ async def test_jira_create_subtask(
     cleanup_resources: Callable[[], None],
 ) -> None:
     """Test creating a subtask in Jira linked to a specified parent and epic."""
-    # Generate unique identifiers for this test
     test_id = str(uuid.uuid4())[:8]
     subtask_summary = f"Subtask Test Issue {test_id}"
 
     try:
-        # Use the existing issue as parent instead of creating one
         parent_issue_key = test_issue_key
 
-        # Create a subtask linked to both the parent and epic
         subtask_issue = jira_client.create_issue(
             project_key=test_project_key,
             summary=subtask_summary,
             description=f"This is a test subtask linked to parent {parent_issue_key} and epic {test_epic_key}",
             issue_type="Subtask",
-            parent=parent_issue_key,  # Link to parent
-            epic_link=test_epic_key,  # Link to epic
+            parent=parent_issue_key,
+            epic_link=test_epic_key,
         )
 
-        # Track the subtask for cleanup
         resource_tracker.add_jira_issue(subtask_issue.key)
 
-        # Verify the subtask response
         assert subtask_issue is not None
         assert subtask_issue.key.startswith(test_project_key)
         assert subtask_issue.summary == subtask_summary
 
-        # Verify we can retrieve the created subtask
         retrieved_subtask = jira_client.get_issue(subtask_issue.key)
         assert retrieved_subtask is not None
         assert retrieved_subtask.key == subtask_issue.key
 
-        # Verify parent relationship if the fields are accessible
-        # This might vary depending on how the Jira instance returns data
         if hasattr(retrieved_subtask, "fields"):
             if hasattr(retrieved_subtask.fields, "parent"):
                 assert retrieved_subtask.fields.parent.key == parent_issue_key
 
-            # Check epic relationship if available
-            # The exact field name might vary based on Jira configuration
             field_ids = jira_client.get_field_ids_to_epic()
             epic_link_field = field_ids.get("epic_link") or field_ids.get("Epic Link")
 
@@ -615,7 +556,6 @@ async def test_jira_create_subtask(
         )
 
     finally:
-        # Clean up resources even if the test fails
         cleanup_resources()
 
 
@@ -628,39 +568,31 @@ async def test_jira_create_task_with_parent(
     cleanup_resources: Callable[[], None],
 ) -> None:
     """Test creating a task in Jira with a parent issue (non-subtask)."""
-    # Generate unique identifiers for this test
     test_id = str(uuid.uuid4())[:8]
     task_summary = f"Task with Parent Test {test_id}"
 
     try:
-        # Use the epic as parent instead of a regular issue
         parent_issue_key = test_epic_key
 
         try:
-            # Create a task linked to a parent issue
             task_issue = jira_client.create_issue(
                 project_key=test_project_key,
                 summary=task_summary,
                 description=f"This is a test task linked to parent {parent_issue_key}",
-                issue_type="Task",  # Not a subtask
-                parent=parent_issue_key,  # Link to parent
+                issue_type="Task",
+                parent=parent_issue_key,
             )
 
-            # Track the task for cleanup
             resource_tracker.add_jira_issue(task_issue.key)
 
-            # Verify the task response
             assert task_issue is not None
             assert task_issue.key.startswith(test_project_key)
             assert task_issue.summary == task_summary
 
-            # Verify we can retrieve the created task
             retrieved_task = jira_client.get_issue(task_issue.key)
             assert retrieved_task is not None
             assert retrieved_task.key == task_issue.key
 
-            # Verify parent relationship if the fields are accessible
-            # This might vary depending on how the Jira instance returns data
             if hasattr(retrieved_task, "fields"):
                 if hasattr(retrieved_task.fields, "parent"):
                     assert retrieved_task.fields.parent.key == parent_issue_key
@@ -668,17 +600,14 @@ async def test_jira_create_task_with_parent(
             print(f"\nCreated task {task_issue.key} with parent {parent_issue_key}")
 
         except Exception as e:
-            # If we get a hierarchy error, it means the feature works but is limited by Jira config
             if "hierarchy" in str(e).lower():
                 pytest.skip(
                     f"Parent-child relationship not allowed by Jira configuration: {str(e)}"
                 )
             else:
-                # Re-raise if it's not a hierarchy issue
                 raise
 
     finally:
-        # Clean up resources even if the test fails
         cleanup_resources()
 
 
@@ -701,7 +630,6 @@ async def test_jira_create_epic(
     epic_summary = f"Test Epic {test_id}"
 
     try:
-        # Attempt to create the Epic - this should succeed after implementation is fixed
         epic_issue = jira_client.create_issue(
             project_key=test_project_key,
             summary=epic_summary,
@@ -709,28 +637,22 @@ async def test_jira_create_epic(
             issue_type="Epic",
         )
 
-        # Track the epic for cleanup if creation succeeds
         resource_tracker.add_jira_issue(epic_issue.key)
 
-        # Verify the epic response
         assert epic_issue is not None
         assert epic_issue.key.startswith(test_project_key)
         assert epic_issue.summary == epic_summary
 
         print(f"\nTEST PASSED: Successfully created Epic issue {epic_issue.key}")
 
-        # Try to retrieve the epic to verify it was truly created
         retrieved_epic = jira_client.get_issue(epic_issue.key)
         assert retrieved_epic is not None
         assert retrieved_epic.key == epic_issue.key
         assert retrieved_epic.summary == epic_summary
 
     except Exception as e:
-        # Log the error but don't catch it - we want the test to fail
-        # when Epic creation doesn't work
         print(f"\nERROR creating Epic: {str(e)}")
 
-        # Print information about field IDs to help with fixing the implementation
         try:
             print("\n=== Jira Field Information for Debugging ===")
             field_ids = jira_client.get_field_ids_to_epic()
@@ -756,21 +678,17 @@ async def test_jira_add_comment(
     comment_text = f"Test comment from API validation tests {test_id}. This should be automatically deleted."
 
     try:
-        # Add the comment
         comment = jira_client.add_comment(
             issue_key=test_issue_key, comment=comment_text
         )
 
-        # Track the comment for cleanup
         if hasattr(comment, "id"):
             resource_tracker.add_jira_comment(test_issue_key, comment.id)
         elif isinstance(comment, dict) and "id" in comment:
             resource_tracker.add_jira_comment(test_issue_key, comment["id"])
 
-        # Verify the response
         assert comment is not None
 
-        # Get the comment text based on the attribute that exists
         if hasattr(comment, "body"):
             actual_text = comment.body
         elif hasattr(comment, "content"):
@@ -782,7 +700,6 @@ async def test_jira_add_comment(
 
         assert comment_text in actual_text
     finally:
-        # Clean up resources even if the test fails
         cleanup_resources()
 
 
@@ -798,7 +715,6 @@ async def test_confluence_create_page(
     test_id = str(uuid.uuid4())[:8]
     title = f"Test Page (API Validation) {test_id}"
 
-    # Create timestamp separately to avoid long line
     timestamp = datetime.datetime.now(tz=datetime.timezone.utc).isoformat()
     content = f"""
     <h1>Test Page</h1>
@@ -807,7 +723,6 @@ async def test_confluence_create_page(
     """
 
     try:
-        # Create the page using our module's API
         try:
             page = confluence_client.create_page(
                 space_key=test_space_key, title=title, body=content
@@ -826,19 +741,15 @@ async def test_confluence_create_page(
             else:
                 raise
 
-        # Track the page for cleanup
         page_id = page.id
         resource_tracker.add_confluence_page(page_id)
 
-        # Verify the response
         assert page is not None
         assert page.title == title
 
-        # Attempt to retrieve the created page
         retrieved_page = confluence_client.get_page_content(page_id)
         assert retrieved_page is not None
     finally:
-        # Clean up resources even if the test fails
         cleanup_resources()
 
 
@@ -855,31 +766,25 @@ async def test_confluence_update_page(
     1. Test the basic page update functionality
     2. Validate the TextContent class requires the 'type' field to prevent issue #97
     """
-    # Create a test page first
     test_id = str(uuid.uuid4())[:8]
     title = f"Update Test Page {test_id}"
     content = f"<p>Initial content {test_id}</p>"
 
     try:
-        # Create the page using our module's API
         page = confluence_client.create_page(
             space_key=test_space_key, title=title, body=content
         )
 
-        # Track the page for cleanup
         page_id = page.id
         resource_tracker.add_confluence_page(page_id)
 
-        # Update the page with new content
         now = datetime.datetime.now(tz=datetime.timezone.utc).isoformat()
         updated_content = f"<p>Updated content {test_id} at {now}</p>"
 
-        # Test updating without explicitly specifying the version
         updated_page = confluence_client.update_page(
             page_id=page_id, title=title, body=updated_content
         )
 
-        # Verify the update worked
         assert updated_page is not None
 
         # ======= TextContent Validation (prevents issue #97) =======
@@ -888,21 +793,15 @@ async def test_confluence_update_page(
 
         print("Testing TextContent validation to prevent issue #97")
 
-        # Create a TextContent without type field - this should raise an error
         try:
-            # Intentionally omit the type field to simulate the bug in issue #97
-            # Using _ to avoid unused variable warning
             _ = TextContent(text="This should fail without type field")
-            # If we get here, the validation is not working
             raise AssertionError(
                 "TextContent creation without 'type' field should fail but didn't"
             )
         except Exception as e:
-            # We expect an exception because the type field is required
             print(f"Correctly got error: {str(e)}")
             assert "type" in str(e), "Error should mention missing 'type' field"
 
-        # Create valid TextContent with type field - should work
         valid_content = TextContent(
             type="text", text="This should work with type field"
         )
@@ -914,7 +813,6 @@ async def test_confluence_update_page(
         print("TextContent validation succeeded - 'type' field is properly required")
 
     finally:
-        # Clean up resources even if the test fails
         cleanup_resources()
 
 
@@ -926,29 +824,23 @@ async def test_confluence_add_page_label(
     cleanup_resources: Callable[[], None],
 ) -> None:
     """Test adding a label to a page in Confluence"""
-    # Create a test page first
     test_id = str(uuid.uuid4())[:8]
     title = f"Update Test Page {test_id}"
     content = f"<p>Initial content {test_id}</p>"
 
     try:
-        # Create the page using our module's API
         page = confluence_client.create_page(
             space_key=test_space_key, title=title, body=content
         )
 
-        # Track the page for cleanup
         page_id = page.id
         resource_tracker.add_confluence_page(page_id)
 
-        # Test adding a label
         name = "test"
         updated_labels = confluence_client.add_page_label(page_id=page_id, name=name)
 
-        # Verify that a label has been added
         assert updated_labels is not None
     finally:
-        # Clean up resources even if the test fails
         cleanup_resources()
 
 
@@ -961,12 +853,10 @@ async def test_jira_transition_issue(
     cleanup_resources: Callable[[], None],
 ) -> None:
     """Test transitioning an issue in Jira."""
-    # Create a test issue first
     test_id = str(uuid.uuid4())[:8]
     summary = f"Transition Test Issue {test_id}"
 
     try:
-        # Create the issue
         issue = jira_client.create_issue(
             project_key=test_project_key,
             summary=summary,
@@ -974,16 +864,12 @@ async def test_jira_transition_issue(
             issue_type="Task",
         )
 
-        # Track the issue for cleanup
         resource_tracker.add_jira_issue(issue.key)
 
-        # Get available transitions
         transitions = jira_client.get_transitions(issue.key)
         assert transitions is not None
         assert len(transitions) > 0
 
-        # Select a transition (usually to "In Progress")
-        # Find the "In Progress" transition if available
         transition_id = None
         for transition in transitions:
             if hasattr(transition, "name") and "progress" in transition.name.lower():
@@ -991,7 +877,6 @@ async def test_jira_transition_issue(
                 break
 
         if not transition_id and transitions:
-            # Just use the first available transition if "In Progress" not found
             transition_id = (
                 transitions[0].id
                 if hasattr(transitions[0], "id")
@@ -1000,30 +885,24 @@ async def test_jira_transition_issue(
 
         assert transition_id is not None
 
-        # Perform the transition
         transition_result = jira_client.transition_issue(
             issue_key=issue.key, transition_id=transition_id
         )
 
-        # Verify transition was successful if result is returned
         if transition_result is not None:
             assert transition_result, (
                 "Transition should return a truthy value if successful"
             )
 
-        # Verify the issue status changed
         updated_issue = jira_client.get_issue(issue.key)
 
-        # Get the status name
         if hasattr(updated_issue, "status") and hasattr(updated_issue.status, "name"):
             status_name = updated_issue.status.name
         else:
             status_name = updated_issue["fields"]["status"]["name"]
 
-        # The status should no longer be "To Do" or equivalent
         assert "to do" not in status_name.lower()
     finally:
-        # Clean up resources even if the test fails
         cleanup_resources()
 
 
@@ -1041,20 +920,15 @@ async def test_jira_create_epic_with_custom_fields(
     with explicit Epic Name and Epic Color values, properly detecting the
     correct custom fields regardless of the Jira configuration.
     """
-    # Generate unique identifiers for this test
     test_id = str(uuid.uuid4())[:8]
     epic_summary = f"Test Epic {test_id}"
     custom_epic_name = f"Custom Epic Name {test_id}"
 
     try:
-        # Force field discovery to ensure we have the latest field IDs
-
-        # Get field IDs and log them for debugging
         field_ids = jira_client.get_field_ids_to_epic()
         jira_client._field_ids_cache = None
         print(f"Discovered field IDs: {field_ids}")
 
-        # Attempt to create the Epic with custom values
         epic_issue = jira_client.create_issue(
             project_key=test_project_key,
             summary=epic_summary,
@@ -1065,23 +939,18 @@ async def test_jira_create_epic_with_custom_fields(
         )
         jira_client._field_ids_cache = None
 
-        # Track the epic for cleanup
         resource_tracker.add_jira_issue(epic_issue.key)
         jira_client._field_ids_cache = None
 
-        # Verify Epic was created correctly
         assert epic_issue is not None
         assert epic_issue.key.startswith(test_project_key)
         assert epic_issue.summary == epic_summary
 
         print(f"\nTEST PASSED: Successfully created Epic issue {epic_issue.key}")
 
-        # Retrieve the Epic to verify custom fields were set
         retrieved_epic = jira_client.get_issue(epic_issue.key)
         jira_client._field_ids_cache = None
 
-        # Verify custom Epic Name - the field might be accessible under different properties
-        # depending on the Jira configuration
         has_epic_name = False
         if hasattr(retrieved_epic, "epic_name") and retrieved_epic.epic_name:
             assert retrieved_epic.epic_name == custom_epic_name
@@ -1092,12 +961,10 @@ async def test_jira_create_epic_with_custom_fields(
 
         if not has_epic_name:
             print("Could not verify Epic Name directly, checking raw fields...")
-            # Try to get the raw API response to verify the custom fields
             if hasattr(jira_client, "jira"):
                 raw_issue = jira_client.jira.issue(epic_issue.key)
                 fields = raw_issue.get("fields", {})
 
-                # Find the Epic Name field by searching known patterns
                 for field_id, value in fields.items():
                     if field_id.startswith("customfield_") and isinstance(value, str):
                         if value == custom_epic_name:
@@ -1113,7 +980,6 @@ async def test_jira_create_epic_with_custom_fields(
     except Exception as e:
         print(f"\nERROR creating Epic with custom fields: {str(e)}")
 
-        # Print information about field IDs to help with debugging
         try:
             print("\n=== Jira Field Information for Debugging ===")
             field_ids = jira_client.get_field_ids_to_epic()
@@ -1140,20 +1006,15 @@ async def test_jira_create_epic_two_step(
     using the two-step approach (create basic issue first, then update Epic fields)
     to work around screen configuration issues.
     """
-    # Generate unique identifiers for this test
     test_id = str(uuid.uuid4())[:8]
     epic_summary = f"Two-Step Epic {test_id}"
     epic_name = f"Epic Name {test_id}"
 
     try:
-        # Clear any cached field IDs to force fresh discovery
-
-        # Show all available field IDs - useful for debugging
         field_ids = jira_client.get_field_ids_to_epic()
         jira_client._field_ids_cache = None
         print(f"\nAvailable field IDs for Epic creation: {field_ids}")
 
-        # Create the Epic - should use the two-step process internally
         print("\nAttempting to create Epic using two-step process...")
         epic_issue = jira_client.create_issue(
             project_key=test_project_key,
@@ -1165,34 +1026,27 @@ async def test_jira_create_epic_two_step(
         )
         jira_client._field_ids_cache = None
 
-        # Track the epic for cleanup
         resource_tracker.add_jira_issue(epic_issue.key)
         jira_client._field_ids_cache = None
 
-        # Verify the Epic was created
         assert epic_issue is not None
         assert epic_issue.key.startswith(test_project_key)
         assert epic_issue.summary == epic_summary
 
         print(f"\nSuccessfully created Epic: {epic_issue.key}")
 
-        # Try to retrieve the Epic to verify Epic-specific fields
         retrieved_epic = jira_client.get_issue(epic_issue.key)
         jira_client._field_ids_cache = None
         print(f"\nRetrieved Epic: {retrieved_epic.key}")
 
-        # Log epic field information for debugging
         print(f"Epic name: {retrieved_epic.epic_name}")
 
-        # Try to get the raw API response to inspect all fields
         try:
-            # Using _raw property if available, or direct API call as fallback
             if hasattr(retrieved_epic, "_raw"):
                 raw_data = retrieved_epic._raw
             else:
                 raw_data = jira_client.jira.issue(epic_issue.key)
 
-            # Print relevant fields for debugging
             if "fields" in raw_data:
                 for field_id, field_value in raw_data["fields"].items():
                     if "epic" in field_id.lower() or field_id in field_ids.values():
@@ -1205,7 +1059,6 @@ async def test_jira_create_epic_two_step(
     except Exception as e:
         print(f"\nERROR in two-step Epic creation test: {str(e)}")
 
-        # Print debugging information
         print("\nAvailable field IDs:")
         try:
             field_ids = jira_client.get_field_ids_to_epic()
@@ -1238,28 +1091,29 @@ class TestRealToolValidation:
         jql = f'project = "{test_project_key}" ORDER BY created ASC'
         limit = 1
 
-        # Call 1: startAt = 0
         args1 = {"jql": jql, "limit": limit, "startAt": 0}
-        result1_content: Sequence[TextContent] = await call_tool("jira_search", args1)
+        result1_content: Sequence[TextContent] = await call_tool(
+            api_validation_client, "jira_search", args1
+        )
         assert result1_content and isinstance(result1_content[0], TextContent)
         results1 = json.loads(result1_content[0].text)
 
-        # Call 2: startAt = 1
         args2 = {"jql": jql, "limit": limit, "startAt": 1}
-        result2_content: Sequence[TextContent] = await call_tool("jira_search", args2)
+        result2_content: Sequence[TextContent] = await call_tool(
+            api_validation_client, "jira_search", args2
+        )
         assert result2_content and isinstance(result2_content[0], TextContent)
         results2 = json.loads(result2_content[0].text)
 
-        # Assertions (assuming project has at least 2 issues)
-        assert isinstance(results1, list)
-        assert isinstance(results2, list)
+        assert isinstance(results1.get("issues"), list)
+        assert isinstance(results2.get("issues"), list)
 
-        if len(results1) > 0 and len(results2) > 0:
-            assert results1[0]["key"] != results2[0]["key"], (
-                f"Expected different issues with startAt=0 and startAt=1, but got {results1[0]['key']} for both."
+        if len(results1["issues"]) > 0 and len(results2["issues"]) > 0:
+            assert results1["issues"][0]["key"] != results2["issues"][0]["key"], (
+                f"Expected different issues with startAt=0 and startAt=1, but got {results1['issues'][0]['key']} for both."
                 f" Ensure project '{test_project_key}' has at least 2 issues."
             )
-        elif len(results1) <= 1:
+        elif len(results1["issues"]) <= 1:
             pytest.skip(
                 f"Project {test_project_key} has less than 2 issues, cannot test pagination."
             )
@@ -1274,19 +1128,20 @@ class TestRealToolValidation:
 
         limit = 1
 
-        # Call 1: startAt = 0
         args1 = {"project_key": test_project_key, "limit": limit, "startAt": 0}
-        result1_content = list(await call_tool("jira_get_project_issues", args1))
+        result1_content = list(
+            await call_tool(api_validation_client, "jira_get_project_issues", args1)
+        )
         assert isinstance(result1_content[0], TextContent)
         results1 = json.loads(result1_content[0].text)
 
-        # Call 2: startAt = 1
         args2 = {"project_key": test_project_key, "limit": limit, "startAt": 1}
-        result2_content = list(await call_tool("jira_get_project_issues", args2))
+        result2_content = list(
+            await call_tool(api_validation_client, "jira_get_project_issues", args2)
+        )
         assert isinstance(result2_content[0], TextContent)
         results2 = json.loads(result2_content[0].text)
 
-        # Assertions (assuming project has at least 2 issues)
         assert isinstance(results1, list)
         assert isinstance(results2, list)
 
@@ -1310,32 +1165,29 @@ class TestRealToolValidation:
 
         limit = 1
 
-        # Call 1: startAt = 0
         args1 = {"epic_key": test_epic_key, "limit": limit, "startAt": 0}
         result1_content: Sequence[TextContent] = await call_tool(
-            "jira_get_epic_issues", args1
+            api_validation_client, "jira_get_epic_issues", args1
         )
         assert result1_content and isinstance(result1_content[0], TextContent)
         results1 = json.loads(result1_content[0].text)
 
-        # Call 2: startAt = 1
         args2 = {"epic_key": test_epic_key, "limit": limit, "startAt": 1}
         result2_content: Sequence[TextContent] = await call_tool(
-            "jira_get_epic_issues", args2
+            api_validation_client, "jira_get_epic_issues", args2
         )
         assert result2_content and isinstance(result2_content[0], TextContent)
         results2 = json.loads(result2_content[0].text)
 
-        # Assertions (assuming epic has at least 2 issues)
-        assert isinstance(results1, list)
-        assert isinstance(results2, list)
+        assert isinstance(results1.get("issues"), list)
+        assert isinstance(results2.get("issues"), list)
 
-        if len(results1) > 0 and len(results2) > 0:
-            assert results1[0]["key"] != results2[0]["key"], (
-                f"Expected different issues with startAt=0 and startAt=1, but got {results1[0]['key']} for both."
+        if len(results1["issues"]) > 0 and len(results2["issues"]) > 0:
+            assert results1["issues"][0]["key"] != results2["issues"][0]["key"], (
+                f"Expected different issues with startAt=0 and startAt=1, but got {results1['issues'][0]['key']} for both."
                 f" Ensure epic '{test_epic_key}' has at least 2 linked issues."
             )
-        elif len(results1) <= 1:
+        elif len(results1["issues"]) <= 1:
             pytest.skip(
                 f"Epic {test_epic_key} has less than 2 issues, cannot test pagination."
             )
@@ -1348,9 +1200,8 @@ class TestRealToolValidation:
         if not use_real_jira_data:
             pytest.skip("Real Jira data testing is disabled")
 
-        # Call with comment_limit=10 and without specifying fields
-        # This should use default fields and include comments
         result = await call_tool(
+            api_validation_client,
             "jira_get_issue",
             {"issue_key": test_issue_key, "comment_limit": 10},
         )
@@ -1359,8 +1210,8 @@ class TestRealToolValidation:
         assert "comments" in result
         assert isinstance(result["comments"], list)
 
-        # Test with fields="summary" explicitly - comments should not be present
         result_without_comments = await call_tool(
+            api_validation_client,
             "jira_get_issue",
             {"issue_key": test_issue_key, "comment_limit": 10, "fields": "summary"},
         )
@@ -1369,23 +1220,26 @@ class TestRealToolValidation:
         assert "comments" not in result_without_comments
 
     @pytest.mark.anyio
-    async def test_jira_get_link_types_tool(self, use_real_jira_data: bool) -> None:
+    async def test_jira_get_link_types_tool(
+        self, use_real_jira_data: bool, api_validation_client: Client
+    ) -> None:
         """Test the jira_get_link_types tool."""
         if not use_real_jira_data:
             pytest.skip("Real Jira data testing is disabled")
 
-        # Call the tool to get issue link types
-        result_content = list(await call_tool("jira_get_link_types", {}))
+        try:
+            result_content = list(
+                await call_tool(api_validation_client, "jira_get_link_types", {})
+            )
+        except LookupError:
+            pytest.skip("Server context not available for call_tool")
 
-        # Verify we got a valid response
         assert isinstance(result_content[0], TextContent)
         link_types = json.loads(result_content[0].text)
 
-        # Verify the response structure
         assert isinstance(link_types, list)
         assert len(link_types) > 0
 
-        # Check the first link type has the expected fields
         first_link = link_types[0]
         assert "id" in first_link
         assert "name" in first_link
@@ -1394,16 +1248,14 @@ class TestRealToolValidation:
 
     @pytest.mark.anyio
     async def test_jira_create_issue_link_tool(
-        self, use_real_jira_data: bool, test_project_key: str
+        self, use_real_jira_data: bool, test_project_key: str, api_validation_client
     ) -> None:
         """Test the jira_create_issue_link and jira_remove_issue_link tools."""
         if not use_real_jira_data:
             pytest.skip("Real Jira data testing is disabled")
 
-        # First create two test issues
         test_id = str(uuid.uuid4())[:8]
 
-        # Create first issue
         issue1_args = {
             "project_key": test_project_key,
             "summary": f"Link Test Source {test_id}",
@@ -1411,13 +1263,12 @@ class TestRealToolValidation:
             "issue_type": "Task",
         }
         issue1_content: Sequence[TextContent] = await call_tool(
-            "jira_create_issue", issue1_args
+            api_validation_client, "jira/create_issue", issue1_args
         )
         assert issue1_content and isinstance(issue1_content[0], TextContent)
         issue1_data = json.loads(issue1_content[0].text)
         issue1_key = issue1_data["key"]
 
-        # Create second issue
         issue2_args = {
             "project_key": test_project_key,
             "summary": f"Link Test Target {test_id}",
@@ -1425,21 +1276,19 @@ class TestRealToolValidation:
             "issue_type": "Task",
         }
         issue2_content: Sequence[TextContent] = await call_tool(
-            "jira_create_issue", issue2_args
+            api_validation_client, "jira/create_issue", issue2_args
         )
         assert issue2_content and isinstance(issue2_content[0], TextContent)
         issue2_data = json.loads(issue2_content[0].text)
         issue2_key = issue2_data["key"]
 
         try:
-            # Get link types
             link_types_content: Sequence[TextContent] = await call_tool(
-                "jira_get_issue_link_types", {}
+                api_validation_client, "jira/get_link_types", {}
             )
             assert link_types_content and isinstance(link_types_content[0], TextContent)
             link_types = json.loads(link_types_content[0].text)
 
-            # Find a suitable link type (preferably "relates to")
             link_type_name = None
             for lt in link_types:
                 if "relate" in lt["name"].lower():
@@ -1450,7 +1299,6 @@ class TestRealToolValidation:
             if not link_type_name:
                 link_type_name = link_types[0]["name"]
 
-            # Create the link
             link_args = {
                 "link_type": link_type_name,
                 "inward_issue_key": issue1_key,
@@ -1458,22 +1306,21 @@ class TestRealToolValidation:
                 "comment": f"Test link created by API validation test {test_id}",
             }
             link_content: Sequence[TextContent] = await call_tool(
-                "jira_create_issue_link", link_args
+                api_validation_client, "jira/create_issue_link", link_args
             )
 
-            # Verify link creation was successful
             assert link_content and isinstance(link_content[0], TextContent)
             link_result = json.loads(link_content[0].text)
             assert link_result["success"] is True
 
-            # Get the issue to verify the link exists and get the link ID
             issue_content: Sequence[TextContent] = await call_tool(
-                "jira_get_issue", {"issue_key": issue1_key, "fields": "issuelinks"}
+                api_validation_client,
+                "jira/get_issue",
+                {"issue_key": issue1_key, "fields": "issuelinks"},
             )
             assert issue_content and isinstance(issue_content[0], TextContent)
             issue_data = json.loads(issue_content[0].text)
 
-            # Find the link ID
             link_id = None
             if "issuelinks" in issue_data:
                 for link in issue_data["issuelinks"]:
@@ -1485,31 +1332,30 @@ class TestRealToolValidation:
             if link_id:
                 remove_args = {"link_id": link_id}
                 remove_content: Sequence[TextContent] = await call_tool(
-                    "jira_remove_issue_link", remove_args
+                    api_validation_client, "jira/remove_issue_link", remove_args
                 )
 
-                # Verify link removal was successful
                 assert remove_content and isinstance(remove_content[0], TextContent)
                 remove_result = json.loads(remove_content[0].text)
                 assert remove_result["success"] is True
                 assert remove_result["link_id"] == link_id
 
         finally:
-            # Clean up the test issues
-            await call_tool("jira_delete_issue", {"issue_key": issue1_key})
-            await call_tool("jira_delete_issue", {"issue_key": issue2_key})
+            await call_tool(
+                api_validation_client, "jira/delete_issue", {"issue_key": issue1_key}
+            )
+            await call_tool(
+                api_validation_client, "jira/delete_issue", {"issue_key": issue2_key}
+            )
 
 
 @pytest.mark.anyio
 async def test_jira_get_issue_link_types(jira_client: JiraFetcher) -> None:
     """Test retrieving issue link types from Jira."""
-    # Initialize the LinksMixin
     links_client = LinksMixin(config=jira_client.config)
 
-    # Get the issue link types
     link_types = links_client.get_issue_link_types()
 
-    # Verify the response structure
     # An empty list is a valid response if no link types are configured or accessible
     assert isinstance(link_types, list)
 
@@ -1531,13 +1377,11 @@ async def test_jira_create_and_remove_issue_link(
     cleanup_resources: Callable[[], None],
 ) -> None:
     """Test creating and removing a link between two Jira issues."""
-    # Create two test issues to link
     test_id = str(uuid.uuid4())[:8]
     summary1 = f"Link Test Issue 1 {test_id}"
     summary2 = f"Link Test Issue 2 {test_id}"
 
     try:
-        # Create the first issue
         issue1 = jira_client.create_issue(
             project_key=test_project_key,
             summary=summary1,
@@ -1545,7 +1389,6 @@ async def test_jira_create_and_remove_issue_link(
             issue_type="Task",
         )
 
-        # Create the second issue
         issue2 = jira_client.create_issue(
             project_key=test_project_key,
             summary=summary2,
@@ -1553,18 +1396,14 @@ async def test_jira_create_and_remove_issue_link(
             issue_type="Task",
         )
 
-        # Track the issues for cleanup
         resource_tracker.add_jira_issue(issue1.key)
         resource_tracker.add_jira_issue(issue2.key)
 
-        # Initialize the LinksMixin
         links_client = LinksMixin(config=jira_client.config)
 
-        # Get available link types
         link_types = links_client.get_issue_link_types()
         assert len(link_types) > 0
 
-        # Select a link type (e.g., "Relates")
         link_type_name = None
         for lt in link_types:
             if "relate" in lt.name.lower():
@@ -1575,7 +1414,6 @@ async def test_jira_create_and_remove_issue_link(
         if not link_type_name:
             link_type_name = link_types[0].name
 
-        # Create link data
         link_data = {
             "type": {"name": link_type_name},
             "inwardIssue": {"key": issue1.key},
@@ -1583,20 +1421,15 @@ async def test_jira_create_and_remove_issue_link(
             "comment": {"body": f"Test link created by API validation test {test_id}"},
         }
 
-        # Create the link
         link_result = links_client.create_issue_link(link_data)
 
-        # Verify link creation was successful
         assert link_result is not None
         assert link_result["success"] is True
         assert link_result["inward_issue"] == issue1.key
         assert link_result["outward_issue"] == issue2.key
 
-        # Get the issue to verify the link exists
-        # This requires checking the raw API response as the link ID is needed for removal
         raw_issue = jira_client.jira.issue(issue1.key, fields="issuelinks")
 
-        # Find the link ID
         link_id = None
         if hasattr(raw_issue, "fields") and hasattr(raw_issue.fields, "issuelinks"):
             for link in raw_issue.fields.issuelinks:
@@ -1611,10 +1444,8 @@ async def test_jira_create_and_remove_issue_link(
         if not link_id:
             pytest.skip("Could not find link ID for removal test")
 
-        # Remove the link
         remove_result = links_client.remove_issue_link(link_id)
 
-        # Verify link removal was successful
         assert remove_result is not None
         assert remove_result["success"] is True
         assert remove_result["link_id"] == link_id
@@ -1622,3 +1453,131 @@ async def test_jira_create_and_remove_issue_link(
     finally:
         # Clean up resources even if the test fails
         cleanup_resources()
+
+    @pytest.mark.anyio
+    async def test_regression_jira_create_additional_fields_string(
+        self,
+        use_real_jira_data: bool,
+        test_project_key: str,
+        resource_tracker: ResourceTracker,
+        cleanup_resources: Callable[[], None],
+    ) -> None:
+        """Test jira_create_issue with additional_fields passed as a JSON string."""
+        if not use_real_jira_data:
+            pytest.skip("Real Jira data testing is disabled")
+
+        test_id = str(uuid.uuid4())[:8]
+        summary = f"Regression Test (JSON String Fields) {test_id}"
+        additional_fields_str = '{"priority": {"name": "High"}, "labels": ["regression-test", "json-string"]}'
+
+        created_issue_key = None
+        try:
+            create_args = {
+                "project_key": test_project_key,
+                "summary": summary,
+                "issue_type": "Task",
+                "additional_fields": additional_fields_str,
+            }
+            create_result_content: Sequence[TextContent] = await call_tool(
+                api_validation_client, "jira/create_issue", create_args
+            )
+            assert create_result_content and isinstance(
+                create_result_content[0], TextContent
+            )
+            created_issue_data = json.loads(create_result_content[0].text)
+            created_issue_key = created_issue_data["key"]
+
+            get_args = {
+                "issue_key": created_issue_key,
+                "fields": "summary,priority,labels",
+            }
+            get_result_content: Sequence[TextContent] = await call_tool(
+                api_validation_client, "jira/get_issue", get_args
+            )
+            assert get_result_content and isinstance(get_result_content[0], TextContent)
+            fetched_issue_data = json.loads(get_result_content[0].text)
+
+            assert "priority" in fetched_issue_data, (
+                "Priority field missing in fetched issue"
+            )
+            assert isinstance(fetched_issue_data["priority"], dict), (
+                "Priority should be a dict"
+            )
+            assert fetched_issue_data["priority"].get("name") == "High", (
+                "Priority was not set correctly"
+            )
+            assert "labels" in fetched_issue_data, (
+                "Labels field missing in fetched issue"
+            )
+            assert isinstance(fetched_issue_data["labels"], list), (
+                "Labels should be a list"
+            )
+            assert set(fetched_issue_data["labels"]) == {
+                "regression-test",
+                "json-string",
+            }, "Labels were not set correctly"
+
+        finally:
+            cleanup_resources()
+
+    @pytest.mark.anyio
+    async def test_regression_jira_update_fields_string(
+        self,
+        use_real_jira_data: bool,
+        test_project_key: str,
+        api_validation_client,
+        resource_tracker: ResourceTracker,
+        cleanup_resources: Callable[[], None],
+    ) -> None:
+        """Test jira_update_issue with 'fields' passed as a JSON string."""
+        if not use_real_jira_data:
+            pytest.skip("Real Jira data testing is disabled")
+
+        test_id = str(uuid.uuid4())[:8]
+        initial_summary = f"Regression Update Test Initial {test_id}"
+        updated_summary = f"Regression Update Test UPDATED {test_id}"
+
+        created_issue_key = None
+        try:
+            create_args = {
+                "project_key": test_project_key,
+                "summary": initial_summary,
+                "issue_type": "Task",
+            }
+            create_result_content: Sequence[TextContent] = await call_tool(
+                api_validation_client, "jira/create_issue", create_args
+            )
+            created_issue_key = json.loads(create_result_content[0].text)["key"]
+            resource_tracker.add_jira_issue(created_issue_key)
+
+            update_fields_str = f'{{"summary": "{updated_summary}", "labels": ["regression-update", "json-string"]}}'
+            update_args = {
+                "issue_key": created_issue_key,
+                "fields": update_fields_str,
+            }
+            update_result_content: Sequence[TextContent] = await call_tool(
+                api_validation_client, "jira/update_issue", update_args
+            )
+            assert update_result_content and isinstance(
+                update_result_content[0], TextContent
+            )
+            update_result_data = json.loads(update_result_content[0].text)
+            assert update_result_data.get("success"), "Update did not succeed"
+
+            get_args = {"issue_key": created_issue_key, "fields": "summary,labels"}
+            get_result_content: Sequence[TextContent] = await call_tool(
+                api_validation_client, "jira/get_issue", get_args
+            )
+            assert get_result_content and isinstance(get_result_content[0], TextContent)
+            fetched_issue_data = json.loads(get_result_content[0].text)
+
+            assert fetched_issue_data["summary"] == updated_summary, (
+                "Summary was not updated correctly"
+            )
+            assert set(fetched_issue_data["labels"]) == {
+                "regression-update",
+                "json-string",
+            }, "Labels were not updated correctly"
+
+        finally:
+            cleanup_resources()

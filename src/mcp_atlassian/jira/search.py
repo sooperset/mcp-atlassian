@@ -83,26 +83,74 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                 fields_param = fields
 
             if self.config.is_cloud:
-                response = self.jira.enhanced_jql(
+                actual_total = -1
+                try:
+                    # Call 1: Get metadata (including total) using standard search API
+                    metadata_params = {"jql": jql, "maxResults": 0}
+                    metadata_response = self.jira.get(
+                        self.jira.resource_url("search"), params=metadata_params
+                    )
+
+                    if (
+                        isinstance(metadata_response, dict)
+                        and "total" in metadata_response
+                    ):
+                        try:
+                            actual_total = int(metadata_response["total"])
+                        except (ValueError, TypeError):
+                            logger.warning(
+                                f"Could not parse 'total' from metadata response for JQL: {jql}. Received: {metadata_response.get('total')}"
+                            )
+                    else:
+                        logger.warning(
+                            f"Could not retrieve total count from metadata response for JQL: {jql}. Response type: {type(metadata_response)}"
+                        )
+                except Exception as meta_err:
+                    logger.error(
+                        f"Error fetching metadata for JQL '{jql}': {str(meta_err)}"
+                    )
+
+                # Call 2: Get the actual issues using the enhanced method
+                issues_response_list = self.jira.enhanced_jql_get_list_of_tickets(
                     jql, fields=fields_param, limit=limit, expand=expand
                 )
+
+                if not isinstance(issues_response_list, list):
+                    msg = f"Unexpected return value type from `jira.enhanced_jql_get_list_of_tickets`: {type(issues_response_list)}"
+                    logger.error(msg)
+                    raise TypeError(msg)
+
+                response_dict_for_model = {
+                    "issues": issues_response_list,
+                    "total": actual_total,
+                }
+
+                search_result = JiraSearchResult.from_api_response(
+                    response_dict_for_model,
+                    base_url=self.config.url,
+                    requested_fields=fields_param,
+                )
+
+                # Return the full search result object
+                return search_result
             else:
+                limit = min(limit, 50)
                 response = self.jira.jql(
                     jql, fields=fields_param, start=start, limit=limit, expand=expand
                 )
+                if not isinstance(response, dict):
+                    msg = f"Unexpected return value type from `jira.jql`: {type(response)}"
+                    logger.error(msg)
+                    raise TypeError(msg)
 
-            if not isinstance(response, dict):
-                msg = f"Unexpected return value type from `jira.jql`: {type(response)}"
-                logger.error(msg)
-                raise TypeError(msg)
+                # Convert the response to a search result model
+                search_result = JiraSearchResult.from_api_response(
+                    response, base_url=self.config.url, requested_fields=fields_param
+                )
 
-            # Convert the response to a search result model
-            search_result = JiraSearchResult.from_api_response(
-                response, base_url=self.config.url, requested_fields=fields_param
-            )
+                # Return the full search result object
+                return search_result
 
-            # Return the full search result object
-            return search_result
         except HTTPError as http_err:
             if http_err.response is not None and http_err.response.status_code in [
                 401,

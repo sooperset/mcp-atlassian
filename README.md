@@ -65,6 +65,12 @@ MCP Atlassian supports three authentication methods:
 
 2. Run the OAuth authorization helper:
    ```bash
+   uvx mcp-atlassian@latest --oauth-setup
+   ```
+   This will guide you through the setup process by prompting for the required values (Client ID, Client Secret, etc.).
+
+   Alternatively, you can clone the repository and run the script directly:
+   ```bash
    # Clone the repository if you haven't already
    git clone https://github.com/sooperset/mcp-atlassian.git
    cd mcp-atlassian
@@ -97,16 +103,12 @@ docker pull ghcr.io/sooperset/mcp-atlassian:latest
 MCP Atlassian is designed to be used with AI assistants through IDE integration.
 
 > [!TIP]
-> **To apply the configuration in Claude Desktop:**
->
-> **Method 1 (Recommended)**: Click hamburger menu (☰) > Settings > Developer > "Edit Config" button
->
-> **Method 2**: Locate and edit the configuration file directly:
+> **For Claude Desktop**: Locate and edit the configuration file directly:
 > - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 > - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 > - **Linux**: `~/.config/Claude/claude_desktop_config.json`
 >
-> **For Cursor**: Open Settings → Features → MCP Servers → + Add new global MCP server
+> **For Cursor**: Open Settings → MCP → + Add new global MCP server
 
 ### Configuration Methods
 
@@ -421,7 +423,6 @@ For Jira Server/DC, use:
 |`confluence_search`|`jira_get_issue`|
 |`confluence_get_page`|`jira_search`|
 |`confluence_get_page_children`|`jira_get_project_issues`|
-|`confluence_get_page_ancestors`|`jira_get_epic_issues`|
 |`confluence_get_comments`|`jira_create_issue`|
 |`confluence_create_page`|`jira_batch_create_issues`|
 |`confluence_update_page`|`jira_update_issue`|

@@ -58,24 +58,24 @@ class JiraSearchResult(ApiModel):
                         )
                     )
 
-        total = data.get("total", 0)
-        start_at = data.get("startAt", 0)
-        max_results = data.get("maxResults", 0)
+        raw_total = data.get("total")
+        raw_start_at = data.get("startAt")
+        raw_max_results = data.get("maxResults")
 
         try:
-            total = int(total) if total is not None else 0
+            total = int(raw_total) if raw_total is not None else -1
         except (ValueError, TypeError):
-            total = 0
+            total = -1
 
         try:
-            start_at = int(start_at) if start_at is not None else 0
+            start_at = int(raw_start_at) if raw_start_at is not None else -1
         except (ValueError, TypeError):
-            start_at = 0
+            start_at = -1
 
         try:
-            max_results = int(max_results) if max_results is not None else 0
+            max_results = int(raw_max_results) if raw_max_results is not None else -1
         except (ValueError, TypeError):
-            max_results = 0
+            max_results = -1
 
         return cls(
             total=total,
@@ -95,12 +95,4 @@ class JiraSearchResult(ApiModel):
         Returns:
             The validated JiraSearchResult instance
         """
-        # Ensure the total is at least as large as the number of issues
-        if self.total < len(self.issues):
-            self.total = len(self.issues)
-
-        # Ensure max_results is at least as large as the number of issues
-        if self.max_results < len(self.issues):
-            self.max_results = len(self.issues)
-
         return self
