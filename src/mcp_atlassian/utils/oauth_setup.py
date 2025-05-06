@@ -98,6 +98,10 @@ class CallbackHandler(http.server.BaseHTTPRequestHandler):
                     color: #721c24;
                     border: 1px solid #f5c6cb;
                 }}
+                .countdown {{
+                    font-weight: bold;
+                    font-size: 1.2em;
+                }}
             </style>
         </head>
         <body>
@@ -105,11 +109,32 @@ class CallbackHandler(http.server.BaseHTTPRequestHandler):
             <div class="message {"success" if status == 200 else "error"}">
                 <p>{message}</p>
             </div>
-            <p>This window will automatically close in 5 seconds...</p>
+            <p>This window will automatically close in <span class="countdown">5</span> seconds...</p>
+            <button onclick="window.close()">Close Window Now</button>
             <script>
+                // Countdown timer
+                var seconds = 5;
+                var countdown = document.querySelector('.countdown');
+                var timer = setInterval(function() {{
+                    seconds--;
+                    countdown.textContent = seconds;
+                    if (seconds <= 0) {{
+                        clearInterval(timer);
+                        // Try multiple methods to close the window
+                        window.close();
+                        // If the above doesn't work (which is often the case with modern browsers)
+                        try {{ window.open('', '_self').close(); }} catch (e) {{}}
+                    }}
+                }}, 1000);
+
+                // Force close on success after 5.5 seconds as a fallback
                 setTimeout(function() {{
-                    window.close();
-                }}, 5000);
+                    // If status is 200 (success), really try hard to close
+                    if ({status} === 200) {{
+                        window.open('about:blank', '_self');
+                        window.close();
+                    }}
+                }}, 5500);
             </script>
         </body>
         </html>
@@ -228,7 +253,7 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
     # Exchange the code for tokens
     logger.info("Exchanging authorization code for tokens...")
     if oauth_config.exchange_code_for_tokens(authorization_code):
-        logger.info("OAuth authorization successful!")
+        logger.info("✅ OAuth authorization successful!")
         logger.info(
             f"Access token: {oauth_config.access_token[:10]}...{oauth_config.access_token[-5:]}"
         )
@@ -238,12 +263,90 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
 
         if oauth_config.cloud_id:
             logger.info(f"Cloud ID: {oauth_config.cloud_id}")
-            logger.info("\nAdd the following to your .env file:")
+
+            # Print environment variable information more clearly
+            logger.info("\n=== IMPORTANT: ENVIRONMENT VARIABLES ===")
+            logger.info(
+                "Your tokens have been securely stored in your system keyring and backup file."
+            )
+            logger.info(
+                "However, to use them in your application, you need these environment variables:"
+            )
+            logger.info("")
+            logger.info(
+                "Add the following to your .env file or set as environment variables:"
+            )
+            logger.info("------------------------------------------------------------")
             logger.info(f"ATLASSIAN_OAUTH_CLIENT_ID={oauth_config.client_id}")
             logger.info(f"ATLASSIAN_OAUTH_CLIENT_SECRET={oauth_config.client_secret}")
             logger.info(f"ATLASSIAN_OAUTH_REDIRECT_URI={oauth_config.redirect_uri}")
             logger.info(f"ATLASSIAN_OAUTH_SCOPE={oauth_config.scope}")
             logger.info(f"ATLASSIAN_OAUTH_CLOUD_ID={oauth_config.cloud_id}")
+            logger.info("------------------------------------------------------------")
+            logger.info("")
+            logger.info(
+                "Note: The tokens themselves are not set as environment variables for security reasons."
+            )
+            logger.info(
+                "They are stored securely in your system keyring and will be loaded automatically."
+            )
+            logger.info(
+                f"Token storage location (backup): ~/.mcp-atlassian/oauth-{oauth_config.client_id}.json"
+            )
+
+            # Generate VS Code configuration JSON snippet
+            import json
+
+            vscode_config = {
+                "mcp": {
+                    "servers": {
+                        "atlassian": {
+                            "command": "docker",
+                            "args": [
+                                "run",
+                                "--rm",
+                                "-i",
+                                "-e",
+                                "CONFLUENCE_URL",
+                                "-e",
+                                "JIRA_URL",
+                                "-e",
+                                "ATLASSIAN_OAUTH_CLIENT_ID",
+                                "-e",
+                                "ATLASSIAN_OAUTH_CLIENT_SECRET",
+                                "-e",
+                                "ATLASSIAN_OAUTH_REDIRECT_URI",
+                                "-e",
+                                "ATLASSIAN_OAUTH_SCOPE",
+                                "-e",
+                                "ATLASSIAN_OAUTH_CLOUD_ID",
+                                "ghcr.io/sooperset/mcp-atlassian:latest",
+                            ],
+                            "env": {
+                                "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
+                                "JIRA_URL": "https://your-company.atlassian.net",
+                                "ATLASSIAN_OAUTH_CLIENT_ID": oauth_config.client_id,
+                                "ATLASSIAN_OAUTH_CLIENT_SECRET": oauth_config.client_secret,
+                                "ATLASSIAN_OAUTH_REDIRECT_URI": oauth_config.redirect_uri,
+                                "ATLASSIAN_OAUTH_SCOPE": oauth_config.scope,
+                                "ATLASSIAN_OAUTH_CLOUD_ID": oauth_config.cloud_id,
+                            },
+                        }
+                    }
+                }
+            }
+
+            # Pretty print the VS Code configuration JSON
+            vscode_json = json.dumps(vscode_config, indent=4)
+
+            logger.info("\n=== VS CODE CONFIGURATION ===")
+            logger.info("Add the following to your VS Code settings.json file:")
+            logger.info("------------------------------------------------------------")
+            logger.info(vscode_json)
+            logger.info("------------------------------------------------------------")
+            logger.info(
+                "\nNote: If you already have an 'mcp' configuration in settings.json, merge this with your existing configuration."
+            )
         else:
             logger.error("Failed to obtain cloud ID!")
 
@@ -304,7 +407,7 @@ def run_oauth_setup() -> int:
 
     default_scope = os.getenv(
         "ATLASSIAN_OAUTH_SCOPE",
-        "read:jira-work write:jira-work read:confluence-space.summary",
+        "read:jira-work write:jira-work read:confluence-space.summary offline_access",
     )
     scope = (
         _prompt_for_input("OAuth Scopes (space-separated)", "ATLASSIAN_OAUTH_SCOPE")

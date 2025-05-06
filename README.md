@@ -74,8 +74,11 @@ MCP Atlassian supports three authentication methods:
      --client-id YOUR_CLIENT_ID \
      --client-secret YOUR_CLIENT_SECRET \
      --redirect-uri "http://localhost:8080/callback" \
-     --scope "read:jira-work write:jira-work read:confluence-space.summary write:confluence-content"
+     --scope "read:jira-work write:jira-work read:confluence-space.summary write:confluence-content offline_access"
    ```
+
+   > [!IMPORTANT]
+   > The `offline_access` scope is required for refresh tokens to work properly. Without this scope, the OAuth setup will fail or tokens will expire quickly.
 
 3. Follow the browser prompt to authorize the application
 4. After successful authorization, add the displayed environment variables to your .env file
@@ -247,7 +250,7 @@ For Atlassian Cloud with OAuth 2.0:
         "ATLASSIAN_OAUTH_CLIENT_ID": "your_client_id",
         "ATLASSIAN_OAUTH_CLIENT_SECRET": "your_client_secret",
         "ATLASSIAN_OAUTH_REDIRECT_URI": "http://localhost:8080/callback",
-        "ATLASSIAN_OAUTH_SCOPE": "read:jira-work write:jira-work read:confluence-space.summary write:confluence-content",
+        "ATLASSIAN_OAUTH_SCOPE": "read:jira-work write:jira-work read:confluence-space.summary write:confluence-content offline_access",
         "ATLASSIAN_OAUTH_CLOUD_ID": "your_cloud_id"
       }
     }

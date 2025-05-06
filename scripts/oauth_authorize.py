@@ -11,7 +11,10 @@ This script helps with the OAuth 2.0 (3LO) authorization flow for Atlassian Clou
 Usage:
     python oauth_authorize.py --client-id YOUR_CLIENT_ID --client-secret YOUR_CLIENT_SECRET
                              --redirect-uri http://localhost:8080/callback
-                             --scope "read:jira-work write:jira-work read:confluence-space.summary"
+                             --scope "read:jira-work write:jira-work read:confluence-space.summary offline_access"
+
+IMPORTANT: The 'offline_access' scope is required for refresh tokens to work properly.
+Without this scope, tokens will expire quickly and authentication will fail.
 
 Environment variables can also be used:
 - ATLASSIAN_OAUTH_CLIENT_ID
@@ -299,6 +302,17 @@ def main() -> int:
         logger.error(f"Missing required arguments: {', '.join(missing)}")
         parser.print_help()
         return 1
+
+    # Check for offline_access scope
+    if args.scope and "offline_access" not in args.scope.split():
+        logger.warning("\n⚠️ WARNING: The 'offline_access' scope is missing!")
+        logger.warning(
+            "Without this scope, refresh tokens will not be issued and authentication will fail when tokens expire."
+        )
+        logger.warning("Consider adding 'offline_access' to your scope string.")
+        proceed = input("Do you want to proceed anyway? (y/n): ")
+        if proceed.lower() != "y":
+            return 1
 
     success = run_oauth_flow(args)
     return 0 if success else 1

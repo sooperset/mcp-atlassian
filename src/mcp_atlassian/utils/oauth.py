@@ -104,10 +104,32 @@ class OAuthConfig:
 
             logger.debug("Exchanging code for tokens...")
             response = requests.post(TOKEN_URL, data=payload)
+
+            # Log more details about the response
+            if not response.ok:
+                logger.error(
+                    f"Token exchange failed with status {response.status_code}: {response.text}"
+                )
+                return False
+
             response.raise_for_status()
 
             # Parse the response
             token_data = response.json()
+
+            # Check if required tokens are present
+            if "access_token" not in token_data:
+                logger.error("Access token not found in response")
+                logger.debug(f"Response keys: {list(token_data.keys())}")
+                return False
+
+            if "refresh_token" not in token_data:
+                logger.error(
+                    "Refresh token not found in response. Make sure 'offline_access' scope is included."
+                )
+                logger.debug(f"Response keys: {list(token_data.keys())}")
+                return False
+
             self.access_token = token_data["access_token"]
             self.refresh_token = token_data["refresh_token"]
             self.expires_at = time.time() + token_data["expires_in"]
@@ -117,6 +139,15 @@ class OAuthConfig:
 
             # Save the tokens
             self._save_tokens()
+
+            # Log success message with token details
+            logger.info("✅ OAuth token exchange successful!")
+            logger.info(
+                f"Access token received (expires in {token_data['expires_in']} seconds)"
+            )
+            logger.info(
+                f"Refresh token received: {self.refresh_token[:3]}...{self.refresh_token[-3:] if self.refresh_token else ''}"
+            )
 
             return True
         except Exception as e:
