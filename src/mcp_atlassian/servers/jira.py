@@ -27,8 +27,9 @@ async def get_issue(
         str | None,
         Field(
             description=(
-                "Fields to return. Can be a comma-separated list (e.g., 'summary,status,customfield_10010'), "
-                "'*all' for all fields (including custom fields), or omitted for essential fields only."
+                "Comma-separated list of fields to return (e.g., 'summary,status,customfield_10010'). "
+                "You may also provide a single field as a string (e.g., 'duedate'). "
+                "Use '*all' for all fields (including custom fields), or omit for essential fields only."
             ),
             default=",".join(DEFAULT_READ_JIRA_FIELDS),
         ),
@@ -72,7 +73,7 @@ async def get_issue(
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        fields: Fields to return.
+        fields: Comma-separated list of fields to return (e.g., 'summary,status,customfield_10010'), a single field as a string (e.g., 'duedate'), '*all' for all fields, or omitted for essentials.
         expand: Optional fields to expand.
         comment_limit: Maximum number of comments.
         properties: Issue properties to return.
@@ -80,6 +81,9 @@ async def get_issue(
 
     Returns:
         JSON string representing the Jira issue object.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
     """
     lifespan_ctx = ctx.request_context.lifespan_context
     if not lifespan_ctx or not lifespan_ctx.jira:
