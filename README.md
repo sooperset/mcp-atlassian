@@ -29,12 +29,12 @@ https://github.com/user-attachments/assets/7fe9c488-ad0c-4876-9b54-120b666bb785
 
 ### Compatibility
 
-|Product|Deployment Type|Support Status|
-|---|---|---|
-|**Confluence**|Cloud|✅ Fully supported|
-|**Confluence**|Server/Data Center|✅ Supported (version 6.0+)|
-|**Jira**|Cloud|✅ Fully supported|
-|**Jira**|Server/Data Center|✅ Supported (version 8.14+)|
+| Product        | Deployment Type    | Support Status              |
+|----------------|--------------------|-----------------------------|
+| **Confluence** | Cloud              | ✅ Fully supported           |
+| **Confluence** | Server/Data Center | ✅ Supported (version 6.0+)  |
+| **Jira**       | Cloud              | ✅ Fully supported           |
+| **Jira**       | Server/Data Center | ✅ Supported (version 8.14+) |
 
 ## Quick Start Guide
 
@@ -437,13 +437,6 @@ For Jira Server/DC, use:
 
 ### Key Tools
 
-#### Confluence Tools
-
-- `confluence_search`: Search Confluence content using CQL
-- `confluence_get_page`: Get content of a specific page
-- `confluence_create_page`: Create a new page
-- `confluence_update_page`: Update an existing page
-
 #### Jira Tools
 
 - `jira_get_issue`: Get details of a specific issue
@@ -453,36 +446,44 @@ For Jira Server/DC, use:
 - `jira_transition_issue`: Transition an issue to a new status
 - `jira_add_comment`: Add a comment to an issue
 
+#### Confluence Tools
+
+- `confluence_search`: Search Confluence content using CQL
+- `confluence_get_page`: Get content of a specific page
+- `confluence_create_page`: Create a new page
+- `confluence_update_page`: Update an existing page
+
 <details> <summary>View All Tools</summary>
 
-*Tools marked with * are only available on Jira Cloud.*
+| Operation | Jira Tools                    | Confluence Tools               |
+|-----------|-------------------------------|--------------------------------|
+| **Read**  | `jira_search`                 | `confluence_search`            |
+|           | `jira_get_issue`              | `confluence_get_page`          |
+|           | `jira_get_project_issues`     | `confluence_get_page_children` |
+|           | `jira_get_worklog`            | `confluence_get_comments`      |
+|           | `jira_get_transitions`        | `confluence_get_labels`        |
+|           | `jira_get_agile_boards`       |                                |
+|           | `jira_get_board_issues`       |                                |
+|           | `jira_get_sprints_from_board` |                                |
+|           | `jira_get_sprint_issues`      |                                |
+|           | `jira_get_issue_link_types`   |                                |
+|           | `jira_batch_get_changelogs`*  |                                |
+|           | `jira_get_user_profile`       |                                |
+|           | `jira_download_attachments`   |                                |
+| **Write** | `jira_create_issue`           | `confluence_create_page`       |
+|           | `jira_update_issue`           | `confluence_update_page`       |
+|           | `jira_delete_issue`           | `confluence_delete_page`       |
+|           | `jira_batch_create_issues`    | `confluence_add_label`         |
+|           | `jira_add_comment`            |                                |
+|           | `jira_transition_issue`       |                                |
+|           | `jira_add_worklog`            |                                |
+|           | `jira_link_to_epic`           |                                |
+|           | `jira_create_sprint`          |                                |
+|           | `jira_update_sprint`          |                                |
+|           | `jira_create_issue_link`      |                                |
+|           | `jira_remove_issue_link`      |                                |
 
-|Confluence Tools|Jira Tools|
-|---|---|
-|`confluence_search`|`jira_get_issue`|
-|`confluence_get_page`|`jira_search`|
-|`confluence_get_page_children`|`jira_get_project_issues`|
-|`confluence_get_comments`|`jira_create_issue`|
-|`confluence_create_page`|`jira_batch_create_issues`|
-|`confluence_update_page`|`jira_update_issue`|
-|`confluence_delete_page`|`jira_delete_issue`|
-|`confluence_get_labels`|`jira_get_transitions`|
-|`confluence_add_label`|`jira_transition_issue`|
-||`jira_add_comment`|
-||`jira_add_worklog`|
-||`jira_get_worklog`|
-||`jira_batch_get_changelogs`*|
-||`jira_download_attachments`|
-||`jira_link_to_epic`|
-||`jira_get_agile_boards`|
-||`jira_get_board_issues`|
-||`jira_get_sprints_from_board`|
-||`jira_get_sprint_issues`|
-||`jira_create_sprint`|
-||`jira_update_sprint`|
-||`jira_get_issue_link_types`|
-||`jira_create_issue_link`|
-||`jira_remove_issue_link`|
+*Tool only available on Jira Cloud
 
 </details>
 
