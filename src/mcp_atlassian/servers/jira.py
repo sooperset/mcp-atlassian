@@ -617,7 +617,7 @@ async def create_issue(
     assignee: Annotated[
         str | None,
         Field(
-            description="Assignee of the ticket (accountID, full name or e-mail)",
+            description="Assignee's user identifier (string): Email, display name, or account ID (e.g., 'user@example.com', 'John Doe', 'accountid:...')",
             default=None,
         ),
     ] = None,
@@ -653,7 +653,7 @@ async def create_issue(
         project_key: The JIRA project key.
         summary: Summary/title of the issue.
         issue_type: Issue type (e.g., 'Task', 'Bug', 'Story', 'Epic', 'Subtask').
-        assignee: Assignee of the ticket (accountID, full name or e-mail).
+        assignee: Assignee's user identifier (string): Email, display name, or account ID (e.g., 'user@example.com', 'John Doe', 'accountid:...').
         description: Issue description.
         components: Comma-separated list of component names.
         additional_fields: Dictionary of additional fields.
@@ -860,9 +860,8 @@ async def update_issue(
         dict[str, Any],
         Field(
             description=(
-                "A valid dictionary of fields to update. "
-                "Example: {'summary': 'New title', 'description': 'Updated description', "
-                "'priority': {'name': 'High'}, 'assignee': 'john.doe'}"
+                "Dictionary of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
+                "Example: `{'assignee': 'user@example.com', 'summary': 'New Summary'}`"
             )
         ),
     ],
