@@ -8,6 +8,9 @@ from typing import TYPE_CHECKING, TypeVar
 import requests
 from requests.exceptions import HTTPError
 
+from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
+from mcp_atlassian.models.jira.common import JiraUser
+
 from .client import JiraClient
 
 # Forward reference for JiraUser
@@ -237,6 +240,95 @@ class UsersMixin(JiraClient):
             logger.info(f"Error looking up user by permissions: {str(e)}")
             return None
 
+    def _determine_user_api_params(self, identifier: str) -> dict[str, str]:
+        """
+        Determines the correct API parameter and value for the jira.user() call based on the identifier and instance type.
+
+        Args:
+            identifier: User identifier (accountId, username, key, or email).
+
+        Returns:
+            A dictionary containing the single keyword argument for self.jira.user().
+
+        Raises:
+            ValueError: If a usable parameter cannot be determined.
+        """
+        api_kwargs: dict[str, str] = {}
+
+        # Cloud: identifier is accountId
+        if self.config.is_cloud and (
+            re.match(r"^[0-9a-f]{24}$", identifier) or re.match(r"^\d+:\w+", identifier)
+        ):
+            api_kwargs["account_id"] = identifier
+            logger.debug(f"Determined param: account_id='{identifier}' (Cloud)")
+        # Server/DC: username, key, or email
+        elif not self.config.is_cloud:
+            if "@" in identifier:
+                api_kwargs["username"] = identifier
+                logger.debug(
+                    f"Determined param: username='{identifier}' (Server/DC email - might not work)"
+                )
+            elif "-" in identifier and any(
+                c.isdigit() for c in identifier
+            ):  # Basic check for key format
+                api_kwargs["key"] = identifier
+                logger.debug(f"Determined param: key='{identifier}' (Server/DC)")
+            else:  # Assume username
+                api_kwargs["username"] = identifier
+                logger.debug(f"Determined param: username='{identifier}' (Server/DC)")
+        # Cloud: identifier is email
+        elif self.config.is_cloud and "@" in identifier:
+            try:
+                resolved_id = self._lookup_user_directly(identifier)
+                if resolved_id and (
+                    re.match(r"^[0-9a-f]{24}$", resolved_id)
+                    or re.match(r"^\d+:\w+", resolved_id)
+                ):
+                    api_kwargs["account_id"] = resolved_id
+                    logger.debug(
+                        f"Resolved email '{identifier}' to accountId '{resolved_id}'. Determined param: account_id (Cloud)"
+                    )
+                else:
+                    raise ValueError(
+                        f"Could not resolve email '{identifier}' to a valid account ID for Jira Cloud."
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to resolve email '{identifier}': {e}")
+                raise ValueError(
+                    f"Could not resolve email '{identifier}' to a valid account ID for Jira Cloud."
+                ) from e
+        # Cloud: identifier is not accountId or email, try to resolve
+        else:  # self.config.is_cloud is True and identifier is not accountId/email
+            logger.debug(
+                f"Identifier '{identifier}' on Cloud is not an account ID or email. Attempting resolution."
+            )
+            try:
+                account_id_resolved = self._get_account_id(
+                    identifier
+                )  # This might call user_find_by_user_string
+                api_kwargs["account_id"] = account_id_resolved
+                logger.debug(
+                    f"Resolved identifier '{identifier}' to accountId '{account_id_resolved}'. Determined param: account_id (Cloud)"
+                )
+            except ValueError as e:
+                logger.error(
+                    f"Could not resolve identifier '{identifier}' to a usable format (accountId/username/key)."
+                )
+                raise ValueError(
+                    f"Could not determine how to look up user '{identifier}'."
+                ) from e
+
+        if not api_kwargs:
+            # This should theoretically not be reached if the logic above is exhaustive
+            logger.error(
+                f"Logic failed to determine API parameters for identifier '{identifier}'"
+            )
+            raise ValueError(
+                f"Could not determine the correct parameter to use for identifier '{identifier}'."
+            )
+
+        return api_kwargs
+
     def get_user_profile_by_identifier(self, identifier: str) -> "JiraUser":
         """
         Retrieve Jira user profile information by identifier.
@@ -248,65 +340,26 @@ class UsersMixin(JiraClient):
             JiraUser model with profile information.
 
         Raises:
-            ValueError: If the user cannot be found.
+            ValueError: If the user cannot be found or identifier cannot be resolved.
             MCPAtlassianAuthenticationError: If authentication fails.
             Exception: For other API errors.
         """
-        params = {}
-        # Determine the correct parameter based on identifier format and instance type
-        if self.config.is_cloud and (
-            re.match(r"^[0-9a-f]{24}$", identifier) or re.match(r"^\d+:\w+", identifier)
-        ):
-            params["accountId"] = identifier
-            logger.debug(f"Treating '{identifier}' as accountId (Cloud)")
-        elif not self.config.is_cloud:
-            params["username"] = identifier
-            logger.debug(f"Treating '{identifier}' as username (Server/DC)")
-        elif (
-            self.config.is_cloud
-            and not re.match(r"^[0-9a-f]{24}$", identifier)
-            and not re.match(r"^\d+:\w+", identifier)
-        ):
-            if "@" in identifier:
-                try:  # Try resolving email to accountId first for Cloud
-                    resolved_id = self._lookup_user_directly(identifier)
-                    if resolved_id and (
-                        re.match(r"^[0-9a-f]{24}$", resolved_id)
-                        or re.match(r"^\d+:\w+", resolved_id)
-                    ):
-                        params["accountId"] = resolved_id
-                        logger.debug(
-                            f"Resolved email '{identifier}' to accountId '{resolved_id}' (Cloud)"
-                        )
-                    else:
-                        params["query"] = identifier
-                        logger.debug(
-                            f"Searching for Cloud user profile by query: {identifier}"
-                        )
-                except Exception as e:
-                    logger.warning(f"Failed to resolve email '{identifier}': {e}")
-                    params["query"] = identifier
-            else:
-                params["query"] = identifier
-                logger.debug(f"Searching for Cloud user profile by query: {identifier}")
-        else:
-            params["query"] = identifier
-            logger.warning(f"Unexpected identifier format '{identifier}', using query.")
+        # Get the correct API parameters using the helper method
+        api_kwargs = self._determine_user_api_params(identifier)
 
         try:
-            user_data = self.jira.user(params=params)  # type: ignore
+            logger.debug(f"Calling self.jira.user() with parameters: {api_kwargs}")
+            # Call self.jira.user() with the single determined keyword argument
+            user_data = self.jira.user(**api_kwargs)
             if not isinstance(user_data, dict):
                 logger.error(
                     f"User lookup for '{identifier}' returned unexpected type: {type(user_data)}. Data: {user_data}"
                 )
                 raise ValueError(f"User '{identifier}' not found or lookup failed.")
-
-            from mcp_atlassian.models.jira.common import JiraUser
-
             return JiraUser.from_api_response(user_data)
-
         except HTTPError as http_err:
             if http_err.response is not None:
+                response_text = http_err.response.text[:200]  # Log snippet of response
                 status_code = http_err.response.status_code
                 if status_code == 404:
                     raise ValueError(f"User '{identifier}' not found.") from http_err
@@ -314,27 +367,28 @@ class UsersMixin(JiraClient):
                     logger.error(
                         f"Authentication/Permission error for '{identifier}': {status_code}"
                     )
-                    from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
-
                     raise MCPAtlassianAuthenticationError(
                         f"Permission denied accessing user '{identifier}'."
                     ) from http_err
                 else:
                     logger.error(
-                        f"HTTP error {status_code} for '{identifier}': {http_err}"
+                        f"HTTP error {status_code} for '{identifier}': {http_err}. Response: {response_text}"
                     )
                     raise Exception(
                         f"API error getting user profile for '{identifier}': {http_err}"
                     ) from http_err
             else:
                 logger.error(
-                    f"Network or unknown HTTP error for '{identifier}': {http_err}"
+                    f"Network or unknown HTTP error (no response object) for '{identifier}': {http_err}"
                 )
                 raise Exception(
                     f"Network error getting user profile for '{identifier}': {http_err}"
                 ) from http_err
         except Exception as e:
-            logger.error(f"Unexpected error for '{identifier}': {str(e)}")
+            # Log with traceback for unexpected errors
+            logger.exception(
+                f"Unexpected error getting/processing user profile for '{identifier}':"
+            )
             raise Exception(
                 f"Error processing user profile for '{identifier}': {str(e)}"
             ) from e
