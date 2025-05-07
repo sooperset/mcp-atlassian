@@ -194,6 +194,30 @@ def mock_jira_fetcher():
         ]
     }
 
+    # Configure get_user_profile_by_identifier for the new tool
+    from src.mcp_atlassian.models.jira.common import JiraUser
+
+    # Create a mock JiraUser for the test response
+    mock_user = MagicMock(spec=JiraUser)
+    mock_user.to_simplified_dict.return_value = {
+        "display_name": "Test User (test.profile@example.com)",
+        "name": "Test User (test.profile@example.com)",  # For backward compatibility
+        "email": "test.profile@example.com",
+        "avatar_url": "https://test.atlassian.net/avatar/test.profile@example.com",
+    }
+
+    # Create a mock for the get_user_profile_by_identifier method
+    mock_get_user_profile = MagicMock()
+
+    # Configure it to return the mock_user for valid inputs and raise ValueError for "nonexistent@example.com"
+    def side_effect_func(identifier):
+        if identifier == "nonexistent@example.com":
+            raise ValueError(f"User '{identifier}' not found.")
+        return mock_user
+
+    mock_get_user_profile.side_effect = side_effect_func
+    mock_fetcher.get_user_profile_by_identifier = mock_get_user_profile
+
     return mock_fetcher
 
 
@@ -234,6 +258,7 @@ def test_jira_mcp(mock_jira_fetcher):
         get_sprint_issues,
         get_sprints_from_board,
         get_transitions,
+        get_user_profile,  # Add import for our new tool
         get_worklog,
         link_to_epic,
         remove_issue_link,
@@ -257,6 +282,7 @@ def test_jira_mcp(mock_jira_fetcher):
     test_mcp.tool()(get_sprints_from_board)
     test_mcp.tool()(get_sprint_issues)
     test_mcp.tool()(get_link_types)
+    test_mcp.tool()(get_user_profile)  # Register our new tool
     # Write tools
     test_mcp.tool()(create_issue)
     test_mcp.tool()(batch_create_issues)
@@ -474,3 +500,47 @@ async def test_batch_create_issues_invalid_json(jira_client):
 
     # Check error message comes from Pydantic/FastMCP validation
     assert "invalid json in issues" in str(excinfo.value).lower()
+
+
+@pytest.mark.anyio
+async def test_get_user_profile_tool_success(jira_client, mock_jira_fetcher):
+    """Test the get_user_profile tool successfully retrieves user info."""
+    # Call the tool
+    response = await jira_client.call_tool(
+        "get_user_profile", {"user_identifier": "test.profile@example.com"}
+    )
+
+    # Verify the fetcher was called
+    mock_jira_fetcher.get_user_profile_by_identifier.assert_called_once_with(
+        "test.profile@example.com"
+    )
+
+    # Verify the response
+    assert len(response) == 1
+    result_data = json.loads(response[0].text)
+    assert result_data["success"] is True
+    assert "user" in result_data
+    user_info = result_data["user"]
+    assert user_info["display_name"] == "Test User (test.profile@example.com)"
+    assert user_info["email"] == "test.profile@example.com"
+    assert (
+        user_info["avatar_url"]
+        == "https://test.atlassian.net/avatar/test.profile@example.com"
+    )
+
+
+@pytest.mark.anyio
+async def test_get_user_profile_tool_not_found(jira_client, mock_jira_fetcher):
+    """Test the get_user_profile tool handles 'user not found' errors."""
+    # Call the tool with a non-existent user
+    response = await jira_client.call_tool(
+        "get_user_profile", {"user_identifier": "nonexistent@example.com"}
+    )
+
+    # Verify the response contains an error
+    assert len(response) == 1
+    result_data = json.loads(response[0].text)
+    assert result_data["success"] is False
+    assert "error" in result_data
+    assert "not found" in result_data["error"]
+    assert result_data["user_identifier"] == "nonexistent@example.com"

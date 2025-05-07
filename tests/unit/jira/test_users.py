@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
+from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.jira.users import UsersMixin
 
 
@@ -516,3 +517,158 @@ class TestUsersMixin:
                 "query": "username",
                 "permissions": "BROWSE",
             }
+
+    def test_get_user_profile_by_identifier_cloud_account_id(self, users_mixin):
+        """Test get_user_profile_by_identifier with Cloud and accountId."""
+        # Mock Cloud config
+        users_mixin.config = MagicMock(spec=JiraConfig)
+        users_mixin.config.is_cloud = True
+
+        # Mock JiraUser import with correct path
+        with patch("mcp_atlassian.models.jira.common.JiraUser") as mock_jira_user:
+            mock_user = mock_jira_user.from_api_response.return_value
+            mock_response_data = {
+                "accountId": "5b10ac8d82e05b22cc7d4ef5",
+                "displayName": "Cloud User",
+                "emailAddress": "cloud@example.com",
+                "active": True,
+            }
+            users_mixin.jira.user = MagicMock(return_value=mock_response_data)
+
+            # Define the account ID to test
+            test_account_id = "5b10ac8d82e05b22cc7d4ef5"  # Example valid format
+
+            # Call method
+            user = users_mixin.get_user_profile_by_identifier(test_account_id)
+
+            # Verify result
+            assert mock_user is not None  # Ensure mock_user was created
+            assert user == mock_user
+            # Verify API call params
+            users_mixin.jira.user.assert_called_once_with(
+                params={"accountId": test_account_id}
+            )
+
+    def test_get_user_profile_by_identifier_server_username(self, users_mixin):
+        """Test get_user_profile_by_identifier with Server/DC and username."""
+        # Mock Server config
+        users_mixin.config = MagicMock(spec=JiraConfig)
+        users_mixin.config.is_cloud = False
+
+        # Mock JiraUser import with correct path
+        with patch("mcp_atlassian.models.jira.common.JiraUser") as mock_jira_user:
+            mock_user = mock_jira_user.from_api_response.return_value
+            mock_response_data = {
+                "name": "server_user",
+                "displayName": "Server User",
+                "emailAddress": "server@example.com",
+                "active": True,
+            }
+            users_mixin.jira.user = MagicMock(return_value=mock_response_data)
+
+            user = users_mixin.get_user_profile_by_identifier("server_user")
+
+            # Verify result
+            assert mock_user is not None
+            assert user == mock_user
+            # Verify API call params
+            users_mixin.jira.user.assert_called_once_with(
+                params={"username": "server_user"}
+            )
+
+    def test_get_user_profile_by_identifier_cloud_email(self, users_mixin):
+        """Test get_user_profile_by_identifier with Cloud and email."""
+        # Mock Cloud config
+        users_mixin.config = MagicMock(spec=JiraConfig)
+        users_mixin.config.is_cloud = True
+
+        # Mock email resolution via _lookup_user_directly
+        users_mixin._lookup_user_directly = MagicMock(
+            return_value="5b10ac8d82e05b22cc7d4ef5"  # Use a valid account ID format
+        )
+
+        # Mock JiraUser import with correct path
+        with patch("mcp_atlassian.models.jira.common.JiraUser") as mock_jira_user:
+            mock_user = mock_jira_user.from_api_response.return_value
+            mock_response_data = {
+                "accountId": "5b10ac8d82e05b22cc7d4ef5",
+                "displayName": "Email User",
+                "emailAddress": "email@example.com",
+                "active": True,
+            }
+            users_mixin.jira.user = MagicMock(return_value=mock_response_data)
+
+            user = users_mixin.get_user_profile_by_identifier("email@example.com")
+
+            # Verify result
+            assert mock_user is not None
+            assert user == mock_user
+            # Verify API call params - should use resolved accountId
+            users_mixin.jira.user.assert_called_once_with(
+                params={"accountId": "5b10ac8d82e05b22cc7d4ef5"}
+            )
+            # Verify email resolution was attempted
+            users_mixin._lookup_user_directly.assert_called_once_with(
+                "email@example.com"
+            )
+
+    def test_get_user_profile_by_identifier_not_found(self, users_mixin):
+        """Test get_user_profile_by_identifier when user is not found (404)."""
+        # Mock config
+        users_mixin.config = MagicMock(spec=JiraConfig)
+        users_mixin.config.is_cloud = True
+
+        # Mock API to raise 404
+        mock_response = MagicMock(spec=requests.Response)
+        mock_response.status_code = 404
+
+        # Create an HTTPError with the mocked response
+        http_error = requests.exceptions.HTTPError(response=mock_response)
+        users_mixin.jira.user = MagicMock(side_effect=http_error)
+
+        # Call method and assert ValueError
+        with pytest.raises(ValueError, match="User 'nonexistent' not found."):
+            users_mixin.get_user_profile_by_identifier("nonexistent")
+
+    def test_get_user_profile_by_identifier_permission_error(self, users_mixin):
+        """Test get_user_profile_by_identifier with a permission error (403)."""
+        # Mock config
+        users_mixin.config = MagicMock(spec=JiraConfig)
+        users_mixin.config.is_cloud = True
+
+        # Mock API to raise 403
+        mock_response = MagicMock(spec=requests.Response)
+        mock_response.status_code = 403
+
+        # Create an HTTPError with the mocked response
+        http_error = requests.exceptions.HTTPError(response=mock_response)
+        users_mixin.jira.user = MagicMock(side_effect=http_error)
+
+        # Mock MCPAtlassianAuthenticationError import with correct path
+        with patch(
+            "mcp_atlassian.exceptions.MCPAtlassianAuthenticationError"
+        ) as mock_auth_error:
+            # Call method and assert it raises the auth error
+            with pytest.raises(Exception):
+                users_mixin.get_user_profile_by_identifier("restricted_user")
+
+            # Verify MCPAtlassianAuthenticationError was raised with correct message
+            mock_auth_error.assert_called_once()
+            assert "Permission denied accessing user 'restricted_user'" in str(
+                mock_auth_error.call_args[0][0]
+            )
+
+    def test_get_user_profile_by_identifier_api_error(self, users_mixin):
+        """Test get_user_profile_by_identifier with a generic API error."""
+        # Mock config
+        users_mixin.config = MagicMock(spec=JiraConfig)
+        users_mixin.config.is_cloud = True
+
+        # Mock API to raise a generic exception
+        users_mixin.jira.user = MagicMock(side_effect=Exception("Network Timeout"))
+
+        # Call method and assert generic Exception
+        with pytest.raises(
+            Exception, match="Error processing user profile for 'error_user'"
+        ):
+            users_mixin.get_user_profile_by_identifier("error_user")
