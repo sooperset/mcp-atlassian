@@ -298,40 +298,40 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
             import json
 
             vscode_config = {
-                "mcp": {
-                    "servers": {
-                        "atlassian": {
-                            "command": "docker",
-                            "args": [
-                                "run",
-                                "--rm",
-                                "-i",
-                                "-e",
-                                "CONFLUENCE_URL",
-                                "-e",
-                                "JIRA_URL",
-                                "-e",
-                                "ATLASSIAN_OAUTH_CLIENT_ID",
-                                "-e",
-                                "ATLASSIAN_OAUTH_CLIENT_SECRET",
-                                "-e",
-                                "ATLASSIAN_OAUTH_REDIRECT_URI",
-                                "-e",
-                                "ATLASSIAN_OAUTH_SCOPE",
-                                "-e",
-                                "ATLASSIAN_OAUTH_CLOUD_ID",
-                                "ghcr.io/sooperset/mcp-atlassian:latest",
-                            ],
-                            "env": {
-                                "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
-                                "JIRA_URL": "https://your-company.atlassian.net",
-                                "ATLASSIAN_OAUTH_CLIENT_ID": oauth_config.client_id,
-                                "ATLASSIAN_OAUTH_CLIENT_SECRET": oauth_config.client_secret,
-                                "ATLASSIAN_OAUTH_REDIRECT_URI": oauth_config.redirect_uri,
-                                "ATLASSIAN_OAUTH_SCOPE": oauth_config.scope,
-                                "ATLASSIAN_OAUTH_CLOUD_ID": oauth_config.cloud_id,
-                            },
-                        }
+                "mcpServers": {
+                    "mcp-atlassian": {
+                        "command": "docker",
+                        "args": [
+                            "run",
+                            "--rm",
+                            "-i",
+                            "-p",
+                            "8080:8080",
+                            "-e",
+                            "CONFLUENCE_URL",
+                            "-e",
+                            "JIRA_URL",
+                            "-e",
+                            "ATLASSIAN_OAUTH_CLIENT_ID",
+                            "-e",
+                            "ATLASSIAN_OAUTH_CLIENT_SECRET",
+                            "-e",
+                            "ATLASSIAN_OAUTH_REDIRECT_URI",
+                            "-e",
+                            "ATLASSIAN_OAUTH_SCOPE",
+                            "-e",
+                            "ATLASSIAN_OAUTH_CLOUD_ID",
+                            "ghcr.io/sooperset/mcp-atlassian:latest",
+                        ],
+                        "env": {
+                            "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
+                            "JIRA_URL": "https://your-company.atlassian.net",
+                            "ATLASSIAN_OAUTH_CLIENT_ID": oauth_config.client_id,
+                            "ATLASSIAN_OAUTH_CLIENT_SECRET": oauth_config.client_secret,
+                            "ATLASSIAN_OAUTH_REDIRECT_URI": oauth_config.redirect_uri,
+                            "ATLASSIAN_OAUTH_SCOPE": oauth_config.scope,
+                            "ATLASSIAN_OAUTH_CLOUD_ID": oauth_config.cloud_id,
+                        },
                     }
                 }
             }
