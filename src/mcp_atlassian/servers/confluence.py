@@ -55,14 +55,15 @@ async def search(
         ),
     ] = 10,
     spaces_filter: Annotated[
-        str | None,
+        str,  # TODO: Revert type hint to once Cursor IDE handles optional parameters with Union types correctly.
         Field(
             description=(
-                "Comma-separated list of space keys to filter results by. "
+                "(Optional) Comma-separated list of space keys to filter results by. "
                 "Overrides the environment variable CONFLUENCE_SPACES_FILTER if provided."
             ),
+            default="",
         ),
-    ] = None,
+    ] = "",
 ) -> str:
     """Search Confluence content using simple terms or CQL.
 
@@ -80,6 +81,9 @@ async def search(
         raise ValueError("Confluence client is not configured or available.")
     confluence = lifespan_ctx.confluence
 
+    # TODO: revert this once Cursor IDE handles optional parameters with Union types correctly.
+    actual_spaces_filter = spaces_filter if spaces_filter else None
+
     # Check if the query is a simple search term or already a CQL query
     if query and not any(
         x in query for x in ["=", "~", ">", "<", " AND ", " OR ", "currentUser()"]
@@ -90,14 +94,20 @@ async def search(
             logger.info(
                 f"Converting simple search term to CQL using siteSearch: {query}"
             )
-            pages = confluence.search(query, limit=limit, spaces_filter=spaces_filter)
+            pages = confluence.search(
+                query, limit=limit, spaces_filter=actual_spaces_filter
+            )
         except Exception as e:
             logger.warning(f"siteSearch failed ('{e}'), falling back to text search.")
             query = f'text ~ "{original_query}"'
             logger.info(f"Falling back to text search with CQL: {query}")
-            pages = confluence.search(query, limit=limit, spaces_filter=spaces_filter)
+            pages = confluence.search(
+                query, limit=limit, spaces_filter=actual_spaces_filter
+            )
     else:
-        pages = confluence.search(query, limit=limit, spaces_filter=spaces_filter)
+        pages = confluence.search(
+            query, limit=limit, spaces_filter=actual_spaces_filter
+        )
 
     search_results = [page.to_simplified_dict() for page in pages]
     return json.dumps(search_results, indent=2, ensure_ascii=False)
@@ -368,11 +378,12 @@ async def create_page(
         ),
     ],
     parent_id: Annotated[
-        str | None,
+        str,  # TODO: Revert type hint to once Cursor IDE handles optional parameters with Union types correctly.
         Field(
-            description="Optional parent page ID. If provided, this page will be created as a child of the specified page"
+            description="Optional parent page ID. If provided, this page will be created as a child of the specified page",
+            default="",
         ),
-    ] = None,
+    ] = "",
 ) -> str:
     """Create a new Confluence page.
 
@@ -397,11 +408,14 @@ async def create_page(
         raise ValueError("Confluence client is not configured or available.")
     confluence = lifespan_ctx.confluence
 
+    # TODO: revert this once Cursor IDE handles optional parameters with Union types correctly.
+    actual_parent_id = parent_id if parent_id else None
+
     page = confluence.create_page(
         space_key=space_key,
         title=title,
         body=content,
-        parent_id=parent_id,
+        parent_id=actual_parent_id,
         is_markdown=True,
     )
     result = page.to_simplified_dict()
@@ -427,8 +441,9 @@ async def update_page(
         str, Field(description="Optional comment for this version", default="")
     ] = "",
     parent_id: Annotated[
-        str | None, Field(description="Optional the new parent page ID")
-    ] = None,
+        str,  # TODO: Revert type hint to once Cursor IDE handles optional parameters with Union types correctly.
+        Field(description="Optional the new parent page ID", default=""),
+    ] = "",
 ) -> str:
     """Update an existing Confluence page.
 
@@ -455,6 +470,9 @@ async def update_page(
         raise ValueError("Confluence client is not configured or available.")
     confluence = lifespan_ctx.confluence
 
+    # TODO: revert this once Cursor IDE handles optional parameters with Union types correctly.
+    actual_parent_id = parent_id if parent_id else None
+
     updated_page = confluence.update_page(
         page_id=page_id,
         title=title,
@@ -462,7 +480,7 @@ async def update_page(
         is_minor_edit=is_minor_edit,
         version_comment=version_comment,
         is_markdown=True,
-        parent_id=parent_id,
+        parent_id=actual_parent_id,
     )
     page_data = updated_page.to_simplified_dict()
     return json.dumps(
