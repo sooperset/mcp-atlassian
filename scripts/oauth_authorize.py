@@ -41,26 +41,16 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.mcp_atlassian.utils.oauth import OAuthConfig
 
 # Configure logging (basicConfig should be called only once, ideally at the very start)
-# Using force=True for Python 3.8+ to reconfigure if already set by other means.
 # Adding lineno for better debugging.
-try:
-    logging.basicConfig(
-        level=logging.DEBUG,  # Set default to DEBUG to catch more details
-        format="%(asctime)s - %(levelname)s - %(name)s - %(lineno)d - %(message)s",
-        force=True,
-    )
-except TypeError:  # For Python < 3.8 which doesn't support force=True
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="%(asctime)s - %(levelname)s - %(name)s - %(lineno)d - %(message)s",
-    )
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s - %(levelname)s - %(name)s - %(lineno)d - %(message)s",
+    force=True,
+)
+
 
 logger = logging.getLogger("oauth-authorize")
-# Ensure this script's main logger is also set to DEBUG if basicConfig didn't cover it
-# or if it was overridden.
 logger.setLevel(logging.DEBUG)
-
-# Also ensure the utility logger can output DEBUG messages if desired
 logging.getLogger("mcp-atlassian.oauth").setLevel(logging.DEBUG)
 
 # Global variables for callback handling
