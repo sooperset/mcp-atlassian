@@ -10,6 +10,7 @@ It handles:
 import json
 import logging
 import os
+import pprint
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -102,32 +103,39 @@ class OAuthConfig:
                 "redirect_uri": self.redirect_uri,
             }
 
-            logger.debug("Exchanging code for tokens...")
+            logger.info(f"Exchanging authorization code for tokens at {TOKEN_URL}")
+            logger.debug(f"Token exchange payload: {pprint.pformat(payload)}")
+
             response = requests.post(TOKEN_URL, data=payload)
 
             # Log more details about the response
+            logger.debug(f"Token exchange response status: {response.status_code}")
+            logger.debug(
+                f"Token exchange response headers: {pprint.pformat(response.headers)}"
+            )
+            logger.debug(f"Token exchange response body: {response.text[:500]}...")
+
             if not response.ok:
                 logger.error(
-                    f"Token exchange failed with status {response.status_code}: {response.text}"
+                    f"Token exchange failed with status {response.status_code}. Response: {response.text}"
                 )
                 return False
-
-            response.raise_for_status()
 
             # Parse the response
             token_data = response.json()
 
             # Check if required tokens are present
             if "access_token" not in token_data:
-                logger.error("Access token not found in response")
-                logger.debug(f"Response keys: {list(token_data.keys())}")
+                logger.error(
+                    f"Access token not found in response. Keys found: {list(token_data.keys())}"
+                )
                 return False
 
             if "refresh_token" not in token_data:
                 logger.error(
-                    "Refresh token not found in response. Make sure 'offline_access' scope is included."
+                    "Refresh token not found in response. Ensure 'offline_access' scope is included. "
+                    f"Keys found: {list(token_data.keys())}"
                 )
-                logger.debug(f"Response keys: {list(token_data.keys())}")
                 return False
 
             self.access_token = token_data["access_token"]
@@ -141,15 +149,34 @@ class OAuthConfig:
             self._save_tokens()
 
             # Log success message with token details
-            logger.info("✅ OAuth token exchange successful!")
             logger.info(
-                f"Access token received (expires in {token_data['expires_in']} seconds)"
+                f"✅ OAuth token exchange successful! Access token expires in {token_data['expires_in']}s."
             )
             logger.info(
-                f"Refresh token received: {self.refresh_token[:3]}...{self.refresh_token[-3:] if self.refresh_token else ''}"
+                f"Access Token (partial): {self.access_token[:10]}...{self.access_token[-5:] if self.access_token else ''}"
             )
-
+            logger.info(
+                f"Refresh Token (partial): {self.refresh_token[:5]}...{self.refresh_token[-3:] if self.refresh_token else ''}"
+            )
+            if self.cloud_id:
+                logger.info(f"Cloud ID successfully retrieved: {self.cloud_id}")
+            else:
+                logger.warning(
+                    "Cloud ID was not retrieved after token exchange. Check accessible resources."
+                )
             return True
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Network error during token exchange: {e}", exc_info=True)
+            return False
+        except json.JSONDecodeError as e:
+            logger.error(
+                f"Failed to decode JSON response from token endpoint: {e}",
+                exc_info=True,
+            )
+            logger.error(
+                f"Response text that failed to parse: {response.text if 'response' in locals() else 'Response object not available'}"
+            )
+            return False
         except Exception as e:
             logger.error(f"Failed to exchange code for tokens: {e}")
             return False
