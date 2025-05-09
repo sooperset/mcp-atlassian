@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.10.4] - 2025-05-10
+
+### Added
+- New `jira_get_user_profile` tool to fetch user information using various identifiers (#396)
+- Added `offline_access` scope to OAuth configs to enable refresh tokens and prevent authentication failures (#381)
+
+### Fixed
+- Made optional string parameters in Confluence tools handle `None` values properly for better client compatibility (#389)
+- Fixed OAuth callback errors and improved logging for easier troubleshooting (#402)
+
+### Documentation
+- Temporarily removed OAuth setup instructions pending validation in Docker environments (#404)
+- Clarified Jira tool parameter descriptions, especially for the `assignee` field (#391, #395)
+- Added security guidance for client secret handling in OAuth setup (#381)
 
 ## [0.10.3] - 2025-05-06
 
