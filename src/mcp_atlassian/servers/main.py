@@ -3,14 +3,22 @@
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastmcp import FastMCP
 from fastmcp.tools import Tool as FastMCPTool
 from mcp.types import Tool as MCPTool
+from starlette.applications import Starlette
+from starlette.concurrency import run_in_threadpool
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.confluence.config import ConfluenceConfig
+from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
+from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.utils import is_read_only_mode
 from mcp_atlassian.utils.environment import get_available_services
@@ -173,6 +181,151 @@ class AtlassianMCP(FastMCP[MainAppContext]):
         return filtered_tools
 
 
+class UserTokenMiddleware(BaseHTTPMiddleware):
+    """Middleware to extract and validate Atlassian user tokens from Authorization headers."""
+
+    async def is_valid_atlassian_token(
+        self, token: str, lifespan_context: MainAppContext
+    ) -> tuple[bool, str | None]:
+        """Validate the Atlassian token against Jira or Confluence. Returns (is_valid, user_email_if_cloud)."""
+        user_email_if_cloud: str | None = None
+
+        async def _validate_with_service(
+            fetcher_cls: type,
+            base_config: Any,
+            token_val: str,
+            service_name: str,
+        ) -> tuple[bool, str | None]:
+            nonlocal user_email_if_cloud
+            if not base_config:
+                logger.debug(
+                    f"No base config for {service_name}, skipping validation with it."
+                )
+                return False, None
+            updated_fields = {
+                "auth_type": "token",
+                "personal_token": token_val,
+                "username": None,
+                "api_token": None,
+                "oauth_config": None,
+            }
+            if not hasattr(base_config, "model_copy"):
+                logger.error(
+                    f"{service_name} base_config is not a Pydantic model, cannot use model_copy."
+                )
+                return False, None
+            temp_config = base_config.model_copy(update=updated_fields)
+            try:
+                fetcher = fetcher_cls(config=temp_config)
+                if service_name == "Jira":
+                    myself_data = await run_in_threadpool(fetcher.jira.myself)
+                    if (
+                        getattr(temp_config, "is_cloud", False)
+                        and myself_data
+                        and "emailAddress" in myself_data
+                    ):
+                        user_email_if_cloud = myself_data["emailAddress"]
+                elif service_name == "Confluence":
+                    current_user = await run_in_threadpool(
+                        fetcher.confluence.get_current_user
+                    )
+                    if (
+                        getattr(temp_config, "is_cloud", False)
+                        and current_user
+                        and "email" in current_user
+                    ):
+                        user_email_if_cloud = current_user["email"]
+                return True, user_email_if_cloud
+            except MCPAtlassianAuthenticationError:
+                logger.warning(
+                    f"{service_name} token validation failed (authentication error) for token starting with: {token_val[:8]}..."
+                )
+                return False, None
+            except Exception as e:
+                logger.error(
+                    f"Unexpected error during {service_name} token validation for {token_val[:8]}...: {e}",
+                    exc_info=True,
+                )
+                return False, None
+
+        # Try validating with Jira config if available
+        if lifespan_context.jira_base_config:
+            is_valid, email = await _validate_with_service(
+                JiraFetcher, lifespan_context.jira_base_config, token, "Jira"
+            )
+            if is_valid:
+                return True, email
+        # If Jira validation failed or not configured, try Confluence
+        if lifespan_context.confluence_base_config:
+            is_valid, email = await _validate_with_service(
+                ConfluenceFetcher,
+                lifespan_context.confluence_base_config,
+                token,
+                "Confluence",
+            )
+            if is_valid:
+                return True, email
+        logger.warning(
+            f"Token validation failed for all configured services, or no service available to validate token starting with: {token[:8]}..."
+        )
+        return False, None
+
+    async def dispatch(
+        self, request: Request, call_next: RequestResponseEndpoint
+    ) -> JSONResponse:
+        mcp_server_instance = getattr(request.app.state, "mcp_server", None)
+        if mcp_server_instance is None:
+            return await call_next(request)
+        mcp_path = mcp_server_instance.settings.streamable_http_path.rstrip("/")
+        request_path = request.url.path.rstrip("/")
+        if request_path == mcp_path and request.method == "POST":
+            auth_header = request.headers.get("Authorization")
+            if auth_header and auth_header.startswith("Bearer "):
+                user_atlassian_token = auth_header.split(" ", 1)[1]
+                if user_atlassian_token:
+                    lifespan_ctx = request.scope.get("fastmcp_lifespan_context")
+                    if lifespan_ctx is None:
+                        logger.warning(
+                            "No lifespan context available in request.scope for token validation."
+                        )
+                        return JSONResponse(
+                            {
+                                "error": "Unauthorized: Server misconfiguration (no lifespan context)"
+                            },
+                            status_code=500,
+                        )
+                    is_valid, user_email = await self.is_valid_atlassian_token(
+                        user_atlassian_token, lifespan_ctx
+                    )
+                    if not is_valid:
+                        logger.warning(
+                            f"Invalid Atlassian token provided for {request.url.path}."
+                        )
+                        return JSONResponse(
+                            {"error": "Unauthorized: Invalid Atlassian token"},
+                            status_code=401,
+                        )
+                    request.state.user_atlassian_token = user_atlassian_token
+                    request.state.user_atlassian_email = user_email
+                else:
+                    logger.warning(
+                        f"Authorization Bearer token is empty for {request.url.path}"
+                    )
+                    return JSONResponse(
+                        {"error": "Unauthorized: Empty Bearer token"}, status_code=401
+                    )
+            else:
+                logger.warning(
+                    f"Authorization header missing or not Bearer for {request.url.path}"
+                )
+                return JSONResponse(
+                    {"error": "Unauthorized: Missing or malformed Bearer token"},
+                    status_code=401,
+                )
+        response = await call_next(request)
+        return response
+
+
 # Initialize the main MCP server using the custom class
 main_mcp = AtlassianMCP(name="Atlassian MCP", lifespan=main_lifespan)
 
@@ -188,3 +341,15 @@ async def _health_check_route(request: Request) -> JSONResponse:
 
 
 logger.info("Added /healthz endpoint for Kubernetes probes")
+
+
+base_mcp_http_app = main_mcp.streamable_http_app()
+final_middleware_stack = base_mcp_http_app.user_middleware + [
+    Middleware(UserTokenMiddleware)
+]
+final_asgi_app = Starlette(
+    routes=base_mcp_http_app.router.routes,
+    middleware=final_middleware_stack,
+    lifespan=main_lifespan,
+)
+final_asgi_app.state.mcp_server = main_mcp

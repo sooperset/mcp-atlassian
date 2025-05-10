@@ -274,16 +274,19 @@ def main(
     if jira_projects_filter:
         os.environ["JIRA_PROJECTS_FILTER"] = jira_projects_filter
 
-    from .servers import main_mcp
+    from .servers.main import final_asgi_app, main_mcp
 
     # Run the server with specified transport
     if final_transport == "sse":
-        asyncio.run(
-            main_mcp.run_async(
-                transport=final_transport,
-                host="0.0.0.0",  # noqa: S104
-                port=final_port,
-            )
+        import uvicorn
+
+        logger.info(
+            f"Starting server with SSE transport on port {final_port} using Uvicorn."
+        )
+        uvicorn.run(
+            final_asgi_app,
+            host="0.0.0.0",  # noqa: S104
+            port=final_port,
         )
     else:
         asyncio.run(main_mcp.run_async(transport=final_transport))
