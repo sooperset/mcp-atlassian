@@ -344,7 +344,7 @@ async def test_get_issue(jira_client, mock_jira_fetcher):
     mock_jira_fetcher.get_issue.assert_called_once_with(
         issue_key="TEST-123",
         fields=["summary", "description", "status"],  # Expect list now
-        expand=None,
+        expand="",
         comment_limit=10,
         properties=None,
         update_history=True,
@@ -388,8 +388,8 @@ async def test_search(jira_client, mock_jira_fetcher):
         fields=["summary", "status"],  # Expect list
         limit=10,
         start=0,  # start, not start_at for the fetcher method
-        projects_filter=None,
-        expand=None,
+        projects_filter="",
+        expand="",
     )
 
 
@@ -433,7 +433,7 @@ async def test_create_issue(jira_client, mock_jira_fetcher):
         summary="New Issue",
         issue_type="Task",
         description="This is a new task",
-        assignee=None,
+        assignee="",
         components=["Frontend", "API"],  # Expect list here
         # additional_fields are passed as **kwargs to the fetcher
         priority={"name": "Medium"},

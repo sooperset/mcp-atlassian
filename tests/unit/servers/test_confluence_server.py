@@ -387,7 +387,7 @@ async def test_create_page(client, mock_confluence_fetcher):
         space_key="TEST",
         title="New Test Page",
         body="# New Page\nContent here.",
-        parent_id=None,
+        parent_id="",
         is_markdown=True,
     )
 
