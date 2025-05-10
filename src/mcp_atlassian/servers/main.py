@@ -10,9 +10,7 @@ from mcp.types import Tool as MCPTool
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.confluence.config import ConfluenceConfig
-from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.utils import is_read_only_mode
 from mcp_atlassian.utils.environment import get_available_services
@@ -33,7 +31,7 @@ async def health_check(request: Request) -> JSONResponse:
 
 @asynccontextmanager
 async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[MainAppContext]:
-    """Initialize Jira/Confluence clients and provide them in context."""
+    """Initialize Jira/Confluence base configs and provide them in context."""
     logger.info("Main Atlassian MCP server lifespan starting...")
     services = get_available_services()
     read_only = is_read_only_mode()
@@ -42,32 +40,62 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[MainAppCo
     logger.debug(f"Lifespan start: read_only={read_only}")
     logger.debug(f"Lifespan start: enabled_tools={enabled_tools}")
 
-    jira: JiraFetcher | None = None
-    confluence: ConfluenceFetcher | None = None
+    final_jira_base_config: JiraConfig | None = None
+    final_confluence_base_config: ConfluenceConfig | None = None
 
-    # Initialize Jira if configured
+    # Initialize Jira base config if configured
     if services.get("jira"):
-        logger.info("Attempting to initialize Jira client...")
+        logger.info("Attempting to load Jira base configuration...")
         try:
             jira_config = JiraConfig.from_env()
-            jira = JiraFetcher(config=jira_config)
-            logger.info("Jira client initialized successfully.")
+            if jira_config:
+                final_jira_base_config = JiraConfig(
+                    url=jira_config.url,
+                    auth_type=None,
+                    username=None,
+                    api_token=None,
+                    personal_token=None,
+                    oauth_config=None,
+                    ssl_verify=jira_config.ssl_verify,
+                    projects_filter=jira_config.projects_filter,
+                    http_proxy=jira_config.http_proxy,
+                    https_proxy=jira_config.https_proxy,
+                    no_proxy=jira_config.no_proxy,
+                    socks_proxy=jira_config.socks_proxy,
+                )
+                logger.info("Jira base configuration loaded.")
         except Exception as e:
-            logger.error(f"Failed to initialize Jira client: {e}", exc_info=True)
+            logger.error(f"Failed to load Jira base configuration: {e}", exc_info=True)
 
-    # Initialize Confluence if configured
+    # Initialize Confluence base config if configured
     if services.get("confluence"):
-        logger.info("Attempting to initialize Confluence client...")
+        logger.info("Attempting to load Confluence base configuration...")
         try:
             confluence_config = ConfluenceConfig.from_env()
-            confluence = ConfluenceFetcher(config=confluence_config)
-            logger.info("Confluence client initialized successfully.")
+            if confluence_config:
+                final_confluence_base_config = ConfluenceConfig(
+                    url=confluence_config.url,
+                    auth_type=None,
+                    username=None,
+                    api_token=None,
+                    personal_token=None,
+                    oauth_config=None,
+                    ssl_verify=confluence_config.ssl_verify,
+                    spaces_filter=confluence_config.spaces_filter,
+                    http_proxy=confluence_config.http_proxy,
+                    https_proxy=confluence_config.https_proxy,
+                    no_proxy=confluence_config.no_proxy,
+                    socks_proxy=confluence_config.socks_proxy,
+                )
+                logger.info("Confluence base configuration loaded.")
         except Exception as e:
-            logger.error(f"Failed to initialize Confluence client: {e}", exc_info=True)
+            logger.error(
+                f"Failed to load Confluence base configuration: {e}", exc_info=True
+            )
 
     app_context = MainAppContext(
-        jira=jira,
-        confluence=confluence,
+        jira_base_config=final_jira_base_config,
+        confluence_base_config=final_confluence_base_config,
         read_only=read_only,
         enabled_tools=enabled_tools,
     )

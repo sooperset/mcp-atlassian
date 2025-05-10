@@ -4,15 +4,15 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from mcp_atlassian.confluence import ConfluenceFetcher
-    from mcp_atlassian.jira import JiraFetcher
+    from mcp_atlassian.confluence.config import ConfluenceConfig
+    from mcp_atlassian.jira.config import JiraConfig
 
 
 @dataclass(frozen=True)
 class MainAppContext:
-    """Context holding initialized fetchers and server settings."""
+    """Context holding base configs and server settings (no fetchers)."""
 
-    jira: JiraFetcher | None = None
-    confluence: ConfluenceFetcher | None = None
+    jira_base_config: JiraConfig | None = None
+    confluence_base_config: ConfluenceConfig | None = None
     read_only: bool = False
     enabled_tools: list[str] | None = None
