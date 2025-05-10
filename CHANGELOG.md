@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.10.5] - 2025-05-10
+
+### Fixed
+- Enhanced compatibility with various MCP clients by improving optional parameter handling in Jira and Confluence tools (#389, #407)
+- Fixed type errors with FastMCP v2.3.1 by updating Context type hints (#408)
+
+### Changed
+- Updated dependencies to use FastMCP 2.3.x series
+
 ## [0.10.4] - 2025-05-10
 
 ### Added
