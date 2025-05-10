@@ -9,9 +9,11 @@ from pydantic import Field
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
+from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 from mcp_atlassian.models.jira.common import JiraUser
 from mcp_atlassian.utils import convert_empty_defaults_to_none
+from mcp_atlassian.utils.decorators import with_jira_fetcher
 
 logger = logging.getLogger(__name__)
 
@@ -87,9 +89,11 @@ async def get_user_profile(
 
 
 @convert_empty_defaults_to_none
+@with_jira_fetcher
 @jira_mcp.tool(tags={"jira", "read"})
 async def get_issue(
     ctx: Context,
+    jira: JiraFetcher,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
     fields: Annotated[
         str,
@@ -140,6 +144,7 @@ async def get_issue(
 
     Args:
         ctx: The FastMCP context.
+        jira: The injected JiraFetcher instance for the current user.
         issue_key: Jira issue key.
         fields: Comma-separated list of fields to return (e.g., 'summary,status,customfield_10010'), a single field as a string (e.g., 'duedate'), '*all' for all fields, or omitted for essentials.
         expand: Optional fields to expand.
@@ -153,11 +158,6 @@ async def get_issue(
     Raises:
         ValueError: If the Jira client is not configured or available.
     """
-    lifespan_ctx = ctx.request_context.lifespan_context
-    if not lifespan_ctx or not lifespan_ctx.jira:
-        raise ValueError("Jira client is not configured or available.")
-    jira = lifespan_ctx.jira
-
     fields_list: str | list[str] | None = fields
     if fields and fields != "*all":
         fields_list = [f.strip() for f in fields.split(",")]
@@ -175,9 +175,11 @@ async def get_issue(
 
 
 @convert_empty_defaults_to_none
+@with_jira_fetcher
 @jira_mcp.tool(tags={"jira", "read"})
 async def search(
     ctx: Context,
+    jira: JiraFetcher,
     jql: Annotated[
         str,
         Field(
@@ -235,6 +237,7 @@ async def search(
 
     Args:
         ctx: The FastMCP context.
+        jira: The injected JiraFetcher instance for the current user.
         jql: JQL query string.
         fields: Comma-separated fields to return.
         limit: Maximum number of results.
@@ -245,11 +248,6 @@ async def search(
     Returns:
         JSON string representing the search results including pagination info.
     """
-    lifespan_ctx = ctx.request_context.lifespan_context
-    if not lifespan_ctx or not lifespan_ctx.jira:
-        raise ValueError("Jira client is not configured or available.")
-    jira = lifespan_ctx.jira
-
     fields_list: str | list[str] | None = fields
     if fields and fields != "*all":
         fields_list = [f.strip() for f in fields.split(",")]
@@ -416,9 +414,11 @@ async def download_attachments(
 
 
 @convert_empty_defaults_to_none
+@with_jira_fetcher
 @jira_mcp.tool(tags={"jira", "read"})
 async def get_agile_boards(
     ctx: Context,
+    jira: JiraFetcher,
     board_name: Annotated[
         str, Field(description="(Optional) The name of board, support fuzzy search")
     ] = "",
@@ -444,6 +444,7 @@ async def get_agile_boards(
 
     Args:
         ctx: The FastMCP context.
+        jira: The injected JiraFetcher instance for the current user.
         board_name: Name of the board (fuzzy search).
         project_key: Project key.
         board_type: Board type ('scrum' or 'kanban').
@@ -453,11 +454,6 @@ async def get_agile_boards(
     Returns:
         JSON string representing a list of board objects.
     """
-    lifespan_ctx = ctx.request_context.lifespan_context
-    if not lifespan_ctx or not lifespan_ctx.jira:
-        raise ValueError("Jira client is not configured or available.")
-    jira = lifespan_ctx.jira
-
     boards = jira.get_all_agile_boards_model(
         board_name=board_name,
         project_key=project_key,
@@ -470,9 +466,11 @@ async def get_agile_boards(
 
 
 @convert_empty_defaults_to_none
+@with_jira_fetcher
 @jira_mcp.tool(tags={"jira", "read"})
 async def get_board_issues(
     ctx: Context,
+    jira: JiraFetcher,
     board_id: Annotated[str, Field(description="The id of the board (e.g., '1001')")],
     jql: Annotated[
         str,
@@ -520,6 +518,7 @@ async def get_board_issues(
 
     Args:
         ctx: The FastMCP context.
+        jira: The injected JiraFetcher instance for the current user.
         board_id: The ID of the board.
         jql: JQL query string to filter issues.
         fields: Comma-separated fields to return.
@@ -530,11 +529,6 @@ async def get_board_issues(
     Returns:
         JSON string representing the search results including pagination info.
     """
-    lifespan_ctx = ctx.request_context.lifespan_context
-    if not lifespan_ctx or not lifespan_ctx.jira:
-        raise ValueError("Jira client is not configured or available.")
-    jira = lifespan_ctx.jira
-
     fields_list: str | list[str] | None = fields
     if fields and fields != "*all":
         fields_list = [f.strip() for f in fields.split(",")]
@@ -552,9 +546,11 @@ async def get_board_issues(
 
 
 @convert_empty_defaults_to_none
+@with_jira_fetcher
 @jira_mcp.tool(tags={"jira", "read"})
 async def get_sprints_from_board(
     ctx: Context,
+    jira: JiraFetcher,
     board_id: Annotated[str, Field(description="The id of board (e.g., '1000')")],
     state: Annotated[
         str,
@@ -573,6 +569,7 @@ async def get_sprints_from_board(
 
     Args:
         ctx: The FastMCP context.
+        jira: The injected JiraFetcher instance for the current user.
         board_id: The ID of the board.
         state: Sprint state ('active', 'future', 'closed'). If None, returns all sprints.
         start_at: Starting index.
@@ -581,11 +578,6 @@ async def get_sprints_from_board(
     Returns:
         JSON string representing a list of sprint objects.
     """
-    lifespan_ctx = ctx.request_context.lifespan_context
-    if not lifespan_ctx or not lifespan_ctx.jira:
-        raise ValueError("Jira client is not configured or available.")
-    jira = lifespan_ctx.jira
-
     sprints = jira.get_all_sprints_from_board_model(
         board_id=board_id, state=state, start=start_at, limit=limit
     )
@@ -594,9 +586,11 @@ async def get_sprints_from_board(
 
 
 @convert_empty_defaults_to_none
+@with_jira_fetcher
 @jira_mcp.tool(tags={"jira", "read"})
 async def get_sprint_issues(
     ctx: Context,
+    jira: JiraFetcher,
     sprint_id: Annotated[str, Field(description="The id of sprint (e.g., '10001')")],
     fields: Annotated[
         str,
@@ -622,6 +616,7 @@ async def get_sprint_issues(
 
     Args:
         ctx: The FastMCP context.
+        jira: The injected JiraFetcher instance for the current user.
         sprint_id: The ID of the sprint.
         fields: Comma-separated fields to return.
         start_at: Starting index.
@@ -630,11 +625,6 @@ async def get_sprint_issues(
     Returns:
         JSON string representing the search results including pagination info.
     """
-    lifespan_ctx = ctx.request_context.lifespan_context
-    if not lifespan_ctx or not lifespan_ctx.jira:
-        raise ValueError("Jira client is not configured or available.")
-    jira = lifespan_ctx.jira
-
     fields_list: str | list[str] | None = fields
     if fields and fields != "*all":
         fields_list = [f.strip() for f in fields.split(",")]
@@ -667,9 +657,11 @@ async def get_link_types(ctx: Context) -> str:
 
 
 @convert_empty_defaults_to_none
+@with_jira_fetcher
 @jira_mcp.tool(tags={"jira", "write"})
 async def create_issue(
     ctx: Context,
+    jira: JiraFetcher,
     project_key: Annotated[
         str,
         Field(
@@ -727,6 +719,7 @@ async def create_issue(
 
     Args:
         ctx: The FastMCP context.
+        jira: The injected JiraFetcher instance for the current user.
         project_key: The JIRA project key.
         summary: Summary/title of the issue.
         issue_type: Issue type (e.g., 'Task', 'Bug', 'Story', 'Epic', 'Subtask').
@@ -747,7 +740,6 @@ async def create_issue(
         raise ValueError("Cannot create issue in read-only mode.")
     if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = lifespan_ctx.jira
 
     # Parse components from comma-separated string to list
     components_list = None
@@ -778,9 +770,11 @@ async def create_issue(
     )
 
 
+@with_jira_fetcher
 @jira_mcp.tool(tags={"jira", "write"})
 async def batch_create_issues(
     ctx: Context,
+    jira: JiraFetcher,
     issues: Annotated[
         str,
         Field(
@@ -811,6 +805,7 @@ async def batch_create_issues(
 
     Args:
         ctx: The FastMCP context.
+        jira: The injected JiraFetcher instance for the current user.
         issues: JSON array string of issue objects.
         validate_only: If true, only validates without creating.
 
@@ -826,7 +821,6 @@ async def batch_create_issues(
         raise ValueError("Cannot create issues in read-only mode.")
     if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = lifespan_ctx.jira
 
     # Parse issues from JSON string
     try:
@@ -854,9 +848,11 @@ async def batch_create_issues(
 
 
 @convert_empty_defaults_to_none
+@with_jira_fetcher
 @jira_mcp.tool(tags={"jira", "read"})
 async def batch_get_changelogs(
     ctx: Context,
+    jira: JiraFetcher,
     issue_ids_or_keys: Annotated[
         list[str],
         Field(
@@ -887,6 +883,7 @@ async def batch_get_changelogs(
 
     Args:
         ctx: The FastMCP context.
+        jira: The injected JiraFetcher instance for the current user.
         issue_ids_or_keys: List of issue IDs or keys.
         fields: List of fields to filter changelogs by. None for all fields.
         limit: Maximum changelogs per issue (-1 for all).
@@ -901,7 +898,6 @@ async def batch_get_changelogs(
     lifespan_ctx = ctx.request_context.lifespan_context
     if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = lifespan_ctx.jira
 
     # Ensure this runs only on Cloud, as per original function docstring
     if not jira.config.is_cloud:
@@ -931,9 +927,11 @@ async def batch_get_changelogs(
 
 
 @convert_empty_defaults_to_none
+@with_jira_fetcher
 @jira_mcp.tool(tags={"jira", "write"})
 async def update_issue(
     ctx: Context,
+    jira: JiraFetcher,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
     fields: Annotated[
         dict[str, Any],
@@ -966,6 +964,7 @@ async def update_issue(
 
     Args:
         ctx: The FastMCP context.
+        jira: The injected JiraFetcher instance for the current user.
         issue_key: Jira issue key.
         fields: Dictionary of fields to update.
         additional_fields: Optional dictionary of additional fields.
@@ -983,7 +982,6 @@ async def update_issue(
         raise ValueError("Cannot update issue in read-only mode.")
     if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = lifespan_ctx.jira
 
     # Use fields directly as dict
     if not isinstance(fields, dict):
@@ -1038,15 +1036,18 @@ async def update_issue(
         raise ValueError(f"Failed to update issue {issue_key}: {str(e)}")
 
 
+@with_jira_fetcher
 @jira_mcp.tool(tags={"jira", "write"})
 async def delete_issue(
     ctx: Context,
+    jira: JiraFetcher,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g. PROJ-123)")],
 ) -> str:
     """Delete an existing Jira issue.
 
     Args:
         ctx: The FastMCP context.
+        jira: The injected JiraFetcher instance for the current user.
         issue_key: Jira issue key.
 
     Returns:
@@ -1061,7 +1062,6 @@ async def delete_issue(
         raise ValueError("Cannot delete issue in read-only mode.")
     if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = lifespan_ctx.jira
 
     deleted = jira.delete_issue(issue_key)
     result = {"message": f"Issue {issue_key} has been deleted successfully."}
@@ -1069,9 +1069,11 @@ async def delete_issue(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
+@with_jira_fetcher
 @jira_mcp.tool(tags={"jira", "write"})
 async def add_comment(
     ctx: Context,
+    jira: JiraFetcher,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
     comment: Annotated[str, Field(description="Comment text in Markdown format")],
 ) -> str:
@@ -1079,6 +1081,7 @@ async def add_comment(
 
     Args:
         ctx: The FastMCP context.
+        jira: The injected JiraFetcher instance for the current user.
         issue_key: Jira issue key.
         comment: Comment text in Markdown.
 
@@ -1094,7 +1097,6 @@ async def add_comment(
         raise ValueError("Cannot add comment in read-only mode.")
     if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = lifespan_ctx.jira
 
     # add_comment returns dict
     result = jira.add_comment(issue_key, comment)
@@ -1102,9 +1104,11 @@ async def add_comment(
 
 
 @convert_empty_defaults_to_none
+@with_jira_fetcher
 @jira_mcp.tool(tags={"jira", "write"})
 async def add_worklog(
     ctx: Context,
+    jira: JiraFetcher,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
     time_spent: Annotated[
         str,
@@ -1140,6 +1144,7 @@ async def add_worklog(
 
     Args:
         ctx: The FastMCP context.
+        jira: The injected JiraFetcher instance for the current user.
         issue_key: Jira issue key.
         time_spent: Time spent in Jira format.
         comment: Optional comment in Markdown.
@@ -1160,7 +1165,6 @@ async def add_worklog(
         raise ValueError("Cannot add worklog in read-only mode.")
     if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = lifespan_ctx.jira
 
     # add_worklog returns dict
     worklog_result = jira.add_worklog(
@@ -1175,9 +1179,11 @@ async def add_worklog(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
+@with_jira_fetcher
 @jira_mcp.tool(tags={"jira", "write"})
 async def link_to_epic(
     ctx: Context,
+    jira: JiraFetcher,
     issue_key: Annotated[
         str, Field(description="The key of the issue to link (e.g., 'PROJ-123')")
     ],
@@ -1189,6 +1195,7 @@ async def link_to_epic(
 
     Args:
         ctx: The FastMCP context.
+        jira: The injected JiraFetcher instance for the current user.
         issue_key: The key of the issue to link.
         epic_key: The key of the epic to link to.
 
@@ -1204,7 +1211,6 @@ async def link_to_epic(
         raise ValueError("Cannot link issue to epic in read-only mode.")
     if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = lifespan_ctx.jira
 
     issue = jira.link_issue_to_epic(issue_key, epic_key)
     result = {
@@ -1215,9 +1221,11 @@ async def link_to_epic(
 
 
 @convert_empty_defaults_to_none
+@with_jira_fetcher
 @jira_mcp.tool(tags={"jira", "write"})
 async def create_issue_link(
     ctx: Context,
+    jira: JiraFetcher,
     link_type: Annotated[
         str,
         Field(
@@ -1245,6 +1253,7 @@ async def create_issue_link(
 
     Args:
         ctx: The FastMCP context.
+        jira: The injected JiraFetcher instance for the current user.
         link_type: The type of link (e.g., 'Blocks').
         inward_issue_key: The key of the source issue.
         outward_issue_key: The key of the target issue.
@@ -1263,7 +1272,6 @@ async def create_issue_link(
         raise ValueError("Cannot create issue link in read-only mode.")
     if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = lifespan_ctx.jira
 
     if not all([link_type, inward_issue_key, outward_issue_key]):
         raise ValueError(
@@ -1289,15 +1297,18 @@ async def create_issue_link(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
+@with_jira_fetcher
 @jira_mcp.tool(tags={"jira", "write"})
 async def remove_issue_link(
     ctx: Context,
+    jira: JiraFetcher,
     link_id: Annotated[str, Field(description="The ID of the link to remove")],
 ) -> str:
     """Remove a link between two Jira issues.
 
     Args:
         ctx: The FastMCP context.
+        jira: The injected JiraFetcher instance for the current user.
         link_id: The ID of the link to remove.
 
     Returns:
@@ -1312,7 +1323,6 @@ async def remove_issue_link(
         raise ValueError("Cannot remove issue link in read-only mode.")
     if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = lifespan_ctx.jira
 
     if not link_id:
         raise ValueError("link_id is required")
@@ -1322,9 +1332,11 @@ async def remove_issue_link(
 
 
 @convert_empty_defaults_to_none
+@with_jira_fetcher
 @jira_mcp.tool(tags={"jira", "write"})
 async def transition_issue(
     ctx: Context,
+    jira: JiraFetcher,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
     transition_id: Annotated[
         str,
@@ -1360,6 +1372,7 @@ async def transition_issue(
 
     Args:
         ctx: The FastMCP context.
+        jira: The injected JiraFetcher instance for the current user.
         issue_key: Jira issue key.
         transition_id: ID of the transition.
         fields: Optional dictionary of fields to update during transition.
@@ -1377,7 +1390,6 @@ async def transition_issue(
         raise ValueError("Cannot transition issue in read-only mode.")
     if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = lifespan_ctx.jira
 
     if not issue_key or not transition_id:
         raise ValueError("issue_key and transition_id are required.")
@@ -1402,9 +1414,11 @@ async def transition_issue(
 
 
 @convert_empty_defaults_to_none
+@with_jira_fetcher
 @jira_mcp.tool(tags={"jira", "write"})
 async def create_sprint(
     ctx: Context,
+    jira: JiraFetcher,
     board_id: Annotated[str, Field(description="The id of board (e.g., '1000')")],
     sprint_name: Annotated[
         str, Field(description="Name of the sprint (e.g., 'Sprint 1')")
@@ -1421,6 +1435,7 @@ async def create_sprint(
 
     Args:
         ctx: The FastMCP context.
+        jira: The injected JiraFetcher instance for the current user.
         board_id: Board ID.
         sprint_name: Sprint name.
         start_date: Start date (ISO format).
@@ -1439,7 +1454,6 @@ async def create_sprint(
         raise ValueError("Cannot create sprint in read-only mode.")
     if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = lifespan_ctx.jira
 
     sprint = jira.create_sprint(
         board_id=board_id,
@@ -1452,9 +1466,11 @@ async def create_sprint(
 
 
 @convert_empty_defaults_to_none
+@with_jira_fetcher
 @jira_mcp.tool(tags={"jira", "write"})
 async def update_sprint(
     ctx: Context,
+    jira: JiraFetcher,
     sprint_id: Annotated[str, Field(description="The id of sprint (e.g., '10001')")],
     sprint_name: Annotated[
         str, Field(description="(Optional) New name for the sprint")
@@ -1475,6 +1491,7 @@ async def update_sprint(
 
     Args:
         ctx: The FastMCP context.
+        jira: The injected JiraFetcher instance for the current user.
         sprint_id: The ID of the sprint.
         sprint_name: Optional new name.
         state: Optional new state (future|active|closed).
@@ -1494,7 +1511,6 @@ async def update_sprint(
         raise ValueError("Cannot update sprint in read-only mode.")
     if not lifespan_ctx or not lifespan_ctx.jira:
         raise ValueError("Jira client is not configured or available.")
-    jira = lifespan_ctx.jira
 
     sprint = jira.update_sprint(
         sprint_id=sprint_id,

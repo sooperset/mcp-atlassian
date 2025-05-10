@@ -1,7 +1,23 @@
+import functools
 import inspect
-from collections.abc import Awaitable, Callable
+import logging
+from collections.abc import Awaitable, Callable, Coroutine
 from functools import wraps
-from typing import Any
+from typing import Any, TypeVar, cast
+
+from fastmcp import Context
+from fastmcp.server.dependencies import get_http_request
+from starlette.requests import Request
+
+from mcp_atlassian.confluence import ConfluenceFetcher
+from mcp_atlassian.confluence.config import ConfluenceConfig
+from mcp_atlassian.jira import JiraFetcher
+from mcp_atlassian.jira.config import JiraConfig
+from mcp_atlassian.servers.context import MainAppContext
+
+logger = logging.getLogger(__name__)
+
+ConfigType = TypeVar("ConfigType", JiraConfig, ConfluenceConfig)
 
 
 # TODO: [CursorIDE Compatibility] Remove this decorator and revert parameter signatures
@@ -73,7 +89,7 @@ def convert_empty_defaults_to_none(func: Callable) -> Callable:
                 and not param_obj.default
                 and isinstance(actual_value, dict)
                 and not actual_value
-            ):  # If default={} is specified in the function signature
+            ):
                 processed_kwargs[name] = None
             # List handling (Pydantic Field(default_factory=list) or default=[]):
             elif (
@@ -103,5 +119,125 @@ def convert_empty_defaults_to_none(func: Callable) -> Callable:
                 processed_kwargs[name] = actual_value
 
         return await func(**processed_kwargs)
+
+    return wrapper
+
+
+def _create_user_specific_config(
+    base_config: ConfigType,
+    user_token: str,
+    user_email: str | None,
+) -> ConfigType:
+    """Create a user-specific config for Jira or Confluence based on the base config and user credentials."""
+    if base_config is None:
+        raise ValueError("Base configuration cannot be None.")
+
+    updated_data: dict[str, Any] = {"oauth_config": None}
+
+    if base_config.is_cloud:
+        updated_data.update(
+            {
+                "auth_type": "basic",
+                "username": user_email,
+                "api_token": user_token,
+                "personal_token": cast(str | None, None),
+            }
+        )
+    else:
+        updated_data.update(
+            {
+                "auth_type": "token",
+                "username": cast(str | None, None),
+                "api_token": cast(str | None, None),
+                "personal_token": user_token,
+            }
+        )
+
+    if hasattr(base_config, "model_copy"):
+        return base_config.model_copy(update=updated_data)
+    else:
+        raise TypeError(f"Unsupported base_config type: {type(base_config)}")
+
+
+def with_jira_fetcher(
+    func: Callable[..., Coroutine[Any, Any, str]],
+) -> Callable[..., Coroutine[Any, Any, str]]:
+    """Decorator to inject a user-specific JiraFetcher into a tool function.
+
+    The decorated function must accept a 'jira' parameter of type JiraFetcher.
+
+    Args:
+        func: The tool function to decorate.
+
+    Returns:
+        The decorated function with JiraFetcher injection.
+
+    Raises:
+        ValueError: If user token or base config is missing.
+    """
+
+    @functools.wraps(func)
+    async def wrapper(ctx: Context, *args: Any, **kwargs: Any) -> str:
+        request: Request = get_http_request()
+        user_token = getattr(request.state, "user_atlassian_token", None)
+        user_email = getattr(request.state, "user_atlassian_email", None)
+
+        if not user_token:
+            logger.error(f"Jira tool ({func.__name__}) missing user token.")
+            raise ValueError("Missing Atlassian authentication token.")
+
+        lifespan_ctx: MainAppContext = cast(
+            MainAppContext, ctx.request_context.lifespan_context
+        )
+        base_config: JiraConfig | None = lifespan_ctx.jira_base_config
+        if not base_config:
+            raise ValueError("Jira base configuration is not available.")
+
+        user_config = _create_user_specific_config(base_config, user_token, user_email)
+        jira_fetcher = JiraFetcher(config=user_config)
+        kwargs["jira"] = jira_fetcher
+        return await func(ctx, *args, **kwargs)
+
+    return wrapper
+
+
+def with_confluence_fetcher(
+    func: Callable[..., Coroutine[Any, Any, str]],
+) -> Callable[..., Coroutine[Any, Any, str]]:
+    """Decorator to inject a user-specific ConfluenceFetcher into a tool function.
+
+    The decorated function must accept a 'confluence' parameter of type ConfluenceFetcher.
+
+    Args:
+        func: The tool function to decorate.
+
+    Returns:
+        The decorated function with ConfluenceFetcher injection.
+
+    Raises:
+        ValueError: If user token or base config is missing.
+    """
+
+    @functools.wraps(func)
+    async def wrapper(ctx: Context, *args: Any, **kwargs: Any) -> str:
+        request: Request = get_http_request()
+        user_token = getattr(request.state, "user_atlassian_token", None)
+        user_email = getattr(request.state, "user_atlassian_email", None)
+
+        if not user_token:
+            logger.error(f"Confluence tool ({func.__name__}) missing user token.")
+            raise ValueError("Missing Atlassian authentication token.")
+
+        lifespan_ctx: MainAppContext = cast(
+            MainAppContext, ctx.request_context.lifespan_context
+        )
+        base_config: ConfluenceConfig | None = lifespan_ctx.confluence_base_config
+        if not base_config:
+            raise ValueError("Confluence base configuration is not available.")
+
+        user_config = _create_user_specific_config(base_config, user_token, user_email)
+        confluence_fetcher = ConfluenceFetcher(config=user_config)
+        kwargs["confluence"] = confluence_fetcher
+        return await func(ctx, *args, **kwargs)
 
     return wrapper
