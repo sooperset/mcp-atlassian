@@ -13,8 +13,6 @@ from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 from mcp_atlassian.models.jira.common import JiraUser
 from mcp_atlassian.utils import convert_empty_defaults_to_none
 
-from .context import MainAppContext
-
 logger = logging.getLogger(__name__)
 
 jira_mcp = FastMCP(
@@ -25,7 +23,7 @@ jira_mcp = FastMCP(
 
 @jira_mcp.tool(tags={"jira", "read"})
 async def get_user_profile(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     user_identifier: Annotated[
         str,
         Field(
@@ -91,7 +89,7 @@ async def get_user_profile(
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "read"})
 async def get_issue(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
     fields: Annotated[
         str,
@@ -179,7 +177,7 @@ async def get_issue(
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "read"})
 async def search(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     jql: Annotated[
         str,
         Field(
@@ -270,7 +268,7 @@ async def search(
 
 @jira_mcp.tool(tags={"jira", "read"})
 async def search_fields(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     keyword: Annotated[
         str,
         Field(
@@ -308,7 +306,7 @@ async def search_fields(
 
 @jira_mcp.tool(tags={"jira", "read"})
 async def get_project_issues(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     project_key: Annotated[str, Field(description="The project key")],
     limit: Annotated[
         int,
@@ -344,7 +342,7 @@ async def get_project_issues(
 
 @jira_mcp.tool(tags={"jira", "read"})
 async def get_transitions(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
 ) -> str:
     """Get available status transitions for a Jira issue.
@@ -368,7 +366,7 @@ async def get_transitions(
 
 @jira_mcp.tool(tags={"jira", "read"})
 async def get_worklog(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
 ) -> str:
     """Get worklog entries for a Jira issue.
@@ -392,7 +390,7 @@ async def get_worklog(
 
 @jira_mcp.tool(tags={"jira", "read"})
 async def download_attachments(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
     target_dir: Annotated[
         str, Field(description="Directory where attachments should be saved")
@@ -420,7 +418,7 @@ async def download_attachments(
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "read"})
 async def get_agile_boards(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     board_name: Annotated[
         str, Field(description="(Optional) The name of board, support fuzzy search")
     ] = "",
@@ -474,7 +472,7 @@ async def get_agile_boards(
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "read"})
 async def get_board_issues(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     board_id: Annotated[str, Field(description="The id of the board (e.g., '1001')")],
     jql: Annotated[
         str,
@@ -556,7 +554,7 @@ async def get_board_issues(
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "read"})
 async def get_sprints_from_board(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     board_id: Annotated[str, Field(description="The id of board (e.g., '1000')")],
     state: Annotated[
         str,
@@ -598,7 +596,7 @@ async def get_sprints_from_board(
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "read"})
 async def get_sprint_issues(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     sprint_id: Annotated[str, Field(description="The id of sprint (e.g., '10001')")],
     fields: Annotated[
         str,
@@ -649,7 +647,7 @@ async def get_sprint_issues(
 
 
 @jira_mcp.tool(tags={"jira", "read"})
-async def get_link_types(ctx: Context[Any, MainAppContext]) -> str:
+async def get_link_types(ctx: Context) -> str:
     """Get all available issue link types.
 
     Args:
@@ -671,7 +669,7 @@ async def get_link_types(ctx: Context[Any, MainAppContext]) -> str:
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "write"})
 async def create_issue(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     project_key: Annotated[
         str,
         Field(
@@ -782,7 +780,7 @@ async def create_issue(
 
 @jira_mcp.tool(tags={"jira", "write"})
 async def batch_create_issues(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     issues: Annotated[
         str,
         Field(
@@ -858,7 +856,7 @@ async def batch_create_issues(
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "read"})
 async def batch_get_changelogs(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     issue_ids_or_keys: Annotated[
         list[str],
         Field(
@@ -935,7 +933,7 @@ async def batch_get_changelogs(
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "write"})
 async def update_issue(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
     fields: Annotated[
         dict[str, Any],
@@ -1042,7 +1040,7 @@ async def update_issue(
 
 @jira_mcp.tool(tags={"jira", "write"})
 async def delete_issue(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g. PROJ-123)")],
 ) -> str:
     """Delete an existing Jira issue.
@@ -1073,7 +1071,7 @@ async def delete_issue(
 
 @jira_mcp.tool(tags={"jira", "write"})
 async def add_comment(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
     comment: Annotated[str, Field(description="Comment text in Markdown format")],
 ) -> str:
@@ -1106,7 +1104,7 @@ async def add_comment(
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "write"})
 async def add_worklog(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
     time_spent: Annotated[
         str,
@@ -1179,7 +1177,7 @@ async def add_worklog(
 
 @jira_mcp.tool(tags={"jira", "write"})
 async def link_to_epic(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     issue_key: Annotated[
         str, Field(description="The key of the issue to link (e.g., 'PROJ-123')")
     ],
@@ -1219,7 +1217,7 @@ async def link_to_epic(
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "write"})
 async def create_issue_link(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     link_type: Annotated[
         str,
         Field(
@@ -1293,7 +1291,7 @@ async def create_issue_link(
 
 @jira_mcp.tool(tags={"jira", "write"})
 async def remove_issue_link(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     link_id: Annotated[str, Field(description="The ID of the link to remove")],
 ) -> str:
     """Remove a link between two Jira issues.
@@ -1326,7 +1324,7 @@ async def remove_issue_link(
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "write"})
 async def transition_issue(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
     transition_id: Annotated[
         str,
@@ -1406,7 +1404,7 @@ async def transition_issue(
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "write"})
 async def create_sprint(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     board_id: Annotated[str, Field(description="The id of board (e.g., '1000')")],
     sprint_name: Annotated[
         str, Field(description="Name of the sprint (e.g., 'Sprint 1')")
@@ -1456,7 +1454,7 @@ async def create_sprint(
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "write"})
 async def update_sprint(
-    ctx: Context[Any, MainAppContext],
+    ctx: Context,
     sprint_id: Annotated[str, Field(description="The id of sprint (e.g., '10001')")],
     sprint_name: Annotated[
         str, Field(description="(Optional) New name for the sprint")
