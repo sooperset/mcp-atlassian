@@ -7,6 +7,7 @@ from typing import Annotated, Any
 from fastmcp import Context, FastMCP
 from pydantic import Field
 
+from ..utils import convert_empty_defaults_to_none
 from .context import MainAppContext
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,7 @@ confluence_mcp = FastMCP(
 )
 
 
+@convert_empty_defaults_to_none
 @confluence_mcp.tool(tags={"confluence", "read"})
 async def search(
     ctx: Context[Any, MainAppContext],
@@ -55,7 +57,7 @@ async def search(
         ),
     ] = 10,
     spaces_filter: Annotated[
-        str,  # TODO: Revert type hint to once Cursor IDE handles optional parameters with Union types correctly.
+        str,
         Field(
             description=(
                 "(Optional) Comma-separated list of space keys to filter results by. "
@@ -81,9 +83,6 @@ async def search(
         raise ValueError("Confluence client is not configured or available.")
     confluence = lifespan_ctx.confluence
 
-    # TODO: revert this once Cursor IDE handles optional parameters with Union types correctly.
-    actual_spaces_filter = spaces_filter if spaces_filter else None
-
     # Check if the query is a simple search term or already a CQL query
     if query and not any(
         x in query for x in ["=", "~", ">", "<", " AND ", " OR ", "currentUser()"]
@@ -94,20 +93,14 @@ async def search(
             logger.info(
                 f"Converting simple search term to CQL using siteSearch: {query}"
             )
-            pages = confluence.search(
-                query, limit=limit, spaces_filter=actual_spaces_filter
-            )
+            pages = confluence.search(query, limit=limit, spaces_filter=spaces_filter)
         except Exception as e:
             logger.warning(f"siteSearch failed ('{e}'), falling back to text search.")
             query = f'text ~ "{original_query}"'
             logger.info(f"Falling back to text search with CQL: {query}")
-            pages = confluence.search(
-                query, limit=limit, spaces_filter=actual_spaces_filter
-            )
+            pages = confluence.search(query, limit=limit, spaces_filter=spaces_filter)
     else:
-        pages = confluence.search(
-            query, limit=limit, spaces_filter=actual_spaces_filter
-        )
+        pages = confluence.search(query, limit=limit, spaces_filter=spaces_filter)
 
     search_results = [page.to_simplified_dict() for page in pages]
     return json.dumps(search_results, indent=2, ensure_ascii=False)
@@ -361,6 +354,7 @@ async def add_label(
     return json.dumps(formatted_labels, indent=2, ensure_ascii=False)
 
 
+@convert_empty_defaults_to_none
 @confluence_mcp.tool(tags={"confluence", "write"})
 async def create_page(
     ctx: Context[Any, MainAppContext],
@@ -378,9 +372,9 @@ async def create_page(
         ),
     ],
     parent_id: Annotated[
-        str,  # TODO: Revert type hint to once Cursor IDE handles optional parameters with Union types correctly.
+        str,
         Field(
-            description="Optional parent page ID. If provided, this page will be created as a child of the specified page",
+            description="(Optional) parent page ID. If provided, this page will be created as a child of the specified page",
             default="",
         ),
     ] = "",
@@ -408,14 +402,11 @@ async def create_page(
         raise ValueError("Confluence client is not configured or available.")
     confluence = lifespan_ctx.confluence
 
-    # TODO: revert this once Cursor IDE handles optional parameters with Union types correctly.
-    actual_parent_id = parent_id if parent_id else None
-
     page = confluence.create_page(
         space_key=space_key,
         title=title,
         body=content,
-        parent_id=actual_parent_id,
+        parent_id=parent_id,
         is_markdown=True,
     )
     result = page.to_simplified_dict()
