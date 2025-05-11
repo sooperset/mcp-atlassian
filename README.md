@@ -215,19 +215,9 @@ This example shows how to configure `mcp-atlassian` in your IDE (like Cursor or 
 {
   "mcpServers": {
     "mcp-atlassian": {
-      "command": "docker",
+      "command": "uvx",
       "args": [
-        "run",
-        "-i",
-        "--rm",
-        "-e", "JIRA_URL",
-        "-e", "CONFLUENCE_URL",
-        "-e", "ATLASSIAN_OAUTH_CLIENT_ID",
-        "-e", "ATLASSIAN_OAUTH_CLIENT_SECRET",
-        "-e", "ATLASSIAN_OAUTH_REDIRECT_URI",
-        "-e", "ATLASSIAN_OAUTH_SCOPE",
-        "-e", "ATLASSIAN_OAUTH_CLOUD_ID",
-        "ghcr.io/sooperset/mcp-atlassian:latest"
+        "mcp-atlassian",
       ],
       "env": {
         "JIRA_URL": "https://your-company.atlassian.net",
