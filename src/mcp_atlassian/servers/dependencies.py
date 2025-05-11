@@ -39,14 +39,14 @@ def _create_user_config_for_fetcher(
 ) -> JiraConfig | ConfluenceConfig:
     """
     Creates a user-specific configuration for Jira or Confluence fetchers.
-    Now supports different auth_types ("token", "basic").
+    Only supports 'token' auth_type for user-specific config.
 
     Args:
         base_url: The base URL for the service.
         base_ssl_verify: Whether to verify SSL certificates.
         is_cloud: Whether the instance is Atlassian Cloud.
-        auth_type: The authentication type ("token" or "basic").
-        credentials: Dict of credentials (token, username, api_token).
+        auth_type: The authentication type ("token").
+        credentials: Dict of credentials (token).
         projects_filter: Project filter (Jira only).
         spaces_filter: Space filter (Confluence only).
         http_proxy: HTTP proxy.
@@ -63,18 +63,15 @@ def _create_user_config_for_fetcher(
         ValueError: If auth_type is not supported.
     """
     username_for_config: str | None = None
-    api_token_for_config: str | None = None
     personal_token_for_config: str | None = None
-    oauth_config_for_config = None
+    oauth_config_for_config = (
+        None  # OAuth is not handled by this user-specific config path
+    )
 
     if auth_type == "token":
         personal_token_for_config = credentials.get("token")
-        username_for_config = credentials.get(
-            "user_email_context"
-        )  # for context, not auth
-    elif auth_type == "basic":
-        username_for_config = credentials.get("username")
-        api_token_for_config = credentials.get("api_token")
+        # User email for context can be passed if needed, but not used for 'token' auth type directly in config
+        username_for_config = credentials.get("user_email_context")
     else:
         raise ValueError(
             f"Unsupported auth_type in _create_user_config_for_fetcher: {auth_type}"
@@ -84,7 +81,7 @@ def _create_user_config_for_fetcher(
         "url": base_url,
         "auth_type": auth_type,
         "username": username_for_config,
-        "api_token": api_token_for_config,
+        "api_token": None,
         "personal_token": personal_token_for_config,
         "ssl_verify": base_ssl_verify,
         "oauth_config": oauth_config_for_config,
@@ -124,13 +121,6 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
             credentials["user_email_context"] = getattr(
                 request.state, "user_atlassian_email", None
             )
-        elif user_auth_type == "basic":
-            credentials["username"] = getattr(
-                request.state, "user_atlassian_username", None
-            )
-            credentials["api_token"] = getattr(
-                request.state, "user_atlassian_api_token", None
-            )
         if user_auth_type and credentials:
             lifespan_ctx_dict = ctx.request_context.lifespan_context  # type: ignore
             app_lifespan_ctx: MainAppContext | None = (
@@ -156,12 +146,12 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
                 config_class=JiraConfig,
             )
             logger.debug(
-                f"DI: Created user-specific JiraFetcher for {user_auth_type} for user {credentials.get('username', credentials.get('token', '')[:8])}..."
+                f"Created user-specific JiraFetcher for token starting with {credentials.get('token', '')[:8]}..."
             )
             return JiraFetcher(config=user_specific_config)
     except RuntimeError:
         logger.debug(
-            "DI: Not in an HTTP request context. Attempting global JiraFetcher for STDIO/non-HTTP."
+            "Not in an HTTP request context. Attempting global JiraFetcher for STDIO/non-HTTP."
         )
     lifespan_ctx_dict_global = ctx.request_context.lifespan_context  # type: ignore
     app_lifespan_ctx_global: MainAppContext | None = (
@@ -171,7 +161,7 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
     )
     if app_lifespan_ctx_global and app_lifespan_ctx_global.full_jira_config:
         logger.debug(
-            "DI: Using global JiraFetcher from lifespan context (full_jira_config)."
+            "Using global JiraFetcher from lifespan context (e.g., for STDIO)."
         )
         return JiraFetcher(config=app_lifespan_ctx_global.full_jira_config)
     logger.error("Jira configuration could not be resolved.")
@@ -202,13 +192,6 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
             credentials["user_email_context"] = getattr(
                 request.state, "user_atlassian_email", None
             )
-        elif user_auth_type == "basic":
-            credentials["username"] = getattr(
-                request.state, "user_atlassian_username", None
-            )
-            credentials["api_token"] = getattr(
-                request.state, "user_atlassian_api_token", None
-            )
         if user_auth_type and credentials:
             lifespan_ctx_dict = ctx.request_context.lifespan_context  # type: ignore
             app_lifespan_ctx: MainAppContext | None = (
@@ -234,12 +217,12 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
                 config_class=ConfluenceConfig,
             )
             logger.debug(
-                f"DI: Created user-specific ConfluenceFetcher for {user_auth_type} for user {credentials.get('username', credentials.get('token', '')[:8])}..."
+                f"Created user-specific ConfluenceFetcher for token starting with {credentials.get('token', '')[:8]}..."
             )
             return ConfluenceFetcher(config=user_specific_config)
     except RuntimeError:
         logger.debug(
-            "DI: Not in an HTTP request context. Attempting global ConfluenceFetcher for STDIO/non-HTTP."
+            "Not in an HTTP request context. Attempting global ConfluenceFetcher for STDIO/non-HTTP."
         )
     lifespan_ctx_dict_global = ctx.request_context.lifespan_context  # type: ignore
     app_lifespan_ctx_global: MainAppContext | None = (
@@ -249,7 +232,7 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
     )
     if app_lifespan_ctx_global and app_lifespan_ctx_global.full_confluence_config:
         logger.debug(
-            "DI: Using global ConfluenceFetcher from lifespan context (full_confluence_config)."
+            "Using global ConfluenceFetcher from lifespan context (e.g., for STDIO)."
         )
         return ConfluenceFetcher(config=app_lifespan_ctx_global.full_confluence_config)
     logger.error("Confluence configuration could not be resolved.")

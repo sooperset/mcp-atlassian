@@ -161,14 +161,13 @@ def main(
     # Logging level logic
     if verbose == 1:
         current_logging_level = logging.INFO
-    elif verbose >= 2:
+    elif verbose >= 2:  # -vv or more
         current_logging_level = logging.DEBUG
     else:
-        env_verbose = os.getenv("MCP_VERBOSE", "false").lower()
-        env_very_verbose = os.getenv("MCP_VERY_VERBOSE", "false").lower()
-        if env_very_verbose in ("true", "1", "yes"):
+        # Default to DEBUG if MCP_VERY_VERBOSE is set, else INFO if MCP_VERBOSE is set, else WARNING
+        if os.getenv("MCP_VERY_VERBOSE", "false").lower() in ("true", "1", "yes"):
             current_logging_level = logging.DEBUG
-        elif env_verbose in ("true", "1", "yes"):
+        elif os.getenv("MCP_VERBOSE", "false").lower() in ("true", "1", "yes"):
             current_logging_level = logging.INFO
         else:
             current_logging_level = logging.WARNING
@@ -279,7 +278,8 @@ def main(
     if click_ctx and was_option_provided(click_ctx, "jira_projects_filter"):
         os.environ["JIRA_PROJECTS_FILTER"] = jira_projects_filter
 
-    from mcp_atlassian.servers import final_asgi_app, main_mcp
+    from mcp_atlassian.servers import main_mcp
+    from mcp_atlassian.servers.main import final_asgi_app
 
     if final_transport == "stdio":
         logger.info("Starting server with STDIO transport.")

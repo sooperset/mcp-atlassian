@@ -1,6 +1,5 @@
 """Main FastMCP server setup for Atlassian integration."""
 
-import base64  # For Basic auth decoding
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -180,8 +179,8 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
         """Validate the Atlassian token/credentials and create fetchers.
 
         Args:
-            auth_type: The authentication type ("token" or "basic").
-            credentials: Dict of credentials (token, username, api_token).
+            auth_type: The authentication type ("token").
+            credentials: Dict of credentials (token).
             lifespan_context: Lifespan context dict.
 
         Returns:
@@ -312,12 +311,10 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 if confluence_email and user_email_if_cloud is None:
                     user_email_if_cloud = confluence_email
 
-        log_identifier = credentials.get(
-            "token", credentials.get("username", "unknown_user")
-        )
+        log_identifier = credentials.get("token", "unknown_user_token")
 
         if not is_auth_valid:
-            logger.warning(
+            logger.info(
                 f"Auth validation failed for all configured services, or no service available to validate for user/token starting with: {log_identifier[:8]}..."
             )
 
@@ -340,8 +337,6 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
             auth_header = request.headers.get("Authorization")
             auth_type_to_use: str | None = None
             credentials_to_use: dict | None = None
-            user_email_for_context: str | None = None
-
             if auth_header:
                 if auth_header.startswith("Bearer "):
                     token = auth_header.split(" ", 1)[1]
@@ -355,37 +350,6 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                         )
                     auth_type_to_use = "token"
                     credentials_to_use = {"token": token}
-                elif auth_header.startswith("Basic "):
-                    try:
-                        encoded_creds = auth_header.split(" ", 1)[1]
-                        decoded_creds = base64.b64decode(encoded_creds).decode("utf-8")
-                        username, api_token = decoded_creds.split(":", 1)
-                        if not username or not api_token:
-                            logger.warning(
-                                f"Malformed Basic credentials for {request.url.path}"
-                            )
-                            return JSONResponse(
-                                {
-                                    "error": "Unauthorized: Malformed Basic token credentials"
-                                },
-                                status_code=401,
-                            )
-                        auth_type_to_use = "basic"
-                        credentials_to_use = {
-                            "username": username,
-                            "api_token": api_token,
-                        }
-                        user_email_for_context = username
-                    except Exception as e:
-                        logger.warning(
-                            f"Error decoding Basic Auth header for {request.url.path}: {e}"
-                        )
-                        return JSONResponse(
-                            {
-                                "error": "Unauthorized: Invalid Basic token encoding or format"
-                            },
-                            status_code=401,
-                        )
                 else:
                     logger.warning(
                         f"Unsupported Authorization type for {request.url.path}"
@@ -400,7 +364,6 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                     {"error": "Unauthorized: Missing Authorization header"},
                     status_code=401,
                 )
-
             if auth_type_to_use and credentials_to_use:
                 app_state = request.scope.get("state", {})
                 lifespan_ctx_dict = app_state.get("app_lifespan_context")
@@ -434,25 +397,11 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                         },
                         status_code=401,
                     )
-
                 # Store credentials and context in request.state
                 if auth_type_to_use == "token":
                     request.state.user_atlassian_token = credentials_to_use.get("token")
                     request.state.user_atlassian_email = auth_provided_email
-                elif auth_type_to_use == "basic":
-                    request.state.user_atlassian_username = credentials_to_use.get(
-                        "username"
-                    )
-                    request.state.user_atlassian_api_token = credentials_to_use.get(
-                        "api_token"
-                    )
-                    request.state.user_atlassian_email = (
-                        auth_provided_email
-                        if auth_provided_email
-                        else user_email_for_context
-                    )
                 request.state.user_atlassian_auth_type = auth_type_to_use
-
                 if jira_fetcher:
                     request.state.jira_fetcher = jira_fetcher
                     logger.debug("JiraFetcher instance injected into request.state.")
