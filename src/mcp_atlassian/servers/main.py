@@ -1,5 +1,6 @@
 """Main FastMCP server setup for Atlassian integration."""
 
+import base64  # For Basic auth decoding
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -20,8 +21,9 @@ from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.config import JiraConfig
-from mcp_atlassian.utils import is_read_only_mode
+from mcp_atlassian.servers.dependencies import _create_user_config_for_fetcher
 from mcp_atlassian.utils.environment import get_available_services
+from mcp_atlassian.utils.io import is_read_only_mode
 from mcp_atlassian.utils.tools import get_enabled_tools, should_include_tool
 
 from .confluence import confluence_mcp
@@ -38,7 +40,7 @@ async def health_check(request: Request) -> JSONResponse:
 
 
 @asynccontextmanager
-async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[MainAppContext]:
+async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
     """Initialize Jira/Confluence base configs and provide them in context."""
     logger.info("Main Atlassian MCP server lifespan starting...")
     services = get_available_services()
@@ -48,68 +50,42 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[MainAppCo
     logger.debug(f"Lifespan start: read_only={read_only}")
     logger.debug(f"Lifespan start: enabled_tools={enabled_tools}")
 
-    final_jira_base_config: JiraConfig | None = None
-    final_confluence_base_config: ConfluenceConfig | None = None
+    loaded_jira_config: JiraConfig | None = None
+    loaded_confluence_config: ConfluenceConfig | None = None
 
-    # Initialize Jira base config if configured
+    # Initialize Jira full config if configured
     if services.get("jira"):
-        logger.info("Attempting to load Jira base configuration...")
+        logger.info("Attempting to load full Jira configuration from environment...")
         try:
             jira_config = JiraConfig.from_env()
             if jira_config:
-                final_jira_base_config = JiraConfig(
-                    url=jira_config.url,
-                    auth_type=None,
-                    username=None,
-                    api_token=None,
-                    personal_token=None,
-                    oauth_config=None,
-                    ssl_verify=jira_config.ssl_verify,
-                    projects_filter=jira_config.projects_filter,
-                    http_proxy=jira_config.http_proxy,
-                    https_proxy=jira_config.https_proxy,
-                    no_proxy=jira_config.no_proxy,
-                    socks_proxy=jira_config.socks_proxy,
-                )
-                logger.info("Jira base configuration loaded.")
+                loaded_jira_config = jira_config
+                logger.info("Full Jira configuration loaded.")
         except Exception as e:
-            logger.error(f"Failed to load Jira base configuration: {e}", exc_info=True)
+            logger.error(f"Failed to load Jira configuration: {e}", exc_info=True)
 
-    # Initialize Confluence base config if configured
+    # Initialize Confluence full config if configured
     if services.get("confluence"):
-        logger.info("Attempting to load Confluence base configuration...")
+        logger.info(
+            "Attempting to load full Confluence configuration from environment..."
+        )
         try:
             confluence_config = ConfluenceConfig.from_env()
             if confluence_config:
-                final_confluence_base_config = ConfluenceConfig(
-                    url=confluence_config.url,
-                    auth_type=None,
-                    username=None,
-                    api_token=None,
-                    personal_token=None,
-                    oauth_config=None,
-                    ssl_verify=confluence_config.ssl_verify,
-                    spaces_filter=confluence_config.spaces_filter,
-                    http_proxy=confluence_config.http_proxy,
-                    https_proxy=confluence_config.https_proxy,
-                    no_proxy=confluence_config.no_proxy,
-                    socks_proxy=confluence_config.socks_proxy,
-                )
-                logger.info("Confluence base configuration loaded.")
+                loaded_confluence_config = confluence_config
+                logger.info("Full Confluence configuration loaded.")
         except Exception as e:
-            logger.error(
-                f"Failed to load Confluence base configuration: {e}", exc_info=True
-            )
+            logger.error(f"Failed to load Confluence configuration: {e}", exc_info=True)
 
     app_context = MainAppContext(
-        jira_base_config=final_jira_base_config,
-        confluence_base_config=final_confluence_base_config,
+        full_jira_config=loaded_jira_config,
+        full_confluence_config=loaded_confluence_config,
         read_only=read_only,
         enabled_tools=enabled_tools,
     )
     logger.info(f"Read-only mode: {'ENABLED' if read_only else 'DISABLED'}")
     logger.info(f"Enabled tools filter: {enabled_tools or 'All tools enabled'}")
-    yield app_context
+    yield {"app_lifespan_context": app_context}
     logger.info("Main Atlassian MCP server lifespan shutting down.")
 
 
@@ -130,9 +106,23 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             )
             return []
 
-        lifespan_ctx = req_context.lifespan_context
-        read_only = getattr(lifespan_ctx, "read_only", False)
-        enabled_tools_filter = getattr(lifespan_ctx, "enabled_tools", None)
+        # lifespan_context is now a dict: {'app_lifespan_context': MainAppContext(...)}
+        lifespan_ctx_dict = req_context.lifespan_context
+        app_lifespan_state: MainAppContext | None = (
+            lifespan_ctx_dict.get("app_lifespan_context")
+            if isinstance(lifespan_ctx_dict, dict)
+            else None
+        )
+        read_only = (
+            getattr(app_lifespan_state, "read_only", False)
+            if app_lifespan_state
+            else False
+        )
+        enabled_tools_filter = (
+            getattr(app_lifespan_state, "enabled_tools", None)
+            if app_lifespan_state
+            else None
+        )
         logger.debug(
             f"_main_mcp_list_tools: read_only={read_only}, enabled_tools_filter={enabled_tools_filter}"
         )
@@ -182,93 +172,161 @@ class AtlassianMCP(FastMCP[MainAppContext]):
 
 
 class UserTokenMiddleware(BaseHTTPMiddleware):
-    """Middleware to extract and validate Atlassian user tokens from Authorization headers."""
+    """Middleware to extract and validate Atlassian user tokens/credentials from Authorization headers."""
 
-    async def is_valid_atlassian_token(
-        self, token: str, lifespan_context: MainAppContext
-    ) -> tuple[bool, str | None]:
-        """Validate the Atlassian token against Jira or Confluence. Returns (is_valid, user_email_if_cloud)."""
+    async def is_valid_atlassian_auth(
+        self, auth_type: str, credentials: dict, lifespan_context: dict
+    ) -> tuple[bool, str | None, JiraFetcher | None, ConfluenceFetcher | None]:
+        """Validate the Atlassian token/credentials and create fetchers.
+
+        Args:
+            auth_type: The authentication type ("token" or "basic").
+            credentials: Dict of credentials (token, username, api_token).
+            lifespan_context: Lifespan context dict.
+
+        Returns:
+            Tuple of (is_valid, user_email_if_cloud, jira_fetcher, confluence_fetcher).
+        """
         user_email_if_cloud: str | None = None
+        jira_fetcher_instance: JiraFetcher | None = None
+        confluence_fetcher_instance: ConfluenceFetcher | None = None
+        is_auth_valid = False
+
+        app_lifespan_ctx: MainAppContext | None = (
+            lifespan_context.get("app_lifespan_context")
+            if isinstance(lifespan_context, dict)
+            else None
+        )
 
         async def _validate_with_service(
             fetcher_cls: type,
-            base_config: Any,
-            token_val: str,
+            base_config: JiraConfig | ConfluenceConfig | None,
+            auth_type_val: str,
+            creds_val: dict,
             service_name: str,
-        ) -> tuple[bool, str | None]:
+        ) -> tuple[bool, str | None, Any | None]:
             nonlocal user_email_if_cloud
+            current_fetcher_instance = None
+            email_for_service = None
+
             if not base_config:
                 logger.debug(
                     f"No base config for {service_name}, skipping validation with it."
                 )
-                return False, None
-            updated_fields = {
-                "auth_type": "token",
-                "personal_token": token_val,
-                "username": None,
-                "api_token": None,
-                "oauth_config": None,
-            }
-            if not hasattr(base_config, "model_copy"):
-                logger.error(
-                    f"{service_name} base_config is not a Pydantic model, cannot use model_copy."
-                )
-                return False, None
-            temp_config = base_config.model_copy(update=updated_fields)
+                return False, None, None
+
+            # Use new flexible fetcher config
+            user_config_for_validation = _create_user_config_for_fetcher(
+                base_url=base_config.url,
+                base_ssl_verify=base_config.ssl_verify,
+                is_cloud=base_config.is_cloud,
+                auth_type=auth_type_val,
+                credentials=creds_val,
+                projects_filter=getattr(base_config, "projects_filter", None),
+                spaces_filter=getattr(base_config, "spaces_filter", None),
+                http_proxy=base_config.http_proxy,
+                https_proxy=base_config.https_proxy,
+                no_proxy=base_config.no_proxy,
+                socks_proxy=base_config.socks_proxy,
+                config_class=JiraConfig if service_name == "Jira" else ConfluenceConfig,
+            )
+
             try:
-                fetcher = fetcher_cls(config=temp_config)
+                fetcher = fetcher_cls(config=user_config_for_validation)
+                user_identifier_for_log = creds_val.get(
+                    "token", creds_val.get("username", "unknown")
+                )[:8]
+
                 if service_name == "Jira":
                     myself_data = await run_in_threadpool(fetcher.jira.myself)
                     if (
-                        getattr(temp_config, "is_cloud", False)
+                        user_config_for_validation.is_cloud
                         and myself_data
                         and "emailAddress" in myself_data
                     ):
-                        user_email_if_cloud = myself_data["emailAddress"]
+                        email_for_service = myself_data["emailAddress"]
+                        if user_email_if_cloud is None:
+                            user_email_if_cloud = email_for_service
                 elif service_name == "Confluence":
-                    current_user = await run_in_threadpool(
-                        fetcher.confluence.get_current_user
+                    current_user_data = await run_in_threadpool(
+                        fetcher.get_current_user_info
                     )
                     if (
-                        getattr(temp_config, "is_cloud", False)
-                        and current_user
-                        and "email" in current_user
+                        user_config_for_validation.is_cloud
+                        and current_user_data
+                        and "email" in current_user_data
                     ):
-                        user_email_if_cloud = current_user["email"]
-                return True, user_email_if_cloud
+                        email_for_service = current_user_data["email"]
+                        if user_email_if_cloud is None:
+                            user_email_if_cloud = email_for_service
+                current_fetcher_instance = fetcher
+                logger.debug(
+                    f"{service_name} auth validated successfully for user/token starting with: {user_identifier_for_log}..."
+                )
+                return True, email_for_service, current_fetcher_instance
             except MCPAtlassianAuthenticationError:
                 logger.warning(
-                    f"{service_name} token validation failed (authentication error) for token starting with: {token_val[:8]}..."
+                    f"{service_name} auth validation failed (authentication error) for user/token starting with: {user_identifier_for_log}..."
                 )
-                return False, None
+                return False, None, None
             except Exception as e:
                 logger.error(
-                    f"Unexpected error during {service_name} token validation for {token_val[:8]}...: {e}",
+                    f"Unexpected error during {service_name} auth validation for {user_identifier_for_log}...: {e}",
                     exc_info=True,
                 )
-                return False, None
+                return False, None, None
 
         # Try validating with Jira config if available
-        if lifespan_context.jira_base_config:
-            is_valid, email = await _validate_with_service(
-                JiraFetcher, lifespan_context.jira_base_config, token, "Jira"
+        if app_lifespan_ctx and app_lifespan_ctx.full_jira_config:
+            (
+                valid_jira,
+                jira_email,
+                jira_fetcher_instance,
+            ) = await _validate_with_service(
+                JiraFetcher,
+                app_lifespan_ctx.full_jira_config,
+                auth_type,
+                credentials,
+                "Jira",
             )
-            if is_valid:
-                return True, email
+            if valid_jira:
+                is_auth_valid = True
+                if jira_email and user_email_if_cloud is None:
+                    user_email_if_cloud = jira_email
+
         # If Jira validation failed or not configured, try Confluence
-        if lifespan_context.confluence_base_config:
-            is_valid, email = await _validate_with_service(
+        if app_lifespan_ctx and app_lifespan_ctx.full_confluence_config:
+            (
+                valid_confluence,
+                confluence_email,
+                confluence_fetcher_instance,
+            ) = await _validate_with_service(
                 ConfluenceFetcher,
-                lifespan_context.confluence_base_config,
-                token,
+                app_lifespan_ctx.full_confluence_config,
+                auth_type,
+                credentials,
                 "Confluence",
             )
-            if is_valid:
-                return True, email
-        logger.warning(
-            f"Token validation failed for all configured services, or no service available to validate token starting with: {token[:8]}..."
+            if valid_confluence:
+                is_auth_valid = True
+                if confluence_email and user_email_if_cloud is None:
+                    user_email_if_cloud = confluence_email
+
+        log_identifier = credentials.get(
+            "token", credentials.get("username", "unknown_user")
         )
-        return False, None
+
+        if not is_auth_valid:
+            logger.warning(
+                f"Auth validation failed for all configured services, or no service available to validate for user/token starting with: {log_identifier[:8]}..."
+            )
+
+        return (
+            is_auth_valid,
+            user_email_if_cloud,
+            jira_fetcher_instance,
+            confluence_fetcher_instance,
+        )
 
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
@@ -280,48 +338,129 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
         request_path = request.url.path.rstrip("/")
         if request_path == mcp_path and request.method == "POST":
             auth_header = request.headers.get("Authorization")
-            if auth_header and auth_header.startswith("Bearer "):
-                user_atlassian_token = auth_header.split(" ", 1)[1]
-                if user_atlassian_token:
-                    lifespan_ctx = request.scope.get("fastmcp_lifespan_context")
-                    if lifespan_ctx is None:
+            auth_type_to_use: str | None = None
+            credentials_to_use: dict | None = None
+            user_email_for_context: str | None = None
+
+            if auth_header:
+                if auth_header.startswith("Bearer "):
+                    token = auth_header.split(" ", 1)[1]
+                    if not token:
                         logger.warning(
-                            "No lifespan context available in request.scope for token validation."
+                            f"Authorization Bearer token is empty for {request.url.path}"
+                        )
+                        return JSONResponse(
+                            {"error": "Unauthorized: Empty Bearer token"},
+                            status_code=401,
+                        )
+                    auth_type_to_use = "token"
+                    credentials_to_use = {"token": token}
+                elif auth_header.startswith("Basic "):
+                    try:
+                        encoded_creds = auth_header.split(" ", 1)[1]
+                        decoded_creds = base64.b64decode(encoded_creds).decode("utf-8")
+                        username, api_token = decoded_creds.split(":", 1)
+                        if not username or not api_token:
+                            logger.warning(
+                                f"Malformed Basic credentials for {request.url.path}"
+                            )
+                            return JSONResponse(
+                                {
+                                    "error": "Unauthorized: Malformed Basic token credentials"
+                                },
+                                status_code=401,
+                            )
+                        auth_type_to_use = "basic"
+                        credentials_to_use = {
+                            "username": username,
+                            "api_token": api_token,
+                        }
+                        user_email_for_context = username
+                    except Exception as e:
+                        logger.warning(
+                            f"Error decoding Basic Auth header for {request.url.path}: {e}"
                         )
                         return JSONResponse(
                             {
-                                "error": "Unauthorized: Server misconfiguration (no lifespan context)"
+                                "error": "Unauthorized: Invalid Basic token encoding or format"
                             },
-                            status_code=500,
-                        )
-                    is_valid, user_email = await self.is_valid_atlassian_token(
-                        user_atlassian_token, lifespan_ctx
-                    )
-                    if not is_valid:
-                        logger.warning(
-                            f"Invalid Atlassian token provided for {request.url.path}."
-                        )
-                        return JSONResponse(
-                            {"error": "Unauthorized: Invalid Atlassian token"},
                             status_code=401,
                         )
-                    request.state.user_atlassian_token = user_atlassian_token
-                    request.state.user_atlassian_email = user_email
                 else:
                     logger.warning(
-                        f"Authorization Bearer token is empty for {request.url.path}"
+                        f"Unsupported Authorization type for {request.url.path}"
                     )
                     return JSONResponse(
-                        {"error": "Unauthorized: Empty Bearer token"}, status_code=401
+                        {"error": "Unauthorized: Unsupported Authorization type"},
+                        status_code=401,
                     )
             else:
-                logger.warning(
-                    f"Authorization header missing or not Bearer for {request.url.path}"
-                )
+                logger.warning(f"Authorization header missing for {request.url.path}")
                 return JSONResponse(
-                    {"error": "Unauthorized: Missing or malformed Bearer token"},
+                    {"error": "Unauthorized: Missing Authorization header"},
                     status_code=401,
                 )
+
+            if auth_type_to_use and credentials_to_use:
+                app_state = request.scope.get("state", {})
+                lifespan_ctx_dict = app_state.get("app_lifespan_context")
+                if lifespan_ctx_dict is None:
+                    logger.warning(
+                        "No lifespan context available in request.scope for token validation."
+                    )
+                    return JSONResponse(
+                        {
+                            "error": "Unauthorized: Server misconfiguration (lifespan context not found in request state)"
+                        },
+                        status_code=500,
+                    )
+                (
+                    is_valid,
+                    auth_provided_email,
+                    jira_fetcher,
+                    confluence_fetcher,
+                ) = await self.is_valid_atlassian_auth(
+                    auth_type_to_use,
+                    credentials_to_use,
+                    {"app_lifespan_context": lifespan_ctx_dict},
+                )
+                if not is_valid:
+                    logger.warning(
+                        f"Invalid Atlassian credentials provided for {request.url.path} via {auth_type_to_use}."
+                    )
+                    return JSONResponse(
+                        {
+                            "error": f"Unauthorized: Invalid Atlassian credentials via {auth_type_to_use}"
+                        },
+                        status_code=401,
+                    )
+
+                # Store credentials and context in request.state
+                if auth_type_to_use == "token":
+                    request.state.user_atlassian_token = credentials_to_use.get("token")
+                    request.state.user_atlassian_email = auth_provided_email
+                elif auth_type_to_use == "basic":
+                    request.state.user_atlassian_username = credentials_to_use.get(
+                        "username"
+                    )
+                    request.state.user_atlassian_api_token = credentials_to_use.get(
+                        "api_token"
+                    )
+                    request.state.user_atlassian_email = (
+                        auth_provided_email
+                        if auth_provided_email
+                        else user_email_for_context
+                    )
+                request.state.user_atlassian_auth_type = auth_type_to_use
+
+                if jira_fetcher:
+                    request.state.jira_fetcher = jira_fetcher
+                    logger.debug("JiraFetcher instance injected into request.state.")
+                if confluence_fetcher:
+                    request.state.confluence_fetcher = confluence_fetcher
+                    logger.debug(
+                        "ConfluenceFetcher instance injected into request.state."
+                    )
         response = await call_next(request)
         return response
 

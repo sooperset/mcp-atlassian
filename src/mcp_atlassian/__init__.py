@@ -36,14 +36,24 @@ logger = setup_logging(logging_level)
 )
 @click.option(
     "--transport",
-    type=click.Choice(["stdio", "sse"]),
+    type=click.Choice(["stdio", "sse", "streamable-http"]),
     default="stdio",
-    help="Transport type (stdio or sse)",
+    help="Transport type (stdio, sse, or streamable-http)",
 )
 @click.option(
     "--port",
     default=8000,
-    help="Port to listen on for SSE transport",
+    help="Port to listen on for SSE or Streamable HTTP transport",
+)
+@click.option(
+    "--host",
+    default="0.0.0.0",  # noqa: S104
+    help="Host to bind to for SSE or Streamable HTTP transport (default: 0.0.0.0)",
+)
+@click.option(
+    "--path",
+    default="/mcp",
+    help="Path for Streamable HTTP transport (e.g., /mcp).",
 )
 @click.option(
     "--confluence-url",
@@ -113,11 +123,13 @@ logger = setup_logging(logging_level)
     help="Atlassian Cloud ID for OAuth 2.0 authentication",
 )
 def main(
-    verbose: bool,
+    verbose: int,
     env_file: str | None,
     oauth_setup: bool,
     transport: str,
     port: int,
+    host: str,
+    path: str | None,
     confluence_url: str | None,
     confluence_username: str | None,
     confluence_token: str | None,
@@ -130,13 +142,13 @@ def main(
     jira_personal_token: str | None,
     jira_ssl_verify: bool,
     jira_projects_filter: str | None,
-    read_only: bool = False,
-    enabled_tools: str | None = None,
-    oauth_client_id: str | None = None,
-    oauth_client_secret: str | None = None,
-    oauth_redirect_uri: str | None = None,
-    oauth_scope: str | None = None,
-    oauth_cloud_id: str | None = None,
+    read_only: bool,
+    enabled_tools: str | None,
+    oauth_client_id: str | None,
+    oauth_client_secret: str | None,
+    oauth_redirect_uri: str | None,
+    oauth_scope: str | None,
+    oauth_cloud_id: str | None,
 ) -> None:
     """MCP Atlassian Server - Jira and Confluence functionality for MCP
 
@@ -146,150 +158,169 @@ def main(
     - Personal Access Token (Server/Data Center)
     - OAuth 2.0 (Cloud only)
     """
-    # Configure logging based on verbosity
-    logging_level = logging.WARNING
+    # Logging level logic
     if verbose == 1:
-        logging_level = logging.INFO
+        current_logging_level = logging.INFO
     elif verbose >= 2:
-        logging_level = logging.DEBUG
+        current_logging_level = logging.DEBUG
+    else:
+        env_verbose = os.getenv("MCP_VERBOSE", "false").lower()
+        env_very_verbose = os.getenv("MCP_VERY_VERBOSE", "false").lower()
+        if env_very_verbose in ("true", "1", "yes"):
+            current_logging_level = logging.DEBUG
+        elif env_verbose in ("true", "1", "yes"):
+            current_logging_level = logging.INFO
+        else:
+            current_logging_level = logging.WARNING
 
-    # Use our utility function for logging setup
     global logger
-    logger = setup_logging(logging_level)
+    logger = setup_logging(current_logging_level)
+    logger.debug(f"Logging level set to: {logging.getLevelName(current_logging_level)}")
 
     def was_option_provided(ctx: click.Context, param_name: str) -> bool:
         return (
-            ctx.get_parameter_source(param_name) != click.core.ParameterSource.DEFAULT
+            ctx.get_parameter_source(param_name)
+            != click.core.ParameterSource.DEFAULT_MAP
+            and ctx.get_parameter_source(param_name)
+            != click.core.ParameterSource.DEFAULT
         )
 
-    # Load environment variables from file if specified, otherwise try default .env
     if env_file:
         logger.debug(f"Loading environment from file: {env_file}")
-        load_dotenv(env_file)
+        load_dotenv(env_file, override=True)
     else:
-        logger.debug("Attempting to load environment from default .env file")
-        load_dotenv()
+        logger.debug(
+            "Attempting to load environment from default .env file if it exists"
+        )
+        load_dotenv(override=True)
 
-    # Handle the OAuth setup wizard if requested
     if oauth_setup:
         logger.info("Starting OAuth 2.0 setup wizard")
-        # Import the oauth_authorize module functionality
         try:
             from .utils.oauth_setup import run_oauth_setup
 
             sys.exit(run_oauth_setup())
         except ImportError:
-            logger.error(
-                "Failed to import OAuth setup module. Make sure you have the required dependencies installed."
-            )
+            logger.error("Failed to import OAuth setup module.")
             sys.exit(1)
 
-    # Check environment variables if CLI options were not used (or kept default)
+    click_ctx = click.get_current_context(silent=True)
 
-    # Determine final transport mode
-    final_transport = transport
-    if transport == "stdio":  # Check if the default CLI value is still set
-        env_transport = os.getenv("TRANSPORT", "stdio").lower()
-        if env_transport in ["stdio", "sse"]:
-            final_transport = env_transport
-            logger.debug(
-                f"Using transport '{final_transport}' from environment variable."
-            )
+    # Transport precedence
+    final_transport = os.getenv("TRANSPORT", "stdio").lower()
+    if click_ctx and was_option_provided(click_ctx, "transport"):
+        final_transport = transport
+    if final_transport not in ["stdio", "sse", "streamable-http"]:
+        logger.warning(
+            f"Invalid transport '{final_transport}' from env/default, using 'stdio'."
+        )
+        final_transport = "stdio"
+    logger.debug(f"Final transport determined: {final_transport}")
 
-    # Determine final port only if transport is SSE
-    final_port = port
-    if final_transport == "sse":
-        if port == 8000:  # Check if the default CLI value is still set
-            env_port_str = os.getenv("PORT")
-            if env_port_str and env_port_str.isdigit():
-                final_port = int(env_port_str)
-                logger.debug(
-                    f"Using port '{final_port}' from environment variable for SSE transport."
-                )
-        else:  # Port was specified via CLI, log it
-            logger.debug(
-                f"Using port '{final_port}' from command line argument for SSE transport."
-            )
+    # Port precedence
+    final_port = 8000
+    if os.getenv("PORT") and os.getenv("PORT").isdigit():
+        final_port = int(os.getenv("PORT"))
+    if click_ctx and was_option_provided(click_ctx, "port"):
+        final_port = port
+    logger.debug(f"Final port for HTTP transports: {final_port}")
 
-    # Handle enabled tools from CLI or environment
-    if enabled_tools:
+    # Host precedence
+    final_host = os.getenv("HOST", "0.0.0.0")  # noqa: S104
+    if click_ctx and was_option_provided(click_ctx, "host"):
+        final_host = host
+    logger.debug(f"Final host for HTTP transports: {final_host}")
+
+    # Path precedence
+    final_path: str | None = os.getenv("STREAMABLE_HTTP_PATH", None)
+    if click_ctx and was_option_provided(click_ctx, "path"):
+        final_path = path
+    logger.debug(
+        f"Final path for Streamable HTTP: {final_path if final_path else 'FastMCP default'}"
+    )
+
+    # Set env vars for downstream config
+    if click_ctx and was_option_provided(click_ctx, "enabled_tools"):
         os.environ["ENABLED_TOOLS"] = enabled_tools
-    elif os.getenv("ENABLED_TOOLS"):
-        logger.debug("Using enabled tools from environment variable")
-    else:
-        logger.debug("No tool filtering specified, all tools will be enabled")
-
-    # Set environment variables from command line arguments if provided
-    if confluence_url:
+    if click_ctx and was_option_provided(click_ctx, "confluence_url"):
         os.environ["CONFLUENCE_URL"] = confluence_url
-    if confluence_username:
+    if click_ctx and was_option_provided(click_ctx, "confluence_username"):
         os.environ["CONFLUENCE_USERNAME"] = confluence_username
-    if confluence_token:
+    if click_ctx and was_option_provided(click_ctx, "confluence_token"):
         os.environ["CONFLUENCE_API_TOKEN"] = confluence_token
-    if confluence_personal_token:
+    if click_ctx and was_option_provided(click_ctx, "confluence_personal_token"):
         os.environ["CONFLUENCE_PERSONAL_TOKEN"] = confluence_personal_token
-    if jira_url:
+    if click_ctx and was_option_provided(click_ctx, "jira_url"):
         os.environ["JIRA_URL"] = jira_url
-    if jira_username:
+    if click_ctx and was_option_provided(click_ctx, "jira_username"):
         os.environ["JIRA_USERNAME"] = jira_username
-    if jira_token:
+    if click_ctx and was_option_provided(click_ctx, "jira_token"):
         os.environ["JIRA_API_TOKEN"] = jira_token
-    if jira_personal_token:
+    if click_ctx and was_option_provided(click_ctx, "jira_personal_token"):
         os.environ["JIRA_PERSONAL_TOKEN"] = jira_personal_token
-
-    # Set OAuth configuration if provided
-    if oauth_client_id:
+    if click_ctx and was_option_provided(click_ctx, "oauth_client_id"):
         os.environ["ATLASSIAN_OAUTH_CLIENT_ID"] = oauth_client_id
-    if oauth_client_secret:
+    if click_ctx and was_option_provided(click_ctx, "oauth_client_secret"):
         os.environ["ATLASSIAN_OAUTH_CLIENT_SECRET"] = oauth_client_secret
-    if oauth_redirect_uri:
+    if click_ctx and was_option_provided(click_ctx, "oauth_redirect_uri"):
         os.environ["ATLASSIAN_OAUTH_REDIRECT_URI"] = oauth_redirect_uri
-    if oauth_scope:
+    if click_ctx and was_option_provided(click_ctx, "oauth_scope"):
         os.environ["ATLASSIAN_OAUTH_SCOPE"] = oauth_scope
-    if oauth_cloud_id:
+    if click_ctx and was_option_provided(click_ctx, "oauth_cloud_id"):
         os.environ["ATLASSIAN_OAUTH_CLOUD_ID"] = oauth_cloud_id
-
-    # Set read-only mode from CLI flag
-    if read_only:
-        os.environ["READ_ONLY_MODE"] = "true"
-
-    # Get the current click context to check parameter sources
-    click_ctx = click.get_current_context()
-
-    # Set SSL verification for Confluence Server/Data Center, respecting env if CLI flag is default
-    if was_option_provided(click_ctx, "confluence_ssl_verify"):
+    if click_ctx and was_option_provided(click_ctx, "read_only"):
+        os.environ["READ_ONLY_MODE"] = str(read_only).lower()
+    if click_ctx and was_option_provided(click_ctx, "confluence_ssl_verify"):
         os.environ["CONFLUENCE_SSL_VERIFY"] = str(confluence_ssl_verify).lower()
-    # else: environment variable (if set) will be used by ConfluenceConfig.from_env()
-
-    # Set spaces filter for Confluence
-    if confluence_spaces_filter:
+    if click_ctx and was_option_provided(click_ctx, "confluence_spaces_filter"):
         os.environ["CONFLUENCE_SPACES_FILTER"] = confluence_spaces_filter
-
-    # Set SSL verification for Jira Server/Data Center, respecting env if CLI flag is default
-    if was_option_provided(click_ctx, "jira_ssl_verify"):
+    if click_ctx and was_option_provided(click_ctx, "jira_ssl_verify"):
         os.environ["JIRA_SSL_VERIFY"] = str(jira_ssl_verify).lower()
-    # else: environment variable (if set) will be used by JiraConfig.from_env()
-
-    # Set projects filter for Jira
-    if jira_projects_filter:
+    if click_ctx and was_option_provided(click_ctx, "jira_projects_filter"):
         os.environ["JIRA_PROJECTS_FILTER"] = jira_projects_filter
 
     from .servers.main import final_asgi_app, main_mcp
 
-    # Run the server with specified transport
-    if final_transport == "sse":
+    if final_transport == "stdio":
+        logger.info("Starting server with STDIO transport.")
+        asyncio.run(main_mcp.run_async(transport="stdio"))
+    elif final_transport == "sse":
         import uvicorn
 
         logger.info(
-            f"Starting server with SSE transport on port {final_port} using Uvicorn."
+            f"Starting server with SSE transport on http://{final_host}:{final_port}{main_mcp.settings.sse_path or '/sse'}"
+        )
+        sse_app_instance = main_mcp.sse_app(
+            path=main_mcp.settings.sse_path, message_path=main_mcp.settings.message_path
+        )
+        uvicorn.run(
+            sse_app_instance,
+            host=final_host,
+            port=final_port,
+            log_level=logging.getLevelName(current_logging_level).lower(),
+        )
+    elif final_transport == "streamable-http":
+        import uvicorn
+
+        actual_http_path = (
+            final_path
+            if final_path is not None
+            else main_mcp.settings.streamable_http_path
+        )
+        logger.info(
+            f"Starting server with Streamable HTTP transport on http://{final_host}:{final_port}{actual_http_path}"
         )
         uvicorn.run(
             final_asgi_app,
-            host="0.0.0.0",  # noqa: S104
+            host=final_host,
             port=final_port,
+            log_level=logging.getLevelName(current_logging_level).lower(),
         )
     else:
-        asyncio.run(main_mcp.run_async(transport=final_transport))
+        logger.error(
+            f"Transport type '{final_transport}' is configured, but no app instance was created. This should not happen."
+        )
+        sys.exit(1)
 
 
 __all__ = ["main", "__version__"]

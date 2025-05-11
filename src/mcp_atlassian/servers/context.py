@@ -10,9 +10,13 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class MainAppContext:
-    """Context holding base configs and server settings (no fetchers)."""
+    """
+    Context holding fully configured Jira and Confluence configurations
+    loaded from environment variables at server startup.
+    These configurations include any global/default authentication details.
+    """
 
-    jira_base_config: JiraConfig | None = None
-    confluence_base_config: ConfluenceConfig | None = None
+    full_jira_config: JiraConfig | None = None
+    full_confluence_config: ConfluenceConfig | None = None
     read_only: bool = False
     enabled_tools: list[str] | None = None

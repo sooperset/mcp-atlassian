@@ -7,8 +7,7 @@ from typing import Annotated
 from fastmcp import Context, FastMCP
 from pydantic import Field
 
-from mcp_atlassian.confluence import ConfluenceFetcher
-from mcp_atlassian.utils.decorators import with_confluence_fetcher
+from mcp_atlassian.servers.dependencies import get_confluence_fetcher
 
 from ..utils import convert_empty_defaults_to_none
 
@@ -21,11 +20,9 @@ confluence_mcp = FastMCP(
 
 
 @convert_empty_defaults_to_none
-@with_confluence_fetcher
 @confluence_mcp.tool(tags={"confluence", "read"})
 async def search(
     ctx: Context,
-    confluence: ConfluenceFetcher,
     query: Annotated[
         str,
         Field(
@@ -75,7 +72,6 @@ async def search(
 
     Args:
         ctx: The FastMCP context.
-        confluence: The injected ConfluenceFetcher instance for the current user.
         query: Search query - can be simple text or a CQL query string.
         limit: Maximum number of results (1-50).
         spaces_filter: Comma-separated list of space keys to filter by.
@@ -83,6 +79,7 @@ async def search(
     Returns:
         JSON string representing a list of simplified Confluence page objects.
     """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
     # Check if the query is a simple search term or already a CQL query
     if query and not any(
         x in query for x in ["=", "~", ">", "<", " AND ", " OR ", "currentUser()"]
@@ -93,24 +90,27 @@ async def search(
             logger.info(
                 f"Converting simple search term to CQL using siteSearch: {query}"
             )
-            pages = confluence.search(query, limit=limit, spaces_filter=spaces_filter)
+            pages = confluence_fetcher.search(
+                query, limit=limit, spaces_filter=spaces_filter
+            )
         except Exception as e:
             logger.warning(f"siteSearch failed ('{e}'), falling back to text search.")
             query = f'text ~ "{original_query}"'
             logger.info(f"Falling back to text search with CQL: {query}")
-            pages = confluence.search(query, limit=limit, spaces_filter=spaces_filter)
+            pages = confluence_fetcher.search(
+                query, limit=limit, spaces_filter=spaces_filter
+            )
     else:
-        pages = confluence.search(query, limit=limit, spaces_filter=spaces_filter)
-
+        pages = confluence_fetcher.search(
+            query, limit=limit, spaces_filter=spaces_filter
+        )
     search_results = [page.to_simplified_dict() for page in pages]
     return json.dumps(search_results, indent=2, ensure_ascii=False)
 
 
-@with_confluence_fetcher
 @confluence_mcp.tool(tags={"confluence", "read"})
 async def get_page(
     ctx: Context,
-    confluence: ConfluenceFetcher,
     page_id: Annotated[
         str,
         Field(
@@ -144,7 +144,6 @@ async def get_page(
 
     Args:
         ctx: The FastMCP context.
-        confluence: The injected ConfluenceFetcher instance for the current user.
         page_id: Confluence page ID.
         include_metadata: Whether to include page metadata.
         convert_to_markdown: Convert content to markdown (true) or keep raw HTML (false).
@@ -152,21 +151,22 @@ async def get_page(
     Returns:
         JSON string representing the page content and/or metadata.
     """
-    page = confluence.get_page_content(page_id, convert_to_markdown=convert_to_markdown)
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    page = confluence_fetcher.get_page_content(
+        page_id, convert_to_markdown=convert_to_markdown
+    )
 
     if include_metadata:
         result = {"metadata": page.to_simplified_dict()}
     else:
-        result = {"content": page.content}
+        result = {"content": {"value": page.content}}
 
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-@with_confluence_fetcher
 @confluence_mcp.tool(tags={"confluence", "read"})
 async def get_page_children(
     ctx: Context,
-    confluence: ConfluenceFetcher,
     parent_id: Annotated[
         str,
         Field(
@@ -212,7 +212,6 @@ async def get_page_children(
 
     Args:
         ctx: The FastMCP context.
-        confluence: The injected ConfluenceFetcher instance for the current user.
         parent_id: The ID of the parent page.
         expand: Fields to expand.
         limit: Maximum number of child pages.
@@ -223,11 +222,12 @@ async def get_page_children(
     Returns:
         JSON string representing a list of child page objects.
     """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
     if include_content and "body" not in expand:
         expand = f"{expand},body.storage" if expand else "body.storage"
 
     try:
-        pages = confluence.get_page_children(
+        pages = confluence_fetcher.get_page_children(
             page_id=parent_id,
             start=start,
             limit=limit,
@@ -252,11 +252,9 @@ async def get_page_children(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-@with_confluence_fetcher
 @confluence_mcp.tool(tags={"confluence", "read"})
 async def get_comments(
     ctx: Context,
-    confluence: ConfluenceFetcher,
     page_id: Annotated[
         str,
         Field(
@@ -272,22 +270,20 @@ async def get_comments(
 
     Args:
         ctx: The FastMCP context.
-        confluence: The injected ConfluenceFetcher instance for the current user.
         page_id: Confluence page ID.
 
     Returns:
         JSON string representing a list of comment objects.
     """
-    comments = confluence.get_page_comments(page_id)
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    comments = confluence_fetcher.get_page_comments(page_id)
     formatted_comments = [comment.to_simplified_dict() for comment in comments]
     return json.dumps(formatted_comments, indent=2, ensure_ascii=False)
 
 
-@with_confluence_fetcher
 @confluence_mcp.tool(tags={"confluence", "read"})
 async def get_labels(
     ctx: Context,
-    confluence: ConfluenceFetcher,
     page_id: Annotated[
         str,
         Field(
@@ -303,22 +299,20 @@ async def get_labels(
 
     Args:
         ctx: The FastMCP context.
-        confluence: The injected ConfluenceFetcher instance for the current user.
         page_id: Confluence page ID.
 
     Returns:
         JSON string representing a list of label objects.
     """
-    labels = confluence.get_page_labels(page_id)
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    labels = confluence_fetcher.get_page_labels(page_id)
     formatted_labels = [label.to_simplified_dict() for label in labels]
     return json.dumps(formatted_labels, indent=2, ensure_ascii=False)
 
 
-@with_confluence_fetcher
 @confluence_mcp.tool(tags={"confluence", "write"})
 async def add_label(
     ctx: Context,
-    confluence: ConfluenceFetcher,
     page_id: Annotated[str, Field(description="The ID of the page to update")],
     name: Annotated[str, Field(description="The name of the label")],
 ) -> str:
@@ -326,7 +320,6 @@ async def add_label(
 
     Args:
         ctx: The FastMCP context.
-        confluence: The injected ConfluenceFetcher instance for the current user.
         page_id: The ID of the page to update.
         name: The name of the label.
 
@@ -336,26 +329,28 @@ async def add_label(
     Raises:
         ValueError: If in read-only mode or Confluence client is unavailable.
     """
-    if ctx.request_context.lifespan_context.read_only:
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    lifespan_ctx_dict = ctx.request_context.lifespan_context
+    app_lifespan_ctx = (
+        lifespan_ctx_dict.get("app_lifespan_context")
+        if isinstance(lifespan_ctx_dict, dict)
+        else None
+    )
+    if app_lifespan_ctx is not None and app_lifespan_ctx.read_only:
         logger.warning("Attempted to call add_label in read-only mode.")
         raise ValueError("Cannot add label in read-only mode.")
-    if (
-        not ctx.request_context.lifespan_context
-        or not ctx.request_context.lifespan_context.confluence
-    ):
+    if app_lifespan_ctx is None or not getattr(app_lifespan_ctx, "confluence", None):
         raise ValueError("Confluence client is not configured or available.")
 
-    labels = confluence.add_page_label(page_id, name)
+    labels = confluence_fetcher.add_page_label(page_id, name)
     formatted_labels = [label.to_simplified_dict() for label in labels]
     return json.dumps(formatted_labels, indent=2, ensure_ascii=False)
 
 
 @convert_empty_defaults_to_none
-@with_confluence_fetcher
 @confluence_mcp.tool(tags={"confluence", "write"})
 async def create_page(
     ctx: Context,
-    confluence: ConfluenceFetcher,
     space_key: Annotated[
         str,
         Field(
@@ -381,7 +376,6 @@ async def create_page(
 
     Args:
         ctx: The FastMCP context.
-        confluence: The injected ConfluenceFetcher instance for the current user.
         space_key: The key of the space.
         title: The title of the page.
         content: The content in Markdown format.
@@ -393,16 +387,20 @@ async def create_page(
     Raises:
         ValueError: If in read-only mode or Confluence client is unavailable.
     """
-    if ctx.request_context.lifespan_context.read_only:
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    lifespan_ctx_dict = ctx.request_context.lifespan_context
+    app_lifespan_ctx = (
+        lifespan_ctx_dict.get("app_lifespan_context")
+        if isinstance(lifespan_ctx_dict, dict)
+        else None
+    )
+    if app_lifespan_ctx is not None and app_lifespan_ctx.read_only:
         logger.warning("Attempted to call create_page in read-only mode.")
         raise ValueError("Cannot create page in read-only mode.")
-    if (
-        not ctx.request_context.lifespan_context
-        or not ctx.request_context.lifespan_context.confluence
-    ):
+    if app_lifespan_ctx is None or not getattr(app_lifespan_ctx, "confluence", None):
         raise ValueError("Confluence client is not configured or available.")
 
-    page = confluence.create_page(
+    page = confluence_fetcher.create_page(
         space_key=space_key,
         title=title,
         body=content,
@@ -417,11 +415,9 @@ async def create_page(
     )
 
 
-@with_confluence_fetcher
 @confluence_mcp.tool(tags={"confluence", "write"})
 async def update_page(
     ctx: Context,
-    confluence: ConfluenceFetcher,
     page_id: Annotated[str, Field(description="The ID of the page to update")],
     title: Annotated[str, Field(description="The new title of the page")],
     content: Annotated[
@@ -442,7 +438,6 @@ async def update_page(
 
     Args:
         ctx: The FastMCP context.
-        confluence: The injected ConfluenceFetcher instance for the current user.
         page_id: The ID of the page to update.
         title: The new title of the page.
         content: The new content in Markdown format.
@@ -456,19 +451,11 @@ async def update_page(
     Raises:
         ValueError: If in read-only mode or Confluence client is unavailable.
     """
-    if ctx.request_context.lifespan_context.read_only:
-        logger.warning("Attempted to call update_page in read-only mode.")
-        raise ValueError("Cannot update page in read-only mode.")
-    if (
-        not ctx.request_context.lifespan_context
-        or not ctx.request_context.lifespan_context.confluence
-    ):
-        raise ValueError("Confluence client is not configured or available.")
-
+    confluence_fetcher = await get_confluence_fetcher(ctx)
     # TODO: revert this once Cursor IDE handles optional parameters with Union types correctly.
     actual_parent_id = parent_id if parent_id else None
 
-    updated_page = confluence.update_page(
+    updated_page = confluence_fetcher.update_page(
         page_id=page_id,
         title=title,
         body=content,
@@ -485,18 +472,15 @@ async def update_page(
     )
 
 
-@with_confluence_fetcher
 @confluence_mcp.tool(tags={"confluence", "write"})
 async def delete_page(
     ctx: Context,
-    confluence: ConfluenceFetcher,
     page_id: Annotated[str, Field(description="The ID of the page to delete")],
 ) -> str:
     """Delete an existing Confluence page.
 
     Args:
         ctx: The FastMCP context.
-        confluence: The injected ConfluenceFetcher instance for the current user.
         page_id: The ID of the page to delete.
 
     Returns:
@@ -505,17 +489,21 @@ async def delete_page(
     Raises:
         ValueError: If in read-only mode or Confluence client is unavailable.
     """
-    if ctx.request_context.lifespan_context.read_only:
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    lifespan_ctx_dict = ctx.request_context.lifespan_context
+    app_lifespan_ctx = (
+        lifespan_ctx_dict.get("app_lifespan_context")
+        if isinstance(lifespan_ctx_dict, dict)
+        else None
+    )
+    if app_lifespan_ctx is not None and app_lifespan_ctx.read_only:
         logger.warning("Attempted to call delete_page in read-only mode.")
         raise ValueError("Cannot delete page in read-only mode.")
-    if (
-        not ctx.request_context.lifespan_context
-        or not ctx.request_context.lifespan_context.confluence
-    ):
+    if app_lifespan_ctx is None or not getattr(app_lifespan_ctx, "confluence", None):
         raise ValueError("Confluence client is not configured or available.")
 
     try:
-        result = confluence.delete_page(page_id=page_id)
+        result = confluence_fetcher.delete_page(page_id=page_id)
         if result:
             response = {
                 "success": True,

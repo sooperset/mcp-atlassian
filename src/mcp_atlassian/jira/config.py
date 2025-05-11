@@ -4,8 +4,8 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
-from ..utils import is_atlassian_cloud_url
 from ..utils.oauth import OAuthConfig
+from ..utils.urls import is_atlassian_cloud_url
 
 
 @dataclass
