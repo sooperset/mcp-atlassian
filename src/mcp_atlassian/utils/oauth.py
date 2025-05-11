@@ -430,12 +430,17 @@ def configure_oauth_session(
     Returns:
         True if the session was successfully configured, False otherwise
     """
-    # Ensure we have a valid token
+    # If user provided only an access token (no refresh_token), use it directly
+    if oauth_config.access_token and not oauth_config.refresh_token:
+        logger.info(
+            "Using provided OAuth access token directly without refresh capability."
+        )
+        session.headers["Authorization"] = f"Bearer {oauth_config.access_token}"
+        return True
+    # Otherwise, ensure we have a valid token (refresh if needed)
     if not oauth_config.ensure_valid_token():
         logger.error("Failed to get valid OAuth token for API requests")
         return False
-
-    # Configure the session with the access token
     session.headers["Authorization"] = f"Bearer {oauth_config.access_token}"
     logger.info("Successfully configured OAuth session for Atlassian Cloud API")
     return True

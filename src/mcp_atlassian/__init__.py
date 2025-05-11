@@ -299,29 +299,21 @@ def main(
             log_level=logging.getLevelName(current_logging_level).lower(),
         )
     elif final_transport == "streamable-http":
-        # Use FastMCP's StreamableHttpServer instead of direct uvicorn usage
-        from fastmcp.server.http import StreamableHttpServer
-
         actual_http_path = (
             final_path
             if final_path is not None
             else main_mcp.settings.streamable_http_path
         )
-        # StreamableHttpServer instance creation
-        # main_mcp is AtlassianMCP, which is compatible with mcp_server argument
-        streamable_server = StreamableHttpServer(
-            mcp_server=main_mcp,  # type: ignore
-            host=final_host,
-            port=final_port,
-            path=actual_http_path,
-        )
         logger.info(
             f"Starting server with Streamable HTTP transport on http://{final_host}:{final_port}{actual_http_path}"
         )
-        # Use run_async to ensure proper initialization (includes uvicorn and TaskGroup setup)
         asyncio.run(
-            streamable_server.run_async(
-                log_level=logging.getLevelName(current_logging_level).lower()
+            main_mcp.run_async(
+                transport="streamable-http",
+                host=final_host,
+                port=final_port,
+                path=actual_http_path,
+                log_level=logging.getLevelName(current_logging_level).lower(),
             )
         )
     else:

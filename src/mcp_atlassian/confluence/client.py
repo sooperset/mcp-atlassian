@@ -50,6 +50,9 @@ class ConfluenceClient:
             # The Confluence API URL with OAuth is different
             api_url = f"https://api.atlassian.com/ex/confluence/{self.config.oauth_config.cloud_id}"
 
+            logger.debug(
+                f"Initializing Confluence client with OAuth. API URL: {api_url}, Session Headers (before API init): {session.headers}"
+            )
             # Initialize Confluence with the session
             self.confluence = Confluence(
                 url=api_url,
@@ -57,7 +60,13 @@ class ConfluenceClient:
                 cloud=True,  # OAuth is only for Cloud
                 verify_ssl=self.config.ssl_verify,
             )
+            logger.debug(
+                f"Confluence client _session after init: {self.confluence._session.__dict__}"
+            )
         elif self.config.auth_type == "token":
+            logger.debug(
+                f"Initializing Confluence client with Token (PAT) auth. URL: {self.config.url}, Token (first 10): {str(self.config.personal_token)[:10] if self.config.personal_token else 'None'}"
+            )
             self.confluence = Confluence(
                 url=self.config.url,
                 token=self.config.personal_token,
@@ -65,6 +74,9 @@ class ConfluenceClient:
                 verify_ssl=self.config.ssl_verify,
             )
         else:  # basic auth
+            logger.debug(
+                f"Initializing Confluence client with Basic auth. URL: {self.config.url}, Username: {self.config.username}"
+            )
             self.confluence = Confluence(
                 url=self.config.url,
                 username=self.config.username,

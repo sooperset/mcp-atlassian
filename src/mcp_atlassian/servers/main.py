@@ -216,24 +216,23 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
 
             # Use new flexible fetcher config
             user_config_for_validation = _create_user_config_for_fetcher(
-                base_url=base_config.url,
-                base_ssl_verify=base_config.ssl_verify,
-                is_cloud=base_config.is_cloud,
+                base_config=base_config,
                 auth_type=auth_type_val,
                 credentials=creds_val,
-                projects_filter=getattr(base_config, "projects_filter", None),
-                spaces_filter=getattr(base_config, "spaces_filter", None),
-                http_proxy=base_config.http_proxy,
-                https_proxy=base_config.https_proxy,
-                no_proxy=base_config.no_proxy,
-                socks_proxy=base_config.socks_proxy,
                 config_class=JiraConfig if service_name == "Jira" else ConfluenceConfig,
             )
 
+            logger.debug(
+                f"Attempting to validate {service_name} with user_config: auth_type='{user_config_for_validation.auth_type}', user='{user_config_for_validation.username}', token_present={bool(user_config_for_validation.personal_token or (user_config_for_validation.oauth_config and user_config_for_validation.oauth_config.access_token))}"
+            )
             try:
                 fetcher = fetcher_cls(config=user_config_for_validation)
                 user_identifier_for_log = creds_val.get(
-                    "token", creds_val.get("username", "unknown")
+                    "token",  # PAT의 경우
+                    creds_val.get(
+                        "oauth_access_token",
+                        creds_val.get("user_email_context", "unknown"),
+                    ),
                 )[:8]
 
                 if service_name == "Jira":
@@ -260,17 +259,17 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                             user_email_if_cloud = email_for_service
                 current_fetcher_instance = fetcher
                 logger.debug(
-                    f"{service_name} auth validated successfully for user/token starting with: {user_identifier_for_log}..."
+                    f"{service_name} auth validated successfully for user/token starting with: {user_identifier_for_log if user_identifier_for_log else 'unknown'}..."
                 )
                 return True, email_for_service, current_fetcher_instance
             except MCPAtlassianAuthenticationError:
                 logger.warning(
-                    f"{service_name} auth validation failed (authentication error) for user/token starting with: {user_identifier_for_log}..."
+                    f"{service_name} auth validation failed (authentication error) for user/token starting with: {user_identifier_for_log if user_identifier_for_log else 'unknown'}..."
                 )
                 return False, None, None
             except Exception as e:
                 logger.error(
-                    f"Unexpected error during {service_name} auth validation for {user_identifier_for_log}...: {e}",
+                    f"Unexpected error during {service_name} auth validation for {user_identifier_for_log if user_identifier_for_log else 'unknown'}...: {e}",
                     exc_info=True,
                 )
                 return False, None, None
@@ -335,6 +334,9 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
         request_path = request.url.path.rstrip("/")
         if request_path == mcp_path and request.method == "POST":
             auth_header = request.headers.get("Authorization")
+            logger.debug(
+                f"UserTokenMiddleware: Received Authorization header: {auth_header[:30] if auth_header else 'None'}..."
+            )
             auth_type_to_use: str | None = None
             credentials_to_use: dict | None = None
             if auth_header:
@@ -348,8 +350,52 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                             {"error": "Unauthorized: Empty Bearer token"},
                             status_code=401,
                         )
-                    auth_type_to_use = "token"
-                    credentials_to_use = {"token": token}
+                    # Determine if this Bearer token should be treated as OAuth or PAT
+                    lifespan_ctx_dict = request.scope.get("state", {}).get(
+                        "app_lifespan_context", {}
+                    )
+                    app_lifespan_ctx = (
+                        lifespan_ctx_dict
+                        if isinstance(lifespan_ctx_dict, MainAppContext)
+                        else None
+                    )
+                    if not app_lifespan_ctx and isinstance(lifespan_ctx_dict, dict):
+                        app_lifespan_ctx = lifespan_ctx_dict.get("app_lifespan_context")
+                    global_jira_config = (
+                        app_lifespan_ctx.full_jira_config if app_lifespan_ctx else None
+                    )
+                    global_confluence_config = (
+                        app_lifespan_ctx.full_confluence_config
+                        if app_lifespan_ctx
+                        else None
+                    )
+                    global_jira_is_oauth = (
+                        global_jira_config
+                        and getattr(global_jira_config, "auth_type", None) == "oauth"
+                    )
+                    global_confluence_is_oauth = (
+                        global_confluence_config
+                        and getattr(global_confluence_config, "auth_type", None)
+                        == "oauth"
+                    )
+                    is_server_globally_oauth_capable = (
+                        global_jira_is_oauth or global_confluence_is_oauth
+                    )
+                    if is_server_globally_oauth_capable:
+                        auth_type_to_use = "oauth"
+                        credentials_to_use = {"oauth_access_token": token}
+                        logger.debug(
+                            "UserTokenMiddleware: Interpreting user Bearer token as OAuth access token."
+                        )
+                    else:
+                        auth_type_to_use = "token"
+                        credentials_to_use = {"token": token}
+                        logger.debug(
+                            "UserTokenMiddleware: Interpreting user Bearer token as PAT (server not OAuth configured globally)."
+                        )
+                    logger.debug(
+                        f"UserTokenMiddleware: Extracted Bearer token (first 10 chars): {token[:10]}..."
+                    )
                 else:
                     logger.warning(
                         f"Unsupported Authorization type for {request.url.path}"
@@ -359,15 +405,21 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                         status_code=401,
                     )
             else:
-                logger.warning(f"Authorization header missing for {request.url.path}")
-                return JSONResponse(
-                    {"error": "Unauthorized: Missing Authorization header"},
-                    status_code=401,
+                # Allow proceeding with global config if Authorization header is missing
+                logger.debug(
+                    f"No Authorization header provided for {request.url.path}. Proceeding with global config."
                 )
+                auth_type_to_use = None
+                credentials_to_use = None
             if auth_type_to_use and credentials_to_use:
                 app_state = request.scope.get("state", {})
-                lifespan_ctx_dict = app_state.get("app_lifespan_context")
-                if lifespan_ctx_dict is None:
+                lifespan_ctx_val = app_state.get("app_lifespan_context")
+                lifespan_ctx_dict_for_validation = (
+                    {"app_lifespan_context": lifespan_ctx_val}
+                    if lifespan_ctx_val
+                    else {}
+                )
+                if lifespan_ctx_dict_for_validation is None:
                     logger.warning(
                         "No lifespan context available in request.scope for token validation."
                     )
@@ -385,10 +437,10 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 ) = await self.is_valid_atlassian_auth(
                     auth_type_to_use,
                     credentials_to_use,
-                    {"app_lifespan_context": lifespan_ctx_dict},
+                    lifespan_ctx_dict_for_validation,
                 )
                 if not is_valid:
-                    logger.warning(
+                    logger.info(
                         f"Invalid Atlassian credentials provided for {request.url.path} via {auth_type_to_use}."
                     )
                     return JSONResponse(
@@ -397,9 +449,13 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                         },
                         status_code=401,
                     )
-                # Store credentials and context in request.state
                 if auth_type_to_use == "token":
                     request.state.user_atlassian_token = credentials_to_use.get("token")
+                    request.state.user_atlassian_email = auth_provided_email
+                elif auth_type_to_use == "oauth":
+                    request.state.user_atlassian_token = credentials_to_use.get(
+                        "oauth_access_token"
+                    )
                     request.state.user_atlassian_email = auth_provided_email
                 request.state.user_atlassian_auth_type = auth_type_to_use
                 if jira_fetcher:
@@ -410,6 +466,10 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                     logger.debug(
                         "ConfluenceFetcher instance injected into request.state."
                     )
+            elif auth_type_to_use is None and credentials_to_use is None:
+                logger.debug(
+                    "Proceeding with global server configuration (no user-specific token)."
+                )
         response = await call_next(request)
         return response
 
