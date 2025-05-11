@@ -9,7 +9,7 @@ from requests import Session
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.preprocessing import JiraPreprocessor
-from mcp_atlassian.utils.logging import log_config_param
+from mcp_atlassian.utils.logging import log_config_param, mask_sensitive
 from mcp_atlassian.utils.oauth import configure_oauth_session
 from mcp_atlassian.utils.ssl import configure_ssl_verification
 
@@ -75,7 +75,7 @@ class JiraClient:
             )
         elif self.config.auth_type == "token":
             logger.debug(
-                f"Initializing Jira client with Token (PAT) auth. URL: {self.config.url}, Token (first 10): {str(self.config.personal_token)[:10] if self.config.personal_token else 'None'}"
+                f"Initializing Jira client with Token (PAT) auth. URL: {self.config.url}, Token (masked): {mask_sensitive(str(self.config.personal_token))}"
             )
             self.jira = Jira(
                 url=self.config.url,

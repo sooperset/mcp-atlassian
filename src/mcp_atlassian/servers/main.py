@@ -23,6 +23,7 @@ from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.servers.dependencies import _create_user_config_for_fetcher
 from mcp_atlassian.utils.environment import get_available_services
 from mcp_atlassian.utils.io import is_read_only_mode
+from mcp_atlassian.utils.logging import mask_sensitive
 from mcp_atlassian.utils.tools import get_enabled_tools, should_include_tool
 
 from .confluence import confluence_mcp
@@ -179,8 +180,8 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
         """Validate the Atlassian token/credentials and create fetchers.
 
         Args:
-            auth_type: The authentication type ("token").
-            credentials: Dict of credentials (token).
+            auth_type: The authentication type ("token" or "oauth").
+            credentials: Dict of credentials (token or oauth_access_token).
             lifespan_context: Lifespan context dict.
 
         Returns:
@@ -214,7 +215,6 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 )
                 return False, None, None
 
-            # Use new flexible fetcher config
             user_config_for_validation = _create_user_config_for_fetcher(
                 base_config=base_config,
                 auth_type=auth_type_val,
@@ -227,14 +227,12 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
             )
             try:
                 fetcher = fetcher_cls(config=user_config_for_validation)
-                user_identifier_for_log = creds_val.get(
-                    "token",  # PAT의 경우
-                    creds_val.get(
-                        "oauth_access_token",
-                        creds_val.get("user_email_context", "unknown"),
-                    ),
-                )[:8]
-
+                user_identifier_for_log = mask_sensitive(
+                    creds_val.get("token")
+                    or creds_val.get("oauth_access_token")
+                    or creds_val.get("user_email_context", "unknown"),
+                    keep_chars=4,
+                )
                 if service_name == "Jira":
                     myself_data = await run_in_threadpool(fetcher.jira.myself)
                     if (
@@ -259,23 +257,27 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                             user_email_if_cloud = email_for_service
                 current_fetcher_instance = fetcher
                 logger.debug(
-                    f"{service_name} auth validated successfully for user/token starting with: {user_identifier_for_log if user_identifier_for_log else 'unknown'}..."
+                    f"{service_name} auth validated successfully for user/token: {user_identifier_for_log}..."
                 )
                 return True, email_for_service, current_fetcher_instance
             except MCPAtlassianAuthenticationError:
                 logger.warning(
-                    f"{service_name} auth validation failed (authentication error) for user/token starting with: {user_identifier_for_log if user_identifier_for_log else 'unknown'}..."
+                    f"{service_name} auth validation failed (authentication error) for user/token: {mask_sensitive(creds_val.get('token') or creds_val.get('oauth_access_token') or creds_val.get('user_email_context', 'unknown'), keep_chars=4)}..."
                 )
                 return False, None, None
             except Exception as e:
                 logger.error(
-                    f"Unexpected error during {service_name} auth validation for {user_identifier_for_log if user_identifier_for_log else 'unknown'}...: {e}",
+                    f"Unexpected error during {service_name} auth validation for user/token: {mask_sensitive(creds_val.get('token') or creds_val.get('oauth_access_token') or creds_val.get('user_email_context', 'unknown'), keep_chars=4)}...: {e}",
                     exc_info=True,
                 )
                 return False, None, None
 
-        # Try validating with Jira config if available
-        if app_lifespan_ctx and app_lifespan_ctx.full_jira_config:
+        jira_available = app_lifespan_ctx and app_lifespan_ctx.full_jira_config
+        confluence_available = (
+            app_lifespan_ctx and app_lifespan_ctx.full_confluence_config
+        )
+
+        if jira_available:
             (
                 valid_jira,
                 jira_email,
@@ -292,8 +294,7 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 if jira_email and user_email_if_cloud is None:
                     user_email_if_cloud = jira_email
 
-        # If Jira validation failed or not configured, try Confluence
-        if app_lifespan_ctx and app_lifespan_ctx.full_confluence_config:
+        if confluence_available:
             (
                 valid_confluence,
                 confluence_email,
@@ -310,11 +311,18 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 if confluence_email and user_email_if_cloud is None:
                     user_email_if_cloud = confluence_email
 
-        log_identifier = credentials.get("token", "unknown_user_token")
+        log_identifier = mask_sensitive(
+            credentials.get("token", "unknown_user_token"), keep_chars=4
+        )
 
-        if not is_auth_valid:
+        if not jira_available and not confluence_available:
+            logger.warning(
+                f"No Atlassian services configured in the server. Cannot validate token for: {log_identifier}..."
+            )
+            is_auth_valid = False
+        elif not is_auth_valid:
             logger.info(
-                f"Auth validation failed for all configured services, or no service available to validate for user/token starting with: {log_identifier[:8]}..."
+                f"Auth validation failed for all configured services, or no service available to validate for user/token: {log_identifier}..."
             )
 
         return (
@@ -335,7 +343,7 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
         if request_path == mcp_path and request.method == "POST":
             auth_header = request.headers.get("Authorization")
             logger.debug(
-                f"UserTokenMiddleware: Received Authorization header: {auth_header[:30] if auth_header else 'None'}..."
+                f"UserTokenMiddleware: Processing request to {request.url.path}"
             )
             auth_type_to_use: str | None = None
             credentials_to_use: dict | None = None
@@ -350,7 +358,6 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                             {"error": "Unauthorized: Empty Bearer token"},
                             status_code=401,
                         )
-                    # Determine if this Bearer token should be treated as OAuth or PAT
                     lifespan_ctx_dict = request.scope.get("state", {}).get(
                         "app_lifespan_context", {}
                     )
@@ -394,7 +401,7 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                             "UserTokenMiddleware: Interpreting user Bearer token as PAT (server not OAuth configured globally)."
                         )
                     logger.debug(
-                        f"UserTokenMiddleware: Extracted Bearer token (first 10 chars): {token[:10]}..."
+                        f"UserTokenMiddleware: Bearer token received (masked): {mask_sensitive(token, keep_chars=4)}"
                     )
                 else:
                     logger.warning(
@@ -405,7 +412,6 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                         status_code=401,
                     )
             else:
-                # Allow proceeding with global config if Authorization header is missing
                 logger.debug(
                     f"No Authorization header provided for {request.url.path}. Proceeding with global config."
                 )
@@ -440,7 +446,7 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                     lifespan_ctx_dict_for_validation,
                 )
                 if not is_valid:
-                    logger.info(
+                    logger.warning(
                         f"Invalid Atlassian credentials provided for {request.url.path} via {auth_type_to_use}."
                     )
                     return JSONResponse(
@@ -451,12 +457,11 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                     )
                 if auth_type_to_use == "token":
                     request.state.user_atlassian_token = credentials_to_use.get("token")
-                    request.state.user_atlassian_email = auth_provided_email
                 elif auth_type_to_use == "oauth":
                     request.state.user_atlassian_token = credentials_to_use.get(
                         "oauth_access_token"
                     )
-                    request.state.user_atlassian_email = auth_provided_email
+                request.state.user_atlassian_email = auth_provided_email
                 request.state.user_atlassian_auth_type = auth_type_to_use
                 if jira_fetcher:
                     request.state.jira_fetcher = jira_fetcher

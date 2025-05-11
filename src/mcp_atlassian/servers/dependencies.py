@@ -25,30 +25,25 @@ logger = logging.getLogger("mcp-atlassian.servers.dependencies")
 
 
 def _create_user_config_for_fetcher(
-    base_config: JiraConfig | ConfluenceConfig,  # global config object
+    base_config: JiraConfig | ConfluenceConfig,
     auth_type: str,
-    credentials: dict,
-    config_class: type[JiraConfig] | type[ConfluenceConfig] = JiraConfig,
+    credentials: dict[str, Any],
 ) -> JiraConfig | ConfluenceConfig:
-    """
-    Creates a user-specific configuration for Jira or Confluence fetchers.
-    Supports 'token' (PAT) and 'oauth' (user access token) auth_type for user-specific config.
+    """Create a user-specific configuration for Jira or Confluence fetchers.
 
     Args:
         base_config: The global configuration for the service (JiraConfig or ConfluenceConfig).
         auth_type: The authentication type determined for the user ("token" or "oauth").
-        credentials: Dict of credentials (token or oauth_access_token).
-        config_class: JiraConfig or ConfluenceConfig.
+        credentials: Dict of credentials (token or oauth_access_token, user_email_context).
 
     Returns:
         JiraConfig or ConfluenceConfig instance for the user.
 
     Raises:
-        TypeError: If config_class is not supported.
-        ValueError: If auth_type is not supported.
-        ValueError: If OAuth credentials or global cloud_id are missing for 'oauth' auth_type.
+        TypeError: If base_config is not supported.
+        ValueError: If auth_type is not supported or required credentials are missing.
     """
-    username_for_config: str | None = None
+    username_for_config: str | None = credentials.get("user_email_context")
     personal_token_for_config: str | None = None
     oauth_config_for_user: OAuthConfig | None = None
 
@@ -57,7 +52,6 @@ def _create_user_config_for_fetcher(
     )
     if auth_type == "token":
         personal_token_for_config = credentials.get("token")
-        username_for_config = credentials.get("user_email_context")
     elif auth_type == "oauth":
         user_access_token = credentials.get("oauth_access_token")
         if not user_access_token:
@@ -70,7 +64,7 @@ def _create_user_config_for_fetcher(
             or not base_config.oauth_config.cloud_id
         ):
             raise ValueError(
-                f"Global OAuth config (with cloud_id) for {config_class.__name__} is missing, "
+                f"Global OAuth config (with cloud_id) for {type(base_config).__name__} is missing, "
                 "but user auth_type is 'oauth'. Cannot determine cloud_id."
             )
         oauth_config_for_user = OAuthConfig(
@@ -83,7 +77,6 @@ def _create_user_config_for_fetcher(
             expires_at=None,
             cloud_id=base_config.oauth_config.cloud_id,
         )
-        username_for_config = credentials.get("user_email_context")
     else:
         raise ValueError(
             f"Unsupported auth_type in _create_user_config_for_fetcher: {auth_type}"
@@ -103,17 +96,16 @@ def _create_user_config_for_fetcher(
         "socks_proxy": base_config.socks_proxy,
     }
 
-    if config_class is JiraConfig:
+    if isinstance(base_config, JiraConfig):
         return JiraConfig(**common_args, projects_filter=base_config.projects_filter)
-    elif config_class is ConfluenceConfig:
+    elif isinstance(base_config, ConfluenceConfig):
         return ConfluenceConfig(**common_args, spaces_filter=base_config.spaces_filter)
     else:
-        raise TypeError("Unsupported config_class provided")
+        raise TypeError(f"Unsupported base_config type: {type(base_config)}")
 
 
 async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
-    """
-    Returns a JiraFetcher instance appropriate for the current request context.
+    """Returns a JiraFetcher instance appropriate for the current request context.
 
     Args:
         ctx: The FastMCP context.
@@ -126,6 +118,12 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
     """
     try:
         request: Request = get_http_request()
+        # Prefer fetcher from request.state if present (set by UserTokenMiddleware)
+        if hasattr(request.state, "jira_fetcher") and request.state.jira_fetcher:
+            logger.debug(
+                "Returning JiraFetcher already validated and stored in request.state."
+            )
+            return request.state.jira_fetcher
         user_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
         logger.debug(
             f"get_jira_fetcher: User auth type from request.state: {user_auth_type}"
@@ -161,10 +159,9 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
                 base_config=app_lifespan_ctx.full_jira_config,
                 auth_type=user_auth_type,
                 credentials=credentials,
-                config_class=JiraConfig,
             )
             logger.debug(
-                f"Created user-specific JiraConfig for token starting with {credentials.get('token', credentials.get('oauth_access_token', ''))[:10]}... Resulting auth_type: {user_specific_config.auth_type}"
+                f"Created user-specific JiraConfig for token (masked): {credentials.get('token') or credentials.get('oauth_access_token') or 'None'}... Resulting auth_type: {user_specific_config.auth_type}"
             )
             return JiraFetcher(config=user_specific_config)
     except RuntimeError:
@@ -189,8 +186,7 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
 
 
 async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
-    """
-    Returns a ConfluenceFetcher instance appropriate for the current request context.
+    """Returns a ConfluenceFetcher instance appropriate for the current request context.
 
     Args:
         ctx: The FastMCP context.
@@ -203,6 +199,15 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
     """
     try:
         request: Request = get_http_request()
+        # Prefer fetcher from request.state if present (set by UserTokenMiddleware)
+        if (
+            hasattr(request.state, "confluence_fetcher")
+            and request.state.confluence_fetcher
+        ):
+            logger.debug(
+                "Returning ConfluenceFetcher already validated and stored in request.state."
+            )
+            return request.state.confluence_fetcher
         user_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
         logger.debug(
             f"get_confluence_fetcher: User auth type from request.state: {user_auth_type}"
@@ -238,10 +243,9 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
                 base_config=app_lifespan_ctx.full_confluence_config,
                 auth_type=user_auth_type,
                 credentials=credentials,
-                config_class=ConfluenceConfig,
             )
             logger.debug(
-                f"Created user-specific ConfluenceConfig for token starting with {credentials.get('token', credentials.get('oauth_access_token', ''))[:10]}... Resulting auth_type: {user_specific_config.auth_type}"
+                f"Created user-specific ConfluenceConfig for token (masked): {credentials.get('token') or credentials.get('oauth_access_token') or 'None'}... Resulting auth_type: {user_specific_config.auth_type}"
             )
             return ConfluenceFetcher(config=user_specific_config)
     except RuntimeError:
