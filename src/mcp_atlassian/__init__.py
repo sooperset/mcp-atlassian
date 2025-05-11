@@ -279,7 +279,6 @@ def main(
         os.environ["JIRA_PROJECTS_FILTER"] = jira_projects_filter
 
     from mcp_atlassian.servers import main_mcp
-    from mcp_atlassian.servers.main import final_asgi_app
 
     if final_transport == "stdio":
         logger.info("Starting server with STDIO transport.")
@@ -300,21 +299,30 @@ def main(
             log_level=logging.getLevelName(current_logging_level).lower(),
         )
     elif final_transport == "streamable-http":
-        import uvicorn
+        # Use FastMCP's StreamableHttpServer instead of direct uvicorn usage
+        from fastmcp.server.http import StreamableHttpServer
 
         actual_http_path = (
             final_path
             if final_path is not None
             else main_mcp.settings.streamable_http_path
         )
+        # StreamableHttpServer instance creation
+        # main_mcp is AtlassianMCP, which is compatible with mcp_server argument
+        streamable_server = StreamableHttpServer(
+            mcp_server=main_mcp,  # type: ignore
+            host=final_host,
+            port=final_port,
+            path=actual_http_path,
+        )
         logger.info(
             f"Starting server with Streamable HTTP transport on http://{final_host}:{final_port}{actual_http_path}"
         )
-        uvicorn.run(
-            final_asgi_app,
-            host=final_host,
-            port=final_port,
-            log_level=logging.getLevelName(current_logging_level).lower(),
+        # Use run_async to ensure proper initialization (includes uvicorn and TaskGroup setup)
+        asyncio.run(
+            streamable_server.run_async(
+                log_level=logging.getLevelName(current_logging_level).lower()
+            )
         )
     else:
         logger.error(
