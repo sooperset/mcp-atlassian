@@ -223,6 +223,7 @@ This example shows how to configure `mcp-atlassian` in your IDE (like Cursor or 
         "run",
         "--rm",
         "-i",
+        "-v", "<path_to_your_home>/.mcp-atlassian:/home/app/.mcp-atlassian",
         "-e", "JIRA_URL",
         "-e", "CONFLUENCE_URL",
         "-e", "ATLASSIAN_OAUTH_CLIENT_ID",
