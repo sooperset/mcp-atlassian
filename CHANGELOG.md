@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.10.6] - 2025-05-12
+
+### Fixed
+- Enhanced OAuth configuration detection to properly identify and prioritize OAuth 2.0 setup when all required variables are present, especially verifying ATLASSIAN_OAUTH_CLOUD_ID (#410)
+- Improved OAuth 2.0 authentication method selection logic in environment configuration handling (#412)
+
+### Documentation
+- Restored and enhanced OAuth 2.0 (3LO) setup guide in README.md with clear step-by-step instructions (#411, #414)
+- Added Docker-specific OAuth configuration examples, including token persistence via volume mounting (#413)
+- Reorganized authentication methods in .env.example for improved clarity and user understanding (#414)
+- Added expanded IDE integration examples for OAuth 2.0 configuration (#415)
+
 ## [0.10.5] - 2025-05-10
 
 ### Fixed

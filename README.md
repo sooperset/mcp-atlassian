@@ -62,7 +62,10 @@ MCP Atlassian supports three authentication methods:
 4. Set **Callback URL** (e.g., `http://localhost:8080/callback` for setup wizard)
 5. Run the OAuth setup wizard:
    ```bash
-   uvx mcp-atlassian@latest --oauth-setup -v
+   docker run --rm -i \
+     -p 8080:8080 \
+     -v "${HOME}/.mcp-atlassian:/home/app/.mcp-atlassian" \
+     ghcr.io/sooperset/mcp-atlassian:latest --oauth-setup -v
    ```
 6. Follow the prompts to enter your `Client ID`, `Client Secret`, `Redirect URI` and `Scope`.
 7. Complete the authorization in the opened browser window
@@ -215,9 +218,20 @@ This example shows how to configure `mcp-atlassian` in your IDE (like Cursor or 
 {
   "mcpServers": {
     "mcp-atlassian": {
-      "command": "uvx",
+      "command": "docker",
       "args": [
-        "mcp-atlassian",
+        "run",
+        "--rm",
+        "-i",
+        "-v", "<path_to_your_home>/.mcp-atlassian:/home/app/.mcp-atlassian",
+        "-e", "JIRA_URL",
+        "-e", "CONFLUENCE_URL",
+        "-e", "ATLASSIAN_OAUTH_CLIENT_ID",
+        "-e", "ATLASSIAN_OAUTH_CLIENT_SECRET",
+        "-e", "ATLASSIAN_OAUTH_REDIRECT_URI",
+        "-e", "ATLASSIAN_OAUTH_SCOPE",
+        "-e", "ATLASSIAN_OAUTH_CLOUD_ID",
+        "ghcr.io/sooperset/mcp-atlassian:latest",
       ],
       "env": {
         "JIRA_URL": "https://your-company.atlassian.net",
