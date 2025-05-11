@@ -54,6 +54,23 @@ MCP Atlassian supports three authentication methods:
 2. Click **Create token**, name it, set expiry
 3. Copy the token immediately
 
+#### C. OAuth 2.0 Authentication (Cloud only)
+
+1. Go to [Atlassian Developer Console](https://developer.atlassian.com/console/myapps/)
+2. Create an "OAuth 2.0 integration"
+3. Configure necessary **Permissions** (scopes) for Jira/Confluence
+4. Set **Callback URL** (e.g., `http://localhost:8080/callback` for setup wizard)
+5. Run the OAuth setup wizard:
+   ```bash
+   uvx mcp-atlassian@latest --oauth-setup -v
+   ```
+6. Follow the prompts to enter your `Client ID`, `Client Secret`, `Redirect URI` and `Scope`.
+7. Complete the authorization in the opened browser window
+8. Add the `ATLASSIAN_OAUTH_CLOUD_ID` (obtained from the wizard output) along with your OAuth app's `CLIENT_ID`, `SECRET`, `REDIRECT_URI`, and `SCOPE` to your `.env` file or IDE's MCP server configuration. See the [OAuth 2.0 Configuration Example](#oauth-20-configuration-example-cloud-only) in the "Configuration Examples" section for IDE integration.
+
+> [!IMPORTANT]
+> Include `offline_access` in your `ATLASSIAN_OAUTH_SCOPE` for persistent authentication (e.g., `read:jira-work write:jira-work offline_access`).
+
 ### 2. Installation
 
 MCP Atlassian is distributed as a Docker image. This is the recommended way to run the server, especially for IDE integration. Ensure you have Docker installed.
@@ -185,6 +202,41 @@ For Server/Data Center deployments, use direct variable passing:
 
 > [!NOTE]
 > Set `CONFLUENCE_SSL_VERIFY` and `JIRA_SSL_VERIFY` to "false" only if you have self-signed certificates.
+
+</details>
+
+<details>
+<summary>OAuth 2.0 Configuration (Cloud Only)</summary>
+<a name="oauth-20-configuration-example-cloud-only"></a>
+
+This example shows how to configure `mcp-atlassian` in your IDE (like Cursor or Claude Desktop) when using OAuth 2.0 for Atlassian Cloud. Ensure you have completed the [OAuth setup wizard](#c-oauth-20-authentication-cloud-only) first.
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "uvx",
+      "args": [
+        "mcp-atlassian",
+      ],
+      "env": {
+        "JIRA_URL": "https://your-company.atlassian.net",
+        "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
+        "ATLASSIAN_OAUTH_CLIENT_ID": "YOUR_OAUTH_APP_CLIENT_ID",
+        "ATLASSIAN_OAUTH_CLIENT_SECRET": "YOUR_OAUTH_APP_CLIENT_SECRET",
+        "ATLASSIAN_OAUTH_REDIRECT_URI": "http://localhost:8080/callback",
+        "ATLASSIAN_OAUTH_SCOPE": "read:jira-work write:jira-work read:confluence-content.all write:confluence-content offline_access",
+        "ATLASSIAN_OAUTH_CLOUD_ID": "YOUR_CLOUD_ID_FROM_SETUP_WIZARD"
+      }
+    }
+  }
+}
+```
+
+> [!NOTE]
+> - `ATLASSIAN_OAUTH_CLOUD_ID` is obtained from the `--oauth-setup` wizard output.
+> - Other `ATLASSIAN_OAUTH_*` variables are those you configured for your OAuth app in the Atlassian Developer Console (and used as input to the setup wizard).
+> - `JIRA_URL` and `CONFLUENCE_URL` for your Cloud instances are still required.
 
 </details>
 

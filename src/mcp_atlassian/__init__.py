@@ -6,7 +6,7 @@ import sys
 import click
 from dotenv import load_dotenv
 
-from .utils.logging import setup_logging
+from mcp_atlassian.utils.logging import setup_logging
 
 __version__ = "0.10.5"
 
@@ -279,7 +279,7 @@ def main(
     if click_ctx and was_option_provided(click_ctx, "jira_projects_filter"):
         os.environ["JIRA_PROJECTS_FILTER"] = jira_projects_filter
 
-    from .servers.main import final_asgi_app, main_mcp
+    from mcp_atlassian.servers import final_asgi_app, main_mcp
 
     if final_transport == "stdio":
         logger.info("Starting server with STDIO transport.")
