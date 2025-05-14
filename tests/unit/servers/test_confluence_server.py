@@ -73,6 +73,16 @@ def mock_confluence_fetcher():
     # Mock add_page_label method
     mock_fetcher.add_page_label.return_value = [mock_label]
 
+    # Mock add_comment method
+    mock_comment = MagicMock()
+    mock_comment.to_simplified_dict.return_value = {
+        "id": "987",
+        "author": "Test User",
+        "created": "2023-08-01T13:00:00.000Z",
+        "body": "This is a test comment added via API",
+    }
+    mock_fetcher.add_comment.return_value = mock_comment
+
     return mock_fetcher
 
 
@@ -97,6 +107,7 @@ def test_confluence_mcp(mock_confluence_fetcher):
 
     # Import the tool functions we want to test
     from src.mcp_atlassian.servers.confluence import (
+        add_comment,
         add_label,
         create_page,
         delete_page,
@@ -118,6 +129,7 @@ def test_confluence_mcp(mock_confluence_fetcher):
     test_mcp.tool()(create_page)
     test_mcp.tool()(update_page)
     test_mcp.tool()(delete_page)
+    test_mcp.tool()(add_comment)
 
     return test_mcp
 
@@ -145,6 +157,7 @@ def read_only_test_confluence_mcp(mock_confluence_fetcher):
 
     # Import and register tools as before
     from src.mcp_atlassian.servers.confluence import (
+        add_comment,
         add_label,
         create_page,
         delete_page,
@@ -165,6 +178,7 @@ def read_only_test_confluence_mcp(mock_confluence_fetcher):
     test_mcp.tool()(create_page)
     test_mcp.tool()(update_page)
     test_mcp.tool()(delete_page)
+    test_mcp.tool()(add_comment)
 
     return test_mcp
 
@@ -190,6 +204,7 @@ def no_fetcher_test_confluence_mcp():
     )
     # Import and register tools
     from src.mcp_atlassian.servers.confluence import (
+        add_comment,
         add_label,
         create_page,
         delete_page,
@@ -210,6 +225,7 @@ def no_fetcher_test_confluence_mcp():
     test_mcp.tool()(create_page)
     test_mcp.tool()(update_page)
     test_mcp.tool()(delete_page)
+    test_mcp.tool()(add_comment)
 
     return test_mcp
 
@@ -476,6 +492,18 @@ async def test_read_only_mode_delete_page(read_only_client, mock_confluence_fetc
 
 
 @pytest.mark.anyio
+async def test_read_only_mode_add_comment(read_only_client, mock_confluence_fetcher):
+    """Test add_comment is blocked in read-only mode."""
+    with pytest.raises(Exception) as excinfo:
+        await read_only_client.call_tool(
+            "add_comment",
+            {"page_id": "123", "content": "Test comment in read-only mode"},
+        )
+    assert "read-only mode" in str(excinfo.value)
+    mock_confluence_fetcher.add_comment.assert_not_called()
+
+
+@pytest.mark.anyio
 async def test_missing_credentials_error(no_fetcher_client):
     """Test error handling when Confluence fetcher is not available."""
     with pytest.raises(Exception) as excinfo:
@@ -504,3 +532,24 @@ async def test_api_error_handling_delete(client, mock_confluence_fetcher):
     assert result_data["success"] is False
     assert "Error deleting page" in result_data["message"]
     assert api_error_msg in result_data["error"]
+
+
+@pytest.mark.anyio
+async def test_add_comment(client, mock_confluence_fetcher):
+    """Test adding a comment to a Confluence page."""
+    response = await client.call_tool(
+        "add_comment",
+        {"page_id": "123456", "content": "Test comment content"},
+    )
+
+    # Verify the fetcher was called with the right arguments
+    mock_confluence_fetcher.add_comment.assert_called_once_with(
+        page_id="123456", content="Test comment content"
+    )
+
+    # Check that the response contains the expected data
+    result_data = json.loads(response[0].text)
+    assert isinstance(result_data, dict)
+    assert result_data["success"] is True
+    assert "comment" in result_data
+    assert result_data["comment"]["id"] == "987"
