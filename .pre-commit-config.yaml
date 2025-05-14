@@ -49,6 +49,7 @@ repos:
             'types-requests',
             'types-setuptools',
             'types-urllib3',
+            'types-cachetools',
             'atlassian-python-api',
             'beautifulsoup4',
             'httpx',
