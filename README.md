@@ -54,25 +54,30 @@ MCP Atlassian supports three authentication methods:
 2. Click **Create token**, name it, set expiry
 3. Copy the token immediately
 
-#### C. OAuth 2.0 Authentication (Cloud only)
+#### C. OAuth 2.0 Authentication (Cloud)
 
 1. Go to [Atlassian Developer Console](https://developer.atlassian.com/console/myapps/)
-2. Create an "OAuth 2.0 integration"
-3. Configure necessary **Permissions** (scopes) for Jira/Confluence
-4. Set **Callback URL** (e.g., `http://localhost:8080/callback` for setup wizard)
-5. Run the OAuth setup wizard:
+2. Create an "OAuth 2.0 (3LO) integration" app
+3. Configure **Permissions** (scopes) for Jira/Confluence
+4. Set **Callback URL** (e.g., `http://localhost:8080/callback`)
+5. Run setup wizard:
    ```bash
    docker run --rm -i \
      -p 8080:8080 \
      -v "${HOME}/.mcp-atlassian:/home/app/.mcp-atlassian" \
      ghcr.io/sooperset/mcp-atlassian:latest --oauth-setup -v
    ```
-6. Follow the prompts to enter your `Client ID`, `Client Secret`, `Redirect URI` and `Scope`.
-7. Complete the authorization in the opened browser window
-8. Add the `ATLASSIAN_OAUTH_CLOUD_ID` (obtained from the wizard output) along with your OAuth app's `CLIENT_ID`, `SECRET`, `REDIRECT_URI`, and `SCOPE` to your `.env` file or IDE's MCP server configuration. See the [OAuth 2.0 Configuration Example](#oauth-20-configuration-example-cloud-only) in the "Configuration Examples" section for IDE integration.
+6. Follow prompts for `Client ID`, `Secret`, `URI`, and `Scope`
+7. Complete browser authorization
+8. Add obtained credentials to `.env` or IDE config:
+   - `ATLASSIAN_OAUTH_CLOUD_ID` (from wizard)
+   - `ATLASSIAN_OAUTH_CLIENT_ID`
+   - `ATLASSIAN_OAUTH_CLIENT_SECRET`
+   - `ATLASSIAN_OAUTH_REDIRECT_URI`
+   - `ATLASSIAN_OAUTH_SCOPE`
 
 > [!IMPORTANT]
-> Include `offline_access` in your `ATLASSIAN_OAUTH_SCOPE` for persistent authentication (e.g., `read:jira-work write:jira-work offline_access`).
+> Include `offline_access` in scope for persistent auth (e.g., `read:jira-work write:jira-work offline_access`)
 
 ### 2. Installation
 
@@ -112,6 +117,7 @@ There are two main approaches to configure the Docker container:
 > - `ENABLED_TOOLS`: Comma-separated list of tool names to enable (e.g., "confluence_search,jira_get_issue")
 >
 > See the [.env.example](https://github.com/sooperset/mcp-atlassian/blob/main/.env.example) file for all available options.
+
 
 ### Configuration Examples
 
@@ -397,21 +403,22 @@ For Jira Server/DC, use:
 
 </details>
 
-### SSE Transport Configuration
+### HTTP Transport Configuration (SSE / Streamable-HTTP)
+
+For multi-user authentication using OAuth 2.0 Bearer tokens, or if you prefer to run the server as a persistent HTTP service instead of using `stdio`, you can use `sse` (Server-Sent Events) or `streamable-http` transport.
 
 <details> <summary>Using SSE Instead of stdio</summary>
 
 1.  Start the server manually in a terminal:
-
     ```bash
     docker run --rm -p 9000:9000 \
+      # Mount .env file or pass individual -e flags
       --env-file /path/to/your/.env \
       ghcr.io/sooperset/mcp-atlassian:latest \
       --transport sse --port 9000 -vv
     ```
 
 2.  Configure your IDE to connect to the running server via its URL:
-
     ```json
     {
       "mcpServers": {
@@ -423,6 +430,60 @@ For Jira Server/DC, use:
     ```
 </details>
 
+<details> <summary>Using Streamable-HTTP Transport (Multi-User)</summary>
+
+Here's a complete example of setting up multi-user authentication with streamable-HTTP transport:
+
+1. First, run the OAuth setup wizard to configure the server's OAuth credentials:
+   ```bash
+   docker run --rm -i \
+     -p 8080:8080 \
+     -v "${HOME}/.mcp-atlassian:/home/app/.mcp-atlassian" \
+     ghcr.io/sooperset/mcp-atlassian:latest --oauth-setup -v
+   ```
+
+2. Start the server with streamable-HTTP transport:
+   ```bash
+   docker run --rm -p 9000:9000 \
+     --env-file .env \
+     ghcr.io/sooperset/mcp-atlassian:latest \
+     --transport streamable-http --port 9000 -vv
+   ```
+
+3. Configure your IDE's MCP settings:
+   ```json
+   {
+     "mcpServers": {
+       "mcp-atlassian-service": {
+         "url": "http://localhost:9000/mcp",
+         "headers": {
+           "Authorization": "Bearer <USER_OAUTH_ACCESS_TOKEN>"
+         }
+       }
+     }
+   }
+   ```
+
+4. Required environment variables in `.env`:
+   ```bash
+   JIRA_URL=https://your-company.atlassian.net
+   CONFLUENCE_URL=https://your-company.atlassian.net/wiki
+   ATLASSIAN_OAUTH_CLIENT_ID=your_oauth_app_client_id
+   ATLASSIAN_OAUTH_CLIENT_SECRET=your_oauth_app_client_secret
+   ATLASSIAN_OAUTH_REDIRECT_URI=http://localhost:8080/callback
+   ATLASSIAN_OAUTH_SCOPE=read:jira-work write:jira-work read:confluence-content.all write:confluence-content offline_access
+   ATLASSIAN_OAUTH_CLOUD_ID=your_cloud_id_from_setup_wizard
+   ```
+
+> [!NOTE]
+> - The server's OAuth setup (`--oauth-setup`) is required for validating user tokens
+> - Each user needs their own OAuth access token from your Atlassian OAuth app
+> - The server will use the user's token for API calls when provided, falling back to server auth if not
+> - User tokens should have appropriate scopes for their needed operations
+
+</details>
+
+---
 
 ## Tools
 
