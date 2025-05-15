@@ -3,6 +3,7 @@
 import os
 from unittest.mock import MagicMock, patch
 
+from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.confluence.client import ConfluenceClient
 from mcp_atlassian.confluence.config import ConfluenceConfig
 
@@ -163,7 +164,7 @@ def test_get_user_details_by_accountid():
             "active": True,
         }
 
-        client = ConfluenceClient()
+        client = ConfluenceFetcher()
 
         # Act
         user_details = client.get_user_details_by_accountid("123456")

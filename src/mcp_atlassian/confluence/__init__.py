@@ -10,10 +10,11 @@ from .labels import LabelsMixin
 from .pages import PagesMixin
 from .search import SearchMixin
 from .spaces import SpacesMixin
+from .users import UsersMixin
 
 
 class ConfluenceFetcher(
-    SearchMixin, SpacesMixin, PagesMixin, CommentsMixin, LabelsMixin
+    SearchMixin, SpacesMixin, PagesMixin, CommentsMixin, LabelsMixin, UsersMixin
 ):
     """Main entry point for Confluence operations, providing backward compatibility.
 
