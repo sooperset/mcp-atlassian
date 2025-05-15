@@ -1,7 +1,7 @@
 """Unit tests for the Confluence FastMCP server."""
 
 import json
-import logging  # Import logging
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -19,7 +19,7 @@ from src.mcp_atlassian.servers.context import MainAppContext
 from src.mcp_atlassian.servers.main import AtlassianMCP
 from src.mcp_atlassian.utils.oauth import OAuthConfig
 
-logger = logging.getLogger(__name__)  # Setup logger for the test module
+logger = logging.getLogger(__name__)
 
 
 @pytest.fixture

@@ -793,7 +793,6 @@ dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
-    { name = "types-cachetools" },
     { name = "uv" },
 ]
 
@@ -817,7 +816,7 @@ requires-dist = [
     { name = "starlette", specifier = ">=0.37.1" },
     { name = "thefuzz", specifier = ">=0.22.1" },
     { name = "trio", specifier = ">=0.29.0" },
-    { name = "types-cachetools" },
+    { name = "types-cachetools", specifier = ">=5.5.0.20240820" },
     { name = "types-python-dateutil", specifier = ">=2.9.0.20241206" },
     { name = "uvicorn", specifier = ">=0.27.1" },
 ]
@@ -831,7 +830,6 @@ dev = [
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pytest-cov", specifier = ">=4.1.0" },
     { name = "ruff", specifier = ">=0.3.0" },
-    { name = "types-cachetools" },
     { name = "uv", specifier = ">=0.1.0" },
 ]
 
