@@ -336,11 +336,12 @@ async def add_label(
         if isinstance(lifespan_ctx_dict, dict)
         else None
     )
+    logger.debug(
+        f"add_label: app_lifespan_ctx.read_only = {app_lifespan_ctx.read_only if app_lifespan_ctx else 'N/A (app_lifespan_ctx is None)'}"
+    )
     if app_lifespan_ctx is not None and app_lifespan_ctx.read_only:
         logger.warning("Attempted to call add_label in read-only mode.")
         raise ValueError("Cannot add label in read-only mode.")
-    if app_lifespan_ctx is None or not getattr(app_lifespan_ctx, "confluence", None):
-        raise ValueError("Confluence client is not configured or available.")
 
     labels = confluence_fetcher.add_page_label(page_id, name)
     formatted_labels = [label.to_simplified_dict() for label in labels]
@@ -394,11 +395,12 @@ async def create_page(
         if isinstance(lifespan_ctx_dict, dict)
         else None
     )
+    logger.debug(
+        f"create_page: app_lifespan_ctx.read_only = {app_lifespan_ctx.read_only if app_lifespan_ctx else 'N/A (app_lifespan_ctx is None)'}"
+    )
     if app_lifespan_ctx is not None and app_lifespan_ctx.read_only:
         logger.warning("Attempted to call create_page in read-only mode.")
         raise ValueError("Cannot create page in read-only mode.")
-    if app_lifespan_ctx is None or not getattr(app_lifespan_ctx, "confluence", None):
-        raise ValueError("Confluence client is not configured or available.")
 
     page = confluence_fetcher.create_page(
         space_key=space_key,
@@ -415,6 +417,7 @@ async def create_page(
     )
 
 
+@convert_empty_defaults_to_none
 @confluence_mcp.tool(tags={"confluence", "write"})
 async def update_page(
     ctx: Context,
@@ -449,9 +452,22 @@ async def update_page(
         JSON string representing the updated page object.
 
     Raises:
-        ValueError: If in read-only mode or Confluence client is unavailable.
+        ValueError: If Confluence client is not configured or available.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
+    lifespan_ctx_dict = ctx.request_context.lifespan_context
+    app_lifespan_ctx = (
+        lifespan_ctx_dict.get("app_lifespan_context")
+        if isinstance(lifespan_ctx_dict, dict)
+        else None
+    )
+    logger.debug(
+        f"update_page: app_lifespan_ctx.read_only = {app_lifespan_ctx.read_only if app_lifespan_ctx else 'N/A (app_lifespan_ctx is None)'}"
+    )
+    if app_lifespan_ctx is not None and app_lifespan_ctx.read_only:
+        logger.warning("Attempted to call update_page in read-only mode.")
+        raise ValueError("Cannot update page in read-only mode.")
+
     # TODO: revert this once Cursor IDE handles optional parameters with Union types correctly.
     actual_parent_id = parent_id if parent_id else None
 
@@ -487,7 +503,7 @@ async def delete_page(
         JSON string indicating success or failure.
 
     Raises:
-        ValueError: If in read-only mode or Confluence client is unavailable.
+        ValueError: If Confluence client is not configured or available.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
     lifespan_ctx_dict = ctx.request_context.lifespan_context
@@ -496,11 +512,12 @@ async def delete_page(
         if isinstance(lifespan_ctx_dict, dict)
         else None
     )
+    logger.debug(
+        f"delete_page: app_lifespan_ctx.read_only = {app_lifespan_ctx.read_only if app_lifespan_ctx else 'N/A (app_lifespan_ctx is None)'}"
+    )
     if app_lifespan_ctx is not None and app_lifespan_ctx.read_only:
         logger.warning("Attempted to call delete_page in read-only mode.")
         raise ValueError("Cannot delete page in read-only mode.")
-    if app_lifespan_ctx is None or not getattr(app_lifespan_ctx, "confluence", None):
-        raise ValueError("Confluence client is not configured or available.")
 
     try:
         result = confluence_fetcher.delete_page(page_id=page_id)
