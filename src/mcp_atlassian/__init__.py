@@ -280,47 +280,37 @@ def main(
 
     from mcp_atlassian.servers import main_mcp
 
+    run_kwargs = {
+        "transport": final_transport,
+    }
+
     if final_transport == "stdio":
         logger.info("Starting server with STDIO transport.")
-        asyncio.run(main_mcp.run_async(transport="stdio"))
-    elif final_transport == "sse":
-        import uvicorn
+    elif final_transport in ["sse", "streamable-http"]:
+        run_kwargs["host"] = final_host
+        run_kwargs["port"] = final_port
+        run_kwargs["log_level"] = logging.getLevelName(current_logging_level).lower()
+
+        if final_path is not None:
+            run_kwargs["path"] = final_path
+
+        log_display_path = final_path
+        if log_display_path is None:
+            if final_transport == "sse":
+                log_display_path = main_mcp.settings.sse_path or "/sse"
+            else:
+                log_display_path = main_mcp.settings.streamable_http_path or "/mcp"
 
         logger.info(
-            f"Starting server with SSE transport on http://{final_host}:{final_port}{main_mcp.settings.sse_path or '/sse'}"
-        )
-        sse_app_instance = main_mcp.sse_app(
-            path=main_mcp.settings.sse_path, message_path=main_mcp.settings.message_path
-        )
-        uvicorn.run(
-            sse_app_instance,
-            host=final_host,
-            port=final_port,
-            log_level=logging.getLevelName(current_logging_level).lower(),
-        )
-    elif final_transport == "streamable-http":
-        actual_http_path = (
-            final_path
-            if final_path is not None
-            else main_mcp.settings.streamable_http_path
-        )
-        logger.info(
-            f"Starting server with Streamable HTTP transport on http://{final_host}:{final_port}{actual_http_path}"
-        )
-        asyncio.run(
-            main_mcp.run_async(
-                transport="streamable-http",
-                host=final_host,
-                port=final_port,
-                path=actual_http_path,
-                log_level=logging.getLevelName(current_logging_level).lower(),
-            )
+            f"Starting server with {final_transport.upper()} transport on http://{final_host}:{final_port}{log_display_path}"
         )
     else:
         logger.error(
-            f"Transport type '{final_transport}' is configured, but no app instance was created. This should not happen."
+            f"Invalid transport type '{final_transport}' determined. Cannot start server."
         )
         sys.exit(1)
+
+    asyncio.run(main_mcp.run_async(**run_kwargs))
 
 
 __all__ = ["main", "__version__"]
