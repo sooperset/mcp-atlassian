@@ -3,7 +3,7 @@
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal
 
 from cachetools import TTLCache
 from fastmcp import FastMCP
@@ -169,6 +169,24 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             f"_main_mcp_list_tools: Included tools: {[tool.name for tool in filtered_tools]}"
         )
         return filtered_tools
+
+    def http_app(
+        self,
+        path: str | None = None,
+        middleware: list[Middleware] | None = None,
+        transport: Literal["streamable-http", "sse"] = "streamable-http",
+    ) -> "Starlette":
+        """
+        Override FastMCP.http_app to inject UserTokenMiddleware.
+        """
+        user_token_mw = Middleware(UserTokenMiddleware)
+        final_middleware_list = [user_token_mw]
+        if middleware:
+            final_middleware_list.extend(middleware)
+        app = super().http_app(
+            path=path, middleware=final_middleware_list, transport=transport
+        )
+        return app
 
 
 # Create the token validation cache (module-level, shared by UserTokenMiddleware)
@@ -480,15 +498,3 @@ async def _health_check_route(request: Request) -> JSONResponse:
 
 
 logger.info("Added /healthz endpoint for Kubernetes probes")
-
-
-base_mcp_http_app = main_mcp.streamable_http_app()
-final_middleware_stack = base_mcp_http_app.user_middleware + [
-    Middleware(UserTokenMiddleware)
-]
-final_asgi_app = Starlette(
-    routes=base_mcp_http_app.router.routes,
-    middleware=final_middleware_stack,
-    lifespan=main_lifespan,
-)
-final_asgi_app.state.mcp_server = main_mcp

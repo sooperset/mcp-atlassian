@@ -411,7 +411,7 @@ wheels = [
 
 [[package]]
 name = "fastmcp"
-version = "2.3.1"
+version = "2.3.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "exceptiongroup" },
@@ -423,9 +423,9 @@ dependencies = [
     { name = "typer" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a8/ff/4632edd70a9bab7c2bca88700eba92a7bdac6a7dc80e2cd5feda4b792cab/fastmcp-2.3.1.tar.gz", hash = "sha256:82025d1c5520a931140ba75b47beed1e47f64f5c75d63e51f8ed1ad288bee6de", size = 984101 }
+sdist = { url = "https://files.pythonhosted.org/packages/75/d9/cc3eb61c59fec834a9492ea21df134381b4be76c35faa18cd2b0249278b8/fastmcp-2.3.4.tar.gz", hash = "sha256:f3fe004b8735b365a65ec2547eeb47db8352d5613697254854bc7c9c3c360eea", size = 998315 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6a/2d/ad50340d6bc70e385a25754006bdd32e2f58de7d15c1265269622928a71d/fastmcp-2.3.1-py3-none-any.whl", hash = "sha256:78562a1ec0b09581ff05faf05802582e6ddea76dac5a9be146c29e6174f35c7b", size = 92227 },
+    { url = "https://files.pythonhosted.org/packages/a0/e6/310d1fe6708b7338e1f48915a13d8bf00fd0599acdc7bf98da4fd20fcb66/fastmcp-2.3.4-py3-none-any.whl", hash = "sha256:12a45f72dd95aeaa1a6a56281fff96ca46929def3ccd9f9eb125cb97b722fbab", size = 96393 },
 ]
 
 [[package]]
@@ -732,7 +732,7 @@ wheels = [
 
 [[package]]
 name = "mcp"
-version = "1.8.0"
+version = "1.8.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -745,9 +745,9 @@ dependencies = [
     { name = "starlette" },
     { name = "uvicorn", marker = "sys_platform != 'emscripten'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ff/97/0a3e08559557b0ac5799f9fb535fbe5a4e4dcdd66ce9d32e7a74b4d0534d/mcp-1.8.0.tar.gz", hash = "sha256:263dfb700540b726c093f0c3e043f66aded0730d0b51f04eb0a3eb90055fe49b", size = 264641 }
+sdist = { url = "https://files.pythonhosted.org/packages/7c/13/16b712e8a3be6a736b411df2fc6b4e75eb1d3e99b1cd57a3a1decf17f612/mcp-1.8.1.tar.gz", hash = "sha256:ec0646271d93749f784d2316fb5fe6102fb0d1be788ec70a9e2517e8f2722c0e", size = 265605 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b2/b2/4ac3bd17b1fdd65658f18de4eb0c703517ee0b483dc5f56467802a9197e0/mcp-1.8.0-py3-none-any.whl", hash = "sha256:889d9d3b4f12b7da59e7a3933a0acadae1fce498bfcd220defb590aa291a1334", size = 119544 },
+    { url = "https://files.pythonhosted.org/packages/1c/5d/91cf0d40e40ae9ecf8d4004e0f9611eea86085aa0b5505493e0ff53972da/mcp-1.8.1-py3-none-any.whl", hash = "sha256:948e03783859fa35abe05b9b6c0a1d5519be452fc079dc8d7f682549591c1770", size = 119761 },
 ]
 
 [package.optional-dependencies]
@@ -802,7 +802,7 @@ requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.12.3" },
     { name = "cachetools", specifier = ">=5.0.0" },
     { name = "click", specifier = ">=8.1.7" },
-    { name = "fastmcp", specifier = ">=2.3.1,<2.4.0" },
+    { name = "fastmcp", specifier = ">=2.3.4,<2.4.0" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "keyring", specifier = ">=25.6.0" },
     { name = "markdown", specifier = ">=3.7.0" },
