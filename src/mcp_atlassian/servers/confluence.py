@@ -540,3 +540,62 @@ async def delete_page(
         }
 
     return json.dumps(response, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(tags={"confluence", "write"})
+async def add_comment(
+    ctx: Context,
+    page_id: Annotated[
+        str, Field(description="The ID of the page to add a comment to")
+    ],
+    content: Annotated[
+        str, Field(description="The comment content in Markdown format")
+    ],
+) -> str:
+    """Add a comment to a Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page to add a comment to.
+        content: The comment content in Markdown format.
+
+    Returns:
+        JSON string representing the created comment.
+
+    Raises:
+        ValueError: If in read-only mode or Confluence client is unavailable.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    lifespan_ctx_dict = ctx.request_context.lifespan_context
+    app_lifespan_ctx = (
+        lifespan_ctx_dict.get("app_lifespan_context")
+        if isinstance(lifespan_ctx_dict, dict)
+        else None
+    )
+    if app_lifespan_ctx is not None and app_lifespan_ctx.read_only:
+        logger.warning("Attempted to call add_comment in read-only mode.")
+        raise ValueError("Cannot add comment in read-only mode.")
+
+    try:
+        comment = confluence_fetcher.add_comment(page_id=page_id, content=content)
+        if comment:
+            comment_data = comment.to_simplified_dict()
+            response = {
+                "success": True,
+                "message": "Comment added successfully",
+                "comment": comment_data,
+            }
+        else:
+            response = {
+                "success": False,
+                "message": f"Unable to add comment to page {page_id}. API request completed but comment creation unsuccessful.",
+            }
+    except Exception as e:
+        logger.error(f"Error adding comment to Confluence page {page_id}: {str(e)}")
+        response = {
+            "success": False,
+            "message": f"Error adding comment to page {page_id}",
+            "error": str(e),
+        }
+
+    return json.dumps(response, indent=2, ensure_ascii=False)

@@ -64,6 +64,16 @@ def mock_confluence_fetcher():
     mock_fetcher.get_page_labels.return_value = [mock_label]
     mock_fetcher.add_page_label.return_value = [mock_label]
 
+    # Mock add_comment method
+    mock_comment = MagicMock()
+    mock_comment.to_simplified_dict.return_value = {
+        "id": "987",
+        "author": "Test User",
+        "created": "2023-08-01T13:00:00.000Z",
+        "body": "This is a test comment added via API",
+    }
+    mock_fetcher.add_comment.return_value = mock_comment
+
     return mock_fetcher
 
 
@@ -90,6 +100,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
 
     # Import and register tool functions (as they are in confluence.py)
     from src.mcp_atlassian.servers.confluence import (
+        add_comment,
         add_label,
         create_page,
         delete_page,
@@ -122,6 +133,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.tool(name="get_page")(get_page)
     confluence_sub_mcp.tool()(get_page_children)
     confluence_sub_mcp.tool()(get_comments)
+    confluence_sub_mcp.tool()(add_comment)
     confluence_sub_mcp.tool()(get_labels)
     confluence_sub_mcp.tool()(add_label)
     confluence_sub_mcp.tool()(create_page)
@@ -139,6 +151,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
 
     # Import and register tool functions (as they are in confluence.py)
     from src.mcp_atlassian.servers.confluence import (
+        add_comment,
         add_label,
         create_page,
         delete_page,
@@ -173,6 +186,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.tool(name="get_page")(get_page)
     confluence_sub_mcp.tool()(get_page_children)
     confluence_sub_mcp.tool()(get_comments)
+    confluence_sub_mcp.tool()(add_comment)
     confluence_sub_mcp.tool()(get_labels)
     confluence_sub_mcp.tool()(add_label)
     confluence_sub_mcp.tool()(create_page)
@@ -334,6 +348,28 @@ async def test_get_comments(client, mock_confluence_fetcher):
     assert isinstance(result_data, list)
     assert len(result_data) > 0
     assert result_data[0]["author"] == "Test User"
+
+
+@pytest.mark.anyio
+async def test_add_comment(client, mock_confluence_fetcher):
+    """Test adding a comment to a Confluence page."""
+    response = await client.call_tool(
+        "confluence_add_comment",
+        {"page_id": "123456", "content": "Test comment content"},
+    )
+
+    mock_confluence_fetcher.add_comment.assert_called_once_with(
+        page_id="123456", content="Test comment content"
+    )
+
+    result_data = json.loads(response[0].text)
+    assert isinstance(result_data, dict)
+    assert result_data["success"] is True
+    assert "comment" in result_data
+    assert result_data["comment"]["id"] == "987"
+    assert result_data["comment"]["author"] == "Test User"
+    assert result_data["comment"]["body"] == "This is a test comment added via API"
+    assert result_data["comment"]["created"] == "2023-08-01T13:00:00.000Z"
 
 
 @pytest.mark.anyio
