@@ -1,25 +1,29 @@
 """Unit tests for the Jira FastMCP server implementation."""
 
 import json
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastmcp import Client, FastMCP
 from fastmcp.client import FastMCPTransport
+from fastmcp.exceptions import ClientError
+from starlette.requests import Request
 
 from src.mcp_atlassian.jira import JiraFetcher
+from src.mcp_atlassian.jira.config import JiraConfig
 from src.mcp_atlassian.servers.context import MainAppContext
+from src.mcp_atlassian.servers.main import AtlassianMCP
+from src.mcp_atlassian.utils.oauth import OAuthConfig
 from tests.fixtures.jira_mocks import (
     MOCK_JIRA_COMMENTS_SIMPLIFIED,
     MOCK_JIRA_ISSUE_RESPONSE_SIMPLIFIED,
     MOCK_JIRA_JQL_RESPONSE_SIMPLIFIED,
 )
 
-pytestmark = pytest.mark.skip(
-    reason="MainAppContext no longer provides JiraFetcher; tests require refactor for new multi-user context structure."
-)
+logger = logging.getLogger(__name__)
 
 
 @pytest.fixture
@@ -27,6 +31,7 @@ def mock_jira_fetcher():
     """Create a mock JiraFetcher using predefined responses from fixtures."""
     mock_fetcher = MagicMock(spec=JiraFetcher)
     mock_fetcher.config = MagicMock()
+    mock_fetcher.config.read_only = False
     mock_fetcher.config.url = "https://test.atlassian.net"
 
     # Configure common methods
@@ -42,14 +47,12 @@ def mock_jira_fetcher():
         properties=None,
         update_history=True,
     ):
-        print(f"DEBUG: mock_get_issue called with issue_key={issue_key}")
         if not issue_key:
             raise ValueError("Issue key is required")
-
         mock_issue = MagicMock()
         response_data = MOCK_JIRA_ISSUE_RESPONSE_SIMPLIFIED.copy()
         response_data["key"] = issue_key
-        response_data["fields_queried"] = fields  # Store for assertion
+        response_data["fields_queried"] = fields
         response_data["expand_param"] = expand
         response_data["comment_limit"] = comment_limit
         response_data["properties_param"] = properties
@@ -72,7 +75,7 @@ def mock_jira_fetcher():
 
     mock_fetcher.get_issue_comments.side_effect = mock_get_issue_comments
 
-    # Configure search_issues to return fixture data (as list of mock issues)
+    # Configure search_issues to return fixture data
     def mock_search_issues(jql, **kwargs):
         mock_search_result = MagicMock()
         issues = []
@@ -80,7 +83,6 @@ def mock_jira_fetcher():
             mock_issue = MagicMock()
             mock_issue.to_simplified_dict.return_value = issue_data
             issues.append(mock_issue)
-        # Mock the JiraSearchResult object returned by search_issues
         mock_search_result.issues = issues
         mock_search_result.total = len(issues)
         mock_search_result.start_at = kwargs.get("start", 0)
@@ -103,19 +105,16 @@ def mock_jira_fetcher():
         description=None,
         assignee=None,
         components=None,
-        **additional_fields,  # Capture additional fields
+        **additional_fields,
     ):
         if not project_key or project_key.strip() == "":
             raise ValueError("valid project is required")
-
-        # Convert components string to list if provided as a string
         components_list = None
         if components:
             if isinstance(components, str):
                 components_list = components.split(",")
             elif isinstance(components, list):
                 components_list = components
-
         mock_issue = MagicMock()
         response_data = {
             "key": f"{project_key}-456",
@@ -126,7 +125,7 @@ def mock_jira_fetcher():
             "components": [{"name": comp} for comp in components_list]
             if components_list
             else [],
-            **additional_fields,  # Include additional fields in the mock response
+            **additional_fields,
         }
         mock_issue.to_simplified_dict.return_value = response_data
         return mock_issue
@@ -136,7 +135,6 @@ def mock_jira_fetcher():
     # Configure batch_create_issues
     def mock_batch_create_issues(issues, validate_only=False):
         if not isinstance(issues, list):
-            # Handle case where JSON string might be passed and parsed earlier
             try:
                 parsed_issues = json.loads(issues)
                 if not isinstance(parsed_issues, list):
@@ -146,16 +144,13 @@ def mock_jira_fetcher():
                 issues = parsed_issues
             except (json.JSONDecodeError, TypeError):
                 raise ValueError("Issues must be a list or a valid JSON array string.")
-
         mock_issues = []
         for idx, issue_data in enumerate(issues, 1):
             mock_issue = MagicMock()
             mock_issue.to_simplified_dict.return_value = {
                 "key": f"{issue_data['project_key']}-{idx}",
                 "summary": issue_data["summary"],
-                "issue_type": {
-                    "name": issue_data["issue_type"]
-                },  # Corrected field name
+                "issue_type": {"name": issue_data["issue_type"]},
                 "status": {"name": "To Do"},
             }
             mock_issues.append(mock_issue)
@@ -166,24 +161,19 @@ def mock_jira_fetcher():
     # Configure get_epic_issues
     def mock_get_epic_issues(epic_key, start=0, limit=50):
         mock_issues = []
-        # Create 3 mock issues for any epic
         for i in range(1, 4):
             mock_issue = MagicMock()
             mock_issue.to_simplified_dict.return_value = {
                 "key": f"TEST-{i}",
                 "summary": f"Epic Issue {i}",
-                "issue_type": {
-                    "name": "Task" if i % 2 == 0 else "Bug"
-                },  # Corrected field name
+                "issue_type": {"name": "Task" if i % 2 == 0 else "Bug"},
                 "status": {"name": "To Do" if i % 2 == 0 else "In Progress"},
             }
             mock_issues.append(mock_issue)
-        # Return a slice based on start/limit
         return mock_issues[start : start + limit]
 
     mock_fetcher.get_epic_issues.side_effect = mock_get_epic_issues
 
-    # Configure resource-related methods (if needed for context, though tools are primary focus)
     mock_fetcher.jira.jql.return_value = {
         "issues": [
             {
@@ -198,22 +188,17 @@ def mock_jira_fetcher():
         ]
     }
 
-    # Configure get_user_profile_by_identifier for the new tool
     from src.mcp_atlassian.models.jira.common import JiraUser
 
-    # Create a mock JiraUser for the test response
     mock_user = MagicMock(spec=JiraUser)
     mock_user.to_simplified_dict.return_value = {
         "display_name": "Test User (test.profile@example.com)",
-        "name": "Test User (test.profile@example.com)",  # For backward compatibility
+        "name": "Test User (test.profile@example.com)",
         "email": "test.profile@example.com",
         "avatar_url": "https://test.atlassian.net/avatar/test.profile@example.com",
     }
-
-    # Create a mock for the get_user_profile_by_identifier method
     mock_get_user_profile = MagicMock()
 
-    # Configure it to return the mock_user for valid inputs and raise ValueError for "nonexistent@example.com"
     def side_effect_func(identifier):
         if identifier == "nonexistent@example.com":
             raise ValueError(f"User '{identifier}' not found.")
@@ -221,32 +206,44 @@ def mock_jira_fetcher():
 
     mock_get_user_profile.side_effect = side_effect_func
     mock_fetcher.get_user_profile_by_identifier = mock_get_user_profile
-
     return mock_fetcher
 
 
 @pytest.fixture
-def test_jira_mcp(mock_jira_fetcher):
-    """Create a FastMCP instance for testing with our mock fetcher."""
+def mock_base_jira_config():
+    """Create a mock base JiraConfig for MainAppContext using OAuth for multi-user scenario."""
+    mock_oauth_config = OAuthConfig(
+        client_id="server_client_id",
+        client_secret="server_client_secret",
+        redirect_uri="http://localhost",
+        scope="read:jira-work",
+        cloud_id="mock_jira_cloud_id",
+    )
+    return JiraConfig(
+        url="https://mock-jira.atlassian.net",
+        auth_type="oauth",
+        oauth_config=mock_oauth_config,
+    )
+
+
+@pytest.fixture
+def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
+    """Create a test FastMCP instance with standard configuration."""
 
     @asynccontextmanager
     async def test_lifespan(app: FastMCP) -> AsyncGenerator[MainAppContext, None]:
-        """Test lifespan that provides our mock fetcher."""
-        print("DEBUG: test_lifespan entered")
         try:
-            # Simulate the structure provided by main_lifespan
-            yield MainAppContext(read_only=False)
+            yield MainAppContext(
+                full_jira_config=mock_base_jira_config, read_only=False
+            )
         finally:
-            print("DEBUG: test_lifespan exited")
+            pass
 
-    # Create a new FastMCP instance with our test lifespan
-    test_mcp = FastMCP(
+    test_mcp = AtlassianMCP(
         "TestJira", description="Test Jira MCP Server", lifespan=test_lifespan
     )
-
-    # Import the actual tool functions we want to test
     from src.mcp_atlassian.servers.jira import (
-        add_comment,  # Add other tools as needed
+        add_comment,
         add_worklog,
         batch_create_issues,
         batch_get_changelogs,
@@ -262,7 +259,7 @@ def test_jira_mcp(mock_jira_fetcher):
         get_sprint_issues,
         get_sprints_from_board,
         get_transitions,
-        get_user_profile,  # Add import for our new tool
+        get_user_profile,
         get_worklog,
         link_to_epic,
         remove_issue_link,
@@ -273,81 +270,120 @@ def test_jira_mcp(mock_jira_fetcher):
         update_sprint,
     )
 
-    # Register the tool functions with our test MCP instance
-    test_mcp.tool()(get_issue)
-    test_mcp.tool()(search)
-    test_mcp.tool()(search_fields)
-    test_mcp.tool()(get_project_issues)
-    test_mcp.tool()(get_transitions)
-    test_mcp.tool()(get_worklog)
-    test_mcp.tool()(download_attachments)
-    test_mcp.tool()(get_agile_boards)
-    test_mcp.tool()(get_board_issues)
-    test_mcp.tool()(get_sprints_from_board)
-    test_mcp.tool()(get_sprint_issues)
-    test_mcp.tool()(get_link_types)
-    test_mcp.tool()(get_user_profile)  # Register our new tool
-    # Write tools
-    test_mcp.tool()(create_issue)
-    test_mcp.tool()(batch_create_issues)
-    test_mcp.tool()(
-        batch_get_changelogs
-    )  # Note: Cloud only, might need specific test setup
-    test_mcp.tool()(update_issue)
-    test_mcp.tool()(delete_issue)
-    test_mcp.tool()(add_comment)
-    test_mcp.tool()(add_worklog)
-    test_mcp.tool()(link_to_epic)
-    test_mcp.tool()(create_issue_link)
-    test_mcp.tool()(remove_issue_link)
-    test_mcp.tool()(transition_issue)
-    # test_mcp.tool()(create_sprint) # Needs mock setup
-    test_mcp.tool()(update_sprint)
-
+    jira_sub_mcp = FastMCP(name="TestJiraSubMCP")
+    jira_sub_mcp.tool()(get_issue)
+    jira_sub_mcp.tool()(search)
+    jira_sub_mcp.tool()(search_fields)
+    jira_sub_mcp.tool()(get_project_issues)
+    jira_sub_mcp.tool()(get_transitions)
+    jira_sub_mcp.tool()(get_worklog)
+    jira_sub_mcp.tool()(download_attachments)
+    jira_sub_mcp.tool()(get_agile_boards)
+    jira_sub_mcp.tool()(get_board_issues)
+    jira_sub_mcp.tool()(get_sprints_from_board)
+    jira_sub_mcp.tool()(get_sprint_issues)
+    jira_sub_mcp.tool()(get_link_types)
+    jira_sub_mcp.tool()(get_user_profile)
+    jira_sub_mcp.tool()(create_issue)
+    jira_sub_mcp.tool()(batch_create_issues)
+    jira_sub_mcp.tool()(batch_get_changelogs)
+    jira_sub_mcp.tool()(update_issue)
+    jira_sub_mcp.tool()(delete_issue)
+    jira_sub_mcp.tool()(add_comment)
+    jira_sub_mcp.tool()(add_worklog)
+    jira_sub_mcp.tool()(link_to_epic)
+    jira_sub_mcp.tool()(create_issue_link)
+    jira_sub_mcp.tool()(remove_issue_link)
+    jira_sub_mcp.tool()(transition_issue)
+    jira_sub_mcp.tool()(update_sprint)
+    test_mcp.mount("jira", jira_sub_mcp)
     return test_mcp
 
 
 @pytest.fixture
-async def jira_client(test_jira_mcp):
-    """Create a FastMCP client for testing using our test FastMCP instance."""
-    transport = FastMCPTransport(test_jira_mcp)
-    # Use context manager for client setup/teardown
-    async with Client(transport=transport) as client:
-        yield client
+def no_fetcher_test_jira_mcp(mock_base_jira_config):
+    """Create a test FastMCP instance that simulates missing Jira fetcher."""
+
+    @asynccontextmanager
+    async def no_fetcher_test_lifespan(
+        app: FastMCP,
+    ) -> AsyncGenerator[MainAppContext, None]:
+        try:
+            yield MainAppContext(full_jira_config=None, read_only=False)
+        finally:
+            pass
+
+    test_mcp = AtlassianMCP(
+        "NoFetcherTestJira",
+        description="No Fetcher Test Jira MCP Server",
+        lifespan=no_fetcher_test_lifespan,
+    )
+    from src.mcp_atlassian.servers.jira import get_issue
+
+    jira_sub_mcp = FastMCP(name="NoFetcherTestJiraSubMCP")
+    jira_sub_mcp.tool()(get_issue)
+    test_mcp.mount("jira", jira_sub_mcp)
+    return test_mcp
+
+
+@pytest.fixture
+def mock_request():
+    """Provides a mock Starlette Request object with a state."""
+    request = MagicMock(spec=Request)
+    request.state = MagicMock()
+    request.state.jira_fetcher = None
+    request.state.user_atlassian_auth_type = None
+    request.state.user_atlassian_token = None
+    request.state.user_atlassian_email = None
+    return request
+
+
+@pytest.fixture
+async def jira_client(test_jira_mcp, mock_jira_fetcher, mock_request):
+    """Create a FastMCP client with mocked Jira fetcher and request state."""
+    with (
+        patch(
+            "src.mcp_atlassian.servers.jira.get_jira_fetcher",
+            AsyncMock(return_value=mock_jira_fetcher),
+        ),
+        patch(
+            "src.mcp_atlassian.servers.dependencies.get_http_request",
+            return_value=mock_request,
+        ),
+    ):
+        async with Client(transport=FastMCPTransport(test_jira_mcp)) as client_instance:
+            yield client_instance
+
+
+@pytest.fixture
+async def no_fetcher_client_fixture(no_fetcher_test_jira_mcp, mock_request):
+    """Create a client that simulates missing Jira fetcher configuration."""
+    async with Client(
+        transport=FastMCPTransport(no_fetcher_test_jira_mcp)
+    ) as client_for_no_fetcher:
+        yield client_for_no_fetcher
 
 
 @pytest.mark.anyio
 async def test_get_issue(jira_client, mock_jira_fetcher):
     """Test the get_issue tool with fixture data."""
-    print("DEBUG: test_get_issue started")
-
-    # Call the tool through the FastMCP client
-    print("DEBUG: Inside client context manager, about to call tool")
     response = await jira_client.call_tool(
-        "get_issue",
+        "jira_get_issue",
         {
             "issue_key": "TEST-123",
             "fields": "summary,description,status",
         },
     )
-    print(f"DEBUG: Tool call completed, response: {response}")
-
-    # The response is a list of TextContent objects
     assert isinstance(response, list)
     assert len(response) > 0
     text_content = response[0]
     assert text_content.type == "text"
-
-    # Parse the JSON content
     content = json.loads(text_content.text)
-    print(f"DEBUG: Response content keys: {content.keys()}")
     assert content["key"] == "TEST-123"
-    assert content["summary"] == "Test Issue Summary"  # From fixture
-
-    # Verify the mock was called with correct parameters
+    assert content["summary"] == "Test Issue Summary"
     mock_jira_fetcher.get_issue.assert_called_once_with(
         issue_key="TEST-123",
-        fields=["summary", "description", "status"],  # Expect list now
+        fields=["summary", "description", "status"],
         expand="",
         comment_limit=10,
         properties=None,
@@ -359,39 +395,32 @@ async def test_get_issue(jira_client, mock_jira_fetcher):
 async def test_search(jira_client, mock_jira_fetcher):
     """Test the search tool with fixture data."""
     response = await jira_client.call_tool(
-        "search",
+        "jira_search",
         {
             "jql": "project = TEST",
             "fields": "summary,status",
             "limit": 10,
-            "start_at": 0,  # Corrected parameter name
+            "start_at": 0,
         },
     )
-
-    # The response is a list of TextContent objects
     assert isinstance(response, list)
     assert len(response) > 0
     text_content = response[0]
     assert text_content.type == "text"
-
-    # Parse the JSON content
     content = json.loads(text_content.text)
-    # The tool now returns a dict with pagination info
     assert isinstance(content, dict)
     assert "issues" in content
     assert isinstance(content["issues"], list)
     assert len(content["issues"]) >= 1
-    assert content["issues"][0]["key"] == "PROJ-123"  # From fixture
-    assert content["total"] > 0  # From fixture logic
+    assert content["issues"][0]["key"] == "PROJ-123"
+    assert content["total"] > 0
     assert content["start_at"] == 0
     assert content["max_results"] == 10
-
-    # Verify the fetcher was called with the correct parameters
     mock_jira_fetcher.search_issues.assert_called_once_with(
         jql="project = TEST",
-        fields=["summary", "status"],  # Expect list
+        fields=["summary", "status"],
         limit=10,
-        start=0,  # start, not start_at for the fetcher method
+        start=0,
         projects_filter="",
         expand="",
     )
@@ -401,24 +430,20 @@ async def test_search(jira_client, mock_jira_fetcher):
 async def test_create_issue(jira_client, mock_jira_fetcher):
     """Test the create_issue tool with fixture data."""
     response = await jira_client.call_tool(
-        "create_issue",
+        "jira_create_issue",
         {
             "project_key": "TEST",
             "summary": "New Issue",
             "issue_type": "Task",
             "description": "This is a new task",
-            "components": "Frontend,API",  # Pass as comma-separated string
-            "additional_fields": {"priority": {"name": "Medium"}},  # Pass as dict
+            "components": "Frontend,API",
+            "additional_fields": {"priority": {"name": "Medium"}},
         },
     )
-
-    # The response is a list of TextContent objects
     assert isinstance(response, list)
     assert len(response) > 0
     text_content = response[0]
     assert text_content.type == "text"
-
-    # Parse the JSON content
     content = json.loads(text_content.text)
     assert content["message"] == "Issue created successfully"
     assert "issue" in content
@@ -429,17 +454,14 @@ async def test_create_issue(jira_client, mock_jira_fetcher):
     component_names = [comp["name"] for comp in content["issue"]["components"]]
     assert "Frontend" in component_names
     assert "API" in component_names
-    assert content["issue"]["priority"] == {"name": "Medium"}  # Check additional field
-
-    # Verify the fetcher was called with the correct parameters
+    assert content["issue"]["priority"] == {"name": "Medium"}
     mock_jira_fetcher.create_issue.assert_called_once_with(
         project_key="TEST",
         summary="New Issue",
         issue_type="Task",
         description="This is a new task",
         assignee="",
-        components=["Frontend", "API"],  # Expect list here
-        # additional_fields are passed as **kwargs to the fetcher
+        components=["Frontend", "API"],
         priority={"name": "Medium"},
     )
 
@@ -463,30 +485,20 @@ async def test_batch_create_issues(jira_client, mock_jira_fetcher):
             "description": "Test description 2",
         },
     ]
-
-    # Convert to JSON string for the API call - the tool expects a string
     test_issues_json = json.dumps(test_issues)
-
     response = await jira_client.call_tool(
-        "batch_create_issues",
+        "jira_batch_create_issues",
         {"issues": test_issues_json, "validate_only": False},
     )
-
-    # Verify the response
     assert len(response) == 1
     text_content = response[0]
     assert text_content.type == "text"
-
-    # Parse the response JSON
     content = json.loads(text_content.text)
     assert "message" in content
     assert "issues" in content
     assert len(content["issues"]) == 2
     assert content["issues"][0]["key"] == "TEST-1"
     assert content["issues"][1]["key"] == "TEST-2"
-
-    # Explicitly check call args instead of using assert_called_once_with
-    # This can sometimes help with complex argument comparison issues in mocks
     call_args, call_kwargs = mock_jira_fetcher.batch_create_issues.call_args
     assert call_args[0] == test_issues
     assert "validate_only" in call_kwargs
@@ -496,30 +508,24 @@ async def test_batch_create_issues(jira_client, mock_jira_fetcher):
 @pytest.mark.anyio
 async def test_batch_create_issues_invalid_json(jira_client):
     """Test error handling for invalid JSON in batch issue creation."""
-    with pytest.raises(Exception) as excinfo:  # FastMCP raises Validation Error
+    with pytest.raises(ClientError) as excinfo:
         await jira_client.call_tool(
-            "batch_create_issues",
+            "jira_batch_create_issues",
             {"issues": "{invalid json", "validate_only": False},
         )
-
-    # Check error message comes from Pydantic/FastMCP validation
-    assert "invalid json in issues" in str(excinfo.value).lower()
+    assert "Error executing tool batch_create_issues" in str(excinfo.value)
+    assert "Invalid JSON in issues" in str(excinfo.value)
 
 
 @pytest.mark.anyio
 async def test_get_user_profile_tool_success(jira_client, mock_jira_fetcher):
     """Test the get_user_profile tool successfully retrieves user info."""
-    # Call the tool
     response = await jira_client.call_tool(
-        "get_user_profile", {"user_identifier": "test.profile@example.com"}
+        "jira_get_user_profile", {"user_identifier": "test.profile@example.com"}
     )
-
-    # Verify the fetcher was called
     mock_jira_fetcher.get_user_profile_by_identifier.assert_called_once_with(
         "test.profile@example.com"
     )
-
-    # Verify the response
     assert len(response) == 1
     result_data = json.loads(response[0].text)
     assert result_data["success"] is True
@@ -536,15 +542,93 @@ async def test_get_user_profile_tool_success(jira_client, mock_jira_fetcher):
 @pytest.mark.anyio
 async def test_get_user_profile_tool_not_found(jira_client, mock_jira_fetcher):
     """Test the get_user_profile tool handles 'user not found' errors."""
-    # Call the tool with a non-existent user
     response = await jira_client.call_tool(
-        "get_user_profile", {"user_identifier": "nonexistent@example.com"}
+        "jira_get_user_profile", {"user_identifier": "nonexistent@example.com"}
     )
-
-    # Verify the response contains an error
     assert len(response) == 1
     result_data = json.loads(response[0].text)
     assert result_data["success"] is False
     assert "error" in result_data
     assert "not found" in result_data["error"]
     assert result_data["user_identifier"] == "nonexistent@example.com"
+
+
+@pytest.mark.anyio
+async def test_no_fetcher_get_issue(no_fetcher_client_fixture, mock_request):
+    """Test that get_issue fails when Jira client is not configured (global config missing)."""
+
+    async def mock_get_fetcher_error(*args, **kwargs):
+        raise ValueError(
+            "Mocked: Jira client (fetcher) not available. Ensure server is configured correctly."
+        )
+
+    with (
+        patch(
+            "src.mcp_atlassian.servers.jira.get_jira_fetcher",
+            AsyncMock(side_effect=mock_get_fetcher_error),
+        ),
+        patch(
+            "src.mcp_atlassian.servers.dependencies.get_http_request",
+            return_value=mock_request,
+        ),
+    ):
+        with pytest.raises(ClientError) as excinfo:
+            await no_fetcher_client_fixture.call_tool(
+                "jira_get_issue",
+                {
+                    "issue_key": "TEST-123",
+                },
+            )
+    assert "Mocked: Jira client (fetcher) not available" in str(excinfo.value)
+    assert "Error executing tool get_issue" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_get_issue_with_user_specific_fetcher_in_state(
+    test_jira_mcp, mock_jira_fetcher, mock_base_jira_config
+):
+    """Test get_issue uses fetcher from request.state if UserTokenMiddleware provided it."""
+    _mock_request_with_fetcher_in_state = MagicMock(spec=Request)
+    _mock_request_with_fetcher_in_state.state = MagicMock()
+    _mock_request_with_fetcher_in_state.state.jira_fetcher = mock_jira_fetcher
+    _mock_request_with_fetcher_in_state.state.user_atlassian_auth_type = "oauth"
+    _mock_request_with_fetcher_in_state.state.user_atlassian_token = (
+        "user_specific_token"
+    )
+
+    # Define the specific fields we expect for this test case
+    test_fields_str = "summary,status,issuetype"
+    expected_fields_list = ["summary", "status", "issuetype"]
+
+    # Import the real get_jira_fetcher to test its interaction with request.state
+    from src.mcp_atlassian.servers.dependencies import (
+        get_jira_fetcher as get_jira_fetcher_real,
+    )
+
+    with (
+        patch(
+            "src.mcp_atlassian.servers.dependencies.get_http_request",
+            return_value=_mock_request_with_fetcher_in_state,
+        ) as mock_get_http,
+        patch(
+            "src.mcp_atlassian.servers.jira.get_jira_fetcher",
+            side_effect=AsyncMock(wraps=get_jira_fetcher_real),
+        ),
+    ):
+        async with Client(transport=FastMCPTransport(test_jira_mcp)) as client_instance:
+            response = await client_instance.call_tool(
+                "jira_get_issue",
+                {"issue_key": "USER-STATE-1", "fields": test_fields_str},
+            )
+
+    mock_get_http.assert_called()
+    mock_jira_fetcher.get_issue.assert_called_with(
+        issue_key="USER-STATE-1",
+        fields=expected_fields_list,
+        expand="",
+        comment_limit=10,
+        properties=None,
+        update_history=True,
+    )
+    result_data = json.loads(response[0].text)
+    assert result_data["key"] == "USER-STATE-1"
