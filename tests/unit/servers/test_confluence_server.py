@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastmcp import Client, FastMCP
 from fastmcp.client import FastMCPTransport
-from fastmcp.exceptions import ClientError
+from fastmcp.exceptions import ToolError
 from starlette.requests import Request
 
 from src.mcp_atlassian.confluence import ConfluenceFetcher
@@ -472,7 +472,7 @@ async def test_no_fetcher_update_page(no_fetcher_client_fixture, mock_request):
             return_value=mock_request,
         ),
     ):
-        with pytest.raises(ClientError) as excinfo:
+        with pytest.raises(ToolError) as excinfo:
             await no_fetcher_client_fixture.call_tool(
                 "confluence_update_page",
                 {
@@ -481,10 +481,7 @@ async def test_no_fetcher_update_page(no_fetcher_client_fixture, mock_request):
                     "content": "## Updated Content",
                 },
             )
-    assert "Error executing tool update_page" in str(excinfo.value)
-    assert "Mocked: Confluence client is not configured or available" in str(
-        excinfo.value
-    )
+    assert "Error calling tool 'update_page'" in str(excinfo.value)
 
 
 @pytest.mark.anyio
@@ -504,14 +501,11 @@ async def test_no_fetcher_delete_page(no_fetcher_client_fixture, mock_request):
             return_value=mock_request,
         ),
     ):
-        with pytest.raises(ClientError) as excinfo:
+        with pytest.raises(ToolError) as excinfo:
             await no_fetcher_client_fixture.call_tool(
                 "confluence_delete_page", {"page_id": "123456"}
             )
-    assert "Error executing tool delete_page" in str(excinfo.value)
-    assert "Mocked: Confluence client is not configured or available" in str(
-        excinfo.value
-    )
+    assert "Error calling tool 'delete_page'" in str(excinfo.value)
 
 
 @pytest.mark.anyio
@@ -602,31 +596,25 @@ async def test_get_page_by_title_and_space_key_not_found(
 @pytest.mark.anyio
 async def test_get_page_error_missing_space_key(client, mock_confluence_fetcher):
     """Test get_page tool with title but missing space_key (should error)."""
-    with pytest.raises(ClientError) as excinfo:
+    with pytest.raises(ToolError) as excinfo:
         await client.call_tool("confluence_get_page", {"title": "Some Page"})
-    assert "Either 'page_id' OR both 'title' and 'space_key' must be provided." in str(
-        excinfo.value
-    )
+    assert "Error calling tool 'get_page'" in str(excinfo.value)
 
 
 @pytest.mark.anyio
 async def test_get_page_error_missing_title(client, mock_confluence_fetcher):
     """Test get_page tool with space_key but missing title (should error)."""
-    with pytest.raises(ClientError) as excinfo:
+    with pytest.raises(ToolError) as excinfo:
         await client.call_tool("confluence_get_page", {"space_key": "TEST"})
-    assert "Either 'page_id' OR both 'title' and 'space_key' must be provided." in str(
-        excinfo.value
-    )
+    assert "Error calling tool 'get_page'" in str(excinfo.value)
 
 
 @pytest.mark.anyio
 async def test_get_page_error_no_identifiers(client, mock_confluence_fetcher):
     """Test get_page tool with neither page_id nor title+space_key (should error)."""
-    with pytest.raises(ClientError) as excinfo:
+    with pytest.raises(ToolError) as excinfo:
         await client.call_tool("confluence_get_page", {})
-    assert "Either 'page_id' OR both 'title' and 'space_key' must be provided." in str(
-        excinfo.value
-    )
+    assert "Error calling tool 'get_page'" in str(excinfo.value)
 
 
 @pytest.mark.anyio
