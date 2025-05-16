@@ -105,6 +105,7 @@ async def search(
     return json.dumps(search_results, indent=2, ensure_ascii=False)
 
 
+@convert_empty_defaults_to_none
 @confluence_mcp.tool(tags={"confluence", "read"})
 async def get_page(
     ctx: Context,
@@ -112,16 +113,34 @@ async def get_page(
         str,
         Field(
             description=(
-                "Confluence page ID (numeric ID, can be found in the page URL). "
-                "For example, in the URL 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', "
-                "the page ID is '123456789'"
-            )
+                "Confluence page ID (numeric ID). Provide this OR both 'title' and 'space_key'. "
+                "If page_id is provided, title and space_key will be ignored."
+            ),
+            default="",
         ),
-    ],
+    ] = "",
+    title: Annotated[
+        str,
+        Field(
+            description=(
+                "The exact title of the Confluence page. Use this with 'space_key' if 'page_id' is not known."
+            ),
+            default="",
+        ),
+    ] = "",
+    space_key: Annotated[
+        str,
+        Field(
+            description=(
+                "The key of the Confluence space where the page resides (e.g., 'DEV', 'TEAM'). Required if using 'title'."
+            ),
+            default="",
+        ),
+    ] = "",
     include_metadata: Annotated[
         bool,
         Field(
-            description="Whether to include page metadata such as creation date, last update, version, and labels",
+            description="Whether to include page metadata such as creation date, last update, version, and labels.",
             default=True,
         ),
     ] = True,
@@ -137,28 +156,70 @@ async def get_page(
         ),
     ] = True,
 ) -> str:
-    """Get content of a specific Confluence page by ID.
+    """Get content of a specific Confluence page by its ID, or by its title and space key.
 
     Args:
         ctx: The FastMCP context.
-        page_id: Confluence page ID.
+        page_id: Confluence page ID. If provided, 'title' and 'space_key' are ignored.
+        title: The exact title of the page. Must be used with 'space_key'.
+        space_key: The key of the space. Must be used with 'title'.
         include_metadata: Whether to include page metadata.
         convert_to_markdown: Convert content to markdown (true) or keep raw HTML (false).
 
     Returns:
-        JSON string representing the page content and/or metadata.
+        JSON string representing the page content and/or metadata, or an error if not found or parameters are invalid.
     """
     lifespan_ctx = ctx.request_context.lifespan_context
     if not lifespan_ctx or not lifespan_ctx.confluence:
         raise ValueError("Confluence client is not configured or available.")
     confluence = lifespan_ctx.confluence
 
-    page = confluence.get_page_content(page_id, convert_to_markdown=convert_to_markdown)
+    page_object = None  # Expects ConfluencePage | None
+
+    if page_id:
+        if title or space_key:
+            logger.warning(
+                "page_id was provided; title and space_key parameters will be ignored."
+            )
+        try:
+            page_object = confluence.get_page_content(
+                page_id, convert_to_markdown=convert_to_markdown
+            )
+        except Exception as e:
+            logger.error(f"Error fetching page by ID '{page_id}': {e}")
+            return json.dumps(
+                {"error": f"Failed to retrieve page by ID '{page_id}': {e}"},
+                indent=2,
+                ensure_ascii=False,
+            )
+    elif title and space_key:
+        page_object = confluence.get_page_by_title(
+            space_key, title, convert_to_markdown=convert_to_markdown
+        )
+        if not page_object:
+            return json.dumps(
+                {
+                    "error": f"Page with title '{title}' not found in space '{space_key}'."
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+    else:
+        raise ValueError(
+            "Either 'page_id' OR both 'title' and 'space_key' must be provided."
+        )
+
+    if not page_object:
+        return json.dumps(
+            {"error": "Page not found with the provided identifiers."},
+            indent=2,
+            ensure_ascii=False,
+        )
 
     if include_metadata:
-        result = {"metadata": page.to_simplified_dict()}
+        result = {"metadata": page_object.to_simplified_dict()}
     else:
-        result = {"content": page.content}
+        result = {"content": page_object.content}
 
     return json.dumps(result, indent=2, ensure_ascii=False)
 

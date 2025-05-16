@@ -517,7 +517,11 @@ async def test_invalid_arguments(client):
     with pytest.raises(Exception) as excinfo:
         await client.call_tool("get_page", {})  # Missing page_id
     error_msg = str(excinfo.value).lower()
-    assert "validation error" in error_msg or "missing" in error_msg
+    assert (
+        "validation error" in error_msg
+        or "missing" in error_msg
+        or "must be provided" in error_msg
+    )
 
 
 @pytest.mark.anyio
@@ -553,3 +557,84 @@ async def test_add_comment(client, mock_confluence_fetcher):
     assert result_data["success"] is True
     assert "comment" in result_data
     assert result_data["comment"]["id"] == "987"
+
+
+@pytest.mark.anyio
+async def test_get_page_by_title_and_space_key(client, mock_confluence_fetcher):
+    """Test get_page tool with title and space_key lookup."""
+    mock_page = MagicMock(spec=ConfluencePage)
+    mock_page.to_simplified_dict.return_value = {
+        "id": "654321",
+        "title": "Title Lookup Page",
+        "url": "https://example.atlassian.net/wiki/spaces/TEST/pages/654321/Title+Lookup",
+        "content": {
+            "value": "Content by title lookup",
+            "format": "markdown",
+        },
+    }
+    mock_page.content = "Content by title lookup"
+    mock_confluence_fetcher.get_page_by_title.return_value = mock_page
+
+    response = await client.call_tool(
+        "get_page", {"title": "Title Lookup Page", "space_key": "TEST"}
+    )
+    mock_confluence_fetcher.get_page_by_title.assert_called_once_with(
+        "TEST", "Title Lookup Page", convert_to_markdown=True
+    )
+    result_data = json.loads(response[0].text)
+    assert "metadata" in result_data
+    assert result_data["metadata"]["title"] == "Title Lookup Page"
+    assert result_data["metadata"]["content"]["value"] == "Content by title lookup"
+
+
+@pytest.mark.anyio
+async def test_get_page_by_title_and_space_key_not_found(
+    client, mock_confluence_fetcher
+):
+    """Test get_page tool with title and space_key when page is not found."""
+    mock_confluence_fetcher.get_page_by_title.return_value = None
+    response = await client.call_tool(
+        "get_page", {"title": "Missing Page", "space_key": "TEST"}
+    )
+    result_data = json.loads(response[0].text)
+    assert "error" in result_data
+    assert "not found" in result_data["error"]
+
+
+@pytest.mark.anyio
+async def test_get_page_error_missing_space_key(client, mock_confluence_fetcher):
+    """Test get_page tool with title but missing space_key (should error)."""
+    with pytest.raises(Exception) as excinfo:
+        await client.call_tool("get_page", {"title": "Some Page"})
+    assert "must be provided" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_get_page_error_missing_title(client, mock_confluence_fetcher):
+    """Test get_page tool with space_key but missing title (should error)."""
+    with pytest.raises(Exception) as excinfo:
+        await client.call_tool("get_page", {"space_key": "TEST"})
+    assert "must be provided" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_get_page_error_no_identifiers(client, mock_confluence_fetcher):
+    """Test get_page tool with neither page_id nor title+space_key (should error)."""
+    with pytest.raises(Exception) as excinfo:
+        await client.call_tool("get_page", {})
+    assert "must be provided" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_get_page_precedence_page_id(client, mock_confluence_fetcher):
+    """Test get_page tool uses page_id even if title and space_key are provided."""
+    response = await client.call_tool(
+        "get_page", {"page_id": "123456", "title": "Ignored", "space_key": "IGNORED"}
+    )
+    mock_confluence_fetcher.get_page_content.assert_called_once_with(
+        "123456", convert_to_markdown=True
+    )
+    mock_confluence_fetcher.get_page_by_title.assert_not_called()
+    result_data = json.loads(response[0].text)
+    assert "metadata" in result_data
+    assert result_data["metadata"]["title"] == "Test Page Mock Title"
