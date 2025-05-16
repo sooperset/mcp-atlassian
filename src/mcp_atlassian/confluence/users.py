@@ -31,6 +31,26 @@ class UsersMixin(ConfluenceClient):
         """
         return self.confluence.get_user_details_by_accountid(account_id, expand)
 
+    def get_user_details_by_username(
+        self, username: str, expand: str = None
+    ) -> dict[str, Any]:
+        """Get user details by username.
+
+        This is typically used for Confluence Server/DC instances where username
+        might be used as an identifier.
+
+        Args:
+            username: The username of the user.
+            expand: Optional expand for get status of user. Possible param is "status". Results are "Active, Deactivated".
+
+        Returns:
+            User details as a dictionary.
+
+        Raises:
+            Various exceptions from the Atlassian API if user doesn't exist or if there are permission issues.
+        """
+        return self.confluence.get_user_details_by_username(username, expand)
+
     def get_current_user_info(self) -> dict[str, Any]:
         """
         Retrieve details for the currently authenticated user by calling Confluence's '/rest/api/user/current' endpoint.

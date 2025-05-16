@@ -18,6 +18,10 @@ class ConfluenceClient(Protocol):
         """Get user details by account ID."""
         ...
 
+    def get_user_details_by_username(self, username: str) -> dict[str, Any]:
+        """Get user details by username (for Server/DC compatibility)."""
+        ...
+
 
 class BasePreprocessor:
     """Base class for text preprocessing operations."""
@@ -54,6 +58,7 @@ class BasePreprocessor:
 
             # Process user mentions
             self._process_user_mentions_in_soup(soup)
+            self._process_user_profile_macros_in_soup(soup)
 
             # Convert to string and markdown
             processed_html = str(soup)
@@ -92,6 +97,79 @@ class BasePreprocessor:
                     account_id = user_ref.get("ri:account-id")
                     if isinstance(account_id, str):
                         self._replace_user_mention(user_element, account_id)
+
+    def _process_user_profile_macros_in_soup(self, soup: BeautifulSoup) -> None:
+        """
+        Process Confluence User Profile macros in BeautifulSoup object.
+        Replaces <ac:structured-macro ac:name="profile">...</ac:structured-macro>
+        with the user's display name, typically formatted as @DisplayName.
+
+        Args:
+            soup: BeautifulSoup object containing HTML
+        """
+        profile_macros = soup.find_all(
+            "ac:structured-macro", attrs={"ac:name": "profile"}
+        )
+
+        for macro_element in profile_macros:
+            user_param = macro_element.find("ac:parameter", attrs={"ac:name": "user"})
+            if not user_param:
+                logger.debug(
+                    "User profile macro found without a 'user' parameter. Replacing with placeholder."
+                )
+                macro_element.replace_with("[User Profile Macro (Malformed)]")
+                continue
+
+            user_ref = user_param.find("ri:user")
+            if not user_ref:
+                logger.debug(
+                    "User profile macro's 'user' parameter found without 'ri:user' tag. Replacing with placeholder."
+                )
+                macro_element.replace_with("[User Profile Macro (Malformed)]")
+                continue
+
+            account_id = user_ref.get("ri:account-id")
+            userkey = user_ref.get("ri:userkey")  # Fallback for Confluence Server/DC
+
+            user_identifier_for_log = account_id or userkey
+            display_name = None
+
+            if self.confluence_client and user_identifier_for_log:
+                try:
+                    if account_id and isinstance(account_id, str):
+                        user_details = (
+                            self.confluence_client.get_user_details_by_accountid(
+                                account_id
+                            )
+                        )
+                        display_name = user_details.get("displayName")
+                    elif userkey and isinstance(userkey, str):
+                        # For Confluence Server/DC, userkey might be the username
+                        user_details = (
+                            self.confluence_client.get_user_details_by_username(userkey)
+                        )
+                        display_name = user_details.get("displayName")
+                except Exception as e:
+                    logger.warning(
+                        f"Error fetching user details for profile macro (user: {user_identifier_for_log}): {e}"
+                    )
+            elif not self.confluence_client:
+                logger.warning(
+                    "Confluence client not available for User Profile Macro processing."
+                )
+
+            if display_name:
+                replacement_text = f"@{display_name}"
+                macro_element.replace_with(replacement_text)
+            else:
+                fallback_identifier = (
+                    user_identifier_for_log
+                    if user_identifier_for_log
+                    else "unknown_user"
+                )
+                fallback_text = f"[User Profile: {fallback_identifier}]"
+                macro_element.replace_with(fallback_text)
+                logger.debug(f"Using fallback for user profile macro: {fallback_text}")
 
     def _replace_user_mention(self, user_element: Tag, account_id: str) -> None:
         """

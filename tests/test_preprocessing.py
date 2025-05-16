@@ -308,3 +308,98 @@ This is some **bold** and *italic* text.
     assert "<em>" in storage_format or "<i>" in storage_format  # Italic
     assert "<a href=" in storage_format.lower()  # Link
     assert "example.com" in storage_format
+
+
+def test_process_confluence_profile_macro(preprocessor_with_confluence):
+    """Test processing Confluence User Profile Macro in page content."""
+    html_content = MOCK_PAGE_RESPONSE["body"]["storage"]["value"]
+    processed_html, processed_markdown = (
+        preprocessor_with_confluence.process_html_content(html_content)
+    )
+    # Should replace macro with @Test User user123
+    assert "@Test User user123" in processed_html
+    assert "@Test User user123" in processed_markdown
+
+
+def test_process_confluence_profile_macro_malformed(preprocessor_with_confluence):
+    """Test processing malformed User Profile Macro (missing user param and ri:user)."""
+    # Macro missing ac:parameter
+    html_missing_param = '<ac:structured-macro ac:name="profile"></ac:structured-macro>'
+    processed_html, processed_markdown = (
+        preprocessor_with_confluence.process_html_content(html_missing_param)
+    )
+    assert "[User Profile Macro (Malformed)]" in processed_html
+    assert "[User Profile Macro (Malformed)]" in processed_markdown
+
+    # Macro with ac:parameter but missing ri:user
+    html_missing_riuser = '<ac:structured-macro ac:name="profile"><ac:parameter ac:name="user"></ac:parameter></ac:structured-macro>'
+    processed_html, processed_markdown = (
+        preprocessor_with_confluence.process_html_content(html_missing_riuser)
+    )
+    assert "[User Profile Macro (Malformed)]" in processed_html
+    assert "[User Profile Macro (Malformed)]" in processed_markdown
+
+
+def test_process_confluence_profile_macro_fallback():
+    """Test fallback when confluence_client is None."""
+    from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
+
+    html = (
+        '<ac:structured-macro ac:name="profile">'
+        '<ac:parameter ac:name="user">'
+        '<ri:user ri:account-id="user999" />'
+        "</ac:parameter>"
+        "</ac:structured-macro>"
+    )
+    preprocessor = ConfluencePreprocessor(
+        base_url="https://example.atlassian.net", confluence_client=None
+    )
+    processed_html, processed_markdown = preprocessor.process_html_content(html)
+    assert "[User Profile: user999]" in processed_html
+    assert "[User Profile: user999]" in processed_markdown
+
+
+def test_process_user_profile_macro_multiple():
+    """Test processing multiple User Profile Macros with account-id and userkey."""
+    from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
+
+    html = (
+        "<p>This page mentions a user via profile macro: "
+        '<ac:structured-macro ac:name="profile" ac:schema-version="1">'
+        '<ac:parameter ac:name="user">'
+        '<ri:user ri:account-id="test-account-id-123" />'
+        "</ac:parameter>"
+        "</ac:structured-macro>. "
+        "And another one: "
+        '<ac:structured-macro ac:name="profile" ac:schema-version="1">'
+        '<ac:parameter ac:name="user">'
+        '<ri:user ri:userkey="test-userkey-456" />'
+        "</ac:parameter>"
+        "</ac:structured-macro>."
+        "</p>"
+    )
+
+    class CustomMockConfluenceClient:
+        def get_user_details_by_accountid(self, account_id):
+            return (
+                {"displayName": "Test User One"}
+                if account_id == "test-account-id-123"
+                else {}
+            )
+
+        def get_user_details_by_username(self, username):
+            return (
+                {"displayName": "Test User Two"}
+                if username == "test-userkey-456"
+                else {}
+            )
+
+    preprocessor = ConfluencePreprocessor(
+        base_url="https://example.atlassian.net",
+        confluence_client=CustomMockConfluenceClient(),
+    )
+    processed_html, processed_markdown = preprocessor.process_html_content(html)
+    assert "@Test User One" in processed_html
+    assert "@Test User Two" in processed_html
+    assert "@Test User One" in processed_markdown
+    assert "@Test User Two" in processed_markdown

@@ -146,7 +146,12 @@ MOCK_PAGE_RESPONSE = {
     },
     "body": {
         "storage": {
-            "value": '<h2><ac:emoticon ac:name="blue-star" />&nbsp;Date</h2><p><time datetime="2024-01-01" /></p><h2><ac:emoticon ac:name="blue-star" />&nbsp;Participants</h2><ul><li><p><ac:link><ri:user ri:account-id="user123" /></ac:link></p></li></ul><h2><ac:emoticon ac:name="blue-star" />&nbsp;Goals</h2><ul><li><p>Example goal</p></li></ul>',
+            "value": '<h2><ac:emoticon ac:name="blue-star" />&nbsp;Date</h2><p><time datetime="2024-01-01" /></p><h2><ac:emoticon ac:name="blue-star" />&nbsp;Participants</h2><ul><li><p><ac:link><ri:user ri:account-id="user123" /></ac:link></p></li></ul><h2><ac:emoticon ac:name="blue-star" />&nbsp;Goals</h2><ul><li><p>Example goal</p></li></ul>'
+            '<p><ac:structured-macro ac:name="profile">'
+            '<ac:parameter ac:name="user">'
+            '<ri:user ri:account-id="user123" />'
+            "</ac:parameter>"
+            "</ac:structured-macro></p>",
             "representation": "storage",
             "embeddedContent": [],
             "_expandable": {"content": "/rest/api/content/987654321"},
