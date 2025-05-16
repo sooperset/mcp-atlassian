@@ -113,8 +113,10 @@ async def get_page(
         str,
         Field(
             description=(
-                "Confluence page ID (numeric ID). Provide this OR both 'title' and 'space_key'. "
-                "If page_id is provided, title and space_key will be ignored."
+                "Confluence page ID (numeric ID, can be found in the page URL). "
+                "For example, in the URL 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', "
+                "the page ID is '123456789'. "
+                "Provide this OR both 'title' and 'space_key'. If page_id is provided, title and space_key will be ignored."
             ),
             default="",
         ),
