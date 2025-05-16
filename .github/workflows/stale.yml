@@ -1,0 +1,53 @@
+name: 'Manage Stale Issues and PRs'
+
+on:
+  schedule:
+    # Runs daily at midnight UTC
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v9
+        with:
+          # === Core Timing Settings ===
+          days-before-stale: 14 # Start with 2 weeks
+          days-before-close: -1 # Disable automatic closing initially
+
+          # === Labels ===
+          stale-issue-label: 'stale'
+          stale-pr-label: 'stale'
+
+          # === Bot Messages ===
+          stale-issue-message: >
+            This issue has been automatically marked as stale because it has not had
+            recent activity for 14 days. It will be closed if no further activity occurs.
+            Please leave a comment or remove the 'stale' label if you believe this issue is still relevant.
+            Thank you for your contributions!
+          stale-pr-message: >
+            This pull request has been automatically marked as stale because it has not had
+            recent activity for 14 days. It will be closed if no further activity occurs.
+            Please leave a comment or remove the 'stale' label if you believe this PR is still relevant.
+            Thank you for your contributions!
+
+          # === Exemptions ===
+          exempt-issue-labels: 'pinned,security,good first issue,help wanted,bug,enhancement,feature request,documentation,awaiting-user-feedback,needs-investigation'
+          exempt-pr-labels: 'pinned,security,work-in-progress,awaiting-review,do-not-merge'
+          exempt-all-milestones: true
+          exempt-all-assignees: false # Consider if most issues should have assignees
+          exempt-draft-pr: true
+
+          # === Behavior Control ===
+          remove-stale-when-updated: true
+          operations-per-run: 30
+          debug-only: false
+          delete-branch: false
+
+          # --- Statistics ---
+          enable-statistics: true
