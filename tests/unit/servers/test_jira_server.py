@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastmcp import Client, FastMCP
 from fastmcp.client import FastMCPTransport
-from fastmcp.exceptions import ToolError
+from fastmcp.exceptions import ClientError
 from starlette.requests import Request
 
 from src.mcp_atlassian.jira import JiraFetcher
@@ -508,12 +508,12 @@ async def test_batch_create_issues(jira_client, mock_jira_fetcher):
 @pytest.mark.anyio
 async def test_batch_create_issues_invalid_json(jira_client):
     """Test error handling for invalid JSON in batch issue creation."""
-    with pytest.raises(ToolError) as excinfo:
+    with pytest.raises(ClientError) as excinfo:
         await jira_client.call_tool(
             "jira_batch_create_issues",
             {"issues": "{invalid json", "validate_only": False},
         )
-    assert "Error calling tool 'batch_create_issues'" in str(excinfo.value)
+    assert "Error executing tool batch_create_issues" in str(excinfo.value)
 
 
 @pytest.mark.anyio
@@ -571,14 +571,14 @@ async def test_no_fetcher_get_issue(no_fetcher_client_fixture, mock_request):
             return_value=mock_request,
         ),
     ):
-        with pytest.raises(ToolError) as excinfo:
+        with pytest.raises(ClientError) as excinfo:
             await no_fetcher_client_fixture.call_tool(
                 "jira_get_issue",
                 {
                     "issue_key": "TEST-123",
                 },
             )
-    assert "Error calling tool 'get_issue'" in str(excinfo.value)
+    assert "Error executing tool get_issue" in str(excinfo.value)
 
 
 @pytest.mark.anyio

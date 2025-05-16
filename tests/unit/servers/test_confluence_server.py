@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastmcp import Client, FastMCP
 from fastmcp.client import FastMCPTransport
-from fastmcp.exceptions import ToolError
+from fastmcp.exceptions import ClientError
 from starlette.requests import Request
 
 from src.mcp_atlassian.confluence import ConfluenceFetcher
@@ -130,7 +130,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     # Create and configure the sub-MCP for Confluence tools
     confluence_sub_mcp = FastMCP(name="TestConfluenceSubMCP")
     confluence_sub_mcp.tool()(search)
-    confluence_sub_mcp.tool(name="get_page")(get_page)
+    confluence_sub_mcp.tool()(get_page)
     confluence_sub_mcp.tool()(get_page_children)
     confluence_sub_mcp.tool()(get_comments)
     confluence_sub_mcp.tool()(add_comment)
@@ -183,7 +183,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     # Create and configure the sub-MCP for Confluence tools
     confluence_sub_mcp = FastMCP(name="NoFetcherTestConfluenceSubMCP")
     confluence_sub_mcp.tool()(search)
-    confluence_sub_mcp.tool(name="get_page")(get_page)
+    confluence_sub_mcp.tool()(get_page)
     confluence_sub_mcp.tool()(get_page_children)
     confluence_sub_mcp.tool()(get_comments)
     confluence_sub_mcp.tool()(add_comment)
@@ -472,7 +472,7 @@ async def test_no_fetcher_update_page(no_fetcher_client_fixture, mock_request):
             return_value=mock_request,
         ),
     ):
-        with pytest.raises(ToolError) as excinfo:
+        with pytest.raises(ClientError) as excinfo:
             await no_fetcher_client_fixture.call_tool(
                 "confluence_update_page",
                 {
@@ -481,7 +481,10 @@ async def test_no_fetcher_update_page(no_fetcher_client_fixture, mock_request):
                     "content": "## Updated Content",
                 },
             )
-    assert "Error calling tool 'update_page'" in str(excinfo.value)
+    assert "Error executing tool update_page" in str(excinfo.value)
+    assert "Mocked: Confluence client is not configured or available" in str(
+        excinfo.value
+    )
 
 
 @pytest.mark.anyio
@@ -501,11 +504,14 @@ async def test_no_fetcher_delete_page(no_fetcher_client_fixture, mock_request):
             return_value=mock_request,
         ),
     ):
-        with pytest.raises(ToolError) as excinfo:
+        with pytest.raises(ClientError) as excinfo:
             await no_fetcher_client_fixture.call_tool(
                 "confluence_delete_page", {"page_id": "123456"}
             )
-    assert "Error calling tool 'delete_page'" in str(excinfo.value)
+    assert "Error executing tool delete_page" in str(excinfo.value)
+    assert "Mocked: Confluence client is not configured or available" in str(
+        excinfo.value
+    )
 
 
 @pytest.mark.anyio
@@ -547,10 +553,8 @@ async def test_get_page_with_user_specific_fetcher_in_state(
         "789", convert_to_markdown=True
     )
     result_data = json.loads(response[0].text)
-    assert isinstance(result_data, dict)
-    assert result_data["success"] is True
-    assert "comment" in result_data
-    assert result_data["comment"]["id"] == "987"
+    assert "metadata" in result_data
+    assert result_data["metadata"]["title"] == "Test Page Mock Title"
 
 
 @pytest.mark.anyio
@@ -570,7 +574,7 @@ async def test_get_page_by_title_and_space_key(client, mock_confluence_fetcher):
     mock_confluence_fetcher.get_page_by_title.return_value = mock_page
 
     response = await client.call_tool(
-        "get_page", {"title": "Title Lookup Page", "space_key": "TEST"}
+        "confluence_get_page", {"title": "Title Lookup Page", "space_key": "TEST"}
     )
     mock_confluence_fetcher.get_page_by_title.assert_called_once_with(
         "TEST", "Title Lookup Page", convert_to_markdown=True
@@ -588,7 +592,7 @@ async def test_get_page_by_title_and_space_key_not_found(
     """Test get_page tool with title and space_key when page is not found."""
     mock_confluence_fetcher.get_page_by_title.return_value = None
     response = await client.call_tool(
-        "get_page", {"title": "Missing Page", "space_key": "TEST"}
+        "confluence_get_page", {"title": "Missing Page", "space_key": "TEST"}
     )
     result_data = json.loads(response[0].text)
     assert "error" in result_data
@@ -598,32 +602,39 @@ async def test_get_page_by_title_and_space_key_not_found(
 @pytest.mark.anyio
 async def test_get_page_error_missing_space_key(client, mock_confluence_fetcher):
     """Test get_page tool with title but missing space_key (should error)."""
-    with pytest.raises(Exception) as excinfo:
-        await client.call_tool("get_page", {"title": "Some Page"})
-    assert "must be provided" in str(excinfo.value)
+    with pytest.raises(ClientError) as excinfo:
+        await client.call_tool("confluence_get_page", {"title": "Some Page"})
+    assert "Either 'page_id' OR both 'title' and 'space_key' must be provided." in str(
+        excinfo.value
+    )
 
 
 @pytest.mark.anyio
 async def test_get_page_error_missing_title(client, mock_confluence_fetcher):
     """Test get_page tool with space_key but missing title (should error)."""
-    with pytest.raises(Exception) as excinfo:
-        await client.call_tool("get_page", {"space_key": "TEST"})
-    assert "must be provided" in str(excinfo.value)
+    with pytest.raises(ClientError) as excinfo:
+        await client.call_tool("confluence_get_page", {"space_key": "TEST"})
+    assert "Either 'page_id' OR both 'title' and 'space_key' must be provided." in str(
+        excinfo.value
+    )
 
 
 @pytest.mark.anyio
 async def test_get_page_error_no_identifiers(client, mock_confluence_fetcher):
     """Test get_page tool with neither page_id nor title+space_key (should error)."""
-    with pytest.raises(Exception) as excinfo:
-        await client.call_tool("get_page", {})
-    assert "must be provided" in str(excinfo.value)
+    with pytest.raises(ClientError) as excinfo:
+        await client.call_tool("confluence_get_page", {})
+    assert "Either 'page_id' OR both 'title' and 'space_key' must be provided." in str(
+        excinfo.value
+    )
 
 
 @pytest.mark.anyio
 async def test_get_page_precedence_page_id(client, mock_confluence_fetcher):
     """Test get_page tool uses page_id even if title and space_key are provided."""
     response = await client.call_tool(
-        "get_page", {"page_id": "123456", "title": "Ignored", "space_key": "IGNORED"}
+        "confluence_get_page",
+        {"page_id": "123456", "title": "Ignored", "space_key": "IGNORED"},
     )
     mock_confluence_fetcher.get_page_content.assert_called_once_with(
         "123456", convert_to_markdown=True
