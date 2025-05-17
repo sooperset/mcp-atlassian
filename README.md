@@ -437,11 +437,23 @@ Both transport types support single-user and multi-user authentication:
 
 2. Configure your IDE (single-user example):
 
+    **SSE Transport Example:**
     ```json
     {
       "mcpServers": {
         "mcp-atlassian-http": {
-          "url": "http://localhost:9000/sse"  // Use /mcp for streamable-http
+          "url": "http://localhost:9000/sse"
+        }
+      }
+    }
+    ```
+
+    **Streamable-HTTP Transport Example:**
+    ```json
+    {
+      "mcpServers": {
+        "mcp-atlassian-service": {
+          "url": "http://localhost:9000/mcp"
         }
       }
     }
@@ -564,7 +576,7 @@ Here's a complete example of setting up multi-user authentication with streamabl
 |           | `jira_update_issue`           | `confluence_update_page`       |
 |           | `jira_delete_issue`           | `confluence_delete_page`       |
 |           | `jira_batch_create_issues`    | `confluence_add_label`         |
-|           | `jira_add_comment`            |                                |
+|           | `jira_add_comment`            | `confluence_add_comment`       |
 |           | `jira_transition_issue`       |                                |
 |           | `jira_add_worklog`            |                                |
 |           | `jira_link_to_epic`           |                                |
