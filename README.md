@@ -38,7 +38,7 @@ https://github.com/user-attachments/assets/7fe9c488-ad0c-4876-9b54-120b666bb785
 
 ## Quick Start Guide
 
-### 1. Authentication Setup
+### 🔐 1. Authentication Setup
 
 MCP Atlassian supports three authentication methods:
 
@@ -79,7 +79,7 @@ MCP Atlassian supports three authentication methods:
 > [!IMPORTANT]
 > Include `offline_access` in scope for persistent auth (e.g., `read:jira-work write:jira-work offline_access`)
 
-### 2. Installation
+### 📦 2. Installation
 
 MCP Atlassian is distributed as a Docker image. This is the recommended way to run the server, especially for IDE integration. Ensure you have Docker installed.
 
@@ -88,7 +88,7 @@ MCP Atlassian is distributed as a Docker image. This is the recommended way to r
 docker pull ghcr.io/sooperset/mcp-atlassian:latest
 ```
 
-## IDE Integration
+## 🛠️ IDE Integration
 
 MCP Atlassian is designed to be used with AI assistants through IDE integration.
 
@@ -100,7 +100,7 @@ MCP Atlassian is designed to be used with AI assistants through IDE integration.
 >
 > **For Cursor**: Open Settings → MCP → + Add new global MCP server
 
-### Configuration Methods
+### ⚙️ Configuration Methods
 
 There are two main approaches to configure the Docker container:
 
@@ -119,7 +119,7 @@ There are two main approaches to configure the Docker container:
 > See the [.env.example](https://github.com/sooperset/mcp-atlassian/blob/main/.env.example) file for all available options.
 
 
-### Configuration Examples
+### 📝 Configuration Examples
 
 **Method 1 (Passing Variables Directly):**
 ```json
@@ -403,7 +403,7 @@ For Jira Server/DC, use:
 
 </details>
 
-### HTTP Transport Configuration
+### 👥 HTTP Transport Configuration
 
 Instead of using `stdio`, you can run the server as a persistent HTTP service using either:
 - `sse` (Server-Sent Events) transport at `/sse` endpoint

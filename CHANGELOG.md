@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## [0.11.0] - 2025-05-18
+
+### Added
+- **Multi-User Authentication for HTTP Transports:** Implemented comprehensive multi-user authentication for `streamable-http` and `sse` transports. Users can now authenticate per-request using OAuth 2.0 Bearer tokens (Cloud) or Personal Access Tokens (PATs for Server/DC or Cloud API tokens). This enables operations under individual user permissions, enhancing security and context-awareness. (#416, #341)
+- **Confluence `add_comment` Tool:** Introduced a new tool `confluence_add_comment` to allow programmatic addition of comments to Confluence pages. (#424, #276)
+- **Enhanced Confluence Page Lookup:** The `confluence_get_page` tool now supports fetching pages by `title` and `space_key` in addition to `page_id`, providing more flexibility when page IDs are unknown. (#430)
+
+### Fixed
+- **Confluence User Profile Macros:** Correctly processes Confluence User Profile Macros (`<ac:structured-macro ac:name="profile">`), resolving an issue where macros were misinterpreted, leading to garbled output or raw macro tags. This includes better user detail fetching for Server/DC instances. (#419)
+
+### Changed
+- **Authentication Context Management:** Refactored server context and dependency injection to support dynamic, user-specific `JiraFetcher` and `ConfluenceFetcher` instances based on per-request authentication.
+- **Dependencies:** Updated `fastmcp` and `mcp` to latest compatible versions. Added `cachetools` for potential future enhancements.
+
+### Documentation
+- Updated README with detailed instructions for setting up and using multi-user authentication with OAuth 2.0 and PATs, including IDE configuration examples.
+- Added the new `confluence_add_comment` tool to the tool table in README.md. (#431)
+
 ## [0.10.6] - 2025-05-12
 
 ### Fixed
