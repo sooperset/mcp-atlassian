@@ -405,20 +405,21 @@ For Jira Server/DC, use:
 
 ### HTTP Transport Configuration (SSE / Streamable-HTTP)
 
-For multi-user authentication using OAuth 2.0 Bearer tokens, or if you prefer to run the server as a persistent HTTP service instead of using `stdio`, you can use `sse` (Server-Sent Events) or `streamable-http` transport.
+For multi-user authentication using OAuth 2.0 Bearer tokens or Personal Access Tokens (PATs), or if you prefer to run the server as a persistent HTTP service instead of using `stdio`, you can use `sse` (Server-Sent Events) or `streamable-http` transport.
 
 <details> <summary>Using SSE Instead of stdio</summary>
 
 1.  Start the server manually in a terminal:
+
     ```bash
     docker run --rm -p 9000:9000 \
-      # Mount .env file or pass individual -e flags
       --env-file /path/to/your/.env \
       ghcr.io/sooperset/mcp-atlassian:latest \
       --transport sse --port 9000 -vv
     ```
 
 2.  Configure your IDE to connect to the running server via its URL:
+
     ```json
     {
       "mcpServers": {
@@ -445,24 +446,45 @@ Here's a complete example of setting up multi-user authentication with streamabl
 2. Start the server with streamable-HTTP transport:
    ```bash
    docker run --rm -p 9000:9000 \
-     --env-file .env \
+     --env-file /path/to/your/.env \
      ghcr.io/sooperset/mcp-atlassian:latest \
      --transport streamable-http --port 9000 -vv
    ```
 
 3. Configure your IDE's MCP settings:
-   ```json
-   {
-     "mcpServers": {
-       "mcp-atlassian-service": {
-         "url": "http://localhost:9000/mcp",
-         "headers": {
-           "Authorization": "Bearer <USER_OAUTH_ACCESS_TOKEN>"
-         }
-       }
-     }
-   }
-   ```
+
+**Choose the appropriate Authorization method for your Atlassian deployment:**
+
+- **Cloud (OAuth 2.0):** Use this if your organization is on Atlassian Cloud and you have an OAuth access token for each user.
+- **Server/Data Center (PAT):** Use this if you are on Atlassian Server or Data Center and each user has a Personal Access Token (PAT).
+
+**Cloud (OAuth 2.0) Example:**
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian-service": {
+      "url": "http://localhost:9000/mcp",
+      "headers": {
+        "Authorization": "Bearer <USER_OAUTH_ACCESS_TOKEN>"
+      }
+    }
+  }
+}
+```
+
+**Server/Data Center (PAT) Example:**
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian-service": {
+      "url": "http://localhost:9000/mcp",
+      "headers": {
+        "Authorization": "Token <USER_PERSONAL_ACCESS_TOKEN>"
+      }
+    }
+  }
+}
+```
 
 4. Required environment variables in `.env`:
    ```bash
@@ -476,8 +498,9 @@ Here's a complete example of setting up multi-user authentication with streamabl
    ```
 
 > [!NOTE]
-> - The server's OAuth setup (`--oauth-setup`) is required for validating user tokens
-> - Each user needs their own OAuth access token from your Atlassian OAuth app
+> - The server should have its own fallback authentication configured (e.g., via environment variables for API token, PAT, or its own OAuth setup using --oauth-setup). This is used if a request doesn't include user-specific authentication.
+> - **OAuth**: Each user needs their own OAuth access token from your Atlassian OAuth app.
+> - **PAT**: Each user provides their own Personal Access Token.
 > - The server will use the user's token for API calls when provided, falling back to server auth if not
 > - User tokens should have appropriate scopes for their needed operations
 
