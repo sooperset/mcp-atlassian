@@ -403,35 +403,52 @@ For Jira Server/DC, use:
 
 </details>
 
-### HTTP Transport Configuration (SSE / Streamable-HTTP)
+### HTTP Transport Configuration
 
-For multi-user authentication using OAuth 2.0 Bearer tokens or Personal Access Tokens (PATs), or if you prefer to run the server as a persistent HTTP service instead of using `stdio`, you can use `sse` (Server-Sent Events) or `streamable-http` transport.
+Instead of using `stdio`, you can run the server as a persistent HTTP service using either:
+- `sse` (Server-Sent Events) transport at `/sse` endpoint
+- `streamable-http` transport at `/mcp` endpoint
 
-<details> <summary>Using SSE Instead of stdio</summary>
+Both transport types support single-user and multi-user authentication:
 
-1.  Start the server manually in a terminal:
+**Authentication Options:**
+- **Single-User**: Use server-level authentication configured via environment variables
+- **Multi-User**: Each user provides their own authentication:
+  - Cloud: OAuth 2.0 Bearer tokens
+  - Server/Data Center: Personal Access Tokens (PATs)
+
+<details> <summary>Basic HTTP Transport Setup</summary>
+
+1. Start the server with your chosen transport:
 
     ```bash
+    # For SSE transport
     docker run --rm -p 9000:9000 \
       --env-file /path/to/your/.env \
       ghcr.io/sooperset/mcp-atlassian:latest \
       --transport sse --port 9000 -vv
+
+    # OR for streamable-http transport
+    docker run --rm -p 9000:9000 \
+      --env-file /path/to/your/.env \
+      ghcr.io/sooperset/mcp-atlassian:latest \
+      --transport streamable-http --port 9000 -vv
     ```
 
-2.  Configure your IDE to connect to the running server via its URL:
+2. Configure your IDE (single-user example):
 
     ```json
     {
       "mcpServers": {
-        "mcp-atlassian-sse": {
-          "url": "http://localhost:9000/sse"
+        "mcp-atlassian-http": {
+          "url": "http://localhost:9000/sse"  // Use /mcp for streamable-http
         }
       }
     }
     ```
 </details>
 
-<details> <summary>Using Streamable-HTTP Transport (Multi-User)</summary>
+<details> <summary>Multi-User Authentication Setup</summary>
 
 Here's a complete example of setting up multi-user authentication with streamable-HTTP transport:
 
@@ -505,8 +522,6 @@ Here's a complete example of setting up multi-user authentication with streamabl
 > - User tokens should have appropriate scopes for their needed operations
 
 </details>
-
----
 
 ## Tools
 
