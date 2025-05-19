@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.11.1] - 2025-05-20
+
+### Fixed
+- **Jira & Confluence Read-Only Mode:** Resolved an `AttributeError` in Jira write tools and standardized read-only mode checks across all Jira and Confluence write-enabled tools. Introduced a `@check_write_access` decorator to correctly use the application context for these checks, ensuring consistent behavior. (Fixes #434, PR #438)
+
 ## [0.11.0] - 2025-05-18
 
 ### Added
