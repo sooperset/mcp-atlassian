@@ -13,6 +13,7 @@ from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 from mcp_atlassian.models.jira.common import JiraUser
 from mcp_atlassian.servers.dependencies import get_jira_fetcher
 from mcp_atlassian.utils import convert_empty_defaults_to_none
+from mcp_atlassian.utils.decorators import check_write_access
 
 logger = logging.getLogger(__name__)
 
@@ -614,6 +615,7 @@ async def get_link_types(ctx: Context) -> str:
 
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "write"})
+@check_write_access
 async def create_issue(
     ctx: Context,
     project_key: Annotated[
@@ -688,10 +690,6 @@ async def create_issue(
         ValueError: If in read-only mode or Jira client is unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    if jira.config.read_only:
-        logger.warning("Attempted to call create_issue in read-only mode.")
-        raise ValueError("Cannot create issue in read-only mode.")
-
     # Parse components from comma-separated string to list
     components_list = None
     if components and isinstance(components, str):
@@ -722,6 +720,7 @@ async def create_issue(
 
 
 @jira_mcp.tool(tags={"jira", "write"})
+@check_write_access
 async def batch_create_issues(
     ctx: Context,
     issues: Annotated[
@@ -764,10 +763,6 @@ async def batch_create_issues(
         ValueError: If in read-only mode, Jira client unavailable, or invalid JSON.
     """
     jira = await get_jira_fetcher(ctx)
-    if jira.config.read_only:
-        logger.warning("Attempted to call batch_create_issues in read-only mode.")
-        raise ValueError("Cannot create issues in read-only mode.")
-
     # Parse issues from JSON string
     try:
         issues_list = json.loads(issues)
@@ -868,6 +863,7 @@ async def batch_get_changelogs(
 
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "write"})
+@check_write_access
 async def update_issue(
     ctx: Context,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
@@ -914,10 +910,6 @@ async def update_issue(
         ValueError: If in read-only mode or Jira client unavailable, or invalid input.
     """
     jira = await get_jira_fetcher(ctx)
-    if jira.config.read_only:
-        logger.warning("Attempted to call update_issue in read-only mode.")
-        raise ValueError("Cannot update issue in read-only mode.")
-
     # Use fields directly as dict
     if not isinstance(fields, dict):
         raise ValueError("fields must be a dictionary.")
@@ -972,6 +964,7 @@ async def update_issue(
 
 
 @jira_mcp.tool(tags={"jira", "write"})
+@check_write_access
 async def delete_issue(
     ctx: Context,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g. PROJ-123)")],
@@ -989,9 +982,6 @@ async def delete_issue(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    if jira.config.read_only:
-        logger.warning("Attempted to call delete_issue in read-only mode.")
-        raise ValueError("Cannot delete issue in read-only mode.")
     deleted = jira.delete_issue(issue_key)
     result = {"message": f"Issue {issue_key} has been deleted successfully."}
     # The underlying method raises on failure, so if we reach here, it's success.
@@ -999,6 +989,7 @@ async def delete_issue(
 
 
 @jira_mcp.tool(tags={"jira", "write"})
+@check_write_access
 async def add_comment(
     ctx: Context,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
@@ -1018,10 +1009,6 @@ async def add_comment(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    if jira.config.read_only:
-        logger.warning("Attempted to call add_comment in read-only mode.")
-        raise ValueError("Cannot add comment in read-only mode.")
-
     # add_comment returns dict
     result = jira.add_comment(issue_key, comment)
     return json.dumps(result, indent=2, ensure_ascii=False)
@@ -1029,6 +1016,7 @@ async def add_comment(
 
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "write"})
+@check_write_access
 async def add_worklog(
     ctx: Context,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
@@ -1081,10 +1069,6 @@ async def add_worklog(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    if jira.config.read_only:
-        logger.warning("Attempted to call add_worklog in read-only mode.")
-        raise ValueError("Cannot add worklog in read-only mode.")
-
     # add_worklog returns dict
     worklog_result = jira.add_worklog(
         issue_key=issue_key,
@@ -1099,6 +1083,7 @@ async def add_worklog(
 
 
 @jira_mcp.tool(tags={"jira", "write"})
+@check_write_access
 async def link_to_epic(
     ctx: Context,
     issue_key: Annotated[
@@ -1122,10 +1107,6 @@ async def link_to_epic(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    if jira.config.read_only:
-        logger.warning("Attempted to call link_to_epic in read-only mode.")
-        raise ValueError("Cannot link issue to epic in read-only mode.")
-
     issue = jira.link_issue_to_epic(issue_key, epic_key)
     result = {
         "message": f"Issue {issue_key} has been linked to epic {epic_key}.",
@@ -1136,6 +1117,7 @@ async def link_to_epic(
 
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "write"})
+@check_write_access
 async def create_issue_link(
     ctx: Context,
     link_type: Annotated[
@@ -1178,9 +1160,6 @@ async def create_issue_link(
         ValueError: If required fields are missing, invalid input, in read-only mode, or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    if jira.config.read_only:
-        logger.warning("Attempted to call create_issue_link in read-only mode.")
-        raise ValueError("Cannot create issue link in read-only mode.")
     if not all([link_type, inward_issue_key, outward_issue_key]):
         raise ValueError(
             "link_type, inward_issue_key, and outward_issue_key are required."
@@ -1206,6 +1185,7 @@ async def create_issue_link(
 
 
 @jira_mcp.tool(tags={"jira", "write"})
+@check_write_access
 async def remove_issue_link(
     ctx: Context,
     link_id: Annotated[str, Field(description="The ID of the link to remove")],
@@ -1223,9 +1203,6 @@ async def remove_issue_link(
         ValueError: If link_id is missing, in read-only mode, or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    if jira.config.read_only:
-        logger.warning("Attempted to call remove_issue_link in read-only mode.")
-        raise ValueError("Cannot remove issue link in read-only mode.")
     if not link_id:
         raise ValueError("link_id is required")
 
@@ -1235,6 +1212,7 @@ async def remove_issue_link(
 
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "write"})
+@check_write_access
 async def transition_issue(
     ctx: Context,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
@@ -1284,9 +1262,6 @@ async def transition_issue(
         ValueError: If required fields missing, invalid input, in read-only mode, or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    if jira.config.read_only:
-        logger.warning("Attempted to call transition_issue in read-only mode.")
-        raise ValueError("Cannot transition issue in read-only mode.")
     if not issue_key or not transition_id:
         raise ValueError("issue_key and transition_id are required.")
 
@@ -1311,6 +1286,7 @@ async def transition_issue(
 
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "write"})
+@check_write_access
 async def create_sprint(
     ctx: Context,
     board_id: Annotated[str, Field(description="The id of board (e.g., '1000')")],
@@ -1342,9 +1318,6 @@ async def create_sprint(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    if jira.config.read_only:
-        logger.warning("Attempted to call create_sprint in read-only mode.")
-        raise ValueError("Cannot create sprint in read-only mode.")
     sprint = jira.create_sprint(
         board_id=board_id,
         sprint_name=sprint_name,
@@ -1357,6 +1330,7 @@ async def create_sprint(
 
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "write"})
+@check_write_access
 async def update_sprint(
     ctx: Context,
     sprint_id: Annotated[str, Field(description="The id of sprint (e.g., '10001')")],
@@ -1393,9 +1367,6 @@ async def update_sprint(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    if jira.config.read_only:
-        logger.warning("Attempted to call update_sprint in read-only mode.")
-        raise ValueError("Cannot update sprint in read-only mode.")
     sprint = jira.update_sprint(
         sprint_id=sprint_id,
         sprint_name=sprint_name,
