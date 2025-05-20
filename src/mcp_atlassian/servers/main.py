@@ -48,18 +48,30 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
     if services.get("jira"):
         try:
             jira_config = JiraConfig.from_env()
-            if jira_config:
+            if jira_config.is_auth_configured():
                 loaded_jira_config = jira_config
-                logger.info("Full Jira configuration loaded.")
+                logger.info(
+                    "Jira configuration loaded and authentication is configured."
+                )
+            else:
+                logger.warning(
+                    "Jira URL found, but authentication is not fully configured. Jira tools will be unavailable."
+                )
         except Exception as e:
             logger.error(f"Failed to load Jira configuration: {e}", exc_info=True)
 
     if services.get("confluence"):
         try:
             confluence_config = ConfluenceConfig.from_env()
-            if confluence_config:
+            if confluence_config.is_auth_configured():
                 loaded_confluence_config = confluence_config
-                logger.info("Full Confluence configuration loaded.")
+                logger.info(
+                    "Confluence configuration loaded and authentication is configured."
+                )
+            else:
+                logger.warning(
+                    "Confluence URL found, but authentication is not fully configured. Confluence tools will be unavailable."
+                )
         except Exception as e:
             logger.error(f"Failed to load Confluence configuration: {e}", exc_info=True)
 
@@ -79,7 +91,7 @@ class AtlassianMCP(FastMCP[MainAppContext]):
     """Custom FastMCP server class for Atlassian integration with tool filtering."""
 
     async def _mcp_list_tools(self) -> list[MCPTool]:
-        # Filter tools based on enabled_tools and read_only mode from the lifespan context.
+        # Filter tools based on enabled_tools, read_only mode, and service configuration from the lifespan context.
         req_context = self._mcp_server.request_context
         if req_context is None or req_context.lifespan_context is None:
             logger.warning(
@@ -124,6 +136,30 @@ class AtlassianMCP(FastMCP[MainAppContext]):
                 logger.debug(
                     f"Excluding tool '{registered_name}' due to read-only mode and 'write' tag"
                 )
+                continue
+
+            # Exclude Jira/Confluence tools if config is not fully authenticated
+            is_jira_tool = "jira" in tool_tags
+            is_confluence_tool = "confluence" in tool_tags
+            service_configured_and_available = True
+            if app_lifespan_state:
+                if is_jira_tool and not app_lifespan_state.full_jira_config:
+                    logger.debug(
+                        f"Excluding Jira tool '{registered_name}' as Jira configuration/authentication is incomplete."
+                    )
+                    service_configured_and_available = False
+                if is_confluence_tool and not app_lifespan_state.full_confluence_config:
+                    logger.debug(
+                        f"Excluding Confluence tool '{registered_name}' as Confluence configuration/authentication is incomplete."
+                    )
+                    service_configured_and_available = False
+            elif is_jira_tool or is_confluence_tool:
+                logger.warning(
+                    f"Excluding tool '{registered_name}' as application context is unavailable to verify service configuration."
+                )
+                service_configured_and_available = False
+
+            if not service_configured_and_available:
                 continue
 
             filtered_tools.append(tool_obj.to_mcp_tool(name=registered_name))

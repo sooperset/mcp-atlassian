@@ -1,5 +1,6 @@
 """Configuration module for Jira API interactions."""
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import Literal
@@ -122,3 +123,28 @@ class JiraConfig:
             no_proxy=no_proxy,
             socks_proxy=socks_proxy,
         )
+
+    def is_auth_configured(self) -> bool:
+        """Check if the current authentication configuration is complete and valid for making API calls.
+
+        Returns:
+            bool: True if authentication is fully configured, False otherwise.
+        """
+        logger = logging.getLogger("mcp-atlassian.jira.config")
+        if self.auth_type == "oauth":
+            return bool(
+                self.oauth_config
+                and self.oauth_config.client_id
+                and self.oauth_config.client_secret
+                and self.oauth_config.redirect_uri
+                and self.oauth_config.scope
+                and self.oauth_config.cloud_id
+            )
+        elif self.auth_type == "token":
+            return bool(self.personal_token)
+        elif self.auth_type == "basic":
+            return bool(self.username and self.api_token)
+        logger.warning(
+            f"Unknown or unsupported auth_type: {self.auth_type} in JiraConfig"
+        )
+        return False
