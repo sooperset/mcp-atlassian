@@ -689,7 +689,9 @@ class TestJiraIssue:
         assert simplified_specific["project"]["key"] == "PROJ"
         assert simplified_specific["resolution"]["name"] == "Fixed"
         assert len(simplified_specific["subtasks"]) == 1
-        assert simplified_specific["customfield_10011"] == "Epic Name Example"
+        assert simplified_specific["customfield_10011"] == {
+            "value": "Epic Name Example"
+        }
 
     def test_find_custom_field_in_api_response(self):
         """Test the _find_custom_field_in_api_response method with different field patterns."""
@@ -861,6 +863,7 @@ class TestJiraIssue:
         assert "customfield_10002" in simplified
         assert "summary" not in simplified
         assert "customfield_10001" not in simplified
+        assert simplified["customfield_10002"] == {"value": "Custom Select Value"}
 
         issue = JiraIssue.from_api_response(jira_issue_data, requested_fields="*all")
         simplified = issue.to_simplified_dict()
@@ -875,7 +878,7 @@ class TestJiraIssue:
         )
         simplified_specific = issue_specific.to_simplified_dict()
         assert "customfield_10014" in simplified_specific
-        assert simplified_specific.get("customfield_10014") == "EPIC-KEY-1"
+        assert simplified_specific.get("customfield_10014") == {"value": "EPIC-KEY-1"}
 
     def test_jira_issue_with_default_fields(self, jira_issue_data):
         """Test that JiraIssue returns only essential fields by default."""

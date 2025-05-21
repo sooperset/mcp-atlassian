@@ -421,18 +421,14 @@ class JiraIssue(ApiModel, TimestampMixin):
 
         # Store custom fields
         custom_fields = {}
-        for field_id, field_value in fields.items():
-            if field_id.startswith("customfield_"):
-                # Extract custom field name if it's a nested object with a name
-                if isinstance(field_value, dict) and "name" in field_value:
-                    field_name = field_value.get("name", "")
-                    if field_name:
-                        # Use the field name as a key for easier access
-                        custom_field_name = field_name.lower().replace(" ", "_")
-                        custom_fields[custom_field_name] = field_value
-                else:
-                    # Use the original ID as the key (instead of shortened version)
-                    custom_fields[field_id] = field_value
+        fields_name_map = data.get("names", {})
+        for orig_field_id, orig_field_value in fields.items():
+            if orig_field_id.startswith("customfield_"):
+                value_obj_to_store = {"value": orig_field_value}
+                human_readable_name = fields_name_map.get(orig_field_id)
+                if human_readable_name:
+                    value_obj_to_store["name"] = human_readable_name
+                custom_fields[orig_field_id] = value_obj_to_store
 
         # Handle requested_fields parameter
         requested_fields_param = kwargs.get("requested_fields")
@@ -606,36 +602,61 @@ class JiraIssue(ApiModel, TimestampMixin):
 
         # Process custom fields
         if self.custom_fields:
-            # Add all custom fields if "*all" is requested
             if self.requested_fields == "*all":
-                # Loop through custom fields and add all of them
-                for field_id, field_value in self.custom_fields.items():
-                    # Process the value to make it more user-friendly
-                    processed_value = self._process_custom_field_value(field_value)
-                    result[field_id] = processed_value
-
-            # Add specific requested custom fields
+                for internal_id, field_data_obj in self.custom_fields.items():
+                    processed_value = self._process_custom_field_value(
+                        field_data_obj.get("value")
+                    )
+                    output_value_obj = {"value": processed_value}
+                    if "name" in field_data_obj:
+                        output_value_obj["name"] = field_data_obj["name"]
+                    result[internal_id] = output_value_obj
             elif isinstance(self.requested_fields, list):
-                for field in self.requested_fields:
-                    # Check for customfield_ format
-                    if field.startswith("customfield_"):
-                        # Try to find the field in custom_fields
-                        if field in self.custom_fields:
-                            value = self._process_custom_field_value(
-                                self.custom_fields[field]
+                for requested_key_or_name in self.requested_fields:
+                    found_by_id_or_name = False
+                    if (
+                        requested_key_or_name.startswith("customfield_")
+                        and requested_key_or_name in self.custom_fields
+                    ):
+                        field_data_obj = self.custom_fields[requested_key_or_name]
+                        output_value_obj = {
+                            "value": self._process_custom_field_value(
+                                field_data_obj.get("value")
                             )
-                            result[field] = value
-
-                    # Check for cf_ format (for backward compatibility in requests)
-                    elif field.startswith("cf_"):
-                        full_id = "customfield_" + field[3:]  # Convert to full form
-
-                        # Try to find the full version in custom_fields
+                        }
+                        if "name" in field_data_obj:
+                            output_value_obj["name"] = field_data_obj["name"]
+                        result[requested_key_or_name] = output_value_obj
+                        found_by_id_or_name = True
+                    else:
+                        for internal_id, field_data_obj in self.custom_fields.items():
+                            if (
+                                field_data_obj.get("name", "").lower()
+                                == requested_key_or_name.lower()
+                            ):
+                                output_value_obj = {
+                                    "value": self._process_custom_field_value(
+                                        field_data_obj.get("value")
+                                    )
+                                }
+                                output_value_obj["name"] = field_data_obj["name"]
+                                result[internal_id] = output_value_obj
+                                found_by_id_or_name = True
+                                break
+                    if not found_by_id_or_name and requested_key_or_name.startswith(
+                        "cf_"
+                    ):
+                        full_id = "customfield_" + requested_key_or_name[3:]
                         if full_id in self.custom_fields:
-                            value = self._process_custom_field_value(
-                                self.custom_fields[full_id]
-                            )
-                            result[full_id] = value
+                            field_data_obj = self.custom_fields[full_id]
+                            output_value_obj = {
+                                "value": self._process_custom_field_value(
+                                    field_data_obj.get("value")
+                                )
+                            }
+                            if "name" in field_data_obj:
+                                output_value_obj["name"] = field_data_obj["name"]
+                            result[full_id] = output_value_obj
 
         return {k: v for k, v in result.items() if v is not None}
 
@@ -653,16 +674,15 @@ class JiraIssue(ApiModel, TimestampMixin):
             return field_value
 
         if isinstance(field_value, dict):
+            # For single-select, user pickers, etc., try to extract 'value' or 'name'
             if "value" in field_value:
                 return field_value["value"]
             elif "name" in field_value:
                 return field_value["name"]
+            return field_value
 
         if isinstance(field_value, list):
-            return [
-                item.get("value", str(item)) if isinstance(item, dict) else str(item)
-                for item in field_value
-            ]
+            return [self._process_custom_field_value(item) for item in field_value]
 
         return str(field_value)
 

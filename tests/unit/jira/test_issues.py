@@ -189,8 +189,10 @@ class TestIssuesMixin:
             assert issue.summary == "Test Issue"
 
             # Verify that the epic information is in the custom fields
-            assert issue.custom_fields.get("customfield_10010") == "EPIC-456"
-            assert issue.custom_fields.get("customfield_10011") == "Epic Name Value"
+            assert issue.custom_fields.get("customfield_10010") == {"value": "EPIC-456"}
+            assert issue.custom_fields.get("customfield_10011") == {
+                "value": "Epic Name Value"
+            }
 
         except Exception as e:
             pytest.fail(f"Test failed: {e}")
@@ -865,7 +867,7 @@ class TestIssuesMixin:
         # Check the result
         simplified = issue.to_simplified_dict()
         assert "customfield_10049" in simplified
-        assert simplified["customfield_10049"] == "Custom value"
+        assert simplified["customfield_10049"] == {"value": "Custom value"}
         assert "description" not in simplified
 
         # Test with list format
@@ -886,7 +888,7 @@ class TestIssuesMixin:
         # Check the result
         simplified = issue.to_simplified_dict()
         assert "customfield_10050" in simplified
-        assert simplified["customfield_10050"] == "Option value"
+        assert simplified["customfield_10050"] == {"value": "Option value"}
 
     def test_get_issue_with_all_fields(self, issues_mixin: IssuesMixin):
         """Test get_issue with '*all' fields parameter."""
