@@ -870,6 +870,40 @@ async def list_tools() -> list[Tool]:
                         "required": ["sprint_id"],
                     },
                 ),
+                Tool(
+                    name="jira_get_project_fields",
+                    description="Get all fields (standard and custom) configured for a specific JIRA project",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "project_key": {
+                                "type": "string",
+                                "description": "The project key to get fields for (e.g., 'PROJ')",
+                            },
+                            "issue_type_id": {
+                                "type": "string",
+                                "description": "The type of JIRA issue, Epic, Story, Bug, Task, Release, Test, Spike, Sub-task, Technical Debt",
+                                "default": "Story",
+                            },
+                            "include_standard_fields": {
+                                "type": "boolean",
+                                "description": "Whether to include standard Jira fields",
+                                "default": True,
+                            },
+                            "include_custom_fields": {
+                                "type": "boolean",
+                                "description": "Whether to include custom fields",
+                                "default": True,
+                            },
+                            "include_field_details": {
+                                "type": "boolean",
+                                "description": "Whether to include detailed information about each field (type, allowed values, etc.)",
+                                "default": True,
+                            },
+                        },
+                        "required": ["project_key"],
+                    },
+                ),
             ]
         )
 
@@ -1643,6 +1677,46 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 TextContent(
                     type="text",
                     text=json.dumps(sprint_issues, indent=2, ensure_ascii=False),
+                )
+            ]
+            
+        elif name == "jira_get_project_fields" and ctx and ctx.jira:
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            project_key = arguments.get("project_key")
+            issue_type_id = arguments.get("issue_type_id")
+            include_standard_fields = arguments.get("include_standard_fields", True)
+            include_custom_fields = arguments.get("include_custom_fields", True)
+            include_field_details = arguments.get("include_field_details", True)
+            
+            # Get fields for the project
+            fields = ctx.jira.get_project_fields(
+                project_key=project_key,
+                issue_type_id=issue_type_id,
+                include_standard_fields=include_standard_fields,
+                include_custom_fields=include_custom_fields
+            )
+            
+            # Format the results based on whether to include details
+            if not include_field_details:
+                # Simplified format with just id and name
+                formatted_fields = {}
+                for field in fields:
+                    field_id = field.get("id")
+                    field_name = field.get("name")
+                    if field_id and field_name:
+                        formatted_fields[field_id] = field_name
+                
+                result = formatted_fields
+            else:
+                # Full details
+                result = fields
+            
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(result, indent=2, ensure_ascii=False),
                 )
             ]
 

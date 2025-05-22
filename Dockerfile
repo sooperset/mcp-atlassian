@@ -28,10 +28,20 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:3.10-slim
 
+# The SSL Certificate needs to be named a .crt (not a .pem file)
+COPY zscaler-root-ca.crt /usr/local/share/ca-certificates/zscaler-root-ca.crt
+RUN apt-get update && \
+    apt-get install -y ca-certificates && \
+    update-ca-certificates
+
 WORKDIR /app
 
 COPY --from=uv --chown=app:app /app/.venv /app/.venv
-COPY .env.example /app/.env
+COPY .env /app/.env
+
+ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV PYTHONHTTPSVERIFY=1
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"

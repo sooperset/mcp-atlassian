@@ -135,6 +135,80 @@ class FieldsMixin(JiraClient):
         except Exception as e:
             logger.error(f"Error getting custom fields: {str(e)}")
             return []
+            
+    def get_project_fields(self, project_key: str, issue_type_id: str, include_standard_fields: bool = True,
+                          include_custom_fields: bool = True, refresh: bool = False) -> list[dict[str, Any]]:
+        """
+        Get all fields (standard and/or custom) configured for a specific JIRA project.
+        
+        This method retrieves the fields that are available for use in the specified project,
+        which can include both standard Jira fields and custom fields.
+        
+        Args:
+            project_key: The project key (e.g., 'PROJ')
+            include_standard_fields: Whether to include standard Jira fields
+            include_custom_fields: Whether to include custom fields
+            refresh: When True, forces a refresh from the server
+            
+        Returns:
+            List of field definitions available for the project
+        """
+        try:
+            # Get all fields first
+            all_fields = self.get_fields(refresh=refresh)
+            
+            # Get project metadata to determine which fields are used in this project
+            # We use the createmeta endpoint which provides field information for issue creation
+            meta = self.jira.issue_createmeta_fieldtypes(
+                project=project_key,
+                issue_type_id=issue_type_id
+            )
+
+            # Extract fields from the metadata
+            project_fields = {}
+            
+            if "projects" in meta and meta["projects"]:
+                project = meta["projects"][0]
+                if "issuetypes" in project and project["issuetypes"]:
+                    # Collect fields from all issue types in the project
+                    for issuetype in project["issuetypes"]:
+                        if "fields" in issuetype:
+                            for field_id, field_meta in issuetype["fields"].items():
+                                project_fields[field_id] = field_meta
+            
+            # Filter the all_fields list to only include fields that are in project_fields
+            result = []
+            for field in all_fields:
+                field_id = field.get("id")
+                
+                # Skip if field_id is not in the project fields
+                if field_id not in project_fields:
+                    continue
+                    
+                # Check if it's a custom field
+                is_custom = field_id.startswith("customfield_")
+                
+                # Apply filters based on field type
+                if (is_custom and include_custom_fields) or (not is_custom and include_standard_fields):
+                    # Enhance the field definition with additional metadata from project_fields
+                    enhanced_field = field.copy()
+                    
+                    # Add project-specific field metadata
+                    project_meta = project_fields.get(field_id, {})
+                    enhanced_field["required"] = project_meta.get("required", False)
+                    enhanced_field["project_meta"] = {
+                        "required": project_meta.get("required", False),
+                        "has_default": "defaultValue" in project_meta,
+                        "allowed_values": project_meta.get("allowedValues", [])
+                    }
+                    
+                    result.append(enhanced_field)
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error getting fields for project {project_key}: {str(e)}")
+            return []
 
     def get_required_fields(self, issue_type: str, project_key: str) -> dict[str, Any]:
         """
