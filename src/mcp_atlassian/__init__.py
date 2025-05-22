@@ -19,6 +19,7 @@ if os.getenv("MCP_VERBOSE", "").lower() in ("true", "1", "yes"):
 logger = setup_logging(logging_level)
 
 
+@click.version_option(__version__, prog_name="mcp-atlassian")
 @click.command()
 @click.option(
     "-v",
