@@ -434,7 +434,7 @@ class TestSearchMixin:
         assert "assignee" in simplified
         assert "customfield_10049" in simplified
 
-        assert simplified["customfield_10049"] == "Custom value"
+        assert simplified["customfield_10049"] == {"value": "Custom value"}
         assert "assignee" in simplified
         assert simplified["assignee"]["display_name"] == "Test User"
 
