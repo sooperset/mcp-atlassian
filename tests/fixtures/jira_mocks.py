@@ -128,6 +128,13 @@ MOCK_JIRA_ISSUE_RESPONSE = {
             {"value": "Custom MultiSelect 2"},
         ],
     },
+    "names": {
+        "customfield_10011": "Epic Name",
+        "customfield_10014": "Epic Link",
+        "customfield_10001": "My Custom Text Field",
+        "customfield_10002": "My Custom Select",
+        "customfield_10003": "My Custom MultiSelect",
+    },
 }
 
 MOCK_JIRA_JQL_RESPONSE = {
@@ -239,6 +246,10 @@ MOCK_JIRA_JQL_RESPONSE = {
             },
         }
     ],
+    "names": {
+        "customfield_10011": "Epic Name",
+        "customfield_10014": "Epic Link",
+    },
 }
 
 # Generic mock Jira comments data without any company-specific information
