@@ -880,7 +880,7 @@ async def list_tools() -> list[Tool]:
                                 "type": "string",
                                 "description": "The project key to get fields for (e.g., 'PROJ')",
                             },
-                            "issue_type_id": {
+                            "issue_type_name": {
                                 "type": "string",
                                 "description": "The type of JIRA issue, Epic, Story, Bug, Task, Release, Test, Spike, Sub-task, Technical Debt",
                                 "default": "Story",
@@ -899,6 +899,32 @@ async def list_tools() -> list[Tool]:
                                 "type": "boolean",
                                 "description": "Whether to include detailed information about each field (type, allowed values, etc.)",
                                 "default": True,
+                            },
+                        },
+                        "required": ["project_key"],
+                    },
+                ),
+                Tool(
+                    name="jira_get_project_issue_types",
+                    description="Get all issue types available for a specific Jira project",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "project_key": {
+                                "type": "string",
+                                "description": "The project key to get issue types for (e.g., 'PROJ')",
+                            },
+                            "start": {
+                                "type": "number",
+                                "description": "Index of the first issue type to return",
+                                "default": 0,
+                            },
+                            "limit": {
+                                "type": "number",
+                                "description": "Maximum number of issue types to return (1-50)",
+                                "default": 50,
+                                "minimum": 1,
+                                "maximum": 50,
                             },
                         },
                         "required": ["project_key"],
@@ -1680,12 +1706,34 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 )
             ]
             
+        elif name == "jira_get_project_issue_types" and ctx and ctx.jira:
+            if not ctx or not ctx.jira:
+                raise ValueError("Jira is not configured.")
+
+            project_key = arguments.get("project_key")
+            start = arguments.get("start", 0)
+            limit = min(int(arguments.get("limit", 50)), 50)
+            
+            # Get issue types for the project using the direct method
+            issue_types = ctx.jira.get_project_issue_types_direct(
+                project_key=project_key,
+                start=start,
+                limit=limit
+            )
+            
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(issue_types, indent=2, ensure_ascii=False),
+                )
+            ]
+
         elif name == "jira_get_project_fields" and ctx and ctx.jira:
             if not ctx or not ctx.jira:
                 raise ValueError("Jira is not configured.")
 
             project_key = arguments.get("project_key")
-            issue_type_id = arguments.get("issue_type_id")
+            issue_type_name = arguments.get("issue_type_name")
             include_standard_fields = arguments.get("include_standard_fields", True)
             include_custom_fields = arguments.get("include_custom_fields", True)
             include_field_details = arguments.get("include_field_details", True)
@@ -1693,7 +1741,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             # Get fields for the project
             fields = ctx.jira.get_project_fields(
                 project_key=project_key,
-                issue_type_id=issue_type_id,
+                issue_type_name=issue_type_name,
                 include_standard_fields=include_standard_fields,
                 include_custom_fields=include_custom_fields
             )

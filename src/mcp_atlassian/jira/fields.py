@@ -136,45 +136,121 @@ class FieldsMixin(JiraClient):
             logger.error(f"Error getting custom fields: {str(e)}")
             return []
             
-    def get_project_fields(self, project_key: str, issue_type_id: str, include_standard_fields: bool = True,
-                          include_custom_fields: bool = True, refresh: bool = False) -> list[dict[str, Any]]:
+    def get_issue_type_id(self, project_key: str, issue_type_name: str) -> str:
         """
-        Get all fields (standard and/or custom) configured for a specific JIRA project.
-        
-        This method retrieves the fields that are available for use in the specified project,
-        which can include both standard Jira fields and custom fields.
+        Get the ID of an issue type by its name for a specific project.
         
         Args:
             project_key: The project key (e.g., 'PROJ')
+            issue_type_name: The name of the issue type (e.g., 'Story', 'Bug')
+            
+        Returns:
+            The ID of the issue type if found, empty string otherwise
+        """
+        try:
+            # Get issue types for the project
+            issue_types = self.jira.issue_createmeta_issuetypes(
+                project=project_key
+            )
+            
+            logger.debug(f"Issue types for project '{project_key}': {issue_types}")
+            # Find the issue type ID that matches the given name
+            for issue_type in issue_types.get("issueTypes", []):
+                if issue_type.get("name") == issue_type_name:
+                    return issue_type.get("id", "")
+                    
+            logger.warning(f"Issue type '{issue_type_name}' not found in project '{project_key}'")
+            return ""
+            
+        except Exception as e:
+            logger.error(f"Error getting issue type ID for '{issue_type_name}' in project '{project_key}': {str(e)}")
+            return ""
+    
+    def get_project_fields(self, project_key: str, issue_type_name: str, include_standard_fields: bool = True,
+                           include_custom_fields: bool = True, refresh: bool = False) -> list[dict[str, Any]]:
+        """
+        Get all fields (standard and/or custom) configured for a specific JIRA project and issue type.
+        
+        This method retrieves the fields that are available for use in the specified project and issue type,
+        which can include both standard Jira fields and custom fields. It uses the issue_createmeta_fieldtypes
+        endpoint to get detailed information about each field, including whether it's required, its allowed
+        values, and other metadata.
+        
+        The method first gets all fields from Jira, then filters them based on the fields available
+        for the specified project and issue type. It also enhances the field definitions with
+        project-specific metadata such as whether the field is required and its allowed values.
+        
+        Args:
+            project_key: The project key (e.g., 'PROJ')
+            issue_type_name: The name of the issue type (e.g., 'Story', 'Bug')
             include_standard_fields: Whether to include standard Jira fields
             include_custom_fields: Whether to include custom fields
             refresh: When True, forces a refresh from the server
             
         Returns:
-            List of field definitions available for the project
+            List of field definitions available for the project and issue type
         """
         try:
             # Get all fields first
             all_fields = self.get_fields(refresh=refresh)
+
+            # Get the issue type ID
+            issue_type_id = self.get_issue_type_id(project_key, issue_type_name)
             
+            if not issue_type_id:
+                logger.error(f"Could not find issue type '{issue_type_name}' in project '{project_key}'")
+                return []
+                
             # Get project metadata to determine which fields are used in this project
             # We use the createmeta endpoint which provides field information for issue creation
-            meta = self.jira.issue_createmeta_fieldtypes(
-                project=project_key,
-                issue_type_id=issue_type_id
-            )
+            try:
+                meta = self.jira.issue_createmeta_fieldtypes(
+                    project=project_key,
+                    issue_type_id=issue_type_id
+                )
+            except Exception as e:
+                logger.error(f"Error fetching field metadata for project '{project_key}' and issue type '{issue_type_name}': {str(e)}")
+                return []
 
+            # Log the structure of the metadata for debugging
+            logger.debug(f"Project metadata structure for '{project_key}' and issue type '{issue_type_name}':")
+            if "fields" in meta:
+                fields_type = type(meta["fields"]).__name__
+                fields_count = len(meta["fields"]) if meta["fields"] else 0
+                logger.debug(f"Found {fields_count} fields in the metadata (type: {fields_type})")
+                
+                # Log the first field to help with debugging
+                if fields_count > 0:
+                    if isinstance(meta["fields"], list) and meta["fields"]:
+                        first_field = meta["fields"][0]
+                        logger.debug(f"First field sample: {first_field}")
+                    elif isinstance(meta["fields"], dict) and meta["fields"]:
+                        first_key = next(iter(meta["fields"]))
+                        logger.debug(f"First field sample: {first_key} -> {meta['fields'][first_key]}")
+            else:
+                logger.warning(f"No 'fields' found in metadata for '{project_key}' and issue type '{issue_type_name}'")
             # Extract fields from the metadata
             project_fields = {}
             
-            if "projects" in meta and meta["projects"]:
-                project = meta["projects"][0]
-                if "issuetypes" in project and project["issuetypes"]:
-                    # Collect fields from all issue types in the project
-                    for issuetype in project["issuetypes"]:
-                        if "fields" in issuetype:
-                            for field_id, field_meta in issuetype["fields"].items():
-                                project_fields[field_id] = field_meta
+            # The issue_createmeta_fieldtypes endpoint returns field information directly
+            # in the "fields" object at the top level of the response
+            if "fields" in meta:
+                # Check if fields is a list or a dictionary
+                if isinstance(meta["fields"], list):
+                    # Handle list of field objects
+                    for field_meta in meta["fields"]:
+                        if "key" in field_meta:
+                            # Use the key as the field_id
+                            field_id = field_meta["key"]
+                            project_fields[field_id] = field_meta
+                        elif "fieldId" in field_meta:
+                            # Alternative: use fieldId if key is not present
+                            field_id = field_meta["fieldId"]
+                            project_fields[field_id] = field_meta
+                else:
+                    # Handle dictionary of field objects (original behavior)
+                    for field_id, field_meta in meta["fields"].items():
+                        project_fields[field_id] = field_meta
             
             # Filter the all_fields list to only include fields that are in project_fields
             result = []

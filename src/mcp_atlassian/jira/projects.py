@@ -246,6 +246,39 @@ class ProjectsMixin(JiraClient):
                 f"Error getting issue types for project {project_key}: {str(e)}"
             )
             return []
+            
+    def get_project_issue_types_direct(self, project_key: str, start: int = 0, limit: int = 50) -> list[dict[str, Any]]:
+        """
+        Get all issue types available for a project using the direct issue_createmeta_issuetypes endpoint.
+        
+        This method uses the dedicated endpoint for retrieving issue types, which may provide
+        more detailed information than the general issue_createmeta endpoint.
+
+        Args:
+            project_key: The project key
+            start: Index of the first issue type to return (default: 0)
+            limit: Maximum number of issue types to return (default: 50)
+
+        Returns:
+            List of issue type data dictionaries
+        """
+        try:
+            # Use the dedicated endpoint for issue types
+            result = self.jira.issue_createmeta_issuetypes(project=project_key, start=start, limit=limit)
+            
+            issue_types = []
+            # Extract issue types from the response
+            if "values" in result:
+                issue_types = result["values"]
+            
+            logger.warning(f"Retrieved {result} issue types for project {project_key}")
+            return issue_types
+            
+        except Exception as e:
+            logger.error(
+                f"Error getting issue types directly for project {project_key}: {str(e)}"
+            )
+            return []
 
     def get_project_issues_count(self, project_key: str) -> int:
         """
