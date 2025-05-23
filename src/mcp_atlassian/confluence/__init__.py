@@ -18,7 +18,19 @@ class ConfluenceFetcher(SearchMixin, SpacesMixin, PagesMixin, CommentsMixin):
     API as the original ConfluenceFetcher class.
     """
 
-    pass
+    def get_page_labels(self, page_id: str) -> list[str]:
+        """
+        Get labels of a specific Confluence page.
+
+        This method calls the implementation in PagesMixin.
+
+        Args:
+            page_id: The ID of the page to get labels for.
+
+        Returns:
+            List of label strings, or an empty list if an error occurs.
+        """
+        return super().get_page_labels(page_id)
 
 
 __all__ = ["ConfluenceFetcher", "ConfluenceConfig", "ConfluenceClient"]

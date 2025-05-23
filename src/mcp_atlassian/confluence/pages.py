@@ -435,3 +435,30 @@ class PagesMixin(ConfluenceClient):
         except Exception as e:
             logger.error(f"Error deleting page {page_id}: {str(e)}")
             raise Exception(f"Failed to delete page {page_id}: {str(e)}") from e
+
+    def get_page_labels(self, page_id: str) -> list[str]:
+        """
+        Get labels of a specific Confluence page.
+
+        Args:
+            page_id: The ID of the page to get labels for.
+
+        Returns:
+            List of label strings, or an empty list if an error occurs.
+        """
+        try:
+            labels_data = self.confluence.get_page_labels(page_id=page_id)
+            # The API returns a dict with a 'results' key, which is a list of label objects
+            # Each label object has a 'name' key.
+            # Example: {'results': [{'prefix': 'global', 'name': 'label-one', 'id': '123', 'label': 'label-one'}, ...]}
+            if labels_data and "results" in labels_data:
+                label_names = [label["name"] for label in labels_data["results"]]
+                logger.info(f"Successfully fetched labels for page {page_id}: {label_names}")
+                return label_names
+            else:
+                logger.info(f"No labels found or unexpected response format for page {page_id}: {labels_data}")
+                return []
+        except Exception as e:
+            logger.error(f"Error fetching labels for page {page_id}: {str(e)}")
+            logger.debug("Full exception details:", exc_info=True)
+            return []

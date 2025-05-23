@@ -486,6 +486,22 @@ async def list_tools() -> list[Tool]:
                         "required": ["page_id"],
                     },
                 ),
+                Tool(
+                    name="confluence_get_page_labels",
+                    description="Get labels of a specific Confluence page by its ID",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "page_id": {
+                                "type": "string",
+                                "description": "Confluence page ID (numeric ID, can be found in the page URL). "
+                                               "For example, in the URL 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', "
+                                               "the page ID is '123456789'",
+                            },
+                        },
+                        "required": ["page_id"],
+                    },
+                )
             ]
         )
 
@@ -1087,6 +1103,30 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                         ),
                     )
                 ]
+
+        elif name == "confluence_get_page_labels":
+            if not ctx or not ctx.confluence:
+                raise ValueError("Confluence is not configured.")
+
+            page_id = arguments.get("page_id")
+            if not page_id:
+                raise ValueError("Missing required parameter: page_id is required.")
+
+            labels = ctx.confluence.get_page_labels(page_id=page_id)
+            
+            # Ensure labels are returned as a list of strings, even if empty
+            if not isinstance(labels, list):
+                # This case should ideally be handled by the get_page_labels method itself,
+                # but as a safeguard:
+                logger.warning(f"Received unexpected type for labels: {type(labels)}. Defaulting to empty list.")
+                labels = []
+
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps({"page_id": page_id, "labels": labels}, indent=2, ensure_ascii=False),
+                )
+            ]
 
         # Jira operations
         elif name == "jira_get_issue":

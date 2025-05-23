@@ -354,6 +354,76 @@ class TestPagesMixin:
                 always_update=True,
             )
 
+    def test_get_page_labels_success(self, pages_mixin, mocker):
+        """Test successful retrieval of page labels."""
+        # Arrange
+        page_id = "123"
+        expected_labels = ["label1", "label2"]
+        mock_response = {"results": [{"name": "label1"}, {"name": "label2"}]}
+        pages_mixin.confluence.get_page_labels.return_value = mock_response
+        mock_logger_info = mocker.patch('mcp_atlassian.confluence.pages.logger.info')
+
+        # Act
+        result = pages_mixin.get_page_labels(page_id)
+
+        # Assert
+        assert result == expected_labels
+        pages_mixin.confluence.get_page_labels.assert_called_once_with(page_id=page_id)
+        mock_logger_info.assert_called_with(f"Successfully fetched labels for page {page_id}: {expected_labels}")
+
+    def test_get_page_labels_no_labels(self, pages_mixin, mocker):
+        """Test retrieval when no labels are found."""
+        # Arrange
+        page_id = "456"
+        expected_labels = []
+        mock_response = {"results": []}
+        pages_mixin.confluence.get_page_labels.return_value = mock_response
+        mock_logger_info = mocker.patch('mcp_atlassian.confluence.pages.logger.info')
+
+        # Act
+        result = pages_mixin.get_page_labels(page_id)
+
+        # Assert
+        assert result == expected_labels
+        pages_mixin.confluence.get_page_labels.assert_called_once_with(page_id=page_id)
+        mock_logger_info.assert_called_with(f"Successfully fetched labels for page {page_id}: {expected_labels}")
+
+    def test_get_page_labels_unexpected_response(self, pages_mixin, mocker):
+        """Test handling of an unexpected API response format."""
+        # Arrange
+        page_id = "789"
+        expected_labels = []
+        mock_response = {"foo": "bar"}  # Unexpected format, missing 'results'
+        pages_mixin.confluence.get_page_labels.return_value = mock_response
+        mock_logger_info = mocker.patch('mcp_atlassian.confluence.pages.logger.info')
+
+        # Act
+        result = pages_mixin.get_page_labels(page_id)
+
+        # Assert
+        assert result == expected_labels
+        pages_mixin.confluence.get_page_labels.assert_called_once_with(page_id=page_id)
+        mock_logger_info.assert_called_with(f"No labels found or unexpected response format for page {page_id}: {mock_response}")
+
+    def test_get_page_labels_api_error(self, pages_mixin, mocker):
+        """Test handling when the API call raises an exception."""
+        # Arrange
+        page_id = "101"
+        expected_labels = []
+        error_message = "API connection failed"
+        pages_mixin.confluence.get_page_labels.side_effect = Exception(error_message)
+        mock_logger_error = mocker.patch('mcp_atlassian.confluence.pages.logger.error')
+        mock_logger_debug = mocker.patch('mcp_atlassian.confluence.pages.logger.debug')
+
+        # Act
+        result = pages_mixin.get_page_labels(page_id)
+
+        # Assert
+        assert result == expected_labels
+        pages_mixin.confluence.get_page_labels.assert_called_once_with(page_id=page_id)
+        mock_logger_error.assert_called_with(f"Error fetching labels for page {page_id}: {error_message}")
+        mock_logger_debug.assert_called_with("Full exception details:", exc_info=True)
+
     def test_update_page_error(self, pages_mixin):
         """Test error handling when updating a page."""
         # Arrange
