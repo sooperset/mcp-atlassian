@@ -285,7 +285,9 @@ def main(
     if click_ctx and was_option_provided(click_ctx, "jira_projects_filter"):
         os.environ["JIRA_PROJECTS_FILTER"] = jira_projects_filter
     if click_ctx and was_option_provided(click_ctx, "confluence_is_markdown_format"):
-        os.environ["CONFLUENCE_IS_MARKDOWN_FORMAT"] = str(confluence_is_markdown_format).lower()
+        os.environ["CONFLUENCE_IS_MARKDOWN_FORMAT"] = str(
+            confluence_is_markdown_format
+        ).lower()
 
     from mcp_atlassian.servers import main_mcp
 
