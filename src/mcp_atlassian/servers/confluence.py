@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from typing import Annotated
 
 from fastmcp import Context, FastMCP
@@ -441,12 +442,14 @@ async def create_page(
         ValueError: If in read-only mode or Confluence client is unavailable.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
+    is_markdown_env = os.getenv("CONFLUENCE_IS_MARKDOWN_FORMAT", "true").lower()
+    is_markdown = is_markdown_env not in ("false", "0", "no")
     page = confluence_fetcher.create_page(
         space_key=space_key,
         title=title,
         body=content,
         parent_id=parent_id,
-        is_markdown=True,
+        is_markdown=is_markdown,
     )
     result = page.to_simplified_dict()
     return json.dumps(
@@ -497,14 +500,15 @@ async def update_page(
     confluence_fetcher = await get_confluence_fetcher(ctx)
     # TODO: revert this once Cursor IDE handles optional parameters with Union types correctly.
     actual_parent_id = parent_id if parent_id else None
-
+    is_markdown_env = os.getenv("CONFLUENCE_IS_MARKDOWN_FORMAT", "true").lower()
+    is_markdown = is_markdown_env not in ("false", "0", "no")
     updated_page = confluence_fetcher.update_page(
         page_id=page_id,
         title=title,
         body=content,
         is_minor_edit=is_minor_edit,
         version_comment=version_comment,
-        is_markdown=True,
+        is_markdown=is_markdown,
         parent_id=actual_parent_id,
     )
     page_data = updated_page.to_simplified_dict()
