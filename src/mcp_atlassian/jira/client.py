@@ -73,7 +73,7 @@ class JiraClient:
             logger.debug(
                 f"Jira client _session after init: {self.jira._session.__dict__}"
             )
-        elif self.config.auth_type == "token":
+        elif self.config.auth_type == "pat":
             logger.debug(
                 f"Initializing Jira client with Token (PAT) auth. URL: {self.config.url}, Token (masked): {mask_sensitive(str(self.config.personal_token))}"
             )

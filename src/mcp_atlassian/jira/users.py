@@ -180,7 +180,7 @@ class UsersMixin(JiraClient):
 
             auth = None
             headers = {}
-            if self.config.auth_type == "token":
+            if self.config.auth_type == "pat":
                 headers["Authorization"] = f"Bearer {self.config.personal_token}"
             else:
                 auth = (self.config.username or "", self.config.api_token or "")
