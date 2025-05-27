@@ -547,6 +547,7 @@ Here's a complete example of setting up multi-user authentication with streamabl
 - `jira_update_issue`: Update an existing issue
 - `jira_transition_issue`: Transition an issue to a new status
 - `jira_add_comment`: Add a comment to an issue
+- `jira_get_project_versions`: List all fix versions for a project
 
 #### Confluence Tools
 

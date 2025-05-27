@@ -1,15 +1,18 @@
 from typing import Any
+
 from ..base import ApiModel
+
 
 class JiraVersion(ApiModel):
     """
     Model representing a Jira project version (fix version).
     """
+
     id: str
     name: str
     description: str | None = None
-    startDate: str | None = None
-    releaseDate: str | None = None
+    startDate: str | None = None  # noqa: N815
+    releaseDate: str | None = None  # noqa: N815
     released: bool = False
     archived: bool = False
 

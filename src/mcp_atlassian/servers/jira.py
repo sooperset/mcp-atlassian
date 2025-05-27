@@ -1383,3 +1383,14 @@ async def update_sprint(
         return json.dumps(error_payload, indent=2, ensure_ascii=False)
     else:
         return json.dumps(sprint.to_simplified_dict(), indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
+async def get_project_versions(
+    ctx: Context,
+    project_key: Annotated[str, Field(description="Jira project key (e.g., 'PROJ')")],
+) -> str:
+    """Get all fix versions for a specific Jira project."""
+    jira = await get_jira_fetcher(ctx)
+    versions = jira.get_project_versions(project_key)
+    return json.dumps(versions, indent=2, ensure_ascii=False)

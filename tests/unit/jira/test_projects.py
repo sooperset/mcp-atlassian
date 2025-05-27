@@ -267,28 +267,35 @@ def test_get_project_components_non_list_response(projects_mixin: ProjectsMixin)
 def test_get_project_versions(projects_mixin: ProjectsMixin, mock_versions: list[dict]):
     """Test get_project_versions method."""
     projects_mixin.jira.get_project_versions.return_value = mock_versions
-
+    # Simplified dicts should include id, name, released and archived
+    expected = [
+        {
+            "id": v["id"],
+            "name": v["name"],
+            "released": v.get("released", False),
+            "archived": v.get("archived", False),
+        }
+        for v in mock_versions
+    ]
     result = projects_mixin.get_project_versions("PROJ1")
-    assert result == mock_versions
+    assert result == expected
     projects_mixin.jira.get_project_versions.assert_called_once_with(key="PROJ1")
 
 
 def test_get_project_versions_exception(projects_mixin: ProjectsMixin):
     """Test get_project_versions method with exception."""
     projects_mixin.jira.get_project_versions.side_effect = Exception("API error")
-
     result = projects_mixin.get_project_versions("PROJ1")
     assert result == []
-    projects_mixin.jira.get_project_versions.assert_called_once()
+    projects_mixin.jira.get_project_versions.assert_called_once_with(key="PROJ1")
 
 
 def test_get_project_versions_non_list_response(projects_mixin: ProjectsMixin):
     """Test get_project_versions method with non-list response."""
     projects_mixin.jira.get_project_versions.return_value = "not a list"
-
     result = projects_mixin.get_project_versions("PROJ1")
     assert result == []
-    projects_mixin.jira.get_project_versions.assert_called_once()
+    projects_mixin.jira.get_project_versions.assert_called_once_with(key="PROJ1")
 
 
 def test_get_project_roles(

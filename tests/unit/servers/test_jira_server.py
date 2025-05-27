@@ -256,6 +256,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         get_issue,
         get_link_types,
         get_project_issues,
+        get_project_versions,
         get_sprint_issues,
         get_sprints_from_board,
         get_transitions,
@@ -275,6 +276,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.tool()(search)
     jira_sub_mcp.tool()(search_fields)
     jira_sub_mcp.tool()(get_project_issues)
+    jira_sub_mcp.tool()(get_project_versions)
     jira_sub_mcp.tool()(get_transitions)
     jira_sub_mcp.tool()(get_worklog)
     jira_sub_mcp.tool()(download_attachments)
@@ -630,3 +632,44 @@ async def test_get_issue_with_user_specific_fetcher_in_state(
     )
     result_data = json.loads(response[0].text)
     assert result_data["key"] == "USER-STATE-1"
+
+
+@pytest.mark.anyio
+async def test_get_project_versions_tool(jira_client, mock_jira_fetcher):
+    """Test the jira_get_project_versions tool returns simplified version list."""
+    # Prepare mock raw versions
+    raw_versions = [
+        {
+            "id": "100",
+            "name": "v1.0",
+            "description": "First",
+            "released": True,
+            "archived": False,
+        },
+        {
+            "id": "101",
+            "name": "v2.0",
+            "startDate": "2025-01-01",
+            "releaseDate": "2025-02-01",
+            "released": False,
+            "archived": False,
+        },
+    ]
+    mock_jira_fetcher.get_project_versions.return_value = raw_versions
+
+    response = await jira_client.call_tool(
+        "jira_get_project_versions",
+        {"project_key": "TEST"},
+    )
+    assert isinstance(response, list)
+    assert len(response) == 1  # FastMCP wraps as list of messages
+    msg = response[0]
+    assert msg.type == "text"
+    import json
+
+    data = json.loads(msg.text)
+    assert isinstance(data, list)
+    # Check fields in simplified dict
+    assert data[0]["id"] == "100"
+    assert data[0]["name"] == "v1.0"
+    assert data[0]["description"] == "First"
