@@ -5,6 +5,7 @@ from typing import Any
 
 from ..models import JiraProject
 from ..models.jira.search import JiraSearchResult
+from ..models.jira.version import JiraVersion
 from .client import JiraClient
 from .protocols import SearchOperationsProto
 
@@ -119,15 +120,20 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
         Get all versions for a project.
 
         Args:
-            project_key: The project key
+            project_key: The project key.
 
         Returns:
             List of version data dictionaries
         """
         try:
-            versions = self.jira.get_project_versions(key=project_key)
-            return versions if isinstance(versions, list) else []
-
+            raw_versions = self.jira.get_project_versions(key=project_key)
+            if not isinstance(raw_versions, list):
+                return []
+            versions: list[dict[str, Any]] = []
+            for v in raw_versions:
+                ver = JiraVersion.from_api_response(v)
+                versions.append(ver.to_simplified_dict())
+            return versions
         except Exception as e:
             logger.error(f"Error getting versions for project {project_key}: {str(e)}")
             return []
