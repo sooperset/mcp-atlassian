@@ -16,6 +16,7 @@ from .jira import JiraFetcher
 from .jira.utils import escape_jql_string
 from .utils.io import is_read_only_mode
 from .utils.urls import is_atlassian_cloud_url
+from .zephyr import ZephyrFetcher
 
 # Configure logging
 logger = logging.getLogger("mcp-atlassian")
@@ -27,6 +28,7 @@ class AppContext:
 
     confluence: ConfluenceFetcher | None = None
     jira: JiraFetcher | None = None
+    zephyr: ZephyrFetcher | None = None
 
 
 def get_available_services() -> dict[str, bool | None]:
@@ -80,7 +82,18 @@ def get_available_services() -> dict[str, bool | None]:
     else:
         jira_is_setup = False
 
-    return {"confluence": confluence_is_setup, "jira": jira_is_setup}
+    # Check for Zephyr Essential credentials
+    zephyr_base_url = os.getenv("ZAPI_BASE_URL")
+    zephyr_access_key = os.getenv("ZAPI_ACCESS_KEY")
+    zephyr_account_id = os.getenv("JIRA_USERNAME")
+    zephyr_secret_key = os.getenv("ZAPI_SECRET_KEY")
+    zephyr_is_setup = all([zephyr_access_key, zephyr_secret_key, zephyr_account_id, zephyr_base_url])
+    
+    return {
+        "confluence": confluence_is_setup,
+        "jira": jira_is_setup,
+        "zephyr": zephyr_is_setup
+    }
 
 
 @asynccontextmanager
@@ -93,6 +106,7 @@ async def server_lifespan(server: Server) -> AsyncIterator[AppContext]:
         # Initialize services
         confluence = ConfluenceFetcher() if services["confluence"] else None
         jira = JiraFetcher() if services["jira"] else None
+        zephyr = ZephyrFetcher() if services.get("zephyr") else None
 
         # Log the startup information
         logger.info("Starting MCP Atlassian server")
@@ -107,9 +121,12 @@ async def server_lifespan(server: Server) -> AsyncIterator[AppContext]:
         if jira:
             jira_url = jira.config.url
             logger.info(f"Jira URL: {jira_url}")
+        if zephyr:
+            zephyr_url = zephyr.config.base_url
+            logger.info(f"Zephyr URL: {zephyr_url}")
 
         # Provide context to the application
-        yield AppContext(confluence=confluence, jira=jira)
+        yield AppContext(confluence=confluence, jira=jira, zephyr=zephyr)
     finally:
         # Cleanup resources if needed
         pass
@@ -1141,6 +1158,116 @@ async def list_tools() -> list[Tool]:
                 ]
             )
 
+    # Add Zephyr tools if Zephyr is configured
+    if ctx and ctx.zephyr:
+        tools.extend([
+            Tool(
+                name="zephyr_create_test_case",
+                description="Create a new Zephyr Essential test case",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "project_key": {
+                            "type": "string",
+                            "description": "The project key (e.g., 'PROJ')"
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "Test case name/summary"
+                        },
+                        "priority_name": {
+                            "type": "string",
+                            "description": "Priority name (e.g., 'High', 'Normal', 'Low')",
+                            "default": "Normal"
+                        },
+                        "status_name": {
+                            "type": "string",
+                            "description": "Status name (e.g., 'Draft', 'Approved')",
+                            "default": "Draft"
+                        },
+                        "folder_id": {
+                            "type": "integer",
+                            "description": "Folder ID to place the test case in",
+                            "default": None
+                        },
+                        "steps": {
+                            "type": "array",
+                                "description": "Array of test steps. Each step should have 'description', 'expected_result', and optional 'test_data' fields.",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "description": {
+                                            "type": "string",
+                                            "description": "Step description"
+                                        },
+                                        "expected_result": {
+                                            "type": "string",
+                                            "description": "Expected result of the step"
+                                        },
+                                        "test_data": {
+                                            "type": "string",
+                                            "description": "Test data for the step"
+                                        }
+                                    },
+                                    "required": ["description", "expected_result"]
+                                },
+                                "default": []
+                        }
+                    },
+                    "required": ["project_key", "name"]
+                }
+            ),
+            Tool(
+                name="zephyr_add_test_case_to_cycle",
+                description="Add a test case to an existing test cycle",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "test_case_key": {
+                            "type": "string",
+                            "description": "The test case key (e.g., 'PROJ-T123')"
+                        },
+                        "test_cycle_key": {
+                            "type": "string",
+                            "description": "The test cycle key"
+                        }
+                    },
+                    "required": ["test_case_key", "test_cycle_key"]
+                }
+            ),
+            Tool(
+                name="zephyr_create_test_execution",
+                description="Create a new test execution for a test case",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "project_key": {
+                            "type": "string",
+                            "description": "The project key (e.g., 'PROJ')"
+                        },
+                        "test_case_key": {
+                            "type": "string",
+                            "description": "The test case key (e.g., 'PROJ-T123')"
+                        },
+                        "test_cycle_key": {
+                            "type": "string",
+                            "description": "The test cycle key (optional)"
+                        },
+                        "status": {
+                            "type": "string",
+                            "description": "Execution status (e.g., 'PASS', 'FAIL', 'UNEXECUTED')",
+                            "default": "UNEXECUTED"
+                        },
+                        "environment_name": {
+                            "type": "string",
+                            "description": "Environment name (optional)"
+                        }
+                    },
+                    "required": ["project_key", "test_case_key"]
+                }
+            )
+        ])
+
     return tools
 
 
@@ -2108,6 +2235,118 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                         text=error_msg,
                     )
                 ]
+
+        # Zephyr operations
+        elif name == "zephyr_create_test_case" and ctx and ctx.zephyr:
+            if not ctx or not ctx.zephyr:
+                raise ValueError("Zephyr is not configured.")
+            
+            # Write operation - check read-only mode
+            if read_only:
+                return [TextContent("Operation 'zephyr_create_test_case' is not available in read-only mode.")]
+            
+            # Extract arguments
+            project_key = arguments.get("project_key")
+            name = arguments.get("name")
+            priority_name = arguments.get("priority_name", "Normal")
+            status_name = arguments.get("status_name", "Draft")
+            folder_id = arguments.get("folder_id")
+            steps_data = arguments.get("steps", [])
+
+            logger.debug(f"Creating the Zephyr Test Case for Project Key: {project_key}")
+
+            # Process steps
+            steps = []
+            for step_data in steps_data:
+                from .models.zephyr import TestStep
+                steps.append(TestStep(
+                    description=step_data.get("description", ""),
+                    expected_result=step_data.get("expected_result", ""),
+                    test_data=step_data.get("test_data")
+                ))
+            
+            # Create the test case
+            from .models.zephyr import TestCase
+            test_case = TestCase(
+                project_key=project_key,
+                name=name,
+                priority_name=priority_name,
+                status_name=status_name,
+                folder_id=folder_id,
+                steps=None
+            )
+            
+            logger.debug(f"Creating the Zephyr Test Case: {test_case}")
+
+            test_case_key = ctx.zephyr.create_test_case(test_case)
+            
+            # Add steps if provided
+            if steps:
+                logger.debug(f"Creating the Zephyr Test Steps: {steps}")
+                ctx.zephyr.add_test_steps(test_case_key, steps)
+            
+            return [
+                TextContent(
+                    type="text",
+                    text=f"Test case created successfully with key: {test_case_key}"
+                )
+            ]
+
+        elif name == "zephyr_add_test_case_to_cycle" and ctx and ctx.zephyr:
+            if not ctx or not ctx.zephyr:
+                raise ValueError("Zephyr is not configured.")
+            
+            # Write operation - check read-only mode
+            if read_only:
+                return [TextContent("Operation 'zephyr_add_test_case_to_cycle' is not available in read-only mode.")]
+            
+            # Extract arguments
+            test_case_key = arguments.get("test_case_key")
+            test_cycle_key = arguments.get("test_cycle_key")
+            
+            # Add test case to cycle
+            ctx.zephyr.add_test_case_to_cycle(test_cycle_key, test_case_key)
+            
+            return [
+                TextContent(
+                    type="text",
+                    text=f"Test case {test_case_key} added to test cycle {test_cycle_key} successfully"
+                )
+            ]
+
+        elif name == "zephyr_create_test_execution" and ctx and ctx.zephyr:
+            if not ctx or not ctx.zephyr:
+                raise ValueError("Zephyr is not configured.")
+            
+            # Write operation - check read-only mode
+            if read_only:
+                return [TextContent("Operation 'zephyr_create_test_execution' is not available in read-only mode.")]
+            
+            # Extract arguments
+            project_key = arguments.get("project_key")
+            test_case_key = arguments.get("test_case_key")
+            test_cycle_key = arguments.get("test_cycle_key")
+            status = arguments.get("status", "UNEXECUTED")
+            environment_name = arguments.get("environment_name")
+            
+            # Create the test execution
+            from .models.zephyr import TestExecution
+            execution = TestExecution(
+                project_key=project_key,
+                test_case_key=test_case_key,
+                test_cycle_key=test_cycle_key,
+                status=status,
+                environment_name=environment_name
+            )
+            
+            execution_key = ctx.zephyr.create_test_execution(execution)
+            
+            return [
+                TextContent(
+                    type="text",
+                    text=f"Test execution created successfully with key: {execution_key}"
+                )
+            ]
 
         raise ValueError(f"Unknown tool: {name}")
 
