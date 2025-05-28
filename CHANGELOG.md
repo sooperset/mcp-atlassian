@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- **Jira Issue Links Support:** Added support for the "issuelinks" field in Jira issues, allowing access to linked issues and their relationships.
+
 ## [0.11.1] - 2025-05-20
 
 ### Fixed
