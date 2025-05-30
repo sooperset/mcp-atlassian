@@ -561,6 +561,82 @@ class TestJiraIssue:
         assert isinstance(issue.worklog, dict)
         assert issue.worklog["total"] == 2
 
+    def test_from_api_response_with_issuelinks(self, jira_issue_data):
+        """Test creating a JiraIssue with issue links."""
+        # Augment jira_issue_data with mock issuelinks
+        mock_issuelinks_data = [
+            {
+                "id": "10000",
+                "type": {
+                    "id": "10000",
+                    "name": "Blocks",
+                    "inward": "is blocked by",
+                    "outward": "blocks",
+                },
+                "outwardIssue": {
+                    "id": "10001",
+                    "key": "PROJ-789",
+                    "self": "https://example.atlassian.net/rest/api/2/issue/10001",
+                    "fields": {
+                        "summary": "Blocked Issue",
+                        "status": {"name": "Open"},
+                        "priority": {"name": "High"},
+                        "issuetype": {"name": "Task"},
+                    },
+                },
+            },
+            {
+                "id": "10001",
+                "type": {
+                    "id": "10001",
+                    "name": "Relates to",
+                    "inward": "relates to",
+                    "outward": "relates to",
+                },
+                "inwardIssue": {
+                    "id": "10002",
+                    "key": "PROJ-111",
+                    "self": "https://example.atlassian.net/rest/api/2/issue/10002",
+                    "fields": {
+                        "summary": "Related Issue",
+                        "status": {"name": "In Progress"},
+                        "priority": {"name": "Medium"},
+                        "issuetype": {"name": "Story"},
+                    },
+                },
+            },
+        ]
+        jira_issue_data_with_links = jira_issue_data.copy()
+        # Ensure fields dictionary exists
+        if "fields" not in jira_issue_data_with_links:
+            jira_issue_data_with_links["fields"] = {}
+        jira_issue_data_with_links["fields"]["issuelinks"] = mock_issuelinks_data
+
+        issue = JiraIssue.from_api_response(
+            jira_issue_data_with_links, requested_fields="*all"
+        )
+
+        assert issue.issuelinks is not None
+        assert len(issue.issuelinks) == 2
+        assert isinstance(issue.issuelinks[0], JiraIssueLink)
+
+        # Check first link (outward)
+        assert issue.issuelinks[0].id == "10000"
+        assert issue.issuelinks[0].type is not None
+        assert issue.issuelinks[0].type.name == "Blocks"
+        assert issue.issuelinks[0].outward_issue is not None
+        assert issue.issuelinks[0].outward_issue.key == "PROJ-789"
+        assert issue.issuelinks[0].outward_issue.fields is not None
+        assert issue.issuelinks[0].outward_issue.fields.summary == "Blocked Issue"
+        assert issue.issuelinks[0].inward_issue is None
+
+        # Test simplified dict output
+        simplified = issue.to_simplified_dict()
+        assert "issuelinks" in simplified
+        assert len(simplified["issuelinks"]) == 2
+        assert simplified["issuelinks"][0]["type"]["name"] == "Blocks"
+        assert simplified["issuelinks"][0]["outward_issue"]["key"] == "PROJ-789"
+
     def test_from_api_response_with_empty_data(self):
         """Test creating a JiraIssue from empty data."""
         issue = JiraIssue.from_api_response({})
