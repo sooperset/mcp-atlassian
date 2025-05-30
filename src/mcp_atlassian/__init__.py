@@ -2,13 +2,18 @@ import asyncio
 import logging
 import os
 import sys
+from importlib.metadata import PackageNotFoundError, version
 
 import click
 from dotenv import load_dotenv
 
 from mcp_atlassian.utils.logging import setup_logging
 
-__version__ = "0.11.1"
+try:
+    __version__ = version("mcp-atlassian")
+except PackageNotFoundError:
+    # package is not installed
+    __version__ = "0.0.0"
 
 # Initialize logging with appropriate level
 logging_level = logging.WARNING
