@@ -28,12 +28,14 @@ jobs:
           python-version: "3.10" # Or your minimum supported Python
 
       - name: Install uv
-        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
 
       - name: Build package
-        run: ~/.cargo/bin/uv build
+        run: uv build
 
       - name: Publish package to PyPI
-        run: ~/.cargo/bin/uv publish --token ${{ secrets.PYPI_API_TOKEN }} dist/*
+        run: uv publish --token ${{ secrets.PYPI_API_TOKEN }} dist/*
         # If using trusted publishing (recommended), remove --token and configure it in PyPI:
-        # run: ~/.cargo/bin/uv publish dist/*
+        # run: uv publish dist/*
