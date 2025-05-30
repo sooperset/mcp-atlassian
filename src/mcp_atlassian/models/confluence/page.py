@@ -206,7 +206,7 @@ class ConfluencePage(ApiModel, TimestampMixin):
             if is_cloud:
                 # Cloud format: {base_url}/spaces/{space_key}/pages/{page_id}
                 space_key = space.key if space and space.key else "unknown"
-                url = f"{base_url}/spaces/{space_key}/pages/{page_id}"
+                url = f"{base_url}/wiki/spaces/{space_key}/pages/{page_id}"
             else:
                 # Server format: {base_url}/pages/viewpage.action?pageId={page_id}
                 url = f"{base_url}/pages/viewpage.action?pageId={page_id}"
