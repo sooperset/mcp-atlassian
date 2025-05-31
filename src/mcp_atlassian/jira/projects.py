@@ -438,8 +438,8 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
         self,
         project_key: str,
         name: str,
-        startDate: str = None,
-        releaseDate: str = None,
+        start_date: str = None,
+        release_date: str = None,
         description: str = None,
     ) -> dict[str, Any]:
         """
@@ -448,8 +448,8 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
         Args:
             project_key: The project key (e.g., 'PROJ')
             name: The name of the version
-            startDate: The start date (YYYY-MM-DD, optional)
-            releaseDate: The release date (YYYY-MM-DD, optional)
+            start_date: The start date (YYYY-MM-DD, optional)
+            release_date: The release date (YYYY-MM-DD, optional)
             description: Description of the version (optional)
 
         Returns:
@@ -458,7 +458,7 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
         return self.create_version(
             project=project_key,
             name=name,
-            startDate=startDate,
-            releaseDate=releaseDate,
+            start_date=start_date,
+            release_date=release_date,
             description=description,
         )

@@ -1403,10 +1403,10 @@ async def create_version(
     ctx: Context,
     project_key: Annotated[str, Field(description="Jira project key (e.g., 'PROJ')")],
     name: Annotated[str, Field(description="Name of the version")],
-    startDate: Annotated[
+    start_date: Annotated[
         str, Field(description="Start date (YYYY-MM-DD)", default=None)
     ] = None,
-    releaseDate: Annotated[
+    release_date: Annotated[
         str, Field(description="Release date (YYYY-MM-DD)", default=None)
     ] = None,
     description: Annotated[
@@ -1419,8 +1419,8 @@ async def create_version(
         ctx: The FastMCP context.
         project_key: The project key.
         name: Name of the version.
-        startDate: Start date (optional).
-        releaseDate: Release date (optional).
+        start_date: Start date (optional).
+        release_date: Release date (optional).
         description: Description (optional).
 
     Returns:
@@ -1428,12 +1428,11 @@ async def create_version(
     """
     jira = await get_jira_fetcher(ctx)
     try:
-        # Use the correct method on JiraFetcher (ProjectsMixin)
         version = jira.create_project_version(
             project_key=project_key,
             name=name,
-            startDate=startDate,
-            releaseDate=releaseDate,
+            start_date=start_date,
+            release_date=release_date,
             description=description,
         )
         return json.dumps(version, indent=2, ensure_ascii=False)

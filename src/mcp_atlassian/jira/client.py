@@ -228,8 +228,8 @@ class JiraClient:
         self,
         project: str,
         name: str,
-        startDate: str = None,
-        releaseDate: str = None,
+        start_date: str = None,
+        release_date: str = None,
         description: str = None,
     ) -> dict[str, Any]:
         """
@@ -238,18 +238,18 @@ class JiraClient:
         Args:
             project: The project key (e.g., 'PROJ')
             name: The name of the version
-            startDate: The start date (YYYY-MM-DD, optional)
-            releaseDate: The release date (YYYY-MM-DD, optional)
+            start_date: The start date (YYYY-MM-DD, optional)
+            release_date: The release date (YYYY-MM-DD, optional)
             description: Description of the version (optional)
 
         Returns:
             The created version object as returned by Jira
         """
         payload = {"project": project, "name": name}
-        if startDate:
-            payload["startDate"] = startDate
-        if releaseDate:
-            payload["releaseDate"] = releaseDate
+        if start_date:
+            payload["startDate"] = start_date
+        if release_date:
+            payload["releaseDate"] = release_date
         if description:
             payload["description"] = description
         logger.info(f"Creating Jira version: {payload}")
