@@ -677,3 +677,48 @@ def test_get_user_accessible_projects_exception(projects_mixin: ProjectsMixin):
         assert result == []
         projects_mixin.get_all_projects.assert_called_once()
         projects_mixin.jira.get_users_with_browse_permission_to_a_project.assert_not_called()
+
+
+def test_create_project_version_minimal(projects_mixin: ProjectsMixin) -> None:
+    """Test create_project_version with only required fields."""
+    mock_response = {"id": "201", "name": "v4.0"}
+    with patch.object(projects_mixin, "create_version", return_value=mock_response) as mock_create_version:
+        result = projects_mixin.create_project_version(project_key="PROJ2", name="v4.0")
+        assert result == mock_response
+        mock_create_version.assert_called_once_with(
+            project="PROJ2", name="v4.0", startDate=None, releaseDate=None, description=None
+        )
+
+
+def test_create_project_version_all_fields(projects_mixin: ProjectsMixin) -> None:
+    """Test create_project_version with all fields."""
+    mock_response = {
+        "id": "202",
+        "name": "v5.0",
+        "description": "Release 5.0",
+        "startDate": "2025-08-01",
+        "releaseDate": "2025-08-15",
+    }
+    with patch.object(projects_mixin, "create_version", return_value=mock_response) as mock_create_version:
+        result = projects_mixin.create_project_version(
+            project_key="PROJ3",
+            name="v5.0",
+            startDate="2025-08-01",
+            releaseDate="2025-08-15",
+            description="Release 5.0",
+        )
+        assert result == mock_response
+        mock_create_version.assert_called_once_with(
+            project="PROJ3",
+            name="v5.0",
+            startDate="2025-08-01",
+            releaseDate="2025-08-15",
+            description="Release 5.0",
+        )
+
+
+def test_create_project_version_error(projects_mixin: ProjectsMixin) -> None:
+    """Test create_project_version propagates errors."""
+    with patch.object(projects_mixin, "create_version", side_effect=Exception("API failure")):
+        with pytest.raises(Exception):
+            projects_mixin.create_project_version("PROJ4", "v6.0")

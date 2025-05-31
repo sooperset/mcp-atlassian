@@ -636,7 +636,7 @@ async def create_issue(
                 "Issue type (e.g. 'Task', 'Bug', 'Story', 'Epic', 'Subtask'). "
                 "The available types depend on your project configuration. "
                 "For subtasks, use 'Subtask' (not 'Sub-task') and include parent in additional_fields."
-            )
+            ),
         ),
     ],
     assignee: Annotated[
@@ -1394,3 +1394,43 @@ async def get_project_versions(
     jira = await get_jira_fetcher(ctx)
     versions = jira.get_project_versions(project_key)
     return json.dumps(versions, indent=2, ensure_ascii=False)
+
+
+@convert_empty_defaults_to_none
+@jira_mcp.tool(tags={"jira", "write"})
+@check_write_access
+async def create_version(
+    ctx: Context,
+    project_key: Annotated[str, Field(description="Jira project key (e.g., 'PROJ')")],
+    name: Annotated[str, Field(description="Name of the version")],
+    startDate: Annotated[str, Field(description="Start date (YYYY-MM-DD)", default=None)] = None,
+    releaseDate: Annotated[str, Field(description="Release date (YYYY-MM-DD)", default=None)] = None,
+    description: Annotated[str, Field(description="Description of the version", default=None)] = None,
+) -> str:
+    """Create a new fix version in a Jira project.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: The project key.
+        name: Name of the version.
+        startDate: Start date (optional).
+        releaseDate: Release date (optional).
+        description: Description (optional).
+
+    Returns:
+        JSON string of the created version object.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        # Use the correct method on JiraFetcher (ProjectsMixin)
+        version = jira.create_project_version(
+            project_key=project_key,
+            name=name,
+            startDate=startDate,
+            releaseDate=releaseDate,
+            description=description,
+        )
+        return json.dumps(version, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Error creating version in project {project_key}: {str(e)}", exc_info=True)
+        return json.dumps({"success": False, "error": str(e)}, indent=2, ensure_ascii=False)
