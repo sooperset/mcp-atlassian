@@ -1,11 +1,11 @@
 """Unit tests for the Jira FastMCP server implementation."""
 
-import json
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import json
 import pytest
 from fastmcp import Client, FastMCP
 from fastmcp.client import FastMCPTransport
