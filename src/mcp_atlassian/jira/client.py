@@ -223,3 +223,37 @@ class JiraClient:
             current_data["nextPageToken"] = api_result["nextPageToken"]
 
         return all_results
+
+    def create_version(
+        self,
+        project: str,
+        name: str,
+        start_date: str = None,
+        release_date: str = None,
+        description: str = None,
+    ) -> dict[str, Any]:
+        """
+        Create a new version in a Jira project.
+
+        Args:
+            project: The project key (e.g., 'PROJ')
+            name: The name of the version
+            start_date: The start date (YYYY-MM-DD, optional)
+            release_date: The release date (YYYY-MM-DD, optional)
+            description: Description of the version (optional)
+
+        Returns:
+            The created version object as returned by Jira
+        """
+        payload = {"project": project, "name": name}
+        if start_date:
+            payload["startDate"] = start_date
+        if release_date:
+            payload["releaseDate"] = release_date
+        if description:
+            payload["description"] = description
+        logger.info(f"Creating Jira version: {payload}")
+        result = self.jira.post("/rest/api/3/version", json=payload)
+        if not isinstance(result, dict):
+            raise ValueError(f"Unexpected response from Jira API: {result}")
+        return result
