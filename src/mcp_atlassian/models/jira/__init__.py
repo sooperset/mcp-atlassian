@@ -18,7 +18,12 @@ from .common import (
     JiraUser,
 )
 from .issue import JiraIssue
-from .link import JiraIssueLinkType
+from .link import (
+    JiraIssueLink,
+    JiraIssueLinkType,
+    JiraLinkedIssue,
+    JiraLinkedIssueFields,
+)
 from .project import JiraProject
 from .search import JiraSearchResult
 from .workflow import JiraTransition
@@ -44,4 +49,7 @@ __all__ = [
     "JiraIssue",
     "JiraSearchResult",
     "JiraIssueLinkType",
+    "JiraIssueLink",
+    "JiraLinkedIssue",
+    "JiraLinkedIssueFields",
 ]

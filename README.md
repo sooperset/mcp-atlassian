@@ -42,7 +42,7 @@ https://github.com/user-attachments/assets/7fe9c488-ad0c-4876-9b54-120b666bb785
 
 MCP Atlassian supports three authentication methods:
 
-#### A. API Token Authentication (Cloud)
+#### A. API Token Authentication (Cloud) - **Recommended**
 
 1. Go to https://id.atlassian.com/manage-profile/security/api-tokens
 2. Click **Create API token**, name it
@@ -54,7 +54,10 @@ MCP Atlassian supports three authentication methods:
 2. Click **Create token**, name it, set expiry
 3. Copy the token immediately
 
-#### C. OAuth 2.0 Authentication (Cloud)
+#### C. OAuth 2.0 Authentication (Cloud) - **Advanced**
+
+> [!NOTE]
+> OAuth 2.0 is more complex to set up but provides enhanced security features. For most users, API Token authentication (Method A) is simpler and sufficient.
 
 1. Go to [Atlassian Developer Console](https://developer.atlassian.com/console/myapps/)
 2. Create an "OAuth 2.0 (3LO) integration" app
@@ -566,6 +569,7 @@ Here's a complete example of setting up multi-user authentication with streamabl
 |           | `jira_get_project_issues`     | `confluence_get_page_children` |
 |           | `jira_get_worklog`            | `confluence_get_comments`      |
 |           | `jira_get_transitions`        | `confluence_get_labels`        |
+|           | `jira_search_fields`          |                                |
 |           | `jira_get_agile_boards`       |                                |
 |           | `jira_get_board_issues`       |                                |
 |           | `jira_get_sprints_from_board` |                                |
@@ -574,6 +578,7 @@ Here's a complete example of setting up multi-user authentication with streamabl
 |           | `jira_batch_get_changelogs`*  |                                |
 |           | `jira_get_user_profile`       |                                |
 |           | `jira_download_attachments`   |                                |
+|           | `jira_get_project_versions`   |                                |
 | **Write** | `jira_create_issue`           | `confluence_create_page`       |
 |           | `jira_update_issue`           | `confluence_update_page`       |
 |           | `jira_delete_issue`           | `confluence_delete_page`       |

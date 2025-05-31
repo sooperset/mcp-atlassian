@@ -27,6 +27,7 @@ from .common import (
     JiraTimetracking,
     JiraUser,
 )
+from .link import JiraIssueLink
 from .project import JiraProject
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,7 @@ class JiraIssue(ApiModel, TimestampMixin):
     security: dict | None = None
     worklog: dict | None = None
     changelogs: list[JiraChangelog] = Field(default_factory=list)
+    issuelinks: list[JiraIssueLink] = Field(default_factory=list)
 
     def __getattribute__(self, name: str) -> Any:
         """
@@ -472,6 +474,7 @@ class JiraIssue(ApiModel, TimestampMixin):
             custom_fields=custom_fields,
             requested_fields=requested_fields_param,
             changelogs=changelogs,
+            issuelinks=cls._extract_issue_links(fields),
         )
 
     def to_simplified_dict(self) -> dict[str, Any]:
@@ -598,6 +601,12 @@ class JiraIssue(ApiModel, TimestampMixin):
         if self.changelogs:
             result["changelogs"] = [
                 changelog.to_simplified_dict() for changelog in self.changelogs
+            ]
+
+        # Add issue links if available and requested
+        if self.issuelinks and should_include_field("issuelinks"):
+            result["issuelinks"] = [
+                link.to_simplified_dict() for link in self.issuelinks
             ]
 
         # Process custom fields
@@ -764,3 +773,27 @@ class JiraIssue(ApiModel, TimestampMixin):
                     return field_value.get("key") or field_value.get("value")
                 return str(field_value)
         return None
+
+    @staticmethod
+    def _extract_issue_links(fields: dict[str, Any]) -> list[JiraIssueLink]:
+        """
+        Extract issue links from fields.
+
+        Args:
+            fields: The fields dictionary from the Jira API
+
+        Returns:
+            List of JiraIssueLink objects
+        """
+        if not fields or not isinstance(fields, dict):
+            return []
+
+        issuelinks_data = fields.get("issuelinks", [])
+        if not isinstance(issuelinks_data, list):
+            return []
+
+        return [
+            JiraIssueLink.from_api_response(link_data)
+            for link_data in issuelinks_data
+            if link_data
+        ]

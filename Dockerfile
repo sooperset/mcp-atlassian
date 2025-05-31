@@ -12,6 +12,7 @@ ENV UV_LINK_MODE=copy
 
 # Generate proper TOML lockfile first
 RUN --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    --mount=type=bind,source=README.md,target=README.md \
     uv lock
 
 # Install the project's dependencies using the lockfile

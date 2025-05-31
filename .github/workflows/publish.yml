@@ -1,0 +1,41 @@
+# .github/workflows/publish.yml
+name: Publish MCP-Atlassian to PyPI
+
+on:
+  release:
+    types: [published] # Triggers when a GitHub Release is published
+  workflow_dispatch:   # Allows manual triggering
+
+jobs:
+  pypi-publish:
+    name: Upload release to PyPI
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/mcp-atlassian # Link to your PyPI package
+    permissions:
+      id-token: write # Necessary for PyPI's trusted publishing
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Required for uv-dynamic-versioning to get tags
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10" # Or your minimum supported Python
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Build package
+        run: uv build
+
+      - name: Publish package to PyPI
+        run: uv publish --token ${{ secrets.PYPI_API_TOKEN }} dist/*
+        # If using trusted publishing (recommended), remove --token and configure it in PyPI:
+        # run: uv publish dist/*

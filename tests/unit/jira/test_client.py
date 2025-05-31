@@ -69,7 +69,7 @@ def test_init_with_token_auth():
     ):
         config = JiraConfig(
             url="https://jira.example.com",
-            auth_type="token",
+            auth_type="pat",
             personal_token="test_personal_token",
             ssl_verify=False,
         )
@@ -226,7 +226,7 @@ def test_get_paged_without_cloud():
     with patch("mcp_atlassian.jira.client.configure_ssl_verification"):
         config = JiraConfig(
             url="https://jira.example.com",
-            auth_type="token",
+            auth_type="pat",
             personal_token="test_token",
         )
         client = JiraClient(config=config)
@@ -256,7 +256,7 @@ def test_init_sets_proxies_and_no_proxy(monkeypatch):
         url="https://test.atlassian.net",
         auth_type="basic",
         username="user",
-        api_token="token",
+        api_token="pat",
         http_proxy="http://proxy:8080",
         https_proxy="https://proxy:8443",
         socks_proxy="socks5://user:pass@proxy:1080",
@@ -285,7 +285,7 @@ def test_init_no_proxies(monkeypatch):
         url="https://test.atlassian.net",
         auth_type="basic",
         username="user",
-        api_token="token",
+        api_token="pat",
     )
     client = JiraClient(config=config)
     assert mock_session.proxies == {}

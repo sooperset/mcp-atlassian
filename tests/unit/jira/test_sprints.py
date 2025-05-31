@@ -17,7 +17,7 @@ def mock_config():
     config.url = "https://test.atlassian.net"
     config.username = "test@example.com"
     config.api_token = "test-token"
-    config.auth_type = "token"
+    config.auth_type = "pat"
     return config
 
 
