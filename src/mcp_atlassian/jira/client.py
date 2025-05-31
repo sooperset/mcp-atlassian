@@ -224,7 +224,14 @@ class JiraClient:
 
         return all_results
 
-    def create_version(self, project: str, name: str, startDate: str = None, releaseDate: str = None, description: str = None) -> dict[str, Any]:
+    def create_version(
+        self,
+        project: str,
+        name: str,
+        startDate: str = None,
+        releaseDate: str = None,
+        description: str = None,
+    ) -> dict[str, Any]:
         """
         Create a new version in a Jira project.
 

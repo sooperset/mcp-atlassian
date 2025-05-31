@@ -1403,9 +1403,15 @@ async def create_version(
     ctx: Context,
     project_key: Annotated[str, Field(description="Jira project key (e.g., 'PROJ')")],
     name: Annotated[str, Field(description="Name of the version")],
-    startDate: Annotated[str, Field(description="Start date (YYYY-MM-DD)", default=None)] = None,
-    releaseDate: Annotated[str, Field(description="Release date (YYYY-MM-DD)", default=None)] = None,
-    description: Annotated[str, Field(description="Description of the version", default=None)] = None,
+    startDate: Annotated[
+        str, Field(description="Start date (YYYY-MM-DD)", default=None)
+    ] = None,
+    releaseDate: Annotated[
+        str, Field(description="Release date (YYYY-MM-DD)", default=None)
+    ] = None,
+    description: Annotated[
+        str, Field(description="Description of the version", default=None)
+    ] = None,
 ) -> str:
     """Create a new fix version in a Jira project.
 
@@ -1432,5 +1438,9 @@ async def create_version(
         )
         return json.dumps(version, indent=2, ensure_ascii=False)
     except Exception as e:
-        logger.error(f"Error creating version in project {project_key}: {str(e)}", exc_info=True)
-        return json.dumps({"success": False, "error": str(e)}, indent=2, ensure_ascii=False)
+        logger.error(
+            f"Error creating version in project {project_key}: {str(e)}", exc_info=True
+        )
+        return json.dumps(
+            {"success": False, "error": str(e)}, indent=2, ensure_ascii=False
+        )
