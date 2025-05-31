@@ -690,8 +690,8 @@ def test_create_project_version_minimal(projects_mixin: ProjectsMixin) -> None:
         mock_create_version.assert_called_once_with(
             project="PROJ2",
             name="v4.0",
-            startDate=None,
-            releaseDate=None,
+            start_date=None,
+            release_date=None,
             description=None,
         )
 
@@ -711,16 +711,16 @@ def test_create_project_version_all_fields(projects_mixin: ProjectsMixin) -> Non
         result = projects_mixin.create_project_version(
             project_key="PROJ3",
             name="v5.0",
-            startDate="2025-08-01",
-            releaseDate="2025-08-15",
+            start_date="2025-08-01",
+            release_date="2025-08-15",
             description="Release 5.0",
         )
         assert result == mock_response
         mock_create_version.assert_called_once_with(
             project="PROJ3",
             name="v5.0",
-            startDate="2025-08-01",
-            releaseDate="2025-08-15",
+            start_date="2025-08-01",
+            release_date="2025-08-15",
             description="Release 5.0",
         )
 
