@@ -1,0 +1,21 @@
+{
+  "name": "mcp-atlassian",
+  "version": "0.1.0",
+  "description": "MCP Atlassian integration",
+  "main": "index.js",
+  "bin": {
+    "mcp-atlassian": "./index.js"
+  },
+  "scripts": {
+    "install": "pip install pyinstaller && pyinstaller --name mcp-atlassian --onefile --console src/mcp_atlassian/servers/main.py",
+    "start": "node index.js"
+  },
+  "keywords": [
+    "mcp",
+    "atlassian",
+    "jira",
+    "confluence"
+  ],
+  "author": "sooperset <soomiles.dev@gmail.com>",
+  "license": "MIT"
+}

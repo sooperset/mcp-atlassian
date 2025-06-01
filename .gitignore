@@ -74,3 +74,15 @@ CLAUDE.md
 
 # cursor
 .cursor*
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# PyInstaller
+# dist/ and build/ are already listed above
+*.spec

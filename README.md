@@ -82,7 +82,7 @@ MCP Atlassian supports three authentication methods:
 > [!IMPORTANT]
 > Include `offline_access` in scope for persistent auth (e.g., `read:jira-work write:jira-work offline_access`)
 
-### 📦 2. Installation
+### 📦 2. Recommended Installation (Docker)
 
 MCP Atlassian is distributed as a Docker image. This is the recommended way to run the server, especially for IDE integration. Ensure you have Docker installed.
 
@@ -102,6 +102,48 @@ MCP Atlassian is designed to be used with AI assistants through IDE integration.
 > - **Linux**: `~/.config/Claude/claude_desktop_config.json`
 >
 > **For Cursor**: Open Settings → MCP → + Add new global MCP server
+
+### Usage with VS Code
+
+For quick installation of the `mcp-atlassian` server using the NPM package you've built, use one of the one-click install buttons below. This will configure the MCP VS Code extension to use `npx mcp-atlassian` to run the server.
+
+[![Install mcp-atlassian in VS Code](https://img.shields.io/badge/VS_Code-NPM-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=mcp-atlassian&config=%7B%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22mcp-atlassian%22%5D%7D)
+[![Install mcp-atlassian in VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-NPM-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=mcp-atlassian&config=%7B%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22mcp-atlassian%22%5D%7D&quality=insiders)
+
+These buttons provide a basic setup. For passing credentials and other configurations (e.g., specific Jira/Confluence instances), refer to the manual installation example below and customize it by adding an `env` block with your environment variables.
+
+For manual installation, add the following JSON block to your User Settings (JSON) file in VS Code. You can do this by pressing `Ctrl + Shift + P` and typing `Preferences: Open User Settings (JSON)`.
+
+Optionally, you can add it to a file called `.vscode/mcp.json` in your workspace. This will allow you to share the configuration with others.
+
+> Note that the `mcp` key is not needed in the `.vscode/mcp.json` file.
+
+The example below shows a configuration using API Token authentication (recommended for Atlassian Cloud). You'll need to replace the placeholder values with your actual URLs, email, and API tokens.
+
+To use other authentication methods (like Personal Access Tokens for Server/Data Center or OAuth for Cloud), or to configure additional settings (like SSL verification, tool filters, content filters), you will need to add other environment variables to the `env` block. Please refer to the main [Authentication Setup](#-1-authentication-setup) section and the [`.env.example`](https://github.com/sooperset/mcp-atlassian/blob/main/.env.example) file for a comprehensive list of all available environment variables and their explanations. Copy the relevant variables from `.env.example` into the `env` block above and fill in your details.
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "mcp-atlassian": {
+        "command": "npx",
+        "args": ["-y", "mcp-atlassian"],
+        "env": {
+          "JIRA_URL": "YOUR_JIRA_INSTANCE_URL",
+          "CONFLUENCE_URL": "YOUR_CONFLUENCE_INSTANCE_URL",
+          "JIRA_USERNAME": "YOUR_ATLASSIAN_EMAIL_FOR_JIRA",
+          "JIRA_API_TOKEN": "YOUR_JIRA_API_TOKEN",
+          "CONFLUENCE_USERNAME": "YOUR_ATLASSIAN_EMAIL_FOR_CONFLUENCE",
+          "CONFLUENCE_API_TOKEN": "YOUR_CONFLUENCE_API_TOKEN",
+          "READ_ONLY_MODE": "false",
+          "MCP_VERBOSE": "true"
+        }
+      }
+    }
+  }
+}
+```
 
 ### ⚙️ Configuration Methods
 
@@ -655,3 +697,46 @@ We use pre-commit hooks for code quality and follow semantic versioning for rele
 ## License
 
 Licensed under MIT - see [LICENSE](LICENSE) file. This is not an official Atlassian product.
+
+## Installation as an npm Package
+
+This project can also be installed as an npm package, allowing you to use it from Node.js environments.
+
+### Prerequisites
+
+- Node.js and npm: Make sure you have Node.js and npm installed. You can download them from [https://nodejs.org/](https://nodejs.org/).
+- Python: A Python interpreter (version 3.10 or higher, as specified in `pyproject.toml`) must be available in your system's PATH. The npm install script will use `pip` to install Python dependencies.
+
+### Installation
+
+To install the package, run the following command in your project:
+
+```bash
+npm install <path-to-this-package-directory-or-git-url>
+```
+
+Or, if you are installing it globally (not recommended for most use cases):
+
+```bash
+npm install -g <path-to-this-package-directory-or-git-url>
+```
+
+The installation process will:
+1. Install PyInstaller and other Python dependencies.
+2. Package the Python application into a standalone executable using PyInstaller.
+
+### Usage
+
+Once installed, you can use the command-line interface provided by the package:
+
+```bash
+mcp-atlassian [arguments]
+```
+
+For example, to see the help message (assuming the Python application has a help option):
+
+```bash
+mcp-atlassian --help
+```
+
+The `mcp-atlassian` command will execute the underlying Python application.
