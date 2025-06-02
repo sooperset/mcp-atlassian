@@ -6,7 +6,12 @@ import requests
 from requests.exceptions import HTTPError
 
 from ..exceptions import MCPAtlassianAuthenticationError
-from ..models.confluence import ConfluencePage, ConfluenceSearchResult
+from ..models.confluence import (
+    ConfluencePage,
+    ConfluenceSearchResult,
+    ConfluenceUserSearchResult,
+    ConfluenceUserSearchResults,
+)
 from .client import ConfluenceClient
 from .utils import quote_cql_identifier_if_needed
 
@@ -121,4 +126,62 @@ class SearchMixin(ConfluenceClient):
         except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
             logger.error(f"Unexpected error during search: {str(e)}")
             logger.debug("Full exception details for search:", exc_info=True)
+            return []
+
+    def search_users(
+        self, cql: str, limit: int = 10
+    ) -> list[ConfluenceUserSearchResult]:
+        """
+        Search users using Confluence Query Language (CQL).
+
+        Args:
+            cql: Confluence Query Language string for user search
+            limit: Maximum number of results to return
+
+        Returns:
+            List of ConfluenceUserSearchResult models containing user search results
+
+        Raises:
+            MCPAtlassianAuthenticationError: If authentication fails with the Confluence API (401/403)
+        """
+        try:
+            # Execute the user search query using the direct API endpoint
+            results = self.confluence.get(
+                "rest/api/search/user", params={"cql": cql, "limit": limit}
+            )
+
+            # Convert the response to a user search result model
+            search_result = ConfluenceUserSearchResults.from_api_response(results)
+
+            # Return the list of user search results
+            return search_result.results
+        except HTTPError as http_err:
+            if http_err.response is not None and http_err.response.status_code in [
+                401,
+                403,
+            ]:
+                error_msg = (
+                    f"Authentication failed for Confluence API ({http_err.response.status_code}). "
+                    "Token may be expired or invalid. Please verify credentials."
+                )
+                logger.error(error_msg)
+                raise MCPAtlassianAuthenticationError(error_msg) from http_err
+            else:
+                logger.error(
+                    f"HTTP error during user search API call: {http_err}",
+                    exc_info=False,
+                )
+                raise http_err
+        except KeyError as e:
+            logger.error(f"Missing key in user search results: {str(e)}")
+            return []
+        except requests.RequestException as e:
+            logger.error(f"Network error during user search: {str(e)}")
+            return []
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error processing user search results: {str(e)}")
+            return []
+        except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
+            logger.error(f"Unexpected error during user search: {str(e)}")
+            logger.debug("Full exception details for user search:", exc_info=True)
             return []
