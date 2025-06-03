@@ -607,7 +607,6 @@ async def add_comment(
     return json.dumps(response, indent=2, ensure_ascii=False)
 
 
-@convert_empty_defaults_to_none
 @confluence_mcp.tool(tags={"confluence", "read"})
 async def search_user(
     ctx: Context,
@@ -654,7 +653,7 @@ async def search_user(
         logger.info(f"Converting simple search term to user CQL: {query}")
 
     try:
-        user_results = confluence_fetcher.search_users(query, limit=limit)
+        user_results = confluence_fetcher.search_user(query, limit=limit)
         search_results = [user.to_simplified_dict() for user in user_results]
         return json.dumps(search_results, indent=2, ensure_ascii=False)
     except Exception as e:

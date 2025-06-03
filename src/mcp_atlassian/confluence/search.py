@@ -128,7 +128,7 @@ class SearchMixin(ConfluenceClient):
             logger.debug("Full exception details for search:", exc_info=True)
             return []
 
-    def search_users(
+    def search_user(
         self, cql: str, limit: int = 10
     ) -> list[ConfluenceUserSearchResult]:
         """
