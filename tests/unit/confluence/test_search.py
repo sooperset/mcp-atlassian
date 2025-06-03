@@ -4,9 +4,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
+from requests import HTTPError
 
 from mcp_atlassian.confluence.search import SearchMixin
 from mcp_atlassian.confluence.utils import quote_cql_identifier_if_needed
+from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 
 
 class TestSearchMixin:
@@ -276,7 +278,7 @@ class TestSearchMixin:
                         "type": "known",
                         "accountId": "1234asdf",
                         "accountType": "atlassian",
-                        "email": "first.last@invitae.com",
+                        "email": "first.last@example.com",
                         "publicName": "First Last",
                         "displayName": "First Last",
                         "isExternalCollaborator": False,
@@ -316,7 +318,7 @@ class TestSearchMixin:
         assert len(result) == 1
         assert result[0].user.account_id == "1234asdf"
         assert result[0].user.display_name == "First Last"
-        assert result[0].user.email == "first.last@invitae.com"
+        assert result[0].user.email == "first.last@example.com"
         assert result[0].title == "First Last"
         assert result[0].entity_type == "user"
 
@@ -361,44 +363,54 @@ class TestSearchMixin:
             "rest/api/search/user", params={"cql": 'user.fullname ~ "Test"', "limit": 5}
         )
 
-    def test_search_user_http_401_error(self, search_mixin):
-        """Test search_user handling of HTTP 401 authentication error."""
-        from requests.exceptions import HTTPError
+    @pytest.mark.parametrize(
+        "exception_type,exception_args,expected_result",
+        [
+            (requests.RequestException, ("Network error",), []),
+            (ValueError, ("Value error",), []),
+            (TypeError, ("Type error",), []),
+            (Exception, ("General error",), []),
+            (KeyError, ("Missing key",), []),
+        ],
+    )
+    def test_search_user_exception_handling(
+        self, search_mixin, exception_type, exception_args, expected_result
+    ):
+        """Test search_user handling of various exceptions that return empty list."""
+        # Mock the exception
+        search_mixin.confluence.get.side_effect = exception_type(*exception_args)
 
-        from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
+        # Act
+        results = search_mixin.search_user('user.fullname ~ "Test"')
 
-        # Mock HTTP 401 error
+        # Assert
+        assert isinstance(results, list)
+        assert results == expected_result
+
+    @pytest.mark.parametrize(
+        "status_code,exception_type",
+        [
+            (401, MCPAtlassianAuthenticationError),
+            (403, MCPAtlassianAuthenticationError),
+        ],
+    )
+    def test_search_user_http_auth_errors(
+        self, search_mixin, status_code, exception_type
+    ):
+        """Test search_user handling of HTTP authentication errors."""
+        # Mock HTTP error
         mock_response = MagicMock()
-        mock_response.status_code = 401
-        http_error = HTTPError("Unauthorized")
+        mock_response.status_code = status_code
+        http_error = HTTPError(f"HTTP {status_code}")
         http_error.response = mock_response
         search_mixin.confluence.get.side_effect = http_error
 
         # Act and assert
-        with pytest.raises(MCPAtlassianAuthenticationError):
-            search_mixin.search_user('user.fullname ~ "Test"')
-
-    def test_search_user_http_403_error(self, search_mixin):
-        """Test search_user handling of HTTP 403 authentication error."""
-        from requests.exceptions import HTTPError
-
-        from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
-
-        # Mock HTTP 403 error
-        mock_response = MagicMock()
-        mock_response.status_code = 403
-        http_error = HTTPError("Forbidden")
-        http_error.response = mock_response
-        search_mixin.confluence.get.side_effect = http_error
-
-        # Act and assert
-        with pytest.raises(MCPAtlassianAuthenticationError):
+        with pytest.raises(exception_type):
             search_mixin.search_user('user.fullname ~ "Test"')
 
     def test_search_user_http_other_error(self, search_mixin):
         """Test search_user handling of other HTTP errors."""
-        from requests.exceptions import HTTPError
-
         # Mock HTTP 500 error
         mock_response = MagicMock()
         mock_response.status_code = 500
@@ -410,79 +422,93 @@ class TestSearchMixin:
         with pytest.raises(HTTPError):
             search_mixin.search_user('user.fullname ~ "Test"')
 
-    def test_search_user_key_error(self, search_mixin):
-        """Test search_user handling of KeyError in results."""
-        # Mock a response missing required keys
-        search_mixin.confluence.get.return_value = {"incomplete": "data"}
+    @pytest.mark.parametrize(
+        "mock_response,expected_length",
+        [
+            ({"incomplete": "data"}, 0),  # KeyError case
+            (None, 0),  # None response case
+            ({"results": []}, 0),  # Empty results case
+        ],
+    )
+    def test_search_user_edge_cases(self, search_mixin, mock_response, expected_length):
+        """Test search_user handling of edge cases in API responses."""
+        search_mixin.confluence.get.return_value = mock_response
 
         # Act
         results = search_mixin.search_user('user.fullname ~ "Test"')
 
         # Assert
         assert isinstance(results, list)
-        assert len(results) == 0
+        assert len(results) == expected_length
 
-    def test_search_user_request_exception(self, search_mixin):
-        """Test search_user handling of RequestException."""
-        # Mock a network error
-        search_mixin.confluence.get.side_effect = requests.RequestException(
-            "Network error"
+    # You can also parametrize the regular search method exception tests:
+    @pytest.mark.parametrize(
+        "exception_type,exception_args,expected_result",
+        [
+            (requests.RequestException, ("API error",), []),
+            (ValueError, ("Value error",), []),
+            (TypeError, ("Type error",), []),
+            (Exception, ("General error",), []),
+            (KeyError, ("Missing key",), []),
+        ],
+    )
+    def test_search_exception_handling(
+        self, search_mixin, exception_type, exception_args, expected_result
+    ):
+        """Test search handling of various exceptions that return empty list."""
+        # Mock the exception
+        search_mixin.confluence.cql.side_effect = exception_type(*exception_args)
+
+        # Act
+        results = search_mixin.search("error query")
+
+        # Assert
+        assert isinstance(results, list)
+        assert results == expected_result
+
+    # Parametrize CQL query tests:
+    @pytest.mark.parametrize(
+        "query,limit,expected_params",
+        [
+            (
+                'user.fullname ~ "Test"',
+                10,
+                {"cql": 'user.fullname ~ "Test"', "limit": 10},
+            ),
+            (
+                'user.email ~ "test@example.com"',
+                5,
+                {"cql": 'user.email ~ "test@example.com"', "limit": 5},
+            ),
+            (
+                'user.fullname ~ "John" AND user.email ~ "@company.com"',
+                15,
+                {
+                    "cql": 'user.fullname ~ "John" AND user.email ~ "@company.com"',
+                    "limit": 15,
+                },
+            ),
+        ],
+    )
+    def test_search_user_api_parameters(
+        self, search_mixin, query, limit, expected_params
+    ):
+        """Test that search_user calls the API with correct parameters."""
+        # Mock successful response
+        search_mixin.confluence.get.return_value = {
+            "results": [],
+            "start": 0,
+            "limit": limit,
+            "totalSize": 0,
+        }
+
+        # Act
+        search_mixin.search_user(query, limit=limit)
+
+        # Assert API was called with correct parameters
+        search_mixin.confluence.get.assert_called_once_with(
+            "rest/api/search/user", params=expected_params
         )
-
-        # Act
-        results = search_mixin.search_user('user.fullname ~ "Test"')
-
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == 0
-
-    def test_search_user_value_error(self, search_mixin):
-        """Test search_user handling of ValueError."""
-        # Mock a value error
-        search_mixin.confluence.get.side_effect = ValueError("Value error")
-
-        # Act
-        results = search_mixin.search_user('user.fullname ~ "Test"')
-
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == 0
-
-    def test_search_user_type_error(self, search_mixin):
-        """Test search_user handling of TypeError."""
-        # Mock a type error
-        search_mixin.confluence.get.side_effect = TypeError("Type error")
-
-        # Act
-        results = search_mixin.search_user('user.fullname ~ "Test"')
-
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == 0
-
-    def test_search_user_general_exception(self, search_mixin):
-        """Test search_user handling of general exceptions."""
-        # Mock a general exception
-        search_mixin.confluence.get.side_effect = Exception("General error")
-
-        # Act
-        results = search_mixin.search_user('user.fullname ~ "Test"')
-
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == 0
-
-    def test_search_user_with_none_response(self, search_mixin):
-        """Test search_user handling of None response from API."""
-        # Mock None response
-        search_mixin.confluence.get.return_value = None
-
-        # Act
-        results = search_mixin.search_user('user.fullname ~ "Test"')
-
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == 0
 
     def test_search_user_api_call_parameters(self, search_mixin):
         """Test that search_user calls the API with correct parameters."""
