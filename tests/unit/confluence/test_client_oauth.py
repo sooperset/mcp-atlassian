@@ -1,7 +1,7 @@
 """Tests for the ConfluenceClient with OAuth authentication."""
 
 import os
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import PropertyMock, patch
 
 import pytest
 
@@ -48,15 +48,14 @@ class TestConfluenceClientOAuth:
                 "mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"
             ) as mock_preprocessor,
             patch.object(
-                type(oauth_config),
+                OAuthConfig,
                 "is_token_expired",
-                new=PropertyMock(return_value=False),
-            ),
+                new_callable=PropertyMock,
+                return_value=False,
+            ) as mock_is_expired,
             patch.object(
-                type(oauth_config),
-                "ensure_valid_token",
-                new=MagicMock(return_value=True),
-            ),
+                oauth_config, "ensure_valid_token", return_value=True
+            ) as mock_ensure_valid,
         ):
             # Configure the mock to return success for OAuth configuration
             mock_configure_oauth.return_value = True
@@ -270,11 +269,14 @@ class TestConfluenceClientOAuth:
             ) as mock_configure_oauth,
             # Patch the methods directly on the instance, not the class
             patch.object(
-                type(oauth_config),
+                OAuthConfig,
                 "is_token_expired",
-                new=PropertyMock(return_value=False),
-            ),
-            patch.object(oauth_config, "ensure_valid_token", return_value=True),
+                new_callable=PropertyMock,
+                return_value=False,
+            ) as mock_is_expired,
+            patch.object(
+                oauth_config, "ensure_valid_token", return_value=True
+            ) as mock_ensure_valid,
         ):
             # Configure the mock to return failure for OAuth configuration
             mock_configure_oauth.return_value = False
@@ -312,11 +314,6 @@ class TestConfluenceClientOAuth:
             refresh_token="env-refresh-token",
             expires_at=9999999999.0,
         )
-        # Mock its token validation methods
-        type(mock_standard_oauth_config).is_token_expired = PropertyMock(
-            return_value=False
-        )
-        mock_standard_oauth_config.ensure_valid_token = MagicMock(return_value=True)
 
         with (
             patch.dict(os.environ, env_vars, clear=True),  # Clear other env vars
@@ -324,6 +321,15 @@ class TestConfluenceClientOAuth:
                 "mcp_atlassian.confluence.config.get_oauth_config_from_env",  # Patch the correct utility
                 return_value=mock_standard_oauth_config,
             ),
+            patch.object(
+                OAuthConfig,
+                "is_token_expired",
+                new_callable=PropertyMock,
+                return_value=False,
+            ) as mock_is_expired_env,
+            patch.object(
+                mock_standard_oauth_config, "ensure_valid_token", return_value=True
+            ) as mock_ensure_valid_env,
             patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
             patch(
                 "mcp_atlassian.confluence.client.configure_oauth_session",
