@@ -87,7 +87,8 @@ def get_available_services() -> dict[str, bool | None]:
     zephyr_access_key = os.getenv("ZAPI_ACCESS_KEY")
     zephyr_account_id = os.getenv("JIRA_USERNAME")
     zephyr_secret_key = os.getenv("ZAPI_SECRET_KEY")
-    zephyr_is_setup = all([zephyr_access_key, zephyr_secret_key, zephyr_account_id, zephyr_base_url])
+    zephyr_is_setup = False
+    #all([zephyr_access_key, zephyr_secret_key, zephyr_account_id, zephyr_base_url])
     
     return {
         "confluence": confluence_is_setup,
@@ -2253,7 +2254,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             folder_id = arguments.get("folder_id")
             steps_data = arguments.get("steps", [])
 
-            logger.debug(f"Creating the Zephyr Test Case for Project Key: {project_key}")
+            logger.info(f"Creating the Zephyr Test Case for Project Key: {project_key}")
 
             # Process steps
             steps = []
@@ -2272,17 +2273,17 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 name=name,
                 priority_name=priority_name,
                 status_name=status_name,
-                folder_id=folder_id,
-                steps=None
+                folder_id=folder_id
+                #steps=steps
             )
             
-            logger.debug(f"Creating the Zephyr Test Case: {test_case}")
+            logger.info(f"Creating the Zephyr Test Case: {test_case}")
 
             test_case_key = ctx.zephyr.create_test_case(test_case)
             
             # Add steps if provided
             if steps:
-                logger.debug(f"Creating the Zephyr Test Steps: {steps}")
+                logger.info(f"Creating the Zephyr Test Steps: {steps}")
                 ctx.zephyr.add_test_steps(test_case_key, steps)
             
             return [

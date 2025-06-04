@@ -37,7 +37,7 @@ class TestCase:
     priority_name: str = "Normal"
     status_name: str = "Draft"
     folder_id: Optional[int] = None
-    steps: List[TestStep] = field(default_factory=list)
+    #steps: List[TestStep] = field(default_factory=list)
     
     @classmethod
     def from_api_response(cls, data: Dict[str, Any]) -> "TestCase":

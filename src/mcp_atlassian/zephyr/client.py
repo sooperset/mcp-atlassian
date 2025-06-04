@@ -9,7 +9,7 @@ from .auth import generate_zephyr_jwt
 from .config import ZephyrConfig
 
 # Configure logging
-logger = logging.getLogger("mcp-zephyr")
+logger = logging.getLogger("mcp-atlassian")
 
 
 class ZephyrClient:
@@ -70,8 +70,12 @@ class ZephyrClient:
         
         # Add JWT token to Authorization header
         headers = kwargs.pop('headers', {})
+        #headers['Content-Type'] = "application/json"
         headers['Authorization'] = f"JWT {jwt_token}"
         
+        logger.error(f"config: {self.config}")
+        logger.error(f"JWT Token: {jwt_token}")
+
         # Make the request
         response = self.session.request(
             method, 

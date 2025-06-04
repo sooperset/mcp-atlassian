@@ -33,7 +33,7 @@ def setup_logging(level: int = logging.WARNING) -> logging.Logger:
     root_logger.addHandler(handler)
 
     # Configure specific loggers
-    loggers = ["mcp-atlassian", "mcp.server", "mcp.server.lowlevel.server", "mcp-jira"]
+    loggers = ["mcp-atlassian", "mcp.server", "mcp.server.lowlevel.server", "mcp-jira", "mcp-zephyr"]
 
     for logger_name in loggers:
         logger = logging.getLogger(logger_name)

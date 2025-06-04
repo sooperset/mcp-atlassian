@@ -23,7 +23,7 @@ class ZephyrConfig:
         Raises:
             ValueError: If required environment variables are missing
         """
-        base_url = os.getenv("ZAPI_BASE_URL", "https://prod-api.zephyr4jiracloud.com/connect")
+        base_url = os.getenv("ZAPI_BASE_URL", "https://prod-api.zephyr4jiracloud.com/v2")
         account_id = os.getenv("JIRA_USERNAME")
         access_key = os.getenv("ZAPI_ACCESS_KEY")
         secret_key = os.getenv("ZAPI_SECRET_KEY")

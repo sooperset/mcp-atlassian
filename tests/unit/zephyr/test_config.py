@@ -43,7 +43,7 @@ class TestZephyrConfig:
         """Test creating ZephyrConfig with default base URL."""
         config = ZephyrConfig.from_env()
 
-        assert config.base_url == "https://prod-api.zephyr4jiracloud.com/connect"
+        assert config.base_url == "https://prod-api.zephyr4jiracloud.com/v2"
         assert config.access_key == "test-access-key"
         assert config.secret_key == "test-secret-key"
 
