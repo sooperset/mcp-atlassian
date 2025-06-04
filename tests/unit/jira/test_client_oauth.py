@@ -45,15 +45,14 @@ class TestJiraClientOAuth:
                 "mcp_atlassian.jira.client.configure_ssl_verification"
             ) as mock_configure_ssl,
             patch.object(
-                type(oauth_config),
+                OAuthConfig,
                 "is_token_expired",
-                new=PropertyMock(return_value=False),
-            ),
+                new_callable=PropertyMock,
+                return_value=False,
+            ) as mock_is_expired,
             patch.object(
-                type(oauth_config),
-                "ensure_valid_token",
-                new=MagicMock(return_value=True),
-            ),
+                oauth_config, "ensure_valid_token", return_value=True
+            ) as mock_ensure_valid,
         ):
             # Configure the mock to return success for OAuth configuration
             mock_configure_oauth.return_value = True
@@ -136,15 +135,14 @@ class TestJiraClientOAuth:
                 "mcp_atlassian.preprocessing.jira.JiraPreprocessor"
             ) as mock_preprocessor,
             patch.object(
-                type(oauth_config),
+                OAuthConfig,
                 "is_token_expired",
-                new=PropertyMock(return_value=False),
-            ),
+                new_callable=PropertyMock,
+                return_value=False,
+            ) as mock_is_expired,
             patch.object(
-                type(oauth_config),
-                "ensure_valid_token",
-                new=MagicMock(return_value=True),
-            ),
+                oauth_config, "ensure_valid_token", return_value=True
+            ) as mock_ensure_valid,
         ):
             # Configure the mock to return failure for OAuth configuration
             mock_configure_oauth.return_value = False
@@ -301,16 +299,21 @@ class TestJiraClientOAuth:
         mock_oauth_config.refresh_token = "env-refresh-token"
         mock_oauth_config.expires_at = 9999999999.0
 
-        # Set up the property and method on the mock
-        type(mock_oauth_config).is_token_expired = MagicMock(return_value=False)
-        mock_oauth_config.ensure_valid_token = MagicMock(return_value=True)
-
         with (
             patch.dict(os.environ, env_vars),
             patch(
                 "mcp_atlassian.jira.config.get_oauth_config_from_env",
                 return_value=mock_oauth_config,
             ),
+            patch.object(
+                OAuthConfig,
+                "is_token_expired",
+                new_callable=PropertyMock,
+                return_value=False,
+            ) as mock_is_expired_env,
+            patch.object(
+                mock_oauth_config, "ensure_valid_token", return_value=True
+            ) as mock_ensure_valid_env,
             patch("mcp_atlassian.jira.client.Jira") as mock_jira,
             patch(
                 "mcp_atlassian.jira.client.configure_oauth_session", return_value=True
