@@ -1522,3 +1522,39 @@ class TestIssuesMixin:
         # Verify result
         assert result.key == "TEST-123"
         assert result.labels == ["bug", "frontend"]
+
+    def test_get_issue_with_config_projects_filter(self, issues_mixin: IssuesMixin):
+        """Test get with projects filter from config."""
+        # Setup mock response
+        mock_issues = {
+            "issues": [
+                {
+                    "id": "10001",
+                    "key": "TEST-123",
+                    "fields": {
+                        "summary": "Test issue",
+                        "issuetype": {"name": "Bug"},
+                        "status": {"name": "Open"},
+                    },
+                }
+            ],
+            "total": 1,
+            "startAt": 0,
+            "maxResults": 50,
+        }
+        issues_mixin.jira.jql.return_value = mock_issues
+        issues_mixin.config.url = "https://example.atlassian.net"
+        issues_mixin.config.projects_filter = "DEV"
+
+        # Mock the API to raise an exception
+        issues_mixin.jira.get_issue.side_effect = Exception("API error")
+
+        # Call the method and verify it raises the expected exception
+        with pytest.raises(
+            Exception,
+            match=(
+                "Error retrieving issue TEST-123: "
+                "Issue with with project prefix 'TEST' are restricted"
+            ),
+        ):
+            issues_mixin.get_issue("TEST-123")
