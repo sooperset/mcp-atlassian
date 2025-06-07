@@ -71,3 +71,6 @@ playground/
 
 # cursor
 .cursor*
+
+# Claude
+.claude/
