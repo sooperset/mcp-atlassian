@@ -304,6 +304,18 @@ Credentials in proxy URLs are masked in logs. If you set `NO_PROXY`, it will be 
 
 </details>
 
+<details>
+<summary>Custom User-Agent Headers</summary>
+
+For enterprise environments with firewall restrictions, you can set custom User-Agent headers:
+
+- `JIRA_USER_AGENT`: Custom User-Agent for Jira API requests
+- `CONFLUENCE_USER_AGENT`: Custom User-Agent for Confluence API requests
+
+Add these to your `.env` file or use `-e JIRA_USER_AGENT` / `-e CONFLUENCE_USER_AGENT` in Docker args.
+
+</details>
+
 <details> <summary>Single Service Configurations</summary>
 
 **For Confluence Cloud only:**

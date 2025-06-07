@@ -46,4 +46,7 @@ COPY --from=uv --chown=app:app /app/.venv /app/.venv
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
 
+# Expose port 9000 for SSE transport
+EXPOSE 9000
+
 ENTRYPOINT ["mcp-atlassian"]

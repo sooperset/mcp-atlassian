@@ -110,6 +110,12 @@ class ConfluenceClient:
             os.environ["NO_PROXY"] = self.config.no_proxy
             log_config_param(logger, "Confluence", "NO_PROXY", self.config.no_proxy)
 
+        # Configure custom User-Agent header if provided
+        if self.config.user_agent:
+            self.confluence._session.headers["User-Agent"] = self.config.user_agent
+            log_config_param(logger, "Confluence", "USER_AGENT", self.config.user_agent)
+            logger.debug(f"Set custom User-Agent header: {self.config.user_agent}")
+
         # Import here to avoid circular imports
         from ..preprocessing.confluence import ConfluencePreprocessor
 
