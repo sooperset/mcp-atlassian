@@ -55,10 +55,9 @@ This document contains critical information about working with this codebase. Fo
 
 ## Code Formatting
 
-1. Ruff
-   - Format: `uv run ruff format .`
-   - Check: `uv run ruff check .`
-   - Fix: `uv run ruff check . --fix`
+1. Pre-commit
+   - Run all checks: `pre-commit run --all-files`
+   - Handles: Ruff (Python), Prettier (YAML/JSON)
    - Critical issues:
      - Line length (88 chars)
      - Import sorting (I001)
@@ -109,7 +108,7 @@ This document contains critical information about working with this codebase. Fo
 
 3. Best Practices
    - Check git status before commits
-   - Run formatters before type checks
+   - Run `pre-commit run --all-files` before commits
    - Keep changes minimal
    - Follow existing patterns
    - Document public APIs
@@ -134,15 +133,10 @@ NEVER proactively create documentation files (*.md) or README files. Only create
    uv run pytest                       # Run all tests
    uv run pytest --cov=mcp_atlassian   # Run tests with coverage
    uv run pytest tests/unit/           # Run unit tests only
-   ./scripts/test_with_real_data.sh     # Test with real Atlassian APIs
    ```
 
 3. **Code Quality**
    ```bash
-   uv run ruff format .                 # Format code
-   uv run ruff check .                  # Check linting
-   uv run ruff check . --fix            # Auto-fix linting issues
-   uv run mypy                          # Type checking (though pyright preferred)
    pre-commit run --all-files           # Run all pre-commit checks
    ```
 
