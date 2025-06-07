@@ -61,7 +61,7 @@ class ConfluenceConfig:
             ValueError: If any required environment variable is missing
         """
         url = os.getenv("CONFLUENCE_URL")
-        if not url:
+        if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE"):
             error_msg = "Missing required CONFLUENCE_URL environment variable"
             raise ValueError(error_msg)
 
@@ -77,14 +77,14 @@ class ConfluenceConfig:
         # Use the shared utility function directly
         is_cloud = is_atlassian_cloud_url(url)
 
-        if oauth_config and oauth_config.cloud_id:
-            # OAuth takes precedence if fully configured
+        if oauth_config:
+            # OAuth is available - could be full config or minimal config for user-provided tokens
             auth_type = "oauth"
         elif is_cloud:
             if username and api_token:
                 auth_type = "basic"
             else:
-                error_msg = "Cloud authentication requires CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN, or OAuth configuration"
+                error_msg = "Cloud authentication requires CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN, or OAuth configuration (set ATLASSIAN_OAUTH_ENABLE=true for user-provided tokens)"
                 raise ValueError(error_msg)
         else:  # Server/Data Center
             if personal_token:
@@ -132,14 +132,26 @@ class ConfluenceConfig:
         """
         logger = logging.getLogger("mcp-atlassian.confluence.config")
         if self.auth_type == "oauth":
-            return bool(
-                self.oauth_config
+            # Full OAuth configuration (traditional mode)
+            if (self.oauth_config
                 and self.oauth_config.client_id
                 and self.oauth_config.client_secret
                 and self.oauth_config.redirect_uri
-                and self.oauth_config.scope
-                and self.oauth_config.cloud_id
-            )
+                and self.oauth_config.scope):
+                return True
+            
+            # Minimal OAuth configuration (user-provided tokens mode)
+            # This is valid if we have oauth_config but missing client credentials
+            # In this case, we expect authentication to come from user-provided headers
+            if (self.oauth_config
+                and not self.oauth_config.client_id
+                and not self.oauth_config.client_secret):
+                logger.debug("Minimal OAuth config detected - expecting user-provided tokens via headers")
+                return True
+            
+            # Partial configuration is invalid
+            logger.warning("Incomplete OAuth configuration detected")
+            return False
         elif self.auth_type == "token":
             return bool(self.personal_token)
         elif self.auth_type == "basic":
