@@ -120,6 +120,12 @@ NEVER create files unless they're absolutely necessary for achieving your goal.
 ALWAYS prefer editing an existing file to creating a new one.
 NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
 
+## Branching Strategy
+- NEVER implement features or bugfixes directly in the `main` branch
+- Always create a feature branch: `git checkout -b feature/description` or `fix/issue-description`
+- Implement changes in the feature branch
+- Push to the feature branch: `git push origin feature/branch-name`
+
 ## Essential Development Commands
 
 1. **Setup**
