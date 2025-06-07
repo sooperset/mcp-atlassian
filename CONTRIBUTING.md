@@ -68,11 +68,11 @@ pre-commit run --all-files
 
 ## Code Style
 
-- We use pre-commit hooks to enforce code quality
-- Code quality tools include:
-  - `ruff-format` for code formatting
-  - `ruff` for linting, with configured rules and fixes
-  - `mypy` for type checking, with specific error code configurations
+- Run `pre-commit run --all-files` before committing
+- Code quality tools (managed by pre-commit):
+  - `ruff` for formatting and linting (88 char line limit)
+  - `pyright` for type checking (preferred over mypy)
+  - `prettier` for YAML/JSON formatting
   - Additional checks for trailing whitespace, file endings, YAML/TOML validity
 - Follow type annotation patterns:
   - `type[T]` for class types
