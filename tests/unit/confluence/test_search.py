@@ -510,25 +510,6 @@ class TestSearchMixin:
             "rest/api/search/user", params=expected_params
         )
 
-    def test_search_user_api_call_parameters(self, search_mixin):
-        """Test that search_user calls the API with correct parameters."""
-        # Mock successful response
-        search_mixin.confluence.get.return_value = {
-            "results": [],
-            "start": 0,
-            "limit": 5,
-            "totalSize": 0,
-        }
-
-        # Act with custom limit
-        search_mixin.search_user('user.email ~ "test@example.com"', limit=5)
-
-        # Assert API was called with correct parameters
-        search_mixin.confluence.get.assert_called_once_with(
-            "rest/api/search/user",
-            params={"cql": 'user.email ~ "test@example.com"', "limit": 5},
-        )
-
     def test_search_user_with_complex_cql_query(self, search_mixin):
         """Test search_user with complex CQL query containing operators."""
         # Mock successful response
