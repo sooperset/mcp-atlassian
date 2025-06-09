@@ -174,6 +174,36 @@ def mock_jira_fetcher():
 
     mock_fetcher.get_epic_issues.side_effect = mock_get_epic_issues
 
+    # Configure get_all_projects
+    def mock_get_all_projects(include_archived=False):
+        projects = [
+            {
+                "id": "10000",
+                "key": "TEST",
+                "name": "Test Project",
+                "description": "Project for testing",
+                "lead": {"name": "admin", "displayName": "Administrator"},
+                "projectTypeKey": "software",
+                "archived": False,
+            }
+        ]
+        if include_archived:
+            projects.append(
+                {
+                    "id": "10001",
+                    "key": "ARCHIVED",
+                    "name": "Archived Project",
+                    "description": "Archived project",
+                    "lead": {"name": "admin", "displayName": "Administrator"},
+                    "projectTypeKey": "software",
+                    "archived": True,
+                }
+            )
+        return projects
+
+    # Set default return value, but allow tests to override it
+    mock_fetcher.get_all_projects.return_value = mock_get_all_projects()
+
     mock_fetcher.jira.jql.return_value = {
         "issues": [
             {
@@ -252,6 +282,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         delete_issue,
         download_attachments,
         get_agile_boards,
+        get_all_projects,
         get_board_issues,
         get_issue,
         get_link_types,
@@ -277,6 +308,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.tool()(search_fields)
     jira_sub_mcp.tool()(get_project_issues)
     jira_sub_mcp.tool()(get_project_versions)
+    jira_sub_mcp.tool()(get_all_projects)
     jira_sub_mcp.tool()(get_transitions)
     jira_sub_mcp.tool()(get_worklog)
     jira_sub_mcp.tool()(download_attachments)
@@ -673,3 +705,96 @@ async def test_get_project_versions_tool(jira_client, mock_jira_fetcher):
     assert data[0]["id"] == "100"
     assert data[0]["name"] == "v1.0"
     assert data[0]["description"] == "First"
+
+
+@pytest.mark.anyio
+async def test_get_all_projects_tool(jira_client, mock_jira_fetcher):
+    """Test the jira_get_all_projects tool returns all accessible projects."""
+    # Prepare mock project data
+    mock_projects = [
+        {
+            "id": "10000",
+            "key": "PROJ1",
+            "name": "Project One",
+            "description": "First project",
+            "lead": {"name": "user1", "displayName": "User One"},
+            "projectTypeKey": "software",
+        },
+        {
+            "id": "10001",
+            "key": "PROJ2",
+            "name": "Project Two",
+            "description": "Second project",
+            "lead": {"name": "user2", "displayName": "User Two"},
+            "projectTypeKey": "business",
+        },
+    ]
+    # Reset the mock and set specific return value for this test
+    mock_jira_fetcher.get_all_projects.reset_mock()
+    mock_jira_fetcher.get_all_projects.return_value = mock_projects
+
+    # Test with default parameters (include_archived=False)
+    response = await jira_client.call_tool(
+        "jira_get_all_projects",
+        {},
+    )
+    assert isinstance(response, list)
+    assert len(response) == 1  # FastMCP wraps as list of messages
+    msg = response[0]
+    assert msg.type == "text"
+
+    data = json.loads(msg.text)
+    assert isinstance(data, list)
+    assert len(data) == 2
+    assert data[0]["id"] == "10000"
+    assert data[0]["key"] == "PROJ1"
+    assert data[0]["name"] == "Project One"
+    assert data[1]["id"] == "10001"
+    assert data[1]["key"] == "PROJ2"
+    assert data[1]["name"] == "Project Two"
+
+    # Verify the underlying method was called with default parameter
+    mock_jira_fetcher.get_all_projects.assert_called_once_with(include_archived=False)
+
+
+@pytest.mark.anyio
+async def test_get_all_projects_tool_with_archived(jira_client, mock_jira_fetcher):
+    """Test the jira_get_all_projects tool with include_archived=True."""
+    mock_projects = [
+        {
+            "id": "10000",
+            "key": "PROJ1",
+            "name": "Active Project",
+            "description": "Active project",
+            "archived": False,
+        },
+        {
+            "id": "10002",
+            "key": "ARCHIVED",
+            "name": "Archived Project",
+            "description": "Archived project",
+            "archived": True,
+        },
+    ]
+    # Reset the mock and set specific return value for this test
+    mock_jira_fetcher.get_all_projects.reset_mock()
+    mock_jira_fetcher.get_all_projects.return_value = mock_projects
+
+    # Test with include_archived=True
+    response = await jira_client.call_tool(
+        "jira_get_all_projects",
+        {"include_archived": True},
+    )
+    assert isinstance(response, list)
+    assert len(response) == 1
+    msg = response[0]
+    assert msg.type == "text"
+
+    data = json.loads(msg.text)
+    assert isinstance(data, list)
+    assert len(data) == 2
+    assert data[0]["key"] == "PROJ1"
+    assert data[1]["key"] == "ARCHIVED"
+
+    # Verify the underlying method was called with include_archived=True
+    mock_jira_fetcher.get_all_projects.assert_called_once_with(include_archived=True)
