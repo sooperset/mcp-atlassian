@@ -1396,6 +1396,31 @@ async def get_project_versions(
     return json.dumps(versions, indent=2, ensure_ascii=False)
 
 
+@jira_mcp.tool(tags={"jira", "read"})
+async def get_all_projects(
+    ctx: Context,
+    include_archived: Annotated[
+        bool,
+        Field(
+            description="Whether to include archived projects in the results",
+            default=False,
+        ),
+    ] = False,
+) -> str:
+    """Get all Jira projects accessible to the current user.
+
+    Args:
+        ctx: The FastMCP context.
+        include_archived: Whether to include archived projects.
+
+    Returns:
+        JSON string representing a list of project objects accessible to the user.
+    """
+    jira = await get_jira_fetcher(ctx)
+    projects = jira.get_all_projects(include_archived=include_archived)
+    return json.dumps(projects, indent=2, ensure_ascii=False)
+
+
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "write"})
 @check_write_access
