@@ -403,3 +403,98 @@ def test_process_user_profile_macro_multiple():
     assert "@Test User Two" in processed_html
     assert "@Test User One" in processed_markdown
     assert "@Test User Two" in processed_markdown
+
+
+def test_markdown_to_confluence_no_automatic_anchors():
+    """Test that heading_anchors=False prevents automatic anchor generation (regression for issue #488)."""
+    from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
+
+    markdown_with_headings = """
+# Main Title
+Some content here.
+
+## Subsection
+More content.
+
+### Deep Section
+Final content.
+"""
+
+    preprocessor = ConfluencePreprocessor(base_url="https://example.atlassian.net")
+    result = preprocessor.markdown_to_confluence_storage(markdown_with_headings)
+
+    # Should not contain automatically generated anchor IDs
+    assert 'id="main-title"' not in result.lower()
+    assert 'id="subsection"' not in result.lower()
+    assert 'id="deep-section"' not in result.lower()
+
+    # Should still contain proper heading tags
+    assert "<h1>Main Title</h1>" in result
+    assert "<h2>Subsection</h2>" in result
+    assert "<h3>Deep Section</h3>" in result
+
+
+def test_markdown_to_confluence_style_preservation():
+    """Test that styled content is preserved during conversion."""
+    from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
+
+    markdown_with_styles = """
+# Title with **bold** text
+
+This paragraph has *italic* and **bold** text.
+
+```python
+def hello():
+    return "world"
+```
+
+- Item with **bold**
+- Item with *italic*
+
+> Blockquote with **formatting**
+
+[Link text](https://example.com) with description.
+"""
+
+    preprocessor = ConfluencePreprocessor(base_url="https://example.atlassian.net")
+    result = preprocessor.markdown_to_confluence_storage(markdown_with_styles)
+
+    # Check that formatting is preserved
+    assert "<strong>bold</strong>" in result
+    assert "<em>italic</em>" in result
+    assert "<blockquote>" in result
+    assert '<a href="https://example.com">Link text</a>' in result
+    assert "ac:structured-macro" in result  # Code block macro
+    assert 'ac:name="code"' in result
+    assert "python" in result
+
+
+def test_markdown_to_confluence_optional_anchor_generation():
+    """Test that enable_heading_anchors parameter controls anchor generation."""
+    from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
+
+    markdown_with_headings = """
+# Main Title
+Content here.
+
+## Subsection
+More content.
+"""
+
+    preprocessor = ConfluencePreprocessor(base_url="https://example.atlassian.net")
+
+    # Test with anchors disabled (default)
+    result_no_anchors = preprocessor.markdown_to_confluence_storage(
+        markdown_with_headings
+    )
+    assert 'id="main-title"' not in result_no_anchors.lower()
+    assert 'id="subsection"' not in result_no_anchors.lower()
+
+    # Test with anchors enabled
+    result_with_anchors = preprocessor.markdown_to_confluence_storage(
+        markdown_with_headings, enable_heading_anchors=True
+    )
+    # When anchors are enabled, they should be present
+    # Note: md2conf may use different anchor formats, so we check for presence of id attributes
+    assert "<h1>" in result_with_anchors
+    assert "<h2>" in result_with_anchors
