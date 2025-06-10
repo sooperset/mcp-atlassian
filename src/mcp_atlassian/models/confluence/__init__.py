@@ -18,6 +18,7 @@ from .label import ConfluenceLabel
 from .page import ConfluencePage, ConfluenceVersion
 from .search import ConfluenceSearchResult
 from .space import ConfluenceSpace
+from .user_search import ConfluenceUserSearchResult, ConfluenceUserSearchResults
 
 __all__ = [
     "ConfluenceUser",
@@ -28,4 +29,6 @@ __all__ = [
     "ConfluenceLabel",
     "ConfluencePage",
     "ConfluenceSearchResult",
+    "ConfluenceUserSearchResult",
+    "ConfluenceUserSearchResults",
 ]
