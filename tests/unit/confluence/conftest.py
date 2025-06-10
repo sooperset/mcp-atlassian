@@ -48,6 +48,26 @@ def mock_config():
 
 
 @pytest.fixture
+def mock_oauth_config():
+    """Return a mock ConfluenceConfig instance with OAuth authentication."""
+    from mcp_atlassian.utils.oauth import OAuthConfig
+
+    oauth_config = OAuthConfig(
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        redirect_uri="http://localhost:8080/callback",
+        scope="read:confluence-content.all",
+        cloud_id="test_cloud_id",
+    )
+
+    return ConfluenceConfig(
+        url="https://test-domain.atlassian.net/wiki",
+        auth_type="oauth",
+        oauth_config=oauth_config,
+    )
+
+
+@pytest.fixture
 def mock_atlassian_confluence():
     """Mock the Atlassian Confluence client."""
     with patch("mcp_atlassian.confluence.client.Confluence") as mock:
@@ -99,6 +119,35 @@ def confluence_client(mock_config, mock_atlassian_confluence, mock_preprocessor)
         client = ConfluenceClient(config=mock_config)
         # Replace the actual Confluence instance with our mock
         client.confluence = mock_atlassian_confluence
+        # Replace the actual preprocessor with our mock
+        client.preprocessor = mock_preprocessor
+        yield client
+
+
+@pytest.fixture
+def oauth_confluence_client(
+    mock_oauth_config, mock_atlassian_confluence, mock_preprocessor
+):
+    """Create a ConfluenceClient instance with OAuth configuration and mocked dependencies."""
+    # Create a client with OAuth configuration
+    with (
+        patch("mcp_atlassian.preprocessing.TextPreprocessor") as mock_text_preprocessor,
+        patch(
+            "mcp_atlassian.confluence.client.configure_oauth_session"
+        ) as mock_configure_oauth,
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence_class,
+    ):
+        mock_text_preprocessor.return_value = mock_preprocessor
+        mock_configure_oauth.return_value = True  # Mock successful OAuth configuration
+        mock_confluence_class.return_value = mock_atlassian_confluence
+
+        client = ConfluenceClient(config=mock_oauth_config)
+        # Replace the actual Confluence instance with our mock
+        client.confluence = mock_atlassian_confluence
+        # Mock session for v2 adapter
+        client.confluence._session = MagicMock()
+        # OAuth clients use api.atlassian.com URL format
+        client.confluence.url = f"https://api.atlassian.com/ex/confluence/{mock_oauth_config.oauth_config.cloud_id}"
         # Replace the actual preprocessor with our mock
         client.preprocessor = mock_preprocessor
         yield client
