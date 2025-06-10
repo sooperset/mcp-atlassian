@@ -85,7 +85,7 @@ class JiraClient:
             )
         else:  # basic auth
             logger.debug(
-                f"Initializing Jira client with Basic auth. URL: {self.config.url}, Username: {self.config.username}"
+                f"Initializing Jira client with Basic auth. URL: {self.config.url}, Username: {self.config.username}, API Token present: {bool(self.config.api_token)}, Is Cloud: {self.config.is_cloud}"
             )
             self.jira = Jira(
                 url=self.config.url,
@@ -93,6 +93,9 @@ class JiraClient:
                 password=self.config.api_token,
                 cloud=self.config.is_cloud,
                 verify_ssl=self.config.ssl_verify,
+            )
+            logger.debug(
+                f"Jira client initialized. Session headers (Authorization masked): {self._get_masked_session_headers()}"
             )
 
         # Configure SSL verification using the shared utility
@@ -125,6 +128,51 @@ class JiraClient:
         self.preprocessor = JiraPreprocessor(base_url=self.config.url)
         self._field_ids_cache = None
         self._current_user_account_id = None
+
+        # Test authentication during initialization (in debug mode only)
+        if logger.isEnabledFor(logging.DEBUG):
+            try:
+                self._validate_authentication()
+            except MCPAtlassianAuthenticationError:
+                logger.warning(
+                    "Authentication validation failed during client initialization - continuing anyway"
+                )
+
+    def _get_masked_session_headers(self) -> dict[str, str]:
+        """Get session headers with sensitive info masked for debugging."""
+        headers = {k: str(v) for k, v in self.jira._session.headers.items()}
+        if "Authorization" in headers:
+            auth_value = headers["Authorization"]
+            if auth_value.startswith("Basic "):
+                headers["Authorization"] = f"Basic {mask_sensitive(auth_value[6:])}"
+            elif auth_value.startswith("Bearer "):
+                headers["Authorization"] = f"Bearer {mask_sensitive(auth_value[7:])}"
+            else:
+                headers["Authorization"] = mask_sensitive(auth_value)
+        return headers
+
+    def _validate_authentication(self) -> None:
+        """Validate authentication by making a simple API call."""
+        try:
+            logger.debug(
+                "Testing Jira authentication by retrieving current user info..."
+            )
+            current_user = self.jira.myself()
+            if current_user:
+                logger.info(
+                    f"Jira authentication successful. Current user: {current_user.get('displayName', 'Unknown')} ({current_user.get('emailAddress', 'No email')})"
+                )
+            else:
+                logger.warning(
+                    "Jira authentication test returned empty user info - this may indicate an issue"
+                )
+        except Exception as e:
+            error_msg = f"Jira authentication validation failed: {e}"
+            logger.error(error_msg)
+            logger.debug(
+                f"Authentication headers during failure: {self._get_masked_session_headers()}"
+            )
+            raise MCPAtlassianAuthenticationError(error_msg) from e
 
     def _clean_text(self, text: str) -> str:
         """Clean text content by:
