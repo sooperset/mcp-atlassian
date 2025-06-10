@@ -21,7 +21,11 @@ if os.getenv("MCP_VERBOSE", "").lower() in ("true", "1", "yes"):
     logging_level = logging.DEBUG
 
 # Set up logging to STDOUT if MCP_LOGGING_STDOUT is set to true
-logging_stream = sys.stdout if os.getenv("MCP_LOGGING_STDOUT", "").lower() in ("true", "1", "yes") else sys.stderr
+logging_stream = (
+    sys.stdout
+    if os.getenv("MCP_LOGGING_STDOUT", "").lower() in ("true", "1", "yes")
+    else sys.stderr
+)
 
 # Set up logging using the utility function
 logger = setup_logging(logging_level, logging_stream)
@@ -182,7 +186,11 @@ def main(
             current_logging_level = logging.WARNING
 
     # Set up logging to STDOUT if MCP_LOGGING_STDOUT is set to true
-    logging_stream = sys.stdout if os.getenv("MCP_LOGGING_STDOUT", "").lower() in ("true", "1", "yes") else sys.stderr
+    logging_stream = (
+        sys.stdout
+        if os.getenv("MCP_LOGGING_STDOUT", "").lower() in ("true", "1", "yes")
+        else sys.stderr
+    )
 
     global logger
     logger = setup_logging(current_logging_level, logging_stream)

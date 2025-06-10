@@ -5,12 +5,14 @@ including level-dependent stream handling to route logs to the appropriate
 output stream based on their level.
 """
 
-import sys
 import logging
+import sys
 from typing import TextIO
 
 
-def setup_logging(level: int = logging.WARNING, stream: TextIO = sys.stderr) -> logging.Logger:
+def setup_logging(
+    level: int = logging.WARNING, stream: TextIO = sys.stderr
+) -> logging.Logger:
     """
     Configure MCP-Atlassian logging with level-based stream routing.
 

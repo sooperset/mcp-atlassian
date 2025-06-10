@@ -1,5 +1,5 @@
-import logging
 import io
+import logging
 
 from mcp_atlassian.utils.logging import setup_logging
 
