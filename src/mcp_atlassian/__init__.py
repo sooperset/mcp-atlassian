@@ -20,8 +20,11 @@ logging_level = logging.WARNING
 if os.getenv("MCP_VERBOSE", "").lower() in ("true", "1", "yes"):
     logging_level = logging.DEBUG
 
+# Set up logging to STDOUT if MCP_LOGGING_STDOUT is set to true
+logging_stream = sys.stdout if os.getenv("MCP_LOGGING_STDOUT", "").lower() in ("true", "1", "yes") else sys.stderr
+
 # Set up logging using the utility function
-logger = setup_logging(logging_level)
+logger = setup_logging(logging_level, logging_stream)
 
 
 @click.version_option(__version__, prog_name="mcp-atlassian")
@@ -178,9 +181,13 @@ def main(
         else:
             current_logging_level = logging.WARNING
 
+    # Set up logging to STDOUT if MCP_LOGGING_STDOUT is set to true
+    logging_stream = sys.stdout if os.getenv("MCP_LOGGING_STDOUT", "").lower() in ("true", "1", "yes") else sys.stderr
+
     global logger
-    logger = setup_logging(current_logging_level)
+    logger = setup_logging(current_logging_level, logging_stream)
     logger.debug(f"Logging level set to: {logging.getLevelName(current_logging_level)}")
+    logger.debug(f"Logging stream set to: {logging_stream}")
 
     def was_option_provided(ctx: click.Context, param_name: str) -> bool:
         return (
