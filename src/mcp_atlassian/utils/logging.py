@@ -18,6 +18,7 @@ def setup_logging(
 
     Args:
         level: The minimum logging level to display (default: WARNING)
+        stream: The stream to write logs to (default: sys.stderr)
 
     Returns:
         The configured logger instance

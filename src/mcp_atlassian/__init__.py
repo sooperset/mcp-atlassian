@@ -195,7 +195,9 @@ def main(
     global logger
     logger = setup_logging(current_logging_level, logging_stream)
     logger.debug(f"Logging level set to: {logging.getLevelName(current_logging_level)}")
-    logger.debug(f"Logging stream set to: {logging_stream}")
+    logger.debug(
+        f"Logging stream set to: {'stdout' if logging_stream is sys.stdout else 'stderr'}"
+    )
 
     def was_option_provided(ctx: click.Context, param_name: str) -> bool:
         return (
