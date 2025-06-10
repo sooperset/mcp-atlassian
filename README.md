@@ -75,7 +75,6 @@ MCP Atlassian supports three authentication methods:
 8. Add obtained credentials to `.env` or IDE config:
    - `ATLASSIAN_OAUTH_CLOUD_ID` (from wizard)
    - `ATLASSIAN_OAUTH_CLIENT_ID`
-   - `ATLASSIAN_OAUTH_CLIENT_ID`
    - `ATLASSIAN_OAUTH_CLIENT_SECRET`
    - `ATLASSIAN_OAUTH_REDIRECT_URI`
    - `ATLASSIAN_OAUTH_SCOPE`

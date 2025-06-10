@@ -88,7 +88,7 @@ def get_available_services() -> dict[str, bool | None]:
         ):
             jira_is_setup = True
             logger.info(
-                "Using Confluence OAuth 2.0 (3LO) authentication (Cloud-only features) "
+                "Using Jira OAuth 2.0 (3LO) authentication (Cloud-only features) "
                 "with provided access token"
             )
         elif is_cloud:  # Cloud non-OAuth

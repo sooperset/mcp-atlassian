@@ -651,35 +651,35 @@ class TestBYOAccessTokenOAuthConfig:
 
 @patch("mcp_atlassian.utils.oauth.BYOAccessTokenOAuthConfig.from_env")
 @patch("mcp_atlassian.utils.oauth.OAuthConfig.from_env")
-def test_get_oauth_config_prefers_standard_oauth(
+def test_get_oauth_config_prefers_byo_when_both_present(
     mock_oauth_from_env, mock_byo_from_env
 ):
-    """Test get_oauth_config_from_env prefers OAuthConfig."""
-    mock_oauth_config = MagicMock(spec=OAuthConfig)
-    mock_oauth_from_env.return_value = mock_oauth_config
+    """Test get_oauth_config_from_env prefers BYOAccessTokenOAuthConfig when both are configured."""
     mock_byo_config = MagicMock(spec=BYOAccessTokenOAuthConfig)
-    mock_byo_from_env.return_value = mock_byo_config  # This shouldn't be returned
+    mock_byo_from_env.return_value = mock_byo_config
+    mock_oauth_config = MagicMock(spec=OAuthConfig)
+    mock_oauth_from_env.return_value = mock_oauth_config  # This shouldn't be returned
 
     result = get_oauth_config_from_env()
-    assert result == mock_oauth_config
-    mock_oauth_from_env.assert_called_once()
-    mock_byo_from_env.assert_not_called()  # Important: BYO should not be called if OAuthConfig is found
+    assert result == mock_byo_config
+    mock_byo_from_env.assert_called_once()
+    mock_oauth_from_env.assert_not_called()  # Standard OAuth should not be called if BYO is found
 
 
 @patch("mcp_atlassian.utils.oauth.BYOAccessTokenOAuthConfig.from_env")
 @patch("mcp_atlassian.utils.oauth.OAuthConfig.from_env")
-def test_get_oauth_config_falls_back_to_byo_token_config(
+def test_get_oauth_config_falls_back_to_standard_oauth_config(
     mock_oauth_from_env, mock_byo_from_env
 ):
-    """Test get_oauth_config_from_env falls back to BYOAccessTokenOAuthConfig."""
-    mock_oauth_from_env.return_value = None  # Standard OAuth not configured
-    mock_byo_config = MagicMock(spec=BYOAccessTokenOAuthConfig)
-    mock_byo_from_env.return_value = mock_byo_config
+    """Test get_oauth_config_from_env falls back to OAuthConfig if BYO is not configured."""
+    mock_byo_from_env.return_value = None  # BYO not configured
+    mock_oauth_config = MagicMock(spec=OAuthConfig)
+    mock_oauth_from_env.return_value = mock_oauth_config
 
     result = get_oauth_config_from_env()
-    assert result == mock_byo_config
-    mock_oauth_from_env.assert_called_once()
+    assert result == mock_oauth_config  # Should be standard OAuth
     mock_byo_from_env.assert_called_once()
+    mock_oauth_from_env.assert_called_once()
 
 
 @patch("mcp_atlassian.utils.oauth.BYOAccessTokenOAuthConfig.from_env")

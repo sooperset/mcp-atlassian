@@ -463,7 +463,7 @@ def get_oauth_config_from_env() -> OAuthConfig | BYOAccessTokenOAuthConfig | Non
         An instance of OAuthConfig or BYOAccessTokenOAuthConfig if environment
         variables are set for either, otherwise None.
     """
-    return OAuthConfig.from_env() or BYOAccessTokenOAuthConfig.from_env() or None
+    return BYOAccessTokenOAuthConfig.from_env() or OAuthConfig.from_env()
 
 
 def configure_oauth_session(
