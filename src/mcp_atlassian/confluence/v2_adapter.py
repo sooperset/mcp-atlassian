@@ -43,22 +43,22 @@ class ConfluenceV2Adapter:
             # Use v2 spaces endpoint to get space ID
             url = f"{self.base_url}/api/v2/spaces"
             params = {"keys": space_key}
-            
+
             response = self.session.get(url, params=params)
             response.raise_for_status()
-            
+
             data = response.json()
             results = data.get("results", [])
-            
+
             if not results:
                 raise ValueError(f"Space with key '{space_key}' not found")
-            
+
             space_id = results[0].get("id")
             if not space_id:
                 raise ValueError(f"No ID found for space '{space_key}'")
-            
+
             return space_id
-            
+
         except HTTPError as e:
             logger.error(f"HTTP error getting space ID for '{space_key}': {e}")
             raise ValueError(f"Failed to get space ID for '{space_key}': {e}") from e
@@ -94,7 +94,7 @@ class ConfluenceV2Adapter:
         try:
             # Get space ID from space key
             space_id = self._get_space_id(space_key)
-            
+
             # Prepare request data for v2 API
             data = {
                 "spaceId": space_id,
@@ -105,22 +105,22 @@ class ConfluenceV2Adapter:
                     "value": body,
                 },
             }
-            
+
             # Add parent if specified
             if parent_id:
                 data["parentId"] = parent_id
-            
+
             # Make the v2 API call
             url = f"{self.base_url}/api/v2/pages"
             response = self.session.post(url, json=data)
             response.raise_for_status()
-            
+
             result = response.json()
             logger.debug(f"Successfully created page '{title}' with v2 API")
-            
+
             # Convert v2 response to v1-compatible format for consistency
             return self._convert_v2_to_v1_format(result, space_key)
-            
+
         except HTTPError as e:
             logger.error(f"HTTP error creating page '{title}': {e}")
             if e.response is not None:
@@ -145,18 +145,18 @@ class ConfluenceV2Adapter:
         try:
             url = f"{self.base_url}/api/v2/pages/{page_id}"
             params = {"body-format": "storage"}
-            
+
             response = self.session.get(url, params=params)
             response.raise_for_status()
-            
+
             data = response.json()
             version_number = data.get("version", {}).get("number")
-            
+
             if version_number is None:
                 raise ValueError(f"No version number found for page '{page_id}'")
-            
+
             return version_number
-            
+
         except HTTPError as e:
             logger.error(f"HTTP error getting page version for '{page_id}': {e}")
             raise ValueError(f"Failed to get page version for '{page_id}': {e}") from e
@@ -193,7 +193,7 @@ class ConfluenceV2Adapter:
             # Get current version and increment it
             current_version = self._get_page_version(page_id)
             new_version = current_version + 1
-            
+
             # Prepare request data for v2 API
             data = {
                 "id": page_id,
@@ -207,26 +207,26 @@ class ConfluenceV2Adapter:
                     "number": new_version,
                 },
             }
-            
+
             # Add version comment if provided
             if version_comment:
                 data["version"]["message"] = version_comment
-            
+
             # Make the v2 API call
             url = f"{self.base_url}/api/v2/pages/{page_id}"
             response = self.session.put(url, json=data)
             response.raise_for_status()
-            
+
             result = response.json()
             logger.debug(f"Successfully updated page '{title}' with v2 API")
-            
+
             # Convert v2 response to v1-compatible format for consistency
             # For update, we need to extract space key from the result
             space_id = result.get("spaceId")
             space_key = self._get_space_key_from_id(space_id) if space_id else "unknown"
-            
+
             return self._convert_v2_to_v1_format(result, space_key)
-            
+
         except HTTPError as e:
             logger.error(f"HTTP error updating page '{page_id}': {e}")
             if e.response is not None:
@@ -251,18 +251,18 @@ class ConfluenceV2Adapter:
         try:
             # Use v2 spaces endpoint to get space key
             url = f"{self.base_url}/api/v2/spaces/{space_id}"
-            
+
             response = self.session.get(url)
             response.raise_for_status()
-            
+
             data = response.json()
             space_key = data.get("key")
-            
+
             if not space_key:
                 raise ValueError(f"No key found for space ID '{space_id}'")
-            
+
             return space_key
-            
+
         except HTTPError as e:
             logger.error(f"HTTP error getting space key for ID '{space_id}': {e}")
             # Return the space_id as fallback
@@ -289,17 +289,19 @@ class ConfluenceV2Adapter:
             url = f"{self.base_url}/api/v2/pages/{page_id}"
             response = self.session.delete(url)
             response.raise_for_status()
-            
+
             logger.debug(f"Successfully deleted page '{page_id}' with v2 API")
-            
+
             # Check if status code indicates success (204 No Content is typical for deletes)
             if response.status_code in [200, 204]:
                 return True
-            
+
             # If we get here, it's an unexpected success status
-            logger.warning(f"Delete page returned unexpected status {response.status_code}")
+            logger.warning(
+                f"Delete page returned unexpected status {response.status_code}"
+            )
             return True
-            
+
         except HTTPError as e:
             logger.error(f"HTTP error deleting page '{page_id}': {e}")
             if e.response is not None:
@@ -309,7 +311,9 @@ class ConfluenceV2Adapter:
             logger.error(f"Error deleting page '{page_id}': {e}")
             raise ValueError(f"Failed to delete page '{page_id}': {e}") from e
 
-    def _convert_v2_to_v1_format(self, v2_response: dict[str, Any], space_key: str) -> dict[str, Any]:
+    def _convert_v2_to_v1_format(
+        self, v2_response: dict[str, Any], space_key: str
+    ) -> dict[str, Any]:
         """Convert v2 API response to v1-compatible format.
 
         This ensures compatibility with existing code that expects v1 response format.
@@ -336,7 +340,7 @@ class ConfluenceV2Adapter:
             },
             "_links": v2_response.get("_links", {}),
         }
-        
+
         # Add body if present in v2 response
         if "body" in v2_response:
             v1_compatible["body"] = {
@@ -345,5 +349,5 @@ class ConfluenceV2Adapter:
                     "representation": "storage",
                 }
             }
-        
+
         return v1_compatible
