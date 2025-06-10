@@ -1,6 +1,6 @@
 """Unit tests for the PagesMixin class."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -726,3 +726,191 @@ class TestPagesMixin:
             assert result.id == page_id
             assert result.title == title
             assert result.version.number == 2
+
+    def test_non_oauth_still_uses_v1_api(self, pages_mixin):
+        """Test that non-OAuth authentication still uses v1 API."""
+        # This test ensures backward compatibility for API token/basic auth
+        # Arrange
+        space_key = "PROJ"
+        title = "New V1 Test Page"
+        body = "<p>Test content for V1</p>"
+
+        # Mock get_page_content to return a ConfluencePage
+        with patch.object(
+            pages_mixin,
+            "get_page_content",
+            return_value=ConfluencePage(
+                id="v1_123456789",
+                title=title,
+                content="V1 page content",
+                space={"key": space_key, "name": "Project"},
+            ),
+        ):
+            # Act
+            result = pages_mixin.create_page(space_key, title, body, is_markdown=False)
+
+            # Assert that v1 API was used
+            pages_mixin.confluence.create_page.assert_called_once_with(
+                space=space_key,
+                title=title,
+                body=body,
+                parent_id=None,
+                representation="storage",
+            )
+
+            # Verify result is a ConfluencePage
+            assert isinstance(result, ConfluencePage)
+            assert result.id == "v1_123456789"
+            assert result.title == title
+
+
+class TestPagesOAuthMixin:
+    """Tests for PagesMixin with OAuth authentication."""
+
+    @pytest.fixture
+    def oauth_pages_mixin(self, oauth_confluence_client):
+        """Create a PagesMixin instance for OAuth testing."""
+        # PagesMixin inherits from ConfluenceClient, so we need to create it properly
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = PagesMixin()
+            # Copy the necessary attributes from our mocked client
+            mixin.confluence = oauth_confluence_client.confluence
+            mixin.config = oauth_confluence_client.config
+            mixin.preprocessor = oauth_confluence_client.preprocessor
+            return mixin
+
+    def test_create_page_oauth_uses_v2_api(self, oauth_pages_mixin):
+        """Test that OAuth authentication uses v2 API for creating pages."""
+        # Arrange
+        space_key = "PROJ"
+        title = "New OAuth Test Page"
+        body = "<p>Test content for OAuth</p>"
+        parent_id = "987654321"
+
+        # Mock the v2 adapter
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceV2Adapter"
+        ) as mock_v2_adapter_class:
+            mock_v2_adapter = MagicMock()
+            mock_v2_adapter_class.return_value = mock_v2_adapter
+            mock_v2_adapter.create_page.return_value = {
+                "id": "oauth_123456789",
+                "title": title,
+            }
+
+            # Mock get_page_content to return a ConfluencePage
+            with patch.object(
+                oauth_pages_mixin,
+                "get_page_content",
+                return_value=ConfluencePage(
+                    id="oauth_123456789",
+                    title=title,
+                    content="OAuth page content",
+                    space={"key": space_key, "name": "Project"},
+                ),
+            ):
+                # Act - specify is_markdown=False since we're directly providing storage format
+                result = oauth_pages_mixin.create_page(
+                    space_key, title, body, parent_id, is_markdown=False
+                )
+
+                # Assert that v2 API was used instead of v1
+                mock_v2_adapter.create_page.assert_called_once_with(
+                    space_key=space_key,
+                    title=title,
+                    body=body,
+                    parent_id=parent_id,
+                    representation="storage",
+                )
+
+                # Verify v1 API was NOT called
+                oauth_pages_mixin.confluence.create_page.assert_not_called()
+
+                # Verify result is a ConfluencePage
+                assert isinstance(result, ConfluencePage)
+                assert result.id == "oauth_123456789"
+                assert result.title == title
+
+    def test_update_page_oauth_uses_v2_api(self, oauth_pages_mixin):
+        """Test that OAuth authentication uses v2 API for updating pages."""
+        # Arrange
+        page_id = "oauth_987654321"
+        title = "Updated OAuth Test Page"
+        body = "<p>Updated test content for OAuth</p>"
+        version_comment = "OAuth update test"
+
+        # Mock the v2 adapter
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceV2Adapter"
+        ) as mock_v2_adapter_class:
+            mock_v2_adapter = MagicMock()
+            mock_v2_adapter_class.return_value = mock_v2_adapter
+            mock_v2_adapter.update_page.return_value = {
+                "id": page_id,
+                "title": title,
+            }
+
+            # Mock get_page_content to return a ConfluencePage
+            with patch.object(
+                oauth_pages_mixin,
+                "get_page_content",
+                return_value=ConfluencePage(
+                    id=page_id,
+                    title=title,
+                    content="Updated OAuth page content",
+                    version={"number": 2},
+                ),
+            ):
+                # Act - specify is_markdown=False since we're directly providing storage format
+                result = oauth_pages_mixin.update_page(
+                    page_id,
+                    title,
+                    body,
+                    is_markdown=False,
+                    version_comment=version_comment,
+                )
+
+                # Assert that v2 API was used instead of v1
+                mock_v2_adapter.update_page.assert_called_once_with(
+                    page_id=page_id,
+                    title=title,
+                    body=body,
+                    representation="storage",
+                    version_comment=version_comment,
+                )
+
+                # Verify v1 API was NOT called
+                oauth_pages_mixin.confluence.update_page.assert_not_called()
+
+                # Verify result is a ConfluencePage
+                assert isinstance(result, ConfluencePage)
+                assert result.id == page_id
+                assert result.title == title
+
+    def test_delete_page_oauth_uses_v2_api(self, oauth_pages_mixin):
+        """Test that OAuth authentication uses v2 API for deleting pages."""
+        # Arrange
+        page_id = "oauth_delete_123"
+
+        # Mock the v2 adapter
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceV2Adapter"
+        ) as mock_v2_adapter_class:
+            mock_v2_adapter = MagicMock()
+            mock_v2_adapter_class.return_value = mock_v2_adapter
+            mock_v2_adapter.delete_page.return_value = True
+
+            # Act
+            result = oauth_pages_mixin.delete_page(page_id)
+
+            # Assert that v2 API was used instead of v1
+            mock_v2_adapter.delete_page.assert_called_once_with(page_id=page_id)
+
+            # Verify v1 API was NOT called
+            oauth_pages_mixin.confluence.remove_page.assert_not_called()
+
+            # Verify result
+            assert result is True
