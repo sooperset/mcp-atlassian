@@ -33,6 +33,7 @@ def mock_jira_fetcher():
     mock_fetcher.config = MagicMock()
     mock_fetcher.config.read_only = False
     mock_fetcher.config.url = "https://test.atlassian.net"
+    mock_fetcher.config.projects_filter = None  # Explicitly set to None by default
 
     # Configure common methods
     mock_fetcher.get_current_user_account_id.return_value = "test-account-id"
@@ -793,8 +794,180 @@ async def test_get_all_projects_tool_with_archived(jira_client, mock_jira_fetche
     data = json.loads(msg.text)
     assert isinstance(data, list)
     assert len(data) == 2
+    # Project keys should always be uppercase in the response
     assert data[0]["key"] == "PROJ1"
     assert data[1]["key"] == "ARCHIVED"
 
     # Verify the underlying method was called with include_archived=True
     mock_jira_fetcher.get_all_projects.assert_called_once_with(include_archived=True)
+
+
+@pytest.mark.anyio
+async def test_get_all_projects_tool_with_projects_filter(
+    jira_client, mock_jira_fetcher
+):
+    """Test the jira_get_all_projects tool respects project filter configuration."""
+    # Prepare mock project data - simulate getting all projects from API
+    all_mock_projects = [
+        {
+            "id": "10000",
+            "key": "PROJ1",
+            "name": "Project One",
+            "description": "First project",
+        },
+        {
+            "id": "10001",
+            "key": "PROJ2",
+            "name": "Project Two",
+            "description": "Second project",
+        },
+        {
+            "id": "10002",
+            "key": "OTHER",
+            "name": "Other Project",
+            "description": "Should be filtered out",
+        },
+    ]
+
+    # Set up the mock to return all projects
+    mock_jira_fetcher.get_all_projects.reset_mock()
+    mock_jira_fetcher.get_all_projects.return_value = all_mock_projects
+
+    # Set up the projects filter in the config
+    mock_jira_fetcher.config.projects_filter = "PROJ1,PROJ2"
+
+    # Call the tool
+    response = await jira_client.call_tool(
+        "jira_get_all_projects",
+        {},
+    )
+
+    assert isinstance(response, list)
+    assert len(response) == 1
+    msg = response[0]
+    assert msg.type == "text"
+
+    data = json.loads(msg.text)
+    assert isinstance(data, list)
+
+    # Should only return projects in the filter (PROJ1, PROJ2), not OTHER
+    assert len(data) == 2
+    returned_keys = [project["key"] for project in data]
+    # Project keys should always be uppercase in the response
+    assert "PROJ1" in returned_keys
+    assert "PROJ2" in returned_keys
+    assert "OTHER" not in returned_keys
+
+    # Verify the underlying method was called (still gets all projects, but then filters)
+    mock_jira_fetcher.get_all_projects.assert_called_once_with(include_archived=False)
+
+
+@pytest.mark.anyio
+async def test_get_all_projects_tool_no_projects_filter(jira_client, mock_jira_fetcher):
+    """Test the jira_get_all_projects tool returns all projects when no filter is configured."""
+    # Prepare mock project data
+    all_mock_projects = [
+        {
+            "id": "10000",
+            "key": "PROJ1",
+            "name": "Project One",
+            "description": "First project",
+        },
+        {
+            "id": "10001",
+            "key": "OTHER",
+            "name": "Other Project",
+            "description": "Should not be filtered out",
+        },
+    ]
+
+    # Set up the mock to return all projects
+    mock_jira_fetcher.get_all_projects.reset_mock()
+    mock_jira_fetcher.get_all_projects.return_value = all_mock_projects
+
+    # Ensure no projects filter is set
+    mock_jira_fetcher.config.projects_filter = None
+
+    # Call the tool
+    response = await jira_client.call_tool(
+        "jira_get_all_projects",
+        {},
+    )
+
+    assert isinstance(response, list)
+    assert len(response) == 1
+    msg = response[0]
+    assert msg.type == "text"
+
+    data = json.loads(msg.text)
+    assert isinstance(data, list)
+
+    # Should return all projects when no filter is configured
+    assert len(data) == 2
+    returned_keys = [project["key"] for project in data]
+    # Project keys should always be uppercase in the response
+    assert "PROJ1" in returned_keys
+    assert "OTHER" in returned_keys
+
+    # Verify the underlying method was called
+    mock_jira_fetcher.get_all_projects.assert_called_once_with(include_archived=False)
+
+
+@pytest.mark.anyio
+async def test_get_all_projects_tool_case_insensitive_filter(
+    jira_client, mock_jira_fetcher
+):
+    """Test the jira_get_all_projects tool handles case-insensitive filtering and whitespace."""
+    # Prepare mock project data with mixed case
+    all_mock_projects = [
+        {
+            "id": "10000",
+            "key": "proj1",  # lowercase
+            "name": "Project One",
+            "description": "First project",
+        },
+        {
+            "id": "10001",
+            "key": "PROJ2",  # uppercase
+            "name": "Project Two",
+            "description": "Second project",
+        },
+        {
+            "id": "10002",
+            "key": "other",  # should be filtered out
+            "name": "Other Project",
+            "description": "Should be filtered out",
+        },
+    ]
+
+    # Set up the mock to return all projects
+    mock_jira_fetcher.get_all_projects.reset_mock()
+    mock_jira_fetcher.get_all_projects.return_value = all_mock_projects
+
+    # Set up projects filter with mixed case and whitespace
+    mock_jira_fetcher.config.projects_filter = " PROJ1 , proj2 "
+
+    # Call the tool
+    response = await jira_client.call_tool(
+        "jira_get_all_projects",
+        {},
+    )
+
+    assert isinstance(response, list)
+    assert len(response) == 1
+    msg = response[0]
+    assert msg.type == "text"
+
+    data = json.loads(msg.text)
+    assert isinstance(data, list)
+
+    # Should return projects matching the filter (case-insensitive)
+    assert len(data) == 2
+    returned_keys = [project["key"] for project in data]
+    # Project keys should always be uppercase in the response, regardless of input case
+    assert "PROJ1" in returned_keys  # lowercase input converted to uppercase
+    assert "PROJ2" in returned_keys  # uppercase stays uppercase
+    assert "OTHER" not in returned_keys  # not in filter
+
+    # Verify the underlying method was called
+    mock_jira_fetcher.get_all_projects.assert_called_once_with(include_archived=False)
