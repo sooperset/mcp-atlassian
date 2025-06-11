@@ -3,6 +3,7 @@
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from os import getenv
 from typing import Any, Literal, Optional
 
 from cachetools import TTLCache
@@ -29,6 +30,11 @@ from .context import MainAppContext
 from .jira import jira_mcp
 
 logger = logging.getLogger("mcp-atlassian.server.main")
+
+HTTP_PROXY = getenv("HTTP_PROXY")
+HTTPS_PROXY = getenv("HTTPS_PROXY")
+NO_PROXY = getenv("NO_PROXY")
+SOCKS_PROXY = getenv("SOCKS_PROXY")
 
 
 async def health_check(request: Request) -> JSONResponse:
@@ -143,11 +149,6 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             is_confluence_tool = "confluence" in tool_tags
             service_configured_and_available = True
             if app_lifespan_state:
-                if is_jira_tool and not app_lifespan_state.full_jira_config:
-                    logger.debug(
-                        f"Excluding Jira tool '{registered_name}' as Jira configuration/authentication is incomplete."
-                    )
-                    service_configured_and_available = False
                 if is_confluence_tool and not app_lifespan_state.full_confluence_config:
                     logger.debug(
                         f"Excluding Confluence tool '{registered_name}' as Confluence configuration/authentication is incomplete."
@@ -222,7 +223,8 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
             f"UserTokenMiddleware.dispatch: Comparing request_path='{request_path}' with mcp_path='{mcp_path}'. Request method='{request.method}'"
         )
         if request_path == mcp_path and request.method == "POST":
-            auth_header = request.headers.get("Authorization")
+            headers = request.headers
+            auth_header = headers.get("Authorization")
             token_for_log = mask_sensitive(
                 auth_header.split(" ", 1)[1].strip()
                 if auth_header and " " in auth_header
@@ -266,6 +268,35 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 )
                 logger.debug(
                     "UserTokenMiddleware.dispatch: Set request.state for PAT auth."
+                )
+            elif url := headers.get("JIRA_URL"):
+                error_msg = "`{}` header is required if you want to use per connection JiraFetcher!"
+
+                if not (username := headers.get("JIRA_USERNAME")):
+                    raise ValueError(error_msg.format("JIRA_USERNAME"))
+
+                if not (api_token := headers.get("JIRA_API_TOKEN")):
+                    raise ValueError(error_msg.format("JIRA_API_TOKEN"))
+
+                request.state.jira_fetcher = JiraFetcher(
+                    JiraConfig(
+                        url=url,
+                        auth_type="basic",
+                        username=username,
+                        api_token=api_token,
+                        personal_token=None,
+                        oauth_config=None,
+                        ssl_verify=headers.get("JIRA_SSL_VERIFY", "true").lower()
+                        not in ("false", "0", "no"),
+                        projects_filter=headers.get("JIRA_PROJECTS_FILTER"),
+                        http_proxy=headers.get("JIRA_HTTP_PROXY", HTTP_PROXY),
+                        https_proxy=headers.get("JIRA_HTTPS_PROXY", HTTPS_PROXY),
+                        no_proxy=headers.get("JIRA_NO_PROXY", NO_PROXY),
+                        socks_proxy=headers.get("JIRA_SOCKS_PROXY", SOCKS_PROXY),
+                    )
+                )
+                logger.debug(
+                    "UserTokenMiddleware.dispatch: Set request.state.jira_fetcher."
                 )
             elif auth_header:
                 logger.warning(
