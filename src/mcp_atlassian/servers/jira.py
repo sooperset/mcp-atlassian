@@ -1396,6 +1396,55 @@ async def get_project_versions(
     return json.dumps(versions, indent=2, ensure_ascii=False)
 
 
+@jira_mcp.tool(tags={"jira", "read"})
+async def get_all_projects(
+    ctx: Context,
+    include_archived: Annotated[
+        bool,
+        Field(
+            description="Whether to include archived projects in the results",
+            default=False,
+        ),
+    ] = False,
+) -> str:
+    """Get all Jira projects accessible to the current user.
+
+    Args:
+        ctx: The FastMCP context.
+        include_archived: Whether to include archived projects.
+
+    Returns:
+        JSON string representing a list of project objects accessible to the user.
+        Project keys are always returned in uppercase.
+        If JIRA_PROJECTS_FILTER is configured, only returns projects matching those keys.
+    """
+    jira = await get_jira_fetcher(ctx)
+    projects = jira.get_all_projects(include_archived=include_archived)
+
+    # Ensure all project keys are uppercase
+    for project in projects:
+        if "key" in project:
+            project["key"] = project["key"].upper()
+
+    # Apply project filter if configured
+    if jira.config.projects_filter:
+        # Split projects filter by commas and handle possible whitespace
+        allowed_project_keys = [
+            p.strip().upper() for p in jira.config.projects_filter.split(",")
+        ]
+
+        # Filter projects to only include those in the allowed list
+        filtered_projects = []
+        for project in projects:
+            project_key = project.get("key", "")
+            if project_key in allowed_project_keys:
+                filtered_projects.append(project)
+
+        projects = filtered_projects
+
+    return json.dumps(projects, indent=2, ensure_ascii=False)
+
+
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "write"})
 @check_write_access
