@@ -30,6 +30,7 @@ class JiraConfig:
     https_proxy: str | None = None  # HTTPS proxy URL
     no_proxy: str | None = None  # Comma-separated list of hosts to bypass proxy
     socks_proxy: str | None = None  # SOCKS proxy URL (optional)
+    user_agent: str | None = None  # Custom User-Agent header
 
     @property
     def is_cloud(self) -> bool:
@@ -109,6 +110,9 @@ class JiraConfig:
         no_proxy = os.getenv("JIRA_NO_PROXY", os.getenv("NO_PROXY"))
         socks_proxy = os.getenv("JIRA_SOCKS_PROXY", os.getenv("SOCKS_PROXY"))
 
+        # Custom User-Agent header
+        user_agent = os.getenv("JIRA_USER_AGENT")
+
         return cls(
             url=url,
             auth_type=auth_type,
@@ -122,6 +126,7 @@ class JiraConfig:
             https_proxy=https_proxy,
             no_proxy=no_proxy,
             socks_proxy=socks_proxy,
+            user_agent=user_agent,
         )
 
     def is_auth_configured(self) -> bool:

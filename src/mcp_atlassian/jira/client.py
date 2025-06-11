@@ -121,6 +121,12 @@ class JiraClient:
             os.environ["NO_PROXY"] = self.config.no_proxy
             log_config_param(logger, "Jira", "NO_PROXY", self.config.no_proxy)
 
+        # Configure custom User-Agent header if provided
+        if self.config.user_agent:
+            self.jira._session.headers["User-Agent"] = self.config.user_agent
+            log_config_param(logger, "Jira", "USER_AGENT", self.config.user_agent)
+            logger.debug(f"Set custom User-Agent header: {self.config.user_agent}")
+
         # Initialize the text preprocessor for text processing capabilities
         self.preprocessor = JiraPreprocessor(base_url=self.config.url)
         self._field_ids_cache = None
