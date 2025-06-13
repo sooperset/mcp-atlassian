@@ -299,10 +299,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.tool()(remove_issue_link)
     jira_sub_mcp.tool()(transition_issue)
     jira_sub_mcp.tool()(update_sprint)
-    jira_sub_mcp.tool(name="jira_batch_create_versions")(
-        batch_create_versions
-    )  # <-- ensure correct tool name
-    jira_sub_mcp.tool(name="batch_create_versions")(batch_create_versions)
+    jira_sub_mcp.tool()(batch_create_versions)
     test_mcp.mount("jira", jira_sub_mcp)
     return test_mcp
 
