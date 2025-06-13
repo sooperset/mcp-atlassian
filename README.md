@@ -117,6 +117,7 @@ There are two main approaches to configure the Docker container:
 > - `JIRA_PROJECTS_FILTER`: Filter by project keys (e.g., "PROJ,DEV,SUPPORT")
 > - `READ_ONLY_MODE`: Set to "true" to disable write operations
 > - `MCP_VERBOSE`: Set to "true" for more detailed logging
+> - `MCP_LOGGING_STDOUT`: Set to "true" to log to stdout instead of stderr
 > - `ENABLED_TOOLS`: Comma-separated list of tool names to enable (e.g., "confluence_search,jira_get_issue")
 >
 > See the [.env.example](https://github.com/sooperset/mcp-atlassian/blob/main/.env.example) file for all available options.
