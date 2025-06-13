@@ -7,6 +7,7 @@ from importlib.metadata import PackageNotFoundError, version
 import click
 from dotenv import load_dotenv
 
+from mcp_atlassian.utils.env import is_env_truthy
 from mcp_atlassian.utils.logging import setup_logging
 
 try:
@@ -17,15 +18,11 @@ except PackageNotFoundError:
 
 # Initialize logging with appropriate level
 logging_level = logging.WARNING
-if os.getenv("MCP_VERBOSE", "").lower() in ("true", "1", "yes"):
+if is_env_truthy("MCP_VERBOSE"):
     logging_level = logging.DEBUG
 
 # Set up logging to STDOUT if MCP_LOGGING_STDOUT is set to true
-logging_stream = (
-    sys.stdout
-    if os.getenv("MCP_LOGGING_STDOUT", "").lower() in ("true", "1", "yes")
-    else sys.stderr
-)
+logging_stream = sys.stdout if is_env_truthy("MCP_LOGGING_STDOUT") else sys.stderr
 
 # Set up logging using the utility function
 logger = setup_logging(logging_level, logging_stream)
@@ -178,19 +175,15 @@ def main(
         current_logging_level = logging.DEBUG
     else:
         # Default to DEBUG if MCP_VERY_VERBOSE is set, else INFO if MCP_VERBOSE is set, else WARNING
-        if os.getenv("MCP_VERY_VERBOSE", "false").lower() in ("true", "1", "yes"):
+        if is_env_truthy("MCP_VERY_VERBOSE", "false"):
             current_logging_level = logging.DEBUG
-        elif os.getenv("MCP_VERBOSE", "false").lower() in ("true", "1", "yes"):
+        elif is_env_truthy("MCP_VERBOSE", "false"):
             current_logging_level = logging.INFO
         else:
             current_logging_level = logging.WARNING
 
     # Set up logging to STDOUT if MCP_LOGGING_STDOUT is set to true
-    logging_stream = (
-        sys.stdout
-        if os.getenv("MCP_LOGGING_STDOUT", "").lower() in ("true", "1", "yes")
-        else sys.stderr
-    )
+    logging_stream = sys.stdout if is_env_truthy("MCP_LOGGING_STDOUT") else sys.stderr
 
     global logger
     logger = setup_logging(current_logging_level, logging_stream)
