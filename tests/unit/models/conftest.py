@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from mcp_atlassian.utils.env import is_env_truthy
 from tests.fixtures.confluence_mocks import (
     MOCK_COMMENTS_RESPONSE,
     MOCK_CQL_SEARCH_RESPONSE,
@@ -78,7 +79,7 @@ def use_real_jira_data() -> bool:
     if not all(os.environ.get(var) for var in required_vars):
         return False
 
-    return os.environ.get("USE_REAL_DATA", "").lower() == "true"
+    return is_env_truthy("USE_REAL_DATA")
 
 
 @pytest.fixture
@@ -94,7 +95,7 @@ def use_real_confluence_data() -> bool:
     if not all(os.environ.get(var) for var in required_vars):
         return False
 
-    return os.environ.get("USE_REAL_DATA", "").lower() == "true"
+    return is_env_truthy("USE_REAL_DATA")
 
 
 @pytest.fixture
