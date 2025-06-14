@@ -159,11 +159,11 @@ class TestMCPAtlassianAuthenticationError:
         error = MCPAtlassianAuthenticationError(message)
 
         # Test standard exception attributes
-        assert hasattr(error, 'args')
-        assert hasattr(error, '__traceback__')
-        assert hasattr(error, '__cause__')
-        assert hasattr(error, '__context__')
-        assert hasattr(error, '__suppress_context__')
+        assert hasattr(error, "args")
+        assert hasattr(error, "__traceback__")
+        assert hasattr(error, "__cause__")
+        assert hasattr(error, "__context__")
+        assert hasattr(error, "__suppress_context__")
 
         # Test docstring access
         expected_doc = "Raised when Atlassian API authentication fails (401/403)."
@@ -199,4 +199,3 @@ class TestMCPAtlassianAuthenticationError:
         oauth_error = MCPAtlassianAuthenticationError("OAuth token has expired")
         assert "OAuth" in str(oauth_error)
         assert "expired" in str(oauth_error)
-
