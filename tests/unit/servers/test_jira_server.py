@@ -246,6 +246,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         add_comment,
         add_worklog,
         batch_create_issues,
+        batch_create_versions,  # <-- add this import
         batch_get_changelogs,
         create_issue,
         create_issue_link,
@@ -298,6 +299,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.tool()(remove_issue_link)
     jira_sub_mcp.tool()(transition_issue)
     jira_sub_mcp.tool()(update_sprint)
+    jira_sub_mcp.tool()(batch_create_versions)
     test_mcp.mount("jira", jira_sub_mcp)
     return test_mcp
 
@@ -673,3 +675,87 @@ async def test_get_project_versions_tool(jira_client, mock_jira_fetcher):
     assert data[0]["id"] == "100"
     assert data[0]["name"] == "v1.0"
     assert data[0]["description"] == "First"
+
+
+@pytest.mark.anyio
+async def test_batch_create_versions_all_success(jira_client, mock_jira_fetcher):
+    """Test batch creation of Jira versions where all succeed."""
+    versions = [
+        {
+            "name": "v1.0",
+            "startDate": "2025-01-01",
+            "releaseDate": "2025-02-01",
+            "description": "First release",
+        },
+        {"name": "v2.0", "description": "Second release"},
+    ]
+    # Patch create_project_version to always succeed
+    mock_jira_fetcher.create_project_version.side_effect = lambda **kwargs: {
+        "id": f"{kwargs['name']}-id",
+        **kwargs,
+    }
+    response = await jira_client.call_tool(
+        "jira_batch_create_versions",
+        {"project_key": "TEST", "versions": json.dumps(versions)},
+    )
+    assert len(response) == 1
+    content = json.loads(response[0].text)
+    assert all(item["success"] for item in content)
+    assert content[0]["version"]["name"] == "v1.0"
+    assert content[1]["version"]["name"] == "v2.0"
+
+
+@pytest.mark.anyio
+async def test_batch_create_versions_partial_failure(jira_client, mock_jira_fetcher):
+    """Test batch creation of Jira versions with some failures."""
+
+    def side_effect(
+        project_key, name, start_date=None, release_date=None, description=None
+    ):
+        if name == "bad":
+            raise Exception("Simulated failure")
+        return {"id": f"{name}-id", "name": name}
+
+    mock_jira_fetcher.create_project_version.side_effect = side_effect
+    versions = [
+        {"name": "good1"},
+        {"name": "bad"},
+        {"name": "good2"},
+    ]
+    response = await jira_client.call_tool(
+        "jira_batch_create_versions",
+        {"project_key": "TEST", "versions": json.dumps(versions)},
+    )
+    content = json.loads(response[0].text)
+    assert content[0]["success"] is True
+    assert content[1]["success"] is False
+    assert "Simulated failure" in content[1]["error"]
+    assert content[2]["success"] is True
+
+
+@pytest.mark.anyio
+async def test_batch_create_versions_all_failure(jira_client, mock_jira_fetcher):
+    """Test batch creation of Jira versions where all fail."""
+    mock_jira_fetcher.create_project_version.side_effect = Exception("API down")
+    versions = [
+        {"name": "fail1"},
+        {"name": "fail2"},
+    ]
+    response = await jira_client.call_tool(
+        "jira_batch_create_versions",
+        {"project_key": "TEST", "versions": json.dumps(versions)},
+    )
+    content = json.loads(response[0].text)
+    assert all(not item["success"] for item in content)
+    assert all("API down" in item["error"] for item in content)
+
+
+@pytest.mark.anyio
+async def test_batch_create_versions_empty(jira_client, mock_jira_fetcher):
+    """Test batch creation of Jira versions with empty input."""
+    response = await jira_client.call_tool(
+        "jira_batch_create_versions",
+        {"project_key": "TEST", "versions": json.dumps([])},
+    )
+    content = json.loads(response[0].text)
+    assert content == []

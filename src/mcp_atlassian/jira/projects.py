@@ -433,3 +433,32 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
                 f"Error getting accessible projects for user {username}: {str(e)}"
             )
             return []
+
+    def create_project_version(
+        self,
+        project_key: str,
+        name: str,
+        start_date: str = None,
+        release_date: str = None,
+        description: str = None,
+    ) -> dict[str, Any]:
+        """
+        Create a new version in the specified Jira project.
+
+        Args:
+            project_key: The project key (e.g., 'PROJ')
+            name: The name of the version
+            start_date: The start date (YYYY-MM-DD, optional)
+            release_date: The release date (YYYY-MM-DD, optional)
+            description: Description of the version (optional)
+
+        Returns:
+            The created version object as returned by Jira
+        """
+        return self.create_version(
+            project=project_key,
+            name=name,
+            start_date=start_date,
+            release_date=release_date,
+            description=description,
+        )
