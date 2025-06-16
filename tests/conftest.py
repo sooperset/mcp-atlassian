@@ -2,6 +2,9 @@
 Root pytest configuration file for MCP Atlassian tests.
 """
 
+from dotenv import load_dotenv
+
+load_dotenv()
 import pytest
 
 

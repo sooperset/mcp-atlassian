@@ -217,7 +217,7 @@ def hello():
         assert "confluence_space_key: TEST" in frontmatter
         assert "confluence_title: Test Page" in frontmatter
         assert "confluence_version: 5" in frontmatter
-        assert "last_modified: 2023-12-01T10:00:00.000Z" in frontmatter
+        assert "last_modified: '2023-12-01T10:00:00.000Z'" in frontmatter
         assert "last_modified_by: Test User" in frontmatter
 
 
