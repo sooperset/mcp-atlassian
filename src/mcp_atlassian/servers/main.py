@@ -242,7 +242,9 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                     f"UserTokenMiddleware.dispatch: Bearer token extracted (masked): ...{mask_sensitive(token, 8)}"
                 )
                 request.state.user_atlassian_token = token
-                request.state.user_atlassian_auth_type = "oauth"
+                # For Bearer tokens, we'll set as 'bearer' type to let the client determine if it's OAuth or PAT
+                # This allows the confluence/jira clients to try both formats
+                request.state.user_atlassian_auth_type = "bearer" 
                 request.state.user_atlassian_email = None
                 logger.debug(
                     f"UserTokenMiddleware.dispatch: Set request.state (pre-validation): "

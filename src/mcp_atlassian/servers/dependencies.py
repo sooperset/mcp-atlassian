@@ -46,9 +46,9 @@ def _create_user_config_for_fetcher(
         ValueError: If required credentials are missing or auth_type is unsupported.
         TypeError: If base_config is not a supported type.
     """
-    if auth_type not in ["oauth", "pat"]:
+    if auth_type not in ["oauth", "pat", "bearer"]:
         raise ValueError(
-            f"Unsupported auth_type '{auth_type}' for user-specific config creation. Expected 'oauth' or 'pat'."
+            f"Unsupported auth_type '{auth_type}' for user-specific config creation. Expected 'oauth', 'pat', or 'bearer'."
         )
 
     username_for_config: str | None = credentials.get("user_email_context")
@@ -59,7 +59,6 @@ def _create_user_config_for_fetcher(
 
     common_args: dict[str, Any] = {
         "url": base_config.url,
-        "auth_type": auth_type,
         "ssl_verify": base_config.ssl_verify,
         "http_proxy": base_config.http_proxy,
         "https_proxy": base_config.https_proxy,
@@ -96,6 +95,7 @@ def _create_user_config_for_fetcher(
         )
         common_args.update(
             {
+                "auth_type": "oauth",
                 "username": username_for_config,
                 "api_token": None,
                 "personal_token": None,
@@ -108,6 +108,21 @@ def _create_user_config_for_fetcher(
             raise ValueError("PAT missing in credentials for user auth_type 'pat'")
         common_args.update(
             {
+                "auth_type": "pat" if isinstance(base_config, JiraConfig) else "token",
+                "personal_token": user_pat,
+                "oauth_config": None,
+                "username": None,
+                "api_token": None,
+            }
+        )
+    elif auth_type == "bearer":
+        # For bearer tokens, try PAT first (more common for Server/DC)
+        user_pat = credentials.get("personal_access_token")
+        if not user_pat:
+            raise ValueError("PAT missing in credentials for user auth_type 'bearer'")
+        common_args.update(
+            {
+                "auth_type": "pat" if isinstance(base_config, JiraConfig) else "token",
                 "personal_token": user_pat,
                 "oauth_config": None,
                 "username": None,
@@ -159,7 +174,7 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
         user_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
         logger.debug(f"get_jira_fetcher: User auth type: {user_auth_type}")
         # If OAuth or PAT token is present, create user-specific fetcher
-        if user_auth_type in ["oauth", "pat"] and hasattr(
+        if user_auth_type in ["oauth", "pat", "bearer"] and hasattr(
             request.state, "user_atlassian_token"
         ):
             user_token = getattr(request.state, "user_atlassian_token", None)
@@ -173,6 +188,11 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
                 credentials["oauth_access_token"] = user_token
             elif user_auth_type == "pat":
                 credentials["personal_access_token"] = user_token
+            elif user_auth_type == "bearer":
+                # For bearer tokens, we'll try PAT first (since it's more common for Server/DC)
+                # and fall back to OAuth if that fails
+                credentials["personal_access_token"] = user_token
+                credentials["oauth_access_token"] = user_token  # Keep both for fallback
             lifespan_ctx_dict = ctx.request_context.lifespan_context  # type: ignore
             app_lifespan_ctx: MainAppContext | None = (
                 lifespan_ctx_dict.get("app_lifespan_context")
@@ -186,25 +206,71 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
             logger.info(
                 f"Creating user-specific JiraFetcher (type: {user_auth_type}) for user {user_email or 'unknown'} (token ...{str(user_token)[-8:]})"
             )
-            user_specific_config = _create_user_config_for_fetcher(
-                base_config=app_lifespan_ctx.full_jira_config,
-                auth_type=user_auth_type,
-                credentials=credentials,
-            )
-            try:
-                user_jira_fetcher = JiraFetcher(config=user_specific_config)
-                current_user_id = user_jira_fetcher.get_current_user_account_id()
-                logger.debug(
-                    f"get_jira_fetcher: Validated Jira token for user ID: {current_user_id}"
+            
+            # For bearer tokens, try PAT first, then fallback to OAuth
+            if user_auth_type == "bearer":
+                # Try PAT first
+                try:
+                    pat_config = _create_user_config_for_fetcher(
+                        base_config=app_lifespan_ctx.full_jira_config,
+                        auth_type="bearer",  # Will be treated as PAT
+                        credentials=credentials,
+                    )
+                    user_jira_fetcher = JiraFetcher(config=pat_config)
+                    current_user_id = user_jira_fetcher.get_current_user_account_id()
+                    logger.debug(
+                        f"get_jira_fetcher: Successfully validated Jira PAT Bearer token for user ID: {current_user_id}"
+                    )
+                    request.state.jira_fetcher = user_jira_fetcher
+                    return user_jira_fetcher
+                except Exception as pat_error:
+                    logger.debug(
+                        f"get_jira_fetcher: PAT Bearer failed, trying OAuth fallback: {pat_error}"
+                    )
+                    # Try OAuth fallback if base config supports it
+                    if hasattr(app_lifespan_ctx.full_jira_config, 'oauth_config') and app_lifespan_ctx.full_jira_config.oauth_config:
+                        try:
+                            oauth_credentials = {"user_email_context": user_email, "oauth_access_token": user_token}
+                            oauth_config = _create_user_config_for_fetcher(
+                                base_config=app_lifespan_ctx.full_jira_config,
+                                auth_type="oauth",
+                                credentials=oauth_credentials,
+                            )
+                            user_jira_fetcher = JiraFetcher(config=oauth_config)
+                            current_user_id = user_jira_fetcher.get_current_user_account_id()
+                            logger.debug(
+                                f"get_jira_fetcher: Successfully validated Jira OAuth Bearer token for user ID: {current_user_id}"
+                            )
+                            request.state.jira_fetcher = user_jira_fetcher
+                            return user_jira_fetcher
+                        except Exception as oauth_error:
+                            logger.error(
+                                f"get_jira_fetcher: Both PAT and OAuth Bearer failed. PAT: {pat_error}, OAuth: {oauth_error}"
+                            )
+                            raise ValueError(f"Invalid Bearer token for both PAT and OAuth formats: PAT error: {pat_error}, OAuth error: {oauth_error}")
+                    else:
+                        raise ValueError(f"Invalid PAT Bearer token and no OAuth config available: {pat_error}")
+            else:
+                # Original logic for oauth/pat
+                user_specific_config = _create_user_config_for_fetcher(
+                    base_config=app_lifespan_ctx.full_jira_config,
+                    auth_type=user_auth_type,
+                    credentials=credentials,
                 )
-                request.state.jira_fetcher = user_jira_fetcher
-                return user_jira_fetcher
-            except Exception as e:
-                logger.error(
-                    f"get_jira_fetcher: Failed to create/validate user-specific JiraFetcher: {e}",
-                    exc_info=True,
-                )
-                raise ValueError(f"Invalid user Jira token or configuration: {e}")
+                try:
+                    user_jira_fetcher = JiraFetcher(config=user_specific_config)
+                    current_user_id = user_jira_fetcher.get_current_user_account_id()
+                    logger.debug(
+                        f"get_jira_fetcher: Validated Jira token for user ID: {current_user_id}"
+                    )
+                    request.state.jira_fetcher = user_jira_fetcher
+                    return user_jira_fetcher
+                except Exception as e:
+                    logger.error(
+                        f"get_jira_fetcher: Failed to create/validate user-specific JiraFetcher: {e}",
+                        exc_info=True,
+                    )
+                    raise ValueError(f"Invalid user Jira token or configuration: {e}")
         else:
             logger.debug(
                 f"get_jira_fetcher: No user-specific JiraFetcher. Auth type: {user_auth_type}. Token present: {hasattr(request.state, 'user_atlassian_token')}. Will use global fallback."
@@ -263,7 +329,7 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
             return request.state.confluence_fetcher
         user_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
         logger.debug(f"get_confluence_fetcher: User auth type: {user_auth_type}")
-        if user_auth_type in ["oauth", "pat"] and hasattr(
+        if user_auth_type in ["oauth", "pat", "bearer"] and hasattr(
             request.state, "user_atlassian_token"
         ):
             user_token = getattr(request.state, "user_atlassian_token", None)
@@ -275,6 +341,11 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
                 credentials["oauth_access_token"] = user_token
             elif user_auth_type == "pat":
                 credentials["personal_access_token"] = user_token
+            elif user_auth_type == "bearer":
+                # For bearer tokens, we'll try PAT first (since it's more common for Server/DC)
+                # and fall back to OAuth if that fails
+                credentials["personal_access_token"] = user_token
+                credentials["oauth_access_token"] = user_token  # Keep both for fallback
             lifespan_ctx_dict = ctx.request_context.lifespan_context  # type: ignore
             app_lifespan_ctx: MainAppContext | None = (
                 lifespan_ctx_dict.get("app_lifespan_context")
@@ -288,43 +359,126 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
             logger.info(
                 f"Creating user-specific ConfluenceFetcher (type: {user_auth_type}) for user {user_email or 'unknown'} (token ...{str(user_token)[-8:]})"
             )
-            user_specific_config = _create_user_config_for_fetcher(
-                base_config=app_lifespan_ctx.full_confluence_config,
-                auth_type=user_auth_type,
-                credentials=credentials,
-            )
-            try:
-                user_confluence_fetcher = ConfluenceFetcher(config=user_specific_config)
-                current_user_data = user_confluence_fetcher.get_current_user_info()
-                # Try to get email from Confluence if not provided (can happen with PAT)
-                derived_email = (
-                    current_user_data.get("email")
-                    if isinstance(current_user_data, dict)
-                    else None
+            
+            # For bearer tokens, try PAT first, then fallback to OAuth
+            if user_auth_type == "bearer":
+                # Try PAT first
+                try:
+                    pat_config = _create_user_config_for_fetcher(
+                        base_config=app_lifespan_ctx.full_confluence_config,
+                        auth_type="bearer",  # Will be treated as PAT
+                        credentials=credentials,
+                    )
+                    user_confluence_fetcher = ConfluenceFetcher(config=pat_config)
+                    current_user_data = user_confluence_fetcher.get_current_user_info()
+                    # Try to get email from Confluence if not provided (can happen with PAT)
+                    derived_email = (
+                        current_user_data.get("email")
+                        if isinstance(current_user_data, dict)
+                        else None
+                    )
+                    display_name = (
+                        current_user_data.get("displayName")
+                        if isinstance(current_user_data, dict)
+                        else None
+                    )
+                    logger.debug(
+                        f"get_confluence_fetcher: Successfully validated Confluence PAT Bearer token. User context: Email='{user_email or derived_email}', DisplayName='{display_name}'"
+                    )
+                    request.state.confluence_fetcher = user_confluence_fetcher
+                    if (
+                        not user_email
+                        and derived_email
+                        and current_user_data
+                        and isinstance(current_user_data, dict)
+                        and current_user_data.get("email")
+                    ):
+                        request.state.user_atlassian_email = current_user_data["email"]
+                    return user_confluence_fetcher
+                except Exception as pat_error:
+                    logger.debug(
+                        f"get_confluence_fetcher: PAT Bearer failed, trying OAuth fallback: {pat_error}"
+                    )
+                    # Try OAuth fallback if base config supports it
+                    if hasattr(app_lifespan_ctx.full_confluence_config, 'oauth_config') and app_lifespan_ctx.full_confluence_config.oauth_config:
+                        try:
+                            oauth_credentials = {"user_email_context": user_email, "oauth_access_token": user_token}
+                            oauth_config = _create_user_config_for_fetcher(
+                                base_config=app_lifespan_ctx.full_confluence_config,
+                                auth_type="oauth",
+                                credentials=oauth_credentials,
+                            )
+                            user_confluence_fetcher = ConfluenceFetcher(config=oauth_config)
+                            current_user_data = user_confluence_fetcher.get_current_user_info()
+                            derived_email = (
+                                current_user_data.get("email")
+                                if isinstance(current_user_data, dict)
+                                else None
+                            )
+                            display_name = (
+                                current_user_data.get("displayName")
+                                if isinstance(current_user_data, dict)
+                                else None
+                            )
+                            logger.debug(
+                                f"get_confluence_fetcher: Successfully validated Confluence OAuth Bearer token. User context: Email='{user_email or derived_email}', DisplayName='{display_name}'"
+                            )
+                            request.state.confluence_fetcher = user_confluence_fetcher
+                            if (
+                                not user_email
+                                and derived_email
+                                and current_user_data
+                                and isinstance(current_user_data, dict)
+                                and current_user_data.get("email")
+                            ):
+                                request.state.user_atlassian_email = current_user_data["email"]
+                            return user_confluence_fetcher
+                        except Exception as oauth_error:
+                            logger.error(
+                                f"get_confluence_fetcher: Both PAT and OAuth Bearer failed. PAT: {pat_error}, OAuth: {oauth_error}"
+                            )
+                            raise ValueError(f"Invalid Bearer token for both PAT and OAuth formats: PAT error: {pat_error}, OAuth error: {oauth_error}")
+                    else:
+                        raise ValueError(f"Invalid PAT Bearer token and no OAuth config available: {pat_error}")
+            else:
+                # Original logic for oauth/pat
+                user_specific_config = _create_user_config_for_fetcher(
+                    base_config=app_lifespan_ctx.full_confluence_config,
+                    auth_type=user_auth_type,
+                    credentials=credentials,
                 )
-                display_name = (
-                    current_user_data.get("displayName")
-                    if isinstance(current_user_data, dict)
-                    else None
-                )
-                logger.debug(
-                    f"get_confluence_fetcher: Validated Confluence token. User context: Email='{user_email or derived_email}', DisplayName='{display_name}'"
-                )
-                request.state.confluence_fetcher = user_confluence_fetcher
-                if (
-                    not user_email
-                    and derived_email
-                    and current_user_data
-                    and isinstance(current_user_data, dict)
-                    and current_user_data.get("email")
-                ):
-                    request.state.user_atlassian_email = current_user_data["email"]
-                return user_confluence_fetcher
-            except Exception as e:
-                logger.error(
-                    f"get_confluence_fetcher: Failed to create/validate user-specific ConfluenceFetcher: {e}"
-                )
-                raise ValueError(f"Invalid user Confluence token or configuration: {e}")
+                try:
+                    user_confluence_fetcher = ConfluenceFetcher(config=user_specific_config)
+                    current_user_data = user_confluence_fetcher.get_current_user_info()
+                    # Try to get email from Confluence if not provided (can happen with PAT)
+                    derived_email = (
+                        current_user_data.get("email")
+                        if isinstance(current_user_data, dict)
+                        else None
+                    )
+                    display_name = (
+                        current_user_data.get("displayName")
+                        if isinstance(current_user_data, dict)
+                        else None
+                    )
+                    logger.debug(
+                        f"get_confluence_fetcher: Validated Confluence token. User context: Email='{user_email or derived_email}', DisplayName='{display_name}'"
+                    )
+                    request.state.confluence_fetcher = user_confluence_fetcher
+                    if (
+                        not user_email
+                        and derived_email
+                        and current_user_data
+                        and isinstance(current_user_data, dict)
+                        and current_user_data.get("email")
+                    ):
+                        request.state.user_atlassian_email = current_user_data["email"]
+                    return user_confluence_fetcher
+                except Exception as e:
+                    logger.error(
+                        f"get_confluence_fetcher: Failed to create/validate user-specific ConfluenceFetcher: {e}"
+                    )
+                    raise ValueError(f"Invalid user Confluence token or configuration: {e}")
         else:
             logger.debug(
                 f"get_confluence_fetcher: No user-specific ConfluenceFetcher. Auth type: {user_auth_type}. Token present: {hasattr(request.state, 'user_atlassian_token')}. Will use global fallback."
