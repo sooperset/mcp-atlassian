@@ -417,7 +417,7 @@ class PagesMixin(ConfluenceClient):
                 if parent_id:
                     update_kwargs["parent_id"] = parent_id
 
-                response = self.confluence.update_page(**update_kwargs)
+                self.confluence.update_page(**update_kwargs)
 
             # After update, refresh the page data
             return self.get_page_content(page_id)
