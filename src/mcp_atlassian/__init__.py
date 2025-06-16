@@ -76,11 +76,6 @@ logger = setup_logging(logging_level)
     help="Comma-separated list of Confluence space keys to filter search results",
 )
 @click.option(
-    "--confluence-is-markdown-format",
-    default=True,
-    help="Confluence API token",
-)
-@click.option(
     "--jira-url",
     help="Jira URL (e.g., https://your-domain.atlassian.net or https://jira.your-company.com)",
 )
@@ -142,7 +137,6 @@ def main(
     confluence_personal_token: str | None,
     confluence_ssl_verify: bool,
     confluence_spaces_filter: str | None,
-    confluence_is_markdown_format: bool,
     jira_url: str | None,
     jira_username: str | None,
     jira_token: str | None,
@@ -284,10 +278,6 @@ def main(
         os.environ["JIRA_SSL_VERIFY"] = str(jira_ssl_verify).lower()
     if click_ctx and was_option_provided(click_ctx, "jira_projects_filter"):
         os.environ["JIRA_PROJECTS_FILTER"] = jira_projects_filter
-    if click_ctx and was_option_provided(click_ctx, "confluence_is_markdown_format"):
-        os.environ["CONFLUENCE_IS_MARKDOWN_FORMAT"] = str(
-            confluence_is_markdown_format
-        ).lower()
 
     from mcp_atlassian.servers import main_mcp
 
