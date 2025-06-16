@@ -76,8 +76,8 @@ class IssuesMixin(
                 if issue_key_project not in projects:
                     # If the project key not in the filter, return an empty issue
                     msg = (
-                        "Issue with with project prefix "
-                        f"'{issue_key_project}' are restricted"
+                        "Issue with project prefix "
+                        f"'{issue_key_project}' are restricted by configuration"
                     )
                     raise ValueError(msg)
 
