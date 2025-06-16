@@ -276,6 +276,7 @@ class PagesMixin(ConfluenceClient):
         parent_id: str | None = None,
         *,
         is_markdown: bool = True,
+        enable_heading_anchors: bool = False,
     ) -> ConfluencePage:
         """
         Create a new page in a Confluence space.
@@ -286,6 +287,7 @@ class PagesMixin(ConfluenceClient):
             body: The content of the page (markdown or storage format)
             parent_id: Optional ID of a parent page
             is_markdown: Whether the body content is in markdown format (default: True, keyword-only)
+            enable_heading_anchors: Whether to enable automatic heading anchor generation (default: False, keyword-only)
 
         Returns:
             ConfluencePage model containing the new page's data
@@ -296,7 +298,9 @@ class PagesMixin(ConfluenceClient):
         try:
             # Convert markdown to Confluence storage format if needed
             storage_body = (
-                self.preprocessor.markdown_to_confluence_storage(body)
+                self.preprocessor.markdown_to_confluence_storage(
+                    body, enable_heading_anchors=enable_heading_anchors
+                )
                 if is_markdown
                 else body
             )
@@ -350,6 +354,7 @@ class PagesMixin(ConfluenceClient):
         version_comment: str = "",
         is_markdown: bool = True,
         parent_id: str | None = None,
+        enable_heading_anchors: bool = False,
     ) -> ConfluencePage:
         """
         Update an existing page in Confluence.
@@ -362,6 +367,7 @@ class PagesMixin(ConfluenceClient):
             version_comment: Optional comment for this version (keyword-only)
             is_markdown: Whether the body content is in markdown format (default: True, keyword-only)
             parent_id: Optional new parent page ID (keyword-only)
+            enable_heading_anchors: Whether to enable automatic heading anchor generation (default: False, keyword-only)
 
         Returns:
             ConfluencePage model containing the updated page's data
@@ -372,7 +378,9 @@ class PagesMixin(ConfluenceClient):
         try:
             # Convert markdown to Confluence storage format if needed
             storage_body = (
-                self.preprocessor.markdown_to_confluence_storage(body)
+                self.preprocessor.markdown_to_confluence_storage(
+                    body, enable_heading_anchors=enable_heading_anchors
+                )
                 if is_markdown
                 else body
             )
