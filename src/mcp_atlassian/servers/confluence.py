@@ -7,6 +7,7 @@ from typing import Annotated
 from fastmcp import Context, FastMCP
 from pydantic import Field
 
+from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.servers.dependencies import get_confluence_fetcher
 from mcp_atlassian.utils.decorators import (
     check_write_access,
@@ -656,10 +657,22 @@ async def search_user(
         user_results = confluence_fetcher.search_user(query, limit=limit)
         search_results = [user.to_simplified_dict() for user in user_results]
         return json.dumps(search_results, indent=2, ensure_ascii=False)
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error during user search: {e}", exc_info=False)
+        return json.dumps(
+            {
+                "error": "Authentication failed. Please check your credentials.",
+                "details": str(e),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
     except Exception as e:
         logger.error(f"Error searching users: {str(e)}")
         return json.dumps(
-            {"error": f"Failed to search users: {str(e)}"},
+            {
+                "error": f"An unexpected error occurred while searching for users: {str(e)}"
+            },
             indent=2,
             ensure_ascii=False,
         )

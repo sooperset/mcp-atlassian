@@ -83,7 +83,7 @@ def mock_confluence_fetcher():
             "account_id": "a031248587011jasoidf9832jd8j1",
             "display_name": "First Last",
             "email": "first.last@foo.com",
-           "profile_picture": "/wiki/aa-avatar/a031248587011jasoidf9832jd8j1",
+            "profile_picture": "/wiki/aa-avatar/a031248587011jasoidf9832jd8j1",
             "is_active": True,
         },
         "url": "/people/a031248587011jasoidf9832jd8j1",
