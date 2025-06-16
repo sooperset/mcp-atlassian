@@ -26,6 +26,7 @@ dependencies = [
     "keyring>=25.6.0",
     "cachetools>=5.0.0",
     "types-cachetools>=5.5.0.20240820",
+    "PyYAML>=6.0.0",
 ]
 [[project.authors]]
 name = "sooperset"

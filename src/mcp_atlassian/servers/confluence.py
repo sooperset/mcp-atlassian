@@ -13,11 +13,18 @@ from mcp_atlassian.utils.decorators import (
     convert_empty_defaults_to_none,
 )
 
+# Import markdown sync tools
+from mcp_atlassian.confluence.markdown_sync.tools import (
+    confluence_sync_markdown_to_page,
+    confluence_sync_page_to_markdown,
+    confluence_sync_markdown_batch,
+)
+
 logger = logging.getLogger(__name__)
 
 confluence_mcp = FastMCP(
     name="Confluence MCP Service",
-    description="Provides tools for interacting with Atlassian Confluence.",
+    description="Provides tools for interacting with Atlassian Confluence, including markdown synchronization.",
 )
 
 
@@ -605,3 +612,203 @@ async def add_comment(
         }
 
     return json.dumps(response, indent=2, ensure_ascii=False)
+
+
+# Register markdown sync tools with the FastMCP instance
+@convert_empty_defaults_to_none
+@confluence_mcp.tool(tags={"confluence", "markdown", "sync", "write"})
+@check_write_access
+async def sync_markdown_to_page(
+    ctx: Context,
+    file_path: Annotated[
+        str,
+        Field(
+            description=(
+                "Path to the markdown file to sync. The file should contain valid markdown content "
+                "and optionally YAML frontmatter with Confluence metadata. "
+                "Example: './docs/project-overview.md'"
+            )
+        ),
+    ],
+    space_key: Annotated[
+        str,
+        Field(
+            description=(
+                "The key of the target Confluence space (e.g., 'DEV', 'DOCS'). "
+                "The page will be created or updated in this space."
+            )
+        ),
+    ],
+    parent_id: Annotated[
+        str,
+        Field(
+            description=(
+                "(Optional) ID of the parent page under which to create the new page. "
+                "If not provided and preserve_hierarchy is enabled, the system will "
+                "attempt to determine the parent based on the file's directory structure."
+            ),
+            default="",
+        ),
+    ] = "",
+    sync_mode: Annotated[
+        str,
+        Field(
+            description=(
+                "Synchronization mode: 'create' (only create new pages), "
+                "'update' (only update existing pages), or 'auto' (create or update as needed). "
+                "Default is 'auto'."
+            ),
+            default="auto",
+        ),
+    ] = "auto",
+    conflict_strategy: Annotated[
+        str,
+        Field(
+            description=(
+                "How to handle conflicts when both local and remote content have changed: "
+                "'overwrite' (overwrite remote changes), 'skip' (skip conflicted files), "
+                "'prompt' (prompt for resolution), or 'merge' (attempt to merge changes). "
+                "Default is 'prompt'."
+            ),
+            default="prompt",
+        ),
+    ] = "prompt",
+    dry_run: Annotated[
+        bool,
+        Field(
+            description=(
+                "If true, preview the changes without actually applying them. "
+                "Useful for testing sync operations before committing."
+            ),
+            default=False,
+        ),
+    ] = False,
+) -> str:
+    """Sync a markdown file to a Confluence page with frontmatter support."""
+    return await confluence_sync_markdown_to_page(
+        ctx, file_path, space_key, parent_id, sync_mode, conflict_strategy, dry_run
+    )
+
+
+@convert_empty_defaults_to_none
+@confluence_mcp.tool(tags={"confluence", "markdown", "sync", "read"})
+async def sync_page_to_markdown(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(
+            description=(
+                "Confluence page ID to export to markdown. "
+                "For example, in the URL 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', "
+                "the page ID is '123456789'."
+            )
+        ),
+    ],
+    output_path: Annotated[
+        str,
+        Field(
+            description=(
+                "Path where the markdown file should be saved. "
+                "The directory will be created if it doesn't exist. "
+                "Example: './docs/exported-page.md'"
+            )
+        ),
+    ],
+    include_attachments: Annotated[
+        bool,
+        Field(
+            description=(
+                "Whether to download and include page attachments. "
+                "Attachments will be saved in a subdirectory next to the markdown file."
+            ),
+            default=False,
+        ),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        Field(
+            description=(
+                "If true, preview the export without actually creating files. "
+                "Useful for testing export operations before committing."
+            ),
+            default=False,
+        ),
+    ] = False,
+) -> str:
+    """Export a Confluence page to markdown with metadata."""
+    return await confluence_sync_page_to_markdown(
+        ctx, page_id, output_path, include_attachments, dry_run
+    )
+
+
+@convert_empty_defaults_to_none
+@confluence_mcp.tool(tags={"confluence", "markdown", "sync", "batch", "write"})
+@check_write_access
+async def sync_markdown_batch(
+    ctx: Context,
+    files: Annotated[
+        str,
+        Field(
+            description=(
+                "Comma-separated list of markdown file paths or glob patterns to sync. "
+                "Examples: './docs/*.md,./guides/setup.md' or "
+                "'./docs/project-overview.md,./docs/api-reference.md'"
+            )
+        ),
+    ],
+    space_key: Annotated[
+        str,
+        Field(
+            description=(
+                "The key of the target Confluence space for all files. "
+                "Individual files can override this with frontmatter."
+            )
+        ),
+    ],
+    sync_mode: Annotated[
+        str,
+        Field(
+            description=(
+                "Synchronization mode for all files: 'create', 'update', or 'auto'. "
+                "Default is 'auto'."
+            ),
+            default="auto",
+        ),
+    ] = "auto",
+    conflict_strategy: Annotated[
+        str,
+        Field(
+            description=(
+                "How to handle conflicts: 'overwrite', 'skip', 'prompt', or 'merge'. "
+                "Default is 'prompt'."
+            ),
+            default="prompt",
+        ),
+    ] = "prompt",
+    preserve_hierarchy: Annotated[
+        bool,
+        Field(
+            description=(
+                "Whether to maintain directory structure as page hierarchy. "
+                "If true, pages will be organized based on file directory structure."
+            ),
+            default=True,
+        ),
+    ] = True,
+    dry_run: Annotated[
+        bool,
+        Field(
+            description=(
+                "If true, preview all changes without applying them. "
+                "Shows what would be synced for each file."
+            ),
+            default=False,
+        ),
+    ] = False,
+) -> str:
+    """Sync multiple markdown files to Confluence pages in batch."""
+    # Convert comma-separated string to list
+    files_list = [f.strip() for f in files.split(',') if f.strip()]
+    return await confluence_sync_markdown_batch(
+        ctx, files_list, space_key, sync_mode, conflict_strategy, preserve_hierarchy, dry_run
+    )
