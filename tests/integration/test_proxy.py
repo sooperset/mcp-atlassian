@@ -21,6 +21,8 @@ def test_jira_client_passes_proxies_to_requests(monkeypatch):
     """Test that JiraClient passes proxies to requests.Session.request."""
     mock_jira = MagicMock()
     mock_session = MagicMock()
+    # Create a proper proxies dictionary that can be updated
+    mock_session.proxies = {}
     mock_jira._session = mock_session
     monkeypatch.setattr("mcp_atlassian.jira.client.Jira", lambda **kwargs: mock_jira)
     monkeypatch.setattr(
@@ -51,6 +53,8 @@ def test_confluence_client_passes_proxies_to_requests(monkeypatch):
     """Test that ConfluenceClient passes proxies to requests.Session.request."""
     mock_confluence = MagicMock()
     mock_session = MagicMock()
+    # Create a proper proxies dictionary that can be updated
+    mock_session.proxies = {}
     mock_confluence._session = mock_session
     monkeypatch.setattr(
         "mcp_atlassian.confluence.client.Confluence", lambda **kwargs: mock_confluence
@@ -113,22 +117,26 @@ class TestProxyConfigurationEnhanced(BaseAuthTest):
     def test_proxy_configuration_from_environment(self):
         """Test proxy configuration loaded from environment variables."""
         with MockEnvironment.basic_auth_env() as env_vars:
-            # Set proxy environment variables
-            env_vars["HTTP_PROXY"] = "http://proxy.company.com:8080"
-            env_vars["HTTPS_PROXY"] = "https://proxy.company.com:8443"
-            env_vars["NO_PROXY"] = "*.internal.com,localhost"
+            # Set proxy environment variables in os.environ directly
+            proxy_vars = {
+                "HTTP_PROXY": "http://proxy.company.com:8080",
+                "HTTPS_PROXY": "https://proxy.company.com:8443",
+                "NO_PROXY": "*.internal.com,localhost"
+            }
             
-            # Jira should pick up proxy settings
-            jira_config = JiraConfig.from_env()
-            assert jira_config.http_proxy == "http://proxy.company.com:8080"
-            assert jira_config.https_proxy == "https://proxy.company.com:8443"
-            assert jira_config.no_proxy == "*.internal.com,localhost"
-            
-            # Confluence should pick up proxy settings
-            confluence_config = ConfluenceConfig.from_env()
-            assert confluence_config.http_proxy == "http://proxy.company.com:8080"
-            assert confluence_config.https_proxy == "https://proxy.company.com:8443"
-            assert confluence_config.no_proxy == "*.internal.com,localhost"
+            # Patch environment with proxy settings
+            with patch.dict(os.environ, proxy_vars):
+                # Jira should pick up proxy settings
+                jira_config = JiraConfig.from_env()
+                assert jira_config.http_proxy == "http://proxy.company.com:8080"
+                assert jira_config.https_proxy == "https://proxy.company.com:8443"
+                assert jira_config.no_proxy == "*.internal.com,localhost"
+                
+                # Confluence should pick up proxy settings
+                confluence_config = ConfluenceConfig.from_env()
+                assert confluence_config.http_proxy == "http://proxy.company.com:8080"
+                assert confluence_config.https_proxy == "https://proxy.company.com:8443"
+                assert confluence_config.no_proxy == "*.internal.com,localhost"
     
     @pytest.mark.integration
     def test_proxy_authentication_in_url(self):
@@ -151,6 +159,8 @@ class TestProxyConfigurationEnhanced(BaseAuthTest):
         """Test SOCKS proxy configuration for both services."""
         mock_jira = MagicMock()
         mock_session = MagicMock()
+        # Create a proper proxies dictionary that can be updated
+        mock_session.proxies = {}
         mock_jira._session = mock_session
         monkeypatch.setattr("mcp_atlassian.jira.client.Jira", lambda **kwargs: mock_jira)
         monkeypatch.setattr(
@@ -233,6 +243,8 @@ class TestProxyConfigurationEnhanced(BaseAuthTest):
         """Test proxy configuration works correctly with SSL verification disabled."""
         mock_confluence = MagicMock()
         mock_session = MagicMock()
+        # Create a proper proxies dictionary that can be updated
+        mock_session.proxies = {}
         mock_confluence._session = mock_session
         monkeypatch.setattr(
             "mcp_atlassian.confluence.client.Confluence", lambda **kwargs: mock_confluence
@@ -266,12 +278,19 @@ class TestProxyConfigurationEnhanced(BaseAuthTest):
     def test_proxy_with_oauth_configuration(self):
         """Test proxy configuration works with OAuth authentication."""
         with MockEnvironment.oauth_env() as env_vars:
-            # Add proxy configuration
-            env_vars["HTTP_PROXY"] = "http://proxy.company.com:8080"
-            env_vars["HTTPS_PROXY"] = "https://proxy.company.com:8443"
-            env_vars["NO_PROXY"] = "localhost,127.0.0.1"
+            # Add proxy configuration to env_vars directly, then patch os.environ
+            proxy_vars = {
+                "HTTP_PROXY": "http://proxy.company.com:8080",
+                "HTTPS_PROXY": "https://proxy.company.com:8443",
+                "NO_PROXY": "localhost,127.0.0.1"
+            }
             
-            # OAuth should still respect proxy settings
-            assert os.environ.get("HTTP_PROXY") == "http://proxy.company.com:8080"
-            assert os.environ.get("HTTPS_PROXY") == "https://proxy.company.com:8443"
-            assert os.environ.get("NO_PROXY") == "localhost,127.0.0.1"
+            # Merge with OAuth env vars
+            all_vars = {**env_vars, **proxy_vars}
+            
+            # Use patch.dict to ensure environment variables are set
+            with patch.dict(os.environ, all_vars):
+                # OAuth should still respect proxy settings
+                assert os.environ.get("HTTP_PROXY") == "http://proxy.company.com:8080"
+                assert os.environ.get("HTTPS_PROXY") == "https://proxy.company.com:8443"
+                assert os.environ.get("NO_PROXY") == "localhost,127.0.0.1"

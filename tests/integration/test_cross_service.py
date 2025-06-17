@@ -370,14 +370,33 @@ class TestConcurrentServiceInitialization:
                 }
                 mock_confluence_fetcher.return_value = mock_confluence_instance
                 
-                # Create fetchers in parallel
-                jira_task = asyncio.create_task(get_jira_fetcher(ctx))
-                confluence_task = asyncio.create_task(get_confluence_fetcher(ctx))
+                # Create fetchers in parallel using anyio for backend compatibility
+                import anyio
                 
-                # Wait for both
-                jira_fetcher, confluence_fetcher = await asyncio.gather(
-                    jira_task, confluence_task
-                )
+                async def fetch_jira():
+                    return await get_jira_fetcher(ctx)
+                
+                async def fetch_confluence():
+                    return await get_confluence_fetcher(ctx)
+                
+                # Wait for both using anyio task group
+                async with anyio.create_task_group() as tg:
+                    jira_future = None
+                    confluence_future = None
+                    
+                    async def set_jira():
+                        nonlocal jira_future
+                        jira_future = await fetch_jira()
+                    
+                    async def set_confluence():
+                        nonlocal confluence_future
+                        confluence_future = await fetch_confluence()
+                    
+                    tg.start_soon(set_jira)
+                    tg.start_soon(set_confluence)
+                
+                jira_fetcher = jira_future
+                confluence_fetcher = confluence_future
                 
                 # Both should be created successfully
                 assert jira_fetcher is not None
