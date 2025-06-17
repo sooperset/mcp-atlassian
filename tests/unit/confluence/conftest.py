@@ -27,6 +27,7 @@ from fixtures.confluence_mocks import (
 
 from mcp_atlassian.confluence.client import ConfluenceClient
 from mcp_atlassian.confluence.config import ConfluenceConfig
+from mcp_atlassian.utils.oauth import OAuthConfig
 from tests.utils.factories import AuthConfigFactory, ConfluencePageFactory
 from tests.utils.mocks import MockAtlassianClient, MockPreprocessor
 
@@ -403,6 +404,80 @@ def preprocessor_factory():
 # ============================================================================
 # Client Instance Fixtures
 # ============================================================================
+
+
+@pytest.fixture
+def oauth_confluence_client(mock_preprocessor):
+    """
+    Create a ConfluenceClient instance configured for OAuth authentication.
+
+    This fixture provides a Confluence client configured with OAuth settings
+    for testing OAuth-specific functionality.
+
+    Args:
+        mock_preprocessor: Mock text preprocessor
+
+    Returns:
+        ConfluenceClient: OAuth-configured client instance
+    """
+    # Create OAuth configuration
+    oauth_config = OAuthConfig(
+        client_id="test-client-id",
+        client_secret="test-client-secret",
+        redirect_uri="http://localhost:8080/callback",
+        scope="read:confluence-content write:confluence-content",
+        cloud_id="test-cloud-id",
+    )
+
+    # Convert to ConfluenceConfig format (use .atlassian.net URL to make is_cloud return True)
+    config = ConfluenceConfig(
+        url="https://test.atlassian.net/wiki",
+        auth_type="oauth",
+        oauth_config=oauth_config,
+    )
+
+    # Mock the OAuth session setup and Confluence client
+    with patch(
+        "mcp_atlassian.confluence.client.configure_oauth_session"
+    ) as mock_oauth_session:
+        with patch(
+            "mcp_atlassian.confluence.client.Confluence"
+        ) as mock_confluence_class:
+            with patch(
+                "mcp_atlassian.preprocessing.TextPreprocessor"
+            ) as mock_text_preprocessor:
+                # Mock OAuth session configuration to succeed
+                mock_oauth_session.return_value = True
+
+                mock_text_preprocessor.return_value = mock_preprocessor
+
+                # Create the mock Confluence instance
+                mock_confluence_instance = MagicMock()
+                mock_confluence_class.return_value = mock_confluence_instance
+
+                # Set up OAuth-specific mock responses
+                mock_confluence_instance.get_all_spaces.return_value = (
+                    MOCK_SPACES_RESPONSE
+                )
+                mock_confluence_instance.get_page_by_id.return_value = (
+                    MOCK_PAGE_RESPONSE
+                )
+                mock_confluence_instance.create_page.return_value = (
+                    ConfluencePageFactory.create(
+                        page_id="v2_123456789", title="OAuth Test Page"
+                    )
+                )
+
+                # Mock the session to have OAuth characteristics
+                mock_session = MagicMock()
+                mock_confluence_instance._session = mock_session
+
+                # Create the client with OAuth config
+                client = ConfluenceClient(config=config)
+                client.confluence = mock_confluence_instance
+                client.preprocessor = mock_preprocessor
+
+                yield client
 
 
 @pytest.fixture
