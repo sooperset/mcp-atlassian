@@ -9,7 +9,11 @@ from requests import Session
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.preprocessing import JiraPreprocessor
-from mcp_atlassian.utils.logging import log_config_param, mask_sensitive
+from mcp_atlassian.utils.logging import (
+    get_masked_session_headers,
+    log_config_param,
+    mask_sensitive,
+)
 from mcp_atlassian.utils.oauth import configure_oauth_session
 from mcp_atlassian.utils.ssl import configure_ssl_verification
 
@@ -60,9 +64,6 @@ class JiraClient:
                 f"https://api.atlassian.com/ex/jira/{self.config.oauth_config.cloud_id}"
             )
 
-            logger.debug(
-                f"Initializing Jira client with OAuth. API URL: {api_url}, Session Headers (before API init): {session.headers}"
-            )
             # Initialize Jira with the session
             self.jira = Jira(
                 url=api_url,
@@ -70,12 +71,11 @@ class JiraClient:
                 cloud=True,  # OAuth is only for Cloud
                 verify_ssl=self.config.ssl_verify,
             )
-            logger.debug(
-                f"Jira client _session after init: {self.jira._session.__dict__}"
-            )
         elif self.config.auth_type == "pat":
             logger.debug(
-                f"Initializing Jira client with Token (PAT) auth. URL: {self.config.url}, Token (masked): {mask_sensitive(str(self.config.personal_token))}"
+                f"Initializing Jira client with Token (PAT) auth. "
+                f"URL: {self.config.url}, "
+                f"Token (masked): {mask_sensitive(str(self.config.personal_token))}"
             )
             self.jira = Jira(
                 url=self.config.url,
@@ -85,7 +85,10 @@ class JiraClient:
             )
         else:  # basic auth
             logger.debug(
-                f"Initializing Jira client with Basic auth. URL: {self.config.url}, Username: {self.config.username}, API Token present: {bool(self.config.api_token)}, Is Cloud: {self.config.is_cloud}"
+                f"Initializing Jira client with Basic auth. "
+                f"URL: {self.config.url}, Username: {self.config.username}, "
+                f"API Token present: {bool(self.config.api_token)}, "
+                f"Is Cloud: {self.config.is_cloud}"
             )
             self.jira = Jira(
                 url=self.config.url,
@@ -95,7 +98,8 @@ class JiraClient:
                 verify_ssl=self.config.ssl_verify,
             )
             logger.debug(
-                f"Jira client initialized. Session headers (Authorization masked): {self._get_masked_session_headers()}"
+                f"Jira client initialized. Session headers (Authorization masked): "
+                f"{get_masked_session_headers(dict(self.jira._session.headers))}"
             )
 
         # Configure SSL verification using the shared utility
@@ -135,21 +139,9 @@ class JiraClient:
                 self._validate_authentication()
             except MCPAtlassianAuthenticationError:
                 logger.warning(
-                    "Authentication validation failed during client initialization - continuing anyway"
+                    "Authentication validation failed during client initialization - "
+                    "continuing anyway"
                 )
-
-    def _get_masked_session_headers(self) -> dict[str, str]:
-        """Get session headers with sensitive info masked for debugging."""
-        headers = {k: str(v) for k, v in self.jira._session.headers.items()}
-        if "Authorization" in headers:
-            auth_value = headers["Authorization"]
-            if auth_value.startswith("Basic "):
-                headers["Authorization"] = f"Basic {mask_sensitive(auth_value[6:])}"
-            elif auth_value.startswith("Bearer "):
-                headers["Authorization"] = f"Bearer {mask_sensitive(auth_value[7:])}"
-            else:
-                headers["Authorization"] = mask_sensitive(auth_value)
-        return headers
 
     def _validate_authentication(self) -> None:
         """Validate authentication by making a simple API call."""
@@ -160,17 +152,21 @@ class JiraClient:
             current_user = self.jira.myself()
             if current_user:
                 logger.info(
-                    f"Jira authentication successful. Current user: {current_user.get('displayName', 'Unknown')} ({current_user.get('emailAddress', 'No email')})"
+                    f"Jira authentication successful. "
+                    f"Current user: {current_user.get('displayName', 'Unknown')} "
+                    f"({current_user.get('emailAddress', 'No email')})"
                 )
             else:
                 logger.warning(
-                    "Jira authentication test returned empty user info - this may indicate an issue"
+                    "Jira authentication test returned empty user info - "
+                    "this may indicate an issue"
                 )
         except Exception as e:
             error_msg = f"Jira authentication validation failed: {e}"
             logger.error(error_msg)
             logger.debug(
-                f"Authentication headers during failure: {self._get_masked_session_headers()}"
+                f"Authentication headers during failure: "
+                f"{get_masked_session_headers(dict(self.jira._session.headers))}"
             )
             raise MCPAtlassianAuthenticationError(error_msg) from e
 
@@ -303,5 +299,6 @@ class JiraClient:
         logger.info(f"Creating Jira version: {payload}")
         result = self.jira.post("/rest/api/3/version", json=payload)
         if not isinstance(result, dict):
-            raise ValueError(f"Unexpected response from Jira API: {result}")
+            error_message = f"Unexpected response from Jira API: {result}"
+            raise ValueError(error_message)
         return result

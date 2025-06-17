@@ -7,7 +7,7 @@ from atlassian import Confluence
 from requests import Session
 
 from ..exceptions import MCPAtlassianAuthenticationError
-from ..utils.logging import log_config_param, mask_sensitive
+from ..utils.logging import get_masked_session_headers, log_config_param, mask_sensitive
 from ..utils.oauth import configure_oauth_session
 from ..utils.ssl import configure_ssl_verification
 from .config import ConfluenceConfig
@@ -49,9 +49,6 @@ class ConfluenceClient:
             # The Confluence API URL with OAuth is different
             api_url = f"https://api.atlassian.com/ex/confluence/{self.config.oauth_config.cloud_id}"
 
-            logger.debug(
-                f"Initializing Confluence client with OAuth. API URL: {api_url}, Session Headers (before API init): {session.headers}"
-            )
             # Initialize Confluence with the session
             self.confluence = Confluence(
                 url=api_url,
@@ -59,12 +56,11 @@ class ConfluenceClient:
                 cloud=True,  # OAuth is only for Cloud
                 verify_ssl=self.config.ssl_verify,
             )
-            logger.debug(
-                f"Confluence client _session after init: {self.confluence._session.__dict__}"
-            )
         elif self.config.auth_type == "token":
             logger.debug(
-                f"Initializing Confluence client with Token (PAT) auth. URL: {self.config.url}, Token (masked): {mask_sensitive(str(self.config.personal_token))}"
+                f"Initializing Confluence client with Token (PAT) auth. "
+                f"URL: {self.config.url}, "
+                f"Token (masked): {mask_sensitive(str(self.config.personal_token))}"
             )
             self.confluence = Confluence(
                 url=self.config.url,
@@ -74,7 +70,10 @@ class ConfluenceClient:
             )
         else:  # basic auth
             logger.debug(
-                f"Initializing Confluence client with Basic auth. URL: {self.config.url}, Username: {self.config.username}, API Token present: {bool(self.config.api_token)}, Is Cloud: {self.config.is_cloud}"
+                f"Initializing Confluence client with Basic auth. "
+                f"URL: {self.config.url}, Username: {self.config.username}, "
+                f"API Token present: {bool(self.config.api_token)}, "
+                f"Is Cloud: {self.config.is_cloud}"
             )
             self.confluence = Confluence(
                 url=self.config.url,
@@ -84,7 +83,9 @@ class ConfluenceClient:
                 verify_ssl=self.config.ssl_verify,
             )
             logger.debug(
-                f"Confluence client initialized. Session headers (Authorization masked): {self._get_masked_session_headers()}"
+                f"Confluence client initialized. "
+                f"Session headers (Authorization masked): "
+                f"{get_masked_session_headers(dict(self.confluence._session.headers))}"
             )
 
         # Configure SSL verification using the shared utility
@@ -126,21 +127,9 @@ class ConfluenceClient:
                 self._validate_authentication()
             except MCPAtlassianAuthenticationError:
                 logger.warning(
-                    "Authentication validation failed during client initialization - continuing anyway"
+                    "Authentication validation failed during client initialization - "
+                    "continuing anyway"
                 )
-
-    def _get_masked_session_headers(self) -> dict[str, str]:
-        """Get session headers with sensitive info masked for debugging."""
-        headers = {k: str(v) for k, v in self.confluence._session.headers.items()}
-        if "Authorization" in headers:
-            auth_value = headers["Authorization"]
-            if auth_value.startswith("Basic "):
-                headers["Authorization"] = f"Basic {mask_sensitive(auth_value[6:])}"
-            elif auth_value.startswith("Bearer "):
-                headers["Authorization"] = f"Bearer {mask_sensitive(auth_value[7:])}"
-            else:
-                headers["Authorization"] = mask_sensitive(auth_value)
-        return headers
 
     def _validate_authentication(self) -> None:
         """Validate authentication by making a simple API call."""
@@ -152,17 +141,20 @@ class ConfluenceClient:
             spaces = self.confluence.get_all_spaces(start=0, limit=1)
             if spaces is not None:
                 logger.info(
-                    f"Confluence authentication successful. API call returned {len(spaces.get('results', []))} spaces."
+                    f"Confluence authentication successful. "
+                    f"API call returned {len(spaces.get('results', []))} spaces."
                 )
             else:
                 logger.warning(
-                    "Confluence authentication test returned None - this may indicate an issue"
+                    "Confluence authentication test returned None - "
+                    "this may indicate an issue"
                 )
         except Exception as e:
             error_msg = f"Confluence authentication validation failed: {e}"
             logger.error(error_msg)
             logger.debug(
-                f"Authentication headers during failure: {self._get_masked_session_headers()}"
+                f"Authentication headers during failure: "
+                f"{get_masked_session_headers(dict(self.confluence._session.headers))}"
             )
             raise MCPAtlassianAuthenticationError(error_msg) from e
 
