@@ -1,11 +1,12 @@
 """Tests for the environment utilities module."""
 
 import logging
+
 import pytest
 
 from mcp_atlassian.utils.environment import get_available_services
-from tests.utils.mocks import MockEnvironment
 from tests.utils.assertions import assert_log_contains
+from tests.utils.mocks import MockEnvironment
 
 
 @pytest.fixture(autouse=True)
@@ -58,10 +59,7 @@ def env_scenarios():
 
 def _assert_service_availability(result, confluence_expected, jira_expected):
     """Helper to assert service availability."""
-    assert result == {
-        "confluence": confluence_expected,
-        "jira": jira_expected
-    }
+    assert result == {"confluence": confluence_expected, "jira": jira_expected}
 
 
 def _assert_authentication_logs(caplog, auth_type, services):
@@ -72,13 +70,17 @@ def _assert_authentication_logs(caplog, auth_type, services):
         "server": "Server/Data Center authentication (PAT or Basic Auth)",
         "not_configured": "is not configured or required environment variables are missing",
     }
-    
+
     for service in services:
         service_name = service.title()
         if auth_type == "not_configured":
-            assert_log_contains(caplog, "INFO", f"{service_name} {log_patterns[auth_type]}")
+            assert_log_contains(
+                caplog, "INFO", f"{service_name} {log_patterns[auth_type]}"
+            )
         else:
-            assert_log_contains(caplog, "INFO", f"Using {service_name} {log_patterns[auth_type]}")
+            assert_log_contains(
+                caplog, "INFO", f"Using {service_name} {log_patterns[auth_type]}"
+            )
 
 
 class TestGetAvailableServices:
@@ -88,8 +90,12 @@ class TestGetAvailableServices:
         """Test that no services are available when no environment variables are set."""
         with MockEnvironment.clean_env():
             result = get_available_services()
-            _assert_service_availability(result, False, False)
-            _assert_authentication_logs(caplog, "not_configured", ["confluence", "jira"])
+            _assert_service_availability(
+                result, confluence_expected=False, jira_expected=False
+            )
+            _assert_authentication_logs(
+                caplog, "not_configured", ["confluence", "jira"]
+            )
 
     @pytest.mark.parametrize(
         "scenario,expected_confluence,expected_jira",
@@ -107,16 +113,23 @@ class TestGetAvailableServices:
         with MockEnvironment.clean_env():
             for key, value in env_scenarios[scenario].items():
                 import os
+
                 os.environ[key] = value
-            
+
             result = get_available_services()
-            _assert_service_availability(result, expected_confluence, expected_jira)
-            
+            _assert_service_availability(
+                result,
+                confluence_expected=expected_confluence,
+                jira_expected=expected_jira,
+            )
+
             # Verify appropriate log messages based on scenario
             if scenario == "oauth_cloud":
                 _assert_authentication_logs(caplog, "oauth", ["confluence", "jira"])
             elif scenario == "basic_auth_cloud":
-                _assert_authentication_logs(caplog, "cloud_basic", ["confluence", "jira"])
+                _assert_authentication_logs(
+                    caplog, "cloud_basic", ["confluence", "jira"]
+                )
             elif scenario in ["pat_server", "basic_auth_server"]:
                 _assert_authentication_logs(caplog, "server", ["confluence", "jira"])
 
@@ -130,19 +143,24 @@ class TestGetAvailableServices:
             "ATLASSIAN_OAUTH_CLOUD_ID",
         ],
     )
-    def test_oauth_missing_required_vars(self, env_scenarios, missing_oauth_var, caplog):
+    def test_oauth_missing_required_vars(
+        self, env_scenarios, missing_oauth_var, caplog
+    ):
         """Test that OAuth fails when any required variable is missing."""
         with MockEnvironment.clean_env():
             oauth_config = env_scenarios["oauth_cloud"]
             # Remove one required OAuth variable
             del oauth_config[missing_oauth_var]
-            
+
             for key, value in oauth_config.items():
                 import os
+
                 os.environ[key] = value
-            
+
             result = get_available_services()
-            _assert_service_availability(result, False, False)
+            _assert_service_availability(
+                result, confluence_expected=False, jira_expected=False
+            )
 
     @pytest.mark.parametrize(
         "missing_basic_vars,service",
@@ -157,17 +175,20 @@ class TestGetAvailableServices:
         """Test that basic auth fails when credentials are missing."""
         with MockEnvironment.clean_env():
             basic_config = env_scenarios["basic_auth_cloud"].copy()
-            
+
             # Remove required variables
             for var in missing_basic_vars:
                 del basic_config[var]
-            
+
             for key, value in basic_config.items():
                 import os
+
                 os.environ[key] = value
-            
+
             result = get_available_services()
-            _assert_service_availability(result, False, False)
+            _assert_service_availability(
+                result, confluence_expected=False, jira_expected=False
+            )
 
     def test_oauth_precedence_over_basic_auth(self, env_scenarios, caplog):
         """Test that OAuth takes precedence over Basic Auth."""
@@ -177,14 +198,17 @@ class TestGetAvailableServices:
                 **env_scenarios["oauth_cloud"],
                 **env_scenarios["basic_auth_cloud"],
             }
-            
+
             for key, value in combined_config.items():
                 import os
+
                 os.environ[key] = value
-            
+
             result = get_available_services()
-            _assert_service_availability(result, True, True)
-            
+            _assert_service_availability(
+                result, confluence_expected=True, jira_expected=True
+            )
+
             # Should use OAuth, not Basic Auth
             _assert_authentication_logs(caplog, "oauth", ["confluence", "jira"])
             assert "Basic Authentication" not in caplog.text
@@ -193,13 +217,16 @@ class TestGetAvailableServices:
         """Test mixed configurations where only one service is configured."""
         with MockEnvironment.clean_env():
             import os
+
             os.environ["CONFLUENCE_URL"] = "https://company.atlassian.net"
             os.environ["CONFLUENCE_USERNAME"] = "user@company.com"
             os.environ["CONFLUENCE_API_TOKEN"] = "api_token"
-            
+
             result = get_available_services()
-            _assert_service_availability(result, True, False)
-            
+            _assert_service_availability(
+                result, confluence_expected=True, jira_expected=False
+            )
+
             _assert_authentication_logs(caplog, "cloud_basic", ["confluence"])
             _assert_authentication_logs(caplog, "not_configured", ["jira"])
 
@@ -207,7 +234,7 @@ class TestGetAvailableServices:
         """Test that the return value has the correct structure."""
         with MockEnvironment.clean_env():
             result = get_available_services()
-            
+
             assert isinstance(result, dict)
             assert set(result.keys()) == {"confluence", "jira"}
             assert all(isinstance(v, bool) for v in result.values())
@@ -224,8 +251,13 @@ class TestGetAvailableServices:
         with MockEnvironment.clean_env():
             for key, value in invalid_vars.items():
                 import os
+
                 os.environ[key] = value
-            
+
             result = get_available_services()
-            _assert_service_availability(result, False, False)
-            _assert_authentication_logs(caplog, "not_configured", ["confluence", "jira"])
+            _assert_service_availability(
+                result, confluence_expected=False, jira_expected=False
+            )
+            _assert_authentication_logs(
+                caplog, "not_configured", ["confluence", "jira"]
+            )

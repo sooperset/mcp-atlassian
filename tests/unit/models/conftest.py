@@ -7,10 +7,11 @@ reusable fixtures for model validation and serialization testing.
 """
 
 import os
-from typing import Dict, Any, List, Callable, Optional
+from typing import Any
 
 import pytest
 
+from mcp_atlassian.utils.env import is_env_truthy
 from tests.fixtures.confluence_mocks import (
     MOCK_COMMENTS_RESPONSE,
     MOCK_CQL_SEARCH_RESPONSE,
@@ -24,30 +25,28 @@ from tests.fixtures.jira_mocks import (
     MOCK_JIRA_ISSUE_RESPONSE,
     MOCK_JIRA_JQL_RESPONSE,
 )
-
 from tests.utils.factories import (
-    JiraIssueFactory,
     ConfluencePageFactory,
     ErrorResponseFactory,
-    AuthConfigFactory
+    JiraIssueFactory,
 )
-
 
 # ============================================================================
 # Factory-Based Data Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def make_jira_issue_data():
     """
     Factory fixture for creating Jira issue data for model testing.
-    
+
     This provides more flexibility than static mock data and allows
     customization for different test scenarios.
-    
+
     Returns:
         Callable: Function that creates Jira issue data
-        
+
     Example:
         def test_jira_model(make_jira_issue_data):
             issue_data = make_jira_issue_data(
@@ -64,10 +63,10 @@ def make_jira_issue_data():
 def make_confluence_page_data():
     """
     Factory fixture for creating Confluence page data for model testing.
-    
+
     Returns:
         Callable: Function that creates Confluence page data
-        
+
     Example:
         def test_confluence_model(make_confluence_page_data):
             page_data = make_confluence_page_data(
@@ -84,10 +83,10 @@ def make_confluence_page_data():
 def make_error_response_data():
     """
     Factory fixture for creating error response data for model testing.
-    
+
     Returns:
         Callable: Function that creates error response data
-        
+
     Example:
         def test_error_model(make_error_response_data):
             error_data = make_error_response_data(
@@ -104,11 +103,12 @@ def make_error_response_data():
 # Compatibility Fixtures (using legacy mock data)
 # ============================================================================
 
+
 @pytest.fixture
-def jira_issue_data() -> Dict[str, Any]:
+def jira_issue_data() -> dict[str, Any]:
     """
     Return mock Jira issue data.
-    
+
     Note: This fixture is maintained for backward compatibility.
     Consider using make_jira_issue_data for new tests.
     """
@@ -116,40 +116,40 @@ def jira_issue_data() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def jira_search_data() -> Dict[str, Any]:
+def jira_search_data() -> dict[str, Any]:
     """
     Return mock Jira search (JQL) results.
-    
+
     Note: This fixture is maintained for backward compatibility.
     """
     return MOCK_JIRA_JQL_RESPONSE
 
 
 @pytest.fixture
-def jira_comments_data() -> Dict[str, Any]:
+def jira_comments_data() -> dict[str, Any]:
     """
     Return mock Jira comments data.
-    
+
     Note: This fixture is maintained for backward compatibility.
     """
     return MOCK_JIRA_COMMENTS
 
 
 @pytest.fixture
-def confluence_search_data() -> Dict[str, Any]:
+def confluence_search_data() -> dict[str, Any]:
     """
     Return mock Confluence search (CQL) results.
-    
+
     Note: This fixture is maintained for backward compatibility.
     """
     return MOCK_CQL_SEARCH_RESPONSE
 
 
 @pytest.fixture
-def confluence_page_data() -> Dict[str, Any]:
+def confluence_page_data() -> dict[str, Any]:
     """
     Return mock Confluence page data.
-    
+
     Note: This fixture is maintained for backward compatibility.
     Consider using make_confluence_page_data for new tests.
     """
@@ -157,20 +157,20 @@ def confluence_page_data() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def confluence_comments_data() -> Dict[str, Any]:
+def confluence_comments_data() -> dict[str, Any]:
     """
     Return mock Confluence comments data.
-    
+
     Note: This fixture is maintained for backward compatibility.
     """
     return MOCK_COMMENTS_RESPONSE
 
 
 @pytest.fixture
-def confluence_labels_data() -> Dict[str, Any]:
+def confluence_labels_data() -> dict[str, Any]:
     """
     Return mock Confluence labels data.
-    
+
     Note: This fixture is maintained for backward compatibility.
     """
     return MOCK_LABELS_RESPONSE
@@ -180,14 +180,15 @@ def confluence_labels_data() -> Dict[str, Any]:
 # Enhanced Model Test Data Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def complete_jira_issue_data():
     """
     Fixture providing complete Jira issue data with all fields populated.
-    
+
     This is useful for testing model serialization/deserialization with
     full field coverage.
-    
+
     Returns:
         Dict[str, Any]: Complete Jira issue data
     """
@@ -202,12 +203,12 @@ def complete_jira_issue_data():
             "assignee": {
                 "displayName": "Test Assignee",
                 "emailAddress": "assignee@example.com",
-                "accountId": "assignee-account-id"
+                "accountId": "assignee-account-id",
             },
             "reporter": {
-                "displayName": "Test Reporter", 
+                "displayName": "Test Reporter",
                 "emailAddress": "reporter@example.com",
-                "accountId": "reporter-account-id"
+                "accountId": "reporter-account-id",
             },
             "labels": ["testing", "complete", "model"],
             "components": [{"name": "Frontend"}, {"name": "Backend"}],
@@ -216,11 +217,11 @@ def complete_jira_issue_data():
             "updated": "2023-01-02T12:00:00.000+0000",
             "duedate": "2023-01-15",
             "timeestimate": 28800,  # 8 hours in seconds
-            "timespent": 14400,     # 4 hours in seconds
+            "timespent": 14400,  # 4 hours in seconds
             "timeoriginalestimate": 28800,
             "customfield_10012": 8.0,  # Story points
             "customfield_10010": "EPIC-123",  # Epic link
-        }
+        },
     )
 
 
@@ -228,9 +229,9 @@ def complete_jira_issue_data():
 def minimal_jira_issue_data():
     """
     Fixture providing minimal Jira issue data for edge case testing.
-    
+
     This is useful for testing model behavior with minimal required fields.
-    
+
     Returns:
         Dict[str, Any]: Minimal Jira issue data
     """
@@ -241,7 +242,7 @@ def minimal_jira_issue_data():
 def complete_confluence_page_data():
     """
     Fixture providing complete Confluence page data with all fields populated.
-    
+
     Returns:
         Dict[str, Any]: Complete Confluence page data
     """
@@ -250,42 +251,34 @@ def complete_confluence_page_data():
         title="Complete Test Page",
         type="page",
         status="current",
-        space={
-            "key": "COMPLETE",
-            "name": "Complete Test Space",
-            "type": "global"
-        },
+        space={"key": "COMPLETE", "name": "Complete Test Space", "type": "global"},
         body={
             "storage": {
                 "value": "<h1>Complete Test Page</h1><p>This page has all fields populated.</p>",
-                "representation": "storage"
+                "representation": "storage",
             },
             "view": {
                 "value": "<h1>Complete Test Page</h1><p>This page has all fields populated.</p>",
-                "representation": "view"
-            }
+                "representation": "view",
+            },
         },
         version={
             "number": 2,
             "when": "2023-01-02T12:00:00.000Z",
             "by": {"displayName": "Test User"},
-            "message": "Updated with complete data"
+            "message": "Updated with complete data",
         },
         metadata={
             "labels": {
                 "results": [
                     {"name": "testing"},
-                    {"name": "complete"}, 
-                    {"name": "model"}
+                    {"name": "complete"},
+                    {"name": "model"},
                 ]
             }
         },
-        ancestors=[
-            {"id": "parent123", "title": "Parent Page"}
-        ],
-        children={
-            "page": {"results": [{"id": "child123", "title": "Child Page"}]}
-        }
+        ancestors=[{"id": "parent123", "title": "Parent Page"}],
+        children={"page": {"results": [{"id": "child123", "title": "Child Page"}]}},
     )
 
 
@@ -293,11 +286,12 @@ def complete_confluence_page_data():
 # Validation and Edge Case Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def invalid_jira_issue_data():
     """
     Fixture providing invalid Jira issue data for validation testing.
-    
+
     Returns:
         List[Dict[str, Any]]: List of invalid issue data variations
     """
@@ -312,7 +306,7 @@ def invalid_jira_issue_data():
             "key": "INVALID-123",
             "fields": {
                 "status": "Invalid Status Format"  # Wrong status format
-            }
+            },
         },
     ]
 
@@ -321,7 +315,7 @@ def invalid_jira_issue_data():
 def invalid_confluence_page_data():
     """
     Fixture providing invalid Confluence page data for validation testing.
-    
+
     Returns:
         List[Dict[str, Any]]: List of invalid page data variations
     """
@@ -335,7 +329,7 @@ def invalid_confluence_page_data():
         {
             "id": "123",
             "title": "Test",
-            "type": "invalid_type"  # Invalid content type
+            "type": "invalid_type",  # Invalid content type
         },
     ]
 
@@ -344,11 +338,12 @@ def invalid_confluence_page_data():
 # Model Serialization Test Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def jira_model_serialization_cases():
     """
     Fixture providing test cases for Jira model serialization/deserialization.
-    
+
     Returns:
         List[Dict[str, Any]]: Test cases with expected serialization results
     """
@@ -356,22 +351,21 @@ def jira_model_serialization_cases():
         {
             "name": "basic_issue",
             "input": JiraIssueFactory.create("SERIAL-1"),
-            "expected_fields": ["key", "id", "self", "fields"]
+            "expected_fields": ["key", "id", "self", "fields"],
         },
         {
-            "name": "minimal_issue", 
+            "name": "minimal_issue",
             "input": JiraIssueFactory.create_minimal("SERIAL-2"),
-            "expected_fields": ["key", "fields"]
+            "expected_fields": ["key", "fields"],
         },
         {
             "name": "issue_with_custom_fields",
             "input": JiraIssueFactory.create(
-                "SERIAL-3",
-                fields={"customfield_10012": 5.0}
+                "SERIAL-3", fields={"customfield_10012": 5.0}
             ),
             "expected_fields": ["key", "fields"],
-            "expected_custom_fields": ["customfield_10012"]
-        }
+            "expected_custom_fields": ["customfield_10012"],
+        },
     ]
 
 
@@ -379,7 +373,7 @@ def jira_model_serialization_cases():
 def confluence_model_serialization_cases():
     """
     Fixture providing test cases for Confluence model serialization/deserialization.
-    
+
     Returns:
         List[Dict[str, Any]]: Test cases with expected serialization results
     """
@@ -387,23 +381,24 @@ def confluence_model_serialization_cases():
         {
             "name": "basic_page",
             "input": ConfluencePageFactory.create("serial123"),
-            "expected_fields": ["id", "title", "type", "space", "body"]
+            "expected_fields": ["id", "title", "type", "space", "body"],
         },
         {
             "name": "page_with_metadata",
             "input": ConfluencePageFactory.create(
                 "serial456",
                 version={"number": 2},
-                metadata={"labels": {"results": [{"name": "test"}]}}
+                metadata={"labels": {"results": [{"name": "test"}]}},
             ),
-            "expected_fields": ["id", "title", "version", "metadata"]
-        }
+            "expected_fields": ["id", "title", "version", "metadata"],
+        },
     ]
 
 
 # ============================================================================
 # Real Data Integration Fixtures
 # ============================================================================
+
 
 @pytest.fixture
 def use_real_jira_data() -> bool:
@@ -413,14 +408,14 @@ def use_real_jira_data() -> bool:
     This will only return True if:
     1. The JIRA_URL, JIRA_USERNAME, and JIRA_API_TOKEN environment variables are set
     2. The USE_REAL_DATA environment variable is set to "true"
-    
+
     Note: This fixture is maintained for backward compatibility.
     """
     required_vars = ["JIRA_URL", "JIRA_USERNAME", "JIRA_API_TOKEN"]
     if not all(os.environ.get(var) for var in required_vars):
         return False
 
-    return os.environ.get("USE_REAL_DATA", "").lower() == "true"
+    return is_env_truthy("USE_REAL_DATA")
 
 
 @pytest.fixture
@@ -431,14 +426,14 @@ def use_real_confluence_data() -> bool:
     This will only return True if:
     1. The CONFLUENCE_URL, CONFLUENCE_USERNAME, and CONFLUENCE_API_TOKEN environment variables are set
     2. The USE_REAL_DATA environment variable is set to "true"
-    
+
     Note: This fixture is maintained for backward compatibility.
     """
     required_vars = ["CONFLUENCE_URL", "CONFLUENCE_USERNAME", "CONFLUENCE_API_TOKEN"]
     if not all(os.environ.get(var) for var in required_vars):
         return False
 
-    return os.environ.get("USE_REAL_DATA", "").lower() == "true"
+    return is_env_truthy("USE_REAL_DATA")
 
 
 @pytest.fixture
@@ -447,7 +442,7 @@ def default_confluence_page_id() -> str:
     Provides a default Confluence page ID to use for tests.
 
     Skips the test if CONFLUENCE_TEST_PAGE_ID environment variable is not set.
-    
+
     Note: This fixture is maintained for backward compatibility.
     """
     page_id = os.environ.get("CONFLUENCE_TEST_PAGE_ID")
@@ -462,7 +457,7 @@ def default_jira_issue_key() -> str:
     Provides a default Jira issue key to use for tests.
 
     Skips the test if JIRA_TEST_ISSUE_KEY environment variable is not set.
-    
+
     Note: This fixture is maintained for backward compatibility.
     """
     issue_key = os.environ.get("JIRA_TEST_ISSUE_KEY")
@@ -475,11 +470,12 @@ def default_jira_issue_key() -> str:
 # Model Performance Test Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def large_jira_dataset():
     """
     Fixture providing a large dataset for performance testing.
-    
+
     Returns:
         List[Dict[str, Any]]: Large list of Jira issues for performance tests
     """
@@ -493,7 +489,7 @@ def large_jira_dataset():
 def large_confluence_dataset():
     """
     Fixture providing a large dataset for performance testing.
-    
+
     Returns:
         List[Dict[str, Any]]: Large list of Confluence pages for performance tests
     """
@@ -507,18 +503,20 @@ def large_confluence_dataset():
 # Model Composition Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def model_test_suite():
     """
     Comprehensive test suite for model testing.
-    
+
     This fixture provides a complete set of test data for thorough
     model validation, including edge cases and error conditions.
-    
+
     Returns:
         Dict[str, Any]: Complete model test suite
     """
-    # Define the factory functions once for reuse  
+
+    # Define the factory functions once for reuse
     def get_complete_jira_data():
         return JiraIssueFactory.create(
             key="COMPLETE-123",
@@ -528,29 +526,28 @@ def model_test_suite():
                 "issuetype": {"name": "Story", "id": "10001"},
                 "status": {"name": "In Progress", "id": "3"},
                 "priority": {"name": "High", "id": "2"},
-            }
+            },
         )
-    
+
     def get_complete_confluence_data():
         return ConfluencePageFactory.create(
-            page_id="complete123", 
-            title="Complete Test Page"
+            page_id="complete123", title="Complete Test Page"
         )
-    
+
     def get_invalid_jira_data():
         return [
             {},  # Empty data
             {"key": None},  # Null key
             {"key": ""},  # Empty key
         ]
-    
+
     def get_invalid_confluence_data():
         return [
             {},  # Empty data
             {"id": None},  # Null ID
             {"id": ""},  # Empty ID
         ]
-    
+
     return {
         "jira": {
             "valid": [
@@ -562,7 +559,7 @@ def model_test_suite():
             "edge_cases": [
                 JiraIssueFactory.create("EDGE-1", fields={}),
                 JiraIssueFactory.create("EDGE-2", id="", self=""),
-            ]
+            ],
         },
         "confluence": {
             "valid": [
@@ -574,11 +571,11 @@ def model_test_suite():
             "edge_cases": [
                 ConfluencePageFactory.create("edge1", body={}),
                 ConfluencePageFactory.create("edge2", space={}),
-            ]
+            ],
         },
         "errors": [
             ErrorResponseFactory.create_api_error(400, "Bad Request"),
             ErrorResponseFactory.create_api_error(404, "Not Found"),
             ErrorResponseFactory.create_auth_error(),
-        ]
+        ],
     }

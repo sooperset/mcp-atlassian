@@ -7,29 +7,28 @@ configurations, and utilities with efficient session-scoped caching.
 """
 
 import os
-from typing import Dict, Any, List, Optional, Callable
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from mcp_atlassian.jira.client import JiraClient
 from mcp_atlassian.jira.config import JiraConfig
-from tests.utils.factories import JiraIssueFactory, AuthConfigFactory
+from tests.utils.factories import AuthConfigFactory, JiraIssueFactory
 from tests.utils.mocks import MockAtlassianClient
-
 
 # ============================================================================
 # Session-Scoped Jira Data Fixtures
 # ============================================================================
 
+
 @pytest.fixture(scope="session")
 def session_jira_field_definitions():
     """
     Session-scoped fixture providing Jira field definitions.
-    
+
     This expensive-to-create data is cached for the entire test session
     to improve test performance.
-    
+
     Returns:
         List[Dict[str, Any]]: Complete Jira field definitions
     """
@@ -121,7 +120,7 @@ def session_jira_field_definitions():
 def session_jira_projects():
     """
     Session-scoped fixture providing Jira project definitions.
-    
+
     Returns:
         List[Dict[str, Any]]: Mock Jira project data
     """
@@ -135,7 +134,7 @@ def session_jira_projects():
             "description": "Test project for unit tests",
         },
         {
-            "id": "10001", 
+            "id": "10001",
             "key": "DEMO",
             "name": "Demo Project",
             "projectTypeKey": "business",
@@ -145,7 +144,7 @@ def session_jira_projects():
         {
             "id": "10002",
             "key": "SAMPLE",
-            "name": "Sample Project", 
+            "name": "Sample Project",
             "projectTypeKey": "service_desk",
             "lead": {"displayName": "Sample Lead"},
             "description": "Sample project with service desk",
@@ -157,7 +156,7 @@ def session_jira_projects():
 def session_jira_issue_types():
     """
     Session-scoped fixture providing Jira issue type definitions.
-    
+
     Returns:
         List[Dict[str, Any]]: Mock Jira issue type data
     """
@@ -167,8 +166,18 @@ def session_jira_issue_types():
         {"id": "3", "name": "Story", "iconUrl": "story.png", "subtask": False},
         {"id": "4", "name": "Epic", "iconUrl": "epic.png", "subtask": False},
         {"id": "5", "name": "Sub-task", "iconUrl": "subtask.png", "subtask": True},
-        {"id": "6", "name": "Improvement", "iconUrl": "improvement.png", "subtask": False},
-        {"id": "7", "name": "New Feature", "iconUrl": "newfeature.png", "subtask": False},
+        {
+            "id": "6",
+            "name": "Improvement",
+            "iconUrl": "improvement.png",
+            "subtask": False,
+        },
+        {
+            "id": "7",
+            "name": "New Feature",
+            "iconUrl": "newfeature.png",
+            "subtask": False,
+        },
     ]
 
 
@@ -176,19 +185,21 @@ def session_jira_issue_types():
 # Configuration Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def jira_config_factory():
     """
     Factory for creating JiraConfig instances with customizable options.
-    
+
     Returns:
         Callable: Function that creates JiraConfig instances
-        
+
     Example:
         def test_config(jira_config_factory):
             config = jira_config_factory(url="https://custom.atlassian.net")
             assert config.url == "https://custom.atlassian.net"
     """
+
     def _create_config(**overrides):
         defaults = {
             "url": "https://test.atlassian.net",
@@ -198,7 +209,7 @@ def jira_config_factory():
         }
         config_data = {**defaults, **overrides}
         return JiraConfig(**config_data)
-    
+
     return _create_config
 
 
@@ -206,10 +217,10 @@ def jira_config_factory():
 def mock_config(jira_config_factory):
     """
     Create a standard mock JiraConfig instance.
-    
+
     This fixture provides a consistent JiraConfig for tests that don't
     need custom configuration.
-    
+
     Returns:
         JiraConfig: Standard test configuration
     """
@@ -220,11 +231,12 @@ def mock_config(jira_config_factory):
 # Environment Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def mock_env_vars():
     """
     Mock environment variables for testing.
-    
+
     Note: This fixture is maintained for backward compatibility.
     Consider using the environment fixtures from root conftest.py.
     """
@@ -244,7 +256,7 @@ def mock_env_vars():
 def jira_auth_environment():
     """
     Fixture providing Jira-specific authentication environment.
-    
+
     This sets up environment variables specifically for Jira authentication
     and can be customized per test.
     """
@@ -254,7 +266,7 @@ def jira_auth_environment():
         "JIRA_USERNAME": auth_config["username"],
         "JIRA_API_TOKEN": auth_config["api_token"],
     }
-    
+
     with patch.dict(os.environ, jira_env, clear=False):
         yield jira_env
 
@@ -263,19 +275,22 @@ def jira_auth_environment():
 # Mock Atlassian Client Fixtures
 # ============================================================================
 
+
 @pytest.fixture
-def mock_atlassian_jira(session_jira_field_definitions, session_jira_projects, session_jira_issue_types):
+def mock_atlassian_jira(
+    session_jira_field_definitions, session_jira_projects, session_jira_issue_types
+):
     """
     Enhanced mock of the Atlassian Jira client.
-    
+
     This fixture provides a comprehensive mock that uses session-scoped
     data for improved performance and consistency.
-    
+
     Args:
         session_jira_field_definitions: Session-scoped field definitions
         session_jira_projects: Session-scoped project data
         session_jira_issue_types: Session-scoped issue type data
-        
+
     Returns:
         MagicMock: Fully configured mock Jira client
     """
@@ -287,9 +302,12 @@ def mock_atlassian_jira(session_jira_field_definitions, session_jira_projects, s
     mock_jira.issue_types.return_value = session_jira_issue_types
 
     # Set up common method returns using factory
-    mock_jira.myself.return_value = {"accountId": "test-account-id", "displayName": "Test User"}
+    mock_jira.myself.return_value = {
+        "accountId": "test-account-id",
+        "displayName": "Test User",
+    }
     mock_jira.get_issue.return_value = JiraIssueFactory.create()
-    
+
     # Search results
     mock_jira.jql.return_value = {
         "issues": [
@@ -301,13 +319,13 @@ def mock_atlassian_jira(session_jira_field_definitions, session_jira_projects, s
         "startAt": 0,
         "maxResults": 50,
     }
-    
+
     # Issue creation
     mock_jira.create_issue.return_value = JiraIssueFactory.create()
-    
+
     # Issue update (returns None like real API)
     mock_jira.update_issue.return_value = None
-    
+
     # Worklog operations
     mock_jira.get_issue_worklog.return_value = {
         "worklogs": [
@@ -321,7 +339,7 @@ def mock_atlassian_jira(session_jira_field_definitions, session_jira_projects, s
             }
         ]
     }
-    
+
     # Comments
     mock_jira.get_issue_comments.return_value = {
         "comments": [
@@ -341,10 +359,10 @@ def mock_atlassian_jira(session_jira_field_definitions, session_jira_projects, s
 def enhanced_mock_jira_client():
     """
     Enhanced mock Jira client using the new factory system.
-    
+
     This provides a more flexible mock that can be easily customized
     and integrates with the factory system.
-    
+
     Returns:
         MagicMock: Enhanced mock Jira client with factory integration
     """
@@ -355,18 +373,19 @@ def enhanced_mock_jira_client():
 # Client Instance Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def jira_client(mock_config, mock_atlassian_jira):
     """
     Create a JiraClient instance with mocked dependencies.
-    
+
     This fixture provides a fully functional JiraClient with mocked
     Atlassian API calls for testing.
-    
+
     Args:
         mock_config: Mock configuration
         mock_atlassian_jira: Mock Atlassian client
-        
+
     Returns:
         JiraClient: Configured client instance
     """
@@ -383,13 +402,13 @@ def jira_client(mock_config, mock_atlassian_jira):
 def jira_fetcher(mock_config, mock_atlassian_jira):
     """
     Create a JiraFetcher instance with mocked dependencies.
-    
+
     Note: This fixture is maintained for backward compatibility.
-    
+
     Args:
         mock_config: Mock configuration
         mock_atlassian_jira: Mock Atlassian client
-        
+
     Returns:
         JiraFetcher: Configured fetcher instance
     """
@@ -408,14 +427,15 @@ def jira_fetcher(mock_config, mock_atlassian_jira):
 # Specialized Test Data Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def make_jira_issue_with_worklog():
     """
     Factory fixture for creating Jira issues with worklog data.
-    
+
     Returns:
         Callable: Function that creates issue data with worklog
-        
+
     Example:
         def test_worklog(make_jira_issue_with_worklog):
             issue = make_jira_issue_with_worklog(
@@ -424,7 +444,13 @@ def make_jira_issue_with_worklog():
                 worklog_comment="Development work"
             )
     """
-    def _create_issue_with_worklog(key: str = "TEST-123", worklog_hours: int = 3, worklog_comment: str = "Test work", **overrides):
+
+    def _create_issue_with_worklog(
+        key: str = "TEST-123",
+        worklog_hours: int = 3,
+        worklog_comment: str = "Test work",
+        **overrides,
+    ):
         issue = JiraIssueFactory.create(key, **overrides)
         issue["fields"]["worklog"] = {
             "worklogs": [
@@ -439,7 +465,7 @@ def make_jira_issue_with_worklog():
             ]
         }
         return issue
-    
+
     return _create_issue_with_worklog
 
 
@@ -447,10 +473,10 @@ def make_jira_issue_with_worklog():
 def make_jira_search_results():
     """
     Factory fixture for creating Jira search results.
-    
+
     Returns:
         Callable: Function that creates JQL search results
-        
+
     Example:
         def test_search(make_jira_search_results):
             results = make_jira_search_results(
@@ -458,23 +484,26 @@ def make_jira_search_results():
                 total=2
             )
     """
-    def _create_search_results(issues: List[str] = None, total: int = None, **overrides):
+
+    def _create_search_results(
+        issues: list[str] = None, total: int = None, **overrides
+    ):
         if issues is None:
             issues = ["TEST-1", "TEST-2", "TEST-3"]
         if total is None:
             total = len(issues)
-            
+
         issue_objects = [JiraIssueFactory.create(key) for key in issues]
-        
+
         defaults = {
             "issues": issue_objects,
             "total": total,
             "startAt": 0,
             "maxResults": 50,
         }
-        
+
         return {**defaults, **overrides}
-    
+
     return _create_search_results
 
 
@@ -482,17 +511,18 @@ def make_jira_search_results():
 # Integration Test Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def jira_integration_client(session_auth_configs):
     """
     Create a JiraClient for integration testing.
-    
+
     This fixture creates a client that can be used for integration tests
     when real API credentials are available.
-    
+
     Args:
         session_auth_configs: Session-scoped auth configurations
-        
+
     Returns:
         Optional[JiraClient]: Real client if credentials available, None otherwise
     """
@@ -500,14 +530,14 @@ def jira_integration_client(session_auth_configs):
     required_vars = ["JIRA_URL", "JIRA_USERNAME", "JIRA_API_TOKEN"]
     if not all(os.environ.get(var) for var in required_vars):
         pytest.skip("Integration test environment variables not set")
-    
+
     config = JiraConfig(
         url=os.environ["JIRA_URL"],
         auth_type="basic",
         username=os.environ["JIRA_USERNAME"],
         api_token=os.environ["JIRA_API_TOKEN"],
     )
-    
+
     return JiraClient(config=config)
 
 
@@ -515,36 +545,33 @@ def jira_integration_client(session_auth_configs):
 # Parameterized Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def parametrized_jira_issue_type(request):
     """
     Parametrized fixture for testing with different Jira issue types.
-    
+
     Use with pytest.mark.parametrize to test functionality across
     different issue types.
-    
+
     Example:
-        @pytest.mark.parametrize("parametrized_jira_issue_type", 
+        @pytest.mark.parametrize("parametrized_jira_issue_type",
                                ["Bug", "Task", "Story"], indirect=True)
         def test_issue_types(parametrized_jira_issue_type):
             # Test runs once for each issue type
             pass
     """
     issue_type = request.param
-    return JiraIssueFactory.create(
-        fields={"issuetype": {"name": issue_type}}
-    )
+    return JiraIssueFactory.create(fields={"issuetype": {"name": issue_type}})
 
 
 @pytest.fixture
 def parametrized_jira_status(request):
     """
     Parametrized fixture for testing with different Jira statuses.
-    
+
     Use with pytest.mark.parametrize to test functionality across
     different issue statuses.
     """
     status = request.param
-    return JiraIssueFactory.create(
-        fields={"status": {"name": status}}
-    )
+    return JiraIssueFactory.create(fields={"status": {"name": status}})

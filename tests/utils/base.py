@@ -1,18 +1,18 @@
 """Base test classes and utilities for MCP Atlassian tests."""
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock
-from typing import Any, Dict, Optional
 
 
 class BaseMixinTest:
     """Base class for mixin tests with common setup patterns."""
-    
+
     @pytest.fixture
     def mock_config(self):
         """Mock configuration for testing."""
         return MagicMock()
-    
+
     @pytest.fixture
     def mock_client(self):
         """Mock client with common methods."""
@@ -27,7 +27,7 @@ class BaseMixinTest:
 
 class BaseAuthTest:
     """Base class for authentication-related tests."""
-    
+
     @pytest.fixture
     def oauth_env_vars(self):
         """Standard OAuth environment variables."""
@@ -36,9 +36,9 @@ class BaseAuthTest:
             "ATLASSIAN_OAUTH_CLIENT_SECRET": "test-client-secret",
             "ATLASSIAN_OAUTH_REDIRECT_URI": "http://localhost:8080/callback",
             "ATLASSIAN_OAUTH_SCOPE": "read:jira-work write:jira-work",
-            "ATLASSIAN_OAUTH_CLOUD_ID": "test-cloud-id"
+            "ATLASSIAN_OAUTH_CLOUD_ID": "test-cloud-id",
         }
-    
+
     @pytest.fixture
     def basic_auth_env_vars(self):
         """Standard basic auth environment variables."""
@@ -48,20 +48,20 @@ class BaseAuthTest:
             "JIRA_API_TOKEN": "test-token",
             "CONFLUENCE_URL": "https://test.atlassian.net/wiki",
             "CONFLUENCE_USERNAME": "test@example.com",
-            "CONFLUENCE_API_TOKEN": "test-token"
+            "CONFLUENCE_API_TOKEN": "test-token",
         }
 
 
 class BaseServerTest:
     """Base class for server-related tests."""
-    
+
     @pytest.fixture
     def mock_request(self):
         """Mock FastMCP request object."""
         request = MagicMock()
         request.state = MagicMock()
         return request
-    
+
     @pytest.fixture
     def mock_context(self):
         """Mock FastMCP context object."""
