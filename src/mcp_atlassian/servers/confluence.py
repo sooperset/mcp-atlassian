@@ -63,7 +63,8 @@ async def search(
         Field(
             description=(
                 "(Optional) Comma-separated list of space keys to filter results by. "
-                "Overrides the environment variable CONFLUENCE_SPACES_FILTER if provided."
+                "Overrides the environment variable CONFLUENCE_SPACES_FILTER if provided. "
+                "Use empty string to disable filtering."
             ),
             default=None,
         ),
@@ -469,8 +470,7 @@ async def update_page(
         str | None, Field(description="Optional comment for this version", default=None)
     ] = None,
     parent_id: Annotated[
-        str
-        | None,  # TODO: Revert type hint to once Cursor IDE handles optional parameters with Union types correctly.
+        str | None,
         Field(description="Optional the new parent page ID", default=None),
     ] = None,
 ) -> str:
@@ -492,9 +492,6 @@ async def update_page(
         ValueError: If Confluence client is not configured or available.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
-    # TODO: revert this once Cursor IDE handles optional parameters with Union types correctly.
-    actual_parent_id = parent_id if parent_id else None
-
     updated_page = confluence_fetcher.update_page(
         page_id=page_id,
         title=title,
@@ -502,7 +499,7 @@ async def update_page(
         is_minor_edit=is_minor_edit,
         version_comment=version_comment,
         is_markdown=True,
-        parent_id=actual_parent_id,
+        parent_id=parent_id,
     )
     page_data = updated_page.to_simplified_dict()
     return json.dumps(
