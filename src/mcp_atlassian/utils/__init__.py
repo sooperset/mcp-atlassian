@@ -6,6 +6,13 @@ This package provides various utility functions used throughout the codebase.
 from .date import parse_date
 from .decorators import convert_empty_defaults_to_none
 from .io import is_read_only_mode
+
+# Export lifecycle utilities
+from .lifecycle import (
+    ensure_clean_exit,
+    run_with_stdio_monitoring,
+    setup_signal_handlers,
+)
 from .logging import setup_logging
 
 # Export OAuth utilities
@@ -25,4 +32,7 @@ __all__ = [
     "OAuthConfig",
     "configure_oauth_session",
     "convert_empty_defaults_to_none",
+    "setup_signal_handlers",
+    "run_with_stdio_monitoring",
+    "ensure_clean_exit",
 ]

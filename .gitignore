@@ -69,8 +69,8 @@ local/
 # debug
 playground/
 
-# rules
-CLAUDE.md
-
 # cursor
 .cursor*
+
+# Claude
+.claude/

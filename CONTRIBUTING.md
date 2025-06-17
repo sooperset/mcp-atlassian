@@ -5,74 +5,98 @@ Thank you for your interest in contributing to MCP Atlassian! This document prov
 ## Development Setup
 
 1. Make sure you have Python 3.10+ installed
-2. Install [uv](https://docs.astral.sh/uv/getting-started/installation/)
-3. Fork the repository
-4. Clone your fork: `git clone https://github.com/YOUR-USERNAME/mcp-atlassian.git`
-5. Add the upstream remote: `git remote add upstream https://github.com/sooperset/mcp-atlassian.git`
-6. Install dependencies:
-```bash
-uv sync --frozen --all-extras --dev
-```
-7. Set up pre-commit hooks:
-```bash
-pre-commit install
-```
-8. Set up environment variables (copy from .env.example):
-```bash
-cp .env.example .env
-```
+1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/)
+1. Fork the repository
+1. Clone your fork: `git clone https://github.com/YOUR-USERNAME/mcp-atlassian.git`
+1. Add the upstream remote: `git remote add upstream https://github.com/sooperset/mcp-atlassian.git`
+1. Install dependencies:
+
+    ```sh
+    uv sync
+    uv sync --frozen --all-extras --dev
+    ```
+
+1. Activate the virtual environment:
+
+    __macOS and Linux__:
+
+    ```sh
+    source .venv/bin/activate
+    ```
+
+    __Windows__:
+
+    ```powershell
+    .venv\Scripts\activate.ps1
+    ```
+
+1. Set up pre-commit hooks:
+
+    ```sh
+    pre-commit install
+    ```
+
+1. Set up environment variables (copy from .env.example):
+
+    ```bash
+    cp .env.example .env
+    ```
 
 ## Development Setup with local VSCode devcontainer
 
 1. Clone your fork: `git clone https://github.com/YOUR-USERNAME/mcp-atlassian.git`
-2. Add the upstream remote: `git remote add upstream https://github.com/sooperset/mcp-atlassian.git`
-3. Open the project with VSCode and open with devcontainer
-4. Add this bit of config to your `.vscode/settings.json`:
-```json
-{
-    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
-    "[python]": {
-      "editor.defaultFormatter": "charliermarsh.ruff",
-      "editor.formatOnSave": true
+1. Add the upstream remote: `git remote add upstream https://github.com/sooperset/mcp-atlassian.git`
+1. Open the project with VSCode and open with devcontainer
+1. Add this bit of config to your `.vscode/settings.json`:
+
+    ```json
+    {
+        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+        "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true
+        }
     }
-}
-```
+    ```
 
 ## Development Workflow
 
 1. Create a feature or fix branch:
-```bash
-git checkout -b feature/your-feature-name
-# or
-git checkout -b fix/issue-description
-```
 
-2. Make your changes
+    ```sh
+    git checkout -b feature/your-feature-name
+    # or
+    git checkout -b fix/issue-description
+    ```
 
-3. Ensure tests pass:
-```bash
-uv run pytest
+1. Make your changes
 
-# With coverage
-uv run pytest --cov=mcp_atlassian
-```
+1. Ensure tests pass:
 
-4. Run code quality checks using pre-commit:
-```bash
-pre-commit run --all-files
-```
+    ```sh
+    uv run pytest
 
-6. Commit your changes with clear, concise commit messages referencing issues when applicable
+    # With coverage
+    uv run pytest --cov=mcp_atlassian
+    ```
 
-7. Submit a pull request to the main branch
+1. Run code quality checks using pre-commit:
+
+    ```bash
+    pre-commit run --all-files
+    ```
+
+1. Commit your changes with clear, concise commit messages referencing issues when applicable
+
+1. Submit a pull request to the main branch
 
 ## Code Style
 
-- We use pre-commit hooks to enforce code quality
-- Code quality tools include:
-  - `ruff-format` for code formatting
-  - `ruff` for linting, with configured rules and fixes
-  - `mypy` for type checking, with specific error code configurations
+- Run `pre-commit run --all-files` before committing
+- Code quality tools (managed by pre-commit):
+  - `ruff` for formatting and linting (88 char line limit)
+  - `pyright` for type checking (preferred over mypy)
+  - `prettier` for YAML/JSON formatting
   - Additional checks for trailing whitespace, file endings, YAML/TOML validity
 - Follow type annotation patterns:
   - `type[T]` for class types
@@ -80,23 +104,23 @@ pre-commit run --all-files
   - Standard collection types with subscripts: `list[str]`, `dict[str, Any]`
 - Add docstrings to all public modules, functions, classes, and methods using Google-style format:
 
-```python
-def function_name(param1: str, param2: int) -> bool:
-    """Summary of function purpose.
+        ```python
+        def function_name(param1: str, param2: int) -> bool:
+            """Summary of function purpose.
 
-    More detailed description if needed.
+            More detailed description if needed.
 
-    Args:
-        param1: Description of param1
-        param2: Description of param2
+            Args:
+                param1: Description of param1
+                param2: Description of param2
 
-    Returns:
-        Description of return value
+            Returns:
+                Description of return value
 
-    Raises:
-        ValueError: When and why this exception is raised
-    """
-```
+            Raises:
+                ValueError: When and why this exception is raised
+            """
+        ```
 
 ## Pull Request Process
 
