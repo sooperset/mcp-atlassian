@@ -202,8 +202,8 @@ def mock_jira_fetcher():
             )
         return projects
 
-    # Set default return value, but allow tests to override it
-    mock_fetcher.get_all_projects.return_value = mock_get_all_projects()
+    # Set default side_effect to respect include_archived parameter
+    mock_fetcher.get_all_projects.side_effect = mock_get_all_projects
 
     mock_fetcher.jira.jql.return_value = {
         "issues": [
@@ -720,6 +720,7 @@ async def test_get_all_projects_tool(jira_client, mock_jira_fetcher):
             "description": "First project",
             "lead": {"name": "user1", "displayName": "User One"},
             "projectTypeKey": "software",
+            "archived": False,
         },
         {
             "id": "10001",
@@ -728,11 +729,14 @@ async def test_get_all_projects_tool(jira_client, mock_jira_fetcher):
             "description": "Second project",
             "lead": {"name": "user2", "displayName": "User Two"},
             "projectTypeKey": "business",
+            "archived": False,
         },
     ]
     # Reset the mock and set specific return value for this test
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.return_value = mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = (
+        lambda include_archived=False: mock_projects
+    )
 
     # Test with default parameters (include_archived=False)
     response = await jira_client.call_tool(
@@ -779,7 +783,9 @@ async def test_get_all_projects_tool_with_archived(jira_client, mock_jira_fetche
     ]
     # Reset the mock and set specific return value for this test
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.return_value = mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = (
+        lambda include_archived=False: mock_projects
+    )
 
     # Test with include_archived=True
     response = await jira_client.call_tool(
@@ -831,7 +837,9 @@ async def test_get_all_projects_tool_with_projects_filter(
 
     # Set up the mock to return all projects
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.return_value = all_mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = (
+        lambda include_archived=False: all_mock_projects
+    )
 
     # Set up the projects filter in the config
     mock_jira_fetcher.config.projects_filter = "PROJ1,PROJ2"
@@ -883,7 +891,9 @@ async def test_get_all_projects_tool_no_projects_filter(jira_client, mock_jira_f
 
     # Set up the mock to return all projects
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.return_value = all_mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = (
+        lambda include_archived=False: all_mock_projects
+    )
 
     # Ensure no projects filter is set
     mock_jira_fetcher.config.projects_filter = None
@@ -942,7 +952,9 @@ async def test_get_all_projects_tool_case_insensitive_filter(
 
     # Set up the mock to return all projects
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.return_value = all_mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = (
+        lambda include_archived=False: all_mock_projects
+    )
 
     # Set up projects filter with mixed case and whitespace
     mock_jira_fetcher.config.projects_filter = " PROJ1 , proj2 "
@@ -971,3 +983,82 @@ async def test_get_all_projects_tool_case_insensitive_filter(
 
     # Verify the underlying method was called
     mock_jira_fetcher.get_all_projects.assert_called_once_with(include_archived=False)
+
+
+@pytest.mark.anyio
+async def test_get_all_projects_tool_empty_response(jira_client, mock_jira_fetcher):
+    """Test tool handles empty list of projects from API."""
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: []
+
+    response = await jira_client.call_tool("jira_get_all_projects", {})
+
+    assert isinstance(response, list)
+    assert len(response) == 1
+    msg = response[0]
+    assert msg.type == "text"
+
+    data = json.loads(msg.text)
+    assert data == []
+
+
+@pytest.mark.anyio
+async def test_get_all_projects_tool_api_error_handling(jira_client, mock_jira_fetcher):
+    """Test tool handles API errors gracefully."""
+    from requests.exceptions import HTTPError
+
+    mock_jira_fetcher.get_all_projects.side_effect = HTTPError("API Error")
+
+    response = await jira_client.call_tool("jira_get_all_projects", {})
+
+    assert isinstance(response, list)
+    assert len(response) == 1
+    msg = response[0]
+    assert msg.type == "text"
+
+    data = json.loads(msg.text)
+    assert data["success"] is False
+    assert "API Error" in data["error"]
+
+
+@pytest.mark.anyio
+async def test_get_all_projects_tool_authentication_error_handling(
+    jira_client, mock_jira_fetcher
+):
+    """Test tool handles authentication errors gracefully."""
+    from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
+
+    mock_jira_fetcher.get_all_projects.side_effect = MCPAtlassianAuthenticationError(
+        "Authentication failed"
+    )
+
+    response = await jira_client.call_tool("jira_get_all_projects", {})
+
+    assert isinstance(response, list)
+    assert len(response) == 1
+    msg = response[0]
+    assert msg.type == "text"
+
+    data = json.loads(msg.text)
+    assert data["success"] is False
+    assert "Authentication/Permission Error" in data["error"]
+
+
+@pytest.mark.anyio
+async def test_get_all_projects_tool_configuration_error_handling(
+    jira_client, mock_jira_fetcher
+):
+    """Test tool handles configuration errors gracefully."""
+    mock_jira_fetcher.get_all_projects.side_effect = ValueError(
+        "Jira client not configured"
+    )
+
+    response = await jira_client.call_tool("jira_get_all_projects", {})
+
+    assert isinstance(response, list)
+    assert len(response) == 1
+    msg = response[0]
+    assert msg.type == "text"
+
+    data = json.loads(msg.text)
+    assert data["success"] is False
+    assert "Configuration Error" in data["error"]
