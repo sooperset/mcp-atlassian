@@ -597,6 +597,8 @@ Here's a complete example of setting up multi-user authentication with streamabl
 |           | `jira_create_version`               |                                |
 |           | `jira_batch_create_versions`        |                                |
 
+</details>
+
 *Tool only available on Jira Cloud
 
 </details>
