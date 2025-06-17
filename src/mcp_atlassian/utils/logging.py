@@ -64,7 +64,7 @@ def mask_sensitive(value: str | None, keep_chars: int = 4) -> str:
         return "*" * len(value)
     start = value[:keep_chars]
     end = value[-keep_chars:]
-    middle = '*' * (len(value) - keep_chars * 2)
+    middle = "*" * (len(value) - keep_chars * 2)
     return f"{start}{middle}{end}"
 
 
