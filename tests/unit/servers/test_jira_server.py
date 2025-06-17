@@ -1148,4 +1148,3 @@ async def test_batch_create_versions_empty(jira_client, mock_jira_fetcher):
     )
     content = json.loads(response[0].text)
     assert content == []
-

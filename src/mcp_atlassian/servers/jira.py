@@ -1429,7 +1429,7 @@ async def get_all_projects(
         log_level = logging.ERROR
         if isinstance(e, MCPAtlassianAuthenticationError):
             error_message = f"Authentication/Permission Error: {str(e)}"
-        elif isinstance(e, (OSError, HTTPError)):
+        elif isinstance(e, OSError | HTTPError):
             error_message = f"Network or API Error: {str(e)}"
         elif isinstance(e, ValueError):
             error_message = f"Configuration Error: {str(e)}"
