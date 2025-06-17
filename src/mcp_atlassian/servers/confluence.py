@@ -469,7 +469,8 @@ async def update_page(
         str | None, Field(description="Optional comment for this version", default=None)
     ] = None,
     parent_id: Annotated[
-        str | None,  # TODO: Revert type hint to once Cursor IDE handles optional parameters with Union types correctly.
+        str
+        | None,  # TODO: Revert type hint to once Cursor IDE handles optional parameters with Union types correctly.
         Field(description="Optional the new parent page ID", default=None),
     ] = None,
 ) -> str:

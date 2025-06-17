@@ -383,7 +383,8 @@ async def download_attachments(
 async def get_agile_boards(
     ctx: Context,
     board_name: Annotated[
-        str | None, Field(description="(Optional) The name of board, support fuzzy search")
+        str | None,
+        Field(description="(Optional) The name of board, support fuzzy search"),
     ] = None,
     project_key: Annotated[
         str | None, Field(description="(Optional) Jira project key (e.g., 'PROJ-123')")
@@ -1285,7 +1286,9 @@ async def create_sprint(
     end_date: Annotated[
         str, Field(description="End time for sprint (ISO 8601 format)")
     ],
-    goal: Annotated[str | None, Field(description="(Optional) Goal of the sprint")] = None,
+    goal: Annotated[
+        str | None, Field(description="(Optional) Goal of the sprint")
+    ] = None,
 ) -> str:
     """Create Jira sprint for a board.
 
@@ -1332,7 +1335,9 @@ async def update_sprint(
     end_date: Annotated[
         str | None, Field(description="(Optional) New end date for the sprint")
     ] = None,
-    goal: Annotated[str | None, Field(description="(Optional) New goal for the sprint")] = None,
+    goal: Annotated[
+        str | None, Field(description="(Optional) New goal for the sprint")
+    ] = None,
 ) -> str:
     """Update jira sprint.
 
