@@ -8,6 +8,11 @@ import click
 from dotenv import load_dotenv
 
 from mcp_atlassian.utils.env import is_env_truthy
+from mcp_atlassian.utils.lifecycle import (
+    ensure_clean_exit,
+    run_with_stdio_monitoring,
+    setup_signal_handlers,
+)
 from mcp_atlassian.utils.logging import setup_logging
 
 try:
@@ -326,7 +331,28 @@ def main(
         )
         sys.exit(1)
 
-    asyncio.run(main_mcp.run_async(**run_kwargs))
+    # Set up signal handlers for graceful shutdown
+    setup_signal_handlers()
+
+    # For STDIO transport, also handle EOF detection
+    if final_transport == "stdio":
+        logger.debug("STDIO transport detected, setting up stdin monitoring")
+
+    try:
+        logger.debug("Starting asyncio event loop...")
+
+        # Create a wrapper coroutine that handles both the server and stdin monitoring
+        if final_transport == "stdio":
+            asyncio.run(run_with_stdio_monitoring(main_mcp.run_async, run_kwargs))
+        else:
+            asyncio.run(main_mcp.run_async(**run_kwargs))
+    except (KeyboardInterrupt, SystemExit) as e:
+        logger.info(f"Server shutdown initiated: {type(e).__name__}")
+    except Exception as e:
+        logger.error(f"Server encountered an error: {e}", exc_info=True)
+        sys.exit(1)
+    finally:
+        ensure_clean_exit()
 
 
 __all__ = ["main", "__version__"]

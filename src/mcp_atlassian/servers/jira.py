@@ -1396,6 +1396,71 @@ async def get_project_versions(
     return json.dumps(versions, indent=2, ensure_ascii=False)
 
 
+@jira_mcp.tool(tags={"jira", "read"})
+async def get_all_projects(
+    ctx: Context,
+    include_archived: Annotated[
+        bool,
+        Field(
+            description="Whether to include archived projects in the results",
+            default=False,
+        ),
+    ] = False,
+) -> str:
+    """Get all Jira projects accessible to the current user.
+
+    Args:
+        ctx: The FastMCP context.
+        include_archived: Whether to include archived projects.
+
+    Returns:
+        JSON string representing a list of project objects accessible to the user.
+        Project keys are always returned in uppercase.
+        If JIRA_PROJECTS_FILTER is configured, only returns projects matching those keys.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    try:
+        jira = await get_jira_fetcher(ctx)
+        projects = jira.get_all_projects(include_archived=include_archived)
+    except (MCPAtlassianAuthenticationError, HTTPError, OSError, ValueError) as e:
+        error_message = ""
+        log_level = logging.ERROR
+        if isinstance(e, MCPAtlassianAuthenticationError):
+            error_message = f"Authentication/Permission Error: {str(e)}"
+        elif isinstance(e, OSError | HTTPError):
+            error_message = f"Network or API Error: {str(e)}"
+        elif isinstance(e, ValueError):
+            error_message = f"Configuration Error: {str(e)}"
+
+        error_result = {
+            "success": False,
+            "error": error_message,
+        }
+        logger.log(log_level, f"get_all_projects failed: {error_message}")
+        return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+    # Ensure all project keys are uppercase
+    for project in projects:
+        if "key" in project:
+            project["key"] = project["key"].upper()
+
+    # Apply project filter if configured
+    if jira.config.projects_filter:
+        # Split projects filter by commas and handle possible whitespace
+        allowed_project_keys = {
+            p.strip().upper() for p in jira.config.projects_filter.split(",")
+        }
+        projects = [
+            project
+            for project in projects
+            if project.get("key") in allowed_project_keys
+        ]
+
+    return json.dumps(projects, indent=2, ensure_ascii=False)
+
+
 @convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "write"})
 @check_write_access
@@ -1443,3 +1508,78 @@ async def create_version(
         return json.dumps(
             {"success": False, "error": str(e)}, indent=2, ensure_ascii=False
         )
+
+
+@convert_empty_defaults_to_none
+@jira_mcp.tool(name="batch_create_versions", tags={"jira", "write"})
+@check_write_access
+async def batch_create_versions(
+    ctx: Context,
+    project_key: Annotated[str, Field(description="Jira project key (e.g., 'PROJ')")],
+    versions: Annotated[
+        str,
+        Field(
+            description=(
+                "JSON array of version objects. Each object should contain:\n"
+                "- name (required): Name of the version\n"
+                "- startDate (optional): Start date (YYYY-MM-DD)\n"
+                "- releaseDate (optional): Release date (YYYY-MM-DD)\n"
+                "- description (optional): Description of the version\n"
+                "Example: [\n"
+                '  {"name": "v1.0", "startDate": "2025-01-01", "releaseDate": "2025-02-01", "description": "First release"},\n'
+                '  {"name": "v2.0"}\n'
+                "]"
+            )
+        ),
+    ],
+) -> str:
+    """Batch create multiple versions in a Jira project.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: The project key.
+        versions: JSON array string of version objects.
+
+    Returns:
+        JSON array of results, each with success flag, version or error.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        version_list = json.loads(versions)
+        if not isinstance(version_list, list):
+            raise ValueError("Input 'versions' must be a JSON array string.")
+    except json.JSONDecodeError:
+        raise ValueError("Invalid JSON in versions")
+    except Exception as e:
+        raise ValueError(f"Invalid input for versions: {e}") from e
+
+    results = []
+    if not version_list:
+        return json.dumps(results, indent=2, ensure_ascii=False)
+
+    for idx, v in enumerate(version_list):
+        # Defensive: ensure v is a dict and has a name
+        if not isinstance(v, dict) or not v.get("name"):
+            results.append(
+                {
+                    "success": False,
+                    "error": f"Item {idx}: Each version must be an object with at least a 'name' field.",
+                }
+            )
+            continue
+        try:
+            version = jira.create_project_version(
+                project_key=project_key,
+                name=v["name"],
+                start_date=v.get("startDate"),
+                release_date=v.get("releaseDate"),
+                description=v.get("description"),
+            )
+            results.append({"success": True, "version": version})
+        except Exception as e:
+            logger.error(
+                f"Error creating version in batch for project {project_key}: {str(e)}",
+                exc_info=True,
+            )
+            results.append({"success": False, "error": str(e), "input": v})
+    return json.dumps(results, indent=2, ensure_ascii=False)
