@@ -112,7 +112,7 @@ def test_jira_client_no_proxy_env(monkeypatch):
 
 class TestProxyConfigurationEnhanced(BaseAuthTest):
     """Enhanced proxy configuration tests using test utilities."""
-    
+
     @pytest.mark.integration
     def test_proxy_configuration_from_environment(self):
         """Test proxy configuration loaded from environment variables."""
@@ -121,9 +121,9 @@ class TestProxyConfigurationEnhanced(BaseAuthTest):
             proxy_vars = {
                 "HTTP_PROXY": "http://proxy.company.com:8080",
                 "HTTPS_PROXY": "https://proxy.company.com:8443",
-                "NO_PROXY": "*.internal.com,localhost"
+                "NO_PROXY": "*.internal.com,localhost",
             }
-            
+
             # Patch environment with proxy settings
             with patch.dict(os.environ, proxy_vars):
                 # Jira should pick up proxy settings
@@ -131,13 +131,13 @@ class TestProxyConfigurationEnhanced(BaseAuthTest):
                 assert jira_config.http_proxy == "http://proxy.company.com:8080"
                 assert jira_config.https_proxy == "https://proxy.company.com:8443"
                 assert jira_config.no_proxy == "*.internal.com,localhost"
-                
+
                 # Confluence should pick up proxy settings
                 confluence_config = ConfluenceConfig.from_env()
                 assert confluence_config.http_proxy == "http://proxy.company.com:8080"
                 assert confluence_config.https_proxy == "https://proxy.company.com:8443"
                 assert confluence_config.no_proxy == "*.internal.com,localhost"
-    
+
     @pytest.mark.integration
     def test_proxy_authentication_in_url(self):
         """Test proxy URLs with authentication credentials."""
@@ -147,13 +147,13 @@ class TestProxyConfigurationEnhanced(BaseAuthTest):
             username="user",
             api_token="token",
             http_proxy="http://proxyuser:proxypass@proxy.company.com:8080",
-            https_proxy="https://proxyuser:proxypass@proxy.company.com:8443"
+            https_proxy="https://proxyuser:proxypass@proxy.company.com:8443",
         )
-        
+
         # Verify proxy URLs contain authentication
         assert "proxyuser:proxypass" in config.http_proxy
         assert "proxyuser:proxypass" in config.https_proxy
-    
+
     @pytest.mark.integration
     def test_socks_proxy_configuration(self, monkeypatch):
         """Test SOCKS proxy configuration for both services."""
@@ -162,42 +162,48 @@ class TestProxyConfigurationEnhanced(BaseAuthTest):
         # Create a proper proxies dictionary that can be updated
         mock_session.proxies = {}
         mock_jira._session = mock_session
-        monkeypatch.setattr("mcp_atlassian.jira.client.Jira", lambda **kwargs: mock_jira)
         monkeypatch.setattr(
-            "mcp_atlassian.jira.client.configure_ssl_verification", lambda **kwargs: None
+            "mcp_atlassian.jira.client.Jira", lambda **kwargs: mock_jira
         )
-        
+        monkeypatch.setattr(
+            "mcp_atlassian.jira.client.configure_ssl_verification",
+            lambda **kwargs: None,
+        )
+
         # Test SOCKS5 proxy
         config = JiraConfig(
             url="https://test.atlassian.net",
             auth_type="basic",
             username="user",
             api_token="token",
-            socks_proxy="socks5://socksuser:sockspass@socks.company.com:1080"
+            socks_proxy="socks5://socksuser:sockspass@socks.company.com:1080",
         )
-        
+
         client = JiraClient(config=config)
-        assert mock_session.proxies["socks"] == "socks5://socksuser:sockspass@socks.company.com:1080"
-    
+        assert (
+            mock_session.proxies["socks"]
+            == "socks5://socksuser:sockspass@socks.company.com:1080"
+        )
+
     @pytest.mark.integration
     def test_proxy_bypass_for_internal_domains(self, monkeypatch):
         """Test that requests to NO_PROXY domains bypass the proxy."""
         # Set up environment
         monkeypatch.setenv("NO_PROXY", "*.internal.com,localhost,127.0.0.1")
-        
+
         config = JiraConfig(
             url="https://jira.internal.com",  # Internal domain
             auth_type="basic",
             username="user",
             api_token="token",
             http_proxy="http://proxy.company.com:8080",
-            no_proxy="*.internal.com,localhost,127.0.0.1"
+            no_proxy="*.internal.com,localhost,127.0.0.1",
         )
-        
+
         # Verify NO_PROXY is set in environment
         assert os.environ["NO_PROXY"] == "*.internal.com,localhost,127.0.0.1"
         assert "internal.com" in config.no_proxy
-    
+
     @pytest.mark.integration
     def test_proxy_error_handling(self, monkeypatch):
         """Test proper error handling when proxy connection fails."""
@@ -205,26 +211,29 @@ class TestProxyConfigurationEnhanced(BaseAuthTest):
         mock_jira = MagicMock()
         mock_jira.side_effect = ProxyError("Unable to connect to proxy")
         monkeypatch.setattr("mcp_atlassian.jira.client.Jira", mock_jira)
-        
+
         config = JiraConfig(
             url="https://test.atlassian.net",
             auth_type="basic",
             username="user",
             api_token="token",
-            http_proxy="http://unreachable.proxy.com:8080"
+            http_proxy="http://unreachable.proxy.com:8080",
         )
-        
+
         # Creating client should raise proxy error
         with pytest.raises(ProxyError, match="Unable to connect to proxy"):
             JiraClient(config=config)
-    
+
     @pytest.mark.integration
     def test_proxy_configuration_precedence(self):
         """Test that explicit proxy config takes precedence over environment."""
-        with patch.dict(os.environ, {
-            "HTTP_PROXY": "http://env.proxy.com:8080",
-            "HTTPS_PROXY": "https://env.proxy.com:8443"
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "HTTP_PROXY": "http://env.proxy.com:8080",
+                "HTTPS_PROXY": "https://env.proxy.com:8443",
+            },
+        ):
             # Explicit configuration should override environment
             config = JiraConfig(
                 url="https://test.atlassian.net",
@@ -232,12 +241,12 @@ class TestProxyConfigurationEnhanced(BaseAuthTest):
                 username="user",
                 api_token="token",
                 http_proxy="http://explicit.proxy.com:8080",
-                https_proxy="https://explicit.proxy.com:8443"
+                https_proxy="https://explicit.proxy.com:8443",
             )
-            
+
             assert config.http_proxy == "http://explicit.proxy.com:8080"
             assert config.https_proxy == "https://explicit.proxy.com:8443"
-    
+
     @pytest.mark.integration
     def test_mixed_proxy_and_ssl_configuration(self, monkeypatch):
         """Test proxy configuration works correctly with SSL verification disabled."""
@@ -247,7 +256,8 @@ class TestProxyConfigurationEnhanced(BaseAuthTest):
         mock_session.proxies = {}
         mock_confluence._session = mock_session
         monkeypatch.setattr(
-            "mcp_atlassian.confluence.client.Confluence", lambda **kwargs: mock_confluence
+            "mcp_atlassian.confluence.client.Confluence",
+            lambda **kwargs: mock_confluence,
         )
         monkeypatch.setattr(
             "mcp_atlassian.confluence.client.configure_ssl_verification",
@@ -257,7 +267,7 @@ class TestProxyConfigurationEnhanced(BaseAuthTest):
             "mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor",
             lambda **kwargs: MagicMock(),
         )
-        
+
         # Configure with both proxy and SSL disabled
         config = ConfluenceConfig(
             url="https://test.atlassian.net/wiki",
@@ -265,15 +275,15 @@ class TestProxyConfigurationEnhanced(BaseAuthTest):
             username="user",
             api_token="token",
             http_proxy="http://proxy.company.com:8080",
-            ssl_verify=False
+            ssl_verify=False,
         )
-        
+
         client = ConfluenceClient(config=config)
-        
+
         # Both proxy and SSL settings should be applied
         assert mock_session.proxies["http"] == "http://proxy.company.com:8080"
         assert config.ssl_verify is False
-    
+
     @pytest.mark.integration
     def test_proxy_with_oauth_configuration(self):
         """Test proxy configuration works with OAuth authentication."""
@@ -282,12 +292,12 @@ class TestProxyConfigurationEnhanced(BaseAuthTest):
             proxy_vars = {
                 "HTTP_PROXY": "http://proxy.company.com:8080",
                 "HTTPS_PROXY": "https://proxy.company.com:8443",
-                "NO_PROXY": "localhost,127.0.0.1"
+                "NO_PROXY": "localhost,127.0.0.1",
             }
-            
+
             # Merge with OAuth env vars
             all_vars = {**env_vars, **proxy_vars}
-            
+
             # Use patch.dict to ensure environment variables are set
             with patch.dict(os.environ, all_vars):
                 # OAuth should still respect proxy settings

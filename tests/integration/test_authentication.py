@@ -2,13 +2,10 @@
 
 import json
 import time
-from datetime import datetime, timedelta
 from unittest.mock import MagicMock, Mock, patch
 
-import keyring
 import pytest
 import requests
-from atlassian import Confluence, Jira
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.confluence.client import ConfluenceClient
@@ -17,9 +14,7 @@ from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.jira.client import JiraClient
 from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.utils.oauth import OAuthConfig, configure_oauth_session
-
-from tests.utils.factories import AuthConfigFactory, ErrorResponseFactory
-from tests.utils.mocks import MockEnvironment, MockOAuthServer
+from tests.utils.mocks import MockEnvironment
 
 
 @pytest.mark.integration
@@ -87,7 +82,9 @@ class TestOAuthTokenRefreshFlow:
             with patch("requests.post") as mock_post:
                 mock_response = Mock()
                 mock_response.ok = False
-                mock_response.raise_for_status.side_effect = HTTPError("401 Unauthorized")
+                mock_response.raise_for_status.side_effect = HTTPError(
+                    "401 Unauthorized"
+                )
                 mock_post.return_value = mock_response
 
                 # Ensure valid token should fail
@@ -268,7 +265,9 @@ class TestAuthenticationFailureRecovery:
         # Set up environment with both OAuth and basic auth but incomplete OAuth
         with MockEnvironment.clean_env():
             # Mock token loading to return empty (no stored tokens)
-            with patch("mcp_atlassian.utils.oauth.OAuthConfig.load_tokens", return_value={}):
+            with patch(
+                "mcp_atlassian.utils.oauth.OAuthConfig.load_tokens", return_value={}
+            ):
                 with patch.dict(
                     "os.environ",
                     {
@@ -288,14 +287,18 @@ class TestAuthenticationFailureRecovery:
                     assert config.auth_type == "basic"  # Falls back to basic auth
 
                     # Now add cloud_id to complete OAuth config
-                    with patch.dict("os.environ", {"ATLASSIAN_OAUTH_CLOUD_ID": "test-cloud-id"}):
+                    with patch.dict(
+                        "os.environ", {"ATLASSIAN_OAUTH_CLOUD_ID": "test-cloud-id"}
+                    ):
                         config = JiraConfig.from_env()
                         assert config.auth_type == "oauth"
 
                         # OAuth should fail without valid tokens
-                        with pytest.raises(MCPAtlassianAuthenticationError, match="Failed to configure OAuth session"):
+                        with pytest.raises(
+                            MCPAtlassianAuthenticationError,
+                            match="Failed to configure OAuth session",
+                        ):
                             JiraClient(config)
-
 
     def test_authentication_retry_on_401(self):
         """Test retry behavior on 401 authentication errors."""
@@ -366,7 +369,10 @@ class TestTokenExpirationAndRetry:
         client_id = "test-client-storage"
 
         # Mock keyring operations
-        with patch("keyring.set_password") as mock_set, patch("keyring.get_password") as mock_get:
+        with (
+            patch("keyring.set_password") as mock_set,
+            patch("keyring.get_password") as mock_get,
+        ):
             # Create OAuth config and save tokens
             oauth_config = OAuthConfig(
                 client_id=client_id,
@@ -510,7 +516,9 @@ class TestJiraConfluenceAuthFlows:
 
     @patch("mcp_atlassian.confluence.client.Confluence")
     @patch("mcp_atlassian.jira.client.Jira")
-    def test_shared_oauth_config_both_services(self, mock_jira_class, mock_confluence_class):
+    def test_shared_oauth_config_both_services(
+        self, mock_jira_class, mock_confluence_class
+    ):
         """Test that both services can share the same OAuth configuration."""
         with MockEnvironment.oauth_env():
             # Mock cloud ID retrieval
@@ -529,12 +537,12 @@ class TestJiraConfluenceAuthFlows:
                 jira_config = JiraConfig(
                     url="https://test.atlassian.net",
                     auth_type="oauth",
-                    oauth_config=oauth_config
+                    oauth_config=oauth_config,
                 )
                 confluence_config = ConfluenceConfig(
                     url="https://test.atlassian.net/wiki",
                     auth_type="oauth",
-                    oauth_config=oauth_config
+                    oauth_config=oauth_config,
                 )
 
                 # Initialize clients
@@ -546,13 +554,18 @@ class TestJiraConfluenceAuthFlows:
                 confluence_url = mock_confluence_class.call_args[1]["url"]
 
                 assert jira_url == "https://api.atlassian.com/ex/jira/test-cloud-id"
-                assert confluence_url == "https://api.atlassian.com/ex/confluence/test-cloud-id"
+                assert (
+                    confluence_url
+                    == "https://api.atlassian.com/ex/confluence/test-cloud-id"
+                )
 
     def test_service_specific_auth_override(self):
         """Test that service-specific auth overrides shared configuration."""
         with MockEnvironment.clean_env():
             # Mock token loading to return empty (no stored tokens)
-            with patch("mcp_atlassian.utils.oauth.OAuthConfig.load_tokens", return_value={}):
+            with patch(
+                "mcp_atlassian.utils.oauth.OAuthConfig.load_tokens", return_value={}
+            ):
                 # Test case 1: Only service-specific auth (no OAuth config)
                 with patch.dict(
                     "os.environ",
