@@ -133,22 +133,28 @@ class JiraConfig:
         logger = logging.getLogger("mcp-atlassian.jira.config")
         if self.auth_type == "oauth":
             # Full OAuth configuration (traditional mode)
-            if (self.oauth_config
+            if (
+                self.oauth_config
                 and self.oauth_config.client_id
                 and self.oauth_config.client_secret
                 and self.oauth_config.redirect_uri
-                and self.oauth_config.scope):
+                and self.oauth_config.scope
+            ):
                 return True
-            
+
             # Minimal OAuth configuration (user-provided tokens mode)
             # This is valid if we have oauth_config but missing client credentials
             # In this case, we expect authentication to come from user-provided headers
-            if (self.oauth_config
+            if (
+                self.oauth_config
                 and not self.oauth_config.client_id
-                and not self.oauth_config.client_secret):
-                logger.debug("Minimal OAuth config detected - expecting user-provided tokens via headers")
+                and not self.oauth_config.client_secret
+            ):
+                logger.debug(
+                    "Minimal OAuth config detected - expecting user-provided tokens via headers"
+                )
                 return True
-            
+
             # Partial configuration is invalid
             logger.warning("Incomplete OAuth configuration detected")
             return False
