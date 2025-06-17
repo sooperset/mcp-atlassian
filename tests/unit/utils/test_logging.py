@@ -1,3 +1,4 @@
+import io
 import logging
 
 from mcp_atlassian.utils.logging import setup_logging
@@ -53,3 +54,11 @@ def test_setup_logging_logger_name():
     """Test that setup_logging creates logger with correct name"""
     logger = setup_logging()
     assert logger.name == "mcp-atlassian"
+
+
+def test_setup_logging_logging_stream():
+    """Test that setup_logging uses the correct stream"""
+    stream = io.StringIO()
+    logger = setup_logging(logging.DEBUG, stream)
+    logger.debug("test")
+    assert stream.getvalue() == f"DEBUG - {logger.name} - test\n"
