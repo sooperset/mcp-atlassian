@@ -22,7 +22,6 @@ confluence_mcp = FastMCP(
 )
 
 
-@convert_empty_defaults_to_none
 @confluence_mcp.tool(tags={"confluence", "read"})
 async def search(
     ctx: Context,
@@ -65,7 +64,8 @@ async def search(
         Field(
             description=(
                 "(Optional) Comma-separated list of space keys to filter results by. "
-                "Overrides the environment variable CONFLUENCE_SPACES_FILTER if provided."
+                "Overrides the environment variable CONFLUENCE_SPACES_FILTER if provided. "
+                "Use empty string to disable filtering."
             ),
             default="",
         ),
@@ -474,7 +474,7 @@ async def update_page(
         str, Field(description="Optional comment for this version", default="")
     ] = "",
     parent_id: Annotated[
-        str,  # TODO: Revert type hint to once Cursor IDE handles optional parameters with Union types correctly.
+        str,
         Field(description="Optional the new parent page ID", default=""),
     ] = "",
 ) -> str:
