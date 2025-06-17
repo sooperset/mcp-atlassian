@@ -32,12 +32,15 @@ class ConfluencePreprocessor(BasePreprocessor):
         """
         super().__init__(base_url=base_url, **kwargs)
 
-    def markdown_to_confluence_storage(self, markdown_content: str) -> str:
+    def markdown_to_confluence_storage(
+        self, markdown_content: str, *, enable_heading_anchors: bool = False
+    ) -> str:
         """
         Convert Markdown content to Confluence storage format (XHTML)
 
         Args:
             markdown_content: Markdown text to convert
+            enable_heading_anchors: Whether to enable automatic heading anchor generation (default: False)
 
         Returns:
             Confluence storage format (XHTML) string
@@ -55,7 +58,9 @@ class ConfluencePreprocessor(BasePreprocessor):
 
                 # Create converter options
                 options = ConfluenceConverterOptions(
-                    ignore_invalid_url=True, heading_anchors=True, render_mermaid=False
+                    ignore_invalid_url=True,
+                    heading_anchors=enable_heading_anchors,
+                    render_mermaid=False,
                 )
 
                 # Create a converter

@@ -6,14 +6,19 @@ output stream based on their level.
 """
 
 import logging
+import sys
+from typing import TextIO
 
 
-def setup_logging(level: int = logging.WARNING) -> logging.Logger:
+def setup_logging(
+    level: int = logging.WARNING, stream: TextIO = sys.stderr
+) -> logging.Logger:
     """
     Configure MCP-Atlassian logging with level-based stream routing.
 
     Args:
         level: The minimum logging level to display (default: WARNING)
+        stream: The stream to write logs to (default: sys.stderr)
 
     Returns:
         The configured logger instance
@@ -27,7 +32,7 @@ def setup_logging(level: int = logging.WARNING) -> logging.Logger:
         root_logger.removeHandler(handler)
 
     # Add the level-dependent handler
-    handler = logging.StreamHandler()
+    handler = logging.StreamHandler(stream)
     formatter = logging.Formatter("%(levelname)s - %(name)s - %(message)s")
     handler.setFormatter(formatter)
     root_logger.addHandler(handler)

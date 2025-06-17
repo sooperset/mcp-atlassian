@@ -7,6 +7,7 @@ from typing import Annotated
 from fastmcp import Context, FastMCP
 from pydantic import Field
 
+from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.servers.dependencies import get_confluence_fetcher
 from mcp_atlassian.utils.decorators import (
     check_write_access,
@@ -605,3 +606,73 @@ async def add_comment(
         }
 
     return json.dumps(response, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(tags={"confluence", "read"})
+async def search_user(
+    ctx: Context,
+    query: Annotated[
+        str,
+        Field(
+            description=(
+                "Search query - a CQL query string for user search. "
+                "Examples of CQL:\n"
+                "- Basic user lookup by full name: 'user.fullname ~ \"First Last\"'\n"
+                'Note: Special identifiers need proper quoting in CQL: personal space keys (e.g., "~username"), '
+                "reserved words, numeric IDs, and identifiers with special characters."
+            )
+        ),
+    ],
+    limit: Annotated[
+        int,
+        Field(
+            description="Maximum number of results (1-50)",
+            default=10,
+            ge=1,
+            le=50,
+        ),
+    ] = 10,
+) -> str:
+    """Search Confluence users using CQL.
+
+    Args:
+        ctx: The FastMCP context.
+        query: Search query - a CQL query string for user search.
+        limit: Maximum number of results (1-50).
+
+    Returns:
+        JSON string representing a list of simplified Confluence user search result objects.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    # If the query doesn't look like CQL, wrap it as a user fullname search
+    if query and not any(
+        x in query for x in ["=", "~", ">", "<", " AND ", " OR ", "user."]
+    ):
+        # Simple search term - search by fullname
+        query = f'user.fullname ~ "{query}"'
+        logger.info(f"Converting simple search term to user CQL: {query}")
+
+    try:
+        user_results = confluence_fetcher.search_user(query, limit=limit)
+        search_results = [user.to_simplified_dict() for user in user_results]
+        return json.dumps(search_results, indent=2, ensure_ascii=False)
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error during user search: {e}", exc_info=False)
+        return json.dumps(
+            {
+                "error": "Authentication failed. Please check your credentials.",
+                "details": str(e),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(f"Error searching users: {str(e)}")
+        return json.dumps(
+            {
+                "error": f"An unexpected error occurred while searching for users: {str(e)}"
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
