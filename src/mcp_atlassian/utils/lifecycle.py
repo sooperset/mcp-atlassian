@@ -26,7 +26,7 @@ def setup_signal_handlers() -> None:
 
     def signal_handler(signum: int, frame: Any) -> None:
         """Handle shutdown signals gracefully.
-        
+
         Uses event-based shutdown to avoid signal safety issues.
         Signal handlers should be minimal and avoid complex operations.
         """
@@ -63,14 +63,14 @@ async def run_with_stdio_monitoring(
     logger.debug("Starting MCP server with stdin monitoring and signal handling...")
 
     # Simple approach: wrap the server execution and monitor for shutdown signals
-    async def run_server_with_monitoring():
+    async def run_server_with_monitoring() -> None:
         """Run server with background monitoring."""
         # Start monitoring tasks
         monitor_task = None
-        
+
         try:
             # Set up stdin monitoring in the background (non-blocking)
-            async def background_monitor():
+            async def background_monitor() -> None:
                 try:
                     # Try to set up stdin monitoring
                     reader = asyncio.StreamReader()
@@ -78,16 +78,20 @@ async def run_with_stdio_monitoring(
                     transport, _ = await asyncio.get_event_loop().connect_read_pipe(
                         lambda: protocol, sys.stdin
                     )
-                    
+
                     logger.debug("Stdin monitoring started")
-                    
+
                     try:
                         while not _shutdown_event.is_set():
                             try:
                                 # Try to read with a timeout
-                                line = await asyncio.wait_for(reader.readline(), timeout=0.5)
+                                line = await asyncio.wait_for(
+                                    reader.readline(), timeout=0.5
+                                )
                                 if not line:  # EOF detected
-                                    logger.info("stdin closed (EOF detected), initiating shutdown...")
+                                    logger.info(
+                                        "stdin closed (EOF detected), initiating shutdown..."
+                                    )
                                     _shutdown_event.set()
                                     break
                             except asyncio.TimeoutError:
@@ -95,19 +99,19 @@ async def run_with_stdio_monitoring(
                     finally:
                         transport.close()
                         logger.debug("Stdin monitoring stopped")
-                        
+
                 except Exception as e:
                     logger.debug(f"Stdin monitoring unavailable: {e}")
                     # Fall back to just waiting for signal-based shutdown
                     while not _shutdown_event.is_set():
                         await asyncio.sleep(0.5)
-            
+
             # Start background monitoring
             monitor_task = asyncio.create_task(background_monitor())
-            
+
             # Run the server
             await server_coroutine(**run_kwargs)
-            
+
         finally:
             # Ensure monitor task is cancelled
             if monitor_task and not monitor_task.done():
@@ -116,7 +120,7 @@ async def run_with_stdio_monitoring(
                     await monitor_task
                 except asyncio.CancelledError:
                     pass
-    
+
     # Check if we need monitoring (if shutdown event is already set, skip monitoring)
     if _shutdown_event.is_set():
         logger.info("Shutdown already requested, running server without monitoring")

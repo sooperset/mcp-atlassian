@@ -1,8 +1,6 @@
 """Tests for lifecycle management utilities."""
 
-import asyncio
 import signal
-import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -91,7 +89,7 @@ class TestRunWithStdioMonitoring:
         """Test server shutdown when signal is received."""
         # Pre-set shutdown event to skip monitoring setup
         _shutdown_event.set()
-        
+
         # Create a simple server that just completes
         async def mock_server(**kwargs):
             return "completed"
@@ -106,7 +104,7 @@ class TestRunWithStdioMonitoring:
         """Test exception handling in server execution."""
         # Pre-set shutdown event to skip monitoring setup
         _shutdown_event.set()
-        
+
         # Create a mock coroutine that raises an exception immediately
         async def mock_server(**kwargs):
             raise RuntimeError("Test error")
@@ -123,20 +121,23 @@ class TestRunWithStdioMonitoring:
         # Mock the event loop and stdin setup
         mock_loop = MagicMock()
         mock_get_loop.return_value = mock_loop
-        
+
         # Mock the reader to return EOF immediately
         mock_reader = AsyncMock()
         mock_reader.readline = AsyncMock(return_value=b"")  # EOF
-        
+
         mock_protocol = MagicMock()
         mock_transport = MagicMock()
-        mock_loop.connect_read_pipe = AsyncMock(return_value=(mock_transport, mock_protocol))
-        
+        mock_loop.connect_read_pipe = AsyncMock(
+            return_value=(mock_transport, mock_protocol)
+        )
+
         # Mock StreamReader and StreamReaderProtocol
-        with patch("asyncio.StreamReader", return_value=mock_reader), \
-             patch("asyncio.StreamReaderProtocol", return_value=mock_protocol), \
-             patch("asyncio.create_task") as mock_create_task:
-            
+        with (
+            patch("asyncio.StreamReader", return_value=mock_reader),
+            patch("asyncio.StreamReaderProtocol", return_value=mock_protocol),
+            patch("asyncio.create_task") as mock_create_task,
+        ):
             # Create a server that completes quickly
             async def mock_server(**kwargs):
                 return "completed"
@@ -148,16 +149,17 @@ class TestRunWithStdioMonitoring:
                 # Simulate EOF detection
                 _shutdown_event.set()
                 return
-            
+
             mock_create_task.return_value = AsyncMock()
             mock_create_task.return_value.done.return_value = True
-            
+
             # This should complete
             await run_with_stdio_monitoring(mock_server, run_kwargs)
 
     @pytest.mark.anyio
     async def test_run_with_stdio_monitoring_stdin_unavailable(self):
         """Test fallback behavior when stdin monitoring is not available."""
+
         # Create a server that completes quickly
         async def mock_server(**kwargs):
             return "completed"
@@ -169,7 +171,7 @@ class TestRunWithStdioMonitoring:
             mock_task = AsyncMock()
             mock_task.done.return_value = True
             mock_create_task.return_value = mock_task
-            
+
             # This should complete even when stdin monitoring setup fails
             await run_with_stdio_monitoring(mock_server, run_kwargs)
 
