@@ -81,7 +81,7 @@ Enhanced environment fixtures for testing different authentication scenarios:
 
 ```python
 # Example usage
-@pytest.mark.parametrize("parametrized_auth_env", 
+@pytest.mark.parametrize("parametrized_auth_env",
                        ["oauth", "basic_auth"], indirect=True)
 def test_auth_scenarios(parametrized_auth_env):
     # Test runs once for OAuth and once for basic auth
@@ -117,7 +117,7 @@ def test_new_functionality(make_jira_issue, make_confluence_page):
     # Create custom test data
     issue = make_jira_issue(key="NEW-123")
     page = make_confluence_page(title="New Test Page")
-    
+
     # Test your functionality
     assert issue["key"] == "NEW-123"
     assert page["title"] == "New Test Page"
@@ -190,7 +190,7 @@ def test_issue_key_validation(complete_jira_issue_data):
 Use parametrized fixtures for testing multiple scenarios:
 
 ```python
-@pytest.mark.parametrize("parametrized_auth_env", 
+@pytest.mark.parametrize("parametrized_auth_env",
                        ["oauth", "basic_auth", "clean"], indirect=True)
 def test_auth_detection(parametrized_auth_env):
     # Test with different auth environments
@@ -227,7 +227,7 @@ def test_jira_issue_creation(make_jira_issue):
         key="TEST-456",
         fields={"summary": "Custom test issue"}
     )
-    
+
     # Test the issue
     model = JiraIssue.from_dict(issue)
     assert model.key == "TEST-456"
@@ -248,18 +248,18 @@ def test_complex_workflow(
         worklog_hours=8,
         worklog_comment="Development work"
     )
-    
+
     # Create page with content
     page = make_confluence_page_with_content(
         title="Workflow Documentation",
         content="<h1>Workflow</h1><p>Process documentation</p>",
         labels=["workflow", "documentation"]
     )
-    
+
     # Test workflow with OAuth environment
     workflow = ComplexWorkflow(issue, page)
     result = workflow.execute()
-    
+
     assert result.success
     assert result.issue_key == "WORKFLOW-123"
     assert "Workflow Documentation" in result.documentation
@@ -276,14 +276,14 @@ def test_real_api_integration(
 ):
     if not use_real_jira_data:
         pytest.skip("Real Jira data not available")
-    
+
     if not use_real_confluence_data:
         pytest.skip("Real Confluence data not available")
-    
+
     # Test with real API clients
     issues = jira_integration_client.search_issues("project = TEST")
     pages = confluence_integration_client.get_space_pages("TEST")
-    
+
     assert len(issues) >= 0
     assert len(pages) >= 0
 ```

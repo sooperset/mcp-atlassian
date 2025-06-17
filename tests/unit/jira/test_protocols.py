@@ -20,26 +20,32 @@ from mcp_atlassian.models.jira.search import JiraSearchResult
 class TestProtocolDefinitions:
     """Tests for protocol definition compliance."""
 
-    @pytest.mark.parametrize("protocol_class", [
-        AttachmentsOperationsProto,
-        IssueOperationsProto,
-        SearchOperationsProto,
-        EpicOperationsProto,
-        FieldsOperationsProto,
-        UsersOperationsProto,
-    ])
+    @pytest.mark.parametrize(
+        "protocol_class",
+        [
+            AttachmentsOperationsProto,
+            IssueOperationsProto,
+            SearchOperationsProto,
+            EpicOperationsProto,
+            FieldsOperationsProto,
+            UsersOperationsProto,
+        ],
+    )
     def test_protocol_inheritance(self, protocol_class):
         """Test that all protocols inherit from Protocol."""
         assert issubclass(protocol_class, Protocol)
 
-    @pytest.mark.parametrize("protocol_class", [
-        AttachmentsOperationsProto,
-        IssueOperationsProto,
-        SearchOperationsProto,
-        EpicOperationsProto,
-        FieldsOperationsProto,
-        UsersOperationsProto,
-    ])
+    @pytest.mark.parametrize(
+        "protocol_class",
+        [
+            AttachmentsOperationsProto,
+            IssueOperationsProto,
+            SearchOperationsProto,
+            EpicOperationsProto,
+            FieldsOperationsProto,
+            UsersOperationsProto,
+        ],
+    )
     def test_protocol_cannot_be_instantiated(self, protocol_class):
         """Test that protocols cannot be instantiated directly."""
         with pytest.raises(TypeError):
@@ -53,7 +59,7 @@ class TestMethodSignatures:
         """Test upload_attachments method signature."""
         method = AttachmentsOperationsProto.upload_attachments
         type_hints = get_type_hints(method)
-        
+
         assert type_hints["issue_key"] is str
         assert type_hints["file_paths"] == list[str]
         assert type_hints["return"] == dict[str, Any]
@@ -64,16 +70,16 @@ class TestMethodSignatures:
         method = IssueOperationsProto.get_issue
         sig = inspect.signature(method)
         type_hints = get_type_hints(method)
-        
+
         # Type hints
         assert type_hints["issue_key"] is str
         assert type_hints["return"] is JiraIssue
-        
+
         # Default parameters
         assert sig.parameters["expand"].default is None
         assert sig.parameters["comment_limit"].default == 10
         assert sig.parameters["update_history"].default is True
-        
+
         expected_fields = (
             "summary,description,status,assignee,reporter,labels,"
             "priority,created,updated,issuetype"
@@ -85,26 +91,29 @@ class TestMethodSignatures:
         method = SearchOperationsProto.search_issues
         sig = inspect.signature(method)
         type_hints = get_type_hints(method)
-        
+
         # Type hints
         assert type_hints["jql"] is str
         assert type_hints["return"] is JiraSearchResult
-        
+
         # Default parameters
         assert sig.parameters["start"].default == 0
         assert sig.parameters["limit"].default == 50
         assert sig.parameters["expand"].default is None
 
-    @pytest.mark.parametrize("method_name,expected_count", [
-        ("update_epic_fields", 1),
-        ("prepare_epic_fields", 1), 
-        ("_try_discover_fields_from_existing_epic", 1),
-    ])
+    @pytest.mark.parametrize(
+        "method_name,expected_count",
+        [
+            ("update_epic_fields", 1),
+            ("prepare_epic_fields", 1),
+            ("_try_discover_fields_from_existing_epic", 1),
+        ],
+    )
     def test_epic_methods(self, method_name, expected_count):
         """Test EpicOperationsProto method signatures."""
         method = getattr(EpicOperationsProto, method_name)
         assert method.__isabstractmethod__ is True
-        
+
         if method_name == "update_epic_fields":
             type_hints = get_type_hints(method)
             assert type_hints["issue_key"] is str
@@ -117,10 +126,10 @@ class TestMethodSignatures:
         method = FieldsOperationsProto._generate_field_map
         sig = inspect.signature(method)
         type_hints = get_type_hints(method)
-        
+
         assert sig.parameters["force_regenerate"].default is False
         assert type_hints["return"] == dict[str, str]
-        
+
         # Test get_field_by_id
         method = FieldsOperationsProto.get_field_by_id
         type_hints = get_type_hints(method)
@@ -131,7 +140,7 @@ class TestMethodSignatures:
         """Test UsersOperationsProto method signature."""
         method = UsersOperationsProto._get_account_id
         type_hints = get_type_hints(method)
-        
+
         assert type_hints["assignee"] is str
         assert type_hints["return"] is str
         assert method.__isabstractmethod__ is True
@@ -142,8 +151,11 @@ class TestProtocolCompliance:
 
     def test_compliant_attachments_implementation(self):
         """Test compliant attachments implementation."""
+
         class CompliantAttachments:
-            def upload_attachments(self, issue_key: str, file_paths: list[str]) -> dict[str, Any]:
+            def upload_attachments(
+                self, issue_key: str, file_paths: list[str]
+            ) -> dict[str, Any]:
                 return {"uploaded": len(file_paths)}
 
         instance = CompliantAttachments()
@@ -152,6 +164,7 @@ class TestProtocolCompliance:
 
     def test_compliant_issue_implementation(self):
         """Test compliant issue implementation."""
+
         class CompliantIssues:
             def get_issue(
                 self,
@@ -176,6 +189,7 @@ class TestProtocolCompliance:
 
     def test_compliant_search_implementation(self):
         """Test compliant search implementation."""
+
         class CompliantSearch:
             def search_issues(
                 self,
@@ -199,6 +213,7 @@ class TestProtocolCompliance:
 
     def test_runtime_checkable_users_protocol(self):
         """Test runtime checking for UsersOperationsProto."""
+
         class CompliantUsers:
             def _get_account_id(self, assignee: str) -> str:
                 return f"account-id-for-{assignee}"
@@ -208,7 +223,7 @@ class TestProtocolCompliance:
 
         compliant_instance = CompliantUsers()
         non_compliant_instance = NonCompliantUsers()
-        
+
         # Runtime checkable only checks method existence
         assert isinstance(compliant_instance, UsersOperationsProto)
         assert not isinstance(non_compliant_instance, UsersOperationsProto)
@@ -219,6 +234,7 @@ class TestProtocolContractValidation:
 
     def test_method_signature_validation(self):
         """Test method signature validation helper."""
+
         def validate_method_signature(protocol_class, method_name: str, implementation):
             """Validate implementation method signature matches protocol."""
             protocol_method = getattr(protocol_class, method_name)
@@ -234,7 +250,9 @@ class TestProtocolContractValidation:
             return protocol_params == impl_params
 
         class TestImplementation:
-            def upload_attachments(self, issue_key: str, file_paths: list[str]) -> dict[str, Any]:
+            def upload_attachments(
+                self, issue_key: str, file_paths: list[str]
+            ) -> dict[str, Any]:
                 return {}
 
         impl = TestImplementation()
@@ -244,6 +262,7 @@ class TestProtocolContractValidation:
 
     def test_type_hint_validation(self):
         """Test type hint compliance validation."""
+
         def validate_type_hints(protocol_class, method_name: str, implementation):
             """Validate type hints match between protocol and implementation."""
             protocol_method = getattr(protocol_class, method_name)
@@ -256,7 +275,9 @@ class TestProtocolContractValidation:
             return protocol_hints.get("return") == impl_hints.get("return")
 
         class TypeCompliantImplementation:
-            def upload_attachments(self, issue_key: str, file_paths: list[str]) -> dict[str, Any]:
+            def upload_attachments(
+                self, issue_key: str, file_paths: list[str]
+            ) -> dict[str, Any]:
                 return {}
 
         impl = TypeCompliantImplementation()
@@ -266,6 +287,7 @@ class TestProtocolContractValidation:
 
     def test_structural_compliance_check(self):
         """Test structural typing validation."""
+
         def check_structural_compliance(instance, protocol_class):
             """Check if instance structurally complies with protocol."""
             abstract_methods = []
@@ -288,7 +310,9 @@ class TestProtocolContractValidation:
             return True
 
         class CompliantImplementation:
-            def upload_attachments(self, issue_key: str, file_paths: list[str]) -> dict[str, Any]:
+            def upload_attachments(
+                self, issue_key: str, file_paths: list[str]
+            ) -> dict[str, Any]:
                 return {}
 
         class NonCompliantImplementation:
@@ -299,20 +323,31 @@ class TestProtocolContractValidation:
         non_compliant = NonCompliantImplementation()
 
         assert check_structural_compliance(compliant, AttachmentsOperationsProto)
-        assert not check_structural_compliance(non_compliant, AttachmentsOperationsProto)
+        assert not check_structural_compliance(
+            non_compliant, AttachmentsOperationsProto
+        )
 
 
 class TestAbstractMethodCounts:
     """Tests for verifying abstract method counts in protocols."""
 
-    @pytest.mark.parametrize("protocol_class,expected_count", [
-        (AttachmentsOperationsProto, 1),  # upload_attachments
-        (IssueOperationsProto, 1),  # get_issue
-        (SearchOperationsProto, 1),  # search_issues
-        (EpicOperationsProto, 3),  # update_epic_fields, prepare_epic_fields, _try_discover_fields_from_existing_epic
-        (FieldsOperationsProto, 3),  # _generate_field_map, get_field_by_id, get_field_ids_to_epic
-        (UsersOperationsProto, 1),  # _get_account_id
-    ])
+    @pytest.mark.parametrize(
+        "protocol_class,expected_count",
+        [
+            (AttachmentsOperationsProto, 1),  # upload_attachments
+            (IssueOperationsProto, 1),  # get_issue
+            (SearchOperationsProto, 1),  # search_issues
+            (
+                EpicOperationsProto,
+                3,
+            ),  # update_epic_fields, prepare_epic_fields, _try_discover_fields_from_existing_epic
+            (
+                FieldsOperationsProto,
+                3,
+            ),  # _generate_field_map, get_field_by_id, get_field_ids_to_epic
+            (UsersOperationsProto, 1),  # _get_account_id
+        ],
+    )
     def test_abstract_method_count(self, protocol_class, expected_count):
         """Test counting abstract methods in each protocol."""
         abstract_methods = [
