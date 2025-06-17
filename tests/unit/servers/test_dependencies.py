@@ -218,78 +218,78 @@ class TestCreateUserConfigForFetcher:
             client_secret="",  # Empty client_secret (minimal config)
             redirect_uri="",
             scope="",
-            cloud_id=""
+            cloud_id="",
         )
         base_config = JiraConfig(
             url="https://base.atlassian.net",
             auth_type="oauth",
-            oauth_config=base_oauth_config
+            oauth_config=base_oauth_config,
         )
-        
+
         # Test with user-provided cloud_id
         credentials = {"oauth_access_token": "user-access-token"}
         result_config = _create_user_config_for_fetcher(
             base_config=base_config,
             auth_type="oauth",
             credentials=credentials,
-            cloud_id="user-cloud-id"
+            cloud_id="user-cloud-id",
         )
-        
+
         # Verify the result
         assert isinstance(result_config, JiraConfig)
         assert result_config.auth_type == "oauth"
         assert result_config.oauth_config is not None
         assert result_config.oauth_config.access_token == "user-access-token"
         assert result_config.oauth_config.cloud_id == "user-cloud-id"
-        assert result_config.oauth_config.client_id == ""  # Should preserve minimal config
-        assert result_config.oauth_config.client_secret == ""  # Should preserve minimal config
+        assert (
+            result_config.oauth_config.client_id == ""
+        )  # Should preserve minimal config
+        assert (
+            result_config.oauth_config.client_secret == ""
+        )  # Should preserve minimal config
 
     def test_multi_tenant_config_isolation(self):
         """Test that user configs are completely isolated from each other."""
         # Setup minimal base config
         base_oauth_config = OAuthConfig(
-            client_id="",
-            client_secret="",
-            redirect_uri="",
-            scope="",
-            cloud_id=""
+            client_id="", client_secret="", redirect_uri="", scope="", cloud_id=""
         )
         base_config = JiraConfig(
             url="https://base.atlassian.net",
             auth_type="oauth",
-            oauth_config=base_oauth_config
+            oauth_config=base_oauth_config,
         )
-        
+
         # Create user config for tenant 1
         tenant1_credentials = {"oauth_access_token": "tenant1-token"}
         tenant1_config = _create_user_config_for_fetcher(
             base_config=base_config,
             auth_type="oauth",
             credentials=tenant1_credentials,
-            cloud_id="tenant1-cloud-id"
+            cloud_id="tenant1-cloud-id",
         )
-        
+
         # Create user config for tenant 2
         tenant2_credentials = {"oauth_access_token": "tenant2-token"}
         tenant2_config = _create_user_config_for_fetcher(
             base_config=base_config,
             auth_type="oauth",
             credentials=tenant2_credentials,
-            cloud_id="tenant2-cloud-id"
+            cloud_id="tenant2-cloud-id",
         )
-        
+
         # Modify tenant1 config
         tenant1_config.oauth_config.access_token = "modified-tenant1-token"
         tenant1_config.oauth_config.cloud_id = "modified-tenant1-cloud-id"
-        
+
         # Verify tenant2 config remains unchanged
         assert tenant2_config.oauth_config.access_token == "tenant2-token"
         assert tenant2_config.oauth_config.cloud_id == "tenant2-cloud-id"
-        
+
         # Verify base config remains unchanged
         assert base_oauth_config.access_token is None
         assert base_oauth_config.cloud_id == ""
-        
+
         # Verify tenant1 config has the modifications
         assert tenant1_config.oauth_config.access_token == "modified-tenant1-token"
         assert tenant1_config.oauth_config.cloud_id == "modified-tenant1-cloud-id"
