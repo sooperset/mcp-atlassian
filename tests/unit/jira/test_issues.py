@@ -1522,3 +1522,147 @@ class TestIssuesMixin:
         # Verify result
         assert result.key == "TEST-123"
         assert result.labels == ["bug", "frontend"]
+
+    def test_get_issue_with_config_projects_filter_restricted(
+        self, issues_mixin: IssuesMixin
+    ):
+        """Test get_issue with projects filter from config - restricted case."""
+        # Setup mock response
+        mock_issues = {
+            "issues": [
+                {
+                    "id": "10001",
+                    "key": "TEST-123",
+                    "fields": {
+                        "summary": "Test issue",
+                        "issuetype": {"name": "Bug"},
+                        "status": {"name": "Open"},
+                    },
+                }
+            ],
+            "total": 1,
+            "startAt": 0,
+            "maxResults": 50,
+        }
+        issues_mixin.jira.jql.return_value = mock_issues
+        issues_mixin.config.url = "https://example.atlassian.net"
+        issues_mixin.config.projects_filter = "DEV"
+
+        # Mock the API to raise an exception
+        issues_mixin.jira.get_issue.side_effect = Exception("API error")
+
+        # Call the method and verify it raises the expected exception
+        with pytest.raises(
+            Exception,
+            match=(
+                "Error retrieving issue TEST-123: "
+                "Issue with project prefix 'TEST' are restricted by configuration"
+            ),
+        ):
+            issues_mixin.get_issue("TEST-123")
+
+    def test_get_issue_with_config_projects_filter_allowed(
+        self, issues_mixin: IssuesMixin
+    ):
+        """Test get_issue with projects filter from config - allowed case."""
+        # Setup mock response for a project that matches the filter
+        mock_issue_data = {
+            "id": "10001",
+            "key": "DEV-123",
+            "fields": {
+                "summary": "Test issue",
+                "description": "This is a test issue",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Bug"},
+            },
+        }
+        issues_mixin.jira.get_issue.return_value = mock_issue_data
+        issues_mixin.config.url = "https://example.atlassian.net"
+        issues_mixin.config.projects_filter = "DEV"
+
+        # Call the method
+        result = issues_mixin.get_issue("DEV-123")
+
+        # Verify the API call was made correctly
+        issues_mixin.jira.get_issue.assert_called_once_with(
+            "DEV-123",
+            expand=None,
+            fields=ANY,
+            properties=None,
+            update_history=True,
+        )
+
+        # Verify the result
+        assert isinstance(result, JiraIssue)
+        assert result.key == "DEV-123"
+        assert result.summary == "Test issue"
+
+    def test_get_issue_with_multiple_projects_filter(self, issues_mixin: IssuesMixin):
+        """Test get_issue with multiple projects in the filter."""
+        # Setup mock response for a project that matches one of the multiple filters
+        mock_issue_data = {
+            "id": "10001",
+            "key": "PROD-123",
+            "fields": {
+                "summary": "Production issue",
+                "description": "This is a production issue",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Bug"},
+            },
+        }
+        issues_mixin.jira.get_issue.return_value = mock_issue_data
+        issues_mixin.config.url = "https://example.atlassian.net"
+        issues_mixin.config.projects_filter = "DEV,PROD"
+
+        # Call the method
+        result = issues_mixin.get_issue("PROD-123")
+
+        # Verify the API call was made correctly
+        issues_mixin.jira.get_issue.assert_called_once_with(
+            "PROD-123",
+            expand=None,
+            fields=ANY,
+            properties=None,
+            update_history=True,
+        )
+
+        # Verify the result
+        assert isinstance(result, JiraIssue)
+        assert result.key == "PROD-123"
+        assert result.summary == "Production issue"
+
+    def test_get_issue_with_whitespace_in_projects_filter(
+        self, issues_mixin: IssuesMixin
+    ):
+        """Test get_issue with extra whitespace in the projects filter."""
+        # Setup mock response for a project that matches the filter with whitespace
+        mock_issue_data = {
+            "id": "10001",
+            "key": "DEV-123",
+            "fields": {
+                "summary": "Development issue",
+                "description": "This is a development issue",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Bug"},
+            },
+        }
+        issues_mixin.jira.get_issue.return_value = mock_issue_data
+        issues_mixin.config.url = "https://example.atlassian.net"
+        issues_mixin.config.projects_filter = " DEV , PROD "  # Extra whitespace
+
+        # Call the method
+        result = issues_mixin.get_issue("DEV-123")
+
+        # Verify the API call was made correctly
+        issues_mixin.jira.get_issue.assert_called_once_with(
+            "DEV-123",
+            expand=None,
+            fields=ANY,
+            properties=None,
+            update_history=True,
+        )
+
+        # Verify the result
+        assert isinstance(result, JiraIssue)
+        assert result.key == "DEV-123"
+        assert result.summary == "Development issue"

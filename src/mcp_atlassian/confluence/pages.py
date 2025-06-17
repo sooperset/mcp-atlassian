@@ -8,12 +8,26 @@ from requests.exceptions import HTTPError
 from ..exceptions import MCPAtlassianAuthenticationError
 from ..models.confluence import ConfluencePage
 from .client import ConfluenceClient
+from .v2_adapter import ConfluenceV2Adapter
 
 logger = logging.getLogger("mcp-atlassian")
 
 
 class PagesMixin(ConfluenceClient):
     """Mixin for Confluence page operations."""
+
+    @property
+    def _v2_adapter(self) -> ConfluenceV2Adapter | None:
+        """Get v2 API adapter for OAuth authentication.
+
+        Returns:
+            ConfluenceV2Adapter instance if OAuth is configured, None otherwise
+        """
+        if self.config.auth_type == "oauth" and self.config.is_cloud:
+            return ConfluenceV2Adapter(
+                session=self.confluence._session, base_url=self.confluence.url
+            )
+        return None
 
     def get_page_content(
         self, page_id: str, *, convert_to_markdown: bool = True
@@ -262,6 +276,7 @@ class PagesMixin(ConfluenceClient):
         parent_id: str | None = None,
         *,
         is_markdown: bool = True,
+        enable_heading_anchors: bool = False,
     ) -> ConfluencePage:
         """
         Create a new page in a Confluence space.
@@ -272,6 +287,7 @@ class PagesMixin(ConfluenceClient):
             body: The content of the page (markdown or storage format)
             parent_id: Optional ID of a parent page
             is_markdown: Whether the body content is in markdown format (default: True, keyword-only)
+            enable_heading_anchors: Whether to enable automatic heading anchor generation (default: False, keyword-only)
 
         Returns:
             ConfluencePage model containing the new page's data
@@ -282,19 +298,37 @@ class PagesMixin(ConfluenceClient):
         try:
             # Convert markdown to Confluence storage format if needed
             storage_body = (
-                self.preprocessor.markdown_to_confluence_storage(body)
+                self.preprocessor.markdown_to_confluence_storage(
+                    body, enable_heading_anchors=enable_heading_anchors
+                )
                 if is_markdown
                 else body
             )
 
-            # Create the page
-            result = self.confluence.create_page(
-                space=space_key,
-                title=title,
-                body=storage_body,
-                parent_id=parent_id,
-                representation="storage",
-            )
+            # Use v2 API for OAuth authentication, v1 API for token/basic auth
+            v2_adapter = self._v2_adapter
+            if v2_adapter:
+                logger.debug(
+                    f"Using v2 API for OAuth authentication to create page '{title}'"
+                )
+                result = v2_adapter.create_page(
+                    space_key=space_key,
+                    title=title,
+                    body=storage_body,
+                    parent_id=parent_id,
+                    representation="storage",
+                )
+            else:
+                logger.debug(
+                    f"Using v1 API for token/basic authentication to create page '{title}'"
+                )
+                result = self.confluence.create_page(
+                    space=space_key,
+                    title=title,
+                    body=storage_body,
+                    parent_id=parent_id,
+                    representation="storage",
+                )
 
             # Get the new page content
             page_id = result.get("id")
@@ -320,6 +354,7 @@ class PagesMixin(ConfluenceClient):
         version_comment: str = "",
         is_markdown: bool = True,
         parent_id: str | None = None,
+        enable_heading_anchors: bool = False,
     ) -> ConfluencePage:
         """
         Update an existing page in Confluence.
@@ -332,6 +367,7 @@ class PagesMixin(ConfluenceClient):
             version_comment: Optional comment for this version (keyword-only)
             is_markdown: Whether the body content is in markdown format (default: True, keyword-only)
             parent_id: Optional new parent page ID (keyword-only)
+            enable_heading_anchors: Whether to enable automatic heading anchor generation (default: False, keyword-only)
 
         Returns:
             ConfluencePage model containing the updated page's data
@@ -342,27 +378,46 @@ class PagesMixin(ConfluenceClient):
         try:
             # Convert markdown to Confluence storage format if needed
             storage_body = (
-                self.preprocessor.markdown_to_confluence_storage(body)
+                self.preprocessor.markdown_to_confluence_storage(
+                    body, enable_heading_anchors=enable_heading_anchors
+                )
                 if is_markdown
                 else body
             )
 
             logger.debug(f"Updating page {page_id} with title '{title}'")
 
-            update_kwargs = {
-                "page_id": page_id,
-                "title": title,
-                "body": storage_body,
-                "type": "page",
-                "representation": "storage",
-                "minor_edit": is_minor_edit,
-                "version_comment": version_comment,
-                "always_update": True,
-            }
-            if parent_id:
-                update_kwargs["parent_id"] = parent_id
+            # Use v2 API for OAuth authentication, v1 API for token/basic auth
+            v2_adapter = self._v2_adapter
+            if v2_adapter:
+                logger.debug(
+                    f"Using v2 API for OAuth authentication to update page '{page_id}'"
+                )
+                response = v2_adapter.update_page(
+                    page_id=page_id,
+                    title=title,
+                    body=storage_body,
+                    representation="storage",
+                    version_comment=version_comment,
+                )
+            else:
+                logger.debug(
+                    f"Using v1 API for token/basic authentication to update page '{page_id}'"
+                )
+                update_kwargs = {
+                    "page_id": page_id,
+                    "title": title,
+                    "body": storage_body,
+                    "type": "page",
+                    "representation": "storage",
+                    "minor_edit": is_minor_edit,
+                    "version_comment": version_comment,
+                    "always_update": True,
+                }
+                if parent_id:
+                    update_kwargs["parent_id"] = parent_id
 
-            response = self.confluence.update_page(**update_kwargs)
+                self.confluence.update_page(**update_kwargs)
 
             # After update, refresh the page data
             return self.get_page_content(page_id)
@@ -459,27 +514,39 @@ class PagesMixin(ConfluenceClient):
         """
         try:
             logger.debug(f"Deleting page {page_id}")
-            response = self.confluence.remove_page(page_id=page_id)
 
-            # The Atlassian library's remove_page returns the raw response from
-            # the REST API call. For a successful deletion, we should get a
-            # response object, but it might be empty (HTTP 204 No Content).
-            # For REST DELETE operations, a success typically returns 204 or 200
-
-            # Check if we got a response object
-            if isinstance(response, requests.Response):
-                # Check if status code indicates success (2xx)
-                success = 200 <= response.status_code < 300
+            # Use v2 API for OAuth authentication, v1 API for token/basic auth
+            v2_adapter = self._v2_adapter
+            if v2_adapter:
                 logger.debug(
-                    f"Delete page {page_id} returned status code {response.status_code}"
+                    f"Using v2 API for OAuth authentication to delete page '{page_id}'"
                 )
-                return success
-            # If it's not a response object but truthy (like True), consider it a success
-            elif response:
+                return v2_adapter.delete_page(page_id=page_id)
+            else:
+                logger.debug(
+                    f"Using v1 API for token/basic authentication to delete page '{page_id}'"
+                )
+                response = self.confluence.remove_page(page_id=page_id)
+
+                # The Atlassian library's remove_page returns the raw response from
+                # the REST API call. For a successful deletion, we should get a
+                # response object, but it might be empty (HTTP 204 No Content).
+                # For REST DELETE operations, a success typically returns 204 or 200
+
+                # Check if we got a response object
+                if isinstance(response, requests.Response):
+                    # Check if status code indicates success (2xx)
+                    success = 200 <= response.status_code < 300
+                    logger.debug(
+                        f"Delete page {page_id} returned status code {response.status_code}"
+                    )
+                    return success
+                # If it's not a response object but truthy (like True), consider it a success
+                elif response:
+                    return True
+                # Default to true since no exception was raised
+                # This is safer than returning false when we don't know what happened
                 return True
-            # Default to true since no exception was raised
-            # This is safer than returning false when we don't know what happened
-            return True
 
         except Exception as e:
             logger.error(f"Error deleting page {page_id}: {str(e)}")
