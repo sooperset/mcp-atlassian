@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
-from ..utils.env import is_env_truthy
+from ..utils.env import is_env_ssl_verify
 from ..utils.oauth import OAuthConfig
 from ..utils.urls import is_atlassian_cloud_url
 
@@ -98,7 +98,7 @@ class JiraConfig:
                 raise ValueError(error_msg)
 
         # SSL verification (for Server/DC)
-        ssl_verify = is_env_truthy("JIRA_SSL_VERIFY", "true")
+        ssl_verify = is_env_ssl_verify("JIRA_SSL_VERIFY")
 
         # Get the projects filter if provided
         projects_filter = os.getenv("JIRA_PROJECTS_FILTER")

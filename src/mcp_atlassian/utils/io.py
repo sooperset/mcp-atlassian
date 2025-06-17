@@ -1,6 +1,6 @@
 """I/O utility functions for MCP Atlassian."""
 
-from mcp_atlassian.utils.env import is_env_truthy
+from mcp_atlassian.utils.env import is_env_extended_truthy
 
 
 def is_read_only_mode() -> bool:
@@ -14,4 +14,4 @@ def is_read_only_mode() -> bool:
     Returns:
         True if read-only mode is enabled, False otherwise
     """
-    return is_env_truthy("READ_ONLY_MODE", "false")
+    return is_env_extended_truthy("READ_ONLY_MODE", "false")
