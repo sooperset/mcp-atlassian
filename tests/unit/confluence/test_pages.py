@@ -160,11 +160,6 @@ class TestPagesMixin:
         space_key = "DEMO"
         title = "Example Page"
 
-        # Mock getting all spaces
-        pages_mixin.confluence.get_all_spaces.return_value = {
-            "results": [{"key": space_key, "name": "Demo Space"}]
-        }
-
         # Mock getting the page by title
         pages_mixin.confluence.get_page_by_title.return_value = {
             "id": "987654321",
@@ -195,25 +190,21 @@ class TestPagesMixin:
 
     def test_get_page_by_title_space_not_found(self, pages_mixin):
         """Test getting a page when the space doesn't exist."""
-        # Arrange
-        pages_mixin.confluence.get_all_spaces.return_value = {
-            "results": [{"key": "OTHER"}, {"key": "TEST"}]
-        }
+        # Arrange - API returns None when space doesn't exist
+        pages_mixin.confluence.get_page_by_title.return_value = None
 
         # Act
         result = pages_mixin.get_page_by_title("NONEXISTENT", "Page Title")
 
         # Assert
         assert result is None
-        pages_mixin.confluence.get_all_spaces.assert_called_once()
-        pages_mixin.confluence.get_page_by_title.assert_not_called()
+        pages_mixin.confluence.get_page_by_title.assert_called_once_with(
+            space="NONEXISTENT", title="Page Title", expand="body.storage,version"
+        )
 
     def test_get_page_by_title_page_not_found(self, pages_mixin):
         """Test getting a page that doesn't exist."""
         # Arrange
-        pages_mixin.confluence.get_all_spaces.return_value = {
-            "results": [{"key": "PROJ"}, {"key": "TEST"}]
-        }
         pages_mixin.confluence.get_page_by_title.return_value = None
 
         # Act
@@ -221,13 +212,13 @@ class TestPagesMixin:
 
         # Assert
         assert result is None
+        pages_mixin.confluence.get_page_by_title.assert_called_once_with(
+            space="PROJ", title="Nonexistent Page", expand="body.storage,version"
+        )
 
     def test_get_page_by_title_error_handling(self, pages_mixin):
         """Test error handling in get_page_by_title."""
         # Arrange
-        pages_mixin.confluence.get_all_spaces.return_value = {
-            "results": [{"key": "PROJ"}]
-        }
         pages_mixin.confluence.get_page_by_title.side_effect = KeyError("Missing key")
 
         # Act

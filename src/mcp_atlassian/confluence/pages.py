@@ -155,26 +155,16 @@ class PagesMixin(ConfluenceClient):
             ConfluencePage model containing the page content and metadata, or None if not found
         """
         try:
-            # First check if the space exists
-            spaces = self.confluence.get_all_spaces(start=0, limit=500)
-
-            # Handle case where spaces can be a dictionary with a "results" key
-            if isinstance(spaces, dict) and "results" in spaces:
-                space_keys = [s["key"] for s in spaces["results"]]
-            else:
-                space_keys = [s["key"] for s in spaces]
-
-            if space_key not in space_keys:
-                logger.warning(f"Space {space_key} not found")
-                return None
-
-            # Then try to find the page by title
+            # Directly try to find the page by title
             page = self.confluence.get_page_by_title(
                 space=space_key, title=title, expand="body.storage,version"
             )
 
             if not page:
-                logger.warning(f"Page '{title}' not found in space {space_key}")
+                logger.warning(
+                    f"Page '{title}' not found in space '{space_key}'. "
+                    f"The space may be invalid, the page may not exist, or permissions may be insufficient."
+                )
                 return None
 
             content = page["body"]["storage"]["value"]
