@@ -265,7 +265,7 @@ async def test_search(client, mock_confluence_fetcher):
     args, kwargs = mock_confluence_fetcher.search.call_args
     assert 'siteSearch ~ "test search"' in args[0]
     assert kwargs.get("limit") == 10
-    assert kwargs.get("spaces_filter") == ""
+    assert kwargs.get("spaces_filter") is None
 
     result_data = json.loads(response[0].text)
     assert isinstance(result_data, list)

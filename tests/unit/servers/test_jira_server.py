@@ -277,7 +277,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         add_comment,
         add_worklog,
         batch_create_issues,
-        batch_create_versions,  # <-- add this import
+        batch_create_versions,
         batch_get_changelogs,
         create_issue,
         create_issue_link,
@@ -421,7 +421,7 @@ async def test_get_issue(jira_client, mock_jira_fetcher):
     mock_jira_fetcher.get_issue.assert_called_once_with(
         issue_key="TEST-123",
         fields=["summary", "description", "status"],
-        expand="",
+        expand=None,
         comment_limit=10,
         properties=None,
         update_history=True,
@@ -458,8 +458,8 @@ async def test_search(jira_client, mock_jira_fetcher):
         fields=["summary", "status"],
         limit=10,
         start=0,
-        projects_filter="",
-        expand="",
+        projects_filter=None,
+        expand=None,
     )
 
 
@@ -497,7 +497,7 @@ async def test_create_issue(jira_client, mock_jira_fetcher):
         summary="New Issue",
         issue_type="Task",
         description="This is a new task",
-        assignee="",
+        assignee=None,
         components=["Frontend", "API"],
         priority={"name": "Medium"},
     )
@@ -660,7 +660,7 @@ async def test_get_issue_with_user_specific_fetcher_in_state(
     mock_jira_fetcher.get_issue.assert_called_with(
         issue_key="USER-STATE-1",
         fields=expected_fields_list,
-        expand="",
+        expand=None,
         comment_limit=10,
         properties=None,
         update_history=True,
