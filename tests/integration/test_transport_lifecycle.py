@@ -1,11 +1,13 @@
-"""Integration tests for transport-specific lifecycle behavior.
+"""Integration tests for transport lifecycle behavior.
 
-These tests ensure that stdio transport doesn't conflict with MCP server's
-internal stdio handling, and that all transports handle lifecycle properly.
+These tests ensure that:
+1. No stdin monitoring is used (preventing issues #519 and #524)
+2. Stdio transport doesn't conflict with MCP server's internal stdio handling
+3. All transports use direct execution
+4. Docker scenarios work correctly
 """
 
 import asyncio
-import sys
 from io import StringIO
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,71 +19,65 @@ from mcp_atlassian.utils.lifecycle import _shutdown_event
 
 @pytest.mark.integration
 class TestTransportLifecycleBehavior:
-    """Test transport-specific lifecycle monitoring behavior."""
+    """Test transport lifecycle behavior to prevent regression of issues #519 and #524."""
 
     def setup_method(self):
         """Reset state before each test."""
         _shutdown_event.clear()
 
-    @pytest.mark.parametrize(
-        "transport,env_transport",
-        [
-            ("stdio", "stdio"),  # stdio transport
-            ("sse", "sse"),  # sse transport
-            ("streamable-http", "streamable-http"),  # http transport
-            (None, "stdio"),  # default stdio from env
-            (None, "sse"),  # sse from env
-        ],
-    )
-    def test_transport_lifecycle_handling(self, transport, env_transport):
-        """Test that each transport uses appropriate lifecycle handling.
+    def test_all_transports_use_direct_execution(self):
+        """Verify all transports use direct execution without stdin monitoring.
 
-        This test verifies the fix for issue #519 where stdio transport
-        conflicted with MCP server's internal stdio handling. After the fix,
-        all transports now directly call run_async without stdin monitoring.
+        This is a regression test to ensure stdin monitoring is never reintroduced,
+        which caused both issue #519 (stdio conflicts) and #524 (HTTP session termination).
         """
-        with patch("asyncio.run") as mock_asyncio_run:
-            with patch.dict("os.environ", {"TRANSPORT": env_transport}, clear=False):
-                # Mock the server creation and CLI parsing
-                with (
-                    patch(
-                        "mcp_atlassian.servers.main.AtlassianMCP"
-                    ) as mock_server_class,
-                    patch("click.core.Context") as mock_click_ctx,
-                ):
-                    # Setup mocks
-                    mock_server = MagicMock()
-                    mock_server.run_async = AsyncMock()
-                    mock_server_class.return_value = mock_server
+        transports_to_test = ["stdio", "sse", "streamable-http"]
 
-                    # Mock CLI context to return our transport
-                    mock_ctx_instance = MagicMock()
-                    mock_ctx_instance.obj = {
-                        "transport": transport,
-                        "port": None,
-                        "host": None,
-                        "path": None,
-                    }
-                    mock_click_ctx.return_value = mock_ctx_instance
+        for transport in transports_to_test:
+            with patch("asyncio.run") as mock_asyncio_run:
+                with patch.dict("os.environ", {"TRANSPORT": transport}, clear=False):
+                    with (
+                        patch(
+                            "mcp_atlassian.servers.main.AtlassianMCP"
+                        ) as mock_server_class,
+                        patch("click.core.Context") as mock_click_ctx,
+                    ):
+                        # Setup mocks
+                        mock_server = MagicMock()
+                        mock_server.run_async = AsyncMock()
+                        mock_server_class.return_value = mock_server
 
-                    # Simulate main execution
-                    with patch("sys.argv", ["mcp-atlassian"]):
-                        try:
-                            main()
-                        except SystemExit:
-                            pass  # Expected for clean exit
+                        # Mock CLI context
+                        mock_ctx_instance = MagicMock()
+                        mock_ctx_instance.obj = {
+                            "transport": transport,
+                            "port": None,
+                            "host": None,
+                            "path": None,
+                        }
+                        mock_click_ctx.return_value = mock_ctx_instance
 
-                    # Verify asyncio.run was called
-                    assert mock_asyncio_run.called
+                        # Execute main
+                        with patch("sys.argv", ["mcp-atlassian"]):
+                            try:
+                                main()
+                            except SystemExit:
+                                pass
 
-                    # Get the coroutine that was passed to asyncio.run
-                    called_coro = mock_asyncio_run.call_args[0][0]
+                        # Verify direct execution for all transports
+                        assert mock_asyncio_run.called, (
+                            f"asyncio.run not called for {transport}"
+                        )
+                        called_coro = mock_asyncio_run.call_args[0][0]
 
-                    # All transports now directly use run_async without stdin monitoring
-                    # This prevents race conditions and premature termination
-                    assert hasattr(called_coro, "cr_code") or "run_async" in str(
-                        called_coro
-                    )
+                        # Ensure NO stdin monitoring wrapper is used
+                        coro_str = str(called_coro)
+                        assert "run_with_stdio_monitoring" not in coro_str, (
+                            f"{transport} should not use stdin monitoring"
+                        )
+                        assert "run_async" in coro_str or hasattr(
+                            called_coro, "cr_code"
+                        ), f"{transport} should use direct run_async execution"
 
     @pytest.mark.anyio
     async def test_stdio_no_race_condition(self):
@@ -124,24 +120,6 @@ class TestTransportLifecycleBehavior:
 
         # Should only have one read - from the MCP server itself
         assert read_count == 1
-        assert result == "completed"
-
-    @pytest.mark.anyio
-    async def test_non_stdio_transports_no_stdin_monitoring(self):
-        """Test that SSE and HTTP transports don't use stdin monitoring.
-
-        After PR #528, stdin monitoring has been completely removed to prevent
-        premature session termination.
-        """
-
-        # Simple server that completes immediately
-        async def mock_server(**kwargs):
-            return "completed"
-
-        # Run server directly - no stdin monitoring for any transport
-        result = await mock_server(transport="sse")
-
-        # Server should complete normally
         assert result == "completed"
 
     def test_main_function_transport_logic(self):
@@ -261,67 +239,32 @@ class TestTransportLifecycleBehavior:
 
 
 @pytest.mark.integration
-class TestLifecycleEdgeCases:
-    """Test edge cases in lifecycle handling to ensure robustness."""
+class TestRegressionPrevention:
+    """Tests to prevent regression of specific issues."""
 
-    @pytest.mark.anyio
-    async def test_server_with_stdin_unavailable(self):
-        """Test server handles unavailable stdin gracefully."""
-        # Remove stdin temporarily
-        original_stdin = sys.stdin
-        sys.stdin = None
+    def test_no_stdin_monitoring_in_codebase(self):
+        """Ensure stdin monitoring is not reintroduced in the codebase.
 
-        try:
+        This is a safeguard against reintroducing the flawed stdin monitoring
+        that caused issues #519 and #524.
+        """
+        # Check that the problematic function doesn't exist
+        from mcp_atlassian.utils import lifecycle
 
-            async def mock_server(**kwargs):
-                return "completed"
+        assert not hasattr(lifecycle, "run_with_stdio_monitoring"), (
+            "run_with_stdio_monitoring should not exist in lifecycle module"
+        )
 
-            # Should complete without errors even without stdin
-            result = await mock_server(transport="sse")
-            assert result == "completed"
+    def test_signal_handlers_are_setup(self):
+        """Verify signal handlers are properly configured."""
+        with patch("mcp_atlassian.setup_signal_handlers") as mock_setup:
+            with patch("asyncio.run"):
+                with patch("mcp_atlassian.servers.main.AtlassianMCP"):
+                    with patch("sys.argv", ["mcp-atlassian"]):
+                        try:
+                            main()
+                        except SystemExit:
+                            pass
 
-        finally:
-            sys.stdin = original_stdin
-
-    @pytest.mark.anyio
-    async def test_server_exception_handling(self):
-        """Test server exceptions are properly propagated."""
-
-        async def failing_server(**kwargs):
-            raise RuntimeError("Server error")
-
-        # Server errors should be propagated
-        with pytest.raises(RuntimeError, match="Server error"):
-            await failing_server(transport="sse")
-
-    @pytest.mark.anyio
-    async def test_signal_based_shutdown(self):
-        """Test handling of signal-based shutdown."""
-        import sys
-
-        shutdown_count = 0
-
-        async def counting_server(**kwargs):
-            nonlocal shutdown_count
-            # Wait a bit to allow shutdown events
-            if "trio" in sys.modules:
-                # We're running under trio
-                import trio
-
-                await trio.sleep(0.1)
-            else:
-                # We're running under asyncio
-                await asyncio.sleep(0.1)
-            shutdown_count += 1
-            return "completed"
-
-        # Clear shutdown event
-        _shutdown_event.clear()
-
-        # For both backends, we can just run the server directly
-        # since we're in an async test function
-        result = await counting_server(transport="sse")
-
-        # Server should have completed normally
-        assert shutdown_count == 1
-        assert result == "completed"
+                    # Signal handlers should always be set up
+                    mock_setup.assert_called_once()
