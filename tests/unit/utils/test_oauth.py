@@ -589,6 +589,63 @@ class TestOAuthConfig:
         # Should return None if required variables are missing
         assert config is None
 
+    @patch("os.getenv")
+    def test_from_env_minimal_oauth_enabled(self, mock_getenv):
+        """Test from_env with minimal OAuth configuration (ATLASSIAN_OAUTH_ENABLE=true)."""
+        # Mock environment variables - only ATLASSIAN_OAUTH_ENABLE is set
+        mock_getenv.side_effect = lambda key, default=None: {
+            "ATLASSIAN_OAUTH_ENABLE": "true",
+            "ATLASSIAN_OAUTH_CLOUD_ID": "cloud-id",  # Optional fallback
+        }.get(key, default)
+
+        config = OAuthConfig.from_env()
+
+        # Should return minimal config when OAuth is enabled
+        assert config is not None
+        assert config.client_id == ""
+        assert config.client_secret == ""
+        assert config.redirect_uri == ""
+        assert config.scope == ""
+        assert config.cloud_id == "cloud-id"
+
+    @patch("os.getenv")
+    def test_from_env_minimal_oauth_disabled(self, mock_getenv):
+        """Test from_env with minimal OAuth configuration disabled."""
+        # Mock environment variables - ATLASSIAN_OAUTH_ENABLE is false
+        mock_getenv.side_effect = lambda key, default=None: {
+            "ATLASSIAN_OAUTH_ENABLE": "false",
+        }.get(key, default)
+
+        config = OAuthConfig.from_env()
+
+        # Should return None when OAuth is disabled
+        assert config is None
+
+    @patch("os.getenv")
+    def test_from_env_full_oauth_takes_precedence(self, mock_getenv):
+        """Test that full OAuth configuration takes precedence over minimal config."""
+        # Mock environment variables - both full OAuth and ATLASSIAN_OAUTH_ENABLE
+        mock_getenv.side_effect = lambda key, default=None: {
+            "ATLASSIAN_OAUTH_ENABLE": "true",
+            "ATLASSIAN_OAUTH_CLIENT_ID": "full-client-id",
+            "ATLASSIAN_OAUTH_CLIENT_SECRET": "full-client-secret",
+            "ATLASSIAN_OAUTH_REDIRECT_URI": "https://example.com/callback",
+            "ATLASSIAN_OAUTH_SCOPE": "read:jira-work",
+            "ATLASSIAN_OAUTH_CLOUD_ID": "full-cloud-id",
+        }.get(key, default)
+
+        # Mock token loading
+        with patch.object(OAuthConfig, "load_tokens", return_value={}):
+            config = OAuthConfig.from_env()
+
+            # Should return full config, not minimal
+            assert config is not None
+            assert config.client_id == "full-client-id"
+            assert config.client_secret == "full-client-secret"
+            assert config.redirect_uri == "https://example.com/callback"
+            assert config.scope == "read:jira-work"
+            assert config.cloud_id == "full-cloud-id"
+
 
 def test_configure_oauth_session_success():
     """Test successful configure_oauth_session."""
