@@ -341,11 +341,13 @@ def main(
     try:
         logger.debug("Starting asyncio event loop...")
 
-        # Create a wrapper coroutine that handles both the server and stdin monitoring
+        # For stdio transport, don't monitor stdin as MCP server handles it internally
+        # This prevents race conditions where both try to read from the same stdin
         if final_transport == "stdio":
-            asyncio.run(run_with_stdio_monitoring(main_mcp.run_async, run_kwargs))
-        else:
             asyncio.run(main_mcp.run_async(**run_kwargs))
+        else:
+            # For other transports (SSE, HTTP), use stdin monitoring for container shutdown
+            asyncio.run(run_with_stdio_monitoring(main_mcp.run_async, run_kwargs))
     except (KeyboardInterrupt, SystemExit) as e:
         logger.info(f"Server shutdown initiated: {type(e).__name__}")
     except Exception as e:
