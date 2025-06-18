@@ -31,7 +31,7 @@ class TestMainTransportSelection:
             yield mock_run
 
     def test_stdio_transport_uses_direct_execution(self, mock_server, mock_asyncio_run):
-        """Test that stdio transport bypasses lifecycle monitoring.
+        """Test that stdio transport uses direct execution.
 
         This test verifies the fix for issue #519 where stdio transport
         conflicted with the MCP server's internal stdio handling.
@@ -51,15 +51,15 @@ class TestMainTransportSelection:
                     called_coro = mock_asyncio_run._called_with
                     coro_repr = repr(called_coro)
 
-                    # For stdio, should NOT wrap with run_with_stdio_monitoring
-                    assert "run_with_stdio_monitoring" not in coro_repr
+                    # All transports now use direct execution
                     # Should be the direct run_async coroutine
                     assert "run_async" in coro_repr or hasattr(called_coro, "cr_code")
 
-    def test_sse_transport_uses_lifecycle_monitoring(
-        self, mock_server, mock_asyncio_run
-    ):
-        """Test that SSE transport uses lifecycle monitoring wrapper."""
+    def test_sse_transport_uses_direct_execution(self, mock_server, mock_asyncio_run):
+        """Test that SSE transport uses direct execution.
+
+        After PR #528, all transports use direct execution without stdin monitoring.
+        """
         with patch("mcp_atlassian.servers.main.AtlassianMCP", return_value=mock_server):
             with patch.dict("os.environ", {"TRANSPORT": "sse"}):
                 with patch("sys.argv", ["mcp-atlassian"]):
@@ -75,16 +75,14 @@ class TestMainTransportSelection:
                     called_coro = mock_asyncio_run._called_with
                     coro_repr = repr(called_coro)
 
-                    # For SSE, should use run_with_stdio_monitoring wrapper
-                    assert "run_with_stdio_monitoring" in coro_repr or (
-                        hasattr(called_coro, "__name__")
-                        and called_coro.__name__ == "run_with_stdio_monitoring"
-                    )
+                    # All transports now use direct execution
+                    assert "run_async" in coro_repr or hasattr(called_coro, "cr_code")
 
-    def test_http_transport_uses_lifecycle_monitoring(
-        self, mock_server, mock_asyncio_run
-    ):
-        """Test that HTTP transport uses lifecycle monitoring wrapper."""
+    def test_http_transport_uses_direct_execution(self, mock_server, mock_asyncio_run):
+        """Test that HTTP transport uses direct execution.
+
+        After PR #528, all transports use direct execution without stdin monitoring.
+        """
         with patch("mcp_atlassian.servers.main.AtlassianMCP", return_value=mock_server):
             with patch.dict("os.environ", {"TRANSPORT": "streamable-http"}):
                 with patch("sys.argv", ["mcp-atlassian"]):
@@ -100,11 +98,8 @@ class TestMainTransportSelection:
                     called_coro = mock_asyncio_run._called_with
                     coro_repr = repr(called_coro)
 
-                    # For HTTP, should use run_with_stdio_monitoring wrapper
-                    assert "run_with_stdio_monitoring" in coro_repr or (
-                        hasattr(called_coro, "__name__")
-                        and called_coro.__name__ == "run_with_stdio_monitoring"
-                    )
+                    # All transports now use direct execution
+                    assert "run_async" in coro_repr or hasattr(called_coro, "cr_code")
 
     def test_cli_overrides_env_transport(self, mock_server, mock_asyncio_run):
         """Test that CLI transport argument overrides environment variable."""
@@ -117,10 +112,10 @@ class TestMainTransportSelection:
                     except SystemExit:
                         pass
 
-                    # Should use stdio behavior (no monitoring) despite env var
+                    # All transports now use direct execution
                     called_coro = mock_asyncio_run._called_with
                     coro_repr = repr(called_coro)
-                    assert "run_with_stdio_monitoring" not in coro_repr
+                    assert "run_async" in coro_repr or hasattr(called_coro, "cr_code")
 
     @pytest.mark.parametrize("transport", ["stdio", "sse", "streamable-http"])
     def test_transport_passed_to_server(self, mock_server, transport):

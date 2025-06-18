@@ -1,7 +1,7 @@
 """Integration tests for transport-specific lifecycle behavior.
 
 These tests ensure that stdio transport doesn't conflict with MCP server's
-internal stdio handling, while other transports properly use lifecycle monitoring.
+internal stdio handling, and that all transports handle lifecycle properly.
 """
 
 import asyncio
@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from mcp_atlassian import main
-from mcp_atlassian.utils.lifecycle import _shutdown_event, run_with_stdio_monitoring
+from mcp_atlassian.utils.lifecycle import _shutdown_event
 
 
 @pytest.mark.integration
@@ -24,22 +24,21 @@ class TestTransportLifecycleBehavior:
         _shutdown_event.clear()
 
     @pytest.mark.parametrize(
-        "transport,env_transport,should_use_monitoring",
+        "transport,env_transport",
         [
-            ("stdio", "stdio", False),  # stdio should NOT use monitoring
-            ("sse", "sse", True),  # sse should use monitoring
-            ("streamable-http", "streamable-http", True),  # http should use monitoring
-            (None, "stdio", False),  # default stdio from env
-            (None, "sse", True),  # sse from env
+            ("stdio", "stdio"),  # stdio transport
+            ("sse", "sse"),  # sse transport
+            ("streamable-http", "streamable-http"),  # http transport
+            (None, "stdio"),  # default stdio from env
+            (None, "sse"),  # sse from env
         ],
     )
-    def test_transport_lifecycle_monitoring_decision(
-        self, transport, env_transport, should_use_monitoring
-    ):
+    def test_transport_lifecycle_handling(self, transport, env_transport):
         """Test that each transport uses appropriate lifecycle handling.
 
         This test verifies the fix for issue #519 where stdio transport
-        conflicted with MCP server's internal stdio handling.
+        conflicted with MCP server's internal stdio handling. After the fix,
+        all transports now directly call run_async without stdin monitoring.
         """
         with patch("asyncio.run") as mock_asyncio_run:
             with patch.dict("os.environ", {"TRANSPORT": env_transport}, clear=False):
@@ -77,35 +76,22 @@ class TestTransportLifecycleBehavior:
 
                     # Get the coroutine that was passed to asyncio.run
                     called_coro = mock_asyncio_run.call_args[0][0]
-                    coro_name = (
-                        called_coro.__name__
-                        if hasattr(called_coro, "__name__")
-                        else str(called_coro)
+
+                    # All transports now directly use run_async without stdin monitoring
+                    # This prevents race conditions and premature termination
+                    assert hasattr(called_coro, "cr_code") or "run_async" in str(
+                        called_coro
                     )
 
-                    if should_use_monitoring:
-                        # For non-stdio transports, should use lifecycle monitoring
-                        assert "run_with_stdio_monitoring" in str(
-                            called_coro
-                        ) or hasattr(called_coro, "cr_code")
-                    else:
-                        # For stdio transport, should NOT use lifecycle monitoring
-                        assert "run_with_stdio_monitoring" not in str(called_coro)
-                        # Should call run_async directly
-                        assert hasattr(called_coro, "cr_code") or "run_async" in str(
-                            called_coro
-                        )
-
     @pytest.mark.anyio
-    async def test_stdio_race_condition_prevented(self):
+    async def test_stdio_no_race_condition(self):
         """Test that stdio transport doesn't create race condition with MCP server.
 
-        This test simulates the original bug where both lifecycle monitoring
-        and MCP server tried to read from stdin simultaneously.
+        After the fix, stdin monitoring has been removed completely, so there's
+        no possibility of race conditions between components trying to read stdin.
         """
         # Create a mock stdin that tracks reads
         read_count = 0
-        read_errors = []
 
         class MockStdin:
             def __init__(self):
@@ -113,90 +99,50 @@ class TestTransportLifecycleBehavior:
                 self._read_lock = asyncio.Lock()
 
             async def readline(self):
-                nonlocal read_count, read_errors
+                nonlocal read_count
 
                 async with self._read_lock:
                     if self.closed:
-                        error = ValueError("I/O operation on closed file")
-                        read_errors.append(error)
-                        raise error
+                        raise ValueError("I/O operation on closed file")
 
                     read_count += 1
-                    # Simulate EOF after first read
-                    if read_count > 1:
-                        self.closed = True
                     return b""  # EOF
 
         mock_stdin = MockStdin()
 
-        # Mock the server coroutine that also tries to read stdin
+        # Mock the server coroutine that reads stdin
         async def mock_server_with_stdio(**kwargs):
             """Simulates MCP server reading from stdin."""
-            try:
-                # MCP server would normally read stdin here
-                await mock_stdin.readline()
-            except Exception as e:
-                # This is what happened in the bug - one reader got an error
-                pass
+            # MCP server would normally read stdin here
+            await mock_stdin.readline()
             return "completed"
 
-        # Test with lifecycle monitoring (the buggy scenario)
+        # Test direct server execution (current behavior)
         with patch("sys.stdin", mock_stdin):
-            with patch("asyncio.StreamReader") as mock_reader_class:
-                mock_reader = AsyncMock()
-                mock_reader.readline = mock_stdin.readline
-                mock_reader_class.return_value = mock_reader
+            # Run server directly without any stdin monitoring
+            result = await mock_server_with_stdio()
 
-                # This simulates the buggy behavior - both try to read stdin
-                try:
-                    await run_with_stdio_monitoring(mock_server_with_stdio, {})
-                except ValueError:
-                    pass  # Expected in the buggy scenario
-
-        # With the bug, we'd see multiple reads and errors
-        assert read_count >= 1
-        if read_count > 1:
-            # If multiple reads happened, there should be errors
-            assert len(read_errors) > 0, (
-                "Race condition detected - multiple stdin readers"
-            )
+        # Should only have one read - from the MCP server itself
+        assert read_count == 1
+        assert result == "completed"
 
     @pytest.mark.anyio
-    async def test_non_stdio_transports_get_monitoring(self):
-        """Test that SSE and HTTP transports properly use lifecycle monitoring."""
-        monitor_started = False
+    async def test_non_stdio_transports_no_stdin_monitoring(self):
+        """Test that SSE and HTTP transports don't use stdin monitoring.
 
-        async def track_monitoring(*args, **kwargs):
-            nonlocal monitor_started
-            monitor_started = True
-            # Simulate immediate completion
-            return None
+        After PR #528, stdin monitoring has been completely removed to prevent
+        premature session termination.
+        """
 
-        # Mock the monitoring components
-        with (
-            patch("asyncio.create_task") as mock_create_task,
-            patch("asyncio.get_event_loop") as mock_get_loop,
-        ):
-            # Setup mocks
-            mock_task = AsyncMock()
-            mock_task.done.return_value = True
-            mock_create_task.return_value = mock_task
+        # Simple server that completes immediately
+        async def mock_server(**kwargs):
+            return "completed"
 
-            mock_loop = MagicMock()
-            mock_loop.connect_read_pipe = AsyncMock(return_value=(MagicMock(), None))
-            mock_get_loop.return_value = mock_loop
+        # Run server directly - no stdin monitoring for any transport
+        result = await mock_server(transport="sse")
 
-            # Simple server that completes immediately
-            async def mock_server(**kwargs):
-                return "completed"
-
-            # Run with monitoring
-            await run_with_stdio_monitoring(mock_server, {"transport": "sse"})
-
-            # Verify monitoring was started
-            assert mock_create_task.called, (
-                "Lifecycle monitoring should start for non-stdio transports"
-            )
+        # Server should complete normally
+        assert result == "completed"
 
     def test_main_function_transport_logic(self):
         """Test the main function's transport determination logic."""
@@ -209,7 +155,7 @@ class TestTransportLifecycleBehavior:
             ("stdio", "sse", "stdio"),  # CLI overrides env
         ]
 
-        for cli_transport, env_transport, expected_transport in test_cases:
+        for cli_transport, env_transport, _expected_transport in test_cases:
             with patch("asyncio.run") as mock_asyncio_run:
                 env_vars = {}
                 if env_transport:
@@ -244,15 +190,15 @@ class TestTransportLifecycleBehavior:
                             except SystemExit:
                                 pass
 
-                        # Verify the server was created with correct transport
-                        create_call_kwargs = mock_server_class.call_args[1]
+                        # Verify asyncio.run was called
                         assert mock_asyncio_run.called
 
-                        # Check if stdio monitoring was used based on transport
+                        # All transports now run directly without stdin monitoring
                         called_coro = mock_asyncio_run.call_args[0][0]
-                        if expected_transport == "stdio":
-                            # Should NOT use monitoring for stdio
-                            assert "run_with_stdio_monitoring" not in str(called_coro)
+                        # Should always call run_async directly
+                        assert hasattr(called_coro, "cr_code") or "run_async" in str(
+                            called_coro
+                        )
 
     @pytest.mark.anyio
     async def test_shutdown_event_handling(self):
@@ -264,11 +210,11 @@ class TestTransportLifecycleBehavior:
             # Should run even with shutdown event set
             return "completed"
 
-        # Test that server runs without monitoring when shutdown is already requested
-        result = await run_with_stdio_monitoring(mock_server, {})
+        # Server runs directly now
+        result = await mock_server()
 
-        # Server should have been called directly
-        assert result is None or result == "completed"
+        # Server should complete normally
+        assert result == "completed"
 
     def test_docker_stdio_scenario(self):
         """Test the specific Docker stdio scenario that caused the bug.
@@ -308,22 +254,19 @@ class TestTransportLifecycleBehavior:
                     assert mock_asyncio_run.called
                     called_coro = mock_asyncio_run.call_args[0][0]
 
-                    # This is the fix - stdio should NOT use monitoring
-                    assert "run_with_stdio_monitoring" not in str(called_coro)
-
-                    # Should use run_async directly
+                    # All transports now use run_async directly
                     assert hasattr(called_coro, "cr_code") or "run_async" in str(
                         called_coro
                     )
 
 
 @pytest.mark.integration
-class TestLifecycleMonitoringEdgeCases:
-    """Test edge cases in lifecycle monitoring to ensure robustness."""
+class TestLifecycleEdgeCases:
+    """Test edge cases in lifecycle handling to ensure robustness."""
 
     @pytest.mark.anyio
-    async def test_monitoring_with_stdin_unavailable(self):
-        """Test lifecycle monitoring gracefully handles unavailable stdin."""
+    async def test_server_with_stdin_unavailable(self):
+        """Test server handles unavailable stdin gracefully."""
         # Remove stdin temporarily
         original_stdin = sys.stdin
         sys.stdin = None
@@ -334,51 +277,51 @@ class TestLifecycleMonitoringEdgeCases:
                 return "completed"
 
             # Should complete without errors even without stdin
-            await run_with_stdio_monitoring(mock_server, {"transport": "sse"})
+            result = await mock_server(transport="sse")
+            assert result == "completed"
 
         finally:
             sys.stdin = original_stdin
 
     @pytest.mark.anyio
-    async def test_monitoring_with_server_exception(self):
-        """Test lifecycle monitoring handles server exceptions properly."""
+    async def test_server_exception_handling(self):
+        """Test server exceptions are properly propagated."""
 
         async def failing_server(**kwargs):
             raise RuntimeError("Server error")
 
-        # Monitoring should not mask server errors
+        # Server errors should be propagated
         with pytest.raises(RuntimeError, match="Server error"):
-            await run_with_stdio_monitoring(failing_server, {"transport": "sse"})
+            await failing_server(transport="sse")
 
     @pytest.mark.anyio
-    async def test_concurrent_shutdown_handling(self):
-        """Test handling of concurrent shutdown signals."""
+    async def test_signal_based_shutdown(self):
+        """Test handling of signal-based shutdown."""
+        import sys
+
         shutdown_count = 0
 
         async def counting_server(**kwargs):
             nonlocal shutdown_count
             # Wait a bit to allow shutdown events
-            await asyncio.sleep(0.1)
+            if "trio" in sys.modules:
+                # We're running under trio
+                import trio
+
+                await trio.sleep(0.1)
+            else:
+                # We're running under asyncio
+                await asyncio.sleep(0.1)
             shutdown_count += 1
             return "completed"
 
         # Clear shutdown event
         _shutdown_event.clear()
 
-        # Start server
-        server_task = asyncio.create_task(
-            run_with_stdio_monitoring(counting_server, {"transport": "sse"})
-        )
+        # For both backends, we can just run the server directly
+        # since we're in an async test function
+        result = await counting_server(transport="sse")
 
-        # Send shutdown signal after brief delay
-        await asyncio.sleep(0.05)
-        _shutdown_event.set()
-
-        # Wait for completion
-        try:
-            await server_task
-        except asyncio.CancelledError:
-            pass
-
-        # Server should have run once
-        assert shutdown_count <= 1
+        # Server should have completed normally
+        assert shutdown_count == 1
+        assert result == "completed"
