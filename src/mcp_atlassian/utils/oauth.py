@@ -9,7 +9,6 @@ It handles:
 
 import json
 import logging
-import os
 import pprint
 import time
 import urllib.parse
@@ -19,6 +18,8 @@ from typing import Any, Optional
 
 import keyring
 import requests
+
+from mcp_atlassian.utils.env import getenv
 
 # Configure logging
 logger = logging.getLogger("mcp-atlassian.oauth")
@@ -379,17 +380,19 @@ class OAuthConfig:
             return {}
 
     @classmethod
-    def from_env(cls) -> Optional["OAuthConfig"]:
+    def from_env(cls, env: dict[str, str] = None) -> Optional["OAuthConfig"]:
+        if env is None:
+            env = {}
         """Create an OAuth configuration from environment variables.
 
         Returns:
             OAuthConfig instance or None if required environment variables are missing
         """
         # Check for required environment variables
-        client_id = os.getenv("ATLASSIAN_OAUTH_CLIENT_ID")
-        client_secret = os.getenv("ATLASSIAN_OAUTH_CLIENT_SECRET")
-        redirect_uri = os.getenv("ATLASSIAN_OAUTH_REDIRECT_URI")
-        scope = os.getenv("ATLASSIAN_OAUTH_SCOPE")
+        client_id = getenv(env, "ATLASSIAN_OAUTH_CLIENT_ID")
+        client_secret = getenv(env, "ATLASSIAN_OAUTH_CLIENT_SECRET")
+        redirect_uri = getenv(env, "ATLASSIAN_OAUTH_REDIRECT_URI")
+        scope = getenv(env, "ATLASSIAN_OAUTH_SCOPE")
 
         # All of these are required for OAuth configuration
         if not all([client_id, client_secret, redirect_uri, scope]):
@@ -401,7 +404,7 @@ class OAuthConfig:
             client_secret=client_secret,
             redirect_uri=redirect_uri,
             scope=scope,
-            cloud_id=os.getenv("ATLASSIAN_OAUTH_CLOUD_ID"),
+            cloud_id=getenv(env, "ATLASSIAN_OAUTH_CLOUD_ID"),
         )
 
         # Try to load existing tokens
