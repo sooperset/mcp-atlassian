@@ -49,9 +49,26 @@ def ensure_clean_exit() -> None:
 
     This is important for containerized environments where output might be
     buffered and could be lost if not properly flushed before exit.
+
+    Handles cases where streams may already be closed by the parent process,
+    particularly on Windows or when run as a child process.
     """
     logger.info("Server stopped, flushing output streams...")
-    # Ensure all output is flushed before exit
-    sys.stdout.flush()
-    sys.stderr.flush()
+
+    # Safely flush stdout
+    try:
+        if hasattr(sys.stdout, "closed") and not sys.stdout.closed:
+            sys.stdout.flush()
+    except (ValueError, OSError, AttributeError) as e:
+        # Stream might be closed or redirected
+        logger.debug(f"Could not flush stdout: {e}")
+
+    # Safely flush stderr
+    try:
+        if hasattr(sys.stderr, "closed") and not sys.stderr.closed:
+            sys.stderr.flush()
+    except (ValueError, OSError, AttributeError) as e:
+        # Stream might be closed or redirected
+        logger.debug(f"Could not flush stderr: {e}")
+
     logger.debug("Output streams flushed, exiting gracefully")

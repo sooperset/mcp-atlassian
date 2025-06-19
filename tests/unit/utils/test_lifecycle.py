@@ -81,8 +81,90 @@ class TestEnsureCleanExit:
     @patch("sys.stdout")
     def test_ensure_clean_exit(self, mock_stdout, mock_stderr):
         """Test that output streams are flushed on exit."""
+        # Mock streams as open
+        mock_stdout.closed = False
+        mock_stderr.closed = False
+
         ensure_clean_exit()
 
         # Check both streams were flushed
         mock_stdout.flush.assert_called_once()
         mock_stderr.flush.assert_called_once()
+
+    @patch("sys.stderr")
+    @patch("sys.stdout")
+    def test_ensure_clean_exit_closed_stdout(self, mock_stdout, mock_stderr):
+        """Test that closed stdout is handled gracefully."""
+        # Mock stdout as closed, stderr as open
+        mock_stdout.closed = True
+        mock_stderr.closed = False
+
+        ensure_clean_exit()
+
+        # Check stdout was not flushed
+        mock_stdout.flush.assert_not_called()
+        # Check stderr was still flushed
+        mock_stderr.flush.assert_called_once()
+
+    @patch("sys.stderr")
+    @patch("sys.stdout")
+    def test_ensure_clean_exit_closed_stderr(self, mock_stdout, mock_stderr):
+        """Test that closed stderr is handled gracefully."""
+        # Mock stderr as closed, stdout as open
+        mock_stdout.closed = False
+        mock_stderr.closed = True
+
+        ensure_clean_exit()
+
+        # Check stdout was flushed
+        mock_stdout.flush.assert_called_once()
+        # Check stderr was not flushed
+        mock_stderr.flush.assert_not_called()
+
+    @patch("sys.stderr")
+    @patch("sys.stdout")
+    def test_ensure_clean_exit_both_closed(self, mock_stdout, mock_stderr):
+        """Test that both streams being closed is handled gracefully."""
+        # Mock both streams as closed
+        mock_stdout.closed = True
+        mock_stderr.closed = True
+
+        ensure_clean_exit()
+
+        # Check neither stream was flushed
+        mock_stdout.flush.assert_not_called()
+        mock_stderr.flush.assert_not_called()
+
+    @patch("sys.stderr")
+    @patch("sys.stdout")
+    def test_ensure_clean_exit_flush_raises_value_error(self, mock_stdout, mock_stderr):
+        """Test that ValueError during flush is handled gracefully."""
+        # Mock streams as open but flush raises ValueError
+        mock_stdout.closed = False
+        mock_stderr.closed = False
+        mock_stdout.flush.side_effect = ValueError("I/O operation on closed file")
+        mock_stderr.flush.side_effect = ValueError("I/O operation on closed file")
+
+        # Should not raise exception
+        ensure_clean_exit()
+
+        # Check both streams had flush attempts
+        mock_stdout.flush.assert_called_once()
+        mock_stderr.flush.assert_called_once()
+
+    @patch("sys.stderr")
+    @patch("sys.stdout")
+    def test_ensure_clean_exit_no_closed_attribute(self, mock_stdout, mock_stderr):
+        """Test handling of streams without 'closed' attribute."""
+        # Remove closed attribute to simulate non-standard streams
+        if hasattr(mock_stdout, "closed"):
+            delattr(mock_stdout, "closed")
+        if hasattr(mock_stderr, "closed"):
+            delattr(mock_stderr, "closed")
+
+        # Should not raise exception
+        ensure_clean_exit()
+
+        # Check neither stream was flushed (no closed attribute)
+        mock_stdout.flush.assert_not_called()
+        mock_stderr.flush.assert_not_called()
