@@ -676,13 +676,13 @@ class TestIssuesMixin:
             return_value=JiraIssue(key="TEST-123", description="")
         )
 
-        # Mock available transitions
+        # Mock available transitions (using TransitionsMixin's normalized format)
         issues_mixin.get_available_transitions = MagicMock(
             return_value=[
                 {
                     "id": "21",
                     "name": "In Progress",
-                    "to": {"name": "In Progress", "id": "3"},
+                    "to_status": "In Progress",
                 }
             ]
         )
