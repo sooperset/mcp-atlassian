@@ -14,7 +14,7 @@ from mcp_atlassian.servers.dependencies import (
     get_confluence_fetcher,
     get_jira_fetcher,
 )
-from mcp_atlassian.servers.main import AtlassianMCP, main_lifespan
+from mcp_atlassian.servers.main import AtlassianMCP, build_main_lifespan
 from mcp_atlassian.utils.environment import get_available_services
 from mcp_atlassian.utils.ssl import configure_ssl_verification
 from tests.utils.factories import (
@@ -22,6 +22,8 @@ from tests.utils.factories import (
     JiraIssueFactory,
 )
 from tests.utils.mocks import MockAtlassianClient, MockEnvironment, MockFastMCP
+
+main_lifespan = build_main_lifespan()
 
 
 @pytest.mark.integration

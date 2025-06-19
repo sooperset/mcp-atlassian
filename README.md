@@ -778,6 +778,9 @@ type %APPDATA%\Claude\logs\mcp*.log | more
 - Keep .env files secure and private
 - See [SECURITY.md](SECURITY.md) for best practices
 
+## Integration
+### Mutli-server
+
 ## Contributing
 
 We welcome contributions to MCP Atlassian! If you'd like to contribute:

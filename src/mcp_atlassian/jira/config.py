@@ -1,11 +1,10 @@
 """Configuration module for Jira API interactions."""
 
 import logging
-import os
 from dataclasses import dataclass
 from typing import Literal
 
-from ..utils.env import is_env_ssl_verify
+from ..utils.env import getenv, is_env_ssl_verify
 from ..utils.oauth import (
     BYOAccessTokenOAuthConfig,
     OAuthConfig,
@@ -56,7 +55,7 @@ class JiraConfig:
         return self.ssl_verify
 
     @classmethod
-    def from_env(cls) -> "JiraConfig":
+    def from_env(cls, env: dict[str, str] = None) -> "JiraConfig":
         """Create configuration from environment variables.
 
         Returns:
@@ -65,18 +64,20 @@ class JiraConfig:
         Raises:
             ValueError: If required environment variables are missing or invalid
         """
-        url = os.getenv("JIRA_URL")
-        if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE"):
+        if env is None:
+            env = {}
+        url = getenv(env, "JIRA_URL")
+        if not url and not getenv(env, "ATLASSIAN_OAUTH_ENABLE"):
             error_msg = "Missing required JIRA_URL environment variable"
             raise ValueError(error_msg)
 
         # Determine authentication type based on available environment variables
-        username = os.getenv("JIRA_USERNAME")
-        api_token = os.getenv("JIRA_API_TOKEN")
-        personal_token = os.getenv("JIRA_PERSONAL_TOKEN")
+        username = getenv(env, "JIRA_USERNAME")
+        api_token = getenv(env, "JIRA_API_TOKEN")
+        personal_token = getenv(env, "JIRA_PERSONAL_TOKEN")
 
         # Check for OAuth configuration
-        oauth_config = get_oauth_config_from_env()
+        oauth_config = get_oauth_config_from_env(env)
         auth_type = None
 
         # Use the shared utility function directly
@@ -102,16 +103,16 @@ class JiraConfig:
                 raise ValueError(error_msg)
 
         # SSL verification (for Server/DC)
-        ssl_verify = is_env_ssl_verify("JIRA_SSL_VERIFY")
+        ssl_verify = is_env_ssl_verify(env, "JIRA_SSL_VERIFY")
 
         # Get the projects filter if provided
-        projects_filter = os.getenv("JIRA_PROJECTS_FILTER")
+        projects_filter = getenv(env, "JIRA_PROJECTS_FILTER")
 
         # Proxy settings
-        http_proxy = os.getenv("JIRA_HTTP_PROXY", os.getenv("HTTP_PROXY"))
-        https_proxy = os.getenv("JIRA_HTTPS_PROXY", os.getenv("HTTPS_PROXY"))
-        no_proxy = os.getenv("JIRA_NO_PROXY", os.getenv("NO_PROXY"))
-        socks_proxy = os.getenv("JIRA_SOCKS_PROXY", os.getenv("SOCKS_PROXY"))
+        http_proxy = getenv(env, "JIRA_HTTP_PROXY", getenv(env, "HTTP_PROXY"))
+        https_proxy = getenv(env, "JIRA_HTTPS_PROXY", getenv(env, "HTTPS_PROXY"))
+        no_proxy = getenv(env, "JIRA_NO_PROXY", getenv(env, "NO_PROXY"))
+        socks_proxy = getenv(env, "JIRA_SOCKS_PROXY", getenv(env, "SOCKS_PROXY"))
 
         return cls(
             url=url,

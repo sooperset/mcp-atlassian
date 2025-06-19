@@ -26,6 +26,45 @@ def test_from_env_success():
         assert config.api_token == "test_token"
 
 
+def test_from_env_success_rewrite():
+    """Test that from_env successfully creates a config from environment variables."""
+    # Need to clear and reset the environment for this test
+    with patch.dict(
+        "os.environ",
+        {
+            "CONFLUENCE_URL": "https://test.atlassian.net/wiki",
+            "CONFLUENCE_USERNAME": "test_username",
+            "CONFLUENCE_API_TOKEN": "test_token",
+            "CONFLUENCE_PERSONAL_TOKEN": "test_personal_token",
+            "CONFLUENCE_SSL_VERIFY": "true",
+            "CONFLUENCE_SPACES_FILTER": "SPACE1",
+        },
+        clear=True,  # Clear existing environment variables
+    ):
+        config = ConfluenceConfig.from_env(
+            {
+                "CONFLUENCE_URL": "https://test.atlassian.net/anotherwiki",
+                "CONFLUENCE_USERNAME": "test_username2",
+                "CONFLUENCE_API_TOKEN": "test_token2",
+                "CONFLUENCE_PERSONAL_TOKEN": "test_personal_token2",
+                "CONFLUENCE_SSL_VERIFY": "false",
+                "CONFLUENCE_SPACES_FILTER": "SPACE2",
+                "ATLASSIAN_OAUTH_CLIENT_ID": "test_client_id",
+                "ATLASSIAN_OAUTH_CLIENT_SECRET": "test_client_secret",
+                "ATLASSIAN_OAUTH_REDIRECT_URI": "test_redirect_uri",
+                "ATLASSIAN_OAUTH_SCOPE": "test_scope",
+            }
+        )
+        assert config.url == "https://test.atlassian.net/anotherwiki"
+        assert config.username == "test_username2"
+        assert config.api_token == "test_token2"
+        assert config.personal_token == "test_personal_token2"
+        assert not config.ssl_verify
+        assert config.spaces_filter == "SPACE2"
+        assert config.oauth_config.client_id == "test_client_id"
+        assert config.oauth_config.client_secret == "test_client_secret"
+
+
 def test_from_env_missing_url():
     """Test that from_env raises ValueError when URL is missing."""
     original_env = os.environ.copy()

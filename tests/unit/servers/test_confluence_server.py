@@ -14,6 +14,7 @@ from starlette.requests import Request
 from src.mcp_atlassian.confluence import ConfluenceFetcher
 from src.mcp_atlassian.confluence.config import ConfluenceConfig
 from src.mcp_atlassian.models.confluence.page import ConfluencePage
+from src.mcp_atlassian.servers.confluence import register_confluence_tools
 from src.mcp_atlassian.servers.context import MainAppContext
 from src.mcp_atlassian.servers.main import AtlassianMCP
 from src.mcp_atlassian.utils.oauth import OAuthConfig
@@ -116,21 +117,6 @@ def mock_base_confluence_config():
 def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     """Create a test FastMCP instance with standard configuration."""
 
-    # Import and register tool functions (as they are in confluence.py)
-    from src.mcp_atlassian.servers.confluence import (
-        add_comment,
-        add_label,
-        create_page,
-        delete_page,
-        get_comments,
-        get_labels,
-        get_page,
-        get_page_children,
-        search,
-        search_user,
-        update_page,
-    )
-
     @asynccontextmanager
     async def test_lifespan(app: FastMCP) -> AsyncGenerator[MainAppContext, None]:
         try:
@@ -148,17 +134,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
 
     # Create and configure the sub-MCP for Confluence tools
     confluence_sub_mcp = FastMCP(name="TestConfluenceSubMCP")
-    confluence_sub_mcp.tool()(search)
-    confluence_sub_mcp.tool()(get_page)
-    confluence_sub_mcp.tool()(get_page_children)
-    confluence_sub_mcp.tool()(get_comments)
-    confluence_sub_mcp.tool()(add_comment)
-    confluence_sub_mcp.tool()(get_labels)
-    confluence_sub_mcp.tool()(add_label)
-    confluence_sub_mcp.tool()(create_page)
-    confluence_sub_mcp.tool()(update_page)
-    confluence_sub_mcp.tool()(delete_page)
-    confluence_sub_mcp.tool()(search_user)
+    register_confluence_tools(confluence_sub_mcp)
 
     test_mcp.mount("confluence", confluence_sub_mcp)
 
@@ -168,21 +144,6 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
 @pytest.fixture
 def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     """Create a test FastMCP instance that simulates missing Confluence fetcher."""
-
-    # Import and register tool functions (as they are in confluence.py)
-    from src.mcp_atlassian.servers.confluence import (
-        add_comment,
-        add_label,
-        create_page,
-        delete_page,
-        get_comments,
-        get_labels,
-        get_page,
-        get_page_children,
-        search,
-        search_user,
-        update_page,
-    )
 
     @asynccontextmanager
     async def no_fetcher_test_lifespan(
@@ -203,17 +164,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
 
     # Create and configure the sub-MCP for Confluence tools
     confluence_sub_mcp = FastMCP(name="NoFetcherTestConfluenceSubMCP")
-    confluence_sub_mcp.tool()(search)
-    confluence_sub_mcp.tool()(get_page)
-    confluence_sub_mcp.tool()(get_page_children)
-    confluence_sub_mcp.tool()(get_comments)
-    confluence_sub_mcp.tool()(add_comment)
-    confluence_sub_mcp.tool()(get_labels)
-    confluence_sub_mcp.tool()(add_label)
-    confluence_sub_mcp.tool()(create_page)
-    confluence_sub_mcp.tool()(update_page)
-    confluence_sub_mcp.tool()(delete_page)
-    confluence_sub_mcp.tool()(search_user)
+    register_confluence_tools(confluence_sub_mcp)
 
     test_mcp.mount("confluence", confluence_sub_mcp)
 
