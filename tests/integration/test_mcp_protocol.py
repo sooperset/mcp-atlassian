@@ -22,8 +22,8 @@ from mcp_atlassian.servers.context import MainAppContext
 from mcp_atlassian.servers.main import (
     AtlassianMCP,
     UserTokenMiddleware,
+    build_main_lifespan,
     health_check,
-    main_lifespan,
 )
 from tests.utils.factories import (
     ConfluencePageFactory,
@@ -32,6 +32,8 @@ from tests.utils.factories import (
 from tests.utils.mocks import MockEnvironment, MockFastMCP
 
 logger = logging.getLogger(__name__)
+
+main_lifespan = build_main_lifespan()
 
 
 @pytest.mark.integration
