@@ -541,9 +541,9 @@ class IssuesMixin(
                 "issuetype": {"name": issue_type},
             }
 
-            # Add description if provided
+            # Add description if provided (convert from Markdown to Jira format)
             if description:
-                fields["description"] = description
+                fields["description"] = self._markdown_to_jira(description)
 
             # Add assignee if provided
             if assignee:
@@ -915,6 +915,12 @@ class IssuesMixin(
             update_fields = fields or {}
             attachments_result = None
 
+            # Convert description from Markdown to Jira format if present
+            if "description" in update_fields:
+                update_fields["description"] = self._markdown_to_jira(
+                    update_fields["description"]
+                )
+
             # Process kwargs
             for key, value in kwargs.items():
                 if key == "status":
@@ -938,6 +944,9 @@ class IssuesMixin(
                         self._add_assignee_to_fields(update_fields, account_id)
                     except ValueError as e:
                         logger.warning(f"Could not update assignee: {str(e)}")
+                elif key == "description":
+                    # Handle description with markdown conversion
+                    update_fields["description"] = self._markdown_to_jira(value)
                 else:
                     # Process regular fields using _process_additional_fields
                     # Create a temporary dict with just this field
