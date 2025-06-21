@@ -912,12 +912,15 @@ class IssuesMixin(
                         logger.warning(f"Invalid attachments value: {value}")
 
                 elif key == "assignee":
-                    # Handle assignee updates
-                    try:
-                        account_id = self._get_account_id(value)
-                        self._add_assignee_to_fields(update_fields, account_id)
-                    except ValueError as e:
-                        logger.warning(f"Could not update assignee: {str(e)}")
+                    # Handle assignee updates, allow unassignment with None or empty string
+                    if value is None or value == "":
+                        update_fields["assignee"] = None
+                    else:
+                        try:
+                            account_id = self._get_account_id(value)
+                            self._add_assignee_to_fields(update_fields, account_id)
+                        except ValueError as e:
+                            logger.warning(f"Could not update assignee: {str(e)}")
                 else:
                     # Process regular fields using _process_additional_fields
                     # Create a temporary dict with just this field
