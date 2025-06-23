@@ -381,7 +381,7 @@ class EpicsMixin(
                 f"Could not link issue {issue_key} to epic {epic_key}. Your Jira instance might use a different field for epic links."
             )
 
-        except ValueError as e:
+        except ValueError:
             # Re-raise ValueError as is
             raise
         except Exception as e:
@@ -588,7 +588,7 @@ class EpicsMixin(
             )
             return []
 
-        except ValueError as e:
+        except ValueError:
             # Re-raise ValueError (like "not an Epic") as is
             raise
         except Exception as e:
