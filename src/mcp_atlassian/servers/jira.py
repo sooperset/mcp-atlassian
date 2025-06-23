@@ -1184,6 +1184,84 @@ async def create_issue_link(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
+@convert_empty_defaults_to_none
+@jira_mcp.tool(tags={"jira", "write"})
+@check_write_access
+async def create_remote_issue_link(
+    ctx: Context,
+    issue_key: Annotated[
+        str, Field(description="The key of the issue to add the link to (e.g., 'PROJ-123')")
+    ],
+    url: Annotated[
+        str, Field(description="The URL to link to (e.g., 'https://example.com/page' or Confluence page URL)")
+    ],
+    title: Annotated[
+        str, Field(description="The title/name of the link (e.g., 'Documentation Page', 'Confluence Page')")
+    ],
+    summary: Annotated[
+        str, Field(description="(Optional) Description of the link")
+    ] = "",
+    relationship: Annotated[
+        str, Field(description="(Optional) Relationship description (e.g., 'causes', 'relates to', 'documentation')")
+    ] = "",
+    icon_url: Annotated[
+        str, Field(description="(Optional) URL to a 16x16 icon for the link")
+    ] = "",
+) -> str:
+    """Create a remote issue link (web link or Confluence link) for a Jira issue.
+
+    This tool allows you to add web links and Confluence links to Jira issues.
+    The links will appear in the issue's "Links" section and can be clicked to navigate to external resources.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: The key of the issue to add the link to.
+        url: The URL to link to (can be any web page or Confluence page).
+        title: The title/name that will be displayed for the link.
+        summary: Optional description of what the link is for.
+        relationship: Optional relationship description.
+        icon_url: Optional URL to a 16x16 icon for the link.
+
+    Returns:
+        JSON string indicating success or failure.
+
+    Raises:
+        ValueError: If required fields are missing, invalid input, in read-only mode, or Jira client unavailable.
+    """
+    jira = await get_jira_fetcher(ctx)
+    if not issue_key:
+        raise ValueError("issue_key is required.")
+    if not url:
+        raise ValueError("url is required.")
+    if not title:
+        raise ValueError("title is required.")
+
+    # Build the remote link data structure
+    link_object = {
+        "url": url,
+        "title": title,
+    }
+
+    if summary:
+        link_object["summary"] = summary
+
+    if icon_url:
+        link_object["icon"] = {
+            "url16x16": icon_url,
+            "title": title
+        }
+
+    link_data = {
+        "object": link_object
+    }
+
+    if relationship:
+        link_data["relationship"] = relationship
+
+    result = jira.create_remote_issue_link(issue_key, link_data)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
 @jira_mcp.tool(tags={"jira", "write"})
 @check_write_access
 async def remove_issue_link(
