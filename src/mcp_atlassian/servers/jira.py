@@ -1173,7 +1173,6 @@ async def create_issue_link(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-@convert_empty_defaults_to_none
 @jira_mcp.tool(tags={"jira", "write"})
 @check_write_access
 async def create_remote_issue_link(
@@ -1195,17 +1194,17 @@ async def create_remote_issue_link(
         ),
     ],
     summary: Annotated[
-        str, Field(description="(Optional) Description of the link")
-    ] = "",
+        str | None, Field(description="(Optional) Description of the link")
+    ] = None,
     relationship: Annotated[
-        str,
+        str | None,
         Field(
             description="(Optional) Relationship description (e.g., 'causes', 'relates to', 'documentation')"
         ),
-    ] = "",
+    ] = None,
     icon_url: Annotated[
-        str, Field(description="(Optional) URL to a 16x16 icon for the link")
-    ] = "",
+        str | None, Field(description="(Optional) URL to a 16x16 icon for the link")
+    ] = None,
 ) -> str:
     """Create a remote issue link (web link or Confluence link) for a Jira issue.
 
