@@ -247,6 +247,12 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
             logger.debug(
                 f"UserTokenMiddleware: Path='{request.url.path}', AuthHeader='{mask_sensitive(auth_header)}', ParsedToken(masked)='{token_for_log}'"
             )
+            # Check for mcp-session-id header for debugging
+            mcp_session_id = request.headers.get("mcp-session-id")
+            if mcp_session_id:
+                logger.debug(
+                    f"UserTokenMiddleware: MCP-Session-ID header found: {mcp_session_id}"
+                )
             if auth_header and auth_header.startswith("Bearer "):
                 token = auth_header.split(" ", 1)[1].strip()
                 if not token:

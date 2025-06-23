@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
-from ..utils.env import is_env_truthy
+from ..utils.env import is_env_ssl_verify
 from ..utils.oauth import OAuthConfig
 from ..utils.urls import is_atlassian_cloud_url
 
@@ -98,7 +98,7 @@ class ConfluenceConfig:
                 raise ValueError(error_msg)
 
         # SSL verification (for Server/DC)
-        ssl_verify = is_env_truthy("CONFLUENCE_SSL_VERIFY", "true")
+        ssl_verify = is_env_ssl_verify("CONFLUENCE_SSL_VERIFY")
 
         # Get the spaces filter if provided
         spaces_filter = os.getenv("CONFLUENCE_SPACES_FILTER")

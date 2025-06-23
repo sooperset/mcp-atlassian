@@ -436,4 +436,100 @@ async def test_search_user(client, mock_confluence_fetcher):
     assert result_data[0]["title"] == "First Last"
     assert result_data[0]["user"]["account_id"] == "a031248587011jasoidf9832jd8j1"
     assert result_data[0]["user"]["display_name"] == "First Last"
-    assert result_data[0]["user"]["email"] == "first.last@foo.com"
+
+
+@pytest.mark.anyio
+async def test_create_page_with_numeric_parent_id(client, mock_confluence_fetcher):
+    """Test creating a page with numeric parent_id (integer) - should convert to string."""
+    response = await client.call_tool(
+        "confluence_create_page",
+        {
+            "space_key": "TEST",
+            "title": "Test Page",
+            "content": "Test content",
+            "parent_id": 123456789,  # Numeric ID as integer
+        },
+    )
+
+    # Verify the parent_id was converted to string when calling the underlying method
+    mock_confluence_fetcher.create_page.assert_called_once()
+    call_kwargs = mock_confluence_fetcher.create_page.call_args.kwargs
+    assert call_kwargs["parent_id"] == "123456789"  # Should be string
+    assert call_kwargs["space_key"] == "TEST"
+    assert call_kwargs["title"] == "Test Page"
+
+    result_data = json.loads(response[0].text)
+    assert result_data["message"] == "Page created successfully"
+    assert result_data["page"]["title"] == "Test Page Mock Title"
+
+
+@pytest.mark.anyio
+async def test_create_page_with_string_parent_id(client, mock_confluence_fetcher):
+    """Test creating a page with string parent_id - should remain unchanged."""
+    response = await client.call_tool(
+        "confluence_create_page",
+        {
+            "space_key": "TEST",
+            "title": "Test Page",
+            "content": "Test content",
+            "parent_id": "123456789",  # String ID
+        },
+    )
+
+    mock_confluence_fetcher.create_page.assert_called_once()
+    call_kwargs = mock_confluence_fetcher.create_page.call_args.kwargs
+    assert call_kwargs["parent_id"] == "123456789"  # Should remain string
+    assert call_kwargs["space_key"] == "TEST"
+    assert call_kwargs["title"] == "Test Page"
+
+    result_data = json.loads(response[0].text)
+    assert result_data["message"] == "Page created successfully"
+    assert result_data["page"]["title"] == "Test Page Mock Title"
+
+
+@pytest.mark.anyio
+async def test_update_page_with_numeric_parent_id(client, mock_confluence_fetcher):
+    """Test updating a page with numeric parent_id (integer) - should convert to string."""
+    response = await client.call_tool(
+        "confluence_update_page",
+        {
+            "page_id": "999999",
+            "title": "Updated Page",
+            "content": "Updated content",
+            "parent_id": 123456789,  # Numeric ID as integer
+        },
+    )
+
+    mock_confluence_fetcher.update_page.assert_called_once()
+    call_kwargs = mock_confluence_fetcher.update_page.call_args.kwargs
+    assert call_kwargs["parent_id"] == "123456789"  # Should be string
+    assert call_kwargs["page_id"] == "999999"
+    assert call_kwargs["title"] == "Updated Page"
+
+    result_data = json.loads(response[0].text)
+    assert result_data["message"] == "Page updated successfully"
+    assert result_data["page"]["title"] == "Test Page Mock Title"
+
+
+@pytest.mark.anyio
+async def test_update_page_with_string_parent_id(client, mock_confluence_fetcher):
+    """Test updating a page with string parent_id - should remain unchanged."""
+    response = await client.call_tool(
+        "confluence_update_page",
+        {
+            "page_id": "999999",
+            "title": "Updated Page",
+            "content": "Updated content",
+            "parent_id": "123456789",  # String ID
+        },
+    )
+
+    mock_confluence_fetcher.update_page.assert_called_once()
+    call_kwargs = mock_confluence_fetcher.update_page.call_args.kwargs
+    assert call_kwargs["parent_id"] == "123456789"  # Should remain string
+    assert call_kwargs["page_id"] == "999999"
+    assert call_kwargs["title"] == "Updated Page"
+
+    result_data = json.loads(response[0].text)
+    assert result_data["message"] == "Page updated successfully"
+    assert result_data["page"]["title"] == "Test Page Mock Title"

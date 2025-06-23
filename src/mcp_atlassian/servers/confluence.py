@@ -412,7 +412,7 @@ async def create_page(
     content: Annotated[
         str,
         Field(
-            description="The content of the page in Markdown format. Supports headings, lists, tables, code blocks, and other Markdown syntax"
+            description="The content of the page. Format depends on content_format parameter. Can be Markdown (default), wiki markup, or storage format"
         ),
     ],
     parent_id: Annotated[
@@ -422,6 +422,20 @@ async def create_page(
             default=None,
         ),
     ] = None,
+    content_format: Annotated[
+        str,
+        Field(
+            description="(Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', or 'storage'. Wiki format uses Confluence wiki markup syntax",
+            default="markdown",
+        ),
+    ] = "markdown",
+    enable_heading_anchors: Annotated[
+        bool,
+        Field(
+            description="(Optional) Whether to enable automatic heading anchor generation. Only applies when content_format is 'markdown'",
+            default=False,
+        ),
+    ] = False,
 ) -> str:
     """Create a new Confluence page.
 
@@ -429,22 +443,43 @@ async def create_page(
         ctx: The FastMCP context.
         space_key: The key of the space.
         title: The title of the page.
-        content: The content in Markdown format.
+        content: The content of the page (format depends on content_format).
         parent_id: Optional parent page ID.
+        content_format: The format of the content ('markdown', 'wiki', or 'storage').
+        enable_heading_anchors: Whether to enable heading anchors (markdown only).
 
     Returns:
         JSON string representing the created page object.
 
     Raises:
-        ValueError: If in read-only mode or Confluence client is unavailable.
+        ValueError: If in read-only mode, Confluence client is unavailable, or invalid content_format.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    # Validate content_format
+    if content_format not in ["markdown", "wiki", "storage"]:
+        raise ValueError(
+            f"Invalid content_format: {content_format}. Must be 'markdown', 'wiki', or 'storage'"
+        )
+
+    # Determine parameters based on content format
+    if content_format == "markdown":
+        is_markdown = True
+        content_representation = None  # Will be converted to storage
+    else:
+        is_markdown = False
+        content_representation = content_format  # Pass 'wiki' or 'storage' directly
+
     page = confluence_fetcher.create_page(
         space_key=space_key,
         title=title,
         body=content,
         parent_id=parent_id,
-        is_markdown=True,
+        is_markdown=is_markdown,
+        enable_heading_anchors=enable_heading_anchors
+        if content_format == "markdown"
+        else False,
+        content_representation=content_representation,
     )
     result = page.to_simplified_dict()
     return json.dumps(
@@ -461,7 +496,10 @@ async def update_page(
     page_id: Annotated[str, Field(description="The ID of the page to update")],
     title: Annotated[str, Field(description="The new title of the page")],
     content: Annotated[
-        str, Field(description="The new content of the page in Markdown format")
+        str,
+        Field(
+            description="The new content of the page. Format depends on content_format parameter"
+        ),
     ],
     is_minor_edit: Annotated[
         bool, Field(description="Whether this is a minor edit", default=False)
@@ -473,6 +511,20 @@ async def update_page(
         str | None,
         Field(description="Optional the new parent page ID", default=None),
     ] = None,
+    content_format: Annotated[
+        str,
+        Field(
+            description="(Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', or 'storage'. Wiki format uses Confluence wiki markup syntax",
+            default="markdown",
+        ),
+    ] = "markdown",
+    enable_heading_anchors: Annotated[
+        bool,
+        Field(
+            description="(Optional) Whether to enable automatic heading anchor generation. Only applies when content_format is 'markdown'",
+            default=False,
+        ),
+    ] = False,
 ) -> str:
     """Update an existing Confluence page.
 
@@ -480,26 +532,47 @@ async def update_page(
         ctx: The FastMCP context.
         page_id: The ID of the page to update.
         title: The new title of the page.
-        content: The new content in Markdown format.
+        content: The new content of the page (format depends on content_format).
         is_minor_edit: Whether this is a minor edit.
         version_comment: Optional comment for this version.
         parent_id: Optional new parent page ID.
+        content_format: The format of the content ('markdown', 'wiki', or 'storage').
+        enable_heading_anchors: Whether to enable heading anchors (markdown only).
 
     Returns:
         JSON string representing the updated page object.
 
     Raises:
-        ValueError: If Confluence client is not configured or available.
+        ValueError: If Confluence client is not configured, available, or invalid content_format.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    # Validate content_format
+    if content_format not in ["markdown", "wiki", "storage"]:
+        raise ValueError(
+            f"Invalid content_format: {content_format}. Must be 'markdown', 'wiki', or 'storage'"
+        )
+
+    # Determine parameters based on content format
+    if content_format == "markdown":
+        is_markdown = True
+        content_representation = None  # Will be converted to storage
+    else:
+        is_markdown = False
+        content_representation = content_format  # Pass 'wiki' or 'storage' directly
+
     updated_page = confluence_fetcher.update_page(
         page_id=page_id,
         title=title,
         body=content,
         is_minor_edit=is_minor_edit,
         version_comment=version_comment,
-        is_markdown=True,
+        is_markdown=is_markdown,
         parent_id=parent_id,
+        enable_heading_anchors=enable_heading_anchors
+        if content_format == "markdown"
+        else False,
+        content_representation=content_representation,
     )
     page_data = updated_page.to_simplified_dict()
     return json.dumps(
