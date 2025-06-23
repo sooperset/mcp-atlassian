@@ -1190,19 +1190,29 @@ async def create_issue_link(
 async def create_remote_issue_link(
     ctx: Context,
     issue_key: Annotated[
-        str, Field(description="The key of the issue to add the link to (e.g., 'PROJ-123')")
+        str,
+        Field(description="The key of the issue to add the link to (e.g., 'PROJ-123')"),
     ],
     url: Annotated[
-        str, Field(description="The URL to link to (e.g., 'https://example.com/page' or Confluence page URL)")
+        str,
+        Field(
+            description="The URL to link to (e.g., 'https://example.com/page' or Confluence page URL)"
+        ),
     ],
     title: Annotated[
-        str, Field(description="The title/name of the link (e.g., 'Documentation Page', 'Confluence Page')")
+        str,
+        Field(
+            description="The title/name of the link (e.g., 'Documentation Page', 'Confluence Page')"
+        ),
     ],
     summary: Annotated[
         str, Field(description="(Optional) Description of the link")
     ] = "",
     relationship: Annotated[
-        str, Field(description="(Optional) Relationship description (e.g., 'causes', 'relates to', 'documentation')")
+        str,
+        Field(
+            description="(Optional) Relationship description (e.g., 'causes', 'relates to', 'documentation')"
+        ),
     ] = "",
     icon_url: Annotated[
         str, Field(description="(Optional) URL to a 16x16 icon for the link")
@@ -1246,14 +1256,9 @@ async def create_remote_issue_link(
         link_object["summary"] = summary
 
     if icon_url:
-        link_object["icon"] = {
-            "url16x16": icon_url,
-            "title": title
-        }
+        link_object["icon"] = {"url16x16": icon_url, "title": title}
 
-    link_data = {
-        "object": link_object
-    }
+    link_data = {"object": link_object}
 
     if relationship:
         link_data["relationship"] = relationship
