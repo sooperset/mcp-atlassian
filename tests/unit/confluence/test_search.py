@@ -1,12 +1,14 @@
 """Unit tests for the SearchMixin class."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
+from requests import HTTPError
 
 from mcp_atlassian.confluence.search import SearchMixin
 from mcp_atlassian.confluence.utils import quote_cql_identifier_if_needed
+from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 
 
 class TestSearchMixin:
@@ -265,3 +267,300 @@ class TestSearchMixin:
         # Assert
         assert isinstance(results, list)
         assert len(results) == 0
+
+    def test_search_user_success(self, search_mixin):
+        """Test search_user with successful results."""
+        # Prepare the mock response
+        search_mixin.confluence.get.return_value = {
+            "results": [
+                {
+                    "user": {
+                        "type": "known",
+                        "accountId": "1234asdf",
+                        "accountType": "atlassian",
+                        "email": "first.last@example.com",
+                        "publicName": "First Last",
+                        "displayName": "First Last",
+                        "isExternalCollaborator": False,
+                        "profilePicture": {
+                            "path": "/wiki/aa-avatar/1234asdf",
+                            "width": 48,
+                            "height": 48,
+                            "isDefault": False,
+                        },
+                    },
+                    "title": "First Last",
+                    "excerpt": "",
+                    "url": "/people/1234asdf",
+                    "entityType": "user",
+                    "lastModified": "2025-06-02T13:35:59.680Z",
+                    "score": 0.0,
+                }
+            ],
+            "start": 0,
+            "limit": 25,
+            "size": 1,
+            "totalSize": 1,
+            "cqlQuery": "( user.fullname ~ 'First Last' )",
+            "searchDuration": 115,
+        }
+
+        # Call the method
+        result = search_mixin.search_user('user.fullname ~ "First Last"')
+
+        # Verify API call
+        search_mixin.confluence.get.assert_called_once_with(
+            "rest/api/search/user",
+            params={"cql": 'user.fullname ~ "First Last"', "limit": 10},
+        )
+
+        # Verify result
+        assert len(result) == 1
+        assert result[0].user.account_id == "1234asdf"
+        assert result[0].user.display_name == "First Last"
+        assert result[0].user.email == "first.last@example.com"
+        assert result[0].title == "First Last"
+        assert result[0].entity_type == "user"
+
+    def test_search_user_with_empty_results(self, search_mixin):
+        """Test search_user with empty results."""
+        # Mock an empty result set
+        search_mixin.confluence.get.return_value = {
+            "results": [],
+            "start": 0,
+            "limit": 25,
+            "size": 0,
+            "totalSize": 0,
+            "cqlQuery": 'user.fullname ~ "Nonexistent"',
+            "searchDuration": 50,
+        }
+
+        # Act
+        results = search_mixin.search_user('user.fullname ~ "Nonexistent"')
+
+        # Assert
+        assert isinstance(results, list)
+        assert len(results) == 0
+
+    def test_search_user_with_custom_limit(self, search_mixin):
+        """Test search_user with custom limit."""
+        # Prepare the mock response
+        search_mixin.confluence.get.return_value = {
+            "results": [],
+            "start": 0,
+            "limit": 5,
+            "size": 0,
+            "totalSize": 0,
+            "cqlQuery": 'user.fullname ~ "Test"',
+            "searchDuration": 30,
+        }
+
+        # Call with custom limit
+        search_mixin.search_user('user.fullname ~ "Test"', limit=5)
+
+        # Verify API call with correct limit
+        search_mixin.confluence.get.assert_called_once_with(
+            "rest/api/search/user", params={"cql": 'user.fullname ~ "Test"', "limit": 5}
+        )
+
+    @pytest.mark.parametrize(
+        "exception_type,exception_args,expected_result",
+        [
+            (requests.RequestException, ("Network error",), []),
+            (ValueError, ("Value error",), []),
+            (TypeError, ("Type error",), []),
+            (Exception, ("General error",), []),
+            (KeyError, ("Missing key",), []),
+        ],
+    )
+    def test_search_user_exception_handling(
+        self, search_mixin, exception_type, exception_args, expected_result
+    ):
+        """Test search_user handling of various exceptions that return empty list."""
+        # Mock the exception
+        search_mixin.confluence.get.side_effect = exception_type(*exception_args)
+
+        # Act
+        results = search_mixin.search_user('user.fullname ~ "Test"')
+
+        # Assert
+        assert isinstance(results, list)
+        assert results == expected_result
+
+    @pytest.mark.parametrize(
+        "status_code,exception_type",
+        [
+            (401, MCPAtlassianAuthenticationError),
+            (403, MCPAtlassianAuthenticationError),
+        ],
+    )
+    def test_search_user_http_auth_errors(
+        self, search_mixin, status_code, exception_type
+    ):
+        """Test search_user handling of HTTP authentication errors."""
+        # Mock HTTP error
+        mock_response = MagicMock()
+        mock_response.status_code = status_code
+        http_error = HTTPError(f"HTTP {status_code}")
+        http_error.response = mock_response
+        search_mixin.confluence.get.side_effect = http_error
+
+        # Act and assert
+        with pytest.raises(exception_type):
+            search_mixin.search_user('user.fullname ~ "Test"')
+
+    def test_search_user_http_other_error(self, search_mixin):
+        """Test search_user handling of other HTTP errors."""
+        # Mock HTTP 500 error
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        http_error = HTTPError("Internal Server Error")
+        http_error.response = mock_response
+        search_mixin.confluence.get.side_effect = http_error
+
+        # Act and assert - should re-raise the HTTPError
+        with pytest.raises(HTTPError):
+            search_mixin.search_user('user.fullname ~ "Test"')
+
+    @pytest.mark.parametrize(
+        "mock_response,expected_length",
+        [
+            ({"incomplete": "data"}, 0),  # KeyError case
+            (None, 0),  # None response case
+            ({"results": []}, 0),  # Empty results case
+        ],
+    )
+    def test_search_user_edge_cases(self, search_mixin, mock_response, expected_length):
+        """Test search_user handling of edge cases in API responses."""
+        search_mixin.confluence.get.return_value = mock_response
+
+        # Act
+        results = search_mixin.search_user('user.fullname ~ "Test"')
+
+        # Assert
+        assert isinstance(results, list)
+        assert len(results) == expected_length
+
+    # You can also parametrize the regular search method exception tests:
+    @pytest.mark.parametrize(
+        "exception_type,exception_args,expected_result",
+        [
+            (requests.RequestException, ("API error",), []),
+            (ValueError, ("Value error",), []),
+            (TypeError, ("Type error",), []),
+            (Exception, ("General error",), []),
+            (KeyError, ("Missing key",), []),
+        ],
+    )
+    def test_search_exception_handling(
+        self, search_mixin, exception_type, exception_args, expected_result
+    ):
+        """Test search handling of various exceptions that return empty list."""
+        # Mock the exception
+        search_mixin.confluence.cql.side_effect = exception_type(*exception_args)
+
+        # Act
+        results = search_mixin.search("error query")
+
+        # Assert
+        assert isinstance(results, list)
+        assert results == expected_result
+
+    # Parametrize CQL query tests:
+    @pytest.mark.parametrize(
+        "query,limit,expected_params",
+        [
+            (
+                'user.fullname ~ "Test"',
+                10,
+                {"cql": 'user.fullname ~ "Test"', "limit": 10},
+            ),
+            (
+                'user.email ~ "test@example.com"',
+                5,
+                {"cql": 'user.email ~ "test@example.com"', "limit": 5},
+            ),
+            (
+                'user.fullname ~ "John" AND user.email ~ "@company.com"',
+                15,
+                {
+                    "cql": 'user.fullname ~ "John" AND user.email ~ "@company.com"',
+                    "limit": 15,
+                },
+            ),
+        ],
+    )
+    def test_search_user_api_parameters(
+        self, search_mixin, query, limit, expected_params
+    ):
+        """Test that search_user calls the API with correct parameters."""
+        # Mock successful response
+        search_mixin.confluence.get.return_value = {
+            "results": [],
+            "start": 0,
+            "limit": limit,
+            "totalSize": 0,
+        }
+
+        # Act
+        search_mixin.search_user(query, limit=limit)
+
+        # Assert API was called with correct parameters
+        search_mixin.confluence.get.assert_called_once_with(
+            "rest/api/search/user", params=expected_params
+        )
+
+    def test_search_user_with_complex_cql_query(self, search_mixin):
+        """Test search_user with complex CQL query containing operators."""
+        # Mock successful response
+        search_mixin.confluence.get.return_value = {
+            "results": [],
+            "start": 0,
+            "limit": 10,
+            "totalSize": 0,
+        }
+
+        complex_query = 'user.fullname ~ "John" AND user.email ~ "@company.com" OR user.displayName ~ "JD"'
+
+        # Act
+        search_mixin.search_user(complex_query)
+
+        # Assert API was called with the exact query
+        search_mixin.confluence.get.assert_called_once_with(
+            "rest/api/search/user", params={"cql": complex_query, "limit": 10}
+        )
+
+    def test_search_user_result_processing(self, search_mixin):
+        """Test that search_user properly processes and returns user search result objects."""
+        # Mock response with user data
+        search_mixin.confluence.get.return_value = {
+            "results": [
+                {
+                    "user": {
+                        "accountId": "test-account-id",
+                        "displayName": "Test User",
+                        "email": "test@example.com",
+                        "isExternalCollaborator": False,
+                    },
+                    "title": "Test User",
+                    "entityType": "user",
+                    "score": 1.5,
+                }
+            ],
+            "start": 0,
+            "limit": 10,
+            "totalSize": 1,
+        }
+
+        # Act
+        results = search_mixin.search_user('user.fullname ~ "Test User"')
+
+        # Assert result structure
+        assert len(results) == 1
+        assert hasattr(results[0], "user")
+        assert hasattr(results[0], "title")
+        assert hasattr(results[0], "entity_type")
+        assert results[0].user.account_id == "test-account-id"
+        assert results[0].user.display_name == "Test User"
+        assert results[0].title == "Test User"
+        assert results[0].entity_type == "user"

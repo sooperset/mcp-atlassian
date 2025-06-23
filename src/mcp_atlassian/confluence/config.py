@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
+from ..utils.env import is_env_ssl_verify
 from ..utils.oauth import (
     BYOAccessTokenOAuthConfig,
     OAuthConfig,
@@ -101,8 +102,7 @@ class ConfluenceConfig:
                 raise ValueError(error_msg)
 
         # SSL verification (for Server/DC)
-        ssl_verify_env = os.getenv("CONFLUENCE_SSL_VERIFY", "true").lower()
-        ssl_verify = ssl_verify_env not in ("false", "0", "no")
+        ssl_verify = is_env_ssl_verify("CONFLUENCE_SSL_VERIFY")
 
         # Get the spaces filter if provided
         spaces_filter = os.getenv("CONFLUENCE_SPACES_FILTER")

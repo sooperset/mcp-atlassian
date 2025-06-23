@@ -83,8 +83,24 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
     )
     logger.info(f"Read-only mode: {'ENABLED' if read_only else 'DISABLED'}")
     logger.info(f"Enabled tools filter: {enabled_tools or 'All tools enabled'}")
-    yield {"app_lifespan_context": app_context}
-    logger.info("Main Atlassian MCP server lifespan shutting down.")
+
+    try:
+        yield {"app_lifespan_context": app_context}
+    except Exception as e:
+        logger.error(f"Error during lifespan: {e}", exc_info=True)
+        raise
+    finally:
+        logger.info("Main Atlassian MCP server lifespan shutting down...")
+        # Perform any necessary cleanup here
+        try:
+            # Close any open connections if needed
+            if loaded_jira_config:
+                logger.debug("Cleaning up Jira resources...")
+            if loaded_confluence_config:
+                logger.debug("Cleaning up Confluence resources...")
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}", exc_info=True)
+        logger.info("Main Atlassian MCP server lifespan shutdown complete.")
 
 
 class AtlassianMCP(FastMCP[MainAppContext]):
@@ -231,6 +247,12 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
             logger.debug(
                 f"UserTokenMiddleware: Path='{request.url.path}', AuthHeader='{mask_sensitive(auth_header)}', ParsedToken(masked)='{token_for_log}'"
             )
+            # Check for mcp-session-id header for debugging
+            mcp_session_id = request.headers.get("mcp-session-id")
+            if mcp_session_id:
+                logger.debug(
+                    f"UserTokenMiddleware: MCP-Session-ID header found: {mcp_session_id}"
+                )
             if auth_header and auth_header.startswith("Bearer "):
                 token = auth_header.split(" ", 1)[1].strip()
                 if not token:

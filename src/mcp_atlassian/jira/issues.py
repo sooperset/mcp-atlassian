@@ -61,6 +61,26 @@ class IssuesMixin(
             Exception: If there is an error retrieving the issue
         """
         try:
+            # Obtain the projects filter from the config.
+            # These should NOT be overridden by the request.
+            filter_to_use = self.config.projects_filter
+
+            # Apply projects filter if present
+            if filter_to_use:
+                # Split projects filter by commas and handle possible whitespace
+                projects = [p.strip() for p in filter_to_use.split(",")]
+
+                # Obtain the project key from issue_key
+                issue_key_project = issue_key.split("-")[0]
+
+                if issue_key_project not in projects:
+                    # If the project key not in the filter, return an empty issue
+                    msg = (
+                        "Issue with project prefix "
+                        f"'{issue_key_project}' are restricted by configuration"
+                    )
+                    raise ValueError(msg)
+
             # Determine fields_param: use provided fields or default from constant
             fields_param = fields
             if fields_param is None:
@@ -521,9 +541,9 @@ class IssuesMixin(
                 "issuetype": {"name": issue_type},
             }
 
-            # Add description if provided
+            # Add description if provided (convert from Markdown to Jira format)
             if description:
-                fields["description"] = description
+                fields["description"] = self._markdown_to_jira(description)
 
             # Add assignee if provided
             if assignee:
@@ -895,6 +915,12 @@ class IssuesMixin(
             update_fields = fields or {}
             attachments_result = None
 
+            # Convert description from Markdown to Jira format if present
+            if "description" in update_fields:
+                update_fields["description"] = self._markdown_to_jira(
+                    update_fields["description"]
+                )
+
             # Process kwargs
             for key, value in kwargs.items():
                 if key == "status":
@@ -912,12 +938,18 @@ class IssuesMixin(
                         logger.warning(f"Invalid attachments value: {value}")
 
                 elif key == "assignee":
-                    # Handle assignee updates
-                    try:
-                        account_id = self._get_account_id(value)
-                        self._add_assignee_to_fields(update_fields, account_id)
-                    except ValueError as e:
-                        logger.warning(f"Could not update assignee: {str(e)}")
+                    # Handle assignee updates, allow unassignment with None or empty string
+                    if value is None or value == "":
+                        update_fields["assignee"] = None
+                    else:
+                        try:
+                            account_id = self._get_account_id(value)
+                            self._add_assignee_to_fields(update_fields, account_id)
+                        except ValueError as e:
+                            logger.warning(f"Could not update assignee: {str(e)}")
+                elif key == "description":
+                    # Handle description with markdown conversion
+                    update_fields["description"] = self._markdown_to_jira(value)
                 else:
                     # Process regular fields using _process_additional_fields
                     # Create a temporary dict with just this field
@@ -996,8 +1028,8 @@ class IssuesMixin(
                 raise TypeError(msg)
             return JiraIssue.from_api_response(issue_data)
 
-        # Get available transitions
-        transitions = self.get_available_transitions(issue_key)
+        # Get available transitions (uses TransitionsMixin's normalized implementation)
+        transitions = self.get_available_transitions(issue_key)  # type: ignore[attr-defined]
 
         # Extract status name or ID depending on what we received
         status_name = None
@@ -1033,9 +1065,8 @@ class IssuesMixin(
         # Find the appropriate transition
         transition_id = None
         for transition in transitions:
-            to_status = transition.get("to", {})
-            transition_status_name = to_status.get("name", "")
-            transition_status_id = to_status.get("id")
+            # TransitionsMixin returns normalized transitions with 'to_status' field
+            transition_status_name = transition.get("to_status", "")
 
             # Match by name (case-insensitive)
             if (
@@ -1049,18 +1080,6 @@ class IssuesMixin(
                 )
                 break
 
-            # Match by ID
-            if (
-                status_id
-                and transition_status_id
-                and str(transition_status_id) == str(status_id)
-            ):
-                transition_id = transition.get("id")
-                logger.info(
-                    f"Found transition ID {transition_id} matching status ID '{status_id}'"
-                )
-                break
-
             # Direct transition ID match (if status is actually a transition ID)
             if status_id and str(transition.get("id", "")) == str(status_id):
                 transition_id = transition.get("id")
@@ -1068,12 +1087,23 @@ class IssuesMixin(
                 break
 
         if not transition_id:
-            available_statuses = ", ".join(
-                [t.get("to", {}).get("name", "") for t in transitions]
+            # Build list of available statuses from normalized transitions
+            available_statuses = []
+            for t in transitions:
+                # Include transition name and target status if available
+                transition_name = t.get("name", "")
+                to_status = t.get("to_status", "")
+                if to_status:
+                    available_statuses.append(f"{transition_name} -> {to_status}")
+                elif transition_name:
+                    available_statuses.append(transition_name)
+
+            available_statuses_str = (
+                ", ".join(available_statuses) if available_statuses else "None found"
             )
             error_msg = (
                 f"Could not find transition to status '{status}'. "
-                f"Available statuses: {available_statuses}"
+                f"Available transitions: {available_statuses_str}"
             )
             logger.error(error_msg)
             raise ValueError(error_msg)
@@ -1163,15 +1193,19 @@ class IssuesMixin(
         except Exception as e:
             logger.warning(f"Error processing field for epic data: {str(e)}")
 
-    def get_available_transitions(self, issue_key: str) -> list[dict]:
+    def _get_raw_transitions(self, issue_key: str) -> list[dict]:
         """
-        Get all available transitions for an issue.
+        Get raw transition data from the Jira API.
+
+        This is an internal method that returns unprocessed transition data.
+        For normalized transitions with proper structure, use get_available_transitions()
+        from TransitionsMixin instead.
 
         Args:
             issue_key: The key of the issue
 
         Returns:
-            List of available transitions
+            List of raw transition data from the API
 
         Raises:
             Exception: If there is an error getting transitions
