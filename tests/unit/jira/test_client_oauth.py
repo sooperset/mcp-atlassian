@@ -399,10 +399,13 @@ class TestJiraClientOAuth:
             # No OAuth specific variables set
             "ATLASSIAN_OAUTH_CLIENT_ID": "",
             "ATLASSIAN_OAUTH_ACCESS_TOKEN": "",
+            # Explicitly clear basic auth credentials
+            "JIRA_USERNAME": "",
+            "JIRA_API_TOKEN": "",
         }
 
         with (
-            patch.dict(os.environ, env_vars),
+            patch.dict(os.environ, env_vars, clear=True),
             patch(
                 "mcp_atlassian.jira.config.get_oauth_config_from_env",
                 return_value=None,  # Simulate no config found
@@ -410,6 +413,6 @@ class TestJiraClientOAuth:
         ):
             with pytest.raises(
                 ValueError,  # Adjusted to actual error raised by JiraConfig.from_env
-                match="Cloud authentication requires JIRA_USERNAME and JIRA_API_TOKEN, or OAuth configuration",
+                match=r"Cloud authentication requires JIRA_USERNAME and JIRA_API_TOKEN, or OAuth configuration.*",
             ):
                 JiraClient()

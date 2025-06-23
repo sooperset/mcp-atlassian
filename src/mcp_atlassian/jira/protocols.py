@@ -155,6 +155,23 @@ class FieldsOperationsProto(Protocol):
 
 
 @runtime_checkable
+class ProjectsOperationsProto(Protocol):
+    """Protocol defining project operations interface."""
+
+    @abstractmethod
+    def get_project_issue_types(self, project_key: str) -> list[dict[str, Any]]:
+        """
+        Get all issue types available for a project.
+
+        Args:
+            project_key: The project key
+
+        Returns:
+            List of issue type data dictionaries
+        """
+
+
+@runtime_checkable
 class UsersOperationsProto(Protocol):
     """Protocol defining user operations interface."""
 

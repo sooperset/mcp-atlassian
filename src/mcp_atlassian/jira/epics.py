@@ -420,18 +420,33 @@ class EpicsMixin(
                 raise TypeError(msg)
             fields_data = epic.get("fields", {})
 
-            # Safely check if the issue is an Epic
-            issue_type = None
-            issuetype_data = fields_data.get("issuetype")
-            if issuetype_data is not None:
-                issue_type = issuetype_data.get("name", "")
+            # Check if the issue is an Epic
+            issuetype_data = fields_data.get("issuetype", {})
+            issue_type_name = issuetype_data.get("name", "")
 
-            if issue_type != "Epic":
-                error_msg = (
-                    f"Issue {epic_key} is not an Epic, it is a "
-                    f"{issue_type or 'unknown type'}"
-                )
-                raise ValueError(error_msg)
+            # Check if it's an Epic by looking for "epic" in the name (case-insensitive)
+            # This handles localized names like "에픽", "エピック", etc.
+            if "epic" not in issue_type_name.lower() and issue_type_name not in [
+                "에픽",
+                "エピック",
+            ]:
+                # Try to verify via JQL as a fallback
+                is_epic = False
+                try:
+                    verify_jql = f'key = "{epic_key}" AND issuetype = Epic'
+                    verify_result = self.search_issues(verify_jql, limit=1)
+                    if verify_result and len(verify_result.issues) > 0:
+                        is_epic = True
+                except Exception as e:
+                    # If JQL fails, stick with our previous determination
+                    logger.debug(f"JQL verification failed: {e}")
+
+                if not is_epic:
+                    error_msg = (
+                        f"Issue {epic_key} is not an Epic, it is a "
+                        f"{issue_type_name or 'unknown type'}"
+                    )
+                    raise ValueError(error_msg)
 
             # Track which methods we've tried
             tried_methods = set()
