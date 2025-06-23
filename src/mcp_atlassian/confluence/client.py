@@ -56,7 +56,7 @@ class ConfluenceClient:
                 cloud=True,  # OAuth is only for Cloud
                 verify_ssl=self.config.ssl_verify,
             )
-        elif self.config.auth_type == "token":
+        elif self.config.auth_type == "pat":
             logger.debug(
                 f"Initializing Confluence client with Token (PAT) auth. "
                 f"URL: {self.config.url}, "

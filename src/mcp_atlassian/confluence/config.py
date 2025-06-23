@@ -24,7 +24,7 @@ class ConfluenceConfig:
     """
 
     url: str  # Base URL for Confluence
-    auth_type: Literal["basic", "token", "oauth"]  # Authentication type
+    auth_type: Literal["basic", "pat", "oauth"]  # Authentication type
     username: str | None = None  # Email or username
     api_token: str | None = None  # API token used as password
     personal_token: str | None = None  # Personal access token (Server/DC)
@@ -93,7 +93,7 @@ class ConfluenceConfig:
                 raise ValueError(error_msg)
         else:  # Server/Data Center
             if personal_token:
-                auth_type = "token"
+                auth_type = "pat"
             elif username and api_token:
                 # Allow basic auth for Server/DC too
                 auth_type = "basic"
@@ -167,7 +167,7 @@ class ConfluenceConfig:
             # Partial configuration is invalid
             logger.warning("Incomplete OAuth configuration detected")
             return False
-        elif self.auth_type == "token":
+        elif self.auth_type == "pat":
             return bool(self.personal_token)
         elif self.auth_type == "basic":
             return bool(self.username and self.api_token)
