@@ -5,7 +5,7 @@ import logging
 from typing import Annotated
 
 from fastmcp import Context, FastMCP
-from pydantic import Field
+from pydantic import BeforeValidator, Field
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.servers.dependencies import get_confluence_fetcher
@@ -421,6 +421,7 @@ async def create_page(
             description="(Optional) parent page ID. If provided, this page will be created as a child of the specified page",
             default=None,
         ),
+        BeforeValidator(lambda x: str(x) if x is not None else None),
     ] = None,
     content_format: Annotated[
         str,
@@ -510,6 +511,7 @@ async def update_page(
     parent_id: Annotated[
         str | None,
         Field(description="Optional the new parent page ID", default=None),
+        BeforeValidator(lambda x: str(x) if x is not None else None),
     ] = None,
     content_format: Annotated[
         str,
