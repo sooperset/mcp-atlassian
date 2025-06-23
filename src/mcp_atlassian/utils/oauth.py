@@ -438,8 +438,58 @@ class OAuthConfig:
         return None
 
 
+@dataclass
+class BYOAccessTokenOAuthConfig:
+    """OAuth configuration when providing a pre-existing access token.
+
+    This class is used when the user provides their own Atlassian Cloud ID
+    and access token directly, bypassing the full OAuth 2.0 (3LO) flow.
+    It's suitable for scenarios like service accounts or CI/CD pipelines
+    where an access token is already available.
+
+    This configuration does not support token refreshing.
+    """
+
+    cloud_id: str
+    access_token: str
+    refresh_token: None = None
+    expires_at: None = None
+
+    @classmethod
+    def from_env(cls) -> Optional["BYOAccessTokenOAuthConfig"]:
+        """Create a BYOAccessTokenOAuthConfig from environment variables.
+
+        Reads `ATLASSIAN_OAUTH_CLOUD_ID` and `ATLASSIAN_OAUTH_ACCESS_TOKEN`.
+
+        Returns:
+            BYOAccessTokenOAuthConfig instance or None if required
+            environment variables are missing.
+        """
+        cloud_id = os.getenv("ATLASSIAN_OAUTH_CLOUD_ID")
+        access_token = os.getenv("ATLASSIAN_OAUTH_ACCESS_TOKEN")
+
+        if not all([cloud_id, access_token]):
+            return None
+
+        return cls(cloud_id=cloud_id, access_token=access_token)
+
+
+def get_oauth_config_from_env() -> OAuthConfig | BYOAccessTokenOAuthConfig | None:
+    """Get the appropriate OAuth configuration from environment variables.
+
+    This function attempts to load standard OAuth configuration first (OAuthConfig).
+    If that's not available, it tries to load a "Bring Your Own Access Token"
+    configuration (BYOAccessTokenOAuthConfig).
+
+    Returns:
+        An instance of OAuthConfig or BYOAccessTokenOAuthConfig if environment
+        variables are set for either, otherwise None.
+    """
+    return BYOAccessTokenOAuthConfig.from_env() or OAuthConfig.from_env()
+
+
 def configure_oauth_session(
-    session: requests.Session, oauth_config: OAuthConfig
+    session: requests.Session, oauth_config: OAuthConfig | BYOAccessTokenOAuthConfig
 ) -> bool:
     """Configure a requests session with OAuth 2.0 authentication.
 
@@ -467,6 +517,11 @@ def configure_oauth_session(
         return True
     logger.debug("configure_oauth_session: Proceeding to ensure_valid_token.")
     # Otherwise, ensure we have a valid token (refresh if needed)
+    if isinstance(oauth_config, BYOAccessTokenOAuthConfig):
+        logger.error(
+            "configure_oauth_session: oauth access token configuration provided as empty string."
+        )
+        return False
     if not oauth_config.ensure_valid_token():
         logger.error(
             f"configure_oauth_session: ensure_valid_token returned False. "

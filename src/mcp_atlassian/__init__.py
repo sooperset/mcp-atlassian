@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 from mcp_atlassian.utils.env import is_env_truthy
 from mcp_atlassian.utils.lifecycle import (
     ensure_clean_exit,
-    run_with_stdio_monitoring,
     setup_signal_handlers,
 )
 from mcp_atlassian.utils.logging import setup_logging
@@ -137,6 +136,11 @@ logger = setup_logging(logging_level, logging_stream)
     "--oauth-cloud-id",
     help="Atlassian Cloud ID for OAuth 2.0 authentication",
 )
+@click.option(
+    "--oauth-access-token",
+    help="Atlassian Cloud OAuth 2.0 access token (if you have your own you'd like to "
+    "use for the session.)",
+)
 def main(
     verbose: int,
     env_file: str | None,
@@ -164,6 +168,7 @@ def main(
     oauth_redirect_uri: str | None,
     oauth_scope: str | None,
     oauth_cloud_id: str | None,
+    oauth_access_token: str | None,
 ) -> None:
     """MCP Atlassian Server - Jira and Confluence functionality for MCP
 
@@ -288,6 +293,8 @@ def main(
         os.environ["ATLASSIAN_OAUTH_SCOPE"] = oauth_scope
     if click_ctx and was_option_provided(click_ctx, "oauth_cloud_id"):
         os.environ["ATLASSIAN_OAUTH_CLOUD_ID"] = oauth_cloud_id
+    if click_ctx and was_option_provided(click_ctx, "oauth_access_token"):
+        os.environ["ATLASSIAN_OAUTH_ACCESS_TOKEN"] = oauth_access_token
     if click_ctx and was_option_provided(click_ctx, "read_only"):
         os.environ["READ_ONLY_MODE"] = str(read_only).lower()
     if click_ctx and was_option_provided(click_ctx, "confluence_ssl_verify"):
@@ -341,10 +348,17 @@ def main(
     try:
         logger.debug("Starting asyncio event loop...")
 
-        # Create a wrapper coroutine that handles both the server and stdin monitoring
+        # For stdio transport, don't monitor stdin as MCP server handles it internally
+        # This prevents race conditions where both try to read from the same stdin
         if final_transport == "stdio":
-            asyncio.run(run_with_stdio_monitoring(main_mcp.run_async, run_kwargs))
+            asyncio.run(main_mcp.run_async(**run_kwargs))
         else:
+            # For HTTP transports (SSE, streamable-http), don't use stdin monitoring
+            # as it causes premature shutdown when the client closes stdin
+            # The server should only rely on OS signals for shutdown
+            logger.debug(
+                f"Running server for {final_transport} transport without stdin monitoring"
+            )
             asyncio.run(main_mcp.run_async(**run_kwargs))
     except (KeyboardInterrupt, SystemExit) as e:
         logger.info(f"Server shutdown initiated: {type(e).__name__}")

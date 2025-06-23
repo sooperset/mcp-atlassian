@@ -6,7 +6,11 @@ from dataclasses import dataclass
 from typing import Literal
 
 from ..utils.env import is_env_ssl_verify
-from ..utils.oauth import OAuthConfig
+from ..utils.oauth import (
+    BYOAccessTokenOAuthConfig,
+    OAuthConfig,
+    get_oauth_config_from_env,
+)
 from ..utils.urls import is_atlassian_cloud_url
 
 
@@ -24,7 +28,7 @@ class JiraConfig:
     username: str | None = None  # Email or username (Cloud)
     api_token: str | None = None  # API token (Cloud)
     personal_token: str | None = None  # Personal access token (Server/DC)
-    oauth_config: OAuthConfig | None = None  # OAuth 2.0 configuration
+    oauth_config: OAuthConfig | BYOAccessTokenOAuthConfig | None = None
     ssl_verify: bool = True  # Whether to verify SSL certificates
     projects_filter: str | None = None  # List of project keys to filter searches
     http_proxy: str | None = None  # HTTP proxy URL
@@ -72,7 +76,7 @@ class JiraConfig:
         personal_token = os.getenv("JIRA_PERSONAL_TOKEN")
 
         # Check for OAuth configuration
-        oauth_config = OAuthConfig.from_env()
+        oauth_config = get_oauth_config_from_env()
         auth_type = None
 
         # Use the shared utility function directly
@@ -132,28 +136,33 @@ class JiraConfig:
         """
         logger = logging.getLogger("mcp-atlassian.jira.config")
         if self.auth_type == "oauth":
-            # Full OAuth configuration (traditional mode)
-            if (
-                self.oauth_config
-                and self.oauth_config.client_id
-                and self.oauth_config.client_secret
-                and self.oauth_config.redirect_uri
-                and self.oauth_config.scope
-            ):
-                return True
-
-            # Minimal OAuth configuration (user-provided tokens mode)
-            # This is valid if we have oauth_config but missing client credentials
-            # In this case, we expect authentication to come from user-provided headers
-            if (
-                self.oauth_config
-                and not self.oauth_config.client_id
-                and not self.oauth_config.client_secret
-            ):
-                logger.debug(
-                    "Minimal OAuth config detected - expecting user-provided tokens via headers"
-                )
-                return True
+            # Handle different OAuth configuration types
+            if self.oauth_config:
+                # Full OAuth configuration (traditional mode)
+                if isinstance(self.oauth_config, OAuthConfig):
+                    if (
+                        self.oauth_config.client_id
+                        and self.oauth_config.client_secret
+                        and self.oauth_config.redirect_uri
+                        and self.oauth_config.scope
+                        and self.oauth_config.cloud_id
+                    ):
+                        return True
+                    # Minimal OAuth configuration (user-provided tokens mode)
+                    # This is valid if we have oauth_config but missing client credentials
+                    # In this case, we expect authentication to come from user-provided headers
+                    elif (
+                        not self.oauth_config.client_id
+                        and not self.oauth_config.client_secret
+                    ):
+                        logger.debug(
+                            "Minimal OAuth config detected - expecting user-provided tokens via headers"
+                        )
+                        return True
+                # Bring Your Own Access Token mode
+                elif isinstance(self.oauth_config, BYOAccessTokenOAuthConfig):
+                    if self.oauth_config.cloud_id and self.oauth_config.access_token:
+                        return True
 
             # Partial configuration is invalid
             logger.warning("Incomplete OAuth configuration detected")

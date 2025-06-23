@@ -262,6 +262,12 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                     "UserTokenMiddleware: No cloudId header provided, will use global config"
                 )
 
+            # Check for mcp-session-id header for debugging
+            mcp_session_id = request.headers.get("mcp-session-id")
+            if mcp_session_id:
+                logger.debug(
+                    f"UserTokenMiddleware: MCP-Session-ID header found: {mcp_session_id}"
+                )
             if auth_header and auth_header.startswith("Bearer "):
                 token = auth_header.split(" ", 1)[1].strip()
                 if not token:

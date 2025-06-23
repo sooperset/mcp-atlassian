@@ -676,19 +676,43 @@ class TestIssuesMixin:
             return_value=JiraIssue(key="TEST-123", description="")
         )
 
-        # Mock available transitions
+        # Mock available transitions (using TransitionsMixin's normalized format)
         issues_mixin.get_available_transitions = MagicMock(
             return_value=[
                 {
                     "id": "21",
                     "name": "In Progress",
-                    "to": {"name": "In Progress", "id": "3"},
+                    "to_status": "In Progress",
                 }
             ]
         )
 
         # Call the method with status in kwargs instead of fields
         issues_mixin.update_issue(issue_key="TEST-123", status="In Progress")
+
+    def test_update_issue_unassign(self, issues_mixin: IssuesMixin):
+        """Test unassigning an issue."""
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test Issue",
+                "description": "This is a test",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Bug"},
+            },
+        }
+        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+        issues_mixin._get_account_id = MagicMock()
+
+        document = issues_mixin.update_issue(issue_key="TEST-123", assignee=None)
+
+        issues_mixin.jira.update_issue.assert_called_once_with(
+            issue_key="TEST-123", update={"fields": {"assignee": None}}
+        )
+        assert not issues_mixin._get_account_id.called
+        assert document.key == "TEST-123"
 
     def test_delete_issue(self, issues_mixin: IssuesMixin):
         """Test deleting an issue."""

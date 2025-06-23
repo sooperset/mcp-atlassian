@@ -80,7 +80,31 @@ MCP Atlassian supports three authentication methods:
    - `ATLASSIAN_OAUTH_SCOPE`
 
 > [!IMPORTANT]
-> Include `offline_access` in scope for persistent auth (e.g., `read:jira-work write:jira-work offline_access`)
+> For the standard OAuth flow described above, include `offline_access` in your scope (e.g., `read:jira-work write:jira-work offline_access`). This allows the server to refresh the access token automatically.
+
+<details>
+<summary>Alternative: Using a Pre-existing OAuth Access Token (BYOT)</summary>
+
+If you are running mcp-atlassian part of a larger system that manages Atlassian OAuth 2.0 access tokens externally (e.g., through a central identity provider or another application), you can provide an access token directly to this MCP server. This method bypasses the interactive setup wizard and the server's internal token management (including refresh capabilities).
+
+**Requirements:**
+- A valid Atlassian OAuth 2.0 Access Token with the necessary scopes for the intended operations.
+- The corresponding `ATLASSIAN_OAUTH_CLOUD_ID` for your Atlassian instance.
+
+**Configuration:**
+To use this method, set the following environment variables (or use the corresponding command-line flags when starting the server):
+- `ATLASSIAN_OAUTH_CLOUD_ID`: Your Atlassian Cloud ID. (CLI: `--oauth-cloud-id`)
+- `ATLASSIAN_OAUTH_ACCESS_TOKEN`: Your pre-existing OAuth 2.0 access token. (CLI: `--oauth-access-token`)
+
+**Important Considerations for BYOT:**
+- **Token Lifecycle Management:** When using BYOT, the MCP server **does not** handle token refresh. The responsibility for obtaining, refreshing (before expiry), and revoking the access token lies entirely with you or the external system providing the token.
+- **Unused Variables:** The standard OAuth client variables (`ATLASSIAN_OAUTH_CLIENT_ID`, `ATLASSIAN_OAUTH_CLIENT_SECRET`, `ATLASSIAN_OAUTH_REDIRECT_URI`, `ATLASSIAN_OAUTH_SCOPE`) are **not** used and can be omitted when configuring for BYOT.
+- **No Setup Wizard:** The `--oauth-setup` wizard is not applicable and should not be used for this approach.
+- **No Token Cache Volume:** The Docker volume mount for token storage (e.g., `-v "${HOME}/.mcp-atlassian:/home/app/.mcp-atlassian"`) is also not necessary if you are exclusively using the BYOT method, as no tokens are stored or managed by this server.
+- **Scope:** The provided access token must already have the necessary permissions (scopes) for the Jira/Confluence operations you intend to perform.
+
+This option is useful in scenarios where OAuth credential management is centralized or handled by other infrastructure components.
+</details>
 
 ### 📦 2. Installation
 
@@ -222,7 +246,11 @@ For Server/Data Center deployments, use direct variable passing:
 <summary>OAuth 2.0 Configuration (Cloud Only)</summary>
 <a name="oauth-20-configuration-example-cloud-only"></a>
 
-This example shows how to configure `mcp-atlassian` in your IDE (like Cursor or Claude Desktop) when using OAuth 2.0 for Atlassian Cloud. Ensure you have completed the [OAuth setup wizard](#c-oauth-20-authentication-cloud-only) first.
+These examples show how to configure `mcp-atlassian` in your IDE (like Cursor or Claude Desktop) when using OAuth 2.0 for Atlassian Cloud.
+
+**Example for Standard OAuth 2.0 Flow (using Setup Wizard):**
+
+This configuration is for when you use the server's built-in OAuth client and have completed the [OAuth setup wizard](#c-oauth-20-authentication-cloud---advanced).
 
 ```json
 {
@@ -241,7 +269,7 @@ This example shows how to configure `mcp-atlassian` in your IDE (like Cursor or 
         "-e", "ATLASSIAN_OAUTH_REDIRECT_URI",
         "-e", "ATLASSIAN_OAUTH_SCOPE",
         "-e", "ATLASSIAN_OAUTH_CLOUD_ID",
-        "ghcr.io/sooperset/mcp-atlassian:latest",
+        "ghcr.io/sooperset/mcp-atlassian:latest"
       ],
       "env": {
         "JIRA_URL": "https://your-company.atlassian.net",
@@ -258,9 +286,47 @@ This example shows how to configure `mcp-atlassian` in your IDE (like Cursor or 
 ```
 
 > [!NOTE]
-> - `ATLASSIAN_OAUTH_CLOUD_ID` is obtained from the `--oauth-setup` wizard output.
-> - Other `ATLASSIAN_OAUTH_*` variables are those you configured for your OAuth app in the Atlassian Developer Console (and used as input to the setup wizard).
-> - `JIRA_URL` and `CONFLUENCE_URL` for your Cloud instances are still required.
+> - For the Standard Flow:
+>   - `ATLASSIAN_OAUTH_CLOUD_ID` is obtained from the `--oauth-setup` wizard output or is known for your instance.
+>   - Other `ATLASSIAN_OAUTH_*` client variables are from your OAuth app in the Atlassian Developer Console.
+>   - `JIRA_URL` and `CONFLUENCE_URL` for your Cloud instances are always required.
+>   - The volume mount (`-v .../.mcp-atlassian:/home/app/.mcp-atlassian`) is crucial for persisting the OAuth tokens obtained by the wizard, enabling automatic refresh.
+
+**Example for Pre-existing Access Token (BYOT - Bring Your Own Token):**
+
+This configuration is for when you are providing your own externally managed OAuth 2.0 access token.
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-e", "JIRA_URL",
+        "-e", "CONFLUENCE_URL",
+        "-e", "ATLASSIAN_OAUTH_CLOUD_ID",
+        "-e", "ATLASSIAN_OAUTH_ACCESS_TOKEN",
+        "ghcr.io/sooperset/mcp-atlassian:latest"
+      ],
+      "env": {
+        "JIRA_URL": "https://your-company.atlassian.net",
+        "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
+        "ATLASSIAN_OAUTH_CLOUD_ID": "YOUR_KNOWN_CLOUD_ID",
+        "ATLASSIAN_OAUTH_ACCESS_TOKEN": "YOUR_PRE_EXISTING_OAUTH_ACCESS_TOKEN"
+      }
+    }
+  }
+}
+```
+
+> [!NOTE]
+> - For the BYOT Method:
+>   - You primarily need `JIRA_URL`, `CONFLUENCE_URL`, `ATLASSIAN_OAUTH_CLOUD_ID`, and `ATLASSIAN_OAUTH_ACCESS_TOKEN`.
+>   - Standard OAuth client variables (`ATLASSIAN_OAUTH_CLIENT_ID`, `CLIENT_SECRET`, `REDIRECT_URI`, `SCOPE`) are **not** used.
+>   - Token lifecycle (e.g., refreshing the token before it expires and restarting mcp-atlassian) is your responsibility, as the server will not refresh BYOT tokens.
 
 </details>
 
