@@ -166,7 +166,7 @@ def test_get_project_issues(projects_mixin: ProjectsMixin):
 
     # Verify search_issues was called, not jira.jql
     projects_mixin.search_issues.assert_called_once_with(
-        "project = TEST",
+        'project = "TEST"',
         start=0,
         limit=50,
     )
@@ -201,7 +201,7 @@ def test_get_project_issues_with_start(projects_mixin: ProjectsMixin) -> None:
 
     # Verify search_issues was called with the correct arguments
     projects_mixin.search_issues.assert_called_once_with(
-        f"project = {project_key}",
+        f'project = "{project_key}"',
         start=start_index,
         limit=5,
     )
@@ -468,7 +468,21 @@ def test_get_project_issues_count(projects_mixin: ProjectsMixin):
     result = projects_mixin.get_project_issues_count("PROJ1")
     assert result == 42
     projects_mixin.jira.jql.assert_called_once_with(
-        jql="project = PROJ1", fields="key", limit=1
+        jql='project = "PROJ1"', fields="key", limit=1
+    )
+
+
+def test_get_project_issues_count__project_with_reserved_keyword(
+    projects_mixin: ProjectsMixin,
+):
+    """Test get_project_issues_count method."""
+    jql_result = {"total": 42}
+    projects_mixin.jira.jql.return_value = jql_result
+
+    result = projects_mixin.get_project_issues_count("AND")
+    assert result == 42
+    projects_mixin.jira.jql.assert_called_once_with(
+        jql='project = "AND"', fields="key", limit=1
     )
 
 
@@ -508,7 +522,7 @@ def test_get_project_issues_with_search_mixin(projects_mixin: ProjectsMixin):
     result = projects_mixin.get_project_issues("PROJ1", start=10, limit=20)
     assert result == mock_search_result
     projects_mixin.search_issues.assert_called_once_with(
-        "project = PROJ1", start=10, limit=20
+        'project = "PROJ1"', start=10, limit=20
     )
     projects_mixin.jira.jql.assert_not_called()
 

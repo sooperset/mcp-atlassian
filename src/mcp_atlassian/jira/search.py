@@ -57,7 +57,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
 
                 # Build the project filter query part
                 if len(projects) == 1:
-                    project_query = f"project = {projects[0]}"
+                    project_query = f'project = "{projects[0]}"'
                 else:
                     quoted_projects = [f'"{p}"' for p in projects]
                     projects_list = ", ".join(quoted_projects)

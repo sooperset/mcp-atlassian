@@ -291,7 +291,7 @@ class TestSearchMixin:
         # Test with single project filter
         result = search_mixin.search_issues("text ~ 'test'", projects_filter="TEST")
         search_mixin.jira.jql.assert_called_with(
-            "(text ~ 'test') AND project = TEST",
+            "(text ~ 'test') AND project = \"TEST\"",
             fields=ANY,
             start=0,
             limit=50,
@@ -350,7 +350,7 @@ class TestSearchMixin:
         # Test with override
         result = search_mixin.search_issues("text ~ 'test'", projects_filter="OVERRIDE")
         search_mixin.jira.jql.assert_called_with(
-            "(text ~ 'test') AND project = OVERRIDE",
+            "(text ~ 'test') AND project = \"OVERRIDE\"",
             fields=ANY,
             start=0,
             limit=50,
@@ -604,7 +604,7 @@ class TestSearchMixin:
 
         # Assert: JQL verification
         api_method_mock.assert_called_with(
-            "(text ~ 'test') AND project = TEST",  # Check constructed JQL
+            "(text ~ 'test') AND project = \"TEST\"",  # Check constructed JQL
             **expected_kwargs,
         )
 
@@ -670,5 +670,5 @@ class TestSearchMixin:
         search_mixin.search_issues("text ~ 'test'", projects_filter="OVERRIDE")
         # Assert: JQL verification
         api_method_mock.assert_called_with(
-            "(text ~ 'test') AND project = OVERRIDE", **expected_kwargs
+            "(text ~ 'test') AND project = \"OVERRIDE\"", **expected_kwargs
         )
