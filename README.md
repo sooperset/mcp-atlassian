@@ -106,6 +106,9 @@ To use this method, set the following environment variables (or use the correspo
 This option is useful in scenarios where OAuth credential management is centralized or handled by other infrastructure components.
 </details>
 
+> [!TIP]
+> **Multi-Cloud OAuth Support**: If you're building a multi-tenant application where users provide their own OAuth tokens, see the [Multi-Cloud OAuth Support](#multi-cloud-oauth-support) section for minimal configuration setup.
+
 ### 📦 2. Installation
 
 MCP Atlassian is distributed as a Docker image. This is the recommended way to run the server, especially for IDE integration. Ensure you have Docker installed.
@@ -371,6 +374,65 @@ Credentials in proxy URLs are masked in logs. If you set `NO_PROXY`, it will be 
 
 </details>
 
+<details>
+<summary>Multi-Cloud OAuth Support</summary>
+
+MCP Atlassian supports multi-cloud OAuth scenarios where each user connects to their own Atlassian cloud instance. This is useful for multi-tenant applications, chatbots, or services where users provide their own OAuth tokens.
+
+**Minimal OAuth Configuration:**
+
+1. Enable minimal OAuth mode (no client credentials required):
+   ```bash
+   docker run -e ATLASSIAN_OAUTH_ENABLE=true -p 9000:9000 \
+     ghcr.io/sooperset/mcp-atlassian:latest \
+     --transport streamable-http --port 9000
+   ```
+
+2. Users provide authentication via HTTP headers:
+   - `Authorization: Bearer <user_oauth_token>`
+   - `X-Atlassian-Cloud-Id: <user_cloud_id>`
+
+**Example Integration (Python):**
+```python
+import asyncio
+from mcp.client.streamable_http import streamablehttp_client
+from mcp import ClientSession
+
+user_token = "user-specific-oauth-token"
+user_cloud_id = "user-specific-cloud-id"
+
+async def main():
+    # Connect to streamable HTTP server with custom headers
+    async with streamablehttp_client(
+        "http://localhost:9000/mcp",
+        headers={
+            "Authorization": f"Bearer {user_token}",
+            "X-Atlassian-Cloud-Id": user_cloud_id
+        }
+    ) as (read_stream, write_stream, _):
+        # Create a session using the client streams
+        async with ClientSession(read_stream, write_stream) as session:
+            # Initialize the connection
+            await session.initialize()
+
+            # Example: Get a Jira issue
+            result = await session.call_tool(
+                "jira_get_issue",
+                {"issue_key": "PROJ-123"}
+            )
+            print(result)
+
+asyncio.run(main())
+```
+
+**Configuration Notes:**
+- Each request can use a different cloud instance via the `X-Atlassian-Cloud-Id` header
+- User tokens are isolated per request - no cross-tenant data leakage
+- Falls back to global `ATLASSIAN_OAUTH_CLOUD_ID` if header not provided
+- Compatible with standard OAuth 2.0 bearer token authentication
+
+</details>
+
 <details> <summary>Single Service Configurations</summary>
 
 **For Confluence Cloud only:**
@@ -600,6 +662,7 @@ Here's a complete example of setting up multi-user authentication with streamabl
 > - The server should have its own fallback authentication configured (e.g., via environment variables for API token, PAT, or its own OAuth setup using --oauth-setup). This is used if a request doesn't include user-specific authentication.
 > - **OAuth**: Each user needs their own OAuth access token from your Atlassian OAuth app.
 > - **PAT**: Each user provides their own Personal Access Token.
+> - **Multi-Cloud**: For OAuth users, optionally include `X-Atlassian-Cloud-Id` header to specify which Atlassian cloud instance to use
 > - The server will use the user's token for API calls when provided, falling back to server auth if not
 > - User tokens should have appropriate scopes for their needed operations
 
