@@ -57,7 +57,7 @@ def test_init_with_token_auth():
     # Arrange
     config = ConfluenceConfig(
         url="https://confluence.example.com",
-        auth_type="token",
+        auth_type="pat",
         personal_token="test_personal_token",
         ssl_verify=False,
     )

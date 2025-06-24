@@ -89,7 +89,7 @@ def test_is_cloud():
     # Arrange & Act - Server URL
     config = ConfluenceConfig(
         url="https://confluence.example.com",
-        auth_type="token",
+        auth_type="pat",
         personal_token="test",
     )
 
@@ -99,7 +99,7 @@ def test_is_cloud():
     # Arrange & Act - Localhost URL (Data Center/Server)
     config = ConfluenceConfig(
         url="http://localhost:8090",
-        auth_type="token",
+        auth_type="pat",
         personal_token="test",
     )
 
@@ -109,7 +109,7 @@ def test_is_cloud():
     # Arrange & Act - IP localhost URL (Data Center/Server)
     config = ConfluenceConfig(
         url="http://127.0.0.1:8090",
-        auth_type="token",
+        auth_type="pat",
         personal_token="test",
     )
 
