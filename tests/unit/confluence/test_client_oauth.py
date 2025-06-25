@@ -152,7 +152,7 @@ class TestConfluenceClientOAuth:
 
         # Verify error is raised by ConfluenceClient's validation
         with pytest.raises(
-            ValueError, match="OAuth authentication requires a valid cloud_id"
+            ValueError, match="BYO Access Token authentication requires a valid cloud_id"
         ):
             ConfluenceClient(config=config)
 
@@ -238,7 +238,7 @@ class TestConfluenceClientOAuth:
 
         # Verify error is raised
         with pytest.raises(
-            ValueError, match="OAuth authentication requires a valid cloud_id"
+            ValueError, match="OAuth authentication for Cloud requires a valid cloud_id"
         ):
             ConfluenceClient(config=config)
 
