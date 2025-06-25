@@ -28,6 +28,40 @@ def test_from_env_basic_auth():
         assert config.ssl_verify is True
 
 
+def test_from_env_rewrite():
+    """Test that from_env correctly loads basic auth configuration."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://test.atlassian.net",
+            "JIRA_USERNAME": "test_username",
+            "JIRA_API_TOKEN": "test_token",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env(
+            {
+                "JIRA_URL": "https://test2.atlassian.net",
+                "JIRA_USERNAME": "test_username2",
+                "JIRA_API_TOKEN": "test_token2",
+                "JIRA_PERSONAL_TOKEN": "test_personal_token2",
+                "JIRA_SSL_VERIFY": "false",
+                "ATLASSIAN_OAUTH_CLIENT_ID": "test_client_id",
+                "ATLASSIAN_OAUTH_CLIENT_SECRET": "test_client_secret",
+                "ATLASSIAN_OAUTH_REDIRECT_URI": "test_redirect_uri",
+                "ATLASSIAN_OAUTH_SCOPE": "test_scope",
+            }
+        )
+        assert config.url == "https://test2.atlassian.net"
+        assert config.auth_type == "oauth"
+        assert config.username == "test_username2"
+        assert config.api_token == "test_token2"
+        assert config.personal_token == "test_personal_token2"
+        assert not config.ssl_verify
+        assert config.oauth_config.client_id == "test_client_id"
+        assert config.oauth_config.client_secret == "test_client_secret"
+
+
 def test_from_env_token_auth():
     """Test that from_env correctly loads token auth configuration."""
     with patch.dict(

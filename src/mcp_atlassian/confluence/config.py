@@ -1,11 +1,10 @@
 """Configuration module for the Confluence client."""
 
 import logging
-import os
 from dataclasses import dataclass
 from typing import Literal
 
-from ..utils.env import is_env_ssl_verify
+from ..utils.env import getenv, is_env_ssl_verify
 from ..utils.oauth import (
     BYOAccessTokenOAuthConfig,
     OAuthConfig,
@@ -56,7 +55,7 @@ class ConfluenceConfig:
         return self.ssl_verify
 
     @classmethod
-    def from_env(cls) -> "ConfluenceConfig":
+    def from_env(cls, env: dict[str, str] = None) -> "ConfluenceConfig":
         """Create configuration from environment variables.
 
         Returns:
@@ -65,18 +64,20 @@ class ConfluenceConfig:
         Raises:
             ValueError: If any required environment variable is missing
         """
-        url = os.getenv("CONFLUENCE_URL")
-        if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE"):
+        if env is None:
+            env = {}
+        url = getenv(env, "CONFLUENCE_URL")
+        if not url and not getenv(env, "ATLASSIAN_OAUTH_ENABLE"):
             error_msg = "Missing required CONFLUENCE_URL environment variable"
             raise ValueError(error_msg)
 
         # Determine authentication type based on available environment variables
-        username = os.getenv("CONFLUENCE_USERNAME")
-        api_token = os.getenv("CONFLUENCE_API_TOKEN")
-        personal_token = os.getenv("CONFLUENCE_PERSONAL_TOKEN")
+        username = getenv(env, "CONFLUENCE_USERNAME")
+        api_token = getenv(env, "CONFLUENCE_API_TOKEN")
+        personal_token = getenv(env, "CONFLUENCE_PERSONAL_TOKEN")
 
         # Check for OAuth configuration
-        oauth_config = get_oauth_config_from_env()
+        oauth_config = get_oauth_config_from_env(env)
         auth_type = None
 
         # Use the shared utility function directly
@@ -102,16 +103,16 @@ class ConfluenceConfig:
                 raise ValueError(error_msg)
 
         # SSL verification (for Server/DC)
-        ssl_verify = is_env_ssl_verify("CONFLUENCE_SSL_VERIFY")
+        ssl_verify = is_env_ssl_verify(env, "CONFLUENCE_SSL_VERIFY")
 
         # Get the spaces filter if provided
-        spaces_filter = os.getenv("CONFLUENCE_SPACES_FILTER")
+        spaces_filter = getenv(env, "CONFLUENCE_SPACES_FILTER")
 
         # Proxy settings
-        http_proxy = os.getenv("CONFLUENCE_HTTP_PROXY", os.getenv("HTTP_PROXY"))
-        https_proxy = os.getenv("CONFLUENCE_HTTPS_PROXY", os.getenv("HTTPS_PROXY"))
-        no_proxy = os.getenv("CONFLUENCE_NO_PROXY", os.getenv("NO_PROXY"))
-        socks_proxy = os.getenv("CONFLUENCE_SOCKS_PROXY", os.getenv("SOCKS_PROXY"))
+        http_proxy = getenv(env, "CONFLUENCE_HTTP_PROXY", getenv(env, "HTTP_PROXY"))
+        https_proxy = getenv(env, "CONFLUENCE_HTTPS_PROXY", getenv(env, "HTTPS_PROXY"))
+        no_proxy = getenv(env, "CONFLUENCE_NO_PROXY", getenv(env, "NO_PROXY"))
+        socks_proxy = getenv(env, "CONFLUENCE_SOCKS_PROXY", getenv(env, "SOCKS_PROXY"))
 
         return cls(
             url=url,

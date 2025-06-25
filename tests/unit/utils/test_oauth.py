@@ -675,8 +675,6 @@ class TestBYOAccessTokenOAuthConfig:
         assert config is not None
         assert config.cloud_id == "env-byo-cloud-id"
         assert config.access_token == "env-byo-access-token"
-        mock_getenv.assert_any_call("ATLASSIAN_OAUTH_CLOUD_ID")
-        mock_getenv.assert_any_call("ATLASSIAN_OAUTH_ACCESS_TOKEN")
 
     @patch("os.getenv")
     def test_from_env_missing_cloud_id(self, mock_getenv):

@@ -15,6 +15,7 @@ from starlette.requests import Request
 from src.mcp_atlassian.jira import JiraFetcher
 from src.mcp_atlassian.jira.config import JiraConfig
 from src.mcp_atlassian.servers.context import MainAppContext
+from src.mcp_atlassian.servers.jira import register_jira_tools
 from src.mcp_atlassian.servers.main import AtlassianMCP
 from src.mcp_atlassian.utils.oauth import OAuthConfig
 from tests.fixtures.jira_mocks import (
@@ -273,66 +274,9 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     test_mcp = AtlassianMCP(
         "TestJira", description="Test Jira MCP Server", lifespan=test_lifespan
     )
-    from src.mcp_atlassian.servers.jira import (
-        add_comment,
-        add_worklog,
-        batch_create_issues,
-        batch_create_versions,
-        batch_get_changelogs,
-        create_issue,
-        create_issue_link,
-        delete_issue,
-        download_attachments,
-        get_agile_boards,
-        get_all_projects,
-        get_board_issues,
-        get_issue,
-        get_link_types,
-        get_project_issues,
-        get_project_versions,
-        get_sprint_issues,
-        get_sprints_from_board,
-        get_transitions,
-        get_user_profile,
-        get_worklog,
-        link_to_epic,
-        remove_issue_link,
-        search,
-        search_fields,
-        transition_issue,
-        update_issue,
-        update_sprint,
-    )
 
     jira_sub_mcp = FastMCP(name="TestJiraSubMCP")
-    jira_sub_mcp.tool()(get_issue)
-    jira_sub_mcp.tool()(search)
-    jira_sub_mcp.tool()(search_fields)
-    jira_sub_mcp.tool()(get_project_issues)
-    jira_sub_mcp.tool()(get_project_versions)
-    jira_sub_mcp.tool()(get_all_projects)
-    jira_sub_mcp.tool()(get_transitions)
-    jira_sub_mcp.tool()(get_worklog)
-    jira_sub_mcp.tool()(download_attachments)
-    jira_sub_mcp.tool()(get_agile_boards)
-    jira_sub_mcp.tool()(get_board_issues)
-    jira_sub_mcp.tool()(get_sprints_from_board)
-    jira_sub_mcp.tool()(get_sprint_issues)
-    jira_sub_mcp.tool()(get_link_types)
-    jira_sub_mcp.tool()(get_user_profile)
-    jira_sub_mcp.tool()(create_issue)
-    jira_sub_mcp.tool()(batch_create_issues)
-    jira_sub_mcp.tool()(batch_get_changelogs)
-    jira_sub_mcp.tool()(update_issue)
-    jira_sub_mcp.tool()(delete_issue)
-    jira_sub_mcp.tool()(add_comment)
-    jira_sub_mcp.tool()(add_worklog)
-    jira_sub_mcp.tool()(link_to_epic)
-    jira_sub_mcp.tool()(create_issue_link)
-    jira_sub_mcp.tool()(remove_issue_link)
-    jira_sub_mcp.tool()(transition_issue)
-    jira_sub_mcp.tool()(update_sprint)
-    jira_sub_mcp.tool()(batch_create_versions)
+    register_jira_tools(jira_sub_mcp)
     test_mcp.mount("jira", jira_sub_mcp)
     return test_mcp
 
@@ -355,10 +299,9 @@ def no_fetcher_test_jira_mcp(mock_base_jira_config):
         description="No Fetcher Test Jira MCP Server",
         lifespan=no_fetcher_test_lifespan,
     )
-    from src.mcp_atlassian.servers.jira import get_issue
 
     jira_sub_mcp = FastMCP(name="NoFetcherTestJiraSubMCP")
-    jira_sub_mcp.tool()(get_issue)
+    register_jira_tools(jira_sub_mcp)
     test_mcp.mount("jira", jira_sub_mcp)
     return test_mcp
 
