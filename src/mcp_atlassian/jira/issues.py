@@ -732,11 +732,19 @@ class IssuesMixin(
             summary: The epic summary
             kwargs: Additional fields from the user
         """
-        # Delegate to EpicsMixin.prepare_epic_fields
+        # Extract project_key from fields if available
+        project_key = None
+        if "project" in fields:
+            if isinstance(fields["project"], dict):
+                project_key = fields["project"].get("key")
+            elif isinstance(fields["project"], str):
+                project_key = fields["project"]
+
+        # Delegate to EpicsMixin.prepare_epic_fields with project_key
         # Since JiraFetcher inherits from both IssuesMixin and EpicsMixin,
         # this will correctly use the prepare_epic_fields method from EpicsMixin
         # which implements the two-step Epic creation approach
-        self.prepare_epic_fields(fields, summary, kwargs)
+        self.prepare_epic_fields(fields, summary, kwargs, project_key)
 
     def _prepare_parent_fields(
         self, fields: dict[str, Any], kwargs: dict[str, Any]

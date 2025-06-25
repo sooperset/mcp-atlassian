@@ -91,7 +91,11 @@ class EpicOperationsProto(Protocol):
 
     @abstractmethod
     def prepare_epic_fields(
-        self, fields: dict[str, Any], summary: str, kwargs: dict[str, Any]
+        self,
+        fields: dict[str, Any],
+        summary: str,
+        kwargs: dict[str, Any],
+        project_key: str = None,
     ) -> None:
         """
         Prepare epic-specific fields for issue creation.
