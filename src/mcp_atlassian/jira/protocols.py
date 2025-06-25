@@ -188,3 +188,18 @@ class UsersOperationsProto(Protocol):
         Raises:
             ValueError: If the account ID could not be found
         """
+
+
+@runtime_checkable
+class SprintOperationsProto(Protocol):
+    """Protocol defining sprint operations interface."""
+
+    @abstractmethod
+    def add_issues_to_sprint(self, sprint_id: str, issues: list[str]) -> None:
+        """
+        Add issues to a sprint.
+
+        Args:
+            sprint_id: The ID of the sprint
+            issues: A list of issue keys to add to the sprint
+        """

@@ -4,6 +4,7 @@ import logging
 from collections import defaultdict
 from typing import Any
 
+import requests
 from requests.exceptions import HTTPError
 
 from ..exceptions import MCPAtlassianAuthenticationError
@@ -204,10 +205,12 @@ class IssuesMixin(
             issue["fields"] = fields_data
 
             # Create and return the JiraIssue model, passing requested_fields
+            sprint_info = self._extract_sprint_information(issue)
             return JiraIssue.from_api_response(
                 issue,
                 base_url=self.config.url if hasattr(self, "config") else None,
                 requested_fields=fields,
+                sprint_info=sprint_info,
             )
         except HTTPError as http_err:
             if http_err.response is not None and http_err.response.status_code in [
@@ -363,6 +366,27 @@ class IssuesMixin(
             logger.warning(f"Error extracting epic information: {str(e)}")
 
         return epic_info
+
+    def _extract_sprint_information(self, issue: dict) -> dict[str, Any] | None:
+        """
+        Extract sprint information from an issue.
+
+        Args:
+            issue: The issue data
+
+        Returns:
+            Dictionary with sprint information
+        """
+        fields = issue.get("fields", {}) or {}
+        sprint_field = fields.get("sprint")
+        if sprint_field and isinstance(sprint_field, dict):
+            return {
+                "id": sprint_field.get("id"),
+                "name": sprint_field.get("name"),
+                "state": sprint_field.get("state"),
+                "boardId": sprint_field.get("boardId"),
+            }
+        return None
 
     def _format_issue_content(
         self,
@@ -1530,3 +1554,20 @@ class IssuesMixin(
         ]
 
         return issues
+
+    def move_issue_to_sprint(self, issue_key: str, sprint_id: str) -> None:
+        """
+        Move an issue to a sprint.
+
+        Args:
+            issue_key: The key of the issue to move
+            sprint_id: The ID of the sprint to move the issue to
+        """
+        try:
+            self.jira.add_issues_to_sprint(sprint_id, [issue_key])
+        except requests.HTTPError as e:
+            logger.error(f"Error moving issue to sprint: {str(e.response.content)}")
+            raise
+        except Exception as e:
+            logger.error(f"Error moving issue to sprint: {str(e)}")
+            raise

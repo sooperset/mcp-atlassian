@@ -1653,3 +1653,34 @@ async def batch_create_versions(
             )
             results.append({"success": False, "error": str(e), "input": v})
     return json.dumps(results, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "write"})
+@check_write_access
+async def add_issues_to_sprint(
+    ctx: Context,
+    sprint_id: Annotated[str, Field(description="The ID of the sprint")],
+    issues: Annotated[
+        list[str], Field(description="A list of issue keys to add to the sprint")
+    ],
+) -> str:
+    """
+    Add issues to a sprint.
+
+    Args:
+        ctx: The FastMCP context.
+        sprint_id: The ID of the sprint
+        issues: A list of issue keys to add to the sprint
+
+    Returns:
+        JSON string indicating the result of the operation.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        jira.add_issues_to_sprint(sprint_id, issues)
+        return json.dumps(
+            {"success": True, "message": f"Issues {issues} added to sprint {sprint_id}"}
+        )
+    except Exception as e:
+        logger.error(f"Error adding issues to sprint: {e}", exc_info=True)
+        return json.dumps({"success": False, "error": str(e)})
