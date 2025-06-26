@@ -133,7 +133,7 @@ class EpicsMixin(
 
             # Get required fields for Epic issue type if project_key provided
             required_fields = {}
-            if project_key and hasattr(self, "get_required_fields"):
+            if project_key:
                 try:
                     required_fields = self.get_required_fields("Epic", project_key)
                     logger.debug(

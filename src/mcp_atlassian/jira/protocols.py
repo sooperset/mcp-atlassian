@@ -157,6 +157,19 @@ class FieldsOperationsProto(Protocol):
             (e.g., {'epic_link': 'customfield_10014', 'epic_name': 'customfield_10011'})
         """
 
+    @abstractmethod
+    def get_required_fields(self, issue_type: str, project_key: str) -> dict[str, Any]:
+        """
+        Get required fields for creating an issue of a specific type in a project.
+
+        Args:
+            issue_type: The issue type (e.g., 'Bug', 'Story', 'Epic')
+            project_key: The project key (e.g., 'PROJ')
+
+        Returns:
+            Dictionary mapping required field names to their definitions
+        """
+
 
 @runtime_checkable
 class ProjectsOperationsProto(Protocol):
