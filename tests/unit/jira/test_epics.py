@@ -407,13 +407,14 @@ class TestEpicsMixin:
 
         # Mock hasattr to return False for get_required_fields
         original_hasattr = hasattr
-        
+
         def mock_hasattr(obj, attr):
             if attr == "get_required_fields":
                 return False
             return original_hasattr(obj, attr)
-        
+
         import builtins
+
         builtins.hasattr = mock_hasattr
 
         fields = {}
@@ -421,7 +422,7 @@ class TestEpicsMixin:
 
         # Call prepare_epic_fields with project_key
         epics_mixin.prepare_epic_fields(fields, "Test Epic", kwargs, "TEST")
-        
+
         # Restore original hasattr
         builtins.hasattr = original_hasattr
 

@@ -596,7 +596,7 @@ class TestIssuesMixin:
         ) as mock_prepare_epic:
             # Set up the mock to store epic values in kwargs
             # Note: First argument is self because EpicsMixin.prepare_epic_fields is called as a class method
-            def side_effect(self_args, fields, summary, kwargs):
+            def side_effect(self_args, fields, summary, kwargs, project_key):
                 kwargs["__epic_name_value"] = summary
                 kwargs["__epic_name_field"] = "customfield_10011"
                 return None
