@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
+from atlassian.errors import ApiValueError
 from requests import HTTPError
 
 from mcp_atlassian.confluence.search import SearchMixin
@@ -256,18 +257,6 @@ class TestSearchMixin:
         )
         assert len(result) == 1
 
-    def test_search_general_exception(self, search_mixin):
-        """Test handling of general exceptions during search."""
-        # Mock a general exception
-        search_mixin.confluence.cql.side_effect = Exception("General error")
-
-        # Act
-        results = search_mixin.search("error query")
-
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == 0
-
     def test_search_user_success(self, search_mixin):
         """Test search_user with successful results."""
         # Prepare the mock response
@@ -369,7 +358,6 @@ class TestSearchMixin:
             (requests.RequestException, ("Network error",), []),
             (ValueError, ("Value error",), []),
             (TypeError, ("Type error",), []),
-            (Exception, ("General error",), []),
             (KeyError, ("Missing key",), []),
         ],
     )
@@ -386,6 +374,37 @@ class TestSearchMixin:
         # Assert
         assert isinstance(results, list)
         assert results == expected_result
+
+    def test_search_propagated_exception_handling(self, search_mixin):
+        """Test that general Exceptions are propagated from the search method."""
+        # Mock a general exception
+        search_mixin.confluence.cql.side_effect = Exception("General error")
+
+        # Act and Assert
+        with pytest.raises(Exception, match="General error"):
+            search_mixin.search("error query")
+
+    def test_search_user_propagated_exception_handling(self, search_mixin):
+        """Test that general Exceptions are propagated from the search_user method."""
+        # Mock a general exception
+        search_mixin.confluence.get.side_effect = Exception("General error")
+
+        # Act and Assert
+        with pytest.raises(Exception, match="General error"):
+            search_mixin.search_user('user.fullname ~ "Test"')
+
+    def test_api_value_error_is_raised(self, search_mixin):
+        """Test that ApiValueError from the underlying library is raised, not suppressed."""
+        # Arrange
+        # Mock the cql method to raise ApiValueError, simulating an invalid query
+        search_mixin.confluence.cql.side_effect = ApiValueError(
+            "The query cannot be parsed", response=MagicMock()
+        )
+
+        # Act & Assert
+        # The decorator should now let this exception propagate instead of returning []
+        with pytest.raises(ApiValueError):
+            search_mixin.search("this is an invalid query")
 
     @pytest.mark.parametrize(
         "status_code,exception_type",
@@ -441,14 +460,12 @@ class TestSearchMixin:
         assert isinstance(results, list)
         assert len(results) == expected_length
 
-    # You can also parametrize the regular search method exception tests:
     @pytest.mark.parametrize(
         "exception_type,exception_args,expected_result",
         [
             (requests.RequestException, ("API error",), []),
             (ValueError, ("Value error",), []),
             (TypeError, ("Type error",), []),
-            (Exception, ("General error",), []),
             (KeyError, ("Missing key",), []),
         ],
     )
@@ -466,7 +483,6 @@ class TestSearchMixin:
         assert isinstance(results, list)
         assert results == expected_result
 
-    # Parametrize CQL query tests:
     @pytest.mark.parametrize(
         "query,limit,expected_params",
         [
