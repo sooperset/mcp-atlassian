@@ -114,6 +114,10 @@ class ConfluenceClient:
             os.environ["NO_PROXY"] = self.config.no_proxy
             log_config_param(logger, "Confluence", "NO_PROXY", self.config.no_proxy)
 
+        # Apply custom headers if configured
+        if self.config.custom_headers:
+            self._apply_custom_headers()
+
         # Import here to avoid circular imports
         from ..preprocessing.confluence import ConfluencePreprocessor
 
@@ -157,6 +161,18 @@ class ConfluenceClient:
                 f"{get_masked_session_headers(dict(self.confluence._session.headers))}"
             )
             raise MCPAtlassianAuthenticationError(error_msg) from e
+
+    def _apply_custom_headers(self) -> None:
+        """Apply custom headers to the Confluence session."""
+        if not self.config.custom_headers:
+            return
+
+        logger.debug(
+            f"Applying {len(self.config.custom_headers)} custom headers to Confluence session"
+        )
+        for header_name, header_value in self.config.custom_headers.items():
+            self.confluence._session.headers[header_name] = header_value
+            logger.debug(f"Applied custom header: {header_name}")
 
     def _process_html_content(
         self, html_content: str, space_key: str

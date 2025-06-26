@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
-from ..utils.env import is_env_ssl_verify
+from ..utils.env import get_custom_headers, is_env_ssl_verify
 from ..utils.oauth import (
     BYOAccessTokenOAuthConfig,
     OAuthConfig,
@@ -35,6 +35,7 @@ class ConfluenceConfig:
     https_proxy: str | None = None  # HTTPS proxy URL
     no_proxy: str | None = None  # Comma-separated list of hosts to bypass proxy
     socks_proxy: str | None = None  # SOCKS proxy URL (optional)
+    custom_headers: dict[str, str] | None = None  # Custom HTTP headers
 
     @property
     def is_cloud(self) -> bool:
@@ -113,6 +114,9 @@ class ConfluenceConfig:
         no_proxy = os.getenv("CONFLUENCE_NO_PROXY", os.getenv("NO_PROXY"))
         socks_proxy = os.getenv("CONFLUENCE_SOCKS_PROXY", os.getenv("SOCKS_PROXY"))
 
+        # Custom headers - service-specific only
+        custom_headers = get_custom_headers("CONFLUENCE_CUSTOM_HEADERS")
+
         return cls(
             url=url,
             auth_type=auth_type,
@@ -126,6 +130,7 @@ class ConfluenceConfig:
             https_proxy=https_proxy,
             no_proxy=no_proxy,
             socks_proxy=socks_proxy,
+            custom_headers=custom_headers,
         )
 
     def is_auth_configured(self) -> bool:
