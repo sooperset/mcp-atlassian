@@ -13,7 +13,9 @@ from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 from mcp_atlassian.models.jira.common import JiraUser
 from mcp_atlassian.servers.dependencies import get_jira_fetcher
 from mcp_atlassian.utils.decorators import check_write_access
-from mcp_atlassian.jira.watchers import WatchersMixin
+from mcp_atlassian.jira.transitions import TransitionsMixin
+from mcp_atlassian.jira.users import UsersMixin
+from mcp_atlassian.jira.worklog import WorklogMixin
 
 logger = logging.getLogger(__name__)
 
