@@ -1657,20 +1657,18 @@ async def batch_create_versions(
 
 
 @jira_mcp.tool(tags={"jira", "write"})
-async def jira_add_watcher(ctx: Context, issue_key: str, user: str):
+async def jira_add_watcher(ctx: Context, issue_key: str, user: str) -> dict[str, Any]:
     """Add a watcher to a Jira issue."""
-    fetcher = get_jira_fetcher(ctx)
-    watcher_mixin = WatchersMixin(config=fetcher.config)
-    watcher_mixin.jira = fetcher.jira
-    watcher_mixin.add_watcher(issue_key, user)
-    return {"status": "success"}
+    jira = await get_jira_fetcher(ctx)
+    result = await jira.add_watcher(issue_key, user)
+    return {"success": True, "result": result}
 
 
 @jira_mcp.tool(tags={"jira", "write"})
-async def jira_remove_watcher(ctx: Context, issue_key: str, user: str):
+async def jira_remove_watcher(
+    ctx: Context, issue_key: str, user: str
+) -> dict[str, Any]:
     """Remove a watcher from a Jira issue."""
-    fetcher = get_jira_fetcher(ctx)
-    watcher_mixin = WatchersMixin(config=fetcher.config)
-    watcher_mixin.jira = fetcher.jira
-    watcher_mixin.remove_watcher(issue_key, user)
-    return {"status": "success"}
+    jira = await get_jira_fetcher(ctx)
+    result = await jira.remove_watcher(issue_key, user)
+    return {"success": True, "result": result}
