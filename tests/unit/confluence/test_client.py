@@ -141,7 +141,7 @@ def test_process_html_content():
 
         # Assert
         mock_preprocessor.process_html_content.assert_called_once_with(
-            "<p>Test</p>", "TEST"
+            "<p>Test</p>", "TEST", client.confluence
         )
         assert html == "<p>HTML</p>"
         assert markdown == "Markdown"

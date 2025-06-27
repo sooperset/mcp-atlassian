@@ -550,7 +550,9 @@ class TestPagesMixin:
         assert len(results) == 1
         assert results[0].content == "Processed Markdown"
         pages_mixin.preprocessor.process_html_content.assert_called_once_with(
-            "<p>This is some content</p>", space_key="DEMO"
+            "<p>This is some content</p>",
+            space_key="DEMO",
+            confluence_client=pages_mixin.confluence,
         )
 
     def test_get_page_children_empty(self, pages_mixin):
