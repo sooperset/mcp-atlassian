@@ -121,9 +121,7 @@ class ConfluenceClient:
         # Import here to avoid circular imports
         from ..preprocessing.confluence import ConfluencePreprocessor
 
-        self.preprocessor = ConfluencePreprocessor(
-            base_url=self.config.url, confluence_client=self.confluence
-        )
+        self.preprocessor = ConfluencePreprocessor(base_url=self.config.url)
 
         # Test authentication during initialization (in debug mode only)
         if logger.isEnabledFor(logging.DEBUG):
@@ -186,4 +184,6 @@ class ConfluenceClient:
         Returns:
             Tuple of (processed_html, processed_markdown)
         """
-        return self.preprocessor.process_html_content(html_content, space_key)
+        return self.preprocessor.process_html_content(
+            html_content, space_key, self.confluence
+        )

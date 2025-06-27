@@ -43,7 +43,9 @@ class CommentsMixin(ConfluenceClient):
                 # Get the content based on format
                 body = comment_data["body"]["view"]["value"]
                 processed_html, processed_markdown = (
-                    self.preprocessor.process_html_content(body, space_key=space_key)
+                    self.preprocessor.process_html_content(
+                        body, space_key=space_key, confluence_client=self.confluence
+                    )
                 )
 
                 # Create a copy of the comment data to modify
@@ -117,6 +119,7 @@ class CommentsMixin(ConfluenceClient):
             processed_html, processed_markdown = self.preprocessor.process_html_content(
                 response.get("body", {}).get("view", {}).get("value", ""),
                 space_key=space_key,
+                confluence_client=self.confluence,
             )
 
             # Modify the response to include processed content
