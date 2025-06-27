@@ -68,4 +68,39 @@ class JiraFetcher(
     pass
 
 
-__all__ = ["JiraFetcher", "JiraConfig", "JiraClient", "Jira"]
+__all__ = [
+    "AttachmentsMixin",
+    "BoardsMixin",
+    "CommentsMixin",
+    "EpicsMixin",
+    "FieldsMixin",
+    "FormattingMixin",
+    "IssuesMixin",
+    "JiraClient",
+    "LinksMixin",
+    "ProjectsMixin",
+    "SearchMixin",
+    "SprintsMixin",
+    "TransitionsMixin",
+    "UsersMixin",
+    "WorklogMixin",
+]
+
+"""
+This module provides a collection of mixins for interacting with Jira's API:
+
+- AttachmentsMixin: Attachment management operations
+- BoardsMixin: Board management operations
+- CommentsMixin: Comment management operations
+- EpicsMixin: Epic management operations
+- FieldsMixin: Field management operations
+- FormattingMixin: Text formatting operations
+- IssuesMixin: Issue management operations
+- LinksMixin: Issue link management operations
+- ProjectsMixin: Project management operations
+- SearchMixin: Search operations
+- SprintsMixin: Sprint management operations
+- TransitionsMixin: Issue transition operations
+- UsersMixin: User management operations
+- WorklogMixin: Worklog management operations
+"""

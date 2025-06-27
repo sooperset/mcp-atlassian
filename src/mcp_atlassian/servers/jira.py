@@ -13,6 +13,9 @@ from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 from mcp_atlassian.models.jira.common import JiraUser
 from mcp_atlassian.servers.dependencies import get_jira_fetcher
 from mcp_atlassian.utils.decorators import check_write_access
+from mcp_atlassian.jira.transitions import TransitionsMixin
+from mcp_atlassian.jira.users import UsersMixin
+from mcp_atlassian.jira.worklog import WorklogMixin
 
 logger = logging.getLogger(__name__)
 
@@ -1653,3 +1656,21 @@ async def batch_create_versions(
             )
             results.append({"success": False, "error": str(e), "input": v})
     return json.dumps(results, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "write"})
+async def jira_add_watcher(ctx: Context, issue_key: str, user: str) -> dict[str, Any]:
+    """Add a watcher to a Jira issue."""
+    jira = await get_jira_fetcher(ctx)
+    result = await jira.add_watcher(issue_key, user)
+    return {"success": True, "result": result}
+
+
+@jira_mcp.tool(tags={"jira", "write"})
+async def jira_remove_watcher(
+    ctx: Context, issue_key: str, user: str
+) -> dict[str, Any]:
+    """Remove a watcher from a Jira issue."""
+    jira = await get_jira_fetcher(ctx)
+    result = await jira.remove_watcher(issue_key, user)
+    return {"success": True, "result": result}
