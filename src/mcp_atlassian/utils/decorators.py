@@ -88,13 +88,6 @@ def handle_atlassian_api_errors(service_name: str = "Atlassian API") -> Callable
                 operation_name = getattr(func, "__name__", "API operation")
                 logger.error(f"Error processing {operation_name} results: {str(e)}")
                 return []
-            except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
-                operation_name = getattr(func, "__name__", "API operation")
-                logger.error(f"Unexpected error during {operation_name}: {str(e)}")
-                logger.debug(
-                    f"Full exception details for {operation_name}:", exc_info=True
-                )
-                return []
 
         return wrapper
 
