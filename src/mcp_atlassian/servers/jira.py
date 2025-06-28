@@ -164,6 +164,174 @@ async def get_issue(
 
 
 @jira_mcp.tool(tags={"jira", "read"})
+async def get_development_status(
+    ctx: Context,
+    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'SMS-8')")],
+    application_type: Annotated[
+        str,
+        Field(
+            description="Source control application type (e.g., 'GitHub', 'Bitbucket', 'GitLab')",
+            default="GitHub",
+        ),
+    ] = "GitHub",
+    data_type: Annotated[
+        str,
+        Field(
+            description="Type of development data to retrieve ('branch', 'pullrequest', 'commit')",
+            default="branch",
+        ),
+    ] = "branch",
+) -> str:
+    """Get development status information for a Jira issue including branch names, commits, and pull requests.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+        application_type: Source control application type.
+        data_type: Type of development data to retrieve.
+
+    Returns:
+        JSON string representing the development status information.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    jira = await get_jira_fetcher(ctx)
+    
+    try:
+        # First get the issue to get the issue ID
+        issue = jira.get_issue(issue_key=issue_key, fields=["id"])
+        issue_id = issue.id
+        
+        logger.info(f"🔍 Getting development status for {issue_key} (ID: {issue_id})")
+        
+        # Use the internal dev-status API endpoint
+        url = f"{jira.config.url}/rest/dev-status/latest/issue/detail"
+        params = {
+            "issueId": issue_id,
+            "applicationType": application_type,
+            "dataType": data_type
+        }
+        
+        logger.info(f"🌐 Making dev-status API call to: {url}")
+        logger.info(f"📋 Params: {params}")
+        
+        # Make the API call using the same authentication as other calls
+        response = jira.jira._session.get(url, params=params)
+        
+        logger.info(f"📡 Dev-status API response: {response.status_code}")
+        
+        if response.status_code == 200:
+            dev_data = response.json()
+            logger.info(f"📄 Dev-status response data keys: {list(dev_data.keys()) if dev_data else 'None'}")
+            
+            # Extract and format the development information
+            result = {
+                "success": True,
+                "issue_key": issue_key,
+                "issue_id": issue_id,
+                "application_type": application_type,
+                "data_type": data_type,
+                "branches": [],
+                "repositories": [],
+                "pull_requests": [],
+                "commits": []
+            }
+            
+            # Process the detailed development information
+            if "detail" in dev_data:
+                logger.info(f"📈 Processing {len(dev_data['detail'])} detail items")
+                for detail in dev_data["detail"]:
+                    # Process branches
+                    if "branches" in detail:
+                        logger.info(f"🌿 Found {len(detail['branches'])} branches")
+                        for branch in detail["branches"]:
+                            branch_info = {
+                                "name": branch.get("name"),
+                                "url": branch.get("url"),
+                                "repository": branch.get("repository", {}).get("name"),
+                                "repository_url": branch.get("repository", {}).get("url"),
+                                "last_commit": branch.get("lastCommit", {}).get("message"),
+                                "last_commit_id": branch.get("lastCommit", {}).get("id")
+                            }
+                            result["branches"].append(branch_info)
+                            logger.info(f"✅ Added branch: {branch_info['name']}")
+                    
+                    # Process repositories
+                    if "repositories" in detail:
+                        for repo in detail["repositories"]:
+                            repo_info = {
+                                "name": repo.get("name"),
+                                "url": repo.get("url"),
+                                "avatar": repo.get("avatar"),
+                                "commits": repo.get("commits", 0)
+                            }
+                            result["repositories"].append(repo_info)
+                    
+                    # Process pull requests
+                    if "pullRequests" in detail:
+                        for pr in detail["pullRequests"]:
+                            pr_info = {
+                                "id": pr.get("id"),
+                                "name": pr.get("name"),
+                                "url": pr.get("url"),
+                                "status": pr.get("status"),
+                                "source_branch": pr.get("source", {}).get("branch"),
+                                "destination_branch": pr.get("destination", {}).get("branch"),
+                                "repository": pr.get("source", {}).get("repository", {}).get("name")
+                            }
+                            result["pull_requests"].append(pr_info)
+                    
+                    # Process commits
+                    if "commits" in detail:
+                        for commit in detail["commits"]:
+                            commit_info = {
+                                "id": commit.get("id"),
+                                "displayId": commit.get("displayId"),
+                                "message": commit.get("message"),
+                                "author": commit.get("author", {}).get("name"),
+                                "authorTimestamp": commit.get("authorTimestamp"),
+                                "url": commit.get("url"),
+                                "repository": commit.get("repository", {}).get("name")
+                            }
+                            result["commits"].append(commit_info)
+            
+            # Add summary information
+            result["summary"] = {
+                "total_branches": len(result["branches"]),
+                "total_repositories": len(result["repositories"]),
+                "total_pull_requests": len(result["pull_requests"]),
+                "total_commits": len(result["commits"])
+            }
+            
+            logger.info(f"🎉 Successfully extracted dev status for {issue_key}: {len(result['branches'])} branches, {len(result['repositories'])} repos")
+            return json.dumps(result, indent=2, ensure_ascii=False)
+            
+        else:
+            error_result = {
+                "success": False,
+                "issue_key": issue_key,
+                "issue_id": issue_id,
+                "error": f"API returned status {response.status_code}",
+                "response_text": response.text[:500] if response.text else None
+            }
+            logger.warning(f"❌ Dev status API returned {response.status_code} for {issue_key}: {response.text[:200]}")
+            return json.dumps(error_result, indent=2, ensure_ascii=False)
+            
+    except Exception as e:
+        error_result = {
+            "success": False,
+            "issue_key": issue_key,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
+        logger.error(f"💥 Error getting development status for {issue_key}: {str(e)}")
+        import traceback
+        logger.error(f"💥 Traceback: {traceback.format_exc()}")
+        return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
 async def search(
     ctx: Context,
     jql: Annotated[
