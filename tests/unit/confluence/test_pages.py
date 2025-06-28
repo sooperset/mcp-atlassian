@@ -1029,6 +1029,61 @@ class TestPagesOAuthMixin:
                 assert result.id == page_id
                 assert result.title == title
 
+    def test_get_page_content_oauth_uses_v2_api(self, oauth_pages_mixin):
+        """Test that OAuth authentication uses v2 API for getting page content."""
+        # Arrange
+        page_id = "oauth_get_123"
+
+        # Mock the v2 adapter
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceV2Adapter"
+        ) as mock_v2_adapter_class:
+            mock_v2_adapter = MagicMock()
+            mock_v2_adapter_class.return_value = mock_v2_adapter
+
+            # Mock v2 API response
+            mock_v2_adapter.get_page.return_value = {
+                "id": page_id,
+                "title": "OAuth Test Page",
+                "body": {"storage": {"value": "<p>OAuth page content</p>"}},
+                "space": {"key": "PROJ", "name": "Project"},
+                "version": {"number": 3},
+            }
+
+            # Mock the preprocessor
+            oauth_pages_mixin.preprocessor.process_html_content.return_value = (
+                "<p>Processed HTML</p>",
+                "Processed OAuth content",
+            )
+
+            # Act
+            result = oauth_pages_mixin.get_page_content(
+                page_id, convert_to_markdown=True
+            )
+
+            # Assert that v2 API was used instead of v1
+            mock_v2_adapter.get_page.assert_called_once_with(
+                page_id=page_id, expand="body.storage,version,space,children.attachment"
+            )
+
+            # Verify v1 API was NOT called
+            oauth_pages_mixin.confluence.get_page_by_id.assert_not_called()
+
+            # Verify the preprocessor was called
+            oauth_pages_mixin.preprocessor.process_html_content.assert_called_once_with(
+                "<p>OAuth page content</p>",
+                space_key="PROJ",
+                confluence_client=oauth_pages_mixin.confluence,
+            )
+
+            # Verify result is a ConfluencePage with correct data
+            assert isinstance(result, ConfluencePage)
+            assert result.id == page_id
+            assert result.title == "OAuth Test Page"
+            assert result.content == "Processed OAuth content"
+            assert result.space.key == "PROJ"
+            assert result.version.number == 3
+
     def test_delete_page_oauth_uses_v2_api(self, oauth_pages_mixin):
         """Test that OAuth authentication uses v2 API for deleting pages."""
         # Arrange
