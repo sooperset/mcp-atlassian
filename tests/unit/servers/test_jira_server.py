@@ -275,6 +275,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     )
     from src.mcp_atlassian.servers.jira import (
         add_comment,
+        add_issues_to_sprint,
         add_worklog,
         batch_create_issues,
         batch_create_versions,
@@ -331,6 +332,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.tool()(create_issue_link)
     jira_sub_mcp.tool()(remove_issue_link)
     jira_sub_mcp.tool()(transition_issue)
+    jira_sub_mcp.tool()(add_issues_to_sprint)
     jira_sub_mcp.tool()(update_sprint)
     jira_sub_mcp.tool()(batch_create_versions)
     test_mcp.mount("jira", jira_sub_mcp)
@@ -1148,3 +1150,25 @@ async def test_batch_create_versions_empty(jira_client, mock_jira_fetcher):
     )
     content = json.loads(response[0].text)
     assert content == []
+
+
+@pytest.mark.anyio
+async def test_add_issues_to_sprint(jira_client, mock_jira_fetcher):
+    """Test the add_issues_to_sprint tool."""
+    response = await jira_client.call_tool(
+        "jira_add_issues_to_sprint",
+        {
+            "sprint_id": "123",
+            "issues": ["TEST-1", "TEST-2"],
+        },
+    )
+    assert isinstance(response, list)
+    assert len(response) > 0
+    text_content = response[0]
+    assert text_content.type == "text"
+    content = json.loads(text_content.text)
+    assert content["success"] is True
+    assert content["message"] == "Issues ['TEST-1', 'TEST-2'] added to sprint 123"
+    mock_jira_fetcher.add_issues_to_sprint.assert_called_once_with(
+        "123", ["TEST-1", "TEST-2"]
+    )
