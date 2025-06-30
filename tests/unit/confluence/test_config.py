@@ -1,11 +1,12 @@
 """Unit tests for the ConfluenceConfig class."""
 
 import os
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from mcp_atlassian.confluence.config import ConfluenceConfig
+from mcp_atlassian.utils.oauth import OAuthConfig
 
 
 def test_from_env_success():
@@ -183,3 +184,213 @@ def test_is_cloud_oauth_with_cloud_id():
         oauth_config=oauth_config,
     )
     assert config.is_cloud is True
+
+
+class TestConfluenceDataCenterOAuth:
+    """Tests for Confluence Data Center OAuth configuration."""
+
+    @patch("mcp_atlassian.utils.oauth.OAuthConfig.from_env")
+    def test_from_env_data_center_oauth_success(self, mock_oauth_from_env):
+        """Test from_env with Data Center OAuth configuration."""
+        # Mock OAuth config for Data Center
+        mock_oauth_config = MagicMock()
+        mock_oauth_config.client_id = "dc-client-id"
+        mock_oauth_config.client_secret = "dc-client-secret"
+        mock_oauth_config.redirect_uri = "https://localhost:8080/callback"
+        mock_oauth_config.scope = "READ WRITE"
+        mock_oauth_config.instance_type = "datacenter"
+        mock_oauth_config.instance_url = "https://confluence.mycompany.com"
+        mock_oauth_config.cloud_id = None
+        mock_oauth_config.is_cloud = False
+        mock_oauth_from_env.return_value = mock_oauth_config
+
+        with patch.dict(
+            os.environ,
+            {
+                "CONFLUENCE_URL": "https://confluence.mycompany.com",
+            },
+            clear=True,
+        ):
+            config = ConfluenceConfig.from_env()
+
+            assert config.url == "https://confluence.mycompany.com"
+            assert config.auth_type == "oauth"
+            assert config.oauth_config == mock_oauth_config
+            assert not config.is_cloud
+
+    @patch("mcp_atlassian.utils.oauth.OAuthConfig.from_env")
+    def test_from_env_cloud_oauth_success(self, mock_oauth_from_env):
+        """Test from_env with Cloud OAuth configuration."""
+        # Mock OAuth config for Cloud
+        mock_oauth_config = MagicMock()
+        mock_oauth_config.client_id = "cloud-client-id"
+        mock_oauth_config.client_secret = "cloud-client-secret"
+        mock_oauth_config.redirect_uri = "https://localhost:8080/callback"
+        mock_oauth_config.scope = "read:jira-work write:jira-work"
+        mock_oauth_config.instance_type = "cloud"
+        mock_oauth_config.instance_url = None
+        mock_oauth_config.cloud_id = "test-cloud-id"
+        mock_oauth_config.is_cloud = True
+        mock_oauth_from_env.return_value = mock_oauth_config
+
+        with patch.dict(
+            os.environ,
+            {
+                "CONFLUENCE_URL": "https://test.atlassian.net/wiki",
+            },
+            clear=True,
+        ):
+            config = ConfluenceConfig.from_env()
+
+            assert config.url == "https://test.atlassian.net/wiki"
+            assert config.auth_type == "oauth"
+            assert config.oauth_config == mock_oauth_config
+            assert config.is_cloud
+
+    @patch("mcp_atlassian.utils.oauth.OAuthConfig.from_env")
+    def test_from_env_incomplete_oauth_fallback_to_pat(self, mock_oauth_from_env):
+        """Test from_env with incomplete OAuth falls back to PAT for Data Center."""
+        # Mock incomplete OAuth config (missing instance_url for Data Center)
+        mock_oauth_config = MagicMock()
+        mock_oauth_config.client_id = "dc-client-id"
+        mock_oauth_config.client_secret = "dc-client-secret"
+        mock_oauth_config.redirect_uri = "https://localhost:8080/callback"
+        mock_oauth_config.scope = "READ WRITE"
+        mock_oauth_config.instance_type = "datacenter"
+        mock_oauth_config.instance_url = None  # Missing required field
+        mock_oauth_config.cloud_id = None
+        mock_oauth_config.is_cloud = False
+        mock_oauth_from_env.return_value = mock_oauth_config
+
+        with patch.dict(
+            os.environ,
+            {
+                "CONFLUENCE_URL": "https://confluence.mycompany.com",
+                "CONFLUENCE_PERSONAL_TOKEN": "my-pat-token",
+            },
+            clear=True,
+        ):
+            config = ConfluenceConfig.from_env()
+
+            # OAuth is present, so auth_type should be oauth even if incomplete
+            assert config.url == "https://confluence.mycompany.com"
+            assert config.auth_type == "oauth"
+            assert config.personal_token == "my-pat-token"
+            assert config.oauth_config == mock_oauth_config
+            assert not config.is_cloud
+
+    def test_is_oauth_fully_configured_data_center_valid(self):
+        """Test _is_oauth_fully_configured for valid Data Center OAuth."""
+        oauth_config = OAuthConfig(
+            client_id="dc-client-id",
+            client_secret="dc-client-secret",
+            redirect_uri="https://localhost:8080/callback",
+            scope="READ WRITE",
+            instance_type="datacenter",
+            instance_url="https://confluence.mycompany.com",
+        )
+
+        result = ConfluenceConfig._is_oauth_fully_configured(oauth_config)
+        assert result is True
+
+    def test_is_oauth_fully_configured_data_center_missing_url(self):
+        """Test _is_oauth_fully_configured for Data Center OAuth missing instance_url."""
+        oauth_config = OAuthConfig(
+            client_id="dc-client-id",
+            client_secret="dc-client-secret",
+            redirect_uri="https://localhost:8080/callback",
+            scope="READ WRITE",
+            instance_type="datacenter",
+            # instance_url is missing
+        )
+
+        result = ConfluenceConfig._is_oauth_fully_configured(oauth_config)
+        assert result is False
+
+    def test_is_oauth_fully_configured_cloud_valid(self):
+        """Test _is_oauth_fully_configured for valid Cloud OAuth."""
+        oauth_config = OAuthConfig(
+            client_id="cloud-client-id",
+            client_secret="cloud-client-secret",
+            redirect_uri="https://localhost:8080/callback",
+            scope="read:jira-work write:jira-work",
+            instance_type="cloud",
+            cloud_id="test-cloud-id",
+        )
+
+        result = ConfluenceConfig._is_oauth_fully_configured(oauth_config)
+        assert result is True
+
+    def test_is_oauth_fully_configured_cloud_missing_cloud_id(self):
+        """Test _is_oauth_fully_configured for Cloud OAuth missing cloud_id."""
+        oauth_config = OAuthConfig(
+            client_id="cloud-client-id",
+            client_secret="cloud-client-secret",
+            redirect_uri="https://localhost:8080/callback",
+            scope="read:jira-work write:jira-work",
+            instance_type="cloud",
+            # cloud_id is missing
+        )
+
+        result = ConfluenceConfig._is_oauth_fully_configured(oauth_config)
+        assert result is False
+
+    def test_is_oauth_fully_configured_missing_basic_fields(self):
+        """Test _is_oauth_fully_configured with missing basic OAuth fields."""
+        oauth_config = OAuthConfig(
+            client_id="test-client-id",
+            client_secret="test-client-secret",
+            redirect_uri="https://localhost:8080/callback",
+            scope="READ WRITE",
+            instance_type="datacenter",
+            instance_url="https://confluence.mycompany.com",
+        )
+
+        # Manually set a required field to None to test validation
+        oauth_config.client_secret = None
+
+        result = ConfluenceConfig._is_oauth_fully_configured(oauth_config)
+        assert result is False
+
+    def test_is_oauth_fully_configured_none_config(self):
+        """Test _is_oauth_fully_configured with None config."""
+        result = ConfluenceConfig._is_oauth_fully_configured(None)
+        assert result is False
+
+    def test_is_auth_configured_data_center_oauth(self):
+        """Test is_auth_configured for Data Center OAuth."""
+        oauth_config = OAuthConfig(
+            client_id="dc-client-id",
+            client_secret="dc-client-secret",
+            redirect_uri="https://localhost:8080/callback",
+            scope="READ WRITE",
+            instance_type="datacenter",
+            instance_url="https://confluence.mycompany.com",
+        )
+
+        config = ConfluenceConfig(
+            url="https://confluence.mycompany.com",
+            auth_type="oauth",
+            oauth_config=oauth_config,
+        )
+
+        assert config.is_auth_configured() is True
+
+    def test_is_auth_configured_incomplete_oauth(self):
+        """Test is_auth_configured for incomplete OAuth configuration."""
+        oauth_config = OAuthConfig(
+            client_id="dc-client-id",
+            client_secret="dc-client-secret",
+            redirect_uri="https://localhost:8080/callback",
+            scope="READ WRITE",
+            instance_type="datacenter",
+            # instance_url is missing
+        )
+
+        config = ConfluenceConfig(
+            url="https://confluence.mycompany.com",
+            auth_type="oauth",
+            oauth_config=oauth_config,
+        )
+
+        assert config.is_auth_configured() is False

@@ -261,7 +261,7 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
             f"Refresh token saved: {oauth_config.refresh_token[:5]}...{oauth_config.refresh_token[-3:]}"
         )
 
-        if oauth_config.cloud_id:
+        if oauth_config.is_cloud and oauth_config.cloud_id:
             logger.info(f"Cloud ID: {oauth_config.cloud_id}")
 
             # Print environment variable information more clearly
@@ -346,6 +346,39 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
             logger.info("------------------------------------------------------------")
             logger.info(
                 "\nNote: If you already have an 'mcp' configuration in settings.json, merge this with your existing configuration."
+            )
+        elif oauth_config.is_datacenter:
+            logger.info(f"Data Center instance: {oauth_config.instance_url}")
+
+            # Print environment variable information for Data Center
+            logger.info("\n=== IMPORTANT: ENVIRONMENT VARIABLES ===")
+            logger.info(
+                "Your tokens have been securely stored in your system keyring and backup file."
+            )
+            logger.info(
+                "However, to use them in your application, you need these environment variables:"
+            )
+            logger.info("")
+            logger.info(
+                "Add the following to your .env file or set as environment variables:"
+            )
+            logger.info("------------------------------------------------------------")
+            logger.info(f"ATLASSIAN_OAUTH_CLIENT_ID={oauth_config.client_id}")
+            logger.info(f"ATLASSIAN_OAUTH_CLIENT_SECRET={oauth_config.client_secret}")
+            logger.info(f"ATLASSIAN_OAUTH_REDIRECT_URI={oauth_config.redirect_uri}")
+            logger.info(f"ATLASSIAN_OAUTH_SCOPE={oauth_config.scope}")
+            logger.info("ATLASSIAN_OAUTH_INSTANCE_TYPE=datacenter")
+            logger.info(f"ATLASSIAN_OAUTH_INSTANCE_URL={oauth_config.instance_url}")
+            logger.info("------------------------------------------------------------")
+            logger.info("")
+            logger.info(
+                "Note: The tokens themselves are not set as environment variables for security reasons."
+            )
+            logger.info(
+                "They are stored securely in your system keyring and will be loaded automatically."
+            )
+            logger.info(
+                f"Token storage location (backup): ~/.mcp-atlassian/oauth-{oauth_config.client_id}.json"
             )
         else:
             logger.error("Failed to obtain cloud ID!")
