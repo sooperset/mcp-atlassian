@@ -114,7 +114,7 @@ async def search(
 async def get_page(
     ctx: Context,
     page_id: Annotated[
-        str | None,
+        str | int | None,
         Field(
             description=(
                 "Confluence page ID (numeric ID, can be found in the page URL). "
@@ -184,8 +184,9 @@ async def get_page(
                 "page_id was provided; title and space_key parameters will be ignored."
             )
         try:
+            page_id_str = str(page_id)
             page_object = confluence_fetcher.get_page_content(
-                page_id, convert_to_markdown=convert_to_markdown
+                page_id_str, convert_to_markdown=convert_to_markdown
             )
         except Exception as e:
             logger.error(f"Error fetching page by ID '{page_id}': {e}")
