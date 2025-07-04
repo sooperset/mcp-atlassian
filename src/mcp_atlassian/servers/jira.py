@@ -171,13 +171,13 @@ async def search(
         Field(
             description=(
                 "JQL query string (Jira Query Language). Examples:\n"
-                '- Find Epics: "issuetype = Epic AND project = PROJ"\n'
-                '- Find issues in Epic: "parent = PROJ-123"\n'
+                "- Find Epics: \"issuetype = Epic AND project = PROJ\"\n"
+                "- Find issues in Epic: \"parent = PROJ-123\"\n"
                 "- Find by status: \"status = 'In Progress' AND project = PROJ\"\n"
-                '- Find by assignee: "assignee = currentUser()"\n'
-                '- Find recently updated: "updated >= -7d AND project = PROJ"\n'
-                '- Find by label: "labels = frontend AND project = PROJ"\n'
-                '- Find by priority: "priority = High AND project = PROJ"'
+                "- Find by assignee: \"assignee = currentUser()\"\n"
+                "- Find recently updated: \"updated >= -7d AND project = PROJ\"\n"
+                "- Find by label: \"labels = frontend AND project = PROJ\"\n"
+                "- Find by priority: \"priority = High AND project = PROJ\""
             )
         ),
     ],
@@ -438,13 +438,13 @@ async def get_board_issues(
         Field(
             description=(
                 "JQL query string (Jira Query Language). Examples:\n"
-                '- Find Epics: "issuetype = Epic AND project = PROJ"\n'
-                '- Find issues in Epic: "parent = PROJ-123"\n'
+                "- Find Epics: \"issuetype = Epic AND project = PROJ\"\n"
+                "- Find issues in Epic: \"parent = PROJ-123\"\n"
                 "- Find by status: \"status = 'In Progress' AND project = PROJ\"\n"
-                '- Find by assignee: "assignee = currentUser()"\n'
-                '- Find recently updated: "updated >= -7d AND project = PROJ"\n'
-                '- Find by label: "labels = frontend AND project = PROJ"\n'
-                '- Find by priority: "priority = High AND project = PROJ"'
+                "- Find by assignee: \"assignee = currentUser()\"\n"
+                "- Find recently updated: \"updated >= -7d AND project = PROJ\"\n"
+                "- Find by label: \"labels = frontend AND project = PROJ\"\n"
+                "- Find by priority: \"priority = High AND project = PROJ\""
             )
         ),
     ],
@@ -728,8 +728,8 @@ async def batch_create_issues(
                 "- assignee (optional): Assignee username or email\n"
                 "- components (optional): Array of component names\n"
                 "Example: [\n"
-                '  {"project_key": "PROJ", "summary": "Issue 1", "issue_type": "Task"},\n'
-                '  {"project_key": "PROJ", "summary": "Issue 2", "issue_type": "Bug", "components": ["Frontend"]}\n'
+                "  {\"project_key\": \"PROJ\", \"summary\": \"Issue 1\", \"issue_type\": \"Task\"},\n"
+                "  {\"project_key\": \"PROJ\", \"summary\": \"Issue 2\", \"issue_type\": \"Bug\", \"components\": [\"Frontend\"]}\n"
                 "]"
             )
         ),
@@ -1596,8 +1596,8 @@ async def batch_create_versions(
                 "- releaseDate (optional): Release date (YYYY-MM-DD)\n"
                 "- description (optional): Description of the version\n"
                 "Example: [\n"
-                '  {"name": "v1.0", "startDate": "2025-01-01", "releaseDate": "2025-02-01", "description": "First release"},\n'
-                '  {"name": "v2.0"}\n'
+                "  {\"name\": \"v1.0\", \"startDate\": \"2025-01-01\", \"releaseDate\": \"2025-02-01\", \"description\": \"First release\"},\n"
+                "  {\"name\": \"v2.0\"}\n"
                 "]"
             )
         ),

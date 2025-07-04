@@ -42,9 +42,9 @@ async def search(
                 "- Content modified this year: 'creator = currentUser() AND lastModified > startOfYear()'\n"
                 "- Content you contributed to recently: 'contributor = currentUser() AND lastModified > startOfWeek()'\n"
                 "- Content watched by user: 'watcher = \"user@domain.com\" AND type = page'\n"
-                '- Exact phrase in content: \'text ~ "\\"Urgent Review Required\\"" AND label = "pending-approval"\'\n'
-                '- Title wildcards: \'title ~ "Minutes*" AND (space = "HR" OR space = "Marketing")\'\n'
-                'Note: Special identifiers need proper quoting in CQL: personal space keys (e.g., "~username"), '
+                "- Exact phrase in content: 'text ~ \"\\\"Urgent Review Required\\\"\" AND label = \"pending-approval\"'\n"
+                "- Title wildcards: 'title ~ \"Minutes*\" AND (space = \"HR\" OR space = \"Marketing\")'\n"
+                "Note: Special identifiers need proper quoting in CQL: personal space keys (e.g., \"~username\"), "
                 "reserved words, numeric IDs, and identifiers with special characters."
             )
         ),
