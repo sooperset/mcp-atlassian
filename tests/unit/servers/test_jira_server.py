@@ -504,6 +504,28 @@ async def test_create_issue(jira_client, mock_jira_fetcher):
 
 
 @pytest.mark.anyio
+async def test_create_issue_error_handling(jira_client, mock_jira_fetcher):
+    """Test that create_issue surfaces errors in a structured JSON response."""
+    # Simulate error by passing an invalid project_key (empty string)
+    response = await jira_client.call_tool(
+        "jira_create_issue",
+        {
+            "project_key": "",  # Invalid project key
+            "summary": "Should Fail",
+            "issue_type": "Task",
+            "description": "This should trigger an error",
+        },
+    )
+    assert isinstance(response, list)
+    assert len(response) > 0
+    text_content = response[0]
+    assert text_content.type == "text"
+    content = json.loads(text_content.text)
+    assert "error" in content
+    assert "valid project is required" in content["error"]
+
+
+@pytest.mark.anyio
 async def test_batch_create_issues(jira_client, mock_jira_fetcher):
     """Test batch creation of Jira issues."""
     test_issues = [
