@@ -429,7 +429,9 @@ def test_get_project_issue_types(
 
     result = projects_mixin.get_project_issue_types("PROJ1")
     assert result == mock_issue_types
-    projects_mixin.jira.issue_createmeta_issuetypes.assert_called_once_with(project="PROJ1")
+    projects_mixin.jira.issue_createmeta_issuetypes.assert_called_once_with(
+        project="PROJ1"
+    )
 
 
 def test_get_project_issue_types_empty_response(projects_mixin: ProjectsMixin):
