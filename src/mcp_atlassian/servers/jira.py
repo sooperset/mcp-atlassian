@@ -690,26 +690,28 @@ async def create_issue(
             comp.strip() for comp in components.split(",") if comp.strip()
         ]
 
-    # Use additional_fields directly as dict
-    extra_fields = additional_fields or {}
-    if not isinstance(extra_fields, dict):
-        raise ValueError("additional_fields must be a dictionary.")
-
-    issue = jira.create_issue(
-        project_key=project_key,
-        summary=summary,
-        issue_type=issue_type,
-        description=description,
-        assignee=assignee,
-        components=components_list,
-        **extra_fields,
-    )
-    result = issue.to_simplified_dict()
-    return json.dumps(
-        {"message": "Issue created successfully", "issue": result},
-        indent=2,
-        ensure_ascii=False,
-    )
+    try:
+        # Ensure description is a string, not None
+        description_str = description if description is not None else ""
+        issue = jira.create_issue(
+            project_key=project_key,
+            summary=summary,
+            issue_type=issue_type,
+            description=description_str,
+            assignee=assignee,
+            components=components_list,
+            **(additional_fields or {}),
+        )
+        result = issue.to_simplified_dict()
+        return json.dumps(
+            {"message": "Issue created successfully", "issue": result},
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(f"Error creating issue in project {project_key}: {str(e)}", exc_info=True)
+        # Surface the error directly to the agent in a structured way
+        return json.dumps({"error": str(e)})
 
 
 @jira_mcp.tool(tags={"jira", "write"})
