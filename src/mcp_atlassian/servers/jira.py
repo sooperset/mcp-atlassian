@@ -709,7 +709,9 @@ async def create_issue(
             ensure_ascii=False,
         )
     except Exception as e:
-        logger.error(f"Error creating issue in project {project_key}: {str(e)}", exc_info=True)
+        logger.error(
+            f"Error creating issue in project {project_key}: {str(e)}", exc_info=True
+        )
         # Surface the error directly to the agent in a structured way
         return json.dumps({"error": str(e)})
 
