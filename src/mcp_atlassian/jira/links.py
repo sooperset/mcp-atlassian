@@ -135,6 +135,87 @@ class LinksMixin(JiraClient):
             logger.error(f"Error creating issue link: {error_msg}", exc_info=True)
             raise Exception(f"Error creating issue link: {error_msg}") from e
 
+    def create_remote_issue_link(
+        self, issue_key: str, link_data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """
+        Create a remote issue link (web link or Confluence link) for an issue.
+
+        Args:
+            issue_key: The key of the issue to add the link to (e.g., 'PROJ-123')
+            link_data: A dictionary containing the remote link data with the following structure:
+                {
+                    "object": {
+                        "url": "https://example.com/page",  # The URL to link to
+                        "title": "Example Page",  # The title/name of the link
+                        "summary": "Optional description of the link",  # Optional description
+                        "icon": {  # Optional icon configuration
+                            "url16x16": "https://example.com/icon16.png",
+                            "title": "Icon Title"
+                        }
+                    },
+                    "relationship": "causes"  # Optional relationship description
+                }
+
+        Returns:
+            Dictionary with the created remote link information
+
+        Raises:
+            ValueError: If required fields are missing
+            MCPAtlassianAuthenticationError: If authentication fails with the Jira API (401/403)
+            Exception: If there is an error creating the remote issue link
+        """
+        # Validate required fields
+        if not issue_key:
+            raise ValueError("Issue key is required")
+        if not link_data.get("object"):
+            raise ValueError("Link object is required")
+        if not link_data["object"].get("url"):
+            raise ValueError("URL is required in link object")
+        if not link_data["object"].get("title"):
+            raise ValueError("Title is required in link object")
+
+        try:
+            # Create the remote issue link using the Jira API
+            endpoint = f"rest/api/3/issue/{issue_key}/remotelink"
+            response = self.jira.post(endpoint, json=link_data)
+
+            # Return a response with the link information
+            result = {
+                "success": True,
+                "message": f"Remote link created for issue {issue_key}",
+                "issue_key": issue_key,
+                "link_title": link_data["object"]["title"],
+                "link_url": link_data["object"]["url"],
+                "relationship": link_data.get("relationship", ""),
+            }
+
+            return result
+
+        except HTTPError as http_err:
+            if http_err.response is not None and http_err.response.status_code in [
+                401,
+                403,
+            ]:
+                error_msg = (
+                    f"Authentication failed for Jira API "
+                    f"({http_err.response.status_code}). "
+                    "Token may be expired or invalid. Please verify credentials."
+                )
+                logger.error(error_msg)
+                raise MCPAtlassianAuthenticationError(error_msg) from http_err
+            else:
+                logger.error(f"HTTP error during API call: {http_err}", exc_info=True)
+                raise Exception(
+                    f"Error creating remote issue link: {http_err}"
+                ) from http_err
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(
+                f"Error creating remote issue link: {error_msg}", exc_info=True
+            )
+            raise Exception(f"Error creating remote issue link: {error_msg}") from e
+
     def remove_issue_link(self, link_id: str) -> dict[str, Any]:
         """
         Remove a link between two issues.

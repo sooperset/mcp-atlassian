@@ -5,8 +5,12 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
-from ..utils.env import is_env_ssl_verify
-from ..utils.oauth import OAuthConfig
+from ..utils.env import get_custom_headers, is_env_ssl_verify
+from ..utils.oauth import (
+    BYOAccessTokenOAuthConfig,
+    OAuthConfig,
+    get_oauth_config_from_env,
+)
 from ..utils.urls import is_atlassian_cloud_url
 
 
@@ -24,13 +28,14 @@ class JiraConfig:
     username: str | None = None  # Email or username (Cloud)
     api_token: str | None = None  # API token (Cloud)
     personal_token: str | None = None  # Personal access token (Server/DC)
-    oauth_config: OAuthConfig | None = None  # OAuth 2.0 configuration
+    oauth_config: OAuthConfig | BYOAccessTokenOAuthConfig | None = None
     ssl_verify: bool = True  # Whether to verify SSL certificates
     projects_filter: str | None = None  # List of project keys to filter searches
     http_proxy: str | None = None  # HTTP proxy URL
     https_proxy: str | None = None  # HTTPS proxy URL
     no_proxy: str | None = None  # Comma-separated list of hosts to bypass proxy
     socks_proxy: str | None = None  # SOCKS proxy URL (optional)
+    custom_headers: dict[str, str] | None = None  # Custom HTTP headers
 
     @property
     def is_cloud(self) -> bool:
@@ -40,7 +45,17 @@ class JiraConfig:
             True if this is a cloud instance (atlassian.net), False otherwise.
             Localhost URLs are always considered non-cloud (Server/Data Center).
         """
-        return is_atlassian_cloud_url(self.url)
+        # Multi-Cloud OAuth mode: URL might be None, but we use api.atlassian.com
+        if (
+            self.auth_type == "oauth"
+            and self.oauth_config
+            and self.oauth_config.cloud_id
+        ):
+            # OAuth with cloud_id uses api.atlassian.com which is always Cloud
+            return True
+
+        # For other auth types, check the URL
+        return is_atlassian_cloud_url(self.url) if self.url else False
 
     @property
     def verify_ssl(self) -> bool:
@@ -62,7 +77,7 @@ class JiraConfig:
             ValueError: If required environment variables are missing or invalid
         """
         url = os.getenv("JIRA_URL")
-        if not url:
+        if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE"):
             error_msg = "Missing required JIRA_URL environment variable"
             raise ValueError(error_msg)
 
@@ -72,20 +87,20 @@ class JiraConfig:
         personal_token = os.getenv("JIRA_PERSONAL_TOKEN")
 
         # Check for OAuth configuration
-        oauth_config = OAuthConfig.from_env()
+        oauth_config = get_oauth_config_from_env()
         auth_type = None
 
         # Use the shared utility function directly
         is_cloud = is_atlassian_cloud_url(url)
 
-        if oauth_config and oauth_config.cloud_id:
-            # OAuth takes precedence if fully configured
+        if oauth_config:
+            # OAuth is available - could be full config or minimal config for user-provided tokens
             auth_type = "oauth"
         elif is_cloud:
             if username and api_token:
                 auth_type = "basic"
             else:
-                error_msg = "Cloud authentication requires JIRA_USERNAME and JIRA_API_TOKEN, or OAuth configuration"
+                error_msg = "Cloud authentication requires JIRA_USERNAME and JIRA_API_TOKEN, or OAuth configuration (set ATLASSIAN_OAUTH_ENABLE=true for user-provided tokens)"
                 raise ValueError(error_msg)
         else:  # Server/Data Center
             if personal_token:
@@ -109,6 +124,9 @@ class JiraConfig:
         no_proxy = os.getenv("JIRA_NO_PROXY", os.getenv("NO_PROXY"))
         socks_proxy = os.getenv("JIRA_SOCKS_PROXY", os.getenv("SOCKS_PROXY"))
 
+        # Custom headers - service-specific only
+        custom_headers = get_custom_headers("JIRA_CUSTOM_HEADERS")
+
         return cls(
             url=url,
             auth_type=auth_type,
@@ -122,6 +140,7 @@ class JiraConfig:
             https_proxy=https_proxy,
             no_proxy=no_proxy,
             socks_proxy=socks_proxy,
+            custom_headers=custom_headers,
         )
 
     def is_auth_configured(self) -> bool:
@@ -132,14 +151,37 @@ class JiraConfig:
         """
         logger = logging.getLogger("mcp-atlassian.jira.config")
         if self.auth_type == "oauth":
-            return bool(
-                self.oauth_config
-                and self.oauth_config.client_id
-                and self.oauth_config.client_secret
-                and self.oauth_config.redirect_uri
-                and self.oauth_config.scope
-                and self.oauth_config.cloud_id
-            )
+            # Handle different OAuth configuration types
+            if self.oauth_config:
+                # Full OAuth configuration (traditional mode)
+                if isinstance(self.oauth_config, OAuthConfig):
+                    if (
+                        self.oauth_config.client_id
+                        and self.oauth_config.client_secret
+                        and self.oauth_config.redirect_uri
+                        and self.oauth_config.scope
+                        and self.oauth_config.cloud_id
+                    ):
+                        return True
+                    # Minimal OAuth configuration (user-provided tokens mode)
+                    # This is valid if we have oauth_config but missing client credentials
+                    # In this case, we expect authentication to come from user-provided headers
+                    elif (
+                        not self.oauth_config.client_id
+                        and not self.oauth_config.client_secret
+                    ):
+                        logger.debug(
+                            "Minimal OAuth config detected - expecting user-provided tokens via headers"
+                        )
+                        return True
+                # Bring Your Own Access Token mode
+                elif isinstance(self.oauth_config, BYOAccessTokenOAuthConfig):
+                    if self.oauth_config.cloud_id and self.oauth_config.access_token:
+                        return True
+
+            # Partial configuration is invalid
+            logger.warning("Incomplete OAuth configuration detected")
+            return False
         elif self.auth_type == "pat":
             return bool(self.personal_token)
         elif self.auth_type == "basic":

@@ -188,6 +188,18 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
         Returns:
             Dictionary mapping required field names to their definitions
         """
+        # Initialize cache if it doesn't exist
+        if not hasattr(self, "_required_fields_cache"):
+            self._required_fields_cache = {}
+
+        # Check cache first
+        cache_key = (project_key, issue_type)
+        if cache_key in self._required_fields_cache:
+            logger.debug(
+                f"Returning cached required fields for {issue_type} in {project_key}"
+            )
+            return self._required_fields_cache[cache_key]
+
         try:
             # Step 1: Get the ID for the given issue type name within the project
             if not hasattr(self, "get_project_issue_types"):
@@ -235,6 +247,13 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
                     f"No required fields found for issue type '{issue_type}' "
                     f"in project '{project_key}'"
                 )
+
+            # Cache the result before returning
+            self._required_fields_cache[cache_key] = required_fields
+            logger.debug(
+                f"Cached required fields for {issue_type} in {project_key}: "
+                f"{len(required_fields)} fields"
+            )
 
             return required_fields
 

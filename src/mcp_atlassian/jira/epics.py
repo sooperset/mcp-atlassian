@@ -111,7 +111,11 @@ class EpicsMixin(
             logger.error(f"Error discovering fields from existing Epic: {str(e)}")
 
     def prepare_epic_fields(
-        self, fields: dict[str, Any], summary: str, kwargs: dict[str, Any]
+        self,
+        fields: dict[str, Any],
+        summary: str,
+        kwargs: dict[str, Any],
+        project_key: str = None,
     ) -> None:
         """
         Prepare epic-specific fields for issue creation.
@@ -120,33 +124,48 @@ class EpicsMixin(
             fields: The fields dictionary to update
             summary: The issue summary that can be used as a default epic name
             kwargs: Additional fields from the user
+            project_key: Optional project key for checking field requirements
         """
         try:
             # Get all field IDs
             field_ids = self.get_field_ids_to_epic()
             logger.info(f"Discovered Jira field IDs for Epic creation: {field_ids}")
 
-            # Store Epic-specific fields in kwargs for later update
-            # This is critical because the Jira API might reject these fields during creation
-            # due to screen configuration restrictions
+            # Get required fields for Epic issue type if project_key provided
+            required_fields = {}
+            if project_key:
+                try:
+                    required_fields = self.get_required_fields("Epic", project_key)
+                    logger.debug(
+                        f"Required fields for Epic in project {project_key}: {list(required_fields.keys())}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not check field requirements: {e}")
 
-            # Extract and store epic_name for later update
+            # Extract and handle epic_name
             epic_name_field = self._get_epic_name_field_id(field_ids)
             if epic_name_field:
-                # Get epic name value but don't add to fields yet
+                # Get epic name value
                 epic_name = kwargs.pop(
                     "epic_name", kwargs.pop("epicName", summary)
                 )  # Use summary as default if epic_name not provided
 
-                # Instead of adding to fields, store in kwargs under a special key
-                # This will be used for the post-creation update
-                kwargs["__epic_name_field"] = epic_name_field
-                kwargs["__epic_name_value"] = epic_name
-                logger.info(
-                    f"Storing Epic Name ({epic_name_field}: {epic_name}) for post-creation update"
-                )
+                # Check if this field is required
+                if epic_name_field in required_fields:
+                    # Add to fields for initial creation
+                    fields[epic_name_field] = epic_name
+                    logger.info(
+                        f"Adding required Epic Name ({epic_name_field}: {epic_name}) to creation fields"
+                    )
+                else:
+                    # Store for post-creation update as before
+                    kwargs["__epic_name_field"] = epic_name_field
+                    kwargs["__epic_name_value"] = epic_name
+                    logger.info(
+                        f"Storing optional Epic Name ({epic_name_field}: {epic_name}) for post-creation update"
+                    )
 
-            # Extract and store epic_color for later update
+            # Extract and handle epic_color
             epic_color_field = self._get_epic_color_field_id(field_ids)
             if epic_color_field:
                 epic_color = (
@@ -156,23 +175,41 @@ class EpicsMixin(
                     or "green"  # Default color
                 )
 
-                # Store for post-creation update
-                kwargs["__epic_color_field"] = epic_color_field
-                kwargs["__epic_color_value"] = epic_color
-                logger.info(
-                    f"Storing Epic Color ({epic_color_field}: {epic_color}) for post-creation update"
-                )
+                # Check if this field is required
+                if epic_color_field in required_fields:
+                    # Add to fields for initial creation
+                    fields[epic_color_field] = epic_color
+                    logger.info(
+                        f"Adding required Epic Color ({epic_color_field}: {epic_color}) to creation fields"
+                    )
+                else:
+                    # Store for post-creation update
+                    kwargs["__epic_color_field"] = epic_color_field
+                    kwargs["__epic_color_value"] = epic_color
+                    logger.info(
+                        f"Storing optional Epic Color ({epic_color_field}: {epic_color}) for post-creation update"
+                    )
 
-            # Store any other epic-related fields for later update
+            # Handle any other epic-related fields
             for key, value in list(kwargs.items()):
                 if key.startswith("epic_") and key in field_ids:
                     field_key = key.replace("epic_", "")
-                    # Store for post-creation update
-                    kwargs[f"__epic_{field_key}_field"] = field_ids[key]
-                    kwargs[f"__epic_{field_key}_value"] = value
-                    logger.info(
-                        f"Storing Epic field ({field_ids[key]} from {key}: {value}) for post-creation update"
-                    )
+                    field_id = field_ids[key]
+
+                    # Check if this field is required
+                    if field_id in required_fields:
+                        # Add to fields for initial creation
+                        fields[field_id] = value
+                        logger.info(
+                            f"Adding required Epic field ({field_id} from {key}: {value}) to creation fields"
+                        )
+                    else:
+                        # Store for post-creation update
+                        kwargs[f"__epic_{field_key}_field"] = field_id
+                        kwargs[f"__epic_{field_key}_value"] = value
+                        logger.info(
+                            f"Storing optional Epic field ({field_id} from {key}: {value}) for post-creation update"
+                        )
                     kwargs.pop(key)  # Remove from kwargs to avoid duplicate processing
 
             # Warn if epic_name field is required but wasn't discovered
@@ -381,7 +418,7 @@ class EpicsMixin(
                 f"Could not link issue {issue_key} to epic {epic_key}. Your Jira instance might use a different field for epic links."
             )
 
-        except ValueError as e:
+        except ValueError:
             # Re-raise ValueError as is
             raise
         except Exception as e:
@@ -420,18 +457,33 @@ class EpicsMixin(
                 raise TypeError(msg)
             fields_data = epic.get("fields", {})
 
-            # Safely check if the issue is an Epic
-            issue_type = None
-            issuetype_data = fields_data.get("issuetype")
-            if issuetype_data is not None:
-                issue_type = issuetype_data.get("name", "")
+            # Check if the issue is an Epic
+            issuetype_data = fields_data.get("issuetype", {})
+            issue_type_name = issuetype_data.get("name", "")
 
-            if issue_type != "Epic":
-                error_msg = (
-                    f"Issue {epic_key} is not an Epic, it is a "
-                    f"{issue_type or 'unknown type'}"
-                )
-                raise ValueError(error_msg)
+            # Check if it's an Epic by looking for "epic" in the name (case-insensitive)
+            # This handles localized names like "에픽", "エピック", etc.
+            if "epic" not in issue_type_name.lower() and issue_type_name not in [
+                "에픽",
+                "エピック",
+            ]:
+                # Try to verify via JQL as a fallback
+                is_epic = False
+                try:
+                    verify_jql = f'key = "{epic_key}" AND issuetype = Epic'
+                    verify_result = self.search_issues(verify_jql, limit=1)
+                    if verify_result and len(verify_result.issues) > 0:
+                        is_epic = True
+                except Exception as e:
+                    # If JQL fails, stick with our previous determination
+                    logger.debug(f"JQL verification failed: {e}")
+
+                if not is_epic:
+                    error_msg = (
+                        f"Issue {epic_key} is not an Epic, it is a "
+                        f"{issue_type_name or 'unknown type'}"
+                    )
+                    raise ValueError(error_msg)
 
             # Track which methods we've tried
             tried_methods = set()
@@ -588,7 +640,7 @@ class EpicsMixin(
             )
             return []
 
-        except ValueError as e:
+        except ValueError:
             # Re-raise ValueError (like "not an Epic") as is
             raise
         except Exception as e:

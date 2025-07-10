@@ -56,7 +56,7 @@ class ConfluenceClient:
                 cloud=True,  # OAuth is only for Cloud
                 verify_ssl=self.config.ssl_verify,
             )
-        elif self.config.auth_type == "token":
+        elif self.config.auth_type == "pat":
             logger.debug(
                 f"Initializing Confluence client with Token (PAT) auth. "
                 f"URL: {self.config.url}, "
@@ -114,12 +114,14 @@ class ConfluenceClient:
             os.environ["NO_PROXY"] = self.config.no_proxy
             log_config_param(logger, "Confluence", "NO_PROXY", self.config.no_proxy)
 
+        # Apply custom headers if configured
+        if self.config.custom_headers:
+            self._apply_custom_headers()
+
         # Import here to avoid circular imports
         from ..preprocessing.confluence import ConfluencePreprocessor
 
-        self.preprocessor = ConfluencePreprocessor(
-            base_url=self.config.url, confluence_client=self.confluence
-        )
+        self.preprocessor = ConfluencePreprocessor(base_url=self.config.url)
 
         # Test authentication during initialization (in debug mode only)
         if logger.isEnabledFor(logging.DEBUG):
@@ -158,6 +160,18 @@ class ConfluenceClient:
             )
             raise MCPAtlassianAuthenticationError(error_msg) from e
 
+    def _apply_custom_headers(self) -> None:
+        """Apply custom headers to the Confluence session."""
+        if not self.config.custom_headers:
+            return
+
+        logger.debug(
+            f"Applying {len(self.config.custom_headers)} custom headers to Confluence session"
+        )
+        for header_name, header_value in self.config.custom_headers.items():
+            self.confluence._session.headers[header_name] = header_value
+            logger.debug(f"Applied custom header: {header_name}")
+
     def _process_html_content(
         self, html_content: str, space_key: str
     ) -> tuple[str, str]:
@@ -170,4 +184,6 @@ class ConfluenceClient:
         Returns:
             Tuple of (processed_html, processed_markdown)
         """
-        return self.preprocessor.process_html_content(html_content, space_key)
+        return self.preprocessor.process_html_content(
+            html_content, space_key, self.confluence
+        )

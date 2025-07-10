@@ -11,7 +11,6 @@ from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.servers.dependencies import get_confluence_fetcher
 from mcp_atlassian.utils.decorators import (
     check_write_access,
-    convert_empty_defaults_to_none,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,16 +59,16 @@ async def search(
         ),
     ] = 10,
     spaces_filter: Annotated[
-        str,
+        str | None,
         Field(
             description=(
                 "(Optional) Comma-separated list of space keys to filter results by. "
                 "Overrides the environment variable CONFLUENCE_SPACES_FILTER if provided. "
                 "Use empty string to disable filtering."
             ),
-            default="",
+            default=None,
         ),
-    ] = "",
+    ] = None,
 ) -> str:
     """Search Confluence content using simple terms or CQL.
 
@@ -111,12 +110,11 @@ async def search(
     return json.dumps(search_results, indent=2, ensure_ascii=False)
 
 
-@convert_empty_defaults_to_none
 @confluence_mcp.tool(tags={"confluence", "read"})
 async def get_page(
     ctx: Context,
     page_id: Annotated[
-        str,
+        str | None,
         Field(
             description=(
                 "Confluence page ID (numeric ID, can be found in the page URL). "
@@ -124,27 +122,27 @@ async def get_page(
                 "the page ID is '123456789'. "
                 "Provide this OR both 'title' and 'space_key'. If page_id is provided, title and space_key will be ignored."
             ),
-            default="",
+            default=None,
         ),
-    ] = "",
+    ] = None,
     title: Annotated[
-        str,
+        str | None,
         Field(
             description=(
                 "The exact title of the Confluence page. Use this with 'space_key' if 'page_id' is not known."
             ),
-            default="",
+            default=None,
         ),
-    ] = "",
+    ] = None,
     space_key: Annotated[
-        str,
+        str | None,
         Field(
             description=(
                 "The key of the Confluence space where the page resides (e.g., 'DEV', 'TEAM'). Required if using 'title'."
             ),
-            default="",
+            default=None,
         ),
-    ] = "",
+    ] = None,
     include_metadata: Annotated[
         bool,
         Field(
@@ -400,7 +398,6 @@ async def add_label(
     return json.dumps(formatted_labels, indent=2, ensure_ascii=False)
 
 
-@convert_empty_defaults_to_none
 @confluence_mcp.tool(tags={"confluence", "write"})
 @check_write_access
 async def create_page(
@@ -419,13 +416,13 @@ async def create_page(
         ),
     ],
     parent_id: Annotated[
-        str,
+        str | None,
         Field(
             description="(Optional) parent page ID. If provided, this page will be created as a child of the specified page",
-            default="",
+            default=None,
         ),
-        BeforeValidator(lambda x: str(x) if x is not None else ""),
-    ] = "",
+        BeforeValidator(lambda x: str(x) if x is not None else None),
+    ] = None,
     content_format: Annotated[
         str,
         Field(
@@ -493,7 +490,6 @@ async def create_page(
     )
 
 
-@convert_empty_defaults_to_none
 @confluence_mcp.tool(tags={"confluence", "write"})
 @check_write_access
 async def update_page(
@@ -510,13 +506,13 @@ async def update_page(
         bool, Field(description="Whether this is a minor edit", default=False)
     ] = False,
     version_comment: Annotated[
-        str, Field(description="Optional comment for this version", default="")
-    ] = "",
+        str | None, Field(description="Optional comment for this version", default=None)
+    ] = None,
     parent_id: Annotated[
-        str,
-        Field(description="Optional the new parent page ID", default=""),
-        BeforeValidator(lambda x: str(x) if x is not None else ""),
-    ] = "",
+        str | None,
+        Field(description="Optional the new parent page ID", default=None),
+        BeforeValidator(lambda x: str(x) if x is not None else None),
+    ] = None,
     content_format: Annotated[
         str,
         Field(
@@ -559,9 +555,6 @@ async def update_page(
             f"Invalid content_format: {content_format}. Must be 'markdown', 'wiki', or 'storage'"
         )
 
-    # TODO: revert this once Cursor IDE handles optional parameters with Union types correctly.
-    actual_parent_id = parent_id if parent_id else None
-
     # Determine parameters based on content format
     if content_format == "markdown":
         is_markdown = True
@@ -577,7 +570,7 @@ async def update_page(
         is_minor_edit=is_minor_edit,
         version_comment=version_comment,
         is_markdown=is_markdown,
-        parent_id=actual_parent_id,
+        parent_id=parent_id,
         enable_heading_anchors=enable_heading_anchors
         if content_format == "markdown"
         else False,

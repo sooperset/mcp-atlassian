@@ -141,6 +141,11 @@ logger = setup_logging(logging_level, logging_stream)
     "--oauth-cloud-id",
     help="Atlassian Cloud ID for OAuth 2.0 authentication",
 )
+@click.option(
+    "--oauth-access-token",
+    help="Atlassian Cloud OAuth 2.0 access token (if you have your own you'd like to "
+    "use for the session.)",
+)
 def main(
     verbose: int,
     env_file: str | None,
@@ -169,6 +174,7 @@ def main(
     oauth_redirect_uri: str | None,
     oauth_scope: str | None,
     oauth_cloud_id: str | None,
+    oauth_access_token: str | None,
 ) -> None:
     """MCP Atlassian Server - Jira and Confluence functionality for MCP
 
@@ -299,6 +305,8 @@ def main(
         os.environ["ATLASSIAN_OAUTH_SCOPE"] = oauth_scope
     if click_ctx and was_option_provided(click_ctx, "oauth_cloud_id"):
         os.environ["ATLASSIAN_OAUTH_CLOUD_ID"] = oauth_cloud_id
+    if click_ctx and was_option_provided(click_ctx, "oauth_access_token"):
+        os.environ["ATLASSIAN_OAUTH_ACCESS_TOKEN"] = oauth_access_token
     if click_ctx and was_option_provided(click_ctx, "read_only"):
         os.environ["READ_ONLY_MODE"] = str(read_only).lower()
     if click_ctx and was_option_provided(click_ctx, "confluence_ssl_verify"):

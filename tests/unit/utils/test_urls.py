@@ -22,6 +22,21 @@ def test_is_atlassian_cloud_url_cloud():
     assert is_atlassian_cloud_url("https://team.jira-dev.com") is True
 
 
+def test_is_atlassian_cloud_url_multi_cloud_oauth():
+    """Test that is_atlassian_cloud_url returns True for Multi-Cloud OAuth URLs."""
+    # Test api.atlassian.com URLs used by Multi-Cloud OAuth
+    assert (
+        is_atlassian_cloud_url("https://api.atlassian.com/ex/jira/abc123/rest/api/2/")
+        is True
+    )
+    assert (
+        is_atlassian_cloud_url("https://api.atlassian.com/ex/confluence/xyz789/")
+        is True
+    )
+    assert is_atlassian_cloud_url("http://api.atlassian.com/ex/jira/test/") is True
+    assert is_atlassian_cloud_url("https://api.atlassian.com") is True
+
+
 def test_is_atlassian_cloud_url_server():
     """Test that is_atlassian_cloud_url returns False for Atlassian Server/Data Center URLs."""
     # Test with various server/data center domains

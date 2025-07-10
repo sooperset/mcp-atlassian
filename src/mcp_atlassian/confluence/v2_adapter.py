@@ -272,6 +272,74 @@ class ConfluenceV2Adapter:
             # Return the space_id as fallback
             return space_id
 
+    def get_page(
+        self,
+        page_id: str,
+        expand: str | None = None,
+    ) -> dict[str, Any]:
+        """Get a page using the v2 API.
+
+        Args:
+            page_id: The ID of the page to retrieve
+            expand: Fields to expand in the response (not used in v2 API, for compatibility only)
+
+        Returns:
+            The page data from the API response in v1-compatible format
+
+        Raises:
+            ValueError: If page retrieval fails
+        """
+        try:
+            # Make the v2 API call to get the page
+            url = f"{self.base_url}/api/v2/pages/{page_id}"
+
+            # Convert v1 expand parameters to v2 format
+            params = {"body-format": "storage"}
+
+            response = self.session.get(url, params=params)
+            response.raise_for_status()
+
+            v2_response = response.json()
+            logger.debug(f"Successfully retrieved page '{page_id}' with v2 API")
+
+            # Get space key from space ID
+            space_id = v2_response.get("spaceId")
+            space_key = self._get_space_key_from_id(space_id) if space_id else "unknown"
+
+            # Convert v2 response to v1-compatible format
+            v1_compatible = self._convert_v2_to_v1_format(v2_response, space_key)
+
+            # Add body.storage structure if body content exists
+            if "body" in v2_response and v2_response["body"].get("storage"):
+                storage_value = v2_response["body"]["storage"].get("value", "")
+                v1_compatible["body"] = {
+                    "storage": {"value": storage_value, "representation": "storage"}
+                }
+
+            # Add space information with more details
+            if space_id:
+                v1_compatible["space"] = {
+                    "key": space_key,
+                    "id": space_id,
+                }
+
+            # Add version information
+            if "version" in v2_response:
+                v1_compatible["version"] = {
+                    "number": v2_response["version"].get("number", 1)
+                }
+
+            return v1_compatible
+
+        except HTTPError as e:
+            logger.error(f"HTTP error getting page '{page_id}': {e}")
+            if e.response is not None:
+                logger.error(f"Response content: {e.response.text}")
+            raise ValueError(f"Failed to get page '{page_id}': {e}") from e
+        except Exception as e:
+            logger.error(f"Error getting page '{page_id}': {e}")
+            raise ValueError(f"Failed to get page '{page_id}': {e}") from e
+
     def delete_page(self, page_id: str) -> bool:
         """Delete a page using the v2 API.
 

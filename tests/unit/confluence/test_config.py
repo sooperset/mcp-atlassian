@@ -89,7 +89,7 @@ def test_is_cloud():
     # Arrange & Act - Server URL
     config = ConfluenceConfig(
         url="https://confluence.example.com",
-        auth_type="token",
+        auth_type="pat",
         personal_token="test",
     )
 
@@ -99,7 +99,7 @@ def test_is_cloud():
     # Arrange & Act - Localhost URL (Data Center/Server)
     config = ConfluenceConfig(
         url="http://localhost:8090",
-        auth_type="token",
+        auth_type="pat",
         personal_token="test",
     )
 
@@ -109,7 +109,7 @@ def test_is_cloud():
     # Arrange & Act - IP localhost URL (Data Center/Server)
     config = ConfluenceConfig(
         url="http://127.0.0.1:8090",
-        auth_type="token",
+        auth_type="pat",
         personal_token="test",
     )
 
@@ -159,3 +159,27 @@ def test_from_env_proxy_settings():
             config.socks_proxy == "socks5://user:pass@confluence-proxy.example.com:1080"
         )
         assert config.no_proxy == "localhost,127.0.0.1,.internal.example.com"
+
+
+def test_is_cloud_oauth_with_cloud_id():
+    """Test that is_cloud returns True for OAuth with cloud_id regardless of URL."""
+    from mcp_atlassian.utils.oauth import BYOAccessTokenOAuthConfig
+
+    # OAuth with cloud_id and no URL - should be Cloud
+    oauth_config = BYOAccessTokenOAuthConfig(
+        cloud_id="test-cloud-id", access_token="test-token"
+    )
+    config = ConfluenceConfig(
+        url=None,  # URL can be None in Multi-Cloud OAuth mode
+        auth_type="oauth",
+        oauth_config=oauth_config,
+    )
+    assert config.is_cloud is True
+
+    # OAuth with cloud_id and server URL - should still be Cloud
+    config = ConfluenceConfig(
+        url="https://confluence.example.com",  # Server-like URL
+        auth_type="oauth",
+        oauth_config=oauth_config,
+    )
+    assert config.is_cloud is True

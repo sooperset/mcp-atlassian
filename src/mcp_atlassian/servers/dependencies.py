@@ -31,6 +31,7 @@ def _create_user_config_for_fetcher(
     base_config: JiraConfig | ConfluenceConfig,
     auth_type: str,
     credentials: dict[str, Any],
+    cloud_id: str | None = None,
 ) -> JiraConfig | ConfluenceConfig:
     """Create a user-specific configuration for Jira or Confluence fetchers.
 
@@ -38,6 +39,7 @@ def _create_user_config_for_fetcher(
         base_config: The base JiraConfig or ConfluenceConfig to clone and modify.
         auth_type: The authentication type ('oauth' or 'pat').
         credentials: Dictionary of credentials (token, email, etc).
+        cloud_id: Optional cloud ID to override the base config cloud ID.
 
     Returns:
         JiraConfig or ConfluenceConfig with user-specific credentials.
@@ -54,7 +56,7 @@ def _create_user_config_for_fetcher(
     username_for_config: str | None = credentials.get("user_email_context")
 
     logger.debug(
-        f"Creating user config for fetcher. Auth type: {auth_type}, Credentials keys: {credentials.keys()}"
+        f"Creating user config for fetcher. Auth type: {auth_type}, Credentials keys: {credentials.keys()}, Cloud ID: {cloud_id}"
     )
 
     common_args: dict[str, Any] = {
@@ -77,22 +79,35 @@ def _create_user_config_for_fetcher(
             not base_config
             or not hasattr(base_config, "oauth_config")
             or not getattr(base_config, "oauth_config", None)
-            or not getattr(getattr(base_config, "oauth_config", None), "cloud_id", None)
         ):
             raise ValueError(
-                f"Global OAuth config (with cloud_id) for {type(base_config).__name__} is missing, "
-                "but user auth_type is 'oauth'. Cannot determine cloud_id."
+                f"Global OAuth config for {type(base_config).__name__} is missing, "
+                "but user auth_type is 'oauth'."
             )
         global_oauth_cfg = base_config.oauth_config
+
+        # Use provided cloud_id or fall back to global config cloud_id
+        effective_cloud_id = cloud_id if cloud_id else global_oauth_cfg.cloud_id
+        if not effective_cloud_id:
+            raise ValueError(
+                "Cloud ID is required for OAuth authentication. "
+                "Provide it via X-Atlassian-Cloud-Id header or configure it globally."
+            )
+
+        # For minimal OAuth config (user-provided tokens), use empty strings for client credentials
         oauth_config_for_user = OAuthConfig(
-            client_id=global_oauth_cfg.client_id if global_oauth_cfg else "",
-            client_secret=global_oauth_cfg.client_secret if global_oauth_cfg else "",
-            redirect_uri=global_oauth_cfg.redirect_uri if global_oauth_cfg else "",
-            scope=global_oauth_cfg.scope if global_oauth_cfg else "",
+            client_id=global_oauth_cfg.client_id if global_oauth_cfg.client_id else "",
+            client_secret=global_oauth_cfg.client_secret
+            if global_oauth_cfg.client_secret
+            else "",
+            redirect_uri=global_oauth_cfg.redirect_uri
+            if global_oauth_cfg.redirect_uri
+            else "",
+            scope=global_oauth_cfg.scope if global_oauth_cfg.scope else "",
             access_token=user_access_token,
             refresh_token=None,
             expires_at=None,
-            cloud_id=global_oauth_cfg.cloud_id if global_oauth_cfg else "",
+            cloud_id=effective_cloud_id,
         )
         common_args.update(
             {
@@ -106,6 +121,14 @@ def _create_user_config_for_fetcher(
         user_pat = credentials.get("personal_access_token")
         if not user_pat:
             raise ValueError("PAT missing in credentials for user auth_type 'pat'")
+
+        # Log warning if cloud_id is provided with PAT auth (not typically needed)
+        if cloud_id:
+            logger.warning(
+                f"Cloud ID '{cloud_id}' provided with PAT authentication. "
+                "PAT authentication typically uses the base URL directly and doesn't require cloud_id override."
+            )
+
         common_args.update(
             {
                 "personal_token": user_pat,
@@ -166,6 +189,8 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
             user_email = getattr(
                 request.state, "user_atlassian_email", None
             )  # May be None for PAT
+            user_cloud_id = getattr(request.state, "user_atlassian_cloud_id", None)
+
             if not user_token:
                 raise ValueError("User Atlassian token found in state but is empty.")
             credentials = {"user_email_context": user_email}
@@ -183,13 +208,16 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
                 raise ValueError(
                     "Jira global configuration (URL, SSL) is not available from lifespan context."
                 )
+
+            cloud_id_info = f" with cloudId {user_cloud_id}" if user_cloud_id else ""
             logger.info(
-                f"Creating user-specific JiraFetcher (type: {user_auth_type}) for user {user_email or 'unknown'} (token ...{str(user_token)[-8:]})"
+                f"Creating user-specific JiraFetcher (type: {user_auth_type}) for user {user_email or 'unknown'} (token ...{str(user_token)[-8:]}){cloud_id_info}"
             )
             user_specific_config = _create_user_config_for_fetcher(
                 base_config=app_lifespan_ctx.full_jira_config,
                 auth_type=user_auth_type,
                 credentials=credentials,
+                cloud_id=user_cloud_id,
             )
             try:
                 user_jira_fetcher = JiraFetcher(config=user_specific_config)
@@ -268,6 +296,8 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
         ):
             user_token = getattr(request.state, "user_atlassian_token", None)
             user_email = getattr(request.state, "user_atlassian_email", None)
+            user_cloud_id = getattr(request.state, "user_atlassian_cloud_id", None)
+
             if not user_token:
                 raise ValueError("User Atlassian token found in state but is empty.")
             credentials = {"user_email_context": user_email}
@@ -285,13 +315,16 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
                 raise ValueError(
                     "Confluence global configuration (URL, SSL) is not available from lifespan context."
                 )
+
+            cloud_id_info = f" with cloudId {user_cloud_id}" if user_cloud_id else ""
             logger.info(
-                f"Creating user-specific ConfluenceFetcher (type: {user_auth_type}) for user {user_email or 'unknown'} (token ...{str(user_token)[-8:]})"
+                f"Creating user-specific ConfluenceFetcher (type: {user_auth_type}) for user {user_email or 'unknown'} (token ...{str(user_token)[-8:]}){cloud_id_info}"
             )
             user_specific_config = _create_user_config_for_fetcher(
                 base_config=app_lifespan_ctx.full_confluence_config,
                 auth_type=user_auth_type,
                 credentials=credentials,
+                cloud_id=user_cloud_id,
             )
             try:
                 user_confluence_fetcher = ConfluenceFetcher(config=user_specific_config)

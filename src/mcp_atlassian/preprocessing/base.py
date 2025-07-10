@@ -26,21 +26,20 @@ class ConfluenceClient(Protocol):
 class BasePreprocessor:
     """Base class for text preprocessing operations."""
 
-    def __init__(
-        self, base_url: str = "", confluence_client: ConfluenceClient | None = None
-    ) -> None:
+    def __init__(self, base_url: str = "") -> None:
         """
         Initialize the base text preprocessor.
 
         Args:
             base_url: Base URL for API server
-            confluence_client: Optional Confluence client for user lookups
         """
         self.base_url = base_url.rstrip("/") if base_url else ""
-        self.confluence_client = confluence_client
 
     def process_html_content(
-        self, html_content: str, space_key: str = ""
+        self,
+        html_content: str,
+        space_key: str = "",
+        confluence_client: ConfluenceClient | None = None,
     ) -> tuple[str, str]:
         """
         Process HTML content to replace user refs and page links.
@@ -48,6 +47,7 @@ class BasePreprocessor:
         Args:
             html_content: The HTML content to process
             space_key: Optional space key for context
+            confluence_client: Optional Confluence client for user lookups
 
         Returns:
             Tuple of (processed_html, processed_markdown)
@@ -57,8 +57,8 @@ class BasePreprocessor:
             soup = BeautifulSoup(html_content, "html.parser")
 
             # Process user mentions
-            self._process_user_mentions_in_soup(soup)
-            self._process_user_profile_macros_in_soup(soup)
+            self._process_user_mentions_in_soup(soup, confluence_client)
+            self._process_user_profile_macros_in_soup(soup, confluence_client)
 
             # Convert to string and markdown
             processed_html = str(soup)
@@ -70,12 +70,15 @@ class BasePreprocessor:
             logger.error(f"Error in process_html_content: {str(e)}")
             raise
 
-    def _process_user_mentions_in_soup(self, soup: BeautifulSoup) -> None:
+    def _process_user_mentions_in_soup(
+        self, soup: BeautifulSoup, confluence_client: ConfluenceClient | None = None
+    ) -> None:
         """
         Process user mentions in BeautifulSoup object.
 
         Args:
             soup: BeautifulSoup object containing HTML
+            confluence_client: Optional Confluence client for user lookups
         """
         # Find all ac:link elements that might contain user mentions
         user_mentions = soup.find_all("ac:link")
@@ -86,7 +89,9 @@ class BasePreprocessor:
                 # Case 1: Direct user reference without link-body
                 account_id = user_ref.get("ri:account-id")
                 if isinstance(account_id, str):
-                    self._replace_user_mention(user_element, account_id)
+                    self._replace_user_mention(
+                        user_element, account_id, confluence_client
+                    )
                     continue
 
             # Case 2: User reference with link-body containing @
@@ -96,9 +101,13 @@ class BasePreprocessor:
                 if user_ref and user_ref.get("ri:account-id"):
                     account_id = user_ref.get("ri:account-id")
                     if isinstance(account_id, str):
-                        self._replace_user_mention(user_element, account_id)
+                        self._replace_user_mention(
+                            user_element, account_id, confluence_client
+                        )
 
-    def _process_user_profile_macros_in_soup(self, soup: BeautifulSoup) -> None:
+    def _process_user_profile_macros_in_soup(
+        self, soup: BeautifulSoup, confluence_client: ConfluenceClient | None = None
+    ) -> None:
         """
         Process Confluence User Profile macros in BeautifulSoup object.
         Replaces <ac:structured-macro ac:name="profile">...</ac:structured-macro>
@@ -106,6 +115,7 @@ class BasePreprocessor:
 
         Args:
             soup: BeautifulSoup object containing HTML
+            confluence_client: Optional Confluence client for user lookups
         """
         profile_macros = soup.find_all(
             "ac:structured-macro", attrs={"ac:name": "profile"}
@@ -134,26 +144,24 @@ class BasePreprocessor:
             user_identifier_for_log = account_id or userkey
             display_name = None
 
-            if self.confluence_client and user_identifier_for_log:
+            if confluence_client and user_identifier_for_log:
                 try:
                     if account_id and isinstance(account_id, str):
-                        user_details = (
-                            self.confluence_client.get_user_details_by_accountid(
-                                account_id
-                            )
+                        user_details = confluence_client.get_user_details_by_accountid(
+                            account_id
                         )
                         display_name = user_details.get("displayName")
                     elif userkey and isinstance(userkey, str):
                         # For Confluence Server/DC, userkey might be the username
-                        user_details = (
-                            self.confluence_client.get_user_details_by_username(userkey)
+                        user_details = confluence_client.get_user_details_by_username(
+                            userkey
                         )
                         display_name = user_details.get("displayName")
                 except Exception as e:
                     logger.warning(
                         f"Error fetching user details for profile macro (user: {user_identifier_for_log}): {e}"
                     )
-            elif not self.confluence_client:
+            elif not confluence_client:
                 logger.warning(
                     "Confluence client not available for User Profile Macro processing."
                 )
@@ -171,18 +179,24 @@ class BasePreprocessor:
                 macro_element.replace_with(fallback_text)
                 logger.debug(f"Using fallback for user profile macro: {fallback_text}")
 
-    def _replace_user_mention(self, user_element: Tag, account_id: str) -> None:
+    def _replace_user_mention(
+        self,
+        user_element: Tag,
+        account_id: str,
+        confluence_client: ConfluenceClient | None = None,
+    ) -> None:
         """
         Replace a user mention with the user's display name.
 
         Args:
             user_element: The HTML element containing the user mention
             account_id: The user's account ID
+            confluence_client: Optional Confluence client for user lookups
         """
         try:
             # Only attempt to get user details if we have a valid confluence client
-            if self.confluence_client is not None:
-                user_details = self.confluence_client.get_user_details_by_accountid(
+            if confluence_client is not None:
+                user_details = confluence_client.get_user_details_by_accountid(
                     account_id
                 )
                 display_name = user_details.get("displayName", "")

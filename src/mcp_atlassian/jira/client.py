@@ -128,6 +128,10 @@ class JiraClient:
             os.environ["NO_PROXY"] = self.config.no_proxy
             log_config_param(logger, "Jira", "NO_PROXY", self.config.no_proxy)
 
+        # Apply custom headers if configured
+        if self.config.custom_headers:
+            self._apply_custom_headers()
+
         # Initialize the text preprocessor for text processing capabilities
         self.preprocessor = JiraPreprocessor(base_url=self.config.url)
         self._field_ids_cache = None
@@ -169,6 +173,18 @@ class JiraClient:
                 f"{get_masked_session_headers(dict(self.jira._session.headers))}"
             )
             raise MCPAtlassianAuthenticationError(error_msg) from e
+
+    def _apply_custom_headers(self) -> None:
+        """Apply custom headers to the Jira session."""
+        if not self.config.custom_headers:
+            return
+
+        logger.debug(
+            f"Applying {len(self.config.custom_headers)} custom headers to Jira session"
+        )
+        for header_name, header_value in self.config.custom_headers.items():
+            self.jira._session.headers[header_name] = header_value
+            logger.debug(f"Applied custom header: {header_name}")
 
     def _clean_text(self, text: str) -> str:
         """Clean text content by:

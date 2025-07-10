@@ -108,7 +108,7 @@ class TestMainAppContext:
         # Test with valid ConfluenceConfig
         confluence_config = ConfluenceConfig(
             url="https://confluence.example.com",
-            auth_type="token",
+            auth_type="pat",
             username="test@example.com",
             api_token="test_token",
         )
