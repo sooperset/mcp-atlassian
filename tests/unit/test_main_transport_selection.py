@@ -9,6 +9,7 @@ These tests verify that:
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import fastmcp.settings
 
 from mcp_atlassian import main
 
@@ -57,6 +58,27 @@ class TestMainTransportSelection:
                     # All transports must use direct execution
                     assert "run_with_stdio_monitoring" not in coro_repr
                     assert "run_async" in coro_repr or hasattr(called_coro, "cr_code")
+
+    @pytest.mark.parametrize("stateless", ["False", "True"])
+    def test_stateless_set(
+            self, mock_asyncio_run, stateless
+    ):
+        """Verify that the server is started in stateless mode when the environment variable is set.
+        """
+        from mcp_atlassian.servers import main_mcp
+        with patch.dict("os.environ", {"STATELESS": stateless}):
+            with patch.dict("os.environ", {"TRANSPORT": "streamable-http"}):
+                with patch("sys.argv", ["mcp-atlassian"]):
+                    try:
+                        main()
+                    except SystemExit:
+                        pass
+
+                    # Verify asyncio.run was called
+                    assert mock_asyncio_run.called
+
+                    desired = stateless.lower() == "true"
+                    assert main_mcp.settings.stateless_http == desired
 
     def test_cli_overrides_env_transport(self, mock_server, mock_asyncio_run):
         """Test that CLI transport argument overrides environment variable."""
