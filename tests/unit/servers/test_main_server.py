@@ -44,6 +44,20 @@ async def test_run_server_streamable_http():
             transport="streamable-http", port=test_port, host=test_host, path=test_path
         )
 
+@pytest.mark.anyio
+async def test_run_server_streamable_http_stateless():
+    """Test that main_mcp.run_async is called with streamable-http transport and correct parameters."""
+    with patch.object(main_mcp, "run_async") as mock_run_async:
+        mock_run_async.return_value = None
+        test_port = 9001
+        test_host = "127.0.0.1"
+        test_path = "/custom_mcp"
+        await main_mcp.run_async(
+            transport="streamable-http", port=test_port, host=test_host, path=test_path, stateless_http=True
+        )
+        mock_run_async.assert_called_once_with(
+            transport="streamable-http", port=test_port, host=test_host, path=test_path, stateless_http=True
+        )
 
 @pytest.mark.anyio
 async def test_run_server_invalid_transport():
