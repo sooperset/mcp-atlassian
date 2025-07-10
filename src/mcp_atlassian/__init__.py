@@ -57,7 +57,7 @@ logger = setup_logging(logging_level, logging_stream)
 @click.option(
     "--stateless",
     is_flag=True,
-    help="Whether the server should be statess (streamable-http only)",
+    help="Whether the server should be stateless (streamable-http only)",
 )
 @click.option(
     "--port",
@@ -243,7 +243,7 @@ def main(
     logger.debug(f"Final transport determined: {final_transport}")
 
     # Stateless precedence
-    final_stateless = os.getenv("STATELESS", "false").lower() in ("true")
+    final_stateless = is_env_truthy("STATELESS", "false")
     if click_ctx and was_option_provided(click_ctx, "stateless"):
         final_stateless = stateless
     logger.debug(f"Final stateless determined: {final_stateless}")
