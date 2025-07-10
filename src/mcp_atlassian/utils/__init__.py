@@ -3,6 +3,8 @@ Utility functions for the MCP Atlassian integration.
 This package provides various utility functions used throughout the codebase.
 """
 
+# Export authentication utilities
+from .auth import AuthUtils
 from .date import parse_date
 from .io import is_read_only_mode
 
@@ -31,4 +33,5 @@ __all__ = [
     "configure_oauth_session",
     "setup_signal_handlers",
     "ensure_clean_exit",
+    "AuthUtils",
 ]

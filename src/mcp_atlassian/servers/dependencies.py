@@ -37,7 +37,7 @@ def _create_user_config_for_fetcher(
 
     Args:
         base_config: The base JiraConfig or ConfluenceConfig to clone and modify.
-        auth_type: The authentication type ('oauth' or 'pat').
+        auth_type: The authentication type ('oauth', 'pat', or 'basic').
         credentials: Dictionary of credentials (token, email, etc).
         cloud_id: Optional cloud ID to override the base config cloud ID.
 
@@ -48,9 +48,9 @@ def _create_user_config_for_fetcher(
         ValueError: If required credentials are missing or auth_type is unsupported.
         TypeError: If base_config is not a supported type.
     """
-    if auth_type not in ["oauth", "pat"]:
+    if auth_type not in ["oauth", "pat", "basic"]:
         raise ValueError(
-            f"Unsupported auth_type '{auth_type}' for user-specific config creation. Expected 'oauth' or 'pat'."
+            f"Unsupported auth_type '{auth_type}' for user-specific config creation. Expected 'oauth', 'pat', or 'basic'."
         )
 
     username_for_config: str | None = credentials.get("user_email_context")
@@ -137,6 +137,34 @@ def _create_user_config_for_fetcher(
                 "api_token": None,
             }
         )
+    elif auth_type == "basic":
+        username = credentials.get("username")
+        password = credentials.get("password")
+
+        if not username:
+            raise ValueError(
+                "Username missing in credentials for user auth_type 'basic'"
+            )
+        if not password:
+            raise ValueError(
+                "Password missing in credentials for user auth_type 'basic'"
+            )
+
+        # Log warning if cloud_id is provided with Basic auth (not typically needed)
+        if cloud_id:
+            logger.warning(
+                f"Cloud ID '{cloud_id}' provided with Basic authentication. "
+                "Basic authentication typically uses the base URL directly and doesn't require cloud_id override."
+            )
+
+        common_args.update(
+            {
+                "username": username,
+                "api_token": password,  # For Basic auth, password goes in api_token
+                "personal_token": None,
+                "oauth_config": None,
+            }
+        )
 
     if isinstance(base_config, JiraConfig):
         user_jira_config: UserJiraConfigType = dataclasses.replace(
@@ -181,8 +209,8 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
             return request.state.jira_fetcher
         user_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
         logger.debug(f"get_jira_fetcher: User auth type: {user_auth_type}")
-        # If OAuth or PAT token is present, create user-specific fetcher
-        if user_auth_type in ["oauth", "pat"] and hasattr(
+        # If OAuth, PAT, or Basic token is present, create user-specific fetcher
+        if user_auth_type in ["oauth", "pat", "basic"] and hasattr(
             request.state, "user_atlassian_token"
         ):
             user_token = getattr(request.state, "user_atlassian_token", None)
@@ -198,6 +226,12 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
                 credentials["oauth_access_token"] = user_token
             elif user_auth_type == "pat":
                 credentials["personal_access_token"] = user_token
+            elif user_auth_type == "basic":
+                if not user_email:
+                    raise ValueError("Username is required for Basic Authentication")
+                credentials["username"] = user_email
+                credentials["password"] = user_token
+
             lifespan_ctx_dict = ctx.request_context.lifespan_context  # type: ignore
             app_lifespan_ctx: MainAppContext | None = (
                 lifespan_ctx_dict.get("app_lifespan_context")
@@ -291,7 +325,7 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
             return request.state.confluence_fetcher
         user_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
         logger.debug(f"get_confluence_fetcher: User auth type: {user_auth_type}")
-        if user_auth_type in ["oauth", "pat"] and hasattr(
+        if user_auth_type in ["oauth", "pat", "basic"] and hasattr(
             request.state, "user_atlassian_token"
         ):
             user_token = getattr(request.state, "user_atlassian_token", None)
@@ -305,6 +339,12 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
                 credentials["oauth_access_token"] = user_token
             elif user_auth_type == "pat":
                 credentials["personal_access_token"] = user_token
+            elif user_auth_type == "basic":
+                if not user_email:
+                    raise ValueError("Username is required for Basic Authentication")
+                credentials["username"] = user_email
+                credentials["password"] = user_token
+
             lifespan_ctx_dict = ctx.request_context.lifespan_context  # type: ignore
             app_lifespan_ctx: MainAppContext | None = (
                 lifespan_ctx_dict.get("app_lifespan_context")

@@ -19,6 +19,7 @@ from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.config import JiraConfig
+from mcp_atlassian.utils.auth import AuthUtils
 from mcp_atlassian.utils.environment import get_available_services
 from mcp_atlassian.utils.io import is_read_only_mode
 from mcp_atlassian.utils.logging import mask_sensitive
@@ -47,7 +48,11 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
 
     if services.get("jira"):
         try:
-            jira_config = JiraConfig.from_env()
+            jira_config = None
+            if services.get("is_request_auth"):
+                jira_config = JiraConfig.from_request()
+            else:
+                jira_config = JiraConfig.from_env()
             if jira_config.is_auth_configured():
                 loaded_jira_config = jira_config
                 logger.info(
@@ -240,6 +245,7 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
         if request_path == mcp_path and request.method == "POST":
             auth_header = request.headers.get("Authorization")
             cloud_id_header = request.headers.get("X-Atlassian-Cloud-Id")
+            cloud_url_header = request.headers.get("cloud-url")
 
             token_for_log = mask_sensitive(
                 auth_header.split(" ", 1)[1].strip()
@@ -268,6 +274,7 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 logger.debug(
                     f"UserTokenMiddleware: MCP-Session-ID header found: {mcp_session_id}"
                 )
+
             if auth_header and auth_header.startswith("Bearer "):
                 token = auth_header.split(" ", 1)[1].strip()
                 if not token:
@@ -304,13 +311,45 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 logger.debug(
                     "UserTokenMiddleware.dispatch: Set request.state for PAT auth."
                 )
+            elif auth_header and auth_header.startswith("Basic "):
+                token = auth_header.split(" ", 1)[1].strip()
+                if not token:
+                    return JSONResponse(
+                        {"error": "Unauthorized: Empty Basic token"},
+                        status_code=401,
+                    )
+
+                # Use AuthUtils to decode the Basic token
+                credentials = AuthUtils.decode_basic_token(token)
+                if not credentials:
+                    logger.warning("Failed to decode Basic Authentication token")
+                    return JSONResponse(
+                        {"error": "Unauthorized: Invalid Basic Authentication token"},
+                        status_code=401,
+                    )
+
+                username, password = credentials
+                logger.debug(
+                    f"UserTokenMiddleware.dispatch: Basic auth credentials extracted for user: {mask_sensitive(username)}"
+                )
+
+                # Store the username as the email and the password as the token
+                request.state.user_atlassian_url = cloud_url_header
+                request.state.user_atlassian_token = password
+                request.state.user_atlassian_auth_type = "basic"
+                request.state.user_atlassian_email = username
+
+                logger.debug(
+                    "UserTokenMiddleware.dispatch: Set request.state for Basic auth. "
+                    f"auth_type='basic', username='{mask_sensitive(username)}'"
+                )
             elif auth_header:
                 logger.warning(
                     f"Unsupported Authorization type for {request.url.path}: {auth_header.split(' ', 1)[0] if ' ' in auth_header else 'UnknownType'}"
                 )
                 return JSONResponse(
                     {
-                        "error": "Unauthorized: Only 'Bearer <OAuthToken>' or 'Token <PAT>' types are supported."
+                        "error": "Unauthorized: Only 'Bearer <OAuthToken>', 'Token <PAT>', or 'Basic <Base64Credentials>' types are supported."
                     },
                     status_code=401,
                 )

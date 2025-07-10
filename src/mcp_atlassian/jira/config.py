@@ -5,6 +5,8 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
+from fastmcp.server.dependencies import get_http_request
+
 from ..utils.env import get_custom_headers, is_env_ssl_verify
 from ..utils.oauth import (
     BYOAccessTokenOAuthConfig,
@@ -77,7 +79,9 @@ class JiraConfig:
             ValueError: If required environment variables are missing or invalid
         """
         url = os.getenv("JIRA_URL")
-        if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE"):
+        if not url and not (
+            os.getenv("ATLASSIAN_OAUTH_ENABLE") or os.getenv("ATLASSIAN_BASIC_ENABLE")
+        ):
             error_msg = "Missing required JIRA_URL environment variable"
             raise ValueError(error_msg)
 
@@ -141,6 +145,42 @@ class JiraConfig:
             no_proxy=no_proxy,
             socks_proxy=socks_proxy,
             custom_headers=custom_headers,
+        )
+
+    @classmethod
+    def from_request(cls) -> "JiraConfig":
+        request = get_http_request()
+        auth_type = request.state.user_atlassian_auth_type
+
+        match auth_type:
+            case "oauth":
+                url = request.state.user_atlassian_url
+                username = None
+                api_token = None
+                personal_token = None
+                oauth_config = request.state.user_atlassian_oauth_config
+            case "pat":
+                url = request.state.user_atlassian_url
+                username = None
+                api_token = None
+                personal_token = request.state.user_atlassian_personal_token
+                oauth_config = None
+            case "basic":
+                url = request.state.user_atlassian_url
+                username = request.state.user_atlassian_email
+                api_token = request.state.user_atlassian_token
+                personal_token = None
+                oauth_config = None
+            case _:
+                raise ValueError(f"Unknown auth_type: {auth_type}")
+
+        return cls(
+            url=url,
+            auth_type=auth_type,
+            username=username,
+            api_token=api_token,
+            personal_token=personal_token,
+            oauth_config=oauth_config,
         )
 
     def is_auth_configured(self) -> bool:
