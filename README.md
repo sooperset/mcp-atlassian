@@ -147,6 +147,14 @@ There are two main approaches to configure the Docker container:
 > - `MCP_LOGGING_STDOUT`: Set to "true" to log to stdout instead of stderr
 > - `ENABLED_TOOLS`: Comma-separated list of tool names to enable (e.g., "confluence_search,jira_get_issue")
 >
+> **Client Certificate Authentication (mTLS):**
+> - `JIRA_CLIENT_CERT`: Path to client certificate file (.pem)
+> - `JIRA_CLIENT_KEY`: Path to client private key file (.pem)
+> - `JIRA_CLIENT_KEY_PASSWORD`: Password for encrypted private key (optional)
+> - `CONFLUENCE_CLIENT_CERT`: Path to client certificate file (.pem)
+> - `CONFLUENCE_CLIENT_KEY`: Path to client private key file (.pem)
+> - `CONFLUENCE_CLIENT_KEY_PASSWORD`: Password for encrypted private key (optional)
+>
 > See the [.env.example](https://github.com/sooperset/mcp-atlassian/blob/main/.env.example) file for all available options.
 
 
