@@ -36,6 +36,9 @@ class ConfluenceConfig:
     no_proxy: str | None = None  # Comma-separated list of hosts to bypass proxy
     socks_proxy: str | None = None  # SOCKS proxy URL (optional)
     custom_headers: dict[str, str] | None = None  # Custom HTTP headers
+    client_cert: str | None = None  # Client certificate file path (.pem)
+    client_key: str | None = None  # Client private key file path (.pem)
+    client_key_password: str | None = None  # Password for encrypted private key
 
     @property
     def is_cloud(self) -> bool:
@@ -134,6 +137,11 @@ class ConfluenceConfig:
         # Custom headers - service-specific only
         custom_headers = get_custom_headers("CONFLUENCE_CUSTOM_HEADERS")
 
+        # Client certificate settings
+        client_cert = os.getenv("CONFLUENCE_CLIENT_CERT")
+        client_key = os.getenv("CONFLUENCE_CLIENT_KEY")
+        client_key_password = os.getenv("CONFLUENCE_CLIENT_KEY_PASSWORD")
+
         return cls(
             url=url,
             auth_type=auth_type,
@@ -148,6 +156,9 @@ class ConfluenceConfig:
             no_proxy=no_proxy,
             socks_proxy=socks_proxy,
             custom_headers=custom_headers,
+            client_cert=client_cert,
+            client_key=client_key,
+            client_key_password=client_key_password,
         )
 
     def is_auth_configured(self) -> bool:
