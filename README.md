@@ -615,7 +615,7 @@ Both transport types support single-user and multi-user authentication:
       --env-file /path/to/your/.env \
       ghcr.io/sooperset/mcp-atlassian:latest \
       --transport streamable-http --port 9000 -vv
-   
+
     # OR for stateless streamable-http transport
     docker run --rm -p 9000:9000 \
       --env-file /path/to/your/.env \
