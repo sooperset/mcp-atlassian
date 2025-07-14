@@ -9,7 +9,6 @@ These tests verify that:
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import fastmcp.settings
 
 from mcp_atlassian import main
 
@@ -60,12 +59,10 @@ class TestMainTransportSelection:
                     assert "run_async" in coro_repr or hasattr(called_coro, "cr_code")
 
     @pytest.mark.parametrize("stateless", ["False", "True"])
-    def test_stateless_set(
-            self, mock_asyncio_run, stateless
-    ):
-        """Verify that the server is started in stateless mode when the environment variable is set.
-        """
+    def test_stateless_set(self, mock_asyncio_run, stateless):
+        """Verify that the server is started in stateless mode when the environment variable is set."""
         from mcp_atlassian.servers import main_mcp
+
         with patch.dict("os.environ", {"STATELESS": stateless}):
             with patch.dict("os.environ", {"TRANSPORT": "streamable-http"}):
                 with patch("sys.argv", ["mcp-atlassian"]):
