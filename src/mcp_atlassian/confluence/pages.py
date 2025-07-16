@@ -48,13 +48,29 @@ class PagesMixin(ConfluenceClient):
             Exception: If there is an error retrieving the page
         """
         try:
-            page = self.confluence.get_page_by_id(
-                page_id=page_id, expand="body.storage,version,space,children.attachment"
-            )
+            # Use v2 API for OAuth authentication, v1 API for token/basic auth
+            v2_adapter = self._v2_adapter
+            if v2_adapter:
+                logger.debug(
+                    f"Using v2 API for OAuth authentication to get page '{page_id}'"
+                )
+                page = v2_adapter.get_page(
+                    page_id=page_id,
+                    expand="body.storage,version,space,children.attachment",
+                )
+            else:
+                logger.debug(
+                    f"Using v1 API for token/basic authentication to get page '{page_id}'"
+                )
+                page = self.confluence.get_page_by_id(
+                    page_id=page_id,
+                    expand="body.storage,version,space,children.attachment",
+                )
+
             space_key = page.get("space", {}).get("key", "")
             content = page["body"]["storage"]["value"]
             processed_html, processed_markdown = self.preprocessor.process_html_content(
-                content, space_key=space_key
+                content, space_key=space_key, confluence_client=self.confluence
             )
 
             # Use the appropriate content format based on the convert_to_markdown flag
@@ -169,7 +185,7 @@ class PagesMixin(ConfluenceClient):
 
             content = page["body"]["storage"]["value"]
             processed_html, processed_markdown = self.preprocessor.process_html_content(
-                content, space_key=space_key
+                content, space_key=space_key, confluence_client=self.confluence
             )
 
             # Use the appropriate content format based on the convert_to_markdown flag
@@ -230,7 +246,7 @@ class PagesMixin(ConfluenceClient):
         for page in pages:
             content = page["body"]["storage"]["value"]
             processed_html, processed_markdown = self.preprocessor.process_html_content(
-                content, space_key=space_key
+                content, space_key=space_key, confluence_client=self.confluence
             )
 
             # Use the appropriate content format based on the convert_to_markdown flag
@@ -477,7 +493,9 @@ class PagesMixin(ConfluenceClient):
                     content = page.get("body", {}).get("storage", {}).get("value", "")
                     if content:
                         _, processed_markdown = self.preprocessor.process_html_content(
-                            content, space_key=space_key
+                            content,
+                            space_key=space_key,
+                            confluence_client=self.confluence,
                         )
                         content_override = processed_markdown
 

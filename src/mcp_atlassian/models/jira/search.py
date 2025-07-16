@@ -96,3 +96,12 @@ class JiraSearchResult(ApiModel):
             The validated JiraSearchResult instance
         """
         return self
+
+    def to_simplified_dict(self) -> dict[str, Any]:
+        """Convert to simplified dictionary for API response."""
+        return {
+            "total": self.total,
+            "start_at": self.start_at,
+            "max_results": self.max_results,
+            "issues": [issue.to_simplified_dict() for issue in self.issues],
+        }

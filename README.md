@@ -373,6 +373,56 @@ Add the relevant proxy variables to the `args` (using `-e`) and `env` sections o
 Credentials in proxy URLs are masked in logs. If you set `NO_PROXY`, it will be respected for requests to matching hosts.
 
 </details>
+<details>
+<summary>Custom HTTP Headers Configuration</summary>
+
+MCP Atlassian supports adding custom HTTP headers to all API requests. This feature is particularly useful in corporate environments where additional headers are required for security, authentication, or routing purposes.
+
+Custom headers are configured using environment variables with comma-separated key=value pairs:
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e", "CONFLUENCE_URL",
+        "-e", "CONFLUENCE_USERNAME",
+        "-e", "CONFLUENCE_API_TOKEN",
+        "-e", "CONFLUENCE_CUSTOM_HEADERS",
+        "-e", "JIRA_URL",
+        "-e", "JIRA_USERNAME",
+        "-e", "JIRA_API_TOKEN",
+        "-e", "JIRA_CUSTOM_HEADERS",
+        "ghcr.io/sooperset/mcp-atlassian:latest"
+      ],
+      "env": {
+        "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
+        "CONFLUENCE_USERNAME": "your.email@company.com",
+        "CONFLUENCE_API_TOKEN": "your_confluence_api_token",
+        "CONFLUENCE_CUSTOM_HEADERS": "X-Confluence-Service=mcp-integration,X-Custom-Auth=confluence-token,X-ALB-Token=secret-token",
+        "JIRA_URL": "https://your-company.atlassian.net",
+        "JIRA_USERNAME": "your.email@company.com",
+        "JIRA_API_TOKEN": "your_jira_api_token",
+        "JIRA_CUSTOM_HEADERS": "X-Forwarded-User=service-account,X-Company-Service=mcp-atlassian,X-Jira-Client=mcp-integration"
+      }
+    }
+  }
+}
+```
+
+**Security Considerations:**
+
+- Custom header values are masked in debug logs to protect sensitive information
+- Ensure custom headers don't conflict with standard HTTP or Atlassian API headers
+- Avoid including sensitive authentication tokens in custom headers if already using basic auth or OAuth
+- Headers are sent with every API request - verify they don't interfere with API functionality
+
+</details>
+
 
 <details>
 <summary>Multi-Cloud OAuth Support</summary>
@@ -755,6 +805,43 @@ The server provides two ways to control tool access:
     - For older Confluence servers: Some older versions require basic authentication with `CONFLUENCE_USERNAME` and `CONFLUENCE_API_TOKEN` (where token is your password)
 - **SSL Certificate Issues**: If using Server/Data Center and encounter SSL errors, set `CONFLUENCE_SSL_VERIFY=false` or `JIRA_SSL_VERIFY=false`
 - **Permission Errors**: Ensure your Atlassian account has sufficient permissions to access the spaces/projects
+- **Custom Headers Issues**: See the ["Debugging Custom Headers"](#debugging-custom-headers) section below to analyze and resolve issues with custom headers
+
+### Debugging Custom Headers
+
+To verify custom headers are being applied correctly:
+
+1. **Enable Debug Logging**: Set `MCP_VERY_VERBOSE=true` to see detailed request logs
+   ```bash
+   # In your .env file or environment
+   MCP_VERY_VERBOSE=true
+   MCP_LOGGING_STDOUT=true
+   ```
+
+2. **Check Header Parsing**: Custom headers appear in logs with masked values for security:
+   ```
+   DEBUG Custom headers applied: {'X-Forwarded-User': '***', 'X-ALB-Token': '***'}
+   ```
+
+3. **Verify Service-Specific Headers**: Check logs to confirm the right headers are being used:
+   ```
+   DEBUG Jira request headers: service-specific headers applied
+   DEBUG Confluence request headers: service-specific headers applied
+   ```
+
+4. **Test Header Format**: Ensure your header string format is correct:
+   ```bash
+   # Correct format
+   JIRA_CUSTOM_HEADERS=X-Custom=value1,X-Other=value2
+   CONFLUENCE_CUSTOM_HEADERS=X-Custom=value1,X-Other=value2
+
+   # Incorrect formats (will be ignored)
+   JIRA_CUSTOM_HEADERS="X-Custom=value1,X-Other=value2"  # Extra quotes
+   JIRA_CUSTOM_HEADERS=X-Custom: value1,X-Other: value2  # Colon instead of equals
+   JIRA_CUSTOM_HEADERS=X-Custom = value1               # Spaces around equals
+   ```
+
+**Security Note**: Header values containing sensitive information (tokens, passwords) are automatically masked in logs to prevent accidental exposure.
 
 ### Debugging Tools
 
