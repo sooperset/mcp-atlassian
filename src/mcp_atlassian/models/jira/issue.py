@@ -483,6 +483,7 @@ class JiraIssue(ApiModel, TimestampMixin):
             requested_fields=requested_fields_param,
             changelogs=changelogs,
             issuelinks=cls._extract_issue_links(fields),
+            sprint=sprint,
         )
 
     def to_simplified_dict(self) -> dict[str, Any]:
