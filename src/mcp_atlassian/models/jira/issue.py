@@ -16,6 +16,7 @@ from ..constants import (
     JIRA_DEFAULT_ID,
     JIRA_DEFAULT_KEY,
 )
+from .agile import JiraSprint
 from .comment import JiraComment
 from .common import (
     JiraAttachment,
@@ -27,7 +28,6 @@ from .common import (
     JiraTimetracking,
     JiraUser,
 )
-from .agile import JiraSprint
 from .link import JiraIssueLink
 from .project import JiraProject
 

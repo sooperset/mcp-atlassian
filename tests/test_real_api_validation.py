@@ -1478,6 +1478,7 @@ def test_jira_client_real_proxy(jira_config: JiraConfig) -> None:
         del os.environ["HTTP_PROXY"]
         del os.environ["HTTPS_PROXY"]
 
+
 @pytest.mark.skip(reason="This test modifies data - use with caution")
 @pytest.mark.anyio
 async def test_jira_add_issue_to_sprint(

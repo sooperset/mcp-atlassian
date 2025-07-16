@@ -334,7 +334,6 @@ def test_update_sprint_exception(sprints_mixin):
     sprints_mixin.jira.update_partially_sprint.assert_called_once()
 
 
-
 def test_add_issues_to_sprint_success(sprints_mixin):
     """Test add_issues_to_sprint method with valid data."""
     sprints_mixin.jira.add_issues_to_sprint.return_value = None

@@ -6,7 +6,6 @@ from typing import Any
 
 import requests
 
-from ..models.jira import JiraIssue
 from ..models.jira import JiraSprint
 from ..utils import parse_date
 from .client import JiraClient
@@ -208,12 +207,18 @@ class SprintsMixin(JiraClient, SprintOperationsProto):
         if not sprint_id or not isinstance(sprint_id, str):
             msg = "sprint_id must be a non-empty string."
             raise ValueError(msg)
-        if not issues or not isinstance(issues, list) or not all(isinstance(i, str) for i in issues):
+        if (
+            not issues
+            or not isinstance(issues, list)
+            or not all(isinstance(i, str) for i in issues)
+        ):
             msg = "issues must be a non-empty list of strings."
             raise ValueError(msg)
 
         try:
             self.jira.add_issues_to_sprint(sprint_id, issues)
         except Exception as e:
-            logger.error(f"An unexpected error occurred while adding issues to sprint: {e}")
+            logger.error(
+                f"An unexpected error occurred while adding issues to sprint: {e}"
+            )
             raise
