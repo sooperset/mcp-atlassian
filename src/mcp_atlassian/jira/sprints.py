@@ -6,6 +6,7 @@ from typing import Any
 
 import requests
 
+from ..models.jira import JiraIssue
 from ..models.jira import JiraSprint
 from ..utils import parse_date
 from .client import JiraClient
@@ -212,4 +213,21 @@ class SprintsMixin(JiraClient, SprintOperationsProto):
             raise
         except Exception as e:
             logger.error(f"Error adding issues to sprint: {str(e)}")
+            raise
+
+    def move_issue_to_sprint(self, issue_key: str, sprint_id: str) -> None:
+        """
+        Move an issue to a sprint.
+
+        Args:
+            issue_key: The key of the issue to move
+            sprint_id: The ID of the sprint to move the issue to
+        """
+        try:
+            self.jira.add_issues_to_sprint(sprint_id, [issue_key])
+        except requests.HTTPError as e:
+            logger.error(f"Error moving issue to sprint: {str(e.response.content)}")
+            raise
+        except Exception as e:
+            logger.error(f"Error moving issue to sprint: {str(e)}")
             raise
