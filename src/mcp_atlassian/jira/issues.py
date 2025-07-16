@@ -204,12 +204,10 @@ class IssuesMixin(
             issue["fields"] = fields_data
 
             # Create and return the JiraIssue model, passing requested_fields
-            sprint_info = self._extract_sprint_information(issue)
             return JiraIssue.from_api_response(
                 issue,
                 base_url=self.config.url if hasattr(self, "config") else None,
                 requested_fields=fields,
-                sprint_info=sprint_info,
             )
         except HTTPError as http_err:
             if http_err.response is not None and http_err.response.status_code in [
