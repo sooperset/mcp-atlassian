@@ -82,7 +82,9 @@ class SearchMixin(ConfluenceClient):
                         # Process the excerpt as HTML content
                         space_key = page.space.key if page.space else ""
                         _, processed_markdown = self.preprocessor.process_html_content(
-                            excerpt, space_key=space_key
+                            excerpt,
+                            space_key=space_key,
+                            confluence_client=self.confluence,
                         )
                         # Create a new page with processed content
                         page.content = processed_markdown

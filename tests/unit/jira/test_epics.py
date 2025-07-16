@@ -231,6 +231,209 @@ class TestEpicsMixin:
         # Verify fields dict remains empty
         assert fields == {}
 
+    def test_prepare_epic_fields_with_required_epic_name(self, epics_mixin: EpicsMixin):
+        """Test Epic field preparation when Epic Name is a required field."""
+        # Mock get_field_ids_to_epic to return field IDs
+        epics_mixin.get_field_ids_to_epic = MagicMock(
+            return_value={
+                "epic_name": "customfield_10011",
+                "epic_color": "customfield_10012",
+            }
+        )
+
+        # Mock get_required_fields to return Epic Name as required
+        epics_mixin.get_required_fields = MagicMock(
+            return_value={
+                "customfield_10011": {
+                    "fieldId": "customfield_10011",
+                    "required": True,
+                    "name": "Epic Name",
+                }
+            }
+        )
+
+        fields = {}
+        kwargs = {"epic_name": "My Epic Name", "epic_color": "blue"}
+
+        # Call prepare_epic_fields with project_key
+        epics_mixin.prepare_epic_fields(fields, "Test Epic", kwargs, "TEST")
+
+        # Assert Epic Name was added to fields for initial creation
+        assert fields["customfield_10011"] == "My Epic Name"
+
+        # Assert Epic Color was stored for post-creation update
+        assert kwargs["__epic_color_field"] == "customfield_10012"
+        assert kwargs["__epic_color_value"] == "blue"
+
+        # Verify get_required_fields was called with correct parameters
+        epics_mixin.get_required_fields.assert_called_once_with("Epic", "TEST")
+
+    def test_prepare_epic_fields_with_optional_epic_name(self, epics_mixin: EpicsMixin):
+        """Test Epic field preparation when Epic Name is not a required field."""
+        # Mock get_field_ids_to_epic to return field IDs
+        epics_mixin.get_field_ids_to_epic = MagicMock(
+            return_value={
+                "epic_name": "customfield_10011",
+                "epic_color": "customfield_10012",
+            }
+        )
+
+        # Mock get_required_fields to return empty dict (no required fields)
+        epics_mixin.get_required_fields = MagicMock(return_value={})
+
+        fields = {}
+        kwargs = {"epic_name": "My Epic Name", "epic_color": "green"}
+
+        # Call prepare_epic_fields with project_key
+        epics_mixin.prepare_epic_fields(fields, "Test Epic", kwargs, "TEST")
+
+        # Assert Epic Name was stored for post-creation update (not in fields)
+        assert "customfield_10011" not in fields
+        assert kwargs["__epic_name_field"] == "customfield_10011"
+        assert kwargs["__epic_name_value"] == "My Epic Name"
+
+        # Assert Epic Color was also stored for post-creation update
+        assert kwargs["__epic_color_field"] == "customfield_10012"
+        assert kwargs["__epic_color_value"] == "green"
+
+    def test_prepare_epic_fields_mixed_required_optional(self, epics_mixin: EpicsMixin):
+        """Test Epic field preparation with mixed required and optional fields."""
+        # Mock get_field_ids_to_epic to return field IDs
+        epics_mixin.get_field_ids_to_epic = MagicMock(
+            return_value={
+                "epic_name": "customfield_10011",
+                "epic_color": "customfield_10012",
+                "epic_start_date": "customfield_10013",
+            }
+        )
+
+        # Mock get_required_fields to return Epic Name and Start Date as required
+        epics_mixin.get_required_fields = MagicMock(
+            return_value={
+                "customfield_10011": {"fieldId": "customfield_10011", "required": True},
+                "customfield_10013": {"fieldId": "customfield_10013", "required": True},
+            }
+        )
+
+        fields = {}
+        kwargs = {
+            "epic_name": "My Epic Name",
+            "epic_color": "purple",
+            "epic_start_date": "2024-01-01",
+        }
+
+        # Call prepare_epic_fields with project_key
+        epics_mixin.prepare_epic_fields(fields, "Test Epic", kwargs, "TEST")
+
+        # Assert required fields were added to fields
+        assert fields["customfield_10011"] == "My Epic Name"
+        assert fields["customfield_10013"] == "2024-01-01"
+
+        # Assert optional field was stored for post-creation update
+        assert "customfield_10012" not in fields
+        assert kwargs["__epic_color_field"] == "customfield_10012"
+        assert kwargs["__epic_color_value"] == "purple"
+
+    def test_prepare_epic_fields_no_project_key(self, epics_mixin: EpicsMixin):
+        """Test Epic field preparation when no project_key is provided."""
+        # Mock get_field_ids_to_epic to return field IDs
+        epics_mixin.get_field_ids_to_epic = MagicMock(
+            return_value={
+                "epic_name": "customfield_10011",
+                "epic_color": "customfield_10012",
+            }
+        )
+
+        # Mock get_required_fields should not be called
+        epics_mixin.get_required_fields = MagicMock()
+
+        fields = {}
+        kwargs = {"epic_name": "My Epic Name", "epic_color": "red"}
+
+        # Call prepare_epic_fields without project_key (None)
+        epics_mixin.prepare_epic_fields(fields, "Test Epic", kwargs, None)
+
+        # Assert all fields were stored for post-creation update (fallback behavior)
+        assert "customfield_10011" not in fields
+        assert "customfield_10012" not in fields
+        assert kwargs["__epic_name_field"] == "customfield_10011"
+        assert kwargs["__epic_name_value"] == "My Epic Name"
+        assert kwargs["__epic_color_field"] == "customfield_10012"
+        assert kwargs["__epic_color_value"] == "red"
+
+        # Verify get_required_fields was not called
+        epics_mixin.get_required_fields.assert_not_called()
+
+    def test_prepare_epic_fields_get_required_fields_error(
+        self, epics_mixin: EpicsMixin
+    ):
+        """Test Epic field preparation when get_required_fields raises an error."""
+        # Mock get_field_ids_to_epic to return field IDs
+        epics_mixin.get_field_ids_to_epic = MagicMock(
+            return_value={
+                "epic_name": "customfield_10011",
+                "epic_color": "customfield_10012",
+            }
+        )
+
+        # Mock get_required_fields to raise an exception
+        epics_mixin.get_required_fields = MagicMock(side_effect=Exception("API error"))
+
+        fields = {}
+        kwargs = {"epic_name": "My Epic Name", "epic_color": "yellow"}
+
+        # Call prepare_epic_fields with project_key
+        epics_mixin.prepare_epic_fields(fields, "Test Epic", kwargs, "TEST")
+
+        # Assert it falls back to storing all fields for post-creation update
+        assert "customfield_10011" not in fields
+        assert "customfield_10012" not in fields
+        assert kwargs["__epic_name_field"] == "customfield_10011"
+        assert kwargs["__epic_name_value"] == "My Epic Name"
+        assert kwargs["__epic_color_field"] == "customfield_10012"
+        assert kwargs["__epic_color_value"] == "yellow"
+
+    def test_prepare_epic_fields_no_get_required_fields_method(
+        self, epics_mixin: EpicsMixin
+    ):
+        """Test Epic field preparation when get_required_fields method doesn't exist."""
+        # Mock get_field_ids_to_epic to return field IDs
+        epics_mixin.get_field_ids_to_epic = MagicMock(
+            return_value={
+                "epic_name": "customfield_10011",
+                "epic_color": "customfield_10012",
+            }
+        )
+
+        # Mock hasattr to return False for get_required_fields
+        original_hasattr = hasattr
+
+        def mock_hasattr(obj, attr):
+            if attr == "get_required_fields":
+                return False
+            return original_hasattr(obj, attr)
+
+        import builtins
+
+        builtins.hasattr = mock_hasattr
+
+        fields = {}
+        kwargs = {"epic_name": "My Epic Name", "epic_color": "orange"}
+
+        # Call prepare_epic_fields with project_key
+        epics_mixin.prepare_epic_fields(fields, "Test Epic", kwargs, "TEST")
+
+        # Restore original hasattr
+        builtins.hasattr = original_hasattr
+
+        # Assert it falls back to storing all fields for post-creation update
+        assert "customfield_10011" not in fields
+        assert "customfield_10012" not in fields
+        assert kwargs["__epic_name_field"] == "customfield_10011"
+        assert kwargs["__epic_name_value"] == "My Epic Name"
+        assert kwargs["__epic_color_field"] == "customfield_10012"
+        assert kwargs["__epic_color_value"] == "orange"
+
     def test_dynamic_epic_field_discovery(self, epics_mixin: EpicsMixin):
         """Test the dynamic discovery of Epic fields with pattern matching."""
         # Mock get_field_ids_to_epic with no epic-related fields
