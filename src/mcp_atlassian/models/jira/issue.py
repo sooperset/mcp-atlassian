@@ -27,6 +27,7 @@ from .common import (
     JiraTimetracking,
     JiraUser,
 )
+from .agile import JiraSprint
 from .link import JiraIssueLink
 from .project import JiraProject
 
@@ -88,6 +89,7 @@ class JiraIssue(ApiModel, TimestampMixin):
     worklog: dict | None = None
     changelogs: list[JiraChangelog] = Field(default_factory=list)
     issuelinks: list[JiraIssueLink] = Field(default_factory=list)
+    sprint: JiraSprint | None = None
 
     def __getattribute__(self, name: str) -> Any:
         """
@@ -401,6 +403,12 @@ class JiraIssue(ApiModel, TimestampMixin):
         timetracking_data = fields.get("timetracking")
         if timetracking_data:
             timetracking = JiraTimetracking.from_api_response(timetracking_data)
+
+        # Sprint
+        sprint = None
+        sprint_data = fields.get("sprint")
+        if sprint_data:
+            sprint = JiraSprint.from_api_response(sprint_data)
 
         # URL
         url = data.get("self")  # API URL for the issue
