@@ -364,27 +364,6 @@ class IssuesMixin(
 
         return epic_info
 
-    def _extract_sprint_information(self, issue: dict) -> dict[str, Any] | None:
-        """
-        Extract sprint information from an issue.
-
-        Args:
-            issue: The issue data
-
-        Returns:
-            Dictionary with sprint information
-        """
-        fields = issue.get("fields", {}) or {}
-        sprint_field = fields.get("sprint")
-        if sprint_field and isinstance(sprint_field, dict):
-            return {
-                "id": sprint_field.get("id"),
-                "name": sprint_field.get("name"),
-                "state": sprint_field.get("state"),
-                "boardId": sprint_field.get("boardId"),
-            }
-        return None
-
     def _format_issue_content(
         self,
         issue_key: str,
