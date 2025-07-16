@@ -332,3 +332,43 @@ def test_update_sprint_exception(sprints_mixin):
 
     assert result is None
     sprints_mixin.jira.update_partially_sprint.assert_called_once()
+
+
+
+def test_add_issues_to_sprint_success(sprints_mixin):
+    """Test add_issues_to_sprint method with valid data."""
+    sprints_mixin.jira.add_issues_to_sprint.return_value = None
+
+    result = sprints_mixin.add_issues_to_sprint(
+        sprint_id="10001",
+        issues=["PROJ-1", "PROJ-2"],
+    )
+
+    assert result is None
+    sprints_mixin.jira.add_issues_to_sprint.assert_called_once_with(
+        "10001", ["PROJ-1", "PROJ-2"]
+    )
+
+
+def test_add_issues_to_sprint_invalid_sprint_id(sprints_mixin):
+    """Test add_issues_to_sprint method with an invalid sprint_id."""
+    with pytest.raises(ValueError, match="sprint_id must be a non-empty string."):
+        sprints_mixin.add_issues_to_sprint(sprint_id="", issues=["PROJ-1"])
+
+    with pytest.raises(ValueError, match="sprint_id must be a non-empty string."):
+        sprints_mixin.add_issues_to_sprint(sprint_id=None, issues=["PROJ-1"])
+
+
+def test_add_issues_to_sprint_empty_list(sprints_mixin):
+    """Test add_issues_to_sprint method with an empty issues list."""
+    with pytest.raises(ValueError, match="issues must be a non-empty list of strings."):
+        sprints_mixin.add_issues_to_sprint(sprint_id="10001", issues=[])
+
+
+def test_add_issues_to_sprint_invalid_issues_type(sprints_mixin):
+    """Test add_issues_to_sprint method with an invalid issues type."""
+    with pytest.raises(ValueError, match="issues must be a non-empty list of strings."):
+        sprints_mixin.add_issues_to_sprint(sprint_id="10001", issues="not-a-list")
+
+    with pytest.raises(ValueError, match="issues must be a non-empty list of strings."):
+        sprints_mixin.add_issues_to_sprint(sprint_id="10001", issues=["PROJ-1", 123])
