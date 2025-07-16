@@ -4,7 +4,6 @@ import logging
 from collections import defaultdict
 from typing import Any
 
-import requests
 from requests.exceptions import HTTPError
 
 from ..exceptions import MCPAtlassianAuthenticationError
