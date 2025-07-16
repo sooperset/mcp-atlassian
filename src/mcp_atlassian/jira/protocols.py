@@ -220,14 +220,3 @@ class SprintOperationsProto(Protocol):
             sprint_id: The ID of the sprint
             issues: A list of issue keys to add to the sprint
         """
-
-
-    @abstractmethod
-    def move_issue_to_sprint(self, issue_key: str, sprint_id: str) -> None:
-        """
-        Move an issue to a sprint.
-
-        Args:
-            issue_key: The key of the issue to move
-            sprint_id: The ID of the sprint to move the issue to
-        """
