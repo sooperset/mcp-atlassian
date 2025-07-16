@@ -1477,3 +1477,49 @@ def test_jira_client_real_proxy(jira_config: JiraConfig) -> None:
         # Clean up env
         del os.environ["HTTP_PROXY"]
         del os.environ["HTTPS_PROXY"]
+
+@pytest.mark.skip(reason="This test modifies data - use with caution")
+@pytest.mark.anyio
+async def test_jira_add_issue_to_sprint(
+    jira_client: JiraFetcher,
+    test_project_key: str,
+    resource_tracker: ResourceTracker,
+    cleanup_resources: Callable[[], None],
+) -> None:
+    """Test adding an issue to a sprint in Jira."""
+    # Create a board
+    board_name = f"Test Board {uuid.uuid4()}"
+    board = jira_client.create_board(name=board_name, project_key=test_project_key)
+
+    # Create a sprint
+    sprint_name = f"Test Sprint {uuid.uuid4()}"
+    start_date = datetime.datetime.now(datetime.timezone.utc)
+    end_date = start_date + datetime.timedelta(days=14)
+    sprint = jira_client.create_sprint(
+        board_id=board.id,
+        name=sprint_name,
+        start_date=start_date.isoformat(),
+        end_date=end_date.isoformat(),
+    )
+
+    # Create an issue
+    issue_summary = f"Test Issue for Sprint {uuid.uuid4()}"
+    issue = jira_client.create_issue(
+        project_key=test_project_key,
+        summary=issue_summary,
+        issue_type="Task",
+        description="Test issue for sprint",
+    )
+    resource_tracker.add_jira_issue(issue.key)
+
+    # Add the issue to the sprint
+    jira_client.add_issues_to_sprint(sprint.id, [issue.key])
+
+    # Verify the issue is in the sprint
+    sprint_issues = jira_client.get_sprint_issues(sprint.id)
+    assert any(sprint_issue.key == issue.key for sprint_issue in sprint_issues)
+
+    # Clean up the board
+    jira_client.delete_board(board.id)
+
+    cleanup_resources()
