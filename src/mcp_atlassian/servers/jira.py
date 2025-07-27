@@ -692,7 +692,7 @@ async def create_issue(
         ),
     ] = None,
     additional_fields: Annotated[
-        dict[str, Any] | None,
+        dict[str, Any] | str | None,
         Field(
             description=(
                 "(Optional) Dictionary of additional fields to set. Examples:\n"
@@ -716,7 +716,7 @@ async def create_issue(
         assignee: Assignee's user identifier (string): Email, display name, or account ID (e.g., 'user@example.com', 'John Doe', 'accountid:...').
         description: Issue description.
         components: Comma-separated list of component names.
-        additional_fields: Dictionary of additional fields.
+        additional_fields: Dictionary or JSON string of additional fields.
 
     Returns:
         JSON string representing the created issue object.
@@ -733,9 +733,22 @@ async def create_issue(
         ]
 
     # Use additional_fields directly as dict
-    extra_fields = additional_fields or {}
-    if not isinstance(extra_fields, dict):
-        raise ValueError("additional_fields must be a dictionary.")
+    # Accept either dict or JSON string for additional fields
+    if additional_fields is None:
+        extra_fields: dict[str, Any] = {}
+    elif isinstance(additional_fields, dict):
+        extra_fields = additional_fields
+    elif isinstance(additional_fields, str):
+        try:
+            extra_fields = json.loads(additional_fields)
+            if not isinstance(extra_fields, dict):
+                raise ValueError(
+                    "Parsed additional_fields is not a JSON object (dict)."
+                )
+        except json.JSONDecodeError as e:
+            raise ValueError(f"additional_fields is not valid JSON: {e}") from e
+    else:
+        raise ValueError("additional_fields must be a dictionary or JSON string.")
 
     issue = jira.create_issue(
         project_key=project_key,
