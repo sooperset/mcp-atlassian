@@ -1,6 +1,7 @@
 """Main FastMCP server setup for Atlassian integration."""
 
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Literal, Optional
@@ -8,6 +9,7 @@ from typing import Any, Literal, Optional
 from cachetools import TTLCache
 from fastmcp import FastMCP
 from fastmcp.tools import Tool as FastMCPTool
+from fastmcp.server.dependencies import get_http_request
 from mcp.types import Tool as MCPTool
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -38,40 +40,45 @@ async def health_check(request: Request) -> JSONResponse:
 @asynccontextmanager
 async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
     logger.info("Main Atlassian MCP server lifespan starting...")
-    services = get_available_services()
     read_only = is_read_only_mode()
     enabled_tools = get_enabled_tools()
 
     loaded_jira_config: JiraConfig | None = None
     loaded_confluence_config: ConfluenceConfig | None = None
 
-    if services.get("jira"):
+    # URL만 있어도 도구들을 초기화하도록 수정
+    jira_url = os.getenv("JIRA_URL")
+    confluence_url = os.getenv("CONFLUENCE_URL")
+
+    if jira_url:
         try:
-            jira_config = JiraConfig.from_env()
-            if jira_config.is_auth_configured():
-                loaded_jira_config = jira_config
-                logger.info(
-                    "Jira configuration loaded and authentication is configured."
-                )
-            else:
-                logger.warning(
-                    "Jira URL found, but authentication is not fully configured. Jira tools will be unavailable."
-                )
+            # URL만으로 기본 설정 생성 (인증은 나중에 사용자별로 처리)
+            from mcp_atlassian.jira.config import JiraConfig
+            jira_config = JiraConfig(
+                url=jira_url,
+                auth_type="api_token",  # Atlassian Cloud API Token 사용
+                ssl_verify=False,  # SSL 검증 무시
+            )
+            loaded_jira_config = jira_config
+            logger.info(
+                f"Jira configuration loaded (URL only: {jira_url}). Authentication will be handled per-user via headers."
+            )
         except Exception as e:
             logger.error(f"Failed to load Jira configuration: {e}", exc_info=True)
 
-    if services.get("confluence"):
+    if confluence_url:
         try:
-            confluence_config = ConfluenceConfig.from_env()
-            if confluence_config.is_auth_configured():
-                loaded_confluence_config = confluence_config
-                logger.info(
-                    "Confluence configuration loaded and authentication is configured."
-                )
-            else:
-                logger.warning(
-                    "Confluence URL found, but authentication is not fully configured. Confluence tools will be unavailable."
-                )
+            # URL만으로 기본 설정 생성 (인증은 나중에 사용자별로 처리)
+            from mcp_atlassian.confluence.config import ConfluenceConfig
+            confluence_config = ConfluenceConfig(
+                url=confluence_url,
+                auth_type="api_token",  # Atlassian Cloud API Token 사용
+                ssl_verify=False,  # SSL 검증 무시
+            )
+            loaded_confluence_config = confluence_config
+            logger.info(
+                f"Confluence configuration loaded (URL only: {confluence_url}). Authentication will be handled per-user via headers."
+            )
         except Exception as e:
             logger.error(f"Failed to load Confluence configuration: {e}", exc_info=True)
 
@@ -135,6 +142,74 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             f"_main_mcp_list_tools: read_only={read_only}, enabled_tools_filter={enabled_tools_filter}"
         )
 
+        # 인증 검증 수행
+        try:
+            request: Request = get_http_request()
+            auth_header = request.headers.get("Authorization")
+            user_email = getattr(request.state, "user_atlassian_email", None)
+            
+            if not auth_header:
+                logger.warning("No Authorization header provided during tool listing")
+                return []
+            
+            # Bearer 토큰 검증
+            if auth_header.startswith("Bearer "):
+                token = auth_header.split(" ", 1)[1].strip()
+                if not token:
+                    logger.warning("Empty Bearer token provided")
+                    return []
+                
+                # Jira 인증 검증
+                try:
+                    from mcp_atlassian.jira.config import JiraConfig
+                    from mcp_atlassian.jira import JiraFetcher
+                    import os
+                    
+                    jira_url = os.getenv("JIRA_URL")
+                    if jira_url:
+                        jira_config = JiraConfig(
+                            url=jira_url,
+                            auth_type="api_token",  # Atlassian Cloud API Token 사용
+                            ssl_verify=False,
+                            api_token=token,  # api_token 필드 사용
+                            username=user_email
+                        )
+                        jira_fetcher = JiraFetcher(config=jira_config)
+                        current_user = jira_fetcher.get_current_user_account_id()
+                        logger.info(f"Jira authentication successful for user: {current_user}")
+                except Exception as e:
+                    logger.error(f"Jira authentication failed: {e}")
+                    return []
+                
+                # Confluence 인증 검증
+                try:
+                    from mcp_atlassian.confluence.config import ConfluenceConfig
+                    from mcp_atlassian.confluence import ConfluenceFetcher
+                    
+                    confluence_url = os.getenv("CONFLUENCE_URL")
+                    if confluence_url:
+                        confluence_config = ConfluenceConfig(
+                            url=confluence_url,
+                            auth_type="api_token",  # Atlassian Cloud API Token 사용
+                            ssl_verify=False,
+                            api_token=token,  # api_token 필드 사용
+                            username=user_email
+                        )
+                        confluence_fetcher = ConfluenceFetcher(config=confluence_config)
+                        current_user_info = confluence_fetcher.get_current_user_info()
+                        logger.info(f"Confluence authentication successful for user: {current_user_info.get('displayName', 'unknown')}")
+                except Exception as e:
+                    logger.error(f"Confluence authentication failed: {e}")
+                    return []
+                    
+            else:
+                logger.warning(f"Unsupported Authorization header format: {auth_header[:20]}...")
+                return []
+                
+        except Exception as e:
+            logger.error(f"Authentication validation failed during tool listing: {e}")
+            return []
+
         all_tools: dict[str, FastMCPTool] = await self.get_tools()
         logger.debug(
             f"Aggregated {len(all_tools)} tools before filtering: {list(all_tools.keys())}"
@@ -154,35 +229,10 @@ class AtlassianMCP(FastMCP[MainAppContext]):
                 )
                 continue
 
-            # Exclude Jira/Confluence tools if config is not fully authenticated
-            is_jira_tool = "jira" in tool_tags
-            is_confluence_tool = "confluence" in tool_tags
-            service_configured_and_available = True
-            if app_lifespan_state:
-                if is_jira_tool and not app_lifespan_state.full_jira_config:
-                    logger.debug(
-                        f"Excluding Jira tool '{registered_name}' as Jira configuration/authentication is incomplete."
-                    )
-                    service_configured_and_available = False
-                if is_confluence_tool and not app_lifespan_state.full_confluence_config:
-                    logger.debug(
-                        f"Excluding Confluence tool '{registered_name}' as Confluence configuration/authentication is incomplete."
-                    )
-                    service_configured_and_available = False
-            elif is_jira_tool or is_confluence_tool:
-                logger.warning(
-                    f"Excluding tool '{registered_name}' as application context is unavailable to verify service configuration."
-                )
-                service_configured_and_available = False
-
-            if not service_configured_and_available:
-                continue
-
+            # 인증이 성공했으므로 모든 도구를 표시
             filtered_tools.append(tool_obj.to_mcp_tool(name=registered_name))
 
-        logger.debug(
-            f"_main_mcp_list_tools: Total tools after filtering: {len(filtered_tools)}"
-        )
+        logger.info(f"Tool listing successful: {len(filtered_tools)} tools enabled after authentication validation")
         return filtered_tools
 
     def http_app(
@@ -240,6 +290,7 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
         if request_path == mcp_path and request.method == "POST":
             auth_header = request.headers.get("Authorization")
             cloud_id_header = request.headers.get("X-Atlassian-Cloud-Id")
+            user_email_header = request.headers.get("X-User-Email")
 
             token_for_log = mask_sensitive(
                 auth_header.split(" ", 1)[1].strip()
@@ -247,8 +298,20 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 else auth_header
             )
             logger.debug(
-                f"UserTokenMiddleware: Path='{request.url.path}', AuthHeader='{mask_sensitive(auth_header)}', ParsedToken(masked)='{token_for_log}', CloudId='{cloud_id_header}'"
+                f"UserTokenMiddleware: Path='{request.url.path}', AuthHeader='{mask_sensitive(auth_header)}', ParsedToken(masked)='{token_for_log}', CloudId='{cloud_id_header}', UserEmail='{user_email_header}'"
             )
+
+            # Extract and save user email if provided
+            if user_email_header and user_email_header.strip():
+                request.state.user_atlassian_email = user_email_header.strip()
+                logger.debug(
+                    f"UserTokenMiddleware: Extracted user email from header: {user_email_header.strip()}"
+                )
+            else:
+                request.state.user_atlassian_email = None
+                logger.debug(
+                    "UserTokenMiddleware: No user email header provided"
+                )
 
             # Extract and save cloudId if provided
             if cloud_id_header and cloud_id_header.strip():
@@ -279,8 +342,8 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                     f"UserTokenMiddleware.dispatch: Bearer token extracted (masked): ...{mask_sensitive(token, 8)}"
                 )
                 request.state.user_atlassian_token = token
-                request.state.user_atlassian_auth_type = "oauth"
-                request.state.user_atlassian_email = None
+                request.state.user_atlassian_auth_type = "api_token"  # Bearer 토큰을 api_token 타입으로 처리
+                request.state.user_atlassian_email = user_email_header.strip() if user_email_header else None # Set email from header
                 logger.debug(
                     f"UserTokenMiddleware.dispatch: Set request.state (pre-validation): "
                     f"auth_type='{getattr(request.state, 'user_atlassian_auth_type', 'N/A')}', "
