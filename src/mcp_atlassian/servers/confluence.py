@@ -744,3 +744,443 @@ async def search_user(
             indent=2,
             ensure_ascii=False,
         )
+
+
+@confluence_mcp.tool(tags={"confluence", "write"})
+@check_write_access
+async def upload_attachment(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(description="Confluence page ID (numeric ID, can be parsed from URL, e.g. from 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title' -> '123456789')"),
+    ],
+    file_path: Annotated[
+        str,
+        Field(description="Path to the file to upload as attachment"),
+    ],
+    comment: Annotated[
+        str | None,
+        Field(description="(Optional) Comment for the attachment upload", default=None),
+    ] = None,
+    minor_edit: Annotated[
+        bool,
+        Field(description="(Optional) Whether this is a minor edit", default=False),
+    ] = False,
+) -> str:
+    """Upload a file attachment to a Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: Confluence page ID.
+        file_path: Path to the file to upload.
+        comment: Optional comment for the attachment.
+        minor_edit: Whether this is a minor edit.
+
+    Returns:
+        JSON string representing the uploaded attachment object.
+
+    Raises:
+        ValueError: If in read-only mode or Confluence client is unavailable.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    
+    try:
+        result = confluence_fetcher.upload_attachment(
+            page_id=page_id,
+            file_path=file_path,
+            comment=comment,
+            minor_edit=minor_edit
+        )
+        return json.dumps(result, indent=2, ensure_ascii=False)
+    except FileNotFoundError as e:
+        logger.error(f"File not found: {e}")
+        return json.dumps(
+            {"error": f"File not found: {str(e)}"},
+            indent=2,
+            ensure_ascii=False,
+        )
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error during attachment upload: {e}", exc_info=False)
+        return json.dumps(
+            {
+                "error": "Authentication failed. Please check your credentials.",
+                "details": str(e),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(f"Error uploading attachment: {str(e)}")
+        return json.dumps(
+            {"error": f"An error occurred while uploading the attachment: {str(e)}"},
+            indent=2,
+            ensure_ascii=False,
+        )
+
+
+@confluence_mcp.tool(tags={"confluence", "write"})
+@check_write_access
+async def update_attachment(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(description="Confluence page ID"),
+    ],
+    attachment_id: Annotated[
+        str,
+        Field(description="ID of the attachment to update"),
+    ],
+    file_path: Annotated[
+        str,
+        Field(description="Path to the new file"),
+    ],
+    comment: Annotated[
+        str | None,
+        Field(description="(Optional) Comment for the attachment update", default=None),
+    ] = None,
+    minor_edit: Annotated[
+        bool,
+        Field(description="(Optional) Whether this is a minor edit", default=False),
+    ] = False,
+) -> str:
+    """Update an existing attachment on a Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: Confluence page ID.
+        attachment_id: ID of the attachment to update.
+        file_path: Path to the new file.
+        comment: Optional comment for the update.
+        minor_edit: Whether this is a minor edit.
+
+    Returns:
+        JSON string representing the updated attachment object.
+
+    Raises:
+        ValueError: If in read-only mode or Confluence client is unavailable.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    
+    try:
+        result = confluence_fetcher.update_attachment(
+            page_id=page_id,
+            attachment_id=attachment_id,
+            file_path=file_path,
+            comment=comment,
+            minor_edit=minor_edit
+        )
+        return json.dumps(result, indent=2, ensure_ascii=False)
+    except FileNotFoundError as e:
+        logger.error(f"File not found: {e}")
+        return json.dumps(
+            {"error": f"File not found: {str(e)}"},
+            indent=2,
+            ensure_ascii=False,
+        )
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error during attachment update: {e}", exc_info=False)
+        return json.dumps(
+            {
+                "error": "Authentication failed. Please check your credentials.",
+                "details": str(e),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(f"Error updating attachment: {str(e)}")
+        return json.dumps(
+            {"error": f"An error occurred while updating the attachment: {str(e)}"},
+            indent=2,
+            ensure_ascii=False,
+        )
+
+
+@confluence_mcp.tool(tags={"confluence", "read"})
+async def get_attachments(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(description="Confluence page ID"),
+    ],
+    start: Annotated[
+        int,
+        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(description="Maximum number of attachments to return (1-50)", default=25, ge=1, le=50),
+    ] = 25,
+    expand: Annotated[
+        str | None,
+        Field(description="(Optional) Fields to expand in the response (e.g., 'version', 'metadata')", default=None),
+    ] = None,
+) -> str:
+    """Get attachments for a specific Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: Confluence page ID.
+        start: Starting index for pagination.
+        limit: Maximum number of attachments to return.
+        expand: Optional fields to expand.
+
+    Returns:
+        JSON string representing a list of attachment objects.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    
+    try:
+        result = confluence_fetcher.get_attachments(
+            page_id=page_id,
+            start=start,
+            limit=limit,
+            expand=expand
+        )
+        return json.dumps(result, indent=2, ensure_ascii=False)
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error during attachment retrieval: {e}", exc_info=False)
+        return json.dumps(
+            {
+                "error": "Authentication failed. Please check your credentials.",
+                "details": str(e),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(f"Error getting attachments: {str(e)}")
+        return json.dumps(
+            {"error": f"An error occurred while retrieving attachments: {str(e)}"},
+            indent=2,
+            ensure_ascii=False,
+        )
+
+
+@confluence_mcp.tool(tags={"confluence", "read"})
+async def get_attachment(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(description="Confluence page ID"),
+    ],
+    attachment_id: Annotated[
+        str,
+        Field(description="ID of the attachment to retrieve"),
+    ],
+    expand: Annotated[
+        str | None,
+        Field(description="(Optional) Fields to expand in the response (e.g., 'version', 'metadata')", default=None),
+    ] = None,
+) -> str:
+    """Get a specific attachment from a Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: Confluence page ID.
+        attachment_id: ID of the attachment.
+        expand: Optional fields to expand.
+
+    Returns:
+        JSON string representing the attachment object.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    
+    try:
+        result = confluence_fetcher.get_attachment(
+            page_id=page_id,
+            attachment_id=attachment_id,
+            expand=expand
+        )
+        return json.dumps(result, indent=2, ensure_ascii=False)
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error during attachment retrieval: {e}", exc_info=False)
+        return json.dumps(
+            {
+                "error": "Authentication failed. Please check your credentials.",
+                "details": str(e),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(f"Error getting attachment: {str(e)}")
+        return json.dumps(
+            {"error": f"An error occurred while retrieving the attachment: {str(e)}"},
+            indent=2,
+            ensure_ascii=False,
+        )
+
+
+@confluence_mcp.tool(tags={"confluence", "write"})
+@check_write_access
+async def delete_attachment(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(description="Confluence page ID"),
+    ],
+    attachment_id: Annotated[
+        str,
+        Field(description="ID of the attachment to delete"),
+    ],
+) -> str:
+    """Delete an attachment from a Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: Confluence page ID.
+        attachment_id: ID of the attachment to delete.
+
+    Returns:
+        JSON string indicating success or failure.
+
+    Raises:
+        ValueError: If in read-only mode or Confluence client is unavailable.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    
+    try:
+        result = confluence_fetcher.delete_attachment(
+            page_id=page_id,
+            attachment_id=attachment_id
+        )
+        return json.dumps(result, indent=2, ensure_ascii=False)
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error during attachment deletion: {e}", exc_info=False)
+        return json.dumps(
+            {
+                "error": "Authentication failed. Please check your credentials.",
+                "details": str(e),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(f"Error deleting attachment: {str(e)}")
+        return json.dumps(
+            {"error": f"An error occurred while deleting the attachment: {str(e)}"},
+            indent=2,
+            ensure_ascii=False,
+        )
+
+
+@confluence_mcp.tool(tags={"confluence", "read"})
+async def download_attachment(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(description="Confluence page ID"),
+    ],
+    attachment_id: Annotated[
+        str,
+        Field(description="ID of the attachment to download"),
+    ],
+    download_path: Annotated[
+        str | None,
+        Field(description="(Optional) Path to save the downloaded file (defaults to current directory with attachment name)", default=None),
+    ] = None,
+) -> str:
+    """Download an attachment from a Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: Confluence page ID.
+        attachment_id: ID of the attachment to download.
+        download_path: Optional path to save the file.
+
+    Returns:
+        JSON string indicating the download result and file path.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    
+    try:
+        file_path = confluence_fetcher.download_attachment(
+            page_id=page_id,
+            attachment_id=attachment_id,
+            download_path=download_path
+        )
+        result = {
+            "success": True,
+            "message": "Attachment downloaded successfully",
+            "file_path": file_path
+        }
+        return json.dumps(result, indent=2, ensure_ascii=False)
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error during attachment download: {e}", exc_info=False)
+        return json.dumps(
+            {
+                "error": "Authentication failed. Please check your credentials.",
+                "details": str(e),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(f"Error downloading attachment: {str(e)}")
+        return json.dumps(
+            {"error": f"An error occurred while downloading the attachment: {str(e)}"},
+            indent=2,
+            ensure_ascii=False,
+        )
+
+
+@confluence_mcp.tool(tags={"confluence", "read"})
+async def get_attachment_properties(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(description="Confluence page ID"),
+    ],
+    attachment_id: Annotated[
+        str,
+        Field(description="ID of the attachment"),
+    ],
+    start: Annotated[
+        int,
+        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(description="Maximum number of properties to return (1-50)", default=25, ge=1, le=50),
+    ] = 25,
+) -> str:
+    """Get properties for a specific attachment.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: Confluence page ID.
+        attachment_id: ID of the attachment.
+        start: Starting index for pagination.
+        limit: Maximum number of properties to return.
+
+    Returns:
+        JSON string representing a list of attachment property objects.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    
+    try:
+        result = confluence_fetcher.get_attachment_properties(
+            page_id=page_id,
+            attachment_id=attachment_id,
+            start=start,
+            limit=limit
+        )
+        return json.dumps(result, indent=2, ensure_ascii=False)
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error during attachment properties retrieval: {e}", exc_info=False)
+        return json.dumps(
+            {
+                "error": "Authentication failed. Please check your credentials.",
+                "details": str(e),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(f"Error getting attachment properties: {str(e)}")
+        return json.dumps(
+            {"error": f"An error occurred while retrieving attachment properties: {str(e)}"},
+            indent=2,
+            ensure_ascii=False,
+        )
