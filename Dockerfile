@@ -4,6 +4,8 @@ FROM ghcr.io/astral-sh/uv:python3.10-alpine AS uv
 # Install the project into `/app`
 WORKDIR /app
 
+RUN apk update
+
 # Enable bytecode compilation
 ENV UV_COMPILE_BYTECODE=1
 
@@ -36,12 +38,24 @@ RUN find /app/.venv -name '__pycache__' -type d -exec rm -rf {} + && \
 # Final stage
 FROM python:3.10-alpine
 
+# Install Node.js and npm for Mermaid CLI in final stage
+RUN apk add --no-cache nodejs npm
+
+# Install Mermaid CLI globally in final stage
+RUN apk add chromium font-noto-cjk font-noto-emoji \
+    terminus-font ttf-dejavu ttf-freefont ttf-font-awesome \
+    ttf-inconsolata ttf-linux-libertine \
+    && fc-cache -f
+RUN npm install -g @mermaid-js/mermaid-cli
+RUN npm rebuild puppeteer
+
 # Create a non-root user 'app'
 RUN adduser -D -h /home/app -s /bin/sh app
 WORKDIR /app
 USER app
 
 COPY --from=uv --chown=app:app /app/.venv /app/.venv
+COPY --from=uv --chown=app:app /app/puppeteer-config.json /app/puppeteer-config.json
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"

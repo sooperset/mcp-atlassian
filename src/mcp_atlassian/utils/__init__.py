@@ -13,6 +13,9 @@ from .lifecycle import (
 )
 from .logging import setup_logging
 
+# Export Mermaid utilities
+from .mermaid import convert_mermaid_to_png, MermaidError
+
 # Export OAuth utilities
 from .oauth import OAuthConfig, configure_oauth_session
 from .ssl import SSLIgnoreAdapter, configure_ssl_verification
@@ -31,4 +34,6 @@ __all__ = [
     "configure_oauth_session",
     "setup_signal_handlers",
     "ensure_clean_exit",
+    "convert_mermaid_to_png",
+    "MermaidError",
 ]

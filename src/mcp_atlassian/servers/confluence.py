@@ -12,6 +12,7 @@ from mcp_atlassian.servers.dependencies import get_confluence_fetcher
 from mcp_atlassian.utils.decorators import (
     check_write_access,
 )
+from mcp_atlassian.utils.mermaid import convert_mermaid_to_png, MermaidError
 
 logger = logging.getLogger(__name__)
 
@@ -1181,6 +1182,63 @@ async def get_attachment_properties(
         logger.error(f"Error getting attachment properties: {str(e)}")
         return json.dumps(
             {"error": f"An error occurred while retrieving attachment properties: {str(e)}"},
+            indent=2,
+            ensure_ascii=False,
+        )
+
+
+@confluence_mcp.tool(tags={"confluence", "utility"})
+async def mermaid_convert(
+    ctx: Context,
+    mermaid_text: Annotated[
+        str,
+        Field(
+            description="The Mermaid diagram syntax as text to convert to PNG format"
+        ),
+    ],
+) -> str:
+    """Convert Mermaid diagram text to PNG image.
+
+    Args:
+        ctx: The FastMCP context.
+        mermaid_text: The Mermaid diagram syntax as text.
+
+    Returns:
+        JSON string indicating the result and the path to the generated PNG file.
+
+    Raises:
+        ValueError: If Mermaid CLI is not available or conversion fails.
+    """
+    try:
+        result_path = convert_mermaid_to_png(mermaid_text, None)
+        return json.dumps(
+            {
+                "success": True,
+                "message": "Mermaid diagram successfully converted to PNG",
+                "file_path": result_path,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except MermaidError as e:
+        logger.error(f"Mermaid conversion error: {e}")
+        return json.dumps(
+            {
+                "success": False,
+                "error": "Mermaid conversion failed",
+                "details": str(e),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error during Mermaid conversion: {e}")
+        return json.dumps(
+            {
+                "success": False,
+                "error": "An unexpected error occurred during Mermaid conversion",
+                "details": str(e),
+            },
             indent=2,
             ensure_ascii=False,
         )
