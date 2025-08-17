@@ -284,9 +284,7 @@ class PagesMixin(ConfluenceClient):
         try:
             # Convert markdown to Confluence storage format if needed
             storage_body = (
-                self.preprocessor.markdown_to_confluence_storage(
-                    body, enable_heading_anchors=enable_heading_anchors
-                )
+                self.preprocessor.markdown_to_confluence_storage(body)
                 if is_markdown
                 else body
             )
@@ -348,9 +346,7 @@ class PagesMixin(ConfluenceClient):
         try:
             # Convert markdown to Confluence storage format if needed
             storage_body = (
-                self.preprocessor.markdown_to_confluence_storage(
-                    body, enable_heading_anchors=enable_heading_anchors
-                )
+                self.preprocessor.markdown_to_confluence_storage(body)
                 if is_markdown
                 else body
             )

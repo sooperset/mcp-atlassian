@@ -101,10 +101,15 @@ async def confluence_sync_markdown_to_page(
     Returns:
         JSON string with sync operation results
     """
+    # Log function entry with parameters
+    logger.info(f"Starting confluence_sync_markdown_to_page: file_path={file_path}, space_key={space_key}, parent_id={parent_id}, sync_mode={sync_mode}, conflict_strategy={conflict_strategy}, dry_run={dry_run}")
+    
     try:
         # Get the Confluence client
+        logger.debug("Retrieving Confluence client from context")
         confluence_fetcher = await get_confluence_fetcher(ctx)
         confluence_client = ConfluenceClient(confluence_fetcher.config)
+        logger.debug(f"Confluence client initialized with URL: {confluence_fetcher.config.url}")
         
         # Initialize sync engine with default config
         sync_config = {
@@ -113,13 +118,16 @@ async def confluence_sync_markdown_to_page(
             'preserve_hierarchy': True,
             'match_threshold': 85
         }
+        logger.debug(f"Initializing sync engine with config: {sync_config}")
         sync_engine = MarkdownSyncEngine(confluence_client, sync_config)
         
         # Convert string parameters to enums
+        logger.debug(f"Converting parameters to enums: sync_mode={sync_mode}, conflict_strategy={conflict_strategy}")
         sync_mode_enum = SyncMode(sync_mode)
         conflict_strategy_enum = ConflictStrategy(conflict_strategy)
         
         # Perform the sync
+        logger.debug(f"About to call sync_markdown_to_page with parameters: file_path={file_path}, space_key={space_key}, parent_id={parent_id if parent_id else None}, sync_mode={sync_mode_enum}, conflict_strategy={conflict_strategy_enum}, dry_run={dry_run}")
         result = sync_engine.sync_markdown_to_page(
             file_path=file_path,
             space_key=space_key,
@@ -128,6 +136,7 @@ async def confluence_sync_markdown_to_page(
             conflict_strategy=conflict_strategy_enum,
             dry_run=dry_run
         )
+        logger.debug(f"Sync operation completed with result: success={result.success}, message={result.message}, page_id={result.page_id}")
         
         # Format response
         response = {
@@ -145,7 +154,7 @@ async def confluence_sync_markdown_to_page(
         return json.dumps(response, indent=2, ensure_ascii=False)
         
     except Exception as e:
-        logger.error(f"Failed to sync markdown file {file_path}: {e}")
+        logger.error(f"Failed to sync markdown file {file_path}: {e}", exc_info=True)
         error_response = {
             "success": False,
             "message": f"Sync operation failed: {str(e)}",
@@ -343,13 +352,18 @@ async def confluence_sync_markdown_batch(
     Returns:
         JSON string with batch sync operation results
     """
+    # Log function entry with parameters
+    logger.info(f"Starting confluence_sync_markdown_batch: files={files}, space_key={space_key}, sync_mode={sync_mode}, conflict_strategy={conflict_strategy}, preserve_hierarchy={preserve_hierarchy}, dry_run={dry_run}")
+    
     try:
         import glob
         import os
         
         # Get the Confluence client
+        logger.debug("Retrieving Confluence client from context for batch sync")
         confluence_fetcher = await get_confluence_fetcher(ctx)
         confluence_client = ConfluenceClient(confluence_fetcher.config)
+        logger.debug(f"Confluence client initialized with URL: {confluence_fetcher.config.url}")
         
         # Initialize sync engine
         sync_config = {
@@ -358,26 +372,47 @@ async def confluence_sync_markdown_batch(
             'preserve_hierarchy': preserve_hierarchy,
             'match_threshold': 85
         }
+        logger.debug(f"Initializing sync engine with config: {sync_config}")
         sync_engine = MarkdownSyncEngine(confluence_client, sync_config)
         
         # Expand file patterns
+        logger.debug(f"Expanding file patterns: {files}")
         expanded_files = []
         for file_pattern in files:
             if '*' in file_pattern or '?' in file_pattern:
                 # It's a glob pattern
-                matched_files = glob.glob(file_pattern, recursive=True)
+                logger.debug(f"Processing glob pattern: {file_pattern}")
+                # Check if the pattern is absolute, if not make it relative to VS Code workspace
+                if not os.path.isabs(file_pattern):
+                    # Make pattern relative to VS Code workspace directory
+                    absolute_pattern = os.path.join('/Users/tdyar/ws/async_iris', file_pattern)
+                    logger.debug(f"Converting relative pattern {file_pattern} to absolute: {absolute_pattern}")
+                else:
+                    absolute_pattern = file_pattern
+                matched_files = glob.glob(absolute_pattern, recursive=True)
+                logger.debug(f"Glob pattern {absolute_pattern} matched {len(matched_files)} files: {matched_files}")
                 expanded_files.extend(matched_files)
             else:
                 # It's a direct file path
-                if os.path.exists(file_pattern):
-                    expanded_files.append(file_pattern)
+                logger.debug(f"Processing direct file path: {file_pattern}")
+                # Check if the path is absolute, if not make it relative to VS Code workspace
+                if not os.path.isabs(file_pattern):
+                    absolute_file_path = os.path.join('/Users/tdyar/ws/async_iris', file_pattern)
+                    logger.debug(f"Converting relative path {file_pattern} to absolute: {absolute_file_path}")
                 else:
-                    logger.warning(f"File not found: {file_pattern}")
+                    absolute_file_path = file_pattern
+                if os.path.exists(absolute_file_path):
+                    expanded_files.append(absolute_file_path)
+                    logger.debug(f"File exists: {absolute_file_path}")
+                else:
+                    logger.warning(f"File not found: {absolute_file_path}")
         
         # Remove duplicates and sort
         expanded_files = sorted(list(set(expanded_files)))
+        logger.info(f"Final expanded file list: {len(expanded_files)} files - {expanded_files}")
         
         if not expanded_files:
+            logger.warning("No files found matching the provided patterns")
             return json.dumps({
                 "success": False,
                 "message": "No files found matching the provided patterns",
@@ -386,6 +421,7 @@ async def confluence_sync_markdown_batch(
             }, indent=2)
         
         # Convert string parameters to enums
+        logger.debug(f"Converting parameters to enums: sync_mode={sync_mode}, conflict_strategy={conflict_strategy}")
         sync_mode_enum = SyncMode(sync_mode)
         conflict_strategy_enum = ConflictStrategy(conflict_strategy)
         
@@ -396,6 +432,9 @@ async def confluence_sync_markdown_batch(
         
         for file_path in expanded_files:
             try:
+                logger.info(f"Processing file {successful + failed + 1}/{len(expanded_files)}: {file_path}")
+                logger.debug(f"About to call sync_markdown_to_page for file: {file_path} with space_key={space_key}, sync_mode={sync_mode_enum}, conflict_strategy={conflict_strategy_enum}, dry_run={dry_run}")
+                
                 result = sync_engine.sync_markdown_to_page(
                     file_path=file_path,
                     space_key=space_key,
@@ -403,6 +442,8 @@ async def confluence_sync_markdown_batch(
                     conflict_strategy=conflict_strategy_enum,
                     dry_run=dry_run
                 )
+                
+                logger.debug(f"Sync result for {file_path}: success={result.success}, message={result.message}, page_id={result.page_id}")
                 
                 file_result = {
                     "file_path": file_path,
@@ -415,11 +456,13 @@ async def confluence_sync_markdown_batch(
                 
                 if result.success:
                     successful += 1
+                    logger.info(f"Successfully synced file: {file_path} -> page_id: {result.page_id}")
                 else:
                     failed += 1
+                    logger.warning(f"Failed to sync file: {file_path} - {result.message}")
                     
             except Exception as e:
-                logger.error(f"Failed to sync file {file_path}: {e}")
+                logger.error(f"Failed to sync file {file_path}: {e}", exc_info=True)
                 file_result = {
                     "file_path": file_path,
                     "success": False,
@@ -447,7 +490,7 @@ async def confluence_sync_markdown_batch(
         return json.dumps(response, indent=2, ensure_ascii=False)
         
     except Exception as e:
-        logger.error(f"Failed to perform batch sync: {e}")
+        logger.error(f"Failed to perform batch sync: {e}", exc_info=True)
         error_response = {
             "success": False,
             "message": f"Batch sync operation failed: {str(e)}",
