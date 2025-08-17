@@ -17,6 +17,7 @@ from .protocols import (
     EpicOperationsProto,
     FieldsOperationsProto,
     IssueOperationsProto,
+    ProjectsOperationsProto,
     UsersOperationsProto,
 )
 
@@ -29,6 +30,7 @@ class IssuesMixin(
     EpicOperationsProto,
     FieldsOperationsProto,
     IssueOperationsProto,
+    ProjectsOperationsProto,
     UsersOperationsProto,
 ):
     """Mixin for Jira issue operations."""
@@ -61,6 +63,26 @@ class IssuesMixin(
             Exception: If there is an error retrieving the issue
         """
         try:
+            # Obtain the projects filter from the config.
+            # These should NOT be overridden by the request.
+            filter_to_use = self.config.projects_filter
+
+            # Apply projects filter if present
+            if filter_to_use:
+                # Split projects filter by commas and handle possible whitespace
+                projects = [p.strip() for p in filter_to_use.split(",")]
+
+                # Obtain the project key from issue_key
+                issue_key_project = issue_key.split("-")[0]
+
+                if issue_key_project not in projects:
+                    # If the project key not in the filter, return an empty issue
+                    msg = (
+                        "Issue with project prefix "
+                        f"'{issue_key_project}' are restricted by configuration"
+                    )
+                    raise ValueError(msg)
+
             # Determine fields_param: use provided fields or default from constant
             fields_param = fields
             if fields_param is None:
@@ -514,16 +536,35 @@ class IssuesMixin(
             if not issue_type:
                 raise ValueError("Issue type is required")
 
+            # Handle Epic and Subtask issue type names across different languages
+            actual_issue_type = issue_type
+            if self._is_epic_issue_type(issue_type) and issue_type.lower() == "epic":
+                # If the user provided "Epic" but we need to find the localized name
+                epic_type_name = self._find_epic_issue_type_name(project_key)
+                if epic_type_name:
+                    actual_issue_type = epic_type_name
+                    logger.info(
+                        f"Using localized Epic issue type name: {actual_issue_type}"
+                    )
+            elif issue_type.lower() in ["subtask", "sub-task"]:
+                # If the user provided "Subtask" but we need to find the localized name
+                subtask_type_name = self._find_subtask_issue_type_name(project_key)
+                if subtask_type_name:
+                    actual_issue_type = subtask_type_name
+                    logger.info(
+                        f"Using localized Subtask issue type name: {actual_issue_type}"
+                    )
+
             # Prepare fields
             fields: dict[str, Any] = {
                 "project": {"key": project_key},
                 "summary": summary,
-                "issuetype": {"name": issue_type},
+                "issuetype": {"name": actual_issue_type},
             }
 
-            # Add description if provided
+            # Add description if provided (convert from Markdown to Jira format)
             if description:
-                fields["description"] = description
+                fields["description"] = self._markdown_to_jira(description)
 
             # Add assignee if provided
             if assignee:
@@ -554,7 +595,7 @@ class IssuesMixin(
 
             # Prepare epic fields if this is an epic
             # This step now stores epic-specific fields in kwargs for post-creation update
-            if issue_type.lower() == "epic":
+            if self._is_epic_issue_type(issue_type):
                 self._prepare_epic_fields(fields, summary, kwargs)
 
             # Prepare parent field if this is a subtask
@@ -581,7 +622,7 @@ class IssuesMixin(
                 raise ValueError(error_msg)
 
             # For Epics, perform the second step: update Epic-specific fields
-            if issue_type.lower() == "epic":
+            if self._is_epic_issue_type(issue_type):
                 # Check if we have any stored Epic fields to update
                 has_epic_fields = any(k.startswith("__epic_") for k in kwargs)
                 if has_epic_fields:
@@ -610,6 +651,74 @@ class IssuesMixin(
             self._handle_create_issue_error(e, issue_type)
             raise  # Re-raise after logging
 
+    def _is_epic_issue_type(self, issue_type: str) -> bool:
+        """
+        Check if an issue type is an Epic, handling localized names.
+
+        Args:
+            issue_type: The issue type name to check
+
+        Returns:
+            True if the issue type is an Epic, False otherwise
+        """
+        # Common Epic names in different languages
+        epic_names = {
+            "epic",  # English
+            "에픽",  # Korean
+            "エピック",  # Japanese
+            "史诗",  # Chinese (Simplified)
+            "史詩",  # Chinese (Traditional)
+            "épica",  # Spanish/Portuguese
+            "épique",  # French
+            "epik",  # Turkish
+            "эпик",  # Russian
+            "епік",  # Ukrainian
+        }
+
+        return issue_type.lower() in epic_names or "epic" in issue_type.lower()
+
+    def _find_epic_issue_type_name(self, project_key: str) -> str | None:
+        """
+        Find the actual Epic issue type name for a project.
+
+        Args:
+            project_key: The project key
+
+        Returns:
+            The Epic issue type name if found, None otherwise
+        """
+        try:
+            issue_types = self.get_project_issue_types(project_key)
+            for issue_type in issue_types:
+                type_name = issue_type.get("name", "")
+                if self._is_epic_issue_type(type_name):
+                    return type_name
+            return None
+        except Exception as e:
+            logger.warning(f"Could not get issue types for project {project_key}: {e}")
+            return None
+
+    def _find_subtask_issue_type_name(self, project_key: str) -> str | None:
+        """
+        Find the actual Subtask issue type name for a project.
+
+        Args:
+            project_key: The project key
+
+        Returns:
+            The Subtask issue type name if found, None otherwise
+        """
+        try:
+            issue_types = self.get_project_issue_types(project_key)
+            for issue_type in issue_types:
+                # Check the subtask field - this is the most reliable way
+                if issue_type.get("subtask", False):
+                    return issue_type.get("name")
+            return None
+        except Exception as e:
+            logger.warning(f"Could not get issue types for project {project_key}: {e}")
+            return None
+
     def _prepare_epic_fields(
         self, fields: dict[str, Any], summary: str, kwargs: dict[str, Any]
     ) -> None:
@@ -623,11 +732,19 @@ class IssuesMixin(
             summary: The epic summary
             kwargs: Additional fields from the user
         """
-        # Delegate to EpicsMixin.prepare_epic_fields
+        # Extract project_key from fields if available
+        project_key = None
+        if "project" in fields:
+            if isinstance(fields["project"], dict):
+                project_key = fields["project"].get("key")
+            elif isinstance(fields["project"], str):
+                project_key = fields["project"]
+
+        # Delegate to EpicsMixin.prepare_epic_fields with project_key
         # Since JiraFetcher inherits from both IssuesMixin and EpicsMixin,
         # this will correctly use the prepare_epic_fields method from EpicsMixin
         # which implements the two-step Epic creation approach
-        self.prepare_epic_fields(fields, summary, kwargs)
+        self.prepare_epic_fields(fields, summary, kwargs, project_key)
 
     def _prepare_parent_fields(
         self, fields: dict[str, Any], kwargs: dict[str, Any]
@@ -895,6 +1012,12 @@ class IssuesMixin(
             update_fields = fields or {}
             attachments_result = None
 
+            # Convert description from Markdown to Jira format if present
+            if "description" in update_fields:
+                update_fields["description"] = self._markdown_to_jira(
+                    update_fields["description"]
+                )
+
             # Process kwargs
             for key, value in kwargs.items():
                 if key == "status":
@@ -912,12 +1035,18 @@ class IssuesMixin(
                         logger.warning(f"Invalid attachments value: {value}")
 
                 elif key == "assignee":
-                    # Handle assignee updates
-                    try:
-                        account_id = self._get_account_id(value)
-                        self._add_assignee_to_fields(update_fields, account_id)
-                    except ValueError as e:
-                        logger.warning(f"Could not update assignee: {str(e)}")
+                    # Handle assignee updates, allow unassignment with None or empty string
+                    if value is None or value == "":
+                        update_fields["assignee"] = None
+                    else:
+                        try:
+                            account_id = self._get_account_id(value)
+                            self._add_assignee_to_fields(update_fields, account_id)
+                        except ValueError as e:
+                            logger.warning(f"Could not update assignee: {str(e)}")
+                elif key == "description":
+                    # Handle description with markdown conversion
+                    update_fields["description"] = self._markdown_to_jira(value)
                 else:
                     # Process regular fields using _process_additional_fields
                     # Create a temporary dict with just this field
@@ -996,8 +1125,8 @@ class IssuesMixin(
                 raise TypeError(msg)
             return JiraIssue.from_api_response(issue_data)
 
-        # Get available transitions
-        transitions = self.get_available_transitions(issue_key)
+        # Get available transitions (uses TransitionsMixin's normalized implementation)
+        transitions = self.get_available_transitions(issue_key)  # type: ignore[attr-defined]
 
         # Extract status name or ID depending on what we received
         status_name = None
@@ -1033,9 +1162,8 @@ class IssuesMixin(
         # Find the appropriate transition
         transition_id = None
         for transition in transitions:
-            to_status = transition.get("to", {})
-            transition_status_name = to_status.get("name", "")
-            transition_status_id = to_status.get("id")
+            # TransitionsMixin returns normalized transitions with 'to_status' field
+            transition_status_name = transition.get("to_status", "")
 
             # Match by name (case-insensitive)
             if (
@@ -1049,18 +1177,6 @@ class IssuesMixin(
                 )
                 break
 
-            # Match by ID
-            if (
-                status_id
-                and transition_status_id
-                and str(transition_status_id) == str(status_id)
-            ):
-                transition_id = transition.get("id")
-                logger.info(
-                    f"Found transition ID {transition_id} matching status ID '{status_id}'"
-                )
-                break
-
             # Direct transition ID match (if status is actually a transition ID)
             if status_id and str(transition.get("id", "")) == str(status_id):
                 transition_id = transition.get("id")
@@ -1068,12 +1184,23 @@ class IssuesMixin(
                 break
 
         if not transition_id:
-            available_statuses = ", ".join(
-                [t.get("to", {}).get("name", "") for t in transitions]
+            # Build list of available statuses from normalized transitions
+            available_statuses = []
+            for t in transitions:
+                # Include transition name and target status if available
+                transition_name = t.get("name", "")
+                to_status = t.get("to_status", "")
+                if to_status:
+                    available_statuses.append(f"{transition_name} -> {to_status}")
+                elif transition_name:
+                    available_statuses.append(transition_name)
+
+            available_statuses_str = (
+                ", ".join(available_statuses) if available_statuses else "None found"
             )
             error_msg = (
                 f"Could not find transition to status '{status}'. "
-                f"Available statuses: {available_statuses}"
+                f"Available transitions: {available_statuses_str}"
             )
             logger.error(error_msg)
             raise ValueError(error_msg)
@@ -1163,15 +1290,19 @@ class IssuesMixin(
         except Exception as e:
             logger.warning(f"Error processing field for epic data: {str(e)}")
 
-    def get_available_transitions(self, issue_key: str) -> list[dict]:
+    def _get_raw_transitions(self, issue_key: str) -> list[dict]:
         """
-        Get all available transitions for an issue.
+        Get raw transition data from the Jira API.
+
+        This is an internal method that returns unprocessed transition data.
+        For normalized transitions with proper structure, use get_available_transitions()
+        from TransitionsMixin instead.
 
         Args:
             issue_key: The key of the issue
 
         Returns:
-            List of available transitions
+            List of raw transition data from the API
 
         Raises:
             Exception: If there is an error getting transitions

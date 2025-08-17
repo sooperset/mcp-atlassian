@@ -57,19 +57,22 @@ class SearchMixin(JiraClient, IssueOperationsProto):
 
                 # Build the project filter query part
                 if len(projects) == 1:
-                    project_query = f"project = {projects[0]}"
+                    project_query = f'project = "{projects[0]}"'
                 else:
                     quoted_projects = [f'"{p}"' for p in projects]
                     projects_list = ", ".join(quoted_projects)
                     project_query = f"project IN ({projects_list})"
 
                 # Add the project filter to existing query
-                if jql and project_query:
-                    if "project = " not in jql and "project IN" not in jql:
-                        # Only add if not already filtering by project
-                        jql = f"({jql}) AND {project_query}"
-                else:
+                if not jql:
+                    # Empty JQL - just use project filter
                     jql = project_query
+                elif jql.strip().upper().startswith("ORDER BY"):
+                    # JQL starts with ORDER BY - prepend project filter
+                    jql = f"{project_query} {jql}"
+                elif "project = " not in jql and "project IN" not in jql:
+                    # Only add if not already filtering by project
+                    jql = f"({jql}) AND {project_query}"
 
                 logger.info(f"Applied projects filter to query: {jql}")
 

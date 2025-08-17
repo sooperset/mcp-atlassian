@@ -7,7 +7,7 @@ from atlassian import Confluence
 from requests import Session
 
 from ..exceptions import MCPAtlassianAuthenticationError
-from ..utils.logging import log_config_param, mask_sensitive
+from ..utils.logging import get_masked_session_headers, log_config_param, mask_sensitive
 from ..utils.oauth import configure_oauth_session
 from ..utils.ssl import configure_ssl_verification
 from .config import ConfluenceConfig
@@ -49,9 +49,6 @@ class ConfluenceClient:
             # The Confluence API URL with OAuth is different
             api_url = f"https://api.atlassian.com/ex/confluence/{self.config.oauth_config.cloud_id}"
 
-            logger.debug(
-                f"Initializing Confluence client with OAuth. API URL: {api_url}, Session Headers (before API init): {session.headers}"
-            )
             # Initialize Confluence with the session
             self.confluence = Confluence(
                 url=api_url,
@@ -59,12 +56,11 @@ class ConfluenceClient:
                 cloud=True,  # OAuth is only for Cloud
                 verify_ssl=self.config.ssl_verify,
             )
+        elif self.config.auth_type == "pat":
             logger.debug(
-                f"Confluence client _session after init: {self.confluence._session.__dict__}"
-            )
-        elif self.config.auth_type == "token":
-            logger.debug(
-                f"Initializing Confluence client with Token (PAT) auth. URL: {self.config.url}, Token (masked): {mask_sensitive(str(self.config.personal_token))}"
+                f"Initializing Confluence client with Token (PAT) auth. "
+                f"URL: {self.config.url}, "
+                f"Token (masked): {mask_sensitive(str(self.config.personal_token))}"
             )
             self.confluence = Confluence(
                 url=self.config.url,
@@ -74,7 +70,10 @@ class ConfluenceClient:
             )
         else:  # basic auth
             logger.debug(
-                f"Initializing Confluence client with Basic auth. URL: {self.config.url}, Username: {self.config.username}"
+                f"Initializing Confluence client with Basic auth. "
+                f"URL: {self.config.url}, Username: {self.config.username}, "
+                f"API Token present: {bool(self.config.api_token)}, "
+                f"Is Cloud: {self.config.is_cloud}"
             )
             self.confluence = Confluence(
                 url=self.config.url,
@@ -82,6 +81,11 @@ class ConfluenceClient:
                 password=self.config.api_token,  # API token is used as password
                 cloud=self.config.is_cloud,
                 verify_ssl=self.config.ssl_verify,
+            )
+            logger.debug(
+                f"Confluence client initialized. "
+                f"Session headers (Authorization masked): "
+                f"{get_masked_session_headers(dict(self.confluence._session.headers))}"
             )
 
         # Configure SSL verification using the shared utility
@@ -110,12 +114,63 @@ class ConfluenceClient:
             os.environ["NO_PROXY"] = self.config.no_proxy
             log_config_param(logger, "Confluence", "NO_PROXY", self.config.no_proxy)
 
+        # Apply custom headers if configured
+        if self.config.custom_headers:
+            self._apply_custom_headers()
+
         # Import here to avoid circular imports
         from ..preprocessing.confluence import ConfluencePreprocessor
 
-        self.preprocessor = ConfluencePreprocessor(
-            base_url=self.config.url, confluence_client=self.confluence
+        self.preprocessor = ConfluencePreprocessor(base_url=self.config.url)
+
+        # Test authentication during initialization (in debug mode only)
+        if logger.isEnabledFor(logging.DEBUG):
+            try:
+                self._validate_authentication()
+            except MCPAtlassianAuthenticationError:
+                logger.warning(
+                    "Authentication validation failed during client initialization - "
+                    "continuing anyway"
+                )
+
+    def _validate_authentication(self) -> None:
+        """Validate authentication by making a simple API call."""
+        try:
+            logger.debug(
+                "Testing Confluence authentication by making a simple API call..."
+            )
+            # Make a simple API call to test authentication
+            spaces = self.confluence.get_all_spaces(start=0, limit=1)
+            if spaces is not None:
+                logger.info(
+                    f"Confluence authentication successful. "
+                    f"API call returned {len(spaces.get('results', []))} spaces."
+                )
+            else:
+                logger.warning(
+                    "Confluence authentication test returned None - "
+                    "this may indicate an issue"
+                )
+        except Exception as e:
+            error_msg = f"Confluence authentication validation failed: {e}"
+            logger.error(error_msg)
+            logger.debug(
+                f"Authentication headers during failure: "
+                f"{get_masked_session_headers(dict(self.confluence._session.headers))}"
+            )
+            raise MCPAtlassianAuthenticationError(error_msg) from e
+
+    def _apply_custom_headers(self) -> None:
+        """Apply custom headers to the Confluence session."""
+        if not self.config.custom_headers:
+            return
+
+        logger.debug(
+            f"Applying {len(self.config.custom_headers)} custom headers to Confluence session"
         )
+        for header_name, header_value in self.config.custom_headers.items():
+            self.confluence._session.headers[header_name] = header_value
+            logger.debug(f"Applied custom header: {header_name}")
 
     def _process_html_content(
         self, html_content: str, space_key: str
@@ -129,4 +184,6 @@ class ConfluenceClient:
         Returns:
             Tuple of (processed_html, processed_markdown)
         """
-        return self.preprocessor.process_html_content(html_content, space_key)
+        return self.preprocessor.process_html_content(
+            html_content, space_key, self.confluence
+        )

@@ -23,24 +23,22 @@ def preprocessor_with_jira():
 
 @pytest.fixture
 def preprocessor_with_confluence():
-    return ConfluencePreprocessor(
-        base_url="https://example.atlassian.net",
-        confluence_client=MockConfluenceClient(),
-    )
+    return ConfluencePreprocessor(base_url="https://example.atlassian.net")
 
 
 def test_init():
     """Test JiraPreprocessor initialization."""
     processor = JiraPreprocessor("https://example.atlassian.net/")
     assert processor.base_url == "https://example.atlassian.net"
-    assert processor.confluence_client is None
 
 
 def test_process_confluence_page_content(preprocessor_with_confluence):
     """Test processing Confluence page content using mock data."""
     html_content = MOCK_PAGE_RESPONSE["body"]["storage"]["value"]
     processed_html, processed_markdown = (
-        preprocessor_with_confluence.process_html_content(html_content)
+        preprocessor_with_confluence.process_html_content(
+            html_content, confluence_client=MockConfluenceClient()
+        )
     )
 
     # Verify user mention is processed
@@ -56,7 +54,9 @@ def test_process_confluence_comment_content(preprocessor_with_confluence):
     """Test processing Confluence comment content using mock data."""
     html_content = MOCK_COMMENTS_RESPONSE["results"][0]["body"]["view"]["value"]
     processed_html, processed_markdown = (
-        preprocessor_with_confluence.process_html_content(html_content)
+        preprocessor_with_confluence.process_html_content(
+            html_content, confluence_client=MockConfluenceClient()
+        )
     )
 
     assert "Comment content here" in processed_markdown
@@ -80,7 +80,9 @@ def test_process_html_content_basic(preprocessor_with_confluence):
     """Test basic HTML content processing."""
     html = "<p>Simple text</p>"
     processed_html, processed_markdown = (
-        preprocessor_with_confluence.process_html_content(html)
+        preprocessor_with_confluence.process_html_content(
+            html, confluence_client=MockConfluenceClient()
+        )
     )
 
     assert processed_html == "<p>Simple text</p>"
@@ -96,7 +98,9 @@ def test_process_html_content_with_user_mentions(preprocessor_with_confluence):
     <p>Some text</p>
     """
     processed_html, processed_markdown = (
-        preprocessor_with_confluence.process_html_content(html)
+        preprocessor_with_confluence.process_html_content(
+            html, confluence_client=MockConfluenceClient()
+        )
     )
 
     assert "@Test User 123456" in processed_html
@@ -157,7 +161,9 @@ def test_clean_jira_text_combined(preprocessor_with_jira):
 def test_process_html_content_error_handling(preprocessor_with_confluence):
     """Test error handling in process_html_content."""
     with pytest.raises(Exception):
-        preprocessor_with_confluence.process_html_content(None)
+        preprocessor_with_confluence.process_html_content(
+            None, confluence_client=MockConfluenceClient()
+        )
 
 
 def test_clean_jira_text_with_invalid_html(preprocessor_with_jira):
@@ -314,7 +320,9 @@ def test_process_confluence_profile_macro(preprocessor_with_confluence):
     """Test processing Confluence User Profile Macro in page content."""
     html_content = MOCK_PAGE_RESPONSE["body"]["storage"]["value"]
     processed_html, processed_markdown = (
-        preprocessor_with_confluence.process_html_content(html_content)
+        preprocessor_with_confluence.process_html_content(
+            html_content, confluence_client=MockConfluenceClient()
+        )
     )
     # Should replace macro with @Test User user123
     assert "@Test User user123" in processed_html
@@ -326,7 +334,9 @@ def test_process_confluence_profile_macro_malformed(preprocessor_with_confluence
     # Macro missing ac:parameter
     html_missing_param = '<ac:structured-macro ac:name="profile"></ac:structured-macro>'
     processed_html, processed_markdown = (
-        preprocessor_with_confluence.process_html_content(html_missing_param)
+        preprocessor_with_confluence.process_html_content(
+            html_missing_param, confluence_client=MockConfluenceClient()
+        )
     )
     assert "[User Profile Macro (Malformed)]" in processed_html
     assert "[User Profile Macro (Malformed)]" in processed_markdown
@@ -334,7 +344,9 @@ def test_process_confluence_profile_macro_malformed(preprocessor_with_confluence
     # Macro with ac:parameter but missing ri:user
     html_missing_riuser = '<ac:structured-macro ac:name="profile"><ac:parameter ac:name="user"></ac:parameter></ac:structured-macro>'
     processed_html, processed_markdown = (
-        preprocessor_with_confluence.process_html_content(html_missing_riuser)
+        preprocessor_with_confluence.process_html_content(
+            html_missing_riuser, confluence_client=MockConfluenceClient()
+        )
     )
     assert "[User Profile Macro (Malformed)]" in processed_html
     assert "[User Profile Macro (Malformed)]" in processed_markdown
@@ -351,10 +363,10 @@ def test_process_confluence_profile_macro_fallback():
         "</ac:parameter>"
         "</ac:structured-macro>"
     )
-    preprocessor = ConfluencePreprocessor(
-        base_url="https://example.atlassian.net", confluence_client=None
+    preprocessor = ConfluencePreprocessor(base_url="https://example.atlassian.net")
+    processed_html, processed_markdown = preprocessor.process_html_content(
+        html, confluence_client=None
     )
-    processed_html, processed_markdown = preprocessor.process_html_content(html)
     assert "[User Profile: user999]" in processed_html
     assert "[User Profile: user999]" in processed_markdown
 
@@ -394,11 +406,10 @@ def test_process_user_profile_macro_multiple():
                 else {}
             )
 
-    preprocessor = ConfluencePreprocessor(
-        base_url="https://example.atlassian.net",
-        confluence_client=CustomMockConfluenceClient(),
+    preprocessor = ConfluencePreprocessor(base_url="https://example.atlassian.net")
+    processed_html, processed_markdown = preprocessor.process_html_content(
+        html, confluence_client=CustomMockConfluenceClient()
     )
-    processed_html, processed_markdown = preprocessor.process_html_content(html)
     assert "@Test User One" in processed_html
     assert "@Test User Two" in processed_html
     assert "@Test User One" in processed_markdown

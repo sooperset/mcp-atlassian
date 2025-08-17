@@ -4,7 +4,6 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any
 
 from md2conf.converter import (
     ConfluenceConverterOptions,
@@ -22,15 +21,14 @@ logger = logging.getLogger("mcp-atlassian")
 class ConfluencePreprocessor(BasePreprocessor):
     """Handles text preprocessing for Confluence content."""
 
-    def __init__(self, base_url: str, **kwargs: Any) -> None:
+    def __init__(self, base_url: str) -> None:
         """
         Initialize the Confluence text preprocessor.
 
         Args:
             base_url: Base URL for Confluence API
-            **kwargs: Additional arguments for the base class
         """
-        super().__init__(base_url=base_url, **kwargs)
+        super().__init__(base_url=base_url)
 
     def markdown_to_confluence_storage(self, markdown_content: str) -> str:
         """

@@ -10,8 +10,10 @@ import requests
 from mcp_atlassian.utils.oauth import (
     KEYRING_SERVICE_NAME,
     TOKEN_EXPIRY_MARGIN,
+    BYOAccessTokenOAuthConfig,
     OAuthConfig,
     configure_oauth_session,
+    get_oauth_config_from_env,
 )
 
 
@@ -589,29 +591,247 @@ class TestOAuthConfig:
         # Should return None if required variables are missing
         assert config is None
 
+    @patch("os.getenv")
+    def test_from_env_minimal_oauth_enabled(self, mock_getenv):
+        """Test from_env with minimal OAuth configuration (ATLASSIAN_OAUTH_ENABLE=true)."""
+        # Mock environment variables - only ATLASSIAN_OAUTH_ENABLE is set
+        mock_getenv.side_effect = lambda key, default=None: {
+            "ATLASSIAN_OAUTH_ENABLE": "true",
+            "ATLASSIAN_OAUTH_CLOUD_ID": "cloud-id",  # Optional fallback
+        }.get(key, default)
 
-def test_configure_oauth_session_success():
-    """Test successful configure_oauth_session."""
+        config = OAuthConfig.from_env()
+
+        # Should return minimal config when OAuth is enabled
+        assert config is not None
+        assert config.client_id == ""
+        assert config.client_secret == ""
+        assert config.redirect_uri == ""
+        assert config.scope == ""
+        assert config.cloud_id == "cloud-id"
+
+    @patch("os.getenv")
+    def test_from_env_minimal_oauth_disabled(self, mock_getenv):
+        """Test from_env with minimal OAuth configuration disabled."""
+        # Mock environment variables - ATLASSIAN_OAUTH_ENABLE is false
+        mock_getenv.side_effect = lambda key, default=None: {
+            "ATLASSIAN_OAUTH_ENABLE": "false",
+        }.get(key, default)
+
+        config = OAuthConfig.from_env()
+
+        # Should return None when OAuth is disabled
+        assert config is None
+
+    @patch("os.getenv")
+    def test_from_env_full_oauth_takes_precedence(self, mock_getenv):
+        """Test that full OAuth configuration takes precedence over minimal config."""
+        # Mock environment variables - both full OAuth and ATLASSIAN_OAUTH_ENABLE
+        mock_getenv.side_effect = lambda key, default=None: {
+            "ATLASSIAN_OAUTH_ENABLE": "true",
+            "ATLASSIAN_OAUTH_CLIENT_ID": "full-client-id",
+            "ATLASSIAN_OAUTH_CLIENT_SECRET": "full-client-secret",
+            "ATLASSIAN_OAUTH_REDIRECT_URI": "https://example.com/callback",
+            "ATLASSIAN_OAUTH_SCOPE": "read:jira-work",
+            "ATLASSIAN_OAUTH_CLOUD_ID": "full-cloud-id",
+        }.get(key, default)
+
+        # Mock token loading
+        with patch.object(OAuthConfig, "load_tokens", return_value={}):
+            config = OAuthConfig.from_env()
+
+            # Should return full config, not minimal
+            assert config is not None
+            assert config.client_id == "full-client-id"
+            assert config.client_secret == "full-client-secret"
+            assert config.redirect_uri == "https://example.com/callback"
+            assert config.scope == "read:jira-work"
+            assert config.cloud_id == "full-cloud-id"
+
+
+class TestBYOAccessTokenOAuthConfig:
+    """Tests for the BYOAccessTokenOAuthConfig class."""
+
+    def test_init_with_required_params(self):
+        """Test initialization with required parameters."""
+        config = BYOAccessTokenOAuthConfig(
+            cloud_id="byo-cloud-id", access_token="byo-access-token"
+        )
+        assert config.cloud_id == "byo-cloud-id"
+        assert config.access_token == "byo-access-token"
+        assert config.refresh_token is None
+        assert config.expires_at is None
+
+    @patch("os.getenv")
+    def test_from_env_success(self, mock_getenv):
+        """Test from_env success for BYOAccessTokenOAuthConfig."""
+        mock_getenv.side_effect = lambda key, default=None: {
+            "ATLASSIAN_OAUTH_CLOUD_ID": "env-byo-cloud-id",
+            "ATLASSIAN_OAUTH_ACCESS_TOKEN": "env-byo-access-token",
+        }.get(key, default)
+
+        config = BYOAccessTokenOAuthConfig.from_env()
+
+        assert config is not None
+        assert config.cloud_id == "env-byo-cloud-id"
+        assert config.access_token == "env-byo-access-token"
+        mock_getenv.assert_any_call("ATLASSIAN_OAUTH_CLOUD_ID")
+        mock_getenv.assert_any_call("ATLASSIAN_OAUTH_ACCESS_TOKEN")
+
+    @patch("os.getenv")
+    def test_from_env_missing_cloud_id(self, mock_getenv):
+        """Test from_env with missing cloud_id for BYOAccessTokenOAuthConfig."""
+        mock_getenv.side_effect = lambda key, default=None: {
+            "ATLASSIAN_OAUTH_ACCESS_TOKEN": "env-byo-access-token",
+        }.get(key, default)
+
+        config = BYOAccessTokenOAuthConfig.from_env()
+        assert config is None
+
+    @patch("os.getenv")
+    def test_from_env_missing_access_token(self, mock_getenv):
+        """Test from_env with missing access_token for BYOAccessTokenOAuthConfig."""
+        mock_getenv.side_effect = lambda key, default=None: {
+            "ATLASSIAN_OAUTH_CLOUD_ID": "env-byo-cloud-id",
+        }.get(key, default)
+
+        config = BYOAccessTokenOAuthConfig.from_env()
+        assert config is None
+
+    @patch("os.getenv")
+    def test_from_env_missing_both(self, mock_getenv):
+        """Test from_env with both missing for BYOAccessTokenOAuthConfig."""
+        mock_getenv.return_value = None  # Covers all calls returning None
+        config = BYOAccessTokenOAuthConfig.from_env()
+        assert config is None
+
+
+@patch("mcp_atlassian.utils.oauth.BYOAccessTokenOAuthConfig.from_env")
+@patch("mcp_atlassian.utils.oauth.OAuthConfig.from_env")
+def test_get_oauth_config_prefers_byo_when_both_present(
+    mock_oauth_from_env, mock_byo_from_env
+):
+    """Test get_oauth_config_from_env prefers BYOAccessTokenOAuthConfig when both are configured."""
+    mock_byo_config = MagicMock(spec=BYOAccessTokenOAuthConfig)
+    mock_byo_from_env.return_value = mock_byo_config
+    mock_oauth_config = MagicMock(spec=OAuthConfig)
+    mock_oauth_from_env.return_value = mock_oauth_config  # This shouldn't be returned
+
+    result = get_oauth_config_from_env()
+    assert result == mock_byo_config
+    mock_byo_from_env.assert_called_once()
+    mock_oauth_from_env.assert_not_called()  # Standard OAuth should not be called if BYO is found
+
+
+@patch("mcp_atlassian.utils.oauth.BYOAccessTokenOAuthConfig.from_env")
+@patch("mcp_atlassian.utils.oauth.OAuthConfig.from_env")
+def test_get_oauth_config_falls_back_to_standard_oauth_config(
+    mock_oauth_from_env, mock_byo_from_env
+):
+    """Test get_oauth_config_from_env falls back to OAuthConfig if BYO is not configured."""
+    mock_byo_from_env.return_value = None  # BYO not configured
+    mock_oauth_config = MagicMock(spec=OAuthConfig)
+    mock_oauth_from_env.return_value = mock_oauth_config
+
+    result = get_oauth_config_from_env()
+    assert result == mock_oauth_config  # Should be standard OAuth
+    mock_byo_from_env.assert_called_once()
+    mock_oauth_from_env.assert_called_once()
+
+
+@patch("mcp_atlassian.utils.oauth.BYOAccessTokenOAuthConfig.from_env")
+@patch("mcp_atlassian.utils.oauth.OAuthConfig.from_env")
+def test_get_oauth_config_returns_none_if_both_unavailable(
+    mock_oauth_from_env, mock_byo_from_env
+):
+    """Test get_oauth_config_from_env returns None if neither is available."""
+    mock_oauth_from_env.return_value = None
+    mock_byo_from_env.return_value = None
+
+    result = get_oauth_config_from_env()
+    assert result is None
+    mock_oauth_from_env.assert_called_once()
+    mock_byo_from_env.assert_called_once()
+
+
+def test_configure_oauth_session_success_with_oauth_config():
+    """Test successful configure_oauth_session with OAuthConfig."""
     session = requests.Session()
-    oauth_config = MagicMock()
-    oauth_config.ensure_valid_token.return_value = True
+    # Explicitly use OAuthConfig and mock its specific methods/attributes
+    oauth_config = MagicMock(spec=OAuthConfig)
     oauth_config.access_token = "test-access-token"
+    oauth_config.refresh_token = "test-refresh-token"  # Crucial for this path
+    oauth_config.ensure_valid_token.return_value = True
 
     result = configure_oauth_session(session, oauth_config)
 
-    # Check result
     assert result is True
     assert session.headers["Authorization"] == "Bearer test-access-token"
+    oauth_config.ensure_valid_token.assert_called_once()
 
 
-def test_configure_oauth_session_failure():
-    """Test failed configure_oauth_session."""
+def test_configure_oauth_session_failure_with_oauth_config():
+    """Test failed configure_oauth_session with OAuthConfig (token refresh fails)."""
     session = requests.Session()
-    oauth_config = MagicMock()
-    oauth_config.ensure_valid_token.return_value = False
+    oauth_config = MagicMock(spec=OAuthConfig)
+    oauth_config.access_token = None  # Start with no access token initially
+    oauth_config.refresh_token = "test-refresh-token"  # Has a refresh token
+    oauth_config.ensure_valid_token.return_value = False  # Refresh fails
 
     result = configure_oauth_session(session, oauth_config)
 
-    # Check result
     assert result is False
     assert "Authorization" not in session.headers
+    oauth_config.ensure_valid_token.assert_called_once()
+
+
+def test_configure_oauth_session_success_with_byo_config():
+    """Test successful configure_oauth_session with BYOAccessTokenOAuthConfig."""
+    session = requests.Session()
+    byo_config = BYOAccessTokenOAuthConfig(
+        cloud_id="byo-cloud-id", access_token="byo-valid-token"
+    )
+    # Ensure ensure_valid_token is not called on BYOAccessTokenOAuthConfig if it were a MagicMock
+    # by not creating it as a MagicMock or by not setting ensure_valid_token if it were.
+
+    result = configure_oauth_session(session, byo_config)
+
+    assert result is True
+    assert session.headers["Authorization"] == "Bearer byo-valid-token"
+
+
+@patch("mcp_atlassian.utils.oauth.logger")
+def test_configure_oauth_session_byo_config_empty_token_logs_error(mock_logger):
+    """Test configure_oauth_session with BYO config and empty token logs error."""
+    session = requests.Session()
+    # BYO config with an effectively invalid (empty) access token
+    byo_config = BYOAccessTokenOAuthConfig(cloud_id="byo-cloud-id", access_token="")
+
+    result = configure_oauth_session(session, byo_config)
+
+    assert result is False
+    assert "Authorization" not in session.headers
+    mock_logger.error.assert_called_once_with(
+        "configure_oauth_session: oauth access token configuration provided as empty string."
+    )
+
+
+@patch("mcp_atlassian.utils.oauth.logger")
+def test_configure_oauth_session_byo_config_no_refresh_token_direct_use(mock_logger):
+    """Test BYO config (with access_token, no refresh_token) uses token directly."""
+    session = requests.Session()
+    oauth_config = BYOAccessTokenOAuthConfig(
+        cloud_id="test_cloud_id", access_token="my_access_token"
+    )
+
+    # We don't need to mock ensure_valid_token because it shouldn't be called.
+    # The actual BYOAccessTokenOAuthConfig instance does not have this method.
+
+    result = configure_oauth_session(session, oauth_config)
+
+    assert result is True
+    assert session.headers["Authorization"] == "Bearer my_access_token"
+    # Check that the specific log message for direct use is present
+    mock_logger.info.assert_any_call(
+        "configure_oauth_session: Using provided OAuth access token directly (no refresh_token)."
+    )
