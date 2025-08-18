@@ -22,6 +22,8 @@ class ConfluenceUser(ApiModel):
     """
 
     account_id: str | None = None
+    username: str | None = None
+    user_key: str | None = None
     display_name: str = UNASSIGNED
     email: str | None = None
     profile_picture: str | None = None
@@ -63,6 +65,8 @@ class ConfluenceUser(ApiModel):
 
         return cls(
             account_id=data.get("accountId"),
+            username=data.get("username"),
+            user_key=data.get("userKey"),
             display_name=data.get("displayName", UNASSIGNED),
             email=data.get("email"),
             profile_picture=profile_pic,

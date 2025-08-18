@@ -13,6 +13,7 @@ from starlette.requests import Request
 
 from src.mcp_atlassian.confluence import ConfluenceFetcher
 from src.mcp_atlassian.confluence.config import ConfluenceConfig
+from src.mcp_atlassian.models.confluence.common import ConfluenceUser
 from src.mcp_atlassian.models.confluence.page import ConfluencePage
 from src.mcp_atlassian.servers.context import MainAppContext
 from src.mcp_atlassian.servers.main import AtlassianMCP
@@ -120,13 +121,13 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     from src.mcp_atlassian.servers.confluence import (
         add_comment,
         add_label,
-        confluence_get_user_details,
         create_page,
         delete_page,
         get_comments,
         get_labels,
         get_page,
         get_page_children,
+        get_user_details,
         search,
         search_user,
         update_page,
@@ -160,7 +161,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.tool()(update_page)
     confluence_sub_mcp.tool()(delete_page)
     confluence_sub_mcp.tool()(search_user)
-    confluence_sub_mcp.tool()(confluence_get_user_details)
+    confluence_sub_mcp.tool()(get_user_details)
 
     test_mcp.mount("confluence", confluence_sub_mcp)
 
@@ -514,85 +515,69 @@ async def test_update_page_with_numeric_parent_id(client, mock_confluence_fetche
 
 
 @pytest.mark.anyio
-async def test_confluence_get_user_details_invalid_userkey(
-    client, mock_confluence_fetcher
-):
-    """Test the confluence_get_user_details tool with an invalid userkey."""
-    mock_confluence_fetcher.get_user_details_by_userkey.side_effect = Exception(
-        "User not found"
+async def test_get_user_details_by_userkey(client, mock_confluence_fetcher):
+    """Test the confluence_get_user_details tool with userkey."""
+    mock_user_details = {"displayName": "Test User", "userKey": "testuser-key-12345"}
+    mock_confluence_fetcher.get_user_details.return_value = (
+        ConfluenceUser.from_api_response(mock_user_details)
     )
 
     response = await client.call_tool(
-        "confluence_confluence_get_user_details",
-        {"identifier": "invalid-userkey", "identifier_type": "userkey"},
+        "confluence_get_user_details",
+        {"identifier": "testuser-key-12345", "identifier_type": "userKey"},
+    )
+
+    result_data = json.loads(response[0].text)
+    assert result_data["display_name"] == "Test User"
+
+
+@pytest.mark.anyio
+async def test_get_user_details_invalid_userkey(client, mock_confluence_fetcher):
+    """Test the get_user_details tool with an invalid userkey."""
+    mock_confluence_fetcher.get_user_details.return_value = None
+
+    response = await client.call_tool(
+        "confluence_get_user_details",
+        {"identifier": "invalid-userkey", "identifier_type": "userKey"},
     )
 
     result_data = json.loads(response[0].text)
     assert result_data["success"] is False
-    assert "User not found" in result_data["error"]
+    assert "User not found" in result_data["message"]
 
 
 @pytest.mark.anyio
-async def test_confluence_get_user_details_by_userkey(client, mock_confluence_fetcher):
-    """Test the confluence_get_user_details tool with userkey."""
-    mock_user_details = {"displayName": "Test User", "userKey": "testuser-key-12345"}
-    mock_confluence_fetcher.get_user_details_by_userkey.return_value = mock_user_details
-
-    response = await client.call_tool(
-        "confluence_confluence_get_user_details",
-        {"identifier": "testuser-key-12345", "identifier_type": "userkey"},
-    )
-
-    mock_confluence_fetcher.get_user_details_by_userkey.assert_called_once_with(
-        "testuser-key-12345"
-    )
-
-    result_data = json.loads(response[0].text)
-    assert result_data["displayName"] == "Test User"
-
-
-@pytest.mark.anyio
-async def test_confluence_get_user_details_by_account_id(
-    client, mock_confluence_fetcher
-):
+async def test_get_user_details_by_account_id(client, mock_confluence_fetcher):
     """Test the confluence_get_user_details tool with accountId."""
     mock_user_details = {"displayName": "Test User", "accountId": "12345"}
-    mock_confluence_fetcher.get_user_details_by_accountid.return_value = (
-        mock_user_details
+    mock_confluence_fetcher.get_user_details.return_value = (
+        ConfluenceUser.from_api_response(mock_user_details)
     )
 
     response = await client.call_tool(
-        "confluence_confluence_get_user_details",
+        "confluence_get_user_details",
         {"identifier": "12345", "identifier_type": "accountId"},
     )
 
-    mock_confluence_fetcher.get_user_details_by_accountid.assert_called_once_with(
-        "12345"
-    )
-
     result_data = json.loads(response[0].text)
-    assert result_data["displayName"] == "Test User"
+    assert result_data["display_name"] == "Test User"
 
 
 @pytest.mark.anyio
-async def test_confluence_get_user_details_by_username(client, mock_confluence_fetcher):
+async def test_get_user_details_by_username(client, mock_confluence_fetcher):
     """Test the confluence_get_user_details tool with username."""
     mock_user_details = {"displayName": "Test User", "name": "testuser"}
-    mock_confluence_fetcher.get_user_details_by_username.return_value = (
-        mock_user_details
+    mock_confluence_fetcher.get_user_details.return_value = (
+        ConfluenceUser.from_api_response(mock_user_details)
     )
 
     response = await client.call_tool(
-        "confluence_confluence_get_user_details",
+        "confluence_get_user_details",
         {"identifier": "testuser", "identifier_type": "username"},
     )
 
-    mock_confluence_fetcher.get_user_details_by_username.assert_called_once_with(
-        "testuser"
-    )
-
     result_data = json.loads(response[0].text)
-    assert result_data["displayName"] == "Test User"
+    assert result_data["display_name"] == "Test User"
 
 
 @pytest.mark.anyio

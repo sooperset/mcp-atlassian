@@ -6,6 +6,7 @@ from typing import Any
 from requests.exceptions import HTTPError
 
 from ..exceptions import MCPAtlassianAuthenticationError
+from ..models.confluence.common import ConfluenceUser
 from .client import ConfluenceClient
 
 logger = logging.getLogger("mcp-atlassian")
@@ -118,3 +119,35 @@ class UsersMixin(ConfluenceClient):
             raise MCPAtlassianAuthenticationError(
                 f"Confluence token validation failed: {e}"
             ) from e
+
+    def get_user_details(
+        self, identifier: str, identifier_type: str = "accountId"
+    ) -> ConfluenceUser | None:
+        """
+        Get user details by identifier (accountId, username, or userKey).
+
+        Args:
+            identifier: The identifier value.
+            identifier_type: The type of identifier ('accountId', 'username', 'userKey').
+
+        Returns:
+            ConfluenceUser instance if found, else None.
+        """
+
+        try:
+            if identifier_type == "accountId":
+                data = self.get_user_details_by_accountid(identifier)
+            elif identifier_type == "username":
+                data = self.get_user_details_by_username(identifier)
+            elif identifier_type == "userKey":
+                data = self.get_user_details_by_userkey(identifier)
+            else:
+                raise ValueError(f"Unsupported identifier_type: {identifier_type}")
+            if data:
+                return ConfluenceUser.from_api_response(data)
+            return None
+        except Exception as e:
+            logger.error(
+                f"Error getting user details for {identifier_type}={identifier}: {e}"
+            )
+            return None

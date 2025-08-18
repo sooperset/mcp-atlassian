@@ -747,7 +747,7 @@ async def search_user(
 
 
 @confluence_mcp.tool(tags={"confluence", "read"})
-async def confluence_get_user_details(
+async def get_user_details(
     ctx: Context,
     identifier: Annotated[
         str,
@@ -758,7 +758,7 @@ async def confluence_get_user_details(
     identifier_type: Annotated[
         str,
         Field(
-            description="The type of the identifier. Can be 'accountId', 'username' or 'userkey'.",
+            description="The type of the identifier. Can be 'accountId', 'username' or 'userKey'.",
             default="accountId",
         ),
     ],
@@ -775,15 +775,17 @@ async def confluence_get_user_details(
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
     try:
-        if identifier_type == "accountId":
-            user_details = confluence_fetcher.get_user_details_by_accountid(identifier)
-        elif identifier_type == "username":
-            user_details = confluence_fetcher.get_user_details_by_username(identifier)
-        elif identifier_type == "userkey":
-            user_details = confluence_fetcher.get_user_details_by_userkey(identifier)
+        user_details = confluence_fetcher.get_user_details(identifier, identifier_type)
+        if user_details:
+            return json.dumps(
+                user_details.to_simplified_dict(), indent=2, ensure_ascii=False
+            )
         else:
-            raise ValueError(f"Unsupported identifier_type: {identifier_type}")
-        return json.dumps(user_details, indent=2, ensure_ascii=False)
+            response = {
+                "success": False,
+                "message": f"User not found for {identifier_type}={identifier}",
+            }
+            return json.dumps(response, indent=2, ensure_ascii=False)
     except Exception as e:
         logger.error(
             f"Error getting user details for identifier {identifier}: {str(e)}"
