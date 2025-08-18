@@ -737,6 +737,7 @@ Here's a complete example of setting up multi-user authentication with streamabl
 - `confluence_get_page`: Get content of a specific page
 - `confluence_create_page`: Create a new page
 - `confluence_update_page`: Update an existing page
+- `confluence_get_user_details`: Gets information about a conflunce user
 
 <details> <summary>View All Tools</summary>
 
@@ -748,7 +749,7 @@ Here's a complete example of setting up multi-user authentication with streamabl
 |           | `jira_get_project_issues`           | `confluence_get_comments`      |
 |           | `jira_get_worklog`                  | `confluence_get_labels`        |
 |           | `jira_get_transitions`              | `confluence_search_user`       |
-|           | `jira_search_fields`                |                                |
+|           | `jira_search_fields`                | `confluence_get_user_details`                                 |
 |           | `jira_get_agile_boards`             |                                |
 |           | `jira_get_board_issues`             |                                |
 |           | `jira_get_sprints_from_board`       |                                |
