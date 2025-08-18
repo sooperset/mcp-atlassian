@@ -744,3 +744,53 @@ async def search_user(
             indent=2,
             ensure_ascii=False,
         )
+
+
+@confluence_mcp.tool(tags={"confluence", "read"})
+async def confluence_get_user_details(
+    ctx: Context,
+    identifier: Annotated[
+        str,
+        Field(
+            description="The identifier of the user. This can be either an accountId, a username or a userkey."
+        ),
+    ],
+    identifier_type: Annotated[
+        str,
+        Field(
+            description="The type of the identifier. Can be 'accountId', 'username' or 'userkey'.",
+            default="accountId",
+        ),
+    ],
+) -> str:
+    """Get user details by account ID, username or userkey.
+
+    Args:
+        ctx: The FastMCP context.
+        identifier: The identifier of the user.
+        identifier_type: The type of the identifier.
+
+    Returns:
+        JSON string representing the user details.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        if identifier_type == "accountId":
+            user_details = confluence_fetcher.get_user_details_by_accountid(identifier)
+        elif identifier_type == "username":
+            user_details = confluence_fetcher.get_user_details_by_username(identifier)
+        elif identifier_type == "userkey":
+            user_details = confluence_fetcher.get_user_details_by_userkey(identifier)
+        else:
+            raise ValueError(f"Unsupported identifier_type: {identifier_type}")
+        return json.dumps(user_details, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(
+            f"Error getting user details for identifier {identifier}: {str(e)}"
+        )
+        response = {
+            "success": False,
+            "message": f"Error getting user details for identifier {identifier}",
+            "error": str(e),
+        }
+        return json.dumps(response, indent=2, ensure_ascii=False)

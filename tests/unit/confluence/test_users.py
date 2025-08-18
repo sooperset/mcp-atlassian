@@ -394,6 +394,62 @@ class TestUsersMixin:
         )
         assert result == expected_data
 
+    def test_get_user_details_by_userkey_success(
+        self, users_mixin, mock_user_data_server
+    ):
+        """Test successfully getting user details by userkey."""
+        # Arrange
+        userkey = "testuser-key-12345"
+        users_mixin.confluence.get_user_details_by_userkey.return_value = (
+            mock_user_data_server
+        )
+
+        # Act
+        result = users_mixin.get_user_details_by_userkey(userkey)
+
+        # Assert
+        users_mixin.confluence.get_user_details_by_userkey.assert_called_once_with(
+            userkey, None
+        )
+        assert result == mock_user_data_server
+        assert result["userKey"] == userkey
+        assert result["displayName"] == "Test User"
+
+    def test_get_user_details_by_userkey_invalid_userkey(self, users_mixin):
+        """Test getting user details with invalid userkey."""
+        # Arrange
+        invalid_userkey = "nonexistent-user-key"
+        users_mixin.confluence.get_user_details_by_userkey.side_effect = Exception(
+            "User not found"
+        )
+
+        # Act/Assert
+        with pytest.raises(Exception, match="User not found"):
+            users_mixin.get_user_details_by_userkey(invalid_userkey)
+
+    def test_get_user_details_by_userkey_with_expand(
+        self, users_mixin, mock_user_data_server
+    ):
+        """Test getting user details by userkey with status expansion."""
+        # Arrange
+        userkey = "testuser-key-12345"
+        expand = "status"
+        mock_data_with_status = mock_user_data_server.copy()
+        mock_data_with_status["status"] = "Active"
+        users_mixin.confluence.get_user_details_by_userkey.return_value = (
+            mock_data_with_status
+        )
+
+        # Act
+        result = users_mixin.get_user_details_by_userkey(userkey, expand=expand)
+
+        # Assert
+        users_mixin.confluence.get_user_details_by_userkey.assert_called_once_with(
+            userkey, expand
+        )
+        assert result == mock_data_with_status
+        assert result["status"] == "Active"
+
     def test_users_mixin_inheritance(self, users_mixin):
         """Test that UsersMixin properly inherits from ConfluenceClient."""
         # Verify that UsersMixin is indeed a ConfluenceClient
