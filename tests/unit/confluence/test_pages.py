@@ -585,6 +585,61 @@ class TestPagesMixin:
         # Assert - should return empty list on error, not raise exception
         assert len(results) == 0
 
+    def test_move_page_with_parent_and_space(self, pages_mixin):
+        """Test moving a page to a new parent and space."""
+        # Arrange
+        page_id = "987654321"
+        space_key = "DEMO"
+        parent_id = "123456"
+        pages_mixin.confluence.move_page.return_value = True
+
+        # Act
+        result = pages_mixin.move_page(
+            page_id, space_key=space_key, parent_id=parent_id
+        )
+
+        # Assert
+        pages_mixin.confluence.move_page.assert_called_once_with(
+            space_key=space_key,
+            page_id=page_id,
+            target_id=parent_id,
+            position="append",
+        )
+        assert result is True
+
+    def test_move_page_without_space_key(self, pages_mixin):
+        """Test moving a page when space key is not provided."""
+        # Arrange
+        page_id = "987654321"
+        pages_mixin.confluence.get_page_by_id.return_value = {"space": {"key": "PROJ"}}
+        pages_mixin.confluence.move_page.return_value = True
+
+        # Act
+        result = pages_mixin.move_page(page_id, parent_id="123456")
+
+        # Assert
+        pages_mixin.confluence.get_page_by_id.assert_called_once_with(
+            page_id, expand="space"
+        )
+        pages_mixin.confluence.move_page.assert_called_once_with(
+            space_key="PROJ",
+            page_id=page_id,
+            target_id="123456",
+            position="append",
+        )
+        assert result is True
+
+    def test_move_page_error(self, pages_mixin):
+        """Test error handling when moving a page."""
+        # Arrange
+        page_id = "987654321"
+        space_key = "DEMO"
+        pages_mixin.confluence.move_page.side_effect = Exception("API Error")
+
+        # Act / Assert
+        with pytest.raises(Exception, match="Failed to move page"):
+            pages_mixin.move_page(page_id, space_key=space_key)
+
     def test_get_page_success(self, pages_mixin):
         """Test successful page retrieval."""
         # Setup
@@ -1105,6 +1160,40 @@ class TestPagesOAuthMixin:
 
             # Verify v1 API was NOT called
             oauth_pages_mixin.confluence.remove_page.assert_not_called()
+
+            # Verify result
+            assert result is True
+
+    def test_move_page_oauth_uses_v2_api(self, oauth_pages_mixin):
+        """Test that OAuth authentication uses v2 API for moving pages."""
+        # Arrange
+        page_id = "oauth_move_123"
+        space_key = "PROJ"
+        parent_id = "987654321"
+
+        # Mock the v2 adapter
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceV2Adapter"
+        ) as mock_v2_adapter_class:
+            mock_v2_adapter = MagicMock()
+            mock_v2_adapter_class.return_value = mock_v2_adapter
+            mock_v2_adapter.move_page.return_value = True
+
+            # Act
+            result = oauth_pages_mixin.move_page(
+                page_id, space_key=space_key, parent_id=parent_id
+            )
+
+            # Assert that v2 API was used instead of v1
+            mock_v2_adapter.move_page.assert_called_once_with(
+                page_id=page_id,
+                space_key=space_key,
+                parent_id=parent_id,
+                position="append",
+            )
+
+            # Verify v1 API was NOT called
+            oauth_pages_mixin.confluence.move_page.assert_not_called()
 
             # Verify result
             assert result is True

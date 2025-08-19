@@ -517,6 +517,57 @@ class PagesMixin(ConfluenceClient):
             logger.debug("Full exception details:", exc_info=True)
             return []
 
+    def move_page(
+        self,
+        page_id: str,
+        *,
+        space_key: str | None = None,
+        parent_id: str | None = None,
+        position: str = "append",
+    ) -> bool:
+        """Move a Confluence page to a different parent and/or space.
+
+        Args:
+            page_id: The ID of the page to move
+            space_key: Destination space key. If omitted, uses the page's current space
+            parent_id: Destination parent page ID. If None, moves page to space root
+            position: Position relative to the parent page (default: "append")
+
+        Returns:
+            True if the page was moved successfully, False otherwise
+
+        Raises:
+            Exception: If there is an error moving the page
+        """
+        try:
+            if space_key is None:
+                page = self.confluence.get_page_by_id(page_id, expand="space")
+                space_key = page.get("space", {}).get("key")
+            if not space_key:
+                raise ValueError("space_key must be provided or resolvable from page")
+
+            v2_adapter = self._v2_adapter
+            move_position = position if parent_id else "topLevel"
+
+            if v2_adapter:
+                return v2_adapter.move_page(
+                    page_id=page_id,
+                    space_key=space_key,
+                    parent_id=parent_id,
+                    position=move_position,
+                )
+
+            self.confluence.move_page(
+                space_key=space_key,
+                page_id=page_id,
+                target_id=parent_id,
+                position=move_position,
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error moving page {page_id}: {str(e)}")
+            raise Exception(f"Failed to move page {page_id}: {str(e)}") from e
+
     def delete_page(self, page_id: str) -> bool:
         """
         Delete a Confluence page by its ID.

@@ -340,6 +340,48 @@ class ConfluenceV2Adapter:
             logger.error(f"Error getting page '{page_id}': {e}")
             raise ValueError(f"Failed to get page '{page_id}': {e}") from e
 
+    def move_page(
+        self,
+        page_id: str,
+        space_key: str,
+        parent_id: str | None = None,
+        position: str = "append",
+    ) -> bool:
+        """Move a page using the v2 API.
+
+        Args:
+            page_id: The ID of the page to move
+            space_key: Destination space key
+            parent_id: Destination parent page ID (optional)
+            position: Position relative to the parent (default: "append")
+
+        Returns:
+            True if the page was moved successfully, False otherwise
+
+        Raises:
+            ValueError: If the move operation fails
+        """
+        try:
+            space_id = self._get_space_id(space_key)
+            data: dict[str, Any] = {"spaceId": space_id, "position": position}
+            if parent_id:
+                data["parentId"] = parent_id
+
+            url = f"{self.base_url}/api/v2/pages/{page_id}/move"
+            response = self.session.post(url, json=data)
+            response.raise_for_status()
+
+            logger.debug(f"Successfully moved page '{page_id}' with v2 API")
+            return True
+        except HTTPError as e:
+            logger.error(f"HTTP error moving page '{page_id}': {e}")
+            if e.response is not None:
+                logger.error(f"Response content: {e.response.text}")
+            raise ValueError(f"Failed to move page '{page_id}': {e}") from e
+        except Exception as e:
+            logger.error(f"Error moving page '{page_id}': {e}")
+            raise ValueError(f"Failed to move page '{page_id}': {e}") from e
+
     def delete_page(self, page_id: str) -> bool:
         """Delete a page using the v2 API.
 
