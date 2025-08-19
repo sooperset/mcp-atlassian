@@ -682,9 +682,7 @@ async def move_page(
     ctx: Context,
     page_id: Annotated[
         str,
-        Field(
-            description="The ID of the page to move"
-        ),
+        Field(description="The ID of the page to move"),
     ],
     space_key: Annotated[
         str | None,
@@ -736,7 +734,7 @@ async def move_page(
         if result:
             response = {
                 "success": True,
-                "message": f"Page {page_id} moved successfully."
+                "message": f"Page {page_id} moved successfully.",
             }
         else:
             response = {
@@ -747,15 +745,14 @@ async def move_page(
                 ),
             }
     except Exception as e:
-        logger.error(
-            f"Error moving Confluence page {page_id}: {str(e)}"
-        )
+        logger.error(f"Error moving Confluence page {page_id}: {str(e)}")
         response = {
             "success": False,
             "message": f"Error moving page {page_id}",
             "error": str(e),
         }
     return json.dumps(response, indent=2, ensure_ascii=False)
+
 
 @confluence_mcp.tool(tags={"confluence", "read"})
 async def search_user(
