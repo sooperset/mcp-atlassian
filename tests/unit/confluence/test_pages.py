@@ -629,6 +629,25 @@ class TestPagesMixin:
         )
         assert result is True
 
+    def test_move_page_to_space_root(self, pages_mixin):
+        """Test moving a page to the space root."""
+        # Arrange
+        page_id = "987654321"
+        space_key = "DEMO"
+        pages_mixin.confluence.move_page.return_value = True
+
+        # Act
+        result = pages_mixin.move_page(page_id, space_key=space_key)
+
+        # Assert
+        pages_mixin.confluence.move_page.assert_called_once_with(
+            space_key=space_key,
+            page_id=page_id,
+            target_id=None,
+            position="topLevel",
+        )
+        assert result is True
+
     def test_move_page_error(self, pages_mixin):
         """Test error handling when moving a page."""
         # Arrange
@@ -639,6 +658,13 @@ class TestPagesMixin:
         # Act / Assert
         with pytest.raises(Exception, match="Failed to move page"):
             pages_mixin.move_page(page_id, space_key=space_key)
+
+    def test_move_page_missing_space_key_raises_value_error(self, pages_mixin):
+        """Test that ValueError is raised when space_key is missing."""
+        page_id = "987654321"
+        pages_mixin.confluence.get_page_by_id.return_value = {}
+        with pytest.raises(ValueError, match="space_key.*provided"):
+            pages_mixin.move_page(page_id)
 
     def test_get_page_success(self, pages_mixin):
         """Test successful page retrieval."""

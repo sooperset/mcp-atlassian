@@ -537,6 +537,7 @@ class PagesMixin(ConfluenceClient):
             True if the page was moved successfully, False otherwise
 
         Raises:
+            ValueError: If space_key is not provided and cannot be resolved
             Exception: If there is an error moving the page
         """
         try:
@@ -564,6 +565,9 @@ class PagesMixin(ConfluenceClient):
                 position=move_position,
             )
             return True
+        except ValueError as e:
+            logger.error(f"Error moving page {page_id}: {str(e)}")
+            raise
         except Exception as e:
             logger.error(f"Error moving page {page_id}: {str(e)}")
             raise Exception(f"Failed to move page {page_id}: {str(e)}") from e

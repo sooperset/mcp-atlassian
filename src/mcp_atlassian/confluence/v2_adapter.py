@@ -346,6 +346,8 @@ class ConfluenceV2Adapter:
         space_key: str,
         parent_id: str | None = None,
         position: str = "append",
+        *,
+        timeout: float | None = 10,
     ) -> bool:
         """Move a page using the v2 API.
 
@@ -354,6 +356,7 @@ class ConfluenceV2Adapter:
             space_key: Destination space key
             parent_id: Destination parent page ID (optional)
             position: Position relative to the parent (default: "append")
+            timeout: Request timeout in seconds (default: 10)
 
         Returns:
             True if the page was moved successfully, False otherwise
@@ -368,7 +371,7 @@ class ConfluenceV2Adapter:
                 data["parentId"] = parent_id
 
             url = f"{self.base_url}/api/v2/pages/{page_id}/move"
-            response = self.session.post(url, json=data)
+            response = self.session.post(url, json=data, timeout=timeout)
             response.raise_for_status()
 
             logger.debug(f"Successfully moved page '{page_id}' with v2 API")
@@ -376,7 +379,15 @@ class ConfluenceV2Adapter:
         except HTTPError as e:
             logger.error(f"HTTP error moving page '{page_id}': {e}")
             if e.response is not None:
-                logger.error(f"Response content: {e.response.text}")
+                content = e.response.text or ""
+                content_preview = (
+                    content[:200] + "..." if len(content) > 200 else content
+                )
+                logger.error(
+                    "Response status: %s, content preview: %r",
+                    e.response.status_code,
+                    content_preview,
+                )
             raise ValueError(f"Failed to move page '{page_id}': {e}") from e
         except Exception as e:
             logger.error(f"Error moving page '{page_id}': {e}")
