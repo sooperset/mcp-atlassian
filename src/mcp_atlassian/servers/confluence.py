@@ -676,6 +676,87 @@ async def add_comment(
     return json.dumps(response, indent=2, ensure_ascii=False)
 
 
+@confluence_mcp.tool(tags={"confluence", "write"})
+@check_write_access
+async def move_page(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(
+            description="The ID of the page to move"
+        ),
+    ],
+    space_key: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Destination space key. If omitted, uses the page's current space"
+            ),
+            default=None,
+        ),
+    ] = None,
+    parent_id: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Destination parent page ID. If None, moves page to space root"
+            ),
+            default=None,
+        ),
+    ] = None,
+    position: Annotated[
+        str,
+        Field(
+            description="Position relative to the parent page (default: 'append')",
+            default="append",
+        ),
+    ] = "append",
+) -> str:
+    """
+    Move a Confluence page to a different parent and/or space.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page to move.
+        space_key: Destination space key. If omitted, uses the page's current space.
+        parent_id: Destination parent page ID. If None, moves page to space root.
+        position: Position relative to the parent page (default: 'append').
+
+    Returns:
+        JSON string indicating success or failure.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        result = confluence_fetcher.move_page(
+            page_id=page_id,
+            space_key=space_key,
+            parent_id=parent_id,
+            position=position,
+        )
+        if result:
+            response = {
+                "success": True,
+                "message": f"Page {page_id} moved successfully."
+            }
+        else:
+            response = {
+                "success": False,
+                "message": (
+                    f"Unable to move page {page_id}. "
+                    "API request completed but move unsuccessful."
+                ),
+            }
+    except Exception as e:
+        logger.error(
+            f"Error moving Confluence page {page_id}: {str(e)}"
+        )
+        response = {
+            "success": False,
+            "message": f"Error moving page {page_id}",
+            "error": str(e),
+        }
+    return json.dumps(response, indent=2, ensure_ascii=False)
+
 @confluence_mcp.tool(tags={"confluence", "read"})
 async def search_user(
     ctx: Context,
