@@ -7,6 +7,7 @@ from atlassian import Confluence
 from requests import Session
 
 from ..exceptions import MCPAtlassianAuthenticationError
+from ..utils.auth import configure_server_pat_auth
 from ..utils.logging import get_masked_session_headers, log_config_param, mask_sensitive
 from ..utils.oauth import configure_oauth_session
 from ..utils.ssl import configure_ssl_verification
@@ -60,14 +61,36 @@ class ConfluenceClient:
             logger.debug(
                 f"Initializing Confluence client with Token (PAT) auth. "
                 f"URL: {self.config.url}, "
-                f"Token (masked): {mask_sensitive(str(self.config.personal_token))}"
+                f"Token (masked): {mask_sensitive(str(self.config.personal_token))}, "
+                f"Is Cloud: {self.config.is_cloud}"
             )
-            self.confluence = Confluence(
-                url=self.config.url,
-                token=self.config.personal_token,
-                cloud=self.config.is_cloud,
-                verify_ssl=self.config.ssl_verify,
-            )
+            
+            if self.config.is_cloud:
+                # Cloud instances can use the token parameter (though this is rare)
+                self.confluence = Confluence(
+                    url=self.config.url,
+                    token=self.config.personal_token,
+                    cloud=True,
+                    verify_ssl=self.config.ssl_verify,
+                )
+            else:
+                # Server/DC instances need Bearer authentication for PATs
+                session = Session()
+                configure_server_pat_auth(session, self.config.personal_token)
+                
+                # Initialize Confluence with the pre-configured session
+                self.confluence = Confluence(
+                    url=self.config.url,
+                    session=session,
+                    cloud=False,
+                    verify_ssl=self.config.ssl_verify,
+                )
+                
+                logger.debug(
+                    f"Confluence Server/DC client initialized with Bearer auth. "
+                    f"Session headers (Authorization masked): "
+                    f"{get_masked_session_headers(dict(self.confluence._session.headers))}"
+                )
         else:  # basic auth
             logger.debug(
                 f"Initializing Confluence client with Basic auth. "

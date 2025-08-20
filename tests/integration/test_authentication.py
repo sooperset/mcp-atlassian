@@ -183,9 +183,10 @@ class TestBasicAuthValidation:
 class TestPATTokenValidation:
     """Test Personal Access Token (PAT) validation and precedence."""
 
+    @patch("mcp_atlassian.jira.client.Session")
     @patch("mcp_atlassian.jira.client.Jira")
-    def test_jira_pat_token_success(self, mock_jira_class):
-        """Test successful Jira PAT authentication."""
+    def test_jira_pat_token_success(self, mock_jira_class, mock_session_class):
+        """Test successful Jira PAT authentication for Server/DC."""
         # Clear existing auth env vars first
         with MockEnvironment.clean_env():
             with patch.dict(
@@ -195,25 +196,33 @@ class TestPATTokenValidation:
                     "JIRA_PERSONAL_TOKEN": "test-personal-access-token",
                 },
             ):
-                # Create mock Jira instance
+                # Create mock session and Jira instance
+                mock_session = MagicMock()
+                mock_session.headers = {}
+                mock_session_class.return_value = mock_session
                 mock_jira = MagicMock()
+                mock_jira._session = mock_session
                 mock_jira_class.return_value = mock_jira
 
                 # Create Jira client
                 config = JiraConfig.from_env()
                 client = JiraClient(config)
 
-                # Verify Jira was initialized with PAT token
+                # Verify Bearer auth was set up for Server/DC
+                assert mock_session.headers["Authorization"] == "Bearer test-personal-access-token"
+                
+                # Verify Jira was initialized with the session
                 mock_jira_class.assert_called_once_with(
                     url="https://jira.company.com",
-                    token="test-personal-access-token",
+                    session=mock_session,
                     cloud=False,  # Server instance
                     verify_ssl=True,
                 )
 
+    @patch("mcp_atlassian.confluence.client.Session")
     @patch("mcp_atlassian.confluence.client.Confluence")
-    def test_confluence_pat_token_success(self, mock_confluence_class):
-        """Test successful Confluence PAT authentication."""
+    def test_confluence_pat_token_success(self, mock_confluence_class, mock_session_class):
+        """Test successful Confluence PAT authentication for Server/DC."""
         # Clear existing auth env vars first
         with MockEnvironment.clean_env():
             with patch.dict(
@@ -223,18 +232,25 @@ class TestPATTokenValidation:
                     "CONFLUENCE_PERSONAL_TOKEN": "test-personal-access-token",
                 },
             ):
-                # Create mock Confluence instance
+                # Create mock session and Confluence instance
+                mock_session = MagicMock()
+                mock_session.headers = {}
+                mock_session_class.return_value = mock_session
                 mock_confluence = MagicMock()
+                mock_confluence._session = mock_session
                 mock_confluence_class.return_value = mock_confluence
 
                 # Create Confluence client
                 config = ConfluenceConfig.from_env()
                 client = ConfluenceClient(config)
 
-                # Verify Confluence was initialized with PAT token
+                # Verify Bearer auth was set up for Server/DC
+                assert mock_session.headers["Authorization"] == "Bearer test-personal-access-token"
+                
+                # Verify Confluence was initialized with the session
                 mock_confluence_class.assert_called_once_with(
                     url="https://confluence.company.com",
-                    token="test-personal-access-token",
+                    session=mock_session,
                     cloud=False,  # Server instance
                     verify_ssl=True,
                 )

@@ -9,6 +9,7 @@ from requests import Session
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.preprocessing import JiraPreprocessor
+from mcp_atlassian.utils.auth import configure_server_pat_auth
 from mcp_atlassian.utils.logging import (
     get_masked_session_headers,
     log_config_param,
@@ -75,14 +76,36 @@ class JiraClient:
             logger.debug(
                 f"Initializing Jira client with Token (PAT) auth. "
                 f"URL: {self.config.url}, "
-                f"Token (masked): {mask_sensitive(str(self.config.personal_token))}"
+                f"Token (masked): {mask_sensitive(str(self.config.personal_token))}, "
+                f"Is Cloud: {self.config.is_cloud}"
             )
-            self.jira = Jira(
-                url=self.config.url,
-                token=self.config.personal_token,
-                cloud=self.config.is_cloud,
-                verify_ssl=self.config.ssl_verify,
-            )
+            
+            if self.config.is_cloud:
+                # Cloud instances can use the token parameter (though this is rare)
+                self.jira = Jira(
+                    url=self.config.url,
+                    token=self.config.personal_token,
+                    cloud=True,
+                    verify_ssl=self.config.ssl_verify,
+                )
+            else:
+                # Server/DC instances need Bearer authentication for PATs
+                session = Session()
+                configure_server_pat_auth(session, self.config.personal_token)
+                
+                # Initialize Jira with the pre-configured session
+                self.jira = Jira(
+                    url=self.config.url,
+                    session=session,
+                    cloud=False,
+                    verify_ssl=self.config.ssl_verify,
+                )
+                
+                logger.debug(
+                    f"Jira Server/DC client initialized with Bearer auth. "
+                    f"Session headers (Authorization masked): "
+                    f"{get_masked_session_headers(dict(self.jira._session.headers))}"
+                )
         else:  # basic auth
             logger.debug(
                 f"Initializing Jira client with Basic auth. "
