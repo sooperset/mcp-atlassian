@@ -57,6 +57,16 @@ from .jira import (
     JiraWorklog,
 )
 
+# Jira development models
+from .jira.development import (
+    Branch,
+    Build,
+    Commit,
+    DevelopmentInformation,
+    PullRequest,
+    Repository,
+)
+
 # Additional models will be added as they are implemented
 
 __all__ = [
@@ -95,6 +105,13 @@ __all__ = [
     "JiraTimetracking",
     "JiraBoard",
     "JiraSprint",
+    # Jira development models
+    "DevelopmentInformation",
+    "PullRequest",
+    "Branch",
+    "Commit",
+    "Build",
+    "Repository",
     # Confluence models
     "ConfluenceUser",
     "ConfluenceSpace",

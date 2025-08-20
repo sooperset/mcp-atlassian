@@ -19,13 +19,14 @@ from mcp_atlassian.utils.oauth import configure_oauth_session
 from mcp_atlassian.utils.ssl import configure_ssl_verification
 
 from .config import JiraConfig
+from .development import DevelopmentMixin
 
 # Configure logging
 logger = logging.getLogger("mcp-jira")
 
 
-class JiraClient:
-    """Base client for Jira API interactions."""
+class JiraClient(DevelopmentMixin):
+    """Base client for Jira API interactions with development information support."""
 
     _field_ids_cache: list[dict[str, Any]] | None
     _current_user_account_id: str | None
