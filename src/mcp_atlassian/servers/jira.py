@@ -337,6 +337,40 @@ async def get_transitions(
 
 
 @jira_mcp.tool(tags={"jira", "read"})
+async def get_comments(
+    ctx: Context,
+    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    limit: Annotated[
+        int,
+        Field(
+            description="Maximum number of comments to retrieve",
+            default=50,
+            ge=1,
+            le=1000,
+        ),
+    ] = 50,
+) -> str:
+    """Get comments for a specific Jira issue.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+        limit: Maximum number of comments to retrieve (1-1000, default 50).
+
+    Returns:
+        JSON string representing the comments with author, creation date, and content.
+    """
+    jira = await get_jira_fetcher(ctx)
+    comments = jira.get_issue_comments(issue_key=issue_key, limit=limit)
+    result = {
+        "issue_key": issue_key,
+        "total_comments": len(comments),
+        "comments": comments,
+    }
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
 async def get_worklog(
     ctx: Context,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
