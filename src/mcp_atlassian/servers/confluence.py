@@ -7,6 +7,12 @@ from typing import Annotated
 from fastmcp import Context, FastMCP
 from pydantic import BeforeValidator, Field
 
+# Import sync tools for proper registration
+from mcp_atlassian.confluence.markdown_sync.tools import (
+    sync_markdown_batch,
+    sync_markdown_to_page,
+    sync_page_to_markdown,
+)
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.servers.dependencies import get_confluence_fetcher
 from mcp_atlassian.utils.decorators import (
@@ -19,6 +25,17 @@ confluence_mcp = FastMCP(
     name="Confluence MCP Service",
     description="Provides tools for interacting with Atlassian Confluence.",
 )
+
+# Register imported sync tools with FastMCP decorators
+sync_markdown_to_page = confluence_mcp.tool(tags={"confluence", "sync", "write"})(
+    sync_markdown_to_page
+)
+sync_page_to_markdown = confluence_mcp.tool(tags={"confluence", "sync", "read"})(
+    sync_page_to_markdown
+)
+sync_markdown_batch = confluence_mcp.tool(
+    tags={"confluence", "sync", "batch", "write"}
+)(sync_markdown_batch)
 
 
 @confluence_mcp.tool(tags={"confluence", "read"})
@@ -735,12 +752,7 @@ async def search_user(
             indent=2,
             ensure_ascii=False,
         )
-    except Exception as e:
-        logger.error(f"Error searching users: {str(e)}")
-        return json.dumps(
-            {
-                "error": f"An unexpected error occurred while searching for users: {str(e)}"
-            },
-            indent=2,
-            ensure_ascii=False,
-        )
+
+
+# Note: FastMCP auto-discovers tools from imports, manual registration not needed
+# The imported functions from tools.py will be automatically discovered

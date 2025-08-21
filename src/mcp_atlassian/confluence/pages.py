@@ -307,9 +307,7 @@ class PagesMixin(ConfluenceClient):
             # Determine body and representation based on content type
             if is_markdown:
                 # Convert markdown to Confluence storage format
-                final_body = self.preprocessor.markdown_to_confluence_storage(
-                    body, enable_heading_anchors=enable_heading_anchors
-                )
+                final_body = self.preprocessor.markdown_to_confluence_storage(body)
                 representation = "storage"
             else:
                 # Use body as-is with specified representation
@@ -392,9 +390,7 @@ class PagesMixin(ConfluenceClient):
             # Determine body and representation based on content type
             if is_markdown:
                 # Convert markdown to Confluence storage format
-                final_body = self.preprocessor.markdown_to_confluence_storage(
-                    body, enable_heading_anchors=enable_heading_anchors
-                )
+                final_body = self.preprocessor.markdown_to_confluence_storage(body)
                 representation = "storage"
             else:
                 # Use body as-is with specified representation
