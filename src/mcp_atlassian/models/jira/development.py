@@ -231,4 +231,5 @@ class DevelopmentInformation:
             ],
             "summary": self.summary,
             "has_development_info": self.has_development_info,
+            "errors": self.errors,
         }

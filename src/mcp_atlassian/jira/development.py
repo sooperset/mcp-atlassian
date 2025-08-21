@@ -58,27 +58,33 @@ class DevelopmentMixin:
                 response = self._get_dev_status_legacy(issue_key, application_type)
         else:
             # Server/DC API endpoint
-            response = self._get_dev_status_legacy(issue_key, application_type)
+            # Server/DC requires the numeric issue ID, not the key
+            issue = self.jira.issue(issue_key, fields="id")
+            issue_id = issue["id"]
+            logger.debug(f"Server/DC: Converting issue key {issue_key} to ID {issue_id}")
+            
+            response = self._get_dev_status_legacy(issue_id, application_type, is_server_dc=True)
         
         return self._parse_development_response(response)
     
     def _get_dev_status_legacy(
-        self, issue_key: str, application_type: Optional[str] = None
+        self, issue_key_or_id: str, application_type: Optional[str] = None, is_server_dc: bool = False
     ) -> Dict[str, Any]:
         """Get development status using the legacy/Server endpoint.
         
-        This works for both Server/DC and as a fallback for Cloud.
+        This works for both Server/DC (with numeric ID) and as a fallback for Cloud (with key).
         
         Args:
-            issue_key: The Jira issue key
+            issue_key_or_id: The Jira issue key (for Cloud) or numeric ID (for Server/DC)
             application_type: Optional application type filter
+            is_server_dc: Whether this is a Server/DC call (uses numeric ID)
             
         Returns:
             Raw development status response
         """
         # Server/DC endpoint: /rest/dev-status/latest/issue/detail
         params = {
-            "issueId": issue_key,
+            "issueId": issue_key_or_id,
             "applicationType": application_type or "",
             "dataType": "pullrequest,branch,commit,repository"
         }
@@ -89,7 +95,37 @@ class DevelopmentMixin:
                 "/rest/dev-status/latest/issue/detail",
                 params=params
             )
-            logger.debug(f"Successfully fetched dev status for {issue_key}")
+            logger.debug(f"Successfully fetched dev status for {issue_key_or_id}")
+            
+            # If detail is empty but we're on Server/DC, also fetch summary to check if data exists
+            if is_server_dc and len(response.get("detail", [])) == 0:
+                # For Server/DC, if detail is empty, try to get summary data
+                logger.debug(f"Detail endpoint returned empty, checking summary endpoint")
+                try:
+                    summary_response = self.jira.get(
+                        "/rest/dev-status/latest/issue/summary",
+                        params={"issueId": issue_key_or_id}
+                    )
+                    
+                    # Add summary to response for informational purposes
+                    response["summary"] = summary_response.get("summary", {})
+                    
+                    # If summary shows data exists but detail is empty, log a warning
+                    pr_count = summary_response.get("summary", {}).get("pullrequest", {}).get("overall", {}).get("count", 0)
+                    commit_count = summary_response.get("summary", {}).get("repository", {}).get("overall", {}).get("count", 0)
+                    
+                    if pr_count > 0 or commit_count > 0:
+                        logger.warning(
+                            f"Development data exists in summary but not in detail for issue {issue_key_or_id}. "
+                            f"This is a known limitation with some Jira Server/DC configurations. "
+                            f"Summary data: PRs={pr_count}, Commits={commit_count}"
+                        )
+                        
+                        # Add a flag to indicate summary data exists
+                        response["has_summary_data"] = True
+                except Exception as e:
+                    logger.debug(f"Could not fetch summary data: {e}")
+            
             return response
         except Exception as e:
             logger.error(f"Failed to fetch dev status: {e}")
@@ -170,6 +206,21 @@ class DevelopmentMixin:
                     # Parse GitHub data
                     dev_info = self._parse_github_instance(instance, dev_info)
                 # Add more providers as needed
+        
+        # If no detail data but summary exists, add a note
+        if len(detail) == 0 and response.get("has_summary_data"):
+            summary = response.get("summary", {})
+            pr_data = summary.get("pullrequest", {}).get("overall", {})
+            repo_data = summary.get("repository", {}).get("overall", {})
+            
+            # Add error/warning about the limitation
+            dev_info.errors.append(
+                f"Development data summary available but details not accessible. "
+                f"PRs: {pr_data.get('count', 0)} (Merged: {pr_data.get('details', {}).get('mergedCount', 0)}, "
+                f"Open: {pr_data.get('details', {}).get('openCount', 0)}), "
+                f"Commits: {repo_data.get('count', 0)}. "
+                f"This is a known limitation with some Jira Server/DC configurations."
+            )
         
         return dev_info
     
