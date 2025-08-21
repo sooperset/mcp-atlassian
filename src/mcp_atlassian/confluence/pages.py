@@ -307,7 +307,7 @@ class PagesMixin(ConfluenceClient):
             # Determine body and representation based on content type
             if is_markdown:
                 # Convert markdown to Confluence storage format
-                final_body = self.preprocessor.markdown_to_confluence_storage(body, enable_heading_anchors=False)
+                final_body = self.preprocessor.markdown_to_confluence_storage(body)
                 representation = "storage"
             else:
                 # Use body as-is with specified representation
@@ -390,7 +390,7 @@ class PagesMixin(ConfluenceClient):
             # Determine body and representation based on content type
             if is_markdown:
                 # Convert markdown to Confluence storage format
-                final_body = self.preprocessor.markdown_to_confluence_storage(body, enable_heading_anchors=False)
+                final_body = self.preprocessor.markdown_to_confluence_storage(body)
                 representation = "storage"
             else:
                 # Use body as-is with specified representation
@@ -401,7 +401,9 @@ class PagesMixin(ConfluenceClient):
 
             # Use v2 API for OAuth authentication, v1 API for token/basic auth
             v2_adapter = self._v2_adapter
-            if v2_adapter:
+            # TEMPORARY: Force v1 API usage due to v2 API payload issues
+            # TODO: Fix v2 API payload structure and re-enable
+            if False and v2_adapter:  # Temporarily disabled
                 logger.debug(
                     f"Using v2 API for OAuth authentication to update page '{page_id}'"
                 )

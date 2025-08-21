@@ -183,20 +183,20 @@ There are two main approaches to configure the Docker container:
 }
 ```
 
-### **UV Usage for Local Dev** 
+### **UV Usage for Local Dev**
 ```bash
-# 1. Install uv (if not already installed) 
-pip install uv 
-# 2. Create a virtual environment 
-uv venv 
-# 3. Install locked dependencies 
-uv pip install -r uv.lock 
-# 4. Install the CLI locally in editable mode 
-uv pip install -e . 
-# 5. Test if the executable works 
+# 1. Install uv (if not already installed)
+pip install uv
+# 2. Create a virtual environment
+uv venv
+# 3. Install locked dependencies
+uv pip install -r uv.lock
+# 4. Install the CLI locally in editable mode
+uv pip install -e .
+# 5. Test if the executable works
 # On Windows:
- .venv\Scripts\mcp-atlassian.exe --help 
-# On macOS/Linux: .venv/bin/mcp-atlassian --help ``` 
+ .venv\Scripts\mcp-atlassian.exe --help
+# On macOS/Linux: .venv/bin/mcp-atlassian --help ```
 ```
 
 <details>

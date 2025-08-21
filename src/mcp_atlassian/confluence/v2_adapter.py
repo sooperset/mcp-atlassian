@@ -130,14 +130,14 @@ class ConfluenceV2Adapter:
             logger.error(f"Error creating page '{title}': {e}")
             raise ValueError(f"Failed to create page '{title}': {e}") from e
 
-    def _get_page_version(self, page_id: str) -> int:
-        """Get the current version number of a page.
+    def _get_page_data(self, page_id: str) -> dict[str, Any]:
+        """Get the complete page data from the v2 API.
 
         Args:
             page_id: The ID of the page
 
         Returns:
-            The current version number
+            The complete page data including version and spaceId
 
         Raises:
             ValueError: If page not found or API error
@@ -150,19 +150,34 @@ class ConfluenceV2Adapter:
             response.raise_for_status()
 
             data = response.json()
-            version_number = data.get("version", {}).get("number")
-
-            if version_number is None:
-                raise ValueError(f"No version number found for page '{page_id}'")
-
-            return version_number
+            return data
 
         except HTTPError as e:
-            logger.error(f"HTTP error getting page version for '{page_id}': {e}")
-            raise ValueError(f"Failed to get page version for '{page_id}': {e}") from e
+            logger.error(f"HTTP error getting page data for '{page_id}': {e}")
+            raise ValueError(f"Failed to get page data for '{page_id}': {e}") from e
         except Exception as e:
-            logger.error(f"Error getting page version for '{page_id}': {e}")
-            raise ValueError(f"Failed to get page version for '{page_id}': {e}") from e
+            logger.error(f"Error getting page data for '{page_id}': {e}")
+            raise ValueError(f"Failed to get page data for '{page_id}': {e}") from e
+
+    def _get_page_version(self, page_id: str) -> int:
+        """Get the current version number of a page.
+
+        Args:
+            page_id: The ID of the page
+
+        Returns:
+            The current version number
+
+        Raises:
+            ValueError: If page not found or API error
+        """
+        data = self._get_page_data(page_id)
+        version_number = data.get("version", {}).get("number")
+
+        if version_number is None:
+            raise ValueError(f"No version number found for page '{page_id}'")
+
+        return version_number
 
     def update_page(
         self,
@@ -190,11 +205,23 @@ class ConfluenceV2Adapter:
             ValueError: If page update fails
         """
         try:
-            # Get current version and increment it
-            current_version = self._get_page_version(page_id)
+            # Get current page data to retrieve space ID and version
+            current_page = self._get_page_data(page_id)
+            current_version = current_page.get("version", {}).get("number", 1)
+
+            # Extract space information - v2 API may use different field names
+            space_id = current_page.get("spaceId")
+            if not space_id:
+                # Fallback to extracting from nested space object
+                space_info = current_page.get("space", {})
+                space_id = space_info.get("id") or space_info.get("key")
+
+            if not space_id:
+                raise ValueError(f"Could not determine space ID for page {page_id}")
+
             new_version = current_version + 1
 
-            # Prepare request data for v2 API
+            # Prepare request data for v2 API - use simplified structure
             data = {
                 "id": page_id,
                 "status": status,
@@ -208,9 +235,22 @@ class ConfluenceV2Adapter:
                 },
             }
 
+            # Add space information - try different field names that v2 API accepts
+            if space_id.startswith("~"):
+                # Personal space - use spaceKey
+                data["spaceKey"] = space_id
+            else:
+                # Regular space - try both spaceId and spaceKey
+                data["spaceId"] = space_id
+
             # Add version comment if provided
             if version_comment:
                 data["version"]["message"] = version_comment
+
+            logger.debug(
+                f"Updating page {page_id} with space {space_id}, version {new_version}"
+            )
+            logger.debug(f"Update payload: {data}")
 
             # Make the v2 API call
             url = f"{self.base_url}/api/v2/pages/{page_id}"

@@ -31,8 +31,18 @@ def check_write_access(func: F) -> F:
             else None
         )  # type: ignore
 
+        # DEBUG: Add detailed logging for read-only mode checking
+        tool_name = func.__name__
+        logger.debug(f"Tool '{tool_name}' - Context check:")
+        logger.debug(f"  lifespan_ctx_dict type: {type(lifespan_ctx_dict)}")
+        logger.debug(f"  lifespan_ctx_dict: {lifespan_ctx_dict}")
+        logger.debug(f"  app_lifespan_ctx: {app_lifespan_ctx}")
+        if app_lifespan_ctx is not None:
+            logger.debug(f"  app_lifespan_ctx.read_only: {app_lifespan_ctx.read_only}")
+        else:
+            logger.debug("  app_lifespan_ctx is None!")
+
         if app_lifespan_ctx is not None and app_lifespan_ctx.read_only:
-            tool_name = func.__name__
             action_description = tool_name.replace(
                 "_", " "
             )  # e.g., "create_issue" -> "create issue"
@@ -99,3 +109,20 @@ def handle_atlassian_api_errors(service_name: str = "Atlassian API") -> Callable
         return wrapper
 
     return decorator
+
+
+def convert_empty_defaults_to_none(func: F) -> F:
+    """
+    Decorator that converts empty string default parameters to None.
+    This is useful for FastMCP tools where empty strings should be treated as None.
+    """
+
+    @wraps(func)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        # Convert empty strings to None in kwargs
+        for key, value in kwargs.items():
+            if value == "":
+                kwargs[key] = None
+        return await func(*args, **kwargs)
+
+    return wrapper  # type: ignore

@@ -53,8 +53,8 @@ async def sync_markdown_to_page(
         str,
         Field(
             description=(
-                "Synchronization mode: 'create' (only create new pages), "
-                "'update' (only update existing pages), or 'auto' (create or update as needed). "
+                "Synchronization mode: 'create_only' (only create new pages), "
+                "'update_only' (only update existing pages), or 'auto' (create or update as needed). "
                 "Default is 'auto'."
             ),
             default="auto",
@@ -141,7 +141,6 @@ async def sync_markdown_to_page(
         # Get the Confluence client
         logger.debug("Retrieving Confluence client from context")
         confluence_fetcher = await get_confluence_fetcher(ctx)
-        confluence_client = PagesMixin(confluence_fetcher.config)
         logger.debug(
             f"Confluence client initialized with URL: {confluence_fetcher.config.url}"
         )
@@ -154,7 +153,7 @@ async def sync_markdown_to_page(
             "match_threshold": 85,
         }
         logger.debug(f"Initializing sync engine with config: {sync_config}")
-        sync_engine = MarkdownSyncEngine(confluence_client, sync_config)
+        sync_engine = MarkdownSyncEngine(confluence_fetcher, sync_config)
 
         # Convert string parameters to enums
         logger.debug(
@@ -338,7 +337,7 @@ async def sync_markdown_batch(
         str,
         Field(
             description=(
-                "Synchronization mode for all files: 'create', 'update', or 'auto'. "
+                "Synchronization mode for all files: 'create_only', 'update_only', or 'auto'. "
                 "Default is 'auto'."
             ),
             default="auto",

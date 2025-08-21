@@ -497,13 +497,17 @@ More content.
 
     preprocessor = ConfluencePreprocessor(base_url="https://example.atlassian.net")
 
-    result = preprocessor.markdown_to_confluence_storage(
-        markdown_with_headings
-    )
+    result = preprocessor.markdown_to_confluence_storage(markdown_with_headings)
     # Anchors should now always be present as heading_anchors=True is hardcoded in ConfluenceConverterOptions
     # md2conf generates anchors like: <ac:structured-macro ac:name="anchor" ac:schema-version="1"><ac:parameter ac:name="">main-title</ac:parameter></ac:structured-macro>
-    assert '<ac:structured-macro ac:name="anchor" ac:schema-version="1"><ac:parameter ac:name="">main-title</ac:parameter></ac:structured-macro>' in result
-    assert '<ac:structured-macro ac:name="anchor" ac:schema-version="1"><ac:parameter ac:name="">subsection</ac:parameter></ac:structured-macro>' in result
+    assert (
+        '<ac:structured-macro ac:name="anchor" ac:schema-version="1"><ac:parameter ac:name="">main-title</ac:parameter></ac:structured-macro>'
+        in result
+    )
+    assert (
+        '<ac:structured-macro ac:name="anchor" ac:schema-version="1"><ac:parameter ac:name="">subsection</ac:parameter></ac:structured-macro>'
+        in result
+    )
     # Ensure headings are still there
     assert "<h1>" in result
     assert "<h2>" in result

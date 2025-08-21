@@ -115,31 +115,53 @@ class MarkdownSyncEngine:
             # Parse markdown file
             parsed_file = self.converter.parse_markdown_file(file_path)
 
-            # Check for existing mapping
+            # Check for existing mapping and frontmatter page ID
             existing_mapping = self.mappings.get(file_path)
             target_page_id = (
                 existing_mapping.get("page_id") if existing_mapping else None
             )
 
+            # Frontmatter page ID takes precedence
+            if "confluence_page_id" in parsed_file.frontmatter:
+                target_page_id = str(parsed_file.frontmatter["confluence_page_id"])
+                logger.info(f"Using page ID from frontmatter: {target_page_id}")
+
             # Find or determine target page
             if target_page_id:
                 # Try to get the mapped page
                 try:
+                    logger.info(f"Looking up page by ID: {target_page_id}")
                     target_page = self._get_page_by_id(target_page_id)
-                    if not target_page:
+                    logger.info(f"_get_page_by_id returned: {target_page}")
+                    if target_page:
+                        logger.info(
+                            f"Found target page: {target_page['id']} - {target_page['title']}"
+                        )
+                        # Override the parsed title with existing page title to avoid corruption
+                        parsed_file.title = target_page["title"]
+                        logger.info(f"Using existing page title: {parsed_file.title}")
+                    else:
                         logger.warning(
                             f"Mapped page {target_page_id} not found, will search for match"
                         )
                         target_page = self._find_target_page(parsed_file, space_key)
                 except Exception as e:
-                    logger.warning(f"Failed to get mapped page {target_page_id}: {e}")
+                    logger.error(
+                        f"Exception in _get_page_by_id for {target_page_id}: {e}"
+                    )
+                    # Also log the full traceback for debugging
+                    import traceback
+
+                    logger.error(f"Full traceback:\n{traceback.format_exc()}")
                     target_page = self._find_target_page(parsed_file, space_key)
             else:
                 target_page = self._find_target_page(parsed_file, space_key)
 
             # Determine operation type
+            logger.info(f"Target page after lookup: {target_page}")
             if target_page:
                 operation = "update"
+                logger.info(f"Operation determined: {operation}")
                 if sync_mode == SyncMode.CREATE_ONLY:
                     return SyncResult(
                         False,
@@ -336,21 +358,61 @@ class MarkdownSyncEngine:
     ) -> dict[str, Any] | None:
         """Get page by ID using the client."""
         try:
-            # Use the client's get page method
+            logger.debug(
+                f"DEBUG: Attempting to get page {page_id} (type: {type(page_id)})"
+            )
+            logger.debug(f"DEBUG: Client type: {type(self.client)}")
+            logger.debug(
+                f"DEBUG: Client methods: {[m for m in dir(self.client) if not m.startswith('_')]}"
+            )
+
+            # Use the client's get page method - convert_to_markdown is keyword-only
             page = self.client.get_page_content(page_id, convert_to_markdown=False)
+            logger.debug(f"DEBUG: get_page_content returned: {type(page)}")
+            if page:
+                logger.debug(
+                    f"DEBUG: Page object attributes: {[a for a in dir(page) if not a.startswith('_')]}"
+                )
+                logger.debug(f"DEBUG: Page ID: {getattr(page, 'id', 'NO_ID')}")
+                logger.debug(f"DEBUG: Page title: {getattr(page, 'title', 'NO_TITLE')}")
+
             if page is None:
+                logger.debug(
+                    f"DEBUG: Page {page_id} returned None - page may not exist or not accessible"
+                )
                 return None
 
             # Convert ConfluencePage object to dict format for compatibility
-            return {
+            space_key = ""
+            if page.space and hasattr(page.space, "key"):
+                space_key = page.space.key
+            elif hasattr(page, "space_key"):
+                space_key = page.space_key
+
+            version_number = 1
+            if page.version and hasattr(page.version, "number"):
+                version_number = page.version.number
+            elif hasattr(page, "version_number"):
+                version_number = page.version_number
+
+            result = {
                 "id": page.id,
                 "title": page.title,
-                "space": {"key": page.space.key if page.space else ""},
+                "space": {"key": space_key},
                 "body": {"storage": {"value": page.content}},
-                "version": {"number": page.version.number if page.version else 0},
+                "version": {"number": version_number},
             }
+            logger.debug(
+                f"DEBUG: Successfully converted page {page_id} to dict with title: '{result['title']}'"
+            )
+            return result
         except Exception as e:
             logger.error(f"Failed to get page {page_id}: {e}")
+            logger.debug(f"DEBUG: Exception details: {type(e).__name__}: {e}")
+            # Also log the full traceback for debugging
+            import traceback
+
+            logger.debug(f"DEBUG: Full traceback:\n{traceback.format_exc()}")
             return None
 
     def _check_for_conflicts(
@@ -439,10 +501,12 @@ class MarkdownSyncEngine:
         try:
             # Use the client to update the page
             page_id = target_page["id"]
+            # For updates, preserve the existing page title
+            existing_title = target_page["title"]
 
             updated_page = self.client.update_page(
                 page_id=page_id,
-                title=parsed_file.title,
+                title=existing_title,
                 body=parsed_file.confluence_content,
                 is_markdown=False,  # Content is already in storage format
             )

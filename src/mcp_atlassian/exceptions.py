@@ -3,6 +3,8 @@ class MCPAtlassianAuthenticationError(Exception):
 
     pass
 
+
 class MCPAtlassianError(Exception):
     """Base exception for MCP-Atlassian errors."""
+
     pass
