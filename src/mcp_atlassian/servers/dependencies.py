@@ -181,14 +181,54 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
             return request.state.jira_fetcher
         user_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
         logger.debug(f"get_jira_fetcher: User auth type: {user_auth_type}")
-        # If OAuth or PAT token is present, create user-specific fetcher
-        if user_auth_type in ["oauth", "pat"] and hasattr(
+
+        service_headers = getattr(request.state, "atlassian_service_headers", {})
+        jira_url_header = service_headers.get("X-Atlassian-Jira-Url")
+        jira_token_header = service_headers.get("X-Atlassian-Jira-Personal-Token")
+
+        if (
+            user_auth_type == "pat"
+            and jira_url_header
+            and jira_token_header
+            and not hasattr(request.state, "user_atlassian_token")
+        ):
+            logger.info(
+                f"Creating header-based JiraFetcher with URL: {jira_url_header} and PAT token"
+            )
+            header_config = JiraConfig(
+                url=jira_url_header,
+                auth_type="pat",
+                personal_token=jira_token_header,
+                ssl_verify=True,
+                projects_filter=None,
+                http_proxy=None,
+                https_proxy=None,
+                no_proxy=None,
+                socks_proxy=None,
+                custom_headers=None,
+            )
+            try:
+                header_jira_fetcher = JiraFetcher(config=header_config)
+                current_user_id = header_jira_fetcher.get_current_user_account_id()
+                logger.debug(
+                    f"get_jira_fetcher: Validated header-based Jira token for user ID: {current_user_id}"
+                )
+                request.state.jira_fetcher = header_jira_fetcher
+                return header_jira_fetcher
+            except Exception as e:
+                logger.error(
+                    f"get_jira_fetcher: Failed to create/validate header-based JiraFetcher: {e}",
+                    exc_info=True,
+                )
+                raise ValueError(
+                    f"Invalid header-based Jira token or configuration: {e}"
+                )
+
+        elif user_auth_type in ["oauth", "pat"] and hasattr(
             request.state, "user_atlassian_token"
         ):
             user_token = getattr(request.state, "user_atlassian_token", None)
-            user_email = getattr(
-                request.state, "user_atlassian_email", None
-            )  # May be None for PAT
+            user_email = getattr(request.state, "user_atlassian_email", None)
             user_cloud_id = getattr(request.state, "user_atlassian_cloud_id", None)
 
             if not user_token:
@@ -291,7 +331,68 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
             return request.state.confluence_fetcher
         user_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
         logger.debug(f"get_confluence_fetcher: User auth type: {user_auth_type}")
-        if user_auth_type in ["oauth", "pat"] and hasattr(
+
+        service_headers = getattr(request.state, "atlassian_service_headers", {})
+        confluence_url_header = service_headers.get("X-Atlassian-Confluence-Url")
+        confluence_token_header = service_headers.get(
+            "X-Atlassian-Confluence-Personal-Token"
+        )
+
+        if (
+            user_auth_type == "pat"
+            and confluence_url_header
+            and confluence_token_header
+            and not hasattr(request.state, "user_atlassian_token")
+        ):
+            logger.info(
+                f"Creating header-based ConfluenceFetcher with URL: {confluence_url_header} and PAT token"
+            )
+            header_config = ConfluenceConfig(
+                url=confluence_url_header,
+                auth_type="pat",
+                personal_token=confluence_token_header,
+                ssl_verify=True,
+                spaces_filter=None,
+                http_proxy=None,
+                https_proxy=None,
+                no_proxy=None,
+                socks_proxy=None,
+                custom_headers=None,
+            )
+            try:
+                header_confluence_fetcher = ConfluenceFetcher(config=header_config)
+                current_user_data = header_confluence_fetcher.get_current_user_info()
+                derived_email = (
+                    current_user_data.get("email")
+                    if isinstance(current_user_data, dict)
+                    else None
+                )
+                display_name = (
+                    current_user_data.get("displayName")
+                    if isinstance(current_user_data, dict)
+                    else None
+                )
+                logger.debug(
+                    f"get_confluence_fetcher: Validated header-based Confluence token. User context: Email='{derived_email}', DisplayName='{display_name}'"
+                )
+                request.state.confluence_fetcher = header_confluence_fetcher
+                if (
+                    derived_email
+                    and current_user_data
+                    and isinstance(current_user_data, dict)
+                ):
+                    request.state.user_atlassian_email = current_user_data["email"]
+                return header_confluence_fetcher
+            except Exception as e:
+                logger.error(
+                    f"get_confluence_fetcher: Failed to create/validate header-based ConfluenceFetcher: {e}",
+                    exc_info=True,
+                )
+                raise ValueError(
+                    f"Invalid header-based Confluence token or configuration: {e}"
+                )
+
+        elif user_auth_type in ["oauth", "pat"] and hasattr(
             request.state, "user_atlassian_token"
         ):
             user_token = getattr(request.state, "user_atlassian_token", None)
