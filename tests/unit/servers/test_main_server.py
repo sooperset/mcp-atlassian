@@ -142,3 +142,109 @@ class TestUserTokenMiddleware:
         # Verify the request was processed normally
         mock_call_next.assert_called_once_with(mock_request)
         assert result is not None
+
+    @pytest.mark.anyio
+    async def test_service_headers_extraction_jira_only(
+        self, middleware, mock_request, mock_call_next
+    ):
+        """Test extraction of Jira service headers for header-based authentication."""
+        mock_request.headers = {
+            "X-Atlassian-Jira-Url": "https://test.atlassian.net",
+            "X-Atlassian-Jira-Personal-Token": "test-jira-pat-token",
+        }
+
+        result = await middleware.dispatch(mock_request, mock_call_next)
+
+        assert hasattr(mock_request.state, "atlassian_service_headers")
+        service_headers = mock_request.state.atlassian_service_headers
+        assert service_headers["X-Atlassian-Jira-Url"] == "https://test.atlassian.net"
+        assert (
+            service_headers["X-Atlassian-Jira-Personal-Token"] == "test-jira-pat-token"
+        )
+
+        assert hasattr(mock_request.state, "user_atlassian_auth_type")
+        assert mock_request.state.user_atlassian_auth_type == "pat"
+        assert mock_request.state.user_atlassian_email is None
+
+        mock_call_next.assert_called_once_with(mock_request)
+
+    @pytest.mark.anyio
+    async def test_service_headers_extraction_confluence_only(
+        self, middleware, mock_request, mock_call_next
+    ):
+        """Test extraction of Confluence service headers for header-based authentication."""
+        mock_request.headers = {
+            "X-Atlassian-Confluence-Url": "https://test.atlassian.net",
+            "X-Atlassian-Confluence-Personal-Token": "test-confluence-pat-token",
+        }
+
+        result = await middleware.dispatch(mock_request, mock_call_next)
+
+        assert hasattr(mock_request.state, "atlassian_service_headers")
+        service_headers = mock_request.state.atlassian_service_headers
+        assert (
+            service_headers["X-Atlassian-Confluence-Url"]
+            == "https://test.atlassian.net"
+        )
+        assert (
+            service_headers["X-Atlassian-Confluence-Personal-Token"]
+            == "test-confluence-pat-token"
+        )
+
+        assert hasattr(mock_request.state, "user_atlassian_auth_type")
+        assert mock_request.state.user_atlassian_auth_type == "pat"
+
+        mock_call_next.assert_called_once_with(mock_request)
+
+    @pytest.mark.anyio
+    async def test_service_headers_extraction_both_services(
+        self, middleware, mock_request, mock_call_next
+    ):
+        """Test extraction of both Jira and Confluence service headers."""
+        mock_request.headers = {
+            "X-Atlassian-Jira-Url": "https://jira.atlassian.net",
+            "X-Atlassian-Jira-Personal-Token": "test-jira-pat-token",
+            "X-Atlassian-Confluence-Url": "https://confluence.atlassian.net",
+            "X-Atlassian-Confluence-Personal-Token": "test-confluence-pat-token",
+        }
+
+        result = await middleware.dispatch(mock_request, mock_call_next)
+
+        assert hasattr(mock_request.state, "atlassian_service_headers")
+        service_headers = mock_request.state.atlassian_service_headers
+        assert len(service_headers) == 4
+        assert service_headers["X-Atlassian-Jira-Url"] == "https://jira.atlassian.net"
+        assert (
+            service_headers["X-Atlassian-Jira-Personal-Token"] == "test-jira-pat-token"
+        )
+        assert (
+            service_headers["X-Atlassian-Confluence-Url"]
+            == "https://confluence.atlassian.net"
+        )
+        assert (
+            service_headers["X-Atlassian-Confluence-Personal-Token"]
+            == "test-confluence-pat-token"
+        )
+
+        mock_call_next.assert_called_once_with(mock_request)
+
+    @pytest.mark.anyio
+    async def test_no_service_headers_no_auth_header(
+        self, middleware, mock_request, mock_call_next
+    ):
+        """Test behavior when no service headers or auth headers are present."""
+
+        mock_request.headers = {"Content-Type": "application/json"}
+
+        result = await middleware.dispatch(mock_request, mock_call_next)
+
+        assert hasattr(mock_request.state, "atlassian_service_headers")
+        service_headers = mock_request.state.atlassian_service_headers
+        assert service_headers == {}
+
+        assert (
+            not hasattr(mock_request.state, "user_atlassian_auth_type")
+            or mock_request.state.user_atlassian_auth_type is None
+        )
+
+        mock_call_next.assert_called_once_with(mock_request)
