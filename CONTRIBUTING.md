@@ -2,6 +2,7 @@
 
 Thank you for your interest in contributing to MCP Atlassian! This document provides guidelines and instructions for contributing to this project.
 
+
 ## Development Setup
 
 1. Make sure you have Python 3.10+ installed
