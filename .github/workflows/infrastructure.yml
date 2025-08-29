@@ -1,0 +1,160 @@
+name: Create/Update infrastructure
+
+on:
+  workflow_call:
+    inputs:
+      tf_vars_files:
+        description: "Used in the terraform command, format: -var-file=var-file-1.tfvars -var-file=var-file-2.tfvars"
+        type: string
+        required: true
+      image_tag:
+        description: Image tag
+        type: string
+        required: true
+      domain_name:
+        description: Target domain name
+        type: string
+        required: true
+      environment_tag:
+        description: Environment tag for container
+        required: true
+        type: string
+      s3_key:
+        description: S3 key for tf state
+        required: true
+        type: string
+      enable_execute_command:
+        type: boolean
+        default: false
+    outputs:
+      fqdn:
+        description: The fully qualified domain name of the deployed service
+        value: ${{ jobs.deploy.outputs.fqdn }}
+      deployment_id:
+        description: The GitHub deployment ID
+        value: ${{ jobs.deploy.outputs.deployment_id }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment_tag }}
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}/infra
+    outputs:
+      fqdn: ${{ steps.get-fqdn.outputs.fqdn }}
+      deployment_id: ${{ steps.deployment.outputs.deployment_id }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_AI }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_AI }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - run: terraform init -backend-config="key=${{ inputs.s3_key }}"
+
+      - name: Create .env file for terraform
+        run: |
+          echo "MCP_VERY_VERBOSE=true" >> .env
+          echo "TRANSPORT=streamable-http" >> .env
+          echo "PORT=8000" >> .env
+
+      - id: plan
+        run: |
+          terraform plan -no-color ${{ inputs.tf_vars_files }} \
+            -var "image_tag=${{ inputs.image_tag }}" \
+            -var "domain_name=${{ inputs.domain_name }}" \
+            -var "target_environment=${{ inputs.environment_tag }}" \
+            -var "enable_execute_command=${{ inputs.enable_execute_command }}" \
+            -var "auth_token=${{ secrets.AUTH_TOKEN }}"
+        
+      - name: Generate an output
+        id: get-fqdn
+        run: |
+          url=$(terraform output -raw fqdn)
+          echo "fqdn=$url" >> $GITHUB_OUTPUT
+      
+      - uses: chrnorm/deployment-action@v2
+        name: Create GitHub deployment
+        id: deployment
+        with:
+          token: '${{ github.token }}'
+          environment-url: "https://${{ steps.get-fqdn.outputs.fqdn }}"
+          environment: ${{ inputs.environment_tag }}
+
+      - name: Terraform Apply
+        run: |
+          terraform apply -auto-approve ${{ inputs.tf_vars_files }} \
+            -var "image_tag=${{ inputs.image_tag }}" \
+            -var "domain_name=${{ inputs.domain_name }}" \
+            -var "target_environment=${{ inputs.environment_tag }}" \
+            -var "enable_execute_command=${{ inputs.enable_execute_command }}" \
+            -var "auth_token=${{ secrets.AUTH_TOKEN }}"
+
+  slackNotificationSuccess:
+    name: Slack Notification (Success)
+    environment: ${{ inputs.environment_tag }}
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: needs.deploy.result == 'success'
+    steps:
+      - name: Send Success Notification
+        uses: slackapi/slack-github-action@v2.1.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            blocks:
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "<${{ github.server_url }}/${{ github.repository }}|${{ env.APP_NAME_NOTIFICATION }}> ${{ inputs.environment_tag}} deployment created :white_check_mark:"
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "Deploying image: ${{ env.ECR_URL }}${{ env.ECR_PATH }}:${{ inputs.image_tag }}"
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "> Check the logs for <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|details>."
+
+  slackNotificationFailure:
+    name: Slack Notification (Failure)
+    environment: ${{ inputs.environment_tag }}
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: always() && needs.deploy.result == 'failure'
+    steps:
+      - name: Send Failure Notification
+        uses: slackapi/slack-github-action@v2.1.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            blocks:
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "<${{ github.server_url }}/${{ github.repository }}|${{ env.APP_NAME_NOTIFICATION }}> ${{ inputs.environment_tag}} deployment creation failed :x:"
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "Attempted to deploy image: ${{ env.ECR_URL }}${{ env.ECR_PATH }}:${{ inputs.image_tag }}"
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "> Check the logs for <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|details>."
+      
+      - name: Update deployment status (failure)
+        if: failure()
+        uses: chrnorm/deployment-status@v2
+        with:
+          token: '${{ github.token }}'
+          environment-url: "https://${{ needs.deploy.outputs.fqdn }}"
+          state: 'failure'
+          deployment-id: ${{ needs.deploy.outputs.deployment_id }} 

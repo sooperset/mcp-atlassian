@@ -1,0 +1,61 @@
+name: Production
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  get-last-successful-staging-run-id:
+    runs-on: ubuntu-latest
+    outputs:
+      run_id: ${{ steps.last_successful_build.outputs.run-id }}
+    steps:
+      - name: Find last successful build
+        uses: SamhammerAG/last-successful-build-action@v7.2
+        with:
+          branch: 'main'
+          workflow: 'Staging'
+        id: last_successful_build
+
+  update-infrastructure:
+    uses: ./.github/workflows/infrastructure.yml
+    needs:
+      - get-last-successful-staging-run-id
+    with:
+      tf_vars_files: "-var-file=var_files/ai.tfvars.safe"
+      image_tag: ${{ needs.get-last-successful-staging-run-id.outputs.run_id }}
+      domain_name: "mcp-atlassian"
+      environment_tag: production
+      s3_key: "mcp-atlassian/terraform/production.tfstate"
+    secrets: inherit
+  
+  update-ecr-tracking:
+    runs-on: ubuntu-latest
+    needs:
+      - get-last-successful-staging-run-id
+      - update-infrastructure
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with: 
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_AI }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_AI }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Push Docker image
+        run: |
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ env.ECR_URL }}
+          docker pull ${{ env.ECR_URL }}${{ env.ECR_PATH }}:${{ needs.get-last-successful-staging-run-id.outputs.run_id }}
+          docker tag ${{ env.ECR_URL }}${{ env.ECR_PATH }}:${{ needs.get-last-successful-staging-run-id.outputs.run_id }} ${{ env.ECR_URL }}${{ env.ECR_PATH }}:production
+          docker push ${{ env.ECR_URL }}${{ env.ECR_PATH }}:production
+
+  smoke-testing:
+    uses: ./.github/workflows/smoke_testing.yml
+    needs:
+      - update-infrastructure
+    with:
+      s3_key: "mcp-atlassian/terraform/production.tfstate"
+      environment_tag: production
+      fqdn: ${{ needs.update-infrastructure.outputs.fqdn }}
+      deployment_id: ${{ needs.update-infrastructure.outputs.deployment_id }}
+    secrets: inherit

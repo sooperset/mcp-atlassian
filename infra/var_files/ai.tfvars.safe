@@ -1,0 +1,12 @@
+registry_arn = "arn:aws:ecr:us-east-2:767397775295:repository/ai/ai-coding-agent"
+s3_arn = "arn:aws:s3:::ai-coding-agent"
+aws_region = "us-east-2"
+log_group_name = "ai-enablement-cluster"
+container_port = 8000
+hosted_zone_id = "Z088938213M784NAAX7NY"
+ecs_name = "ai-enablement-cluster"
+acm_certificate_arn = "arn:aws:acm:us-east-2:767397775295:certificate/c90a939f-9e92-4556-98a4-09b0f9df430b"
+app_name="mcp-atlassian"
+env_file_arn="arn:aws:s3:::ai-coding-agent/mcp-atlassian/env_files/.env"
+image_url=767397775295.dkr.ecr.us-east-2.amazonaws.com
+s3_bucket_name = "ai-coding-agent"

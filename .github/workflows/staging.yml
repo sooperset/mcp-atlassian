@@ -1,0 +1,45 @@
+name: Staging
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**/README.md'
+      - .devcontainer/**
+      - .github/workflows/production*
+      - .github/workflows/manual-*
+      - .github/workflows/*one-off-deployment*
+
+jobs:
+  build-and-publish:
+    uses: ./.github/workflows/build_and_publish.yml
+    with:
+      image_tag: ${{ github.run_id }}
+      environment_tag: staging
+    secrets: inherit
+
+  update-infrastructure:
+    uses: ./.github/workflows/infrastructure.yml
+    needs:
+      - build-and-publish
+    with:
+      tf_vars_files: "-var-file=var_files/ai.tfvars.safe"
+      image_tag: ${{ github.run_id }}
+      domain_name: "mcp-atlassian-staging"
+      environment_tag: staging
+      s3_key: "mcp-atlassian/terraform/staging.tfstate"
+      enable_execute_command: true
+    secrets: inherit
+  
+  smoke-testing:
+    uses: ./.github/workflows/smoke_testing.yml
+    needs:
+      - update-infrastructure
+    with:
+      s3_key: "mcp-atlassian/terraform/staging.tfstate"
+      environment_tag: staging
+      fqdn: ${{ needs.update-infrastructure.outputs.fqdn }}
+      deployment_id: ${{ needs.update-infrastructure.outputs.deployment_id }}
+    secrets: inherit

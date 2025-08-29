@@ -75,3 +75,23 @@ playground/
 
 # Claude
 .claude/
+
+# Environment and secrets
+.env
+.env.local
+.env.production
+.env.staging
+ngrok.env
+.env.*
+!.env.example
+!/playwright/.env*
+
+# Terraform files to ignore
+*.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+*.tfvars.json
+.terraform.tfstate.lock.info
+plan.out
+*lock.hcl

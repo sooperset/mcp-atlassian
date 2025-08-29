@@ -1,0 +1,89 @@
+name: Build and Publish
+
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: Image tag for container
+        required: true
+        type: string
+      environment_tag:
+        description: Image tag for container
+        required: true
+        type: string
+
+jobs:  
+  build-and-publish:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment_tag }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with: 
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_AI }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_AI }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Build Docker image
+        run: |
+          docker build -t ${{ env.ECR_URL }}${{ env.ECR_PATH }}:${{ inputs.image_tag }} -f Dockerfile .
+
+      - name: Push Docker image
+        run: |
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ env.ECR_URL }}${{ env.ECR_PATH }}:${{ inputs.image_tag }} -f Dockerfile .
+          docker tag ${{ env.ECR_URL }}${{ env.ECR_PATH }}:${{ inputs.image_tag }} -f Dockerfile .${{ env.ECR_URL }}${{ env.ECR_PATH }}:${{ inputs.image_tag }} -f Dockerfile .nv.ECR_PATH }}:${{ inputs.environment_tag }}
+          docker push ${{ env.ECR_URL }}${{ env.ECR_PATH }}:${{ inputs.image_tag }} -f Dockerfile .
+          docker push ${{ env.ECR_URL }}${{ env.ECR_PATH }}:${{ inputs.image_tag }} -f Dockerfile .environment_tag }}
+
+  slackNotificationSuccess:
+    name: Slack Notification (Success)
+    environment: ${{ inputs.environment_tag }}
+    runs-on: ubuntu-latest
+    needs: build-and-publish
+    if: needs.build-and-publish.result == 'success'
+    steps:
+      - name: Send Success Notification
+        uses: slackapi/slack-github-action@v2.1.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            blocks:
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "<${{ github.server_url }}/${{ github.repository }}|${{ env.APP_NAME_NOTIFICATION }}> ${{ inputs.environment_tag}} image has been published :white_check_mark:"
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "Image has been published to ${{ env.ECR_URL }}${{ env.ECR_PATH }}:${{ inputs.image_tag }}"
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "> Check the logs for <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|details>."
+
+  slackNotificationFailure:
+    name: Slack Notification (Failure)
+    environment: ${{ inputs.environment_tag }}
+    runs-on: ubuntu-latest
+    needs: build-and-publish
+    if: always() && needs.build-and-publish.result == 'failure'
+    steps:
+      - name: Send Failure Notification
+        uses: slackapi/slack-github-action@v2.1.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            blocks:
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "<${{ github.server_url }}/${{ github.repository }}|${{ env.APP_NAME_NOTIFICATION }}> ${{ inputs.environment_tag}} image creation failed :x:"
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "> Check the logs for <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|details>."

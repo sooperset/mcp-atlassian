@@ -1,0 +1,158 @@
+name: Smoke Test
+
+on:
+  workflow_call:
+    inputs:
+      s3_key:
+        description: S3 key for tf state
+        required: true
+        type: string
+      environment_tag:
+        description: Environment tag for container
+        required: true
+        type: string
+      fqdn:
+        description: The fully qualified domain name of the deployed service
+        required: true
+        type: string
+      deployment_id:
+        description: The GitHub deployment ID
+        required: true
+        type: string
+
+jobs:
+  run-tests:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment_tag }}
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}/infra
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_AI }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_AI }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - run: terraform init -backend-config="key=${{ inputs.s3_key }}"
+
+      - name: Wait for ECS service stable
+        run: |
+          cluster=$(terraform output -raw ecs_cluster_name)
+          service=$(terraform output -raw ecs_service_name)
+          aws ecs wait services-stable --cluster "$cluster" --services "$service"
+
+      - name: Verify rollout completed
+        run: |
+          cluster=$(terraform output -raw ecs_cluster_name)
+          service=$(terraform output -raw ecs_service_name)
+
+          deadline=$((SECONDS+300))
+          while :; do
+          read -r rollout td reason <<< "$(aws ecs describe-services \
+          --cluster "$cluster" --services "$service" \
+          --query "services[0].deployments[?status=='PRIMARY']|[0].[rolloutState,taskDefinition,rolloutStateReason]" \
+          --output text || true)"
+
+          echo "PRIMARY rolloutState: ${rollout:-<none>} (taskDefinition=${td:-n/a})"
+          if [[ "$rollout" == "COMPLETED" ]]; then
+            echo "Rollout completed"
+            break
+          fi
+          if [[ "$rollout" == "FAILED" ]]; then
+            echo "Rollout FAILED: $reason"
+            exit 1
+          fi
+          if (( SECONDS >= deadline )); then
+            echo "Timed out after 5 minutes. Last state: ${rollout:-unknown}. Reason: ${reason:-n/a}"
+            exit 1
+          fi
+          sleep 5
+          done
+
+      - name: Wait for Target Group healthy
+        run: |
+          tg=$(terraform output -raw target_group_arn)
+          deadline=$((SECONDS+600))
+          while :; do
+          states=$(aws elbv2 describe-target-health --target-group-arn "$tg"  \
+            --query "TargetHealthDescriptions[].TargetHealth.State" --output text || true)
+          echo "Target states: $states"
+          if [ -n "$states" ] && ! grep -qv healthy <<< "$states"; then
+          echo "All targets healthy"; break
+          fi
+          [ $SECONDS -gt $deadline ] && echo "Timed out waiting for healthy targets" && exit 1
+          sleep 5
+          done
+
+      - name: App health check via ALB
+        run: |
+          url=$(terraform output -raw alb_dns_name)
+          curl -fsS --retry 30 --retry-connrefused --retry-delay 2 "http://$url/health"
+
+  slackNotificationSuccess:
+    name: Slack Notification (Success)
+    environment: ${{ inputs.environment_tag }}
+    runs-on: ubuntu-latest
+    needs: run-tests
+    if: needs.run-tests.result == 'success'
+    steps:
+      - name: Send Success Notification
+        uses: slackapi/slack-github-action@v2.1.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            blocks:
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "<${{ github.server_url }}/${{ github.repository }}|${{ env.APP_NAME_NOTIFICATION }}> ${{ inputs.environment_tag}} smoke testing successful :white_check_mark:"
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "> Check the logs for <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|details>."
+      - name: Update deployment status (success)
+        if: success()
+        uses: chrnorm/deployment-status@v2
+        with:
+          token: '${{ github.token }}'
+          environment-url: "https://${{ inputs.fqdn }}"
+          state: 'success'
+          deployment-id: ${{ inputs.deployment_id }}
+
+  slackNotificationFailure:
+    name: Slack Notification (Failure)
+    environment: ${{ inputs.environment_tag }}
+    runs-on: ubuntu-latest
+    needs: run-tests
+    if: always() && needs.run-tests.result == 'failure'
+    steps:
+      - name: Send Failure Notification
+        uses: slackapi/slack-github-action@v2.1.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            blocks:
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "<${{ github.server_url }}/${{ github.repository }}|AI Coding Agent> ${{ inputs.environment_tag}} smoke testing failed :x:"
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "> Check the logs for <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|details>."
+      - name: Update deployment status (failure)
+        if: failure()
+        uses: chrnorm/deployment-status@v2
+        with:
+          token: '${{ github.token }}'
+          environment-url: "https://${{ inputs.fqdn }}"
+          state: 'failure'
+          deployment-id: ${{ inputs.deployment_id }}

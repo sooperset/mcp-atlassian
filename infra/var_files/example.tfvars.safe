@@ -1,0 +1,7 @@
+s3_arn = "<S3 bucket ARN>"
+ecs_arn = "<Elastic Container Service Cluster ARN>"
+env_file_arn = "<ARN to .env file in S3 bucket>"
+image_tag =  "<ECR Image tag>"
+target_environment = "<Application environment>"
+aws_region = "<target region>"
+log_group_name = "<Name of the log group>"
