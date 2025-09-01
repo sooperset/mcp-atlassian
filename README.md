@@ -725,6 +725,7 @@ Here's a complete example of setting up multi-user authentication with streamabl
 #### Jira Tools
 
 - `jira_get_issue`: Get details of a specific issue
+- `jira_get_issue_extended`: Get comprehensive issue details including full changelog, worklogs, and attachments
 - `jira_search`: Search issues using JQL
 - `jira_create_issue`: Create a new issue
 - `jira_update_issue`: Update an existing issue
@@ -744,10 +745,11 @@ Here's a complete example of setting up multi-user authentication with streamabl
 |-----------|-------------------------------------|--------------------------------|
 | **Read**  | `jira_search`                       | `confluence_search`            |
 |           | `jira_get_issue`                    | `confluence_get_page`          |
-|           | `jira_get_all_projects`             | `confluence_get_page_children` |
-|           | `jira_get_project_issues`           | `confluence_get_comments`      |
-|           | `jira_get_worklog`                  | `confluence_get_labels`        |
-|           | `jira_get_transitions`              | `confluence_search_user`       |
+|           | `jira_get_issue_extended`           | `confluence_get_page_children` |
+|           | `jira_get_all_projects`             | `confluence_get_comments`      |
+|           | `jira_get_project_issues`           | `confluence_get_labels`        |
+|           | `jira_get_worklog`                  | `confluence_search_user`       |
+|           | `jira_get_transitions`              |                                |
 |           | `jira_search_fields`                |                                |
 |           | `jira_get_agile_boards`             |                                |
 |           | `jira_get_board_issues`             |                                |

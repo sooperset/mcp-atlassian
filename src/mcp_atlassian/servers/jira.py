@@ -81,6 +81,44 @@ async def get_user_profile(
 
 
 @jira_mcp.tool(tags={"jira", "read"})
+async def get_issue_extended(
+    ctx: Context,
+    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+) -> str:
+    """Get extended Jira issue details including changelog, worklogs, and attachments.
+    
+    Returns comprehensive issue data in one call for detailed analysis.
+    """
+    jira = await get_jira_fetcher(ctx)
+    
+    # Get full issue with changelog
+    issue = jira.get_issue(
+        issue_key=issue_key,
+        fields="*all",
+        expand="changelog,renderedFields,transitions",
+        comment_limit=50,
+        update_history=True,
+    )
+    result = issue.to_simplified_dict()
+    
+    # Add worklogs
+    try:
+        worklogs = jira.get_worklogs(issue_key)
+        result["worklogs"] = worklogs
+    except:
+        result["worklogs"] = []
+    
+    # Add transitions
+    try:
+        transitions = jira.get_available_transitions(issue_key)
+        result["transitions"] = transitions
+    except:
+        result["transitions"] = []
+    
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
 async def get_issue(
     ctx: Context,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
