@@ -443,7 +443,12 @@ class TestGetJiraFetcher:
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
     async def test_header_based_jira_fetcher_creation(
-        self, mock_jira_fetcher_class, mock_get_http_request, mock_context, mock_request
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
     ):
         """Test creating header-based JiraFetcher with PAT token from headers."""
         service_headers = {
@@ -451,14 +456,22 @@ class TestGetJiraFetcher:
             "X-Atlassian-Jira-Personal-Token": "test-pat-token",
         }
 
-        mock_request.state.user_atlassian_auth_type = "pat"
-        mock_request.state.user_atlassian_email = None
-        _setup_mock_request_state(mock_request, service_headers=service_headers)
+        # Create a special state mock that controls hasattr() behavior
+        class MockState:
+            def __init__(self):
+                self.jira_fetcher = None
+                self.user_atlassian_auth_type = "pat"
+                self.user_atlassian_email = None
+                self.atlassian_service_headers = service_headers
 
-        delattr(mock_request.state, "user_atlassian_token") if hasattr(
-            mock_request.state, "user_atlassian_token"
-        ) else None
+            def __getattr__(self, name):
+                if name == "user_atlassian_token":
+                    raise AttributeError(
+                        f"'{type(self).__name__}' object has no attribute '{name}'"
+                    )
+                return None
 
+        mock_request.state = MockState()
         mock_get_http_request.return_value = mock_request
 
         mock_fetcher = _create_mock_fetcher(JiraFetcher)
@@ -487,12 +500,21 @@ class TestGetJiraFetcher:
             "X-Atlassian-Jira-Personal-Token": "invalid-token",
         }
 
-        mock_request.state.user_atlassian_auth_type = "pat"
-        _setup_mock_request_state(mock_request, service_headers=service_headers)
-        delattr(mock_request.state, "user_atlassian_token") if hasattr(
-            mock_request.state, "user_atlassian_token"
-        ) else None
+        # Create a special state mock that controls hasattr() behavior
+        class MockState:
+            def __init__(self):
+                self.jira_fetcher = None
+                self.user_atlassian_auth_type = "pat"
+                self.atlassian_service_headers = service_headers
 
+            def __getattr__(self, name):
+                if name == "user_atlassian_token":
+                    raise AttributeError(
+                        f"'{type(self).__name__}' object has no attribute '{name}'"
+                    )
+                return None
+
+        mock_request.state = MockState()
         mock_get_http_request.return_value = mock_request
 
         mock_fetcher = _create_mock_fetcher(
@@ -694,13 +716,22 @@ class TestGetConfluenceFetcher:
             "X-Atlassian-Confluence-Personal-Token": "test-confluence-pat-token",
         }
 
-        mock_request.state.user_atlassian_auth_type = "pat"
-        mock_request.state.user_atlassian_email = None
-        _setup_mock_request_state(mock_request, service_headers=service_headers)
-        delattr(mock_request.state, "user_atlassian_token") if hasattr(
-            mock_request.state, "user_atlassian_token"
-        ) else None
+        # Create a special state mock that controls hasattr() behavior
+        class MockState:
+            def __init__(self):
+                self.confluence_fetcher = None
+                self.user_atlassian_auth_type = "pat"
+                self.user_atlassian_email = None
+                self.atlassian_service_headers = service_headers
 
+            def __getattr__(self, name):
+                if name == "user_atlassian_token":
+                    raise AttributeError(
+                        f"'{type(self).__name__}' object has no attribute '{name}'"
+                    )
+                return None
+
+        mock_request.state = MockState()
         mock_get_http_request.return_value = mock_request
 
         user_info = {"email": "user@example.com", "displayName": "Test User"}
@@ -737,12 +768,21 @@ class TestGetConfluenceFetcher:
             "X-Atlassian-Confluence-Personal-Token": "invalid-token",
         }
 
-        mock_request.state.user_atlassian_auth_type = "pat"
-        _setup_mock_request_state(mock_request, service_headers=service_headers)
-        delattr(mock_request.state, "user_atlassian_token") if hasattr(
-            mock_request.state, "user_atlassian_token"
-        ) else None
+        # Create a special state mock that controls hasattr() behavior
+        class MockState:
+            def __init__(self):
+                self.confluence_fetcher = None
+                self.user_atlassian_auth_type = "pat"
+                self.atlassian_service_headers = service_headers
 
+            def __getattr__(self, name):
+                if name == "user_atlassian_token":
+                    raise AttributeError(
+                        f"'{type(self).__name__}' object has no attribute '{name}'"
+                    )
+                return None
+
+        mock_request.state = MockState()
         mock_get_http_request.return_value = mock_request
 
         # Setup mock fetcher to fail validation
