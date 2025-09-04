@@ -1653,3 +1653,196 @@ async def batch_create_versions(
             )
             results.append({"success": False, "error": str(e), "input": v})
     return json.dumps(results, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
+async def get_customfield_options(
+    ctx: Context,
+    field_id: Annotated[
+        str,
+        Field(
+            description="The ID of the custom field (e.g., 'customfield_10001'). "
+            "You can use the 'search_fields' tool to find the field ID for a custom field name."
+        ),
+    ],
+    start_at: Annotated[
+        int,
+        Field(
+            description="Starting index for pagination (0-based)",
+            default=0,
+            ge=0,
+        ),
+    ] = 0,
+    max_results: Annotated[
+        int,
+        Field(
+            description="Maximum number of results per page (1-10000)",
+            default=10000,
+            ge=1,
+            le=10000,
+        ),
+    ] = 10000,
+) -> str:
+    """Get available options for a custom field in Jira.
+    
+    This retrieves the global options for a custom field. For more precise options
+    based on context (project, issue type), use get_customfield_context_options.
+
+    Args:
+        ctx: The FastMCP context.
+        field_id: The ID of the custom field (e.g., 'customfield_10001').
+        start_at: Starting index for pagination.
+        max_results: Maximum number of results per page.
+
+    Returns:
+        JSON string representing the field options with pagination info.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        options_response = jira.get_field_options(
+            field_id=field_id,
+            start_at=start_at,
+            max_results=max_results,
+        )
+        result = options_response.to_simplified_dict()
+        return json.dumps(result, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Error getting options for field '{field_id}': {str(e)}")
+        error_result = {
+            "success": False,
+            "error": str(e),
+            "field_id": field_id,
+        }
+        return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
+async def get_customfield_contexts(
+    ctx: Context,
+    field_id: Annotated[
+        str,
+        Field(
+            description="The ID of the custom field (e.g., 'customfield_10001'). "
+            "You can use the 'search_fields' tool to find the field ID for a custom field name."
+        ),
+    ],
+    start_at: Annotated[
+        int,
+        Field(
+            description="Starting index for pagination (0-based)",
+            default=0,
+            ge=0,
+        ),
+    ] = 0,
+    max_results: Annotated[
+        int,
+        Field(
+            description="Maximum number of results per page (1-10000)",
+            default=10000,
+            ge=1,
+            le=10000,
+        ),
+    ] = 10000,
+) -> str:
+    """Get contexts for a custom field in Jira.
+    
+    Contexts define where and how custom fields are used. Different contexts
+    can have different available options for the same field.
+
+    Args:
+        ctx: The FastMCP context.
+        field_id: The ID of the custom field (e.g., 'customfield_10001').
+        start_at: Starting index for pagination.
+        max_results: Maximum number of results per page.
+
+    Returns:
+        JSON string representing the field contexts with pagination info.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        contexts_response = jira.get_field_contexts(
+            field_id=field_id,
+            start_at=start_at,
+            max_results=max_results,
+        )
+        result = contexts_response.to_simplified_dict()
+        return json.dumps(result, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Error getting contexts for field '{field_id}': {str(e)}")
+        error_result = {
+            "success": False,
+            "error": str(e),
+            "field_id": field_id,
+        }
+        return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
+async def get_customfield_context_options(
+    ctx: Context,
+    field_id: Annotated[
+        str,
+        Field(
+            description="The ID of the custom field (e.g., 'customfield_10001'). "
+            "You can use the 'search_fields' tool to find the field ID for a custom field name."
+        ),
+    ],
+    context_id: Annotated[
+        str,
+        Field(
+            description="The ID of the context. Use 'get_customfield_contexts' to find context IDs."
+        ),
+    ],
+    start_at: Annotated[
+        int,
+        Field(
+            description="Starting index for pagination (0-based)",
+            default=0,
+            ge=0,
+        ),
+    ] = 0,
+    max_results: Annotated[
+        int,
+        Field(
+            description="Maximum number of results per page (1-10000)",
+            default=10000,
+            ge=1,
+            le=10000,
+        ),
+    ] = 10000,
+) -> str:
+    """Get options for a custom field within a specific context.
+    
+    This is the most precise way to get field options as they can differ by context.
+    Different contexts (e.g., different projects or issue types) can have different
+    available options for the same custom field.
+
+    Args:
+        ctx: The FastMCP context.
+        field_id: The ID of the custom field (e.g., 'customfield_10001').
+        context_id: The ID of the context.
+        start_at: Starting index for pagination.
+        max_results: Maximum number of results per page.
+
+    Returns:
+        JSON string representing the field options for the context with pagination info.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        context_options_response = jira.get_field_context_options(
+            field_id=field_id,
+            context_id=context_id,
+            start_at=start_at,
+            max_results=max_results,
+        )
+        result = context_options_response.to_simplified_dict()
+        return json.dumps(result, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Error getting context options for field '{field_id}' in context '{context_id}': {str(e)}")
+        error_result = {
+            "success": False,
+            "error": str(e),
+            "field_id": field_id,
+            "context_id": context_id,
+        }
+        return json.dumps(error_result, indent=2, ensure_ascii=False)

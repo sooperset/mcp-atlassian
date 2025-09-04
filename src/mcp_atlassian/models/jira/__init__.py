@@ -25,6 +25,13 @@ from .link import (
     JiraLinkedIssueFields,
 )
 from .project import JiraProject
+from .field_option import (
+    JiraFieldOption,
+    JiraFieldContext,
+    JiraFieldOptionsResponse,
+    JiraFieldContextOptionsResponse,
+    JiraFieldContextsResponse,
+)
 from .search import JiraSearchResult
 from .workflow import JiraTransition
 from .worklog import JiraWorklog
@@ -52,4 +59,10 @@ __all__ = [
     "JiraIssueLink",
     "JiraLinkedIssue",
     "JiraLinkedIssueFields",
+    # Field options models
+    "JiraFieldOption",
+    "JiraFieldContext",
+    "JiraFieldOptionsResponse",
+    "JiraFieldContextOptionsResponse",
+    "JiraFieldContextsResponse",
 ]
