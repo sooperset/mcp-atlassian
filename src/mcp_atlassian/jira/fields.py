@@ -6,10 +6,11 @@ from typing import Any
 from thefuzz import fuzz
 
 from mcp_atlassian.models.jira.field_option import (
+    JiraFieldContextOptionsResponse,
     JiraFieldContextsResponse,
     JiraFieldOptionsResponse,
-    JiraFieldContextOptionsResponse,
 )
+
 from .client import JiraClient
 from .protocols import EpicOperationsProto, UsersOperationsProto
 
@@ -554,11 +555,13 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
             raise ValueError("Field ID is required")
 
         if not field_id.startswith("customfield_"):
-            raise ValueError("Field ID must be a custom field (starting with 'customfield_')")
+            raise ValueError(
+                "Field ID must be a custom field (starting with 'customfield_')"
+            )
 
         try:
             logger.debug(f"Getting contexts for field '{field_id}'")
-            
+
             # Use different API endpoints for Cloud vs DC/Server
             if self.config.is_cloud:
                 # Cloud API
@@ -567,7 +570,7 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
                 # DC/Server API - contexts endpoint may not exist or be different
                 # For DC, we'll use the same endpoint as Cloud but with API v2
                 path = f"/rest/api/2/field/{field_id}/context"
-            
+
             params = {
                 "startAt": start_at,
                 "maxResults": max_results,
@@ -579,14 +582,15 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
             )
 
             if not isinstance(result, dict):
-                error_msg = f"Unexpected response type from field contexts API: {type(result)}"
+                error_msg = (
+                    f"Unexpected response type from field contexts API: {type(result)}"
+                )
                 logger.error(error_msg)
                 raise ValueError(error_msg)
 
             # Parse the response using our model
             contexts_response = JiraFieldContextsResponse.from_api_response(
-                result, 
-                max_results=max_results
+                result, max_results=max_results
             )
             logger.debug(
                 f"Retrieved {len(contexts_response.values)} contexts for field '{field_id}'"
@@ -621,11 +625,13 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
             raise ValueError("Field ID is required")
 
         if not field_id.startswith("customfield_"):
-            raise ValueError("Field ID must be a custom field (starting with 'customfield_')")
+            raise ValueError(
+                "Field ID must be a custom field (starting with 'customfield_')"
+            )
 
         try:
             logger.debug(f"Getting global options for field '{field_id}'")
-            
+
             # Use different API endpoints for Cloud vs DC/Server
             if self.config.is_cloud:
                 # Cloud API - different endpoint structure
@@ -635,7 +641,7 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
                 # Extract numerical ID from customfield_XXXXX
                 numerical_id = field_id.replace("customfield_", "")
                 path = f"/rest/api/2/customFields/{numerical_id}/options"
-            
+
             params = {
                 "startAt": start_at,
                 "maxResults": max_results,
@@ -647,14 +653,15 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
             )
 
             if not isinstance(result, dict):
-                error_msg = f"Unexpected response type from field options API: {type(result)}"
+                error_msg = (
+                    f"Unexpected response type from field options API: {type(result)}"
+                )
                 logger.error(error_msg)
                 raise ValueError(error_msg)
 
             # Parse the response using our model
             options_response = JiraFieldOptionsResponse.from_api_response(
-                result, 
-                max_results=max_results
+                result, max_results=max_results
             )
             logger.debug(
                 f"Retrieved {len(options_response.values)} options for field '{field_id}'"
@@ -694,11 +701,15 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
             raise ValueError("Context ID is required")
 
         if not field_id.startswith("customfield_"):
-            raise ValueError("Field ID must be a custom field (starting with 'customfield_')")
+            raise ValueError(
+                "Field ID must be a custom field (starting with 'customfield_')"
+            )
 
         try:
-            logger.debug(f"Getting context options for field '{field_id}' in context '{context_id}'")
-            
+            logger.debug(
+                f"Getting context options for field '{field_id}' in context '{context_id}'"
+            )
+
             # Use different API endpoints for Cloud vs DC/Server
             if self.config.is_cloud:
                 # Cloud API
@@ -709,8 +720,10 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
                 # Extract numerical ID from customfield_XXXXX
                 numerical_id = field_id.replace("customfield_", "")
                 path = f"/rest/api/2/customFields/{numerical_id}/options"
-                logger.warning(f"DC/Server may not support context-specific options for field '{field_id}', using general options")
-            
+                logger.warning(
+                    f"DC/Server may not support context-specific options for field '{field_id}', using general options"
+                )
+
             params = {
                 "startAt": start_at,
                 "maxResults": max_results,
@@ -727,9 +740,10 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
                 raise ValueError(error_msg)
 
             # Parse the response using our model
-            context_options_response = JiraFieldContextOptionsResponse.from_api_response(
-                result, 
-                max_results=max_results
+            context_options_response = (
+                JiraFieldContextOptionsResponse.from_api_response(
+                    result, max_results=max_results
+                )
             )
             logger.debug(
                 f"Retrieved {len(context_options_response.values)} options for field '{field_id}' in context '{context_id}'"
@@ -737,5 +751,7 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
             return context_options_response
 
         except Exception as e:
-            logger.error(f"Error getting context options for field '{field_id}' in context '{context_id}': {str(e)}")
+            logger.error(
+                f"Error getting context options for field '{field_id}' in context '{context_id}': {str(e)}"
+            )
             raise

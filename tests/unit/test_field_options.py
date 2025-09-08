@@ -1,14 +1,15 @@
 """Tests for custom field options functionality."""
 
-import pytest
 from unittest.mock import Mock, patch
 
+import pytest
+
 from mcp_atlassian.models.jira.field_option import (
-    JiraFieldOption,
     JiraFieldContext,
-    JiraFieldOptionsResponse,
-    JiraFieldContextsResponse,
     JiraFieldContextOptionsResponse,
+    JiraFieldContextsResponse,
+    JiraFieldOption,
+    JiraFieldOptionsResponse,
 )
 
 
@@ -21,11 +22,11 @@ class TestFieldOptionModels:
             "id": "10001",
             "value": "High Priority",
             "disabled": False,
-            "config": {"color": "red"}
+            "config": {"color": "red"},
         }
-        
+
         option = JiraFieldOption(**option_data)
-        
+
         assert option.id == "10001"
         assert option.value == "High Priority"
         assert option.disabled is False
@@ -38,11 +39,11 @@ class TestFieldOptionModels:
             "name": "Default context",
             "description": "Default field context",
             "isGlobalContext": True,
-            "isAnyIssueType": True
+            "isAnyIssueType": True,
         }
-        
+
         context = JiraFieldContext(**context_data)
-        
+
         assert context.id == "10020"
         assert context.name == "Default context"
         assert context.description == "Default field context"
@@ -59,12 +60,12 @@ class TestFieldOptionModels:
             "values": [
                 {"id": "10001", "value": "High", "disabled": False},
                 {"id": "10002", "value": "Medium", "disabled": False},
-                {"id": "10003", "value": "Low", "disabled": False}
-            ]
+                {"id": "10003", "value": "Low", "disabled": False},
+            ],
         }
-        
+
         response = JiraFieldOptionsResponse(**response_data)
-        
+
         assert response.max_results == 50
         assert response.start_at == 0
         assert response.total == 3
@@ -81,13 +82,13 @@ class TestFieldOptionModels:
             "isLast": True,
             "values": [
                 {"id": "10001", "value": "High", "disabled": False},
-                {"id": "10002", "value": "Low", "disabled": True}
-            ]
+                {"id": "10002", "value": "Low", "disabled": True},
+            ],
         }
-        
+
         response = JiraFieldOptionsResponse(**response_data)
         simplified = response.to_simplified_dict()
-        
+
         expected = {
             "pagination": {
                 "start_at": 0,
@@ -97,10 +98,10 @@ class TestFieldOptionModels:
             },
             "options": [
                 {"id": "10001", "value": "High", "disabled": False, "config": None},
-                {"id": "10002", "value": "Low", "disabled": True, "config": None}
-            ]
+                {"id": "10002", "value": "Low", "disabled": True, "config": None},
+            ],
         }
-        
+
         assert simplified == expected
 
     def test_jira_field_contexts_response_creation(self):
@@ -116,13 +117,13 @@ class TestFieldOptionModels:
                     "name": "Default context",
                     "description": "Default field context",
                     "isGlobalContext": True,
-                    "isAnyIssueType": True
+                    "isAnyIssueType": True,
                 }
-            ]
+            ],
         }
-        
+
         response = JiraFieldContextsResponse(**response_data)
-        
+
         assert response.max_results == 50
         assert response.start_at == 0
         assert response.total == 1
@@ -139,19 +140,19 @@ class TestFieldOptionModels:
             "isLast": True,
             "values": [
                 {"id": "10001", "value": "Option 1", "disabled": False},
-                {"id": "10002", "value": "Option 2", "disabled": False}
+                {"id": "10002", "value": "Option 2", "disabled": False},
             ],
             "context": {
                 "id": "10020",
                 "name": "Test context",
                 "description": "Test context description",
                 "isGlobalContext": False,
-                "isAnyIssueType": False
-            }
+                "isAnyIssueType": False,
+            },
         }
-        
+
         response = JiraFieldContextOptionsResponse(**response_data)
-        
+
         assert response.max_results == 50
         assert response.start_at == 0
         assert response.total == 2
@@ -167,21 +168,19 @@ class TestFieldOptionModels:
             "startAt": 0,
             "total": 1,
             "isLast": True,
-            "values": [
-                {"id": "10001", "value": "Context Option", "disabled": False}
-            ],
+            "values": [{"id": "10001", "value": "Context Option", "disabled": False}],
             "context": {
                 "id": "10020",
                 "name": "Test context",
                 "description": "Test context description",
                 "isGlobalContext": False,
-                "isAnyIssueType": True
-            }
+                "isAnyIssueType": True,
+            },
         }
-        
+
         response = JiraFieldContextOptionsResponse(**response_data)
         simplified = response.to_simplified_dict()
-        
+
         expected = {
             "pagination": {
                 "start_at": 0,
@@ -190,33 +189,38 @@ class TestFieldOptionModels:
                 "is_last": True,
             },
             "options": [
-                {"id": "10001", "value": "Context Option", "disabled": False, "config": None}
+                {
+                    "id": "10001",
+                    "value": "Context Option",
+                    "disabled": False,
+                    "config": None,
+                }
             ],
             "context": {
                 "id": "10020",
-                "name": "Test context", 
+                "name": "Test context",
                 "description": "Test context description",
                 "is_global_context": False,
-                "is_any_issue_type": True
-            }
+                "is_any_issue_type": True,
+            },
         }
-        
+
         assert simplified == expected
 
 
 class TestFieldOptionMethods:
     """Test the field option methods in FieldsMixin."""
 
-    @patch('mcp_atlassian.jira.fields.logger')
+    @patch("mcp_atlassian.jira.fields.logger")
     def test_get_field_options_validation(self, mock_logger):
         """Test field options validation."""
         from mcp_atlassian.jira.fields import FieldsMixin
-        
+
         # Create a mock mixin instance
         mixin = Mock(spec=FieldsMixin)
         mixin.config = Mock()
         mixin.config.is_cloud = True
-        
+
         # Test empty field_id
         with pytest.raises(ValueError, match="Field ID is required"):
             FieldsMixin.get_field_options(mixin, "")
@@ -225,16 +229,16 @@ class TestFieldOptionMethods:
         with pytest.raises(ValueError, match="Field ID must be a custom field"):
             FieldsMixin.get_field_options(mixin, "summary")
 
-    @patch('mcp_atlassian.jira.fields.logger')
+    @patch("mcp_atlassian.jira.fields.logger")
     def test_get_field_contexts_validation(self, mock_logger):
         """Test field contexts validation."""
         from mcp_atlassian.jira.fields import FieldsMixin
-        
+
         # Create a mock mixin instance
         mixin = Mock(spec=FieldsMixin)
         mixin.config = Mock()
         mixin.config.is_cloud = True
-        
+
         # Test empty field_id
         with pytest.raises(ValueError, match="Field ID is required"):
             FieldsMixin.get_field_contexts(mixin, "")
@@ -243,16 +247,16 @@ class TestFieldOptionMethods:
         with pytest.raises(ValueError, match="Field ID must be a custom field"):
             FieldsMixin.get_field_contexts(mixin, "priority")
 
-    @patch('mcp_atlassian.jira.fields.logger')
+    @patch("mcp_atlassian.jira.fields.logger")
     def test_get_field_context_options_validation(self, mock_logger):
         """Test field context options validation."""
         from mcp_atlassian.jira.fields import FieldsMixin
-        
+
         # Create a mock mixin instance
         mixin = Mock(spec=FieldsMixin)
         mixin.config = Mock()
         mixin.config.is_cloud = True
-        
+
         # Test empty field_id
         with pytest.raises(ValueError, match="Field ID is required"):
             FieldsMixin.get_field_context_options(mixin, "", "10020")
@@ -268,40 +272,40 @@ class TestFieldOptionMethods:
     def test_api_version_selection(self):
         """Test that the correct API version is selected based on deployment type."""
         from mcp_atlassian.jira.fields import FieldsMixin
-        
+
         # Create mock mixin instances
         cloud_mixin = Mock(spec=FieldsMixin)
         cloud_mixin.config = Mock()
         cloud_mixin.config.is_cloud = True
         cloud_mixin.jira = Mock()
-        
+
         server_mixin = Mock(spec=FieldsMixin)
         server_mixin.config = Mock()
         server_mixin.config.is_cloud = False
         server_mixin.jira = Mock()
-        
+
         # Mock successful API responses
         mock_response = {
             "maxResults": 50,
             "startAt": 0,
             "total": 1,
             "isLast": True,
-            "values": [{"id": "10001", "value": "Test Option", "disabled": False}]
+            "values": [{"id": "10001", "value": "Test Option", "disabled": False}],
         }
-        
+
         cloud_mixin.jira.get.return_value = mock_response
         server_mixin.jira.get.return_value = mock_response
-        
+
         # Test Cloud API version (3)
         FieldsMixin.get_field_options(cloud_mixin, "customfield_10001")
         cloud_mixin.jira.get.assert_called_with(
             path="/rest/api/3/field/customfield_10001/option",
-            params={"startAt": 0, "maxResults": 10000}
+            params={"startAt": 0, "maxResults": 10000},
         )
-        
-        # Test Server API version (2)  
+
+        # Test Server API version (2)
         FieldsMixin.get_field_options(server_mixin, "customfield_10001")
         server_mixin.jira.get.assert_called_with(
-            path="/rest/api/2/customFields/10001/options", 
-            params={"startAt": 0, "maxResults": 10000}
+            path="/rest/api/2/customFields/10001/options",
+            params={"startAt": 0, "maxResults": 10000},
         )

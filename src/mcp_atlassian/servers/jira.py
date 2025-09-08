@@ -1684,7 +1684,7 @@ async def get_customfield_options(
     ] = 10000,
 ) -> str:
     """Get available options for a custom field in Jira.
-    
+
     This retrieves the global options for a custom field. For more precise options
     based on context (project, issue type), use get_customfield_context_options.
 
@@ -1745,7 +1745,7 @@ async def get_customfield_contexts(
     ] = 10000,
 ) -> str:
     """Get contexts for a custom field in Jira.
-    
+
     Contexts define where and how custom fields are used. Different contexts
     can have different available options for the same field.
 
@@ -1812,7 +1812,7 @@ async def get_customfield_context_options(
     ] = 10000,
 ) -> str:
     """Get options for a custom field within a specific context.
-    
+
     This is the most precise way to get field options as they can differ by context.
     Different contexts (e.g., different projects or issue types) can have different
     available options for the same custom field.
@@ -1838,7 +1838,9 @@ async def get_customfield_context_options(
         result = context_options_response.to_simplified_dict()
         return json.dumps(result, indent=2, ensure_ascii=False)
     except Exception as e:
-        logger.error(f"Error getting context options for field '{field_id}' in context '{context_id}': {str(e)}")
+        logger.error(
+            f"Error getting context options for field '{field_id}' in context '{context_id}': {str(e)}"
+        )
         error_result = {
             "success": False,
             "error": str(e),

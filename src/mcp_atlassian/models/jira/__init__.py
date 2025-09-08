@@ -17,6 +17,13 @@ from .common import (
     JiraTimetracking,
     JiraUser,
 )
+from .field_option import (
+    JiraFieldContext,
+    JiraFieldContextOptionsResponse,
+    JiraFieldContextsResponse,
+    JiraFieldOption,
+    JiraFieldOptionsResponse,
+)
 from .issue import JiraIssue
 from .link import (
     JiraIssueLink,
@@ -25,13 +32,6 @@ from .link import (
     JiraLinkedIssueFields,
 )
 from .project import JiraProject
-from .field_option import (
-    JiraFieldOption,
-    JiraFieldContext,
-    JiraFieldOptionsResponse,
-    JiraFieldContextOptionsResponse,
-    JiraFieldContextsResponse,
-)
 from .search import JiraSearchResult
 from .workflow import JiraTransition
 from .worklog import JiraWorklog
