@@ -296,12 +296,12 @@ class TestFieldOptionMethods:
         FieldsMixin.get_field_options(cloud_mixin, "customfield_10001")
         cloud_mixin.jira.get.assert_called_with(
             path="/rest/api/3/field/customfield_10001/option",
-            params={"startAt": 0, "maxResults": 50}
+            params={"startAt": 0, "maxResults": 10000}
         )
         
         # Test Server API version (2)  
         FieldsMixin.get_field_options(server_mixin, "customfield_10001")
         server_mixin.jira.get.assert_called_with(
-            path="/rest/api/2/field/customfield_10001/option", 
-            params={"startAt": 0, "maxResults": 50}
+            path="/rest/api/2/customFields/10001/options", 
+            params={"startAt": 0, "maxResults": 10000}
         )
