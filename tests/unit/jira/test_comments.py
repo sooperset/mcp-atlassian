@@ -171,7 +171,7 @@ class TestCommentsMixin:
             "Test comment"
         )
         comments_mixin.jira.issue_add_comment.assert_called_once_with(
-            "TEST-123", "*This* is _Jira_ formatted"
+            "TEST-123", "*This* is _Jira_ formatted", None
         )
         assert result["id"] == "10001"
         assert result["body"] == "This is a comment"
@@ -211,7 +211,7 @@ class TestCommentsMixin:
             markdown_comment
         )
         comments_mixin.jira.issue_add_comment.assert_called_once_with(
-            "TEST-123", "*This* is _Jira_ formatted"
+            "TEST-123", "*This* is _Jira_ formatted", None
         )
         assert result["body"] == "*This* is _Jira_ formatted"
 
@@ -230,8 +230,39 @@ class TestCommentsMixin:
 
         # Verify - for empty comments, markdown_to_jira should NOT be called as per implementation
         comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
-        comments_mixin.jira.issue_add_comment.assert_called_once_with("TEST-123", "")
+        comments_mixin.jira.issue_add_comment.assert_called_once_with(
+            "TEST-123", "", None
+        )
         assert result["body"] == ""
+
+    def test_add_comment_with_restricted_visibility(self, comments_mixin):
+        """Test add_comment with visibility set."""
+        # Setup mock response
+        comments_mixin.jira.issue_add_comment.return_value = {
+            "id": "10001",
+            "body": "This is a comment",
+            "created": "2024-01-01T10:00:00.000+0000",
+            "author": {"displayName": "John Doe"},
+        }
+
+        # Call the method
+        result = comments_mixin.add_comment(
+            "TEST-123", "Test comment", {"type": "group", "value": "restricted"}
+        )
+
+        # Verify
+        comments_mixin.preprocessor.markdown_to_jira.assert_called_once_with(
+            "Test comment"
+        )
+        comments_mixin.jira.issue_add_comment.assert_called_once_with(
+            "TEST-123",
+            "*This* is _Jira_ formatted",
+            {"type": "group", "value": "restricted"},
+        )
+        assert result["id"] == "10001"
+        assert result["body"] == "This is a comment"
+        assert result["created"] == "2024-01-01 10:00:00+00:00"  # Parsed date
+        assert result["author"] == "John Doe"
 
     def test_add_comment_with_error(self, comments_mixin):
         """Test add_comment with an error response."""
