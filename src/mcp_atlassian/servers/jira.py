@@ -986,7 +986,7 @@ async def add_comment(
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
     comment: Annotated[str, Field(description="Comment text in Markdown format")],
     visibility: Annotated[
-        dict,
+        dict[str, str],
         Field(
             description="""(Optional) Comment visibility (e.g. {"type":"group","value":"jira-users"})"""
         ),
