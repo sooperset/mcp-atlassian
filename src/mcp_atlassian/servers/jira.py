@@ -708,21 +708,129 @@ async def create_issue(
     else:
         raise ValueError("additional_fields must be a dictionary or JSON string.")
 
-    issue = jira.create_issue(
-        project_key=project_key,
-        summary=summary,
-        issue_type=issue_type,
-        description=description,
-        assignee=assignee,
-        components=components_list,
-        **extra_fields,
-    )
-    result = issue.to_simplified_dict()
-    return json.dumps(
-        {"message": "Issue created successfully", "issue": result},
-        indent=2,
-        ensure_ascii=False,
-    )
+    try:
+        issue = jira.create_issue(
+            project_key=project_key,
+            summary=summary,
+            issue_type=issue_type,
+            description=description,
+            assignee=assignee,
+            components=components_list,
+            **extra_fields,
+        )
+        result = issue.to_simplified_dict()
+        return json.dumps(
+            {"message": "Issue created successfully", "issue": result},
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        # Enhanced error handling with detailed information
+        error_msg = f"Failed to create JIRA issue: {str(e)}"
+
+        # Extract JIRA API error details if available
+        if hasattr(e, "response") and hasattr(e.response, "text"):
+            try:
+                jira_error = json.loads(e.response.text)
+                error_msg += (
+                    f"\n\nJIRA API Response:\n{json.dumps(jira_error, indent=2)}"
+                )
+            except Exception:
+                error_msg += f"\n\nJIRA API Response (raw):\n{e.response.text}"
+
+        # Try creating with individual fields if batch creation failed
+        if extra_fields:
+            logger.warning(
+                f"Batch create failed, attempting individual field fallback for project {project_key}"
+            )
+
+            # First create with core fields only
+            try:
+                core_issue = jira.create_issue(
+                    project_key=project_key,
+                    summary=summary,
+                    issue_type=issue_type,
+                    description=description,
+                    assignee=assignee,
+                    components=components_list,
+                )
+
+                # Then attempt to update with additional fields using our enhanced update function
+                success_fields = []
+                failed_fields = []
+
+                for field_name, field_value in extra_fields.items():
+                    try:
+                        jira.update_issue(core_issue.key, **{field_name: field_value})
+                        success_fields.append(field_name)
+                    except Exception as field_error:
+                        failed_fields.append(
+                            {
+                                "field": field_name,
+                                "value": field_value,
+                                "error": str(field_error),
+                                "suggestion": analyze_field_format(
+                                    field_name, field_value
+                                ),
+                            }
+                        )
+
+                # Return partial success with details
+                result = core_issue.to_simplified_dict()
+                response_data = {
+                    "message": "Issue created with partial field updates",
+                    "issue": result,
+                    "field_update_results": {
+                        "successful_fields": success_fields,
+                        "failed_fields": failed_fields,
+                    },
+                }
+
+                if failed_fields:
+                    response_data["troubleshooting"] = (
+                        "Some additional fields failed to update. Check field names, types, and permissions."
+                    )
+
+                return json.dumps(response_data, indent=2, ensure_ascii=False)
+
+            except Exception as fallback_error:
+                error_msg += f"\n\nFallback creation also failed: {str(fallback_error)}"
+
+        # Add field format analysis for debugging
+        if extra_fields:
+            error_msg += "\n\nField Analysis:"
+            for field_name, field_value in extra_fields.items():
+                suggestion = analyze_field_format(field_name, field_value)
+                error_msg += f"\n- {field_name}: {suggestion}"
+
+        logger.error(f"JIRA create_issue failed: {error_msg}")
+
+        # Return structured error response instead of raising exception
+        # This ensures detailed error information reaches the MCP client
+        error_response = {
+            "success": False,
+            "error": "Issue creation failed",
+            "details": error_msg,
+            "troubleshooting_guide": "Check field names, required fields, and permissions in your JIRA project",
+        }
+
+        # Parse JIRA API errors if available
+        if hasattr(e, "response") and hasattr(e.response, "text"):
+            try:
+                jira_error_details = json.loads(e.response.text)
+                error_response["jira_api_response"] = jira_error_details
+            except Exception:
+                error_response["jira_api_response_raw"] = e.response.text
+
+        # Add field analysis for debugging
+        if extra_fields:
+            error_response["field_analysis"] = {}
+            for field_name, field_value in extra_fields.items():
+                error_response["field_analysis"][field_name] = analyze_field_format(
+                    field_name, field_value
+                )
+
+        return json.dumps(error_response, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(tags={"jira", "write"})
@@ -866,6 +974,100 @@ async def batch_get_changelogs(
     return json.dumps(results, indent=2, ensure_ascii=False)
 
 
+def try_individual_field_updates(
+    jira: Any, issue_key: str, failed_fields: dict[str, Any]
+) -> dict[str, Any]:
+    """Attempt to update fields individually to identify specific failures."""
+    results: dict[str, dict[str, Any]] = {}
+    successful_updates = {}
+
+    for field_name, field_value in failed_fields.items():
+        try:
+            single_field_update = {field_name: field_value}
+            jira.update_issue(issue_key=issue_key, **single_field_update)
+            results[field_name] = {"status": "success"}
+            successful_updates[field_name] = field_value
+        except Exception as field_error:
+            results[field_name] = {
+                "status": "failed",
+                "error": str(field_error),
+                "error_type": type(field_error).__name__,
+                "format_analysis": analyze_field_format(field_name, field_value),
+            }
+
+            # Try to extract JIRA-specific error details for individual fields
+            if hasattr(field_error, "response") and field_error.response is not None:
+                results[field_name].update(
+                    {
+                        "http_status": getattr(
+                            field_error.response, "status_code", None
+                        ),
+                        "jira_response": getattr(field_error.response, "text", None),
+                    }
+                )
+
+    return {
+        "individual_results": results,
+        "successful_updates": successful_updates,
+        "failed_count": len([r for r in results.values() if r["status"] == "failed"]),
+        "success_count": len([r for r in results.values() if r["status"] == "success"]),
+    }
+
+
+def analyze_field_format(field_id: str, field_value: Any) -> dict[str, Any]:
+    """Analyze field value and suggest potential format fixes."""
+    analysis = {
+        "field_id": field_id,
+        "current_value": field_value,
+        "current_type": type(field_value).__name__,
+        "suggestions": [],
+    }
+
+    # Check for boolean-like string values that might need object format
+    if isinstance(field_value, str):
+        lower_val = field_value.lower()
+        if lower_val in ["yes", "no", "true", "false"]:
+            analysis["suggestions"].extend(
+                [
+                    f"Try boolean object format: {{'value': '{field_value}'}}",
+                    f"Try boolean direct format: {lower_val in ['true', 'yes']}",
+                ]
+            )
+
+        # Check for select/option fields that might need object format
+        if "customfield" in field_id:
+            analysis["suggestions"].extend(
+                [
+                    f"Try select object format: {{'value': '{field_value}'}}",
+                    f"Try select with ID format: {{'id': '{field_value}'}}",
+                ]
+            )
+
+        # Check for user fields
+        if "@" in field_value or "user" in field_id.lower():
+            analysis["suggestions"].extend(
+                [
+                    f"Try user object format: {{'name': '{field_value}'}}",
+                    f"Try user object format: {{'accountId': '{field_value}'}}",
+                ]
+            )
+
+    # Check for numeric values that might need string format
+    elif isinstance(field_value, int | float):
+        analysis["suggestions"].append(f"Try string format: '{field_value}'")
+
+    # Check for very large numbers that might be ranking/ordering fields
+    if isinstance(field_value, int) and field_value > 1000000000:
+        analysis["suggestions"].extend(
+            [
+                "This looks like a ranking/ordering field - consider if it should be auto-managed by JIRA",
+                "Try string format for large numbers",
+            ]
+        )
+
+    return analysis
+
+
 @jira_mcp.tool(tags={"jira", "write"})
 @check_write_access
 async def update_issue(
@@ -881,7 +1083,7 @@ async def update_issue(
         ),
     ],
     additional_fields: Annotated[
-        dict[str, Any] | None,
+        dict[str, Any] | str | None,
         Field(
             description="(Optional) Dictionary of additional fields to update. Use this for custom fields or more complex updates.",
             default=None,
@@ -919,10 +1121,22 @@ async def update_issue(
         raise ValueError("fields must be a dictionary.")
     update_fields = fields
 
-    # Use additional_fields directly as dict
-    extra_fields = additional_fields or {}
-    if not isinstance(extra_fields, dict):
-        raise ValueError("additional_fields must be a dictionary.")
+    # Accept either dict or JSON string for additional fields
+    if additional_fields is None:
+        extra_fields: dict[str, Any] = {}
+    elif isinstance(additional_fields, dict):
+        extra_fields = additional_fields
+    elif isinstance(additional_fields, str):
+        try:
+            extra_fields = json.loads(additional_fields)
+            if not isinstance(extra_fields, dict):
+                raise ValueError(
+                    "Parsed additional_fields is not a JSON object (dict)."
+                )
+        except json.JSONDecodeError as e:
+            raise ValueError(f"additional_fields is not valid JSON: {e}") from e
+    else:
+        raise ValueError("additional_fields must be a dictionary or JSON string.")
 
     # Parse attachments
     attachment_paths = []
@@ -963,8 +1177,101 @@ async def update_issue(
             ensure_ascii=False,
         )
     except Exception as e:
-        logger.error(f"Error updating issue {issue_key}: {str(e)}", exc_info=True)
-        raise ValueError(f"Failed to update issue {issue_key}: {str(e)}")
+        # Enhanced error details for debugging
+        error_details = {
+            "error_type": type(e).__name__,
+            "message": str(e),
+            "issue_key": issue_key,
+            "attempted_updates": {
+                "fields": update_fields,
+                "additional_fields": extra_fields,
+                "attachment_paths": attachment_paths,
+            },
+        }
+
+        # Try to extract JIRA-specific error information
+        if hasattr(e, "response") and e.response is not None:
+            error_details.update(
+                {
+                    "http_status": getattr(e.response, "status_code", None),
+                    "jira_response": getattr(e.response, "text", None),
+                }
+            )
+
+        # Try to extract more detailed error info from common JIRA exception types
+        if hasattr(e, "status_code"):
+            error_details["http_status"] = e.status_code
+        if hasattr(e, "text"):
+            error_details["jira_response"] = e.text
+
+        logger.error(
+            f"Error updating issue {issue_key}: {json.dumps(error_details, indent=2)}",
+            exc_info=True,
+        )
+
+        # If we have additional fields and the batch update failed, try individual field updates
+        if extra_fields:
+            logger.info(
+                f"Batch update failed for {issue_key}, attempting individual field updates..."
+            )
+
+            # First try to update standard fields only (if any)
+            standard_update_success = False
+            if update_fields:
+                try:
+                    jira.update_issue(issue_key=issue_key, **update_fields)
+                    standard_update_success = True
+                    logger.info(f"Standard fields updated successfully for {issue_key}")
+                except Exception as std_error:
+                    logger.warning(
+                        f"Standard fields also failed for {issue_key}: {str(std_error)}"
+                    )
+
+            # Try individual additional field updates
+            individual_results = try_individual_field_updates(
+                jira, issue_key, extra_fields
+            )
+
+            # If some individual updates succeeded, return partial success
+            if individual_results["success_count"] > 0 or standard_update_success:
+                response = {
+                    "message": "Partial update completed with some failures",
+                    "issue_key": issue_key,
+                    "batch_error": error_details,
+                    "individual_field_results": individual_results,
+                    "standard_fields_updated": standard_update_success,
+                }
+
+                # Try to get the updated issue for the response
+                try:
+                    updated_issue = jira.get_issue(issue_key=issue_key)
+                    response["issue"] = updated_issue.to_simplified_dict()
+                except Exception:
+                    response["issue"] = {
+                        "key": issue_key,
+                        "note": "Could not retrieve updated issue details",
+                    }
+
+                return json.dumps(response, indent=2, ensure_ascii=False)
+
+        # If no fallback succeeded or no additional fields, return structured error response
+        # instead of raising exception to ensure detailed error info reaches MCP client
+        error_response = {
+            "success": False,
+            "error": f"Failed to update issue {issue_key}",
+            "details": error_details,
+            "troubleshooting_guide": "Check field names, required fields, and permissions in your JIRA project",
+        }
+
+        # Add field analysis for debugging if we had extra fields
+        if extra_fields:
+            error_response["field_analysis"] = {}
+            for field_name, field_value in extra_fields.items():
+                error_response["field_analysis"][field_name] = analyze_field_format(
+                    field_name, field_value
+                )
+
+        return json.dumps(error_response, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(tags={"jira", "write"})

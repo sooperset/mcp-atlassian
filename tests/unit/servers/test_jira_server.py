@@ -159,6 +159,25 @@ def mock_jira_fetcher():
 
     mock_fetcher.batch_create_issues.side_effect = mock_batch_create_issues
 
+    # Configure update_issue
+    def mock_update_issue(issue_key, fields=None, **kwargs):
+        mock_issue = MagicMock()
+        # Merge fields and kwargs for the response
+        merged_fields = {**(fields or {}), **kwargs}
+        mock_issue.to_simplified_dict.return_value = {
+            "key": issue_key,
+            "summary": merged_fields.get("summary", "Updated Issue"),
+            "description": merged_fields.get("description", "Updated description"),
+            "status": {"name": "In Progress"},
+            "issue_type": {"name": "Task"},
+            "priority": merged_fields.get("priority", {"name": "Medium"}),
+            "assignee": {"display_name": merged_fields.get("assignee", "Test User")},
+            **{k: v for k, v in merged_fields.items() if k.startswith("customfield_")},
+        }
+        return mock_issue
+
+    mock_fetcher.update_issue.side_effect = mock_update_issue
+
     # Configure get_epic_issues
     def mock_get_epic_issues(epic_key, start=0, limit=50):
         mock_issues = []
@@ -576,6 +595,96 @@ async def test_batch_create_issues_invalid_json(jira_client):
             {"issues": "{invalid json", "validate_only": False},
         )
     assert "Error calling tool 'batch_create_issues'" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_update_issue_basic(jira_client, mock_jira_fetcher):
+    """Test basic update_issue functionality."""
+    payload = {
+        "issue_key": "TEST-123",
+        "fields": {"summary": "Updated Summary", "priority": {"name": "High"}},
+    }
+    response = await jira_client.call_tool("jira_update_issue", payload)
+    assert response
+    data = json.loads(response[0].text)
+    assert data["message"] == "Issue updated successfully"
+    assert "issue" in data
+    assert data["issue"]["key"] == "TEST-123"
+    assert data["issue"]["summary"] == "Updated Summary"
+
+    mock_jira_fetcher.update_issue.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_update_issue_accepts_json_string_additional_fields(
+    jira_client, mock_jira_fetcher
+):
+    """Test that update_issue accepts JSON string for additional_fields."""
+    payload = {
+        "issue_key": "TEST-456",
+        "fields": {"summary": "Updated with Custom Fields"},
+        "additional_fields": '{"customfield_10103": 5.0, "customfield_21540": "Yes", "labels": ["urgent", "frontend"]}',
+    }
+    response = await jira_client.call_tool("jira_update_issue", payload)
+    assert response
+    data = json.loads(response[0].text)
+    assert data["message"] == "Issue updated successfully"
+    assert "issue" in data
+    assert data["issue"]["key"] == "TEST-456"
+
+    # Verify the mock was called with merged fields
+    call_args, call_kwargs = mock_jira_fetcher.update_issue.call_args
+    assert call_kwargs["issue_key"] == "TEST-456"  # issue_key passed as kwarg
+    assert call_kwargs["summary"] == "Updated with Custom Fields"
+    assert call_kwargs["customfield_10103"] == 5.0
+    assert call_kwargs["customfield_21540"] == "Yes"
+    assert call_kwargs["labels"] == ["urgent", "frontend"]
+
+
+@pytest.mark.anyio
+async def test_update_issue_dict_additional_fields(jira_client, mock_jira_fetcher):
+    """Test that update_issue accepts dict for additional_fields (backward compatibility)."""
+    payload = {
+        "issue_key": "TEST-789",
+        "fields": {"summary": "Dict Fields Test"},
+        "additional_fields": {"customfield_10103": 3.0, "assignee": "test@example.com"},
+    }
+    response = await jira_client.call_tool("jira_update_issue", payload)
+    assert response
+    data = json.loads(response[0].text)
+    assert data["message"] == "Issue updated successfully"
+
+    call_args, call_kwargs = mock_jira_fetcher.update_issue.call_args
+    assert call_kwargs["issue_key"] == "TEST-789"  # issue_key passed as kwarg
+    assert call_kwargs["summary"] == "Dict Fields Test"
+    assert call_kwargs["customfield_10103"] == 3.0
+    assert call_kwargs["assignee"] == "test@example.com"
+
+
+@pytest.mark.anyio
+async def test_update_issue_invalid_json_additional_fields(jira_client):
+    """Test error handling for invalid JSON in additional_fields."""
+    payload = {
+        "issue_key": "TEST-ERROR",
+        "fields": {"summary": "This will fail"},
+        "additional_fields": '{"invalid": json}',  # Invalid JSON
+    }
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool("jira_update_issue", payload)
+    assert "Error calling tool 'update_issue'" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_update_issue_non_dict_json_additional_fields(jira_client):
+    """Test error handling when JSON additional_fields is not an object."""
+    payload = {
+        "issue_key": "TEST-ERROR2",
+        "fields": {"summary": "This will also fail"},
+        "additional_fields": '["this", "is", "an", "array"]',  # Valid JSON but not object
+    }
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool("jira_update_issue", payload)
+    assert "Error calling tool 'update_issue'" in str(excinfo.value)
 
 
 @pytest.mark.anyio

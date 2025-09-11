@@ -726,8 +726,7 @@ Here's a complete example of setting up multi-user authentication with streamabl
 
 - `jira_get_issue`: Get details of a specific issue
 - `jira_search`: Search issues using JQL
-- `jira_create_issue`: Create a new issue (supports `additional_fields` as a
-  dictionary or JSON string)
+- `jira_create_issue`: Create a new issue
 - `jira_update_issue`: Update an existing issue
 - `jira_transition_issue`: Transition an issue to a new status
 - `jira_add_comment`: Add a comment to an issue
