@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Simple verification that FormsMixin is properly integrated."""
 
-import ast
 import sys
 from pathlib import Path
 
-def check_forms_integration():
+
+def check_forms_integration() -> bool:
     """Check if FormsMixin is properly integrated."""
 
     # Check if FormsMixin is in __init__.py
@@ -14,7 +14,7 @@ def check_forms_integration():
         print("ERROR: __init__.py not found")
         return False
 
-    with open(init_file, 'r') as f:
+    with open(init_file) as f:
         content = f.read()
 
     if "FormsMixin" not in content:
@@ -33,17 +33,27 @@ def check_forms_integration():
         print("ERROR: jira.py server file not found")
         return False
 
-    with open(server_file, 'r') as f:
+    with open(server_file) as f:
         server_content = f.read()
 
     forms_tools = [
-        "get_form", "get_issue_forms", "submit_form", "get_form_answers",
-        "attach_form", "get_issue_forms_index", "change_form_visibility",
-        "submit_form_action", "reopen_form", "copy_forms",
-        "get_form_simplified_answers", "get_project_form_templates",
-        "get_project_form_template", "export_form_template",
-        "create_project_form_template", "update_project_form_template",
-        "delete_project_form_template"
+        "get_form",
+        "get_issue_forms",
+        "submit_form",
+        "get_form_answers",
+        "attach_form",
+        "get_issue_forms_index",
+        "change_form_visibility",
+        "submit_form_action",
+        "reopen_form",
+        "copy_forms",
+        "get_form_simplified_answers",
+        "get_project_form_templates",
+        "get_project_form_template",
+        "export_form_template",
+        "create_project_form_template",
+        "update_project_form_template",
+        "delete_project_form_template",
     ]
     missing_tools = []
 
@@ -63,17 +73,27 @@ def check_forms_integration():
         print("ERROR: forms.py not found")
         return False
 
-    with open(forms_file, 'r') as f:
+    with open(forms_file) as f:
         forms_content = f.read()
 
     forms_methods = [
-        "get_form", "get_issue_forms", "submit_form", "get_form_answers",
-        "attach_form", "get_issue_forms_index", "change_form_visibility",
-        "submit_form_action", "reopen_form", "copy_forms",
-        "get_form_simplified_answers", "get_project_form_templates",
-        "get_project_form_template", "export_form_template",
-        "create_project_form_template", "update_project_form_template",
-        "delete_project_form_template"
+        "get_form",
+        "get_issue_forms",
+        "submit_form",
+        "get_form_answers",
+        "attach_form",
+        "get_issue_forms_index",
+        "change_form_visibility",
+        "submit_form_action",
+        "reopen_form",
+        "copy_forms",
+        "get_form_simplified_answers",
+        "get_project_form_templates",
+        "get_project_form_template",
+        "export_form_template",
+        "create_project_form_template",
+        "update_project_form_template",
+        "delete_project_form_template",
     ]
     missing_methods = []
 
@@ -88,6 +108,7 @@ def check_forms_integration():
     print("SUCCESS: All forms methods are implemented in FormsMixin")
 
     return True
+
 
 if __name__ == "__main__":
     print("Verifying Jira Forms integration...")
