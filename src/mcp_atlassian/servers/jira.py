@@ -179,7 +179,9 @@ async def get_form(
 @jira_mcp.tool(tags={"jira", "read"})
 async def get_issue_forms(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="The key of the issue to retrieve the forms for.")],
+    issue_key: Annotated[
+        str, Field(description="The key of the issue to retrieve the forms for.")
+    ],
 ) -> str:
     """
     Retrieves the forms attached to a Jira issue.
@@ -193,9 +195,13 @@ async def get_issue_forms(
 @check_write_access
 async def submit_form(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="The key of the issue to submit the form for.")],
+    issue_key: Annotated[
+        str, Field(description="The key of the issue to submit the form for.")
+    ],
     form_id: Annotated[str, Field(description="The ID of the form to submit.")],
-    answers: Annotated[dict, Field(description="A dictionary of answers to the form questions.")],
+    answers: Annotated[
+        dict, Field(description="A dictionary of answers to the form questions.")
+    ],
 ) -> str:
     """
     Submits a Jira Form for an issue.
@@ -208,8 +214,12 @@ async def submit_form(
 @jira_mcp.tool(tags={"jira", "read"})
 async def get_form_answers(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="The key of the issue to retrieve the form answers for.")],
-    form_id: Annotated[str, Field(description="The ID of the form to retrieve the answers for.")],
+    issue_key: Annotated[
+        str, Field(description="The key of the issue to retrieve the form answers for.")
+    ],
+    form_id: Annotated[
+        str, Field(description="The ID of the form to retrieve the answers for.")
+    ],
 ) -> str:
     """
     Retrieves the answers from a submitted Jira Form.
