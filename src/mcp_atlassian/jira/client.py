@@ -104,8 +104,8 @@ class JiraClient(FormsMixin):
             )
             # Initialize Jira Forms client with correct API URL for PAT authentication
             if self.config.is_cloud:
-                # Try to get cloud ID from serverInfo endpoint first
-                cloud_id = self._get_cloud_id_from_server_info()
+                # Try to get cloud ID from tenant_info endpoint first
+                cloud_id = self._get_cloud_id_from_tenant_info()
 
                 if cloud_id:
                     forms_api_url = (
@@ -161,8 +161,8 @@ class JiraClient(FormsMixin):
             )
             # Initialize Jira Forms client with correct API URL for Basic authentication
             if self.config.is_cloud:
-                # Try to get cloud ID from serverInfo endpoint first
-                cloud_id = self._get_cloud_id_from_server_info()
+                # Try to get cloud ID from tenant_info endpoint first
+                cloud_id = self._get_cloud_id_from_tenant_info()
 
                 if cloud_id:
                     forms_api_url = (
@@ -420,48 +420,52 @@ class JiraClient(FormsMixin):
             raise ValueError(error_message)
         return result
 
-    def _get_cloud_id_from_server_info(self) -> str | None:
+    def _get_cloud_id_from_tenant_info(self) -> str | None:
         """
-        Extract cloud ID from the Jira serverInfo endpoint.
+        Extract cloud ID from the Jira _edge/tenant_info endpoint.
 
         Returns:
             The cloud ID if available, None otherwise
         """
         try:
-            server_info = self.jira.server_info()
+            from urllib.parse import urlparse
 
-            # Check if the serverInfo response contains cloud-related information
-            if isinstance(server_info, dict):
-                # Look for cloud ID in various possible locations
-                cloud_id = None
+            # Extract the base URL from the instance URL
+            parsed_url = urlparse(self.config.url)
+            base_url = f"{parsed_url.scheme}://{parsed_url.hostname}"
 
-                # Check if there's a direct cloudId field
-                if "cloudId" in server_info:
-                    cloud_id = server_info["cloudId"]
+            # Make request to tenant_info endpoint
+            tenant_info_url = f"{base_url}/_edge/tenant_info"
 
-                # Check in the instance info
-                elif "instance" in server_info and isinstance(
-                    server_info["instance"], dict
-                ):
-                    instance_info = server_info["instance"]
-                    if "cloudId" in instance_info:
-                        cloud_id = instance_info["cloudId"]
+            # Use the session from the main Jira client
+            session = self.jira._session
 
-                # Check if we can extract from the baseUrl
-                elif "baseUrl" in server_info:
-                    base_url = server_info["baseUrl"]
-                    from urllib.parse import urlparse
+            # Make the request
+            response = session.get(tenant_info_url)
 
-                    parsed_url = urlparse(base_url)
-                    hostname = parsed_url.hostname or ""
-                    if hostname and ".atlassian.net" in hostname:
-                        cloud_id = hostname.replace(".atlassian.net", "")
+            if response.status_code == 200:
+                tenant_data = response.json()
 
-                return cloud_id
+                # Extract cloud ID from the response
+                if isinstance(tenant_data, dict):
+                    # Look for cloudId in the response
+                    cloud_id = tenant_data.get("cloudId")
+                    if cloud_id:
+                        return cloud_id
+
+                    # Also check for other possible field names
+                    possible_fields = ["cloud_id", "tenantId", "tenant_id", "id"]
+                    for field in possible_fields:
+                        if field in tenant_data:
+                            return tenant_data[field]
+
+                logger.debug(f"Tenant info response: {tenant_data}")
+            else:
+                logger.debug(
+                    f"Tenant info request failed with status: {response.status_code}"
+                )
+
         except Exception as e:
-            # Catch broad exception since we're using this as a fallback
-            # and don't want to fail client initialization if serverInfo
-            # endpoint is not available or returns unexpected data
-            logger.debug(f"Failed to get cloud ID from serverInfo: {e}")
+            logger.debug(f"Failed to get cloud ID from tenant_info: {e}")
 
         return None
