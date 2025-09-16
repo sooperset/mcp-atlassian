@@ -229,6 +229,250 @@ async def get_form_answers(
     return json.dumps(answers, indent=2, ensure_ascii=False)
 
 
+@jira_mcp.tool(tags={"jira", "write"})
+async def attach_form(
+    ctx: Context,
+    issue_key: Annotated[
+        str, Field(description="The key of the issue to attach the form to.")
+    ],
+    form_template_id: Annotated[
+        str, Field(description="The ID of the form template to attach to the issue.")
+    ],
+) -> str:
+    """
+    Attaches a form template to a Jira issue.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.attach_form(issue_key, form_template_id)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
+async def get_issue_forms_index(
+    ctx: Context,
+    issue_key: Annotated[
+        str, Field(description="The key of the issue to retrieve the forms index for.")
+    ],
+) -> str:
+    """
+    Retrieves the index of forms attached to a Jira issue.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_issue_forms_index(issue_key)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "write"})
+async def change_form_visibility(
+    ctx: Context,
+    issue_key: Annotated[
+        str, Field(description="The key of the issue containing the form.")
+    ],
+    form_id: Annotated[
+        str, Field(description="The ID of the form to change visibility for.")
+    ],
+    visibility: Annotated[
+        str, Field(description="The visibility to set (external/internal).")
+    ],
+) -> str:
+    """
+    Changes the visibility of a form on a Jira issue.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.change_form_visibility(issue_key, form_id, visibility)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "write"})
+async def submit_form_action(
+    ctx: Context,
+    issue_key: Annotated[
+        str, Field(description="The key of the issue containing the form.")
+    ],
+    form_id: Annotated[
+        str, Field(description="The ID of the form to submit action for.")
+    ],
+    action: Annotated[str, Field(description="The action to perform (submit/reject).")],
+) -> str:
+    """
+    Submits a form action for a Jira issue form.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.submit_form_action(issue_key, form_id, action)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "write"})
+async def reopen_form(
+    ctx: Context,
+    issue_key: Annotated[
+        str, Field(description="The key of the issue containing the form.")
+    ],
+    form_id: Annotated[str, Field(description="The ID of the form to reopen.")],
+) -> str:
+    """
+    Reopens a form for editing on a Jira issue.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.reopen_form(issue_key, form_id)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "write"})
+async def copy_forms(
+    ctx: Context,
+    source_issue_key: Annotated[
+        str, Field(description="The key of the source issue to copy forms from.")
+    ],
+    target_issue_key: Annotated[
+        str, Field(description="The key of the target issue to copy forms to.")
+    ],
+    form_ids: Annotated[list[str], Field(description="List of form IDs to copy.")],
+) -> str:
+    """
+    Copies forms from one Jira issue to another.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.copy_forms(source_issue_key, target_issue_key, form_ids)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
+async def get_form_simplified_answers(
+    ctx: Context,
+    issue_key: Annotated[
+        str, Field(description="The key of the issue containing the form.")
+    ],
+    form_id: Annotated[
+        str, Field(description="The ID of the form to get simplified answers for.")
+    ],
+) -> str:
+    """
+    Retrieves simplified answers from a submitted form on a Jira issue.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_form_simplified_answers(issue_key, form_id)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
+async def get_project_form_templates(
+    ctx: Context,
+    project_key: Annotated[
+        str, Field(description="The key of the project to retrieve form templates for.")
+    ],
+) -> str:
+    """
+    Retrieves form templates for a Jira project.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_project_form_templates(project_key)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
+async def get_project_form_template(
+    ctx: Context,
+    project_key: Annotated[
+        str, Field(description="The key of the project containing the form template.")
+    ],
+    template_id: Annotated[
+        str, Field(description="The ID of the form template to retrieve.")
+    ],
+) -> str:
+    """
+    Retrieves a specific form template from a Jira project.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_project_form_template(project_key, template_id)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
+async def export_form_template(
+    ctx: Context,
+    project_key: Annotated[
+        str, Field(description="The key of the project containing the form template.")
+    ],
+    template_id: Annotated[
+        str, Field(description="The ID of the form template to export.")
+    ],
+) -> str:
+    """
+    Exports a form template from a Jira project.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.export_form_template(project_key, template_id)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "write"})
+async def create_project_form_template(
+    ctx: Context,
+    project_key: Annotated[
+        str, Field(description="The key of the project to create the form template in.")
+    ],
+    template_data: Annotated[
+        str, Field(description="JSON string containing the form template data.")
+    ],
+) -> str:
+    """
+    Creates a new form template in a Jira project.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        template_dict = json.loads(template_data)
+    except json.JSONDecodeError:
+        raise ValueError("Invalid JSON in template_data")
+
+    result = jira.create_project_form_template(project_key, template_dict)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "write"})
+async def update_project_form_template(
+    ctx: Context,
+    project_key: Annotated[
+        str, Field(description="The key of the project containing the form template.")
+    ],
+    template_id: Annotated[
+        str, Field(description="The ID of the form template to update.")
+    ],
+    template_data: Annotated[
+        str, Field(description="JSON string containing the updated form template data.")
+    ],
+) -> str:
+    """
+    Updates an existing form template in a Jira project.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        template_dict = json.loads(template_data)
+    except json.JSONDecodeError:
+        raise ValueError("Invalid JSON in template_data")
+
+    result = jira.update_project_form_template(project_key, template_id, template_dict)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "write"})
+async def delete_project_form_template(
+    ctx: Context,
+    project_key: Annotated[
+        str, Field(description="The key of the project containing the form template.")
+    ],
+    template_id: Annotated[
+        str, Field(description="The ID of the form template to delete.")
+    ],
+) -> str:
+    """
+    Deletes a form template from a Jira project.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.delete_project_form_template(project_key, template_id)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
 @jira_mcp.tool(tags={"jira", "read"})
 async def search(
     ctx: Context,
