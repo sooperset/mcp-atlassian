@@ -13,6 +13,7 @@ from .comments import CommentsMixin
 from .config import JiraConfig
 from .epics import EpicsMixin
 from .fields import FieldsMixin
+from .forms import FormsMixin
 from .formatting import FormattingMixin
 from .issues import IssuesMixin
 from .links import LinksMixin
@@ -41,6 +42,7 @@ class JiraFetcher(
     SprintsMixin,
     AttachmentsMixin,
     LinksMixin,
+    FormsMixin,
 ):
     """
     The main Jira client class providing access to all Jira operations.

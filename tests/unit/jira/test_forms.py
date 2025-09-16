@@ -46,7 +46,8 @@ class TestFormsMixin(unittest.TestCase):
     def test_get_form_answers(self):
         """Test get_form_answers method."""
         self.mixin.jira.get.return_value = {
-            "id": "123", "answers": {"question_1": "answer_1"}
+            "id": "123",
+            "answers": {"question_1": "answer_1"},
         }
         form = self.mixin.get_form_answers("PROJ-1", "123")
         self.mixin.jira.get.assert_called_with("issue/PROJ-1/form/123")

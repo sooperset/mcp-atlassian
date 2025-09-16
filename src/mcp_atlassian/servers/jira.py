@@ -164,6 +164,62 @@ async def get_issue(
 
 
 @jira_mcp.tool(tags={"jira", "read"})
+async def get_form(
+    ctx: Context,
+    form_id: Annotated[str, Field(description="The ID of the form to retrieve.")],
+) -> str:
+    """
+    Retrieves the definition of a Jira Form.
+    """
+    jira = await get_jira_fetcher(ctx)
+    form = jira.get_form(form_id)
+    return json.dumps(form, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
+async def get_issue_forms(
+    ctx: Context,
+    issue_key: Annotated[str, Field(description="The key of the issue to retrieve the forms for.")],
+) -> str:
+    """
+    Retrieves the forms attached to a Jira issue.
+    """
+    jira = await get_jira_fetcher(ctx)
+    forms = jira.get_issue_forms(issue_key)
+    return json.dumps(forms, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "write"})
+@check_write_access
+async def submit_form(
+    ctx: Context,
+    issue_key: Annotated[str, Field(description="The key of the issue to submit the form for.")],
+    form_id: Annotated[str, Field(description="The ID of the form to submit.")],
+    answers: Annotated[dict, Field(description="A dictionary of answers to the form questions.")],
+) -> str:
+    """
+    Submits a Jira Form for an issue.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.submit_form(issue_key, form_id, answers)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
+async def get_form_answers(
+    ctx: Context,
+    issue_key: Annotated[str, Field(description="The key of the issue to retrieve the form answers for.")],
+    form_id: Annotated[str, Field(description="The ID of the form to retrieve the answers for.")],
+) -> str:
+    """
+    Retrieves the answers from a submitted Jira Form.
+    """
+    jira = await get_jira_fetcher(ctx)
+    answers = jira.get_form_answers(issue_key, form_id)
+    return json.dumps(answers, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
 async def search(
     ctx: Context,
     jql: Annotated[
