@@ -104,16 +104,34 @@ class JiraClient(FormsMixin):
                 cloud=self.config.is_cloud,
                 verify_ssl=self.config.ssl_verify,
             )
-            # Initialize Jira Forms client using the same instance URL for PAT authentication
+            # Initialize Jira Forms client with correct API URL for PAT authentication
+            if self.config.is_cloud:
+                # Extract cloud ID from instance URL for Forms API
+                from urllib.parse import urlparse
+
+                parsed_url = urlparse(self.config.url)
+                hostname = parsed_url.hostname or ""
+                if hostname and ".atlassian.net" in hostname:
+                    cloud_id = hostname.replace(".atlassian.net", "")
+                    forms_api_url = (
+                        f"https://api.atlassian.com/jira/forms/cloud/{cloud_id}"
+                    )
+                else:
+                    # Fallback to instance URL for non-standard cloud domains
+                    forms_api_url = self.config.url
+            else:
+                # Server/DC uses the same URL
+                forms_api_url = self.config.url
+
             self.jira_forms = Jira(
-                url=self.config.url,
+                url=forms_api_url,
                 token=self.config.personal_token,
                 cloud=self.config.is_cloud,
                 verify_ssl=self.config.ssl_verify,
             )
             configure_ssl_verification(
                 service_name="Jira Forms",
-                url=self.config.url,
+                url=forms_api_url,
                 session=self.jira_forms._session,
                 ssl_verify=self.config.ssl_verify,
             )
@@ -135,9 +153,27 @@ class JiraClient(FormsMixin):
                 f"Jira client initialized. Session headers (Authorization masked): "
                 f"{get_masked_session_headers(dict(self.jira._session.headers))}"
             )
-            # Initialize Jira Forms client using the same credentials for Basic authentication
+            # Initialize Jira Forms client with correct API URL for Basic authentication
+            if self.config.is_cloud:
+                # Extract cloud ID from instance URL for Forms API
+                from urllib.parse import urlparse
+
+                parsed_url = urlparse(self.config.url)
+                hostname = parsed_url.hostname or ""
+                if hostname and ".atlassian.net" in hostname:
+                    cloud_id = hostname.replace(".atlassian.net", "")
+                    forms_api_url = (
+                        f"https://api.atlassian.com/jira/forms/cloud/{cloud_id}"
+                    )
+                else:
+                    # Fallback to instance URL for non-standard cloud domains
+                    forms_api_url = self.config.url
+            else:
+                # Server/DC uses the same URL
+                forms_api_url = self.config.url
+
             self.jira_forms = Jira(
-                url=self.config.url,
+                url=forms_api_url,
                 username=self.config.username,
                 password=self.config.api_token,
                 cloud=self.config.is_cloud,
@@ -145,7 +181,7 @@ class JiraClient(FormsMixin):
             )
             configure_ssl_verification(
                 service_name="Jira Forms",
-                url=self.config.url,
+                url=forms_api_url,
                 session=self.jira_forms._session,
                 ssl_verify=self.config.ssl_verify,
             )

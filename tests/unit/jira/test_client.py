@@ -116,6 +116,10 @@ def test_init_from_env():
     ):
         mock_config = MagicMock()
         mock_config.auth_type = "basic"  # needed for the if condition
+        mock_config.url = "https://test.atlassian.net"  # Add mock URL for cloud ID extraction
+        mock_config.username = "test_user"
+        mock_config.api_token = "test_token"
+        mock_config.is_cloud = True
         mock_from_env.return_value = mock_config
 
         client = JiraClient()
