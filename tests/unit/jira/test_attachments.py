@@ -1,5 +1,6 @@
 """Tests for the Jira attachments module."""
 
+import os
 from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
@@ -77,8 +78,9 @@ class TestAttachmentsMixin:
             mock_getsize.return_value = 12  # Length of "test content"
 
             # Call the method
+            target_path = os.path.join("/tmp", "test_file.txt")
             result = attachments_mixin.download_attachment(
-                "https://test.url/attachment", "/tmp/test_file.txt"
+                "https://test.url/attachment", target_path
             )
 
             # Assertions
@@ -86,7 +88,13 @@ class TestAttachmentsMixin:
             attachments_mixin.jira._session.get.assert_called_once_with(
                 "https://test.url/attachment", stream=True
             )
-            mock_file.assert_called_once_with("/tmp/test_file.txt", "wb")
+            # Normalize path for cross-platform comparison
+            # The actual call will use the absolute path, so we need to handle that
+            actual_call_args = mock_file.call_args[0]
+            actual_path = actual_call_args[0]
+            expected_path = os.path.abspath(os.path.normpath(target_path))
+            assert actual_path == expected_path
+            assert actual_call_args[1] == "wb"
             mock_file().write.assert_called_once_with(b"test content")
             mock_makedirs.assert_called_once()
 
@@ -112,7 +120,9 @@ class TestAttachmentsMixin:
             mock_exists.return_value = True
             mock_getsize.return_value = 12
             mock_isabs.return_value = False
-            mock_abspath.return_value = "/absolute/path/test_file.txt"
+            mock_abspath.return_value = os.path.join(
+                "/absolute", "path", "test_file.txt"
+            )
 
             # Call the method with a relative path
             result = attachments_mixin.download_attachment(
@@ -123,7 +133,9 @@ class TestAttachmentsMixin:
             assert result is True
             mock_isabs.assert_called_once_with("test_file.txt")
             mock_abspath.assert_called_once_with("test_file.txt")
-            mock_file.assert_called_once_with("/absolute/path/test_file.txt", "wb")
+            mock_file.assert_called_once_with(
+                os.path.join("/absolute", "path", "test_file.txt"), "wb"
+            )
 
     def test_download_attachment_no_url(self, attachments_mixin: AttachmentsMixin):
         """Test attachment download with no URL."""
@@ -466,12 +478,14 @@ class TestAttachmentsMixin:
             mock_exists.return_value = True
             mock_getsize.return_value = 100
             mock_isabs.return_value = True
-            mock_abspath.return_value = "/absolute/path/test_file.txt"
+            mock_abspath.return_value = os.path.join(
+                "/absolute", "path", "test_file.txt"
+            )
             mock_basename.return_value = "test_file.txt"
 
             # Call the method
             result = attachments_mixin.upload_attachment(
-                "TEST-123", "/absolute/path/test_file.txt"
+                "TEST-123", os.path.join("/absolute", "path", "test_file.txt")
             )
 
             # Assertions
@@ -481,7 +495,8 @@ class TestAttachmentsMixin:
             assert result["size"] == 100
             assert result["id"] == "12345"
             attachments_mixin.jira.add_attachment.assert_called_once_with(
-                issue_key="TEST-123", filename="/absolute/path/test_file.txt"
+                issue_key="TEST-123",
+                filename=os.path.join("/absolute", "path", "test_file.txt"),
             )
 
     def test_upload_attachment_relative_path(self, attachments_mixin: AttachmentsMixin):
@@ -506,7 +521,9 @@ class TestAttachmentsMixin:
             mock_exists.return_value = True
             mock_getsize.return_value = 100
             mock_isabs.return_value = False
-            mock_abspath.return_value = "/absolute/path/test_file.txt"
+            mock_abspath.return_value = os.path.join(
+                "/absolute", "path", "test_file.txt"
+            )
             mock_basename.return_value = "test_file.txt"
 
             # Call the method with a relative path
@@ -517,7 +534,8 @@ class TestAttachmentsMixin:
             mock_isabs.assert_called_once_with("test_file.txt")
             mock_abspath.assert_called_once_with("test_file.txt")
             attachments_mixin.jira.add_attachment.assert_called_once_with(
-                issue_key="TEST-123", filename="/absolute/path/test_file.txt"
+                issue_key="TEST-123",
+                filename=os.path.join("/absolute", "path", "test_file.txt"),
             )
 
     def test_upload_attachment_no_issue_key(self, attachments_mixin: AttachmentsMixin):

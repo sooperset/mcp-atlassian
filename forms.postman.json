@@ -1,0 +1,1559 @@
+{
+  "info": {
+    "_postman_id": "11b80163-40c4-4442-a751-9283646973db",
+    "name": "ProForma Forms RESTful API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.0.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Forms on Portal",
+      "description": "APIs which handle forms in the portal (service desk). \n \n To learn about the appropriate URI structure for your chosen authentication method, [view authentication and authorization](/cloud/forms/rest/intro/#authentication-and-authorization).",
+      "item": [
+        {
+          "name": "Get external form data on a request type",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}servicedesk/:serviceDeskId/requesttype/:requestTypeId/form/externaldata",
+              "query": [],
+              "variable": [
+                {
+                  "key": "serviceDeskId",
+                  "value": "{{serviceDeskId}}",
+                  "description": "The service desk ID. This can alternatively be a [project identifier](#project-identifiers).",
+                  "disabled": false
+                },
+                {
+                  "key": "requestTypeId",
+                  "value": "{{requestTypeId}}",
+                  "description": "The request type ID",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Get all external form data for questions and default answers on a form added to a request type. Forms can be linked to external sources including Jira fields and data connections, with this API returning the latest responses on these linked fields.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/service-desk/rest/intro/#permissions) required:**\n\n *  *View Service Desk* permission to view the service desk.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get form on a request type",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}servicedesk/:serviceDeskId/requesttype/:requestTypeId/form",
+              "query": [
+                {
+                  "key": "requestLanguage",
+                  "value": "{{requestLanguage}}",
+                  "disabled": true,
+                  "description": "The requested language for the form to be translated to"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "serviceDeskId",
+                  "value": "{{serviceDeskId}}",
+                  "description": "The service desk ID. This can alternatively be a [project identifier](#project-identifiers).",
+                  "disabled": false
+                },
+                {
+                  "key": "requestTypeId",
+                  "value": "{{requestTypeId}}",
+                  "description": "The request type ID",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Gets a form template as a JSON object on a request type.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/service-desk/rest/intro/#permissions) required:**\n\n *  *View Service Desk* permission to view the service desk.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Forms on Issue",
+      "description": "APIs which handle forms on Jira issues. \n \n To learn about the appropriate URI structure for your chosen authentication method, [view authentication and authorization](/cloud/forms/rest/intro/#authentication-and-authorization).",
+      "item": [
+        {
+          "name": "Get form",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}issue/:issueIdOrKey/form/:formId",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Gets a single form on an issue as a complete JSON object.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/#permissions) required:**\n\n *  *Browse projects* [project permission](https://confluence.atlassian.com/x/yodKLg) for the project that the issue is in.\n *  If [issue-level security](https://confluence.atlassian.com/x/J4lKLg) is configured, issue-level security permission to view the issue.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Save form answers",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}issue/:issueIdOrKey/form/:formId",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "PUT",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Saves form answers on an issue.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/#permissions) required:**\n\n *  *Browse projects and Edit issues* [project permission](https://confluence.atlassian.com/x/yodKLg) for the project that the issue is in.\n *  If [issue-level security](https://confluence.atlassian.com/x/J4lKLg) is configured, issue-level security permission to view the issue.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            },
+            "body": {
+              "mode": "raw",
+              "raw": ""
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete form",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}issue/:issueIdOrKey/form/:formId",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "DELETE",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Deletes a form from an issue.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/#permissions) required:**\n\n *  *Browse projects and Edit issues* [project permission](https://confluence.atlassian.com/x/yodKLg) for the project that the issue is in.\n *  If [issue-level security](https://confluence.atlassian.com/x/J4lKLg) is configured, issue-level security permission to view the issue.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get form attachments metadata",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}issue/:issueIdOrKey/form/:formId/attachment",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Retrieve metadata for all attachments in a form on an issue.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/#permissions) required:**\n\n *  *Browse projects* [project permission](https://confluence.atlassian.com/x/yodKLg) for the project that the issue is in.\n *  If [issue-level security](https://confluence.atlassian.com/x/J4lKLg) is configured, issue-level security permission to view the issue.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get external form data",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}issue/:issueIdOrKey/form/:formId/externaldata",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Get all external form data for questions and answers on a form on an issue. Forms can be linked to external sources including Jira fields and data connections, with this API returning the latest responses on these linked fields.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/#permissions) required:**\n\n *  *Browse projects* [project permission](https://confluence.atlassian.com/x/yodKLg) for the project that the issue is in.\n *  If [issue-level security](https://confluence.atlassian.com/x/J4lKLg) is configured, issue-level security permission to view the issue.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Change visibility to external",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}issue/:issueIdOrKey/form/:formId/action/external",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "PUT",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Changes the visibility of a form on an issue from internal only to external. External forms can be viewed in the portal by customers.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/#permissions) required:**\n\n *  *Browse projects and Edit issues* [project permission](https://confluence.atlassian.com/x/yodKLg) for the project that the issue is in.\n *  If [issue-level security](https://confluence.atlassian.com/x/J4lKLg) is configured, issue-level security permission to view the issue.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Change visibility to internal",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}issue/:issueIdOrKey/form/:formId/action/internal",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "PUT",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Changes the visibility of a form on an issue from external to internal only. Internal forms can not be viewed in the portal by customers.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/#permissions) required:**\n\n *  *Browse projects and Edit issues* [project permission](https://confluence.atlassian.com/x/yodKLg) for the project that the issue is in.\n *  If [issue-level security](https://confluence.atlassian.com/x/J4lKLg) is configured, issue-level security permission to view the issue.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get form index",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}issue/:issueIdOrKey/form",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Gets a list of forms on the issue with basic metadata about them.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/#permissions) required:**\n\n *  *Browse projects* [project permission](https://confluence.atlassian.com/x/yodKLg) for the project that the issue is in.\n *  If [issue-level security](https://confluence.atlassian.com/x/J4lKLg) is configured, issue-level security permission to view the issue.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Add form",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}issue/:issueIdOrKey/form",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Adds a form template to an issue.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/#permissions) required:**\n\n *  *Browse projects and Edit issues* [project permission](https://confluence.atlassian.com/x/yodKLg) for the project that the issue is in.\n *  If [issue-level security](https://confluence.atlassian.com/x/J4lKLg) is configured, issue-level security permission to view the issue.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            },
+            "body": {
+              "mode": "raw",
+              "raw": ""
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get form PDF",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}issue/:issueIdOrKey/form/:formId/format/pdf",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/pdf"
+              }
+            ],
+            "description": "Gets a single form on an issue as a PDF file.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/#permissions) required:**\n\n *  *Browse projects* [project permission](https://confluence.atlassian.com/x/yodKLg) for the project that the issue is in.\n *  If [issue-level security](https://confluence.atlassian.com/x/J4lKLg) is configured, issue-level security permission to view the issue.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get form XLSX",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}issue/:issueIdOrKey/form/:formId/format/xlsx",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              }
+            ],
+            "description": "Gets a single form on an issue as an XLSX file.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/#permissions) required:**\n\n *  *Browse projects* [project permission](https://confluence.atlassian.com/x/yodKLg) for the project that the issue is in.\n *  If [issue-level security](https://confluence.atlassian.com/x/J4lKLg) is configured, issue-level security permission to view the issue.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Submit form",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}issue/:issueIdOrKey/form/:formId/action/submit",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "PUT",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Changes the status of a form on an issue to submitted.Depending on how the form is configured the form may either enter the submitted state or the locked state. Locked forms are considered to be submitted and locked and can only be reopened by project admins.The current iteration of this API does not check that form answers are valid.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/#permissions) required:**\n\n *  *Browse projects and Edit issues* [project permission](https://confluence.atlassian.com/x/yodKLg) for the project that the issue is in.\n *  If [issue-level security](https://confluence.atlassian.com/x/J4lKLg) is configured, issue-level security permission to view the issue.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Reopen form",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}issue/:issueIdOrKey/form/:formId/action/reopen",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "PUT",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Changes the status of a submitted form on an issue to open to enable editing. Locked forms can only be reopened by a project admin.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/#permissions) required:**\n\n *  *Browse projects and Edit issues* [project permission](https://confluence.atlassian.com/x/yodKLg) for the project that the issue is in.\n *  If [issue-level security](https://confluence.atlassian.com/x/J4lKLg) is configured, issue-level security permission to view the issue.\n\n *  *Administer Jira* [project permission](https://confluence.atlassian.com/x/x4dKLg) if the form is locked.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Copy forms",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}issue/:sourceIssueIdOrKey/form/copy/:targetIssueIdOrKey",
+              "query": [],
+              "variable": [
+                {
+                  "key": "sourceIssueIdOrKey",
+                  "value": "{{sourceIssueIdOrKey}}",
+                  "description": "The source issue key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "targetIssueIdOrKey",
+                  "value": "{{targetIssueIdOrKey}}",
+                  "description": "The target issue key or ID",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Copy forms from one issue to another.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/#permissions) required:**\n\n *  *Browse projects and Edit issues* [project permission](https://confluence.atlassian.com/x/yodKLg) for the project that the issue is in.\n *  If [issue-level security](https://confluence.atlassian.com/x/J4lKLg) is configured, issue-level security permission to view the issue.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            },
+            "body": {
+              "mode": "raw",
+              "raw": ""
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get form simplified answers",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}issue/:issueIdOrKey/form/:formId/format/answers",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Gets the answers from a form on an issue that are simplified into a flattened list for scripting tool ease of use. Multivalued answers will be flattened to a comma-separated string.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/#permissions) required:**\n\n *  *Browse projects* [project permission](https://confluence.atlassian.com/x/yodKLg) for the project that the issue is in.\n *  If [issue-level security](https://confluence.atlassian.com/x/J4lKLg) is configured, issue-level security permission to view the issue.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Forms Export",
+      "description": "APIs which handle exporting form data from Jira. \n \n To learn how to export forms, read [exporting forms](/cloud/forms/guides/export-forms).\n \n To learn about the appropriate URI structure for your chosen authentication method, read [authentication and authorization](/cloud/forms/rest/intro/#authentication-and-authorization).",
+      "item": [
+        {
+          "name": "Start export",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}export",
+              "query": [],
+              "variable": []
+            },
+            "method": "POST",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Starts an export of form data on a project.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/service-desk/rest/intro/#permissions) required:**\n\n *  *Browse projects* [project permission](https://confluence.atlassian.com/x/yodKLg) for the project.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            },
+            "body": {
+              "mode": "raw",
+              "raw": ""
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Download export result",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}export/:exportId/:filename",
+              "query": [],
+              "variable": [
+                {
+                  "key": "exportId",
+                  "value": "{{exportId}}",
+                  "description": "The export task ID",
+                  "disabled": false
+                },
+                {
+                  "key": "filename",
+                  "value": "{{filename}}",
+                  "description": "The name of the file to export to",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              }
+            ],
+            "description": "Downloads the result of an export of form data.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/service-desk/rest/intro/#permissions) required:**\n\n *  *Browse projects* [project permission](https://confluence.atlassian.com/x/yodKLg) for the project.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get export status",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}export/:exportId",
+              "query": [],
+              "variable": [
+                {
+                  "key": "exportId",
+                  "value": "{{exportId}}",
+                  "description": "The export task ID",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Gets the status of an export of form data.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/service-desk/rest/intro/#permissions) required:**\n\n *  *Browse projects* [project permission](https://confluence.atlassian.com/x/yodKLg) for the project.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Forms on Customer Request",
+      "description": "APIs which handle external forms on customer requests in the portal. For internal forms, see [Forms on Issue](/cloud/forms/rest/api-group-forms-on-issue/#api-group-forms-on-issue). \n \n To learn about the appropriate URI structure for your chosen authentication method, [view authentication and authorization](/cloud/forms/rest/intro/#authentication-and-authorization).",
+      "item": [
+        {
+          "name": "Get form attachments metadata",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}request/:issueIdOrKey/form/:formId/attachment",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Retrieve metadata for all attachments in a form on a request.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/service-desk/rest/intro/#permissions) required:**\n\n *  *View request* permission to view the customer request.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get form simplified answers",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}request/:issueIdOrKey/form/:formId/format/answers",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Gets the answers from a form on a request that are simplified into a flattened list for scripting tool ease of use. Multivalued answers will be flattened to a comma-separated string.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/service-desk/rest/intro/#permissions) required:**\n\n *  *View request* permission to view the customer request.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get form",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}request/:issueIdOrKey/form/:formId",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Gets a single form on a request as a complete JSON object.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/service-desk/rest/intro/#permissions) required:**\n\n *  *View request* permission to view the customer request.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Save form answers",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}request/:issueIdOrKey/form/:formId",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "PUT",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Saves form answers on a request.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/service-desk/rest/intro/#permissions) required:**\n\n *  *Edit request* permission to edit the customer request.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            },
+            "body": {
+              "mode": "raw",
+              "raw": ""
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get form index",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}request/:issueIdOrKey/form",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Gets a list of forms on the customer request with basic metadata about them.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/service-desk/rest/intro/#permissions) required:**\n\n *  *View request* permission to view the customer request.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get form PDF",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}request/:issueIdOrKey/form/:formId/format/pdf",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/pdf"
+              }
+            ],
+            "description": "Gets a single form on a request as a PDF file.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/service-desk/rest/intro/#permissions) required:**\n\n *  *View request* permission to view the customer request.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get form XLSX",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}request/:issueIdOrKey/form/:formId/format/xlsx",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              }
+            ],
+            "description": "Gets a single form on a request as an XLSX file.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/service-desk/rest/intro/#permissions) required:**\n\n *  *View request* permission to view the customer request.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Submit form",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}request/:issueIdOrKey/form/:formId/action/submit",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "PUT",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Changes the status of a form on a request to submitted.Depending on how the form is configured the form may either enter the submitted state or the locked state. Locked forms are considered to be submitted and locked and can only be reopened by project admins.The current iteration of this API does not check that form answers are valid.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/service-desk/rest/intro/#permissions) required:**\n\n *  *Edit request* permission to edit the customer request.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get external form data",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}request/:issueIdOrKey/form/:formId/externaldata",
+              "query": [],
+              "variable": [
+                {
+                  "key": "issueIdOrKey",
+                  "value": "{{issueIdOrKey}}",
+                  "description": "The issue key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Get all external form data for questions and answers on a form added to a request. Forms can be linked to external sources including Jira fields and data connections, with this API returning the latest responses on these linked fields.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/service-desk/rest/intro/#permissions) required:**\n\n *  *View request* permission to view the customer request.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Forms on Project",
+      "description": "APIs which handle forms on JSM projects. \n \n To learn about the appropriate URI structure for your chosen authentication method, [view authentication and authorization](/cloud/forms/rest/intro/#authentication-and-authorization).",
+      "item": [
+        {
+          "name": "Get form template",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}project/:projectIdOrKey/form/:formId",
+              "query": [
+                {
+                  "key": "requestLanguage",
+                  "value": "{{requestLanguage}}",
+                  "disabled": true,
+                  "description": "The requested language for the form to be translated to"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "projectIdOrKey",
+                  "value": "{{projectIdOrKey}}",
+                  "description": "The project key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Gets a form template as a JSON object on a project.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/service-desk/rest/intro/#permissions) required:**\n\n *  *Browse projects* [project permission](https://confluence.atlassian.com/x/yodKLg) for the project.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Save form template",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}project/:projectIdOrKey/form/:formId",
+              "query": [],
+              "variable": [
+                {
+                  "key": "projectIdOrKey",
+                  "value": "{{projectIdOrKey}}",
+                  "description": "The project key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "PUT",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Saves a form template on a project.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/#permissions) required:**\n\n *  *Administer Jira* [project permission](https://confluence.atlassian.com/x/yodKLg).",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            },
+            "body": {
+              "mode": "raw",
+              "raw": ""
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete form template",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}project/:projectIdOrKey/form/:formId",
+              "query": [],
+              "variable": [
+                {
+                  "key": "projectIdOrKey",
+                  "value": "{{projectIdOrKey}}",
+                  "description": "The project key or ID",
+                  "disabled": false
+                },
+                {
+                  "key": "formId",
+                  "value": "{{formId}}",
+                  "description": "The ID of the form",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "DELETE",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Deletes a form on a project. This won't affect existing issues that already use this form, or any copies of this form in other projects.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/#permissions) required:**\n\n *  *Administer Jira* [project permission](https://confluence.atlassian.com/x/yodKLg).",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get project form index",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}project/:projectIdOrKey/form",
+              "query": [],
+              "variable": [
+                {
+                  "key": "projectIdOrKey",
+                  "value": "{{projectIdOrKey}}",
+                  "description": "The project key or ID",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Get a list of form templates associated with the project.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/service-desk/rest/intro/#permissions) required:**\n\n *  *Browse projects* [project permission](https://confluence.atlassian.com/x/yodKLg) for the project.",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create form template",
+          "request": {
+            "url": {
+              "protocol": "{{protocol}}",
+              "host": "{{host}}",
+              "path": "{{basePath}}project/:projectIdOrKey/form",
+              "query": [],
+              "variable": [
+                {
+                  "key": "projectIdOrKey",
+                  "value": "{{projectIdOrKey}}",
+                  "description": "The project key or ID",
+                  "disabled": false
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "description": "",
+                "disabled": false,
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "description": "Creates a form template on a project.\n\n**[Permissions](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/#permissions) required:**\n\n *  *Administer Jira* [project permission](https://confluence.atlassian.com/x/yodKLg).",
+            "auth": {
+              "type": "basic",
+              "basic": {
+                "username": "{{username}}",
+                "password": "{{apiToken}}"
+              }
+            },
+            "body": {
+              "mode": "raw",
+              "raw": ""
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "protocol",
+      "name": "Protocol",
+      "description": "The HTTP Protocol that should be used for this REST API.",
+      "type": "string",
+      "value": "https"
+    },
+    {
+      "key": "host",
+      "name": "Host",
+      "description": "The HTTP host that should be used for this REST API.",
+      "type": "string",
+      "value": "api.atlassian.com"
+    },
+    {
+      "key": "basePath",
+      "name": "Base Path",
+      "description": "The path, after the host, of the base of the REST API.",
+      "type": "string",
+      "value": "jira/forms/cloud/%7BcloudId%7D/"
+    }
+  ]
+}

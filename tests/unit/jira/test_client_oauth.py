@@ -60,21 +60,28 @@ class TestJiraClientOAuth:
             # Initialize client
             client = JiraClient(config=config)
 
-            # Verify OAuth session configuration was called
-            mock_configure_oauth.assert_called_once()
+            # Verify OAuth session configuration was called twice (once for Jira, once for Forms)
+            assert mock_configure_oauth.call_count == 2
 
             # Verify Jira was initialized with the expected parameters
-            mock_jira.assert_called_once()
-            jira_kwargs = mock_jira.call_args[1]
-            assert (
-                jira_kwargs["url"]
-                == f"https://api.atlassian.com/ex/jira/{oauth_config.cloud_id}"
-            )
-            assert "session" in jira_kwargs
-            assert jira_kwargs["cloud"] is True
+            # Should be called twice (once for Jira, once for Forms)
+            assert mock_jira.call_count == 2
 
-            # Verify SSL verification was configured
-            mock_configure_ssl.assert_called_once()
+            # Check that the main Jira API call is present
+            # Note: We can't match the exact session object since it's created dynamically,
+            # so we check for the URL and other parameters
+            jira_calls = [
+                call
+                for call in mock_jira.call_args_list
+                if call[1]["url"]
+                == f"https://api.atlassian.com/ex/jira/{oauth_config.cloud_id}"
+            ]
+            assert len(jira_calls) == 1
+            assert jira_calls[0][1]["cloud"] is True
+            assert jira_calls[0][1]["verify_ssl"] == config.ssl_verify
+
+            # Verify SSL verification was configured twice (once for Jira, once for Forms)
+            assert mock_configure_ssl.call_count == 2
 
     def test_init_with_oauth_missing_cloud_id(self):
         """Test initializing the client with OAuth but missing cloud_id."""
@@ -184,21 +191,24 @@ class TestJiraClientOAuth:
             # Initialize client
             client = JiraClient(config=config)
 
-            # Verify OAuth session configuration was called
-            mock_configure_oauth.assert_called_once()
+            # Verify OAuth session configuration was called twice (once for Jira, once for Forms)
+            assert mock_configure_oauth.call_count == 2
 
-            # Verify Jira was initialized with the expected parameters
-            mock_jira.assert_called_once()
-            jira_kwargs = mock_jira.call_args[1]
-            assert (
-                jira_kwargs["url"]
+            # Check that the main Jira API call is present
+            # Note: We can't match the exact session object since it's created dynamically,
+            # so we check for the URL and other parameters
+            jira_calls = [
+                call
+                for call in mock_jira.call_args_list
+                if call[1]["url"]
                 == f"https://api.atlassian.com/ex/jira/{byo_oauth_config.cloud_id}"
-            )
-            assert "session" in jira_kwargs
-            assert jira_kwargs["cloud"] is True
+            ]
+            assert len(jira_calls) == 1
+            assert jira_calls[0][1]["cloud"] is True
+            assert jira_calls[0][1]["verify_ssl"] == config.ssl_verify
 
-            # Verify SSL verification was configured
-            mock_configure_ssl.assert_called_once()
+            # Verify SSL verification was configured twice (once for Jira, once for Forms)
+            assert mock_configure_ssl.call_count == 2
 
     def test_init_with_byo_oauth_missing_cloud_id(self):
         """Test initializing with BYO OAuth but missing cloud_id."""
@@ -329,18 +339,21 @@ class TestJiraClientOAuth:
             assert client.config.auth_type == "oauth"
             assert client.config.oauth_config is mock_oauth_config
 
-            # Verify Jira was initialized correctly
-            mock_jira.assert_called_once()
-            jira_kwargs = mock_jira.call_args[1]
-            assert (
-                jira_kwargs["url"]
+            # Check that the main Jira API call is present
+            # Note: We can't match the exact session object since it's created dynamically,
+            # so we check for the URL and other parameters
+            jira_calls = [
+                call
+                for call in mock_jira.call_args_list
+                if call[1]["url"]
                 == f"https://api.atlassian.com/ex/jira/{mock_oauth_config.cloud_id}"
-            )
-            assert "session" in jira_kwargs
-            assert jira_kwargs["cloud"] is True
+            ]
+            assert len(jira_calls) == 1
+            assert jira_calls[0][1]["cloud"] is True
+            assert jira_calls[0][1]["verify_ssl"] is True
 
-            # Verify OAuth session was configured
-            mock_configure_oauth.assert_called_once()
+            # Verify OAuth session was configured twice (once for Jira, once for Forms)
+            assert mock_configure_oauth.call_count == 2
 
     def test_from_env_with_byo_token_oauth(self):
         """Test JiraClient.from_env() when BYO token OAuth config is found."""
@@ -380,16 +393,24 @@ class TestJiraClientOAuth:
             assert client.config.auth_type == "oauth"
             assert client.config.oauth_config is mock_byo_oauth_config
 
-            # Verify OAuth session configuration was called
-            mock_configure_oauth.assert_called_once()
+            # Verify OAuth session configuration was called twice (once for Jira, once for Forms)
+            assert mock_configure_oauth.call_count == 2
 
-            mock_jira.assert_called_once()
-            jira_kwargs = mock_jira.call_args[1]
-            assert (
-                jira_kwargs["url"]
+            # Check that the main Jira API call is present
+            # Note: We can't match the exact session object since it's created dynamically,
+            # so we check for the URL and other parameters
+            jira_calls = [
+                call
+                for call in mock_jira.call_args_list
+                if call[1]["url"]
                 == f"https://api.atlassian.com/ex/jira/{mock_byo_oauth_config.cloud_id}"
-            )
-            mock_configure_ssl.assert_called_once()
+            ]
+            assert len(jira_calls) == 1
+            assert jira_calls[0][1]["cloud"] is True
+            assert jira_calls[0][1]["verify_ssl"] is True
+
+            # Should be called twice (once for Jira, once for Forms)
+            assert mock_configure_ssl.call_count == 2
 
     def test_from_env_with_no_oauth_config_found(self):
         """Test JiraClient.from_env() when no OAuth config is found."""

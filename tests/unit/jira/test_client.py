@@ -38,21 +38,27 @@ def test_init_with_basic_auth():
         client = JiraClient(config=config)
 
         # Verify Jira was initialized correctly
-        mock_jira.assert_called_once_with(
+        # Check that we have at least one call with the expected parameters
+        expected_call = call(
             url="https://test.atlassian.net",
             username="test_username",
             password="test_token",
             cloud=True,
             verify_ssl=True,
         )
+        assert expected_call in mock_jira.call_args_list
 
-        # Verify SSL verification was configured
-        mock_configure_ssl.assert_called_once_with(
+        # Verify SSL verification was configured twice (once for Jira, once for Forms)
+        assert mock_configure_ssl.call_count == 2
+
+        # Check that the main Jira SSL configuration call is present
+        ssl_call = call(
             service_name="Jira",
             url="https://test.atlassian.net",
             session=mock_jira.return_value._session,
             ssl_verify=True,
         )
+        assert ssl_call in mock_configure_ssl.call_args_list
 
         assert client.config == config
         assert client._field_ids_cache is None
@@ -77,20 +83,26 @@ def test_init_with_token_auth():
         client = JiraClient(config=config)
 
         # Verify Jira was initialized correctly
-        mock_jira.assert_called_once_with(
+        # Check that we have at least one call with the expected parameters
+        expected_call = call(
             url="https://jira.example.com",
             token="test_personal_token",
             cloud=False,
             verify_ssl=False,
         )
+        assert expected_call in mock_jira.call_args_list
 
-        # Verify SSL verification was configured with ssl_verify=False
-        mock_configure_ssl.assert_called_once_with(
+        # Verify SSL verification was configured twice (once for Jira, once for Forms)
+        assert mock_configure_ssl.call_count == 2
+
+        # Check that the main Jira SSL configuration call is present
+        ssl_call = call(
             service_name="Jira",
             url="https://jira.example.com",
             session=mock_jira.return_value._session,
             ssl_verify=False,
         )
+        assert ssl_call in mock_configure_ssl.call_args_list
 
         assert client.config == config
 

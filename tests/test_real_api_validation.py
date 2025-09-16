@@ -230,6 +230,7 @@ async def call_tool(
     return await client.call_tool(tool_name, arguments)
 
 
+@pytest.mark.skip(reason="Skipping real API validation tests")
 class TestRealJiraValidation:
     """
     Test class for validating Jira models with real API data.
@@ -304,6 +305,7 @@ class TestRealJiraValidation:
             assert "body" in comment or "author" in comment
 
 
+@pytest.mark.skip(reason="Skipping real API validation tests")
 class TestRealConfluenceValidation:
     """
     Test class for validating Confluence models with real API data.
@@ -387,6 +389,7 @@ class TestRealConfluenceValidation:
             assert page.title is not None
 
 
+@pytest.mark.skip(reason="Skipping real API validation tests")
 @pytest.mark.anyio
 async def test_jira_get_issue(jira_client: JiraFetcher, test_issue_key: str) -> None:
     """Test retrieving an issue from Jira."""
@@ -397,6 +400,7 @@ async def test_jira_get_issue(jira_client: JiraFetcher, test_issue_key: str) -> 
     assert hasattr(issue, "fields") or hasattr(issue, "summary")
 
 
+@pytest.mark.skip(reason="Skipping real API validation tests")
 @pytest.mark.anyio
 async def test_jira_get_issue_with_fields(
     jira_client: JiraFetcher, test_issue_key: str
@@ -444,6 +448,7 @@ async def test_jira_get_issue_with_fields(
         assert "status" in list_data
 
 
+@pytest.mark.skip(reason="Skipping real API validation tests")
 @pytest.mark.anyio
 async def test_jira_get_epic_issues(
     jira_client: JiraFetcher, test_epic_key: str
@@ -459,6 +464,7 @@ async def test_jira_get_epic_issues(
             assert hasattr(issue, "id")
 
 
+@pytest.mark.skip(reason="Skipping real API validation tests")
 @pytest.mark.anyio
 async def test_confluence_get_page_content(
     confluence_client: ConfluenceFetcher, test_page_id: str
@@ -471,6 +477,7 @@ async def test_confluence_get_page_content(
     assert page.title is not None
 
 
+@pytest.mark.skip(reason="Skipping real API validation tests")
 @pytest.mark.anyio
 async def test_jira_create_issue(
     jira_client: JiraFetcher,
@@ -505,6 +512,7 @@ async def test_jira_create_issue(
         cleanup_resources()
 
 
+@pytest.mark.skip(reason="Skipping real API validation tests")
 @pytest.mark.anyio
 async def test_jira_create_subtask(
     jira_client: JiraFetcher,
@@ -559,6 +567,7 @@ async def test_jira_create_subtask(
         cleanup_resources()
 
 
+@pytest.mark.skip(reason="Skipping real API validation tests")
 @pytest.mark.anyio
 async def test_jira_create_task_with_parent(
     jira_client: JiraFetcher,

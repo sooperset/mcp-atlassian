@@ -6,7 +6,6 @@ from typing import Any, Literal
 
 from atlassian import Jira
 from requests import Session
-from requests.exceptions import HTTPError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.preprocessing import JiraPreprocessor
@@ -76,9 +75,7 @@ class JiraClient(FormsMixin):
                 verify_ssl=self.config.ssl_verify,
             )
             # Initialize Jira Forms client with its specific API URL
-            forms_api_url = (
-                f"https://api.atlassian.com/jira/forms/cloud/{self.config.oauth_config.cloud_id}"
-            )
+            forms_api_url = f"https://api.atlassian.com/jira/forms/cloud/{self.config.oauth_config.cloud_id}"
             forms_session = Session()
             if not configure_oauth_session(forms_session, self.config.oauth_config):
                 error_msg = "Failed to configure OAuth session for Forms API"
