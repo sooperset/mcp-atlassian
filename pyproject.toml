@@ -90,6 +90,7 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 "tests/**/*.py" = ["S", "ANN", "B017"]
 "tests/fixtures/*.py" = ["E501"]
 "src/mcp_atlassian/server.py" = ["E501"]
+"src/mcp_atlassian/jira/forms.py" = ["E501"]
 
 [tool.ruff.format]
 quote-style = "double"

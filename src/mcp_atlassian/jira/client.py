@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from atlassian import Jira
 from requests import Session
+from requests.exceptions import HTTPError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.preprocessing import JiraPreprocessor
@@ -23,7 +24,10 @@ from .config import JiraConfig
 logger = logging.getLogger("mcp-jira")
 
 
-class JiraClient:
+from .forms import FormsMixin
+
+
+class JiraClient(FormsMixin):
     """Base client for Jira API interactions."""
 
     _field_ids_cache: list[dict[str, Any]] | None
@@ -71,6 +75,26 @@ class JiraClient:
                 cloud=True,  # OAuth is only for Cloud
                 verify_ssl=self.config.ssl_verify,
             )
+            # Initialize Jira Forms client with its specific API URL
+            forms_api_url = (
+                f"https://api.atlassian.com/jira/forms/cloud/{self.config.oauth_config.cloud_id}"
+            )
+            forms_session = Session()
+            if not configure_oauth_session(forms_session, self.config.oauth_config):
+                error_msg = "Failed to configure OAuth session for Forms API"
+                raise MCPAtlassianAuthenticationError(error_msg)
+            self.jira_forms = Jira(
+                url=forms_api_url,
+                session=forms_session,
+                cloud=True,
+                verify_ssl=self.config.ssl_verify,
+            )
+            configure_ssl_verification(
+                service_name="Jira Forms",
+                url=forms_api_url,
+                session=self.jira_forms._session,
+                ssl_verify=self.config.ssl_verify,
+            )
         elif self.config.auth_type == "pat":
             logger.debug(
                 f"Initializing Jira client with Token (PAT) auth. "
@@ -82,6 +106,19 @@ class JiraClient:
                 token=self.config.personal_token,
                 cloud=self.config.is_cloud,
                 verify_ssl=self.config.ssl_verify,
+            )
+            # Initialize Jira Forms client using the same instance URL for PAT authentication
+            self.jira_forms = Jira(
+                url=self.config.url,
+                token=self.config.personal_token,
+                cloud=self.config.is_cloud,
+                verify_ssl=self.config.ssl_verify,
+            )
+            configure_ssl_verification(
+                service_name="Jira Forms",
+                url=self.config.url,
+                session=self.jira_forms._session,
+                ssl_verify=self.config.ssl_verify,
             )
         else:  # basic auth
             logger.debug(
@@ -100,6 +137,20 @@ class JiraClient:
             logger.debug(
                 f"Jira client initialized. Session headers (Authorization masked): "
                 f"{get_masked_session_headers(dict(self.jira._session.headers))}"
+            )
+            # Initialize Jira Forms client using the same credentials for Basic authentication
+            self.jira_forms = Jira(
+                url=self.config.url,
+                username=self.config.username,
+                password=self.config.api_token,
+                cloud=self.config.is_cloud,
+                verify_ssl=self.config.ssl_verify,
+            )
+            configure_ssl_verification(
+                service_name="Jira Forms",
+                url=self.config.url,
+                session=self.jira_forms._session,
+                ssl_verify=self.config.ssl_verify,
             )
 
         # Configure SSL verification using the shared utility
@@ -136,6 +187,9 @@ class JiraClient:
         self.preprocessor = JiraPreprocessor(base_url=self.config.url)
         self._field_ids_cache = None
         self._current_user_account_id = None
+
+        # Initialize FormsMixin
+        super().__init__(self.config, self.jira_forms)
 
         # Test authentication during initialization (in debug mode only)
         if logger.isEnabledFor(logging.DEBUG):
