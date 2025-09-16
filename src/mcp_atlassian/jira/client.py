@@ -18,12 +18,10 @@ from mcp_atlassian.utils.oauth import configure_oauth_session
 from mcp_atlassian.utils.ssl import configure_ssl_verification
 
 from .config import JiraConfig
+from .forms import FormsMixin
 
 # Configure logging
 logger = logging.getLogger("mcp-jira")
-
-
-from .forms import FormsMixin
 
 
 class JiraClient(FormsMixin):
@@ -106,19 +104,27 @@ class JiraClient(FormsMixin):
             )
             # Initialize Jira Forms client with correct API URL for PAT authentication
             if self.config.is_cloud:
-                # Extract cloud ID from instance URL for Forms API
-                from urllib.parse import urlparse
+                # Try to get cloud ID from serverInfo endpoint first
+                cloud_id = self._get_cloud_id_from_server_info()
 
-                parsed_url = urlparse(self.config.url)
-                hostname = parsed_url.hostname or ""
-                if hostname and ".atlassian.net" in hostname:
-                    cloud_id = hostname.replace(".atlassian.net", "")
+                if cloud_id:
                     forms_api_url = (
                         f"https://api.atlassian.com/jira/forms/cloud/{cloud_id}"
                     )
                 else:
-                    # Fallback to instance URL for non-standard cloud domains
-                    forms_api_url = self.config.url
+                    # Fallback: Extract cloud ID from instance URL for Forms API
+                    from urllib.parse import urlparse
+
+                    parsed_url = urlparse(self.config.url)
+                    hostname = parsed_url.hostname or ""
+                    if hostname and ".atlassian.net" in hostname:
+                        cloud_id = hostname.replace(".atlassian.net", "")
+                        forms_api_url = (
+                            f"https://api.atlassian.com/jira/forms/cloud/{cloud_id}"
+                        )
+                    else:
+                        # Fallback to instance URL for non-standard cloud domains
+                        forms_api_url = self.config.url
             else:
                 # Server/DC uses the same URL
                 forms_api_url = self.config.url
@@ -155,19 +161,27 @@ class JiraClient(FormsMixin):
             )
             # Initialize Jira Forms client with correct API URL for Basic authentication
             if self.config.is_cloud:
-                # Extract cloud ID from instance URL for Forms API
-                from urllib.parse import urlparse
+                # Try to get cloud ID from serverInfo endpoint first
+                cloud_id = self._get_cloud_id_from_server_info()
 
-                parsed_url = urlparse(self.config.url)
-                hostname = parsed_url.hostname or ""
-                if hostname and ".atlassian.net" in hostname:
-                    cloud_id = hostname.replace(".atlassian.net", "")
+                if cloud_id:
                     forms_api_url = (
                         f"https://api.atlassian.com/jira/forms/cloud/{cloud_id}"
                     )
                 else:
-                    # Fallback to instance URL for non-standard cloud domains
-                    forms_api_url = self.config.url
+                    # Fallback: Extract cloud ID from instance URL for Forms API
+                    from urllib.parse import urlparse
+
+                    parsed_url = urlparse(self.config.url)
+                    hostname = parsed_url.hostname or ""
+                    if hostname and ".atlassian.net" in hostname:
+                        cloud_id = hostname.replace(".atlassian.net", "")
+                        forms_api_url = (
+                            f"https://api.atlassian.com/jira/forms/cloud/{cloud_id}"
+                        )
+                    else:
+                        # Fallback to instance URL for non-standard cloud domains
+                        forms_api_url = self.config.url
             else:
                 # Server/DC uses the same URL
                 forms_api_url = self.config.url
@@ -405,3 +419,49 @@ class JiraClient(FormsMixin):
             error_message = f"Unexpected response from Jira API: {result}"
             raise ValueError(error_message)
         return result
+
+    def _get_cloud_id_from_server_info(self) -> str | None:
+        """
+        Extract cloud ID from the Jira serverInfo endpoint.
+
+        Returns:
+            The cloud ID if available, None otherwise
+        """
+        try:
+            server_info = self.jira.server_info()
+
+            # Check if the serverInfo response contains cloud-related information
+            if isinstance(server_info, dict):
+                # Look for cloud ID in various possible locations
+                cloud_id = None
+
+                # Check if there's a direct cloudId field
+                if "cloudId" in server_info:
+                    cloud_id = server_info["cloudId"]
+
+                # Check in the instance info
+                elif "instance" in server_info and isinstance(
+                    server_info["instance"], dict
+                ):
+                    instance_info = server_info["instance"]
+                    if "cloudId" in instance_info:
+                        cloud_id = instance_info["cloudId"]
+
+                # Check if we can extract from the baseUrl
+                elif "baseUrl" in server_info:
+                    base_url = server_info["baseUrl"]
+                    from urllib.parse import urlparse
+
+                    parsed_url = urlparse(base_url)
+                    hostname = parsed_url.hostname or ""
+                    if hostname and ".atlassian.net" in hostname:
+                        cloud_id = hostname.replace(".atlassian.net", "")
+
+                return cloud_id
+        except Exception as e:
+            # Catch broad exception since we're using this as a fallback
+            # and don't want to fail client initialization if serverInfo
+            # endpoint is not available or returns unexpected data
+            logger.debug(f"Failed to get cloud ID from serverInfo: {e}")
+
+        return None
