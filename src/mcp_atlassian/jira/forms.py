@@ -316,10 +316,24 @@ class FormsMixin:
             }
         endpoint = f"project/{project_key}/form"
         try:
+            # Add debug logging
+            logger.debug(f"Creating form template for project {project_key}")
+            logger.debug(
+                f"Forms client URL: {getattr(self.jira_forms, 'url', 'No URL available')}"
+            )
+            logger.debug(f"Endpoint: {endpoint}")
+            logger.debug(f"Template data: {template_data}")
+
             response = self.jira_forms.post(endpoint, json=template_data)
+            logger.debug(f"Response: {response}")
             return response or {}
         except HTTPError as e:
             logger.error(f"Error creating form template for project {project_key}: {e}")
+            # Enhanced error logging
+            if hasattr(e, "response") and e.response:
+                logger.error(f"Response status: {e.response.status_code}")
+                logger.error(f"Response headers: {e.response.headers}")
+                logger.error(f"Response content: {e.response.text}")
             return {
                 "error": str(e),
                 "status_code": e.response.status_code if e.response else None,

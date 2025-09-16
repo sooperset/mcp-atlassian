@@ -111,6 +111,7 @@ class JiraClient(FormsMixin):
                     forms_api_url = (
                         f"https://api.atlassian.com/jira/forms/cloud/{cloud_id}"
                     )
+                    logger.debug(f"Forms API URL (from tenant_info): {forms_api_url}")
                 else:
                     # Fallback: Extract cloud ID from instance URL for Forms API
                     from urllib.parse import urlparse
@@ -122,12 +123,19 @@ class JiraClient(FormsMixin):
                         forms_api_url = (
                             f"https://api.atlassian.com/jira/forms/cloud/{cloud_id}"
                         )
+                        logger.debug(
+                            f"Forms API URL (from URL parsing): {forms_api_url}"
+                        )
                     else:
                         # Fallback to instance URL for non-standard cloud domains
                         forms_api_url = self.config.url
+                        logger.debug(
+                            f"Forms API URL (fallback to instance): {forms_api_url}"
+                        )
             else:
                 # Server/DC uses the same URL
                 forms_api_url = self.config.url
+                logger.debug(f"Forms API URL (Server/DC): {forms_api_url}")
 
             self.jira_forms = Jira(
                 url=forms_api_url,
@@ -168,6 +176,7 @@ class JiraClient(FormsMixin):
                     forms_api_url = (
                         f"https://api.atlassian.com/jira/forms/cloud/{cloud_id}"
                     )
+                    logger.debug(f"Forms API URL (from tenant_info): {forms_api_url}")
                 else:
                     # Fallback: Extract cloud ID from instance URL for Forms API
                     from urllib.parse import urlparse
@@ -179,12 +188,19 @@ class JiraClient(FormsMixin):
                         forms_api_url = (
                             f"https://api.atlassian.com/jira/forms/cloud/{cloud_id}"
                         )
+                        logger.debug(
+                            f"Forms API URL (from URL parsing): {forms_api_url}"
+                        )
                     else:
                         # Fallback to instance URL for non-standard cloud domains
                         forms_api_url = self.config.url
+                        logger.debug(
+                            f"Forms API URL (fallback to instance): {forms_api_url}"
+                        )
             else:
                 # Server/DC uses the same URL
                 forms_api_url = self.config.url
+                logger.debug(f"Forms API URL (Server/DC): {forms_api_url}")
 
             self.jira_forms = Jira(
                 url=forms_api_url,
@@ -440,32 +456,45 @@ class JiraClient(FormsMixin):
             # Use the session from the main Jira client
             session = self.jira._session
 
+            # Debug logging
+            logger.debug(f"Attempting to get cloud ID from: {tenant_info_url}")
+            logger.debug(f"Session headers: {dict(session.headers)}")
+
             # Make the request
             response = session.get(tenant_info_url)
 
+            logger.debug(f"Tenant info response status: {response.status_code}")
+
             if response.status_code == 200:
                 tenant_data = response.json()
+                logger.debug(f"Tenant info response: {tenant_data}")
 
                 # Extract cloud ID from the response
                 if isinstance(tenant_data, dict):
                     # Look for cloudId in the response
                     cloud_id = tenant_data.get("cloudId")
                     if cloud_id:
+                        logger.debug(f"Found cloudId: {cloud_id}")
                         return cloud_id
 
                     # Also check for other possible field names
                     possible_fields = ["cloud_id", "tenantId", "tenant_id", "id"]
                     for field in possible_fields:
                         if field in tenant_data:
+                            logger.debug(
+                                f"Found cloud ID via field {field}: {tenant_data[field]}"
+                            )
                             return tenant_data[field]
-
-                logger.debug(f"Tenant info response: {tenant_data}")
             else:
                 logger.debug(
                     f"Tenant info request failed with status: {response.status_code}"
                 )
+                logger.debug(f"Response content: {response.text}")
 
         except Exception as e:
-            logger.debug(f"Failed to get cloud ID from tenant_info: {e}")
+            logger.error(f"Failed to get cloud ID from tenant_info: {e}")
+            import traceback
+
+            logger.debug(f"Traceback: {traceback.format_exc()}")
 
         return None
