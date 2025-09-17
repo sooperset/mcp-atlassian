@@ -90,8 +90,12 @@ class ConfluenceConfig:
         oauth_config = get_oauth_config_from_env()
         auth_type = None
 
-        # Use the shared utility function directly
-        is_cloud = is_atlassian_cloud_url(url)
+        if url:
+            is_cloud = is_atlassian_cloud_url(url)
+        else:
+            # When no URL, let the @property is_cloud method handle detection
+            # It will check for OAuth cloud_id or return False
+            is_cloud = False
 
         if oauth_config:
             # OAuth is available - could be full config or minimal config for user-provided tokens
