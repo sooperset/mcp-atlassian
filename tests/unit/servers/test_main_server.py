@@ -4,8 +4,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-from starlette.requests import Request
-from starlette.responses import JSONResponse
 
 from mcp_atlassian.servers.main import UserTokenMiddleware, main_mcp
 
