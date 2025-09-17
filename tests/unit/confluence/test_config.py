@@ -238,7 +238,7 @@ def test_from_env_oauth_enable_with_server_url():
     with patch.dict(
         os.environ,
         {
-            "ATLASSIAN_OAUTH_ENABLE": "true", 
+            "ATLASSIAN_OAUTH_ENABLE": "true",
             "CONFLUENCE_URL": "https://confluence.example.com",
         },
         clear=True,

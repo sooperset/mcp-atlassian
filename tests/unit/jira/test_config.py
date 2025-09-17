@@ -230,7 +230,7 @@ def test_from_env_oauth_enable_no_url_with_cloud_id():
             "ATLASSIAN_OAUTH_CLOUD_ID": "test-cloud-id",
             # No JIRA_URL set
         },
-        clear=True, 
+        clear=True,
     ):
         config = JiraConfig.from_env()
         assert config.auth_type == "oauth"
@@ -258,7 +258,7 @@ def test_from_env_oauth_enable_with_server_url():
     with patch.dict(
         os.environ,
         {
-            "ATLASSIAN_OAUTH_ENABLE": "true", 
+            "ATLASSIAN_OAUTH_ENABLE": "true",
             "JIRA_URL": "https://jira.example.com",
         },
         clear=True,
