@@ -276,12 +276,14 @@ class ConfluenceV2Adapter:
         self,
         page_id: str,
         expand: str | None = None,
+        version: int | None = None,
     ) -> dict[str, Any]:
         """Get a page using the v2 API.
 
         Args:
             page_id: The ID of the page to retrieve
             expand: Fields to expand in the response (not used in v2 API, for compatibility only)
+            version: Optional version number of the page to retrieve
 
         Returns:
             The page data from the API response in v1-compatible format
@@ -295,6 +297,8 @@ class ConfluenceV2Adapter:
 
             # Convert v1 expand parameters to v2 format
             params = {"body-format": "storage"}
+            if version is not None:
+                params["version"] = version
 
             response = self.session.get(url, params=params)
             response.raise_for_status()

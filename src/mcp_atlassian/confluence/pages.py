@@ -30,7 +30,7 @@ class PagesMixin(ConfluenceClient):
         return None
 
     def get_page_content(
-        self, page_id: str, *, convert_to_markdown: bool = True
+        self, page_id: str, *, convert_to_markdown: bool = True, version: int | None = None
     ) -> ConfluencePage:
         """
         Get content of a specific page.
@@ -39,6 +39,7 @@ class PagesMixin(ConfluenceClient):
             page_id: The ID of the page to retrieve
             convert_to_markdown: When True, returns content in markdown format,
                                otherwise returns raw HTML (keyword-only)
+            version: Optional version number of the page to retrieve. If None, gets the latest version (keyword-only)
 
         Returns:
             ConfluencePage model containing the page content and metadata
@@ -53,19 +54,27 @@ class PagesMixin(ConfluenceClient):
             if v2_adapter:
                 logger.debug(
                     f"Using v2 API for OAuth authentication to get page '{page_id}'"
+                    + (f" version {version}" if version else "")
                 )
                 page = v2_adapter.get_page(
                     page_id=page_id,
                     expand="body.storage,version,space,children.attachment",
+                    version=version,
                 )
             else:
                 logger.debug(
                     f"Using v1 API for token/basic authentication to get page '{page_id}'"
+                    + (f" version {version}" if version else "")
                 )
-                page = self.confluence.get_page_by_id(
-                    page_id=page_id,
-                    expand="body.storage,version,space,children.attachment",
-                )
+                # For v1 API, we need to add version parameter if specified
+                get_page_kwargs = {
+                    "page_id": page_id,
+                    "expand": "body.storage,version,space,children.attachment",
+                }
+                if version is not None:
+                    get_page_kwargs["version"] = version
+                
+                page = self.confluence.get_page_by_id(**get_page_kwargs)
 
             space_key = page.get("space", {}).get("key", "")
             content = page["body"]["storage"]["value"]
