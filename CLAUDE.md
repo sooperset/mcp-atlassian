@@ -93,7 +93,7 @@ This is a Model Context Protocol (MCP) server that provides AI assistants with a
 
 #### Service Modules
 - **Jira** (`src/mcp_atlassian/jira/`): Issue management, search, boards, sprints, worklogs
-- **Confluence** (`src/mcp_atlassian/confluence/`): Page management, search, comments, labels
+- **Confluence** (`src/mcp_atlassian/confluence/`): Page management, search, comments, labels, version history
 
 #### Authentication Support
 - **Cloud**: Username/API token, OAuth 2.0 (standard and BYOT)
