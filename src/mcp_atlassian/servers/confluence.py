@@ -207,6 +207,14 @@ async def get_page(
                 ensure_ascii=False,
             )
     elif title and space_key:
+        if version is not None:
+            return json.dumps(
+                {
+                    "error": "Version parameter is not supported when looking up pages by title and space_key. Please use page_id to retrieve specific versions."
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
         page_object = confluence_fetcher.get_page_by_title(
             space_key, title, convert_to_markdown=convert_to_markdown
         )

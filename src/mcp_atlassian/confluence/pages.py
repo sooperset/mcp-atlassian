@@ -30,7 +30,11 @@ class PagesMixin(ConfluenceClient):
         return None
 
     def get_page_content(
-        self, page_id: str, *, convert_to_markdown: bool = True, version: int | None = None
+        self,
+        page_id: str,
+        *,
+        convert_to_markdown: bool = True,
+        version: int | None = None,
     ) -> ConfluencePage:
         """
         Get content of a specific page.
@@ -39,13 +43,15 @@ class PagesMixin(ConfluenceClient):
             page_id: The ID of the page to retrieve
             convert_to_markdown: When True, returns content in markdown format,
                                otherwise returns raw HTML (keyword-only)
-            version: Optional version number of the page to retrieve. If None, gets the latest version (keyword-only)
+            version: Optional version number of the page to retrieve. If None, gets the 
+                    latest version (keyword-only)
 
         Returns:
             ConfluencePage model containing the page content and metadata
 
         Raises:
-            MCPAtlassianAuthenticationError: If authentication fails with the Confluence API (401/403)
+            MCPAtlassianAuthenticationError: If authentication fails with the 
+                Confluence API (401/403)
             Exception: If there is an error retrieving the page
         """
         try:
@@ -62,9 +68,10 @@ class PagesMixin(ConfluenceClient):
                     version=version,
                 )
             else:
+                version_msg = f" version {version}" if version else ""
                 logger.debug(
-                    f"Using v1 API for token/basic authentication to get page '{page_id}'"
-                    + (f" version {version}" if version else "")
+                    f"Using v1 API for token/basic authentication to get page "
+                    f"'{page_id}'{version_msg}"
                 )
                 # For v1 API, we need to add version parameter if specified
                 get_page_kwargs = {
@@ -73,7 +80,7 @@ class PagesMixin(ConfluenceClient):
                 }
                 if version is not None:
                     get_page_kwargs["version"] = version
-                
+
                 page = self.confluence.get_page_by_id(**get_page_kwargs)
 
             space_key = page.get("space", {}).get("key", "")
