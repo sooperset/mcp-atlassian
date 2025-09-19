@@ -164,6 +164,71 @@ class ConfluenceV2Adapter:
             logger.error(f"Error getting page version for '{page_id}': {e}")
             raise ValueError(f"Failed to get page version for '{page_id}': {e}") from e
 
+    def get_page_versions(self, page_id: str) -> list:
+        """Get all versions of a page using v2 API.
+
+        Args:
+            page_id: The ID of the page
+
+        Returns:
+            List of ConfluenceVersion objects
+
+        Raises:
+            ValueError: If API call fails
+        """
+        try:
+            url = f"{self.base_url}/api/v2/pages/{page_id}/versions"
+            response = self.session.get(url)
+            response.raise_for_status()
+
+            data = response.json()
+            versions = []
+            
+            from ..models.confluence import ConfluenceVersion
+            
+            for version_data in data.get("results", []):
+                versions.append(ConfluenceVersion.from_api_response(version_data))
+            
+            return versions
+
+        except HTTPError as e:
+            logger.error(f"HTTP error getting versions for page '{page_id}': {e}")
+            raise ValueError(f"Failed to get versions for page '{page_id}': {e}") from e
+        except Exception as e:
+            logger.error(f"Error getting versions for page '{page_id}': {e}")
+            raise ValueError(f"Failed to get versions for page '{page_id}': {e}") from e
+
+    def get_page_version(self, page_id: str, version_number: int):
+        """Get a specific version of a page using v2 API.
+
+        Args:
+            page_id: The ID of the page
+            version_number: The version number to retrieve
+
+        Returns:
+            ConfluenceVersion object
+
+        Raises:
+            ValueError: If API call fails
+        """
+        try:
+            url = f"{self.base_url}/api/v2/pages/{page_id}/versions/{version_number}"
+            response = self.session.get(url)
+            response.raise_for_status()
+
+            data = response.json()
+            
+            from ..models.confluence import ConfluenceVersion
+            
+            return ConfluenceVersion.from_api_response(data)
+
+        except HTTPError as e:
+            logger.error(f"HTTP error getting version {version_number} for page '{page_id}': {e}")
+            raise ValueError(f"Failed to get version {version_number} for page '{page_id}': {e}") from e
+        except Exception as e:
+            logger.error(f"Error getting version {version_number} for page '{page_id}': {e}")
+            raise ValueError(f"Failed to get version {version_number} for page '{page_id}': {e}") from e
+
     def update_page(
         self,
         page_id: str,
