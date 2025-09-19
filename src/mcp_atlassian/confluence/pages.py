@@ -138,17 +138,38 @@ class PagesMixin(ConfluenceClient):
                 return v2_adapter.get_page_versions(page_id)
             else:
                 logger.debug(f"Using v1 API to get versions for page '{page_id}'")
-                # v1 API: use /rest/api/content/{id}/version endpoint
+                # For Cloud instances, try the wiki prefix
+                base_url = self.config.url
+                if "/wiki" not in base_url:
+                    base_url = f"{base_url}/wiki"
+                
                 try:
-                    url = f"{self.config.url}/rest/api/content/{page_id}/version"
+                    url = f"{base_url}/rest/api/content/{page_id}/history"
                     response = self.confluence._session.get(url)
                     response.raise_for_status()
                     
                     data = response.json()
                     versions = []
                     
-                    for version_data in data.get("results", []):
-                        versions.append(ConfluenceVersion.from_api_response(version_data))
+                    # v1 API returns versions in lastUpdated field
+                    if "lastUpdated" in data:
+                        last_updated = data["lastUpdated"]
+                        versions.append(ConfluenceVersion.from_api_response({
+                            "number": last_updated.get("number", 1),
+                            "when": last_updated.get("when", ""),
+                            "message": last_updated.get("message"),
+                            "by": last_updated.get("by")
+                        }))
+                    
+                    # Also check for previousVersion to get more history
+                    if "previousVersion" in data:
+                        prev = data["previousVersion"]
+                        versions.append(ConfluenceVersion.from_api_response({
+                            "number": prev.get("number", 1),
+                            "when": prev.get("when", ""),
+                            "message": prev.get("message"),
+                            "by": prev.get("by")
+                        }))
                     
                     return versions
                 except Exception as e:
