@@ -697,7 +697,7 @@ async def add_comment(
 
 
 @confluence_mcp.tool(tags={"confluence", "read"})
-async def confluence_get_page_versions(
+async def get_page_versions(
     ctx: Context,
     page_id: Annotated[
         str,
