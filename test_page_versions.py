@@ -13,14 +13,14 @@ from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.confluence.config import ConfluenceConfig
 
 
-def load_credentials():
+def load_credentials() -> dict[str, str | None]:
     """Load credentials from .test-credentials.json or environment."""
     creds_file = Path(".test-credentials.json")
-    
+
     if creds_file.exists():
         with open(creds_file) as f:
             return json.load(f)
-    
+
     # Fallback to environment variables
     return {
         "confluence_url": os.getenv("CONFLUENCE_URL"),
@@ -29,46 +29,50 @@ def load_credentials():
     }
 
 
-def test_page_versions(page_id: str):
+def test_page_versions(page_id: str) -> bool:
     """Test getting page versions for a specific page ID."""
     print(f"Testing page versions for page ID: {page_id}")
-    
+
     # Load credentials
     creds = load_credentials()
-    
-    if not all([creds.get("confluence_url"), creds.get("username"), creds.get("api_token")]):
-        print("❌ Missing credentials. Please provide .test-credentials.json or set environment variables.")
+
+    if not all(
+        [creds.get("confluence_url"), creds.get("username"), creds.get("api_token")]
+    ):
+        print(
+            "❌ Missing credentials. Please provide .test-credentials.json or set environment variables."
+        )
         return False
-    
+
     try:
         # Create config
         config = ConfluenceConfig(
             url=creds["confluence_url"],
             username=creds["username"],
             api_token=creds["api_token"],
-            auth_type="basic"
+            auth_type="basic",
         )
-        
+
         # Create fetcher
         fetcher = ConfluenceFetcher(config)
-        
+
         print(f"✅ Connected to: {config.url}")
         print(f"🔧 Auth type: {config.auth_type}")
         print(f"🌐 Is Cloud: {config.is_cloud}")
         print(f"🔌 Using v2 adapter: {fetcher._v2_adapter is not None}")
-        
+
         # Test 1: Get all versions
         print("\n📋 Getting all versions...")
         versions = fetcher.get_page_versions(page_id)
         print(f"Found {len(versions)} versions:")
-        
+
         for version in versions:
             print(f"  - Version {version.number}: {version.when}")
             if version.message:
                 print(f"    Message: {version.message}")
             if version.by:
                 print(f"    By: {version.by.display_name}")
-        
+
         # Test 2: Get specific version (latest)
         if versions:
             latest_version = versions[0].number
@@ -77,9 +81,9 @@ def test_page_versions(page_id: str):
             print(f"Version {specific_version.number}: {specific_version.when}")
             if specific_version.message:
                 print(f"Message: {specific_version.message}")
-        
+
         return True
-        
+
     except Exception as e:
         print(f"❌ Error: {e}")
         return False

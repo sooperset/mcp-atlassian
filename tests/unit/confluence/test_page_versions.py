@@ -72,7 +72,9 @@ class TestPageVersions:
     ):
         """Test error handling when getting page versions."""
         mock_get_fetcher.return_value = mock_confluence_fetcher
-        mock_confluence_fetcher.get_page_versions.side_effect = ValueError("Page not found")
+        mock_confluence_fetcher.get_page_versions.side_effect = ValueError(
+            "Page not found"
+        )
 
         result = await get_page_versions(mock_context, "invalid")
 

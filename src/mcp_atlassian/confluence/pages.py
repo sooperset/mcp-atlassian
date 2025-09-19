@@ -43,14 +43,14 @@ class PagesMixin(ConfluenceClient):
             page_id: The ID of the page to retrieve
             convert_to_markdown: When True, returns content in markdown format,
                                otherwise returns raw HTML (keyword-only)
-            version: Optional version number of the page to retrieve. If None, gets the 
+            version: Optional version number of the page to retrieve. If None, gets the
                     latest version (keyword-only)
 
         Returns:
             ConfluencePage model containing the page content and metadata
 
         Raises:
-            MCPAtlassianAuthenticationError: If authentication fails with the 
+            MCPAtlassianAuthenticationError: If authentication fails with the
                 Confluence API (401/403)
             Exception: If there is an error retrieving the page
         """
@@ -142,35 +142,43 @@ class PagesMixin(ConfluenceClient):
                 base_url = self.config.url
                 if "/wiki" not in base_url:
                     base_url = f"{base_url}/wiki"
-                
+
                 try:
                     url = f"{base_url}/rest/api/content/{page_id}/history"
                     response = self.confluence._session.get(url)
                     response.raise_for_status()
-                    
+
                     data = response.json()
                     versions = []
-                    
+
                     # v1 API returns versions in lastUpdated field
                     if "lastUpdated" in data:
                         last_updated = data["lastUpdated"]
-                        versions.append(ConfluenceVersion.from_api_response({
-                            "number": last_updated.get("number", 1),
-                            "when": last_updated.get("when", ""),
-                            "message": last_updated.get("message"),
-                            "by": last_updated.get("by")
-                        }))
-                    
+                        versions.append(
+                            ConfluenceVersion.from_api_response(
+                                {
+                                    "number": last_updated.get("number", 1),
+                                    "when": last_updated.get("when", ""),
+                                    "message": last_updated.get("message"),
+                                    "by": last_updated.get("by"),
+                                }
+                            )
+                        )
+
                     # Also check for previousVersion to get more history
                     if "previousVersion" in data:
                         prev = data["previousVersion"]
-                        versions.append(ConfluenceVersion.from_api_response({
-                            "number": prev.get("number", 1),
-                            "when": prev.get("when", ""),
-                            "message": prev.get("message"),
-                            "by": prev.get("by")
-                        }))
-                    
+                        versions.append(
+                            ConfluenceVersion.from_api_response(
+                                {
+                                    "number": prev.get("number", 1),
+                                    "when": prev.get("when", ""),
+                                    "message": prev.get("message"),
+                                    "by": prev.get("by"),
+                                }
+                            )
+                        )
+
                     return versions
                 except Exception as e:
                     logger.warning(f"Failed to get versions via v1 API: {e}")
@@ -178,11 +186,13 @@ class PagesMixin(ConfluenceClient):
                     page = self.confluence.get_page_by_id(
                         page_id=page_id, expand="version"
                     )
-                    
+
                     versions = []
                     if version_data := page.get("version"):
-                        versions.append(ConfluenceVersion.from_api_response(version_data))
-                    
+                        versions.append(
+                            ConfluenceVersion.from_api_response(version_data)
+                        )
+
                     return versions
 
         except HTTPError as e:
@@ -209,30 +219,44 @@ class PagesMixin(ConfluenceClient):
         """
         try:
             if v2_adapter := self._v2_adapter:
-                logger.debug(f"Using v2 API to get version {version_number} for page '{page_id}'")
+                logger.debug(
+                    f"Using v2 API to get version {version_number} for page '{page_id}'"
+                )
                 return v2_adapter.get_page_version(page_id, version_number)
             else:
-                logger.debug(f"Using v1 API to get version {version_number} for page '{page_id}'")
+                logger.debug(
+                    f"Using v1 API to get version {version_number} for page '{page_id}'"
+                )
                 # Get page with specific version
                 page = self.confluence.get_page_by_id(
                     page_id=page_id, version=version_number, expand="version"
                 )
-                
+
                 if version_data := page.get("version"):
                     return ConfluenceVersion.from_api_response(version_data)
-                
-                raise ValueError(f"Version {version_number} not found for page '{page_id}'")
+
+                raise ValueError(
+                    f"Version {version_number} not found for page '{page_id}'"
+                )
 
         except HTTPError as e:
             if e.response.status_code == 401:
                 raise MCPAtlassianAuthenticationError(
                     "Authentication failed when getting page version"
                 ) from e
-            logger.error(f"HTTP error getting version {version_number} for page '{page_id}': {e}")
-            raise ValueError(f"Failed to get version {version_number} for page '{page_id}': {e}") from e
+            logger.error(
+                f"HTTP error getting version {version_number} for page '{page_id}': {e}"
+            )
+            raise ValueError(
+                f"Failed to get version {version_number} for page '{page_id}': {e}"
+            ) from e
         except Exception as e:
-            logger.error(f"Error getting version {version_number} for page '{page_id}': {e}")
-            raise ValueError(f"Failed to get version {version_number} for page '{page_id}': {e}") from e
+            logger.error(
+                f"Error getting version {version_number} for page '{page_id}': {e}"
+            )
+            raise ValueError(
+                f"Failed to get version {version_number} for page '{page_id}': {e}"
+            ) from e
 
     def get_page_ancestors(self, page_id: str) -> list[ConfluencePage]:
         """
