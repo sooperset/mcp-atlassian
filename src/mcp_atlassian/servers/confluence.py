@@ -161,6 +161,17 @@ async def get_page(
             default=True,
         ),
     ] = True,
+    version: Annotated[
+        int | None,
+        Field(
+            description=(
+                "Optional version number of the page to retrieve. If not provided, gets the latest version. "
+                "Use this to access previous versions of the page."
+            ),
+            default=None,
+            ge=1,
+        ),
+    ] = None,
 ) -> str:
     """Get content of a specific Confluence page by its ID, or by its title and space key.
 
@@ -171,6 +182,7 @@ async def get_page(
         space_key: The key of the space. Must be used with 'title'.
         include_metadata: Whether to include page metadata.
         convert_to_markdown: Convert content to markdown (true) or keep raw HTML (false).
+        version: Optional version number to retrieve a specific version of the page.
 
     Returns:
         JSON string representing the page content and/or metadata, or an error if not found or parameters are invalid.
@@ -185,7 +197,7 @@ async def get_page(
             )
         try:
             page_object = confluence_fetcher.get_page_content(
-                page_id, convert_to_markdown=convert_to_markdown
+                page_id, convert_to_markdown=convert_to_markdown, version=version
             )
         except Exception as e:
             logger.error(f"Error fetching page by ID '{page_id}': {e}")
@@ -195,6 +207,14 @@ async def get_page(
                 ensure_ascii=False,
             )
     elif title and space_key:
+        if version is not None:
+            return json.dumps(
+                {
+                    "error": "Version parameter is not supported when looking up pages by title and space_key. Please use page_id to retrieve specific versions."
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
         page_object = confluence_fetcher.get_page_by_title(
             space_key, title, convert_to_markdown=convert_to_markdown
         )
@@ -683,39 +703,25 @@ async def get_page_versions(
         str,
         Field(description="The ID of the page to get versions for"),
     ],
-    version_number: Annotated[
-        int | None,
-        Field(
-            default=None,
-            description="Optional specific version number. If not provided, returns all versions.",
-        ),
-    ] = None,
 ) -> str:
     """
-    Get version information for a Confluence page.
+    Get all available versions of a Confluence page.
 
     Args:
         ctx: The FastMCP context.
         page_id: The ID of the page.
-        version_number: Optional specific version number.
 
     Returns:
-        JSON string with version information or error details.
+        JSON string with list of all page versions.
 
     Raises:
         ValueError: If the Confluence client is not configured or available.
     """
     confluence = await get_confluence_fetcher(ctx)
     try:
-        if version_number is not None:
-            # Get specific version
-            version = confluence.get_page_version(page_id, version_number)
-            return json.dumps(version.to_simplified_dict(), indent=2)
-        else:
-            # Get all versions
-            versions = confluence.get_page_versions(page_id)
-            versions_data = [version.to_simplified_dict() for version in versions]
-            return json.dumps({"versions": versions_data}, indent=2)
+        versions = confluence.get_page_versions(page_id)
+        versions_data = [version.to_simplified_dict() for version in versions]
+        return json.dumps({"versions": versions_data}, indent=2)
 
     except MCPAtlassianAuthenticationError as e:
         logger.error(f"Authentication error getting page versions: {e}")

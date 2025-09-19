@@ -279,7 +279,7 @@ async def test_get_page(client, mock_confluence_fetcher):
     response = await client.call_tool("confluence_get_page", {"page_id": "123456"})
 
     mock_confluence_fetcher.get_page_content.assert_called_once_with(
-        "123456", convert_to_markdown=True
+        "123456", convert_to_markdown=True, version=None
     )
 
     result_data = json.loads(response[0].text)
@@ -298,7 +298,7 @@ async def test_get_page_no_metadata(client, mock_confluence_fetcher):
     )
 
     mock_confluence_fetcher.get_page_content.assert_called_once_with(
-        "123456", convert_to_markdown=True
+        "123456", convert_to_markdown=True, version=None
     )
 
     result_data = json.loads(response[0].text)
@@ -328,7 +328,7 @@ async def test_get_page_no_markdown(client, mock_confluence_fetcher):
     )
 
     mock_confluence_fetcher.get_page_content.assert_called_once_with(
-        "123456", convert_to_markdown=False
+        "123456", convert_to_markdown=False, version=None
     )
 
     result_data = json.loads(response[0].text)
@@ -336,6 +336,41 @@ async def test_get_page_no_markdown(client, mock_confluence_fetcher):
     assert result_data["metadata"]["title"] == "Test Page HTML"
     assert result_data["metadata"]["content"] == "<p>HTML Content</p>"
     assert result_data["metadata"]["content_format"] == "storage"
+
+
+@pytest.mark.anyio
+async def test_get_page_with_version(client, mock_confluence_fetcher):
+    """Test the get_page tool with version parameter."""
+    response = await client.call_tool(
+        "confluence_get_page", {"page_id": "123456", "version": 5}
+    )
+
+    mock_confluence_fetcher.get_page_content.assert_called_once_with(
+        "123456", convert_to_markdown=True, version=5
+    )
+
+    result_data = json.loads(response[0].text)
+    assert "metadata" in result_data
+    assert result_data["metadata"]["title"] == "Test Page Mock Title"
+
+
+@pytest.mark.anyio
+async def test_get_page_version_with_title_space_error(client, mock_confluence_fetcher):
+    """Test that version parameter with title/space_key returns error."""
+    response = await client.call_tool(
+        "confluence_get_page", {"title": "Test Page", "space_key": "TEST", "version": 3}
+    )
+
+    # Should not call get_page_content because version + title/space is not supported
+    mock_confluence_fetcher.get_page_content.assert_not_called()
+    mock_confluence_fetcher.get_page_by_title.assert_not_called()
+
+    result_data = json.loads(response[0].text)
+    assert "error" in result_data
+    assert (
+        "Version parameter is not supported when looking up pages by title and space_key"
+        in result_data["error"]
+    )
 
 
 @pytest.mark.anyio

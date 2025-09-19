@@ -52,21 +52,6 @@ class TestPageVersions:
 
     @pytest.mark.asyncio
     @patch("mcp_atlassian.servers.confluence.get_confluence_fetcher")
-    async def test_get_specific_page_version(
-        self, mock_get_fetcher, mock_context, mock_confluence_fetcher, sample_version
-    ):
-        """Test getting a specific version of a page."""
-        mock_get_fetcher.return_value = mock_confluence_fetcher
-        mock_confluence_fetcher.get_page_version.return_value = sample_version
-
-        result = await get_page_versions(mock_context, "123456", 1)
-
-        result_data = json.loads(result)
-        assert result_data["number"] == 1
-        assert result_data["message"] == "Initial version"
-
-    @pytest.mark.asyncio
-    @patch("mcp_atlassian.servers.confluence.get_confluence_fetcher")
     async def test_get_page_versions_error(
         self, mock_get_fetcher, mock_context, mock_confluence_fetcher
     ):
