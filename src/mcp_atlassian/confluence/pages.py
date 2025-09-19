@@ -144,40 +144,31 @@ class PagesMixin(ConfluenceClient):
                     base_url = f"{base_url}/wiki"
 
                 try:
-                    url = f"{base_url}/rest/api/content/{page_id}/history"
-                    response = self.confluence._session.get(url)
-                    response.raise_for_status()
-
-                    data = response.json()
+                    # Use the proper versions endpoint with pagination
                     versions = []
+                    start = 0
+                    limit = 50
+                    
+                    while True:
+                        url = f"{base_url}/rest/api/content/{page_id}/version"
+                        params = {"start": start, "limit": limit}
+                        response = self.confluence._session.get(url, params=params)
+                        response.raise_for_status()
 
-                    # v1 API returns versions in lastUpdated field
-                    if "lastUpdated" in data:
-                        last_updated = data["lastUpdated"]
-                        versions.append(
-                            ConfluenceVersion.from_api_response(
-                                {
-                                    "number": last_updated.get("number", 1),
-                                    "when": last_updated.get("when", ""),
-                                    "message": last_updated.get("message"),
-                                    "by": last_updated.get("by"),
-                                }
-                            )
-                        )
-
-                    # Also check for previousVersion to get more history
-                    if "previousVersion" in data:
-                        prev = data["previousVersion"]
-                        versions.append(
-                            ConfluenceVersion.from_api_response(
-                                {
-                                    "number": prev.get("number", 1),
-                                    "when": prev.get("when", ""),
-                                    "message": prev.get("message"),
-                                    "by": prev.get("by"),
-                                }
-                            )
-                        )
+                        data = response.json()
+                        results = data.get("results", [])
+                        
+                        if not results:
+                            break
+                            
+                        for version_data in results:
+                            versions.append(ConfluenceVersion.from_api_response(version_data))
+                        
+                        # Check if there are more results
+                        if len(results) < limit:
+                            break
+                            
+                        start += limit
 
                     return versions
                 except Exception as e:
