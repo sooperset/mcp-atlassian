@@ -161,17 +161,6 @@ async def get_page(
             default=True,
         ),
     ] = True,
-    version: Annotated[
-        int | None,
-        Field(
-            description=(
-                "Optional version number of the page to retrieve. If not provided, gets the latest version. "
-                "Use this to access previous versions of the page."
-            ),
-            default=None,
-            ge=1,
-        ),
-    ] = None,
 ) -> str:
     """Get content of a specific Confluence page by its ID, or by its title and space key.
 
@@ -182,7 +171,6 @@ async def get_page(
         space_key: The key of the space. Must be used with 'title'.
         include_metadata: Whether to include page metadata.
         convert_to_markdown: Convert content to markdown (true) or keep raw HTML (false).
-        version: Optional version number to retrieve a specific version of the page.
 
     Returns:
         JSON string representing the page content and/or metadata, or an error if not found or parameters are invalid.
@@ -197,7 +185,7 @@ async def get_page(
             )
         try:
             page_object = confluence_fetcher.get_page_content(
-                page_id, convert_to_markdown=convert_to_markdown, version=version
+                page_id, convert_to_markdown=convert_to_markdown
             )
         except Exception as e:
             logger.error(f"Error fetching page by ID '{page_id}': {e}")
@@ -207,14 +195,6 @@ async def get_page(
                 ensure_ascii=False,
             )
     elif title and space_key:
-        if version is not None:
-            return json.dumps(
-                {
-                    "error": "Version parameter is not supported when looking up pages by title and space_key. Please use page_id to retrieve specific versions."
-                },
-                indent=2,
-                ensure_ascii=False,
-            )
         page_object = confluence_fetcher.get_page_by_title(
             space_key, title, convert_to_markdown=convert_to_markdown
         )
