@@ -138,16 +138,31 @@ class PagesMixin(ConfluenceClient):
                 return v2_adapter.get_page_versions(page_id)
             else:
                 logger.debug(f"Using v1 API to get versions for page '{page_id}'")
-                # v1 API doesn't have dedicated versions endpoint, get page with version history
-                page = self.confluence.get_page_by_id(
-                    page_id=page_id, expand="version,history"
-                )
-                
-                versions = []
-                if version_data := page.get("version"):
-                    versions.append(ConfluenceVersion.from_api_response(version_data))
-                
-                return versions
+                # v1 API: use /rest/api/content/{id}/version endpoint
+                try:
+                    url = f"{self.config.url}/rest/api/content/{page_id}/version"
+                    response = self.confluence._session.get(url)
+                    response.raise_for_status()
+                    
+                    data = response.json()
+                    versions = []
+                    
+                    for version_data in data.get("results", []):
+                        versions.append(ConfluenceVersion.from_api_response(version_data))
+                    
+                    return versions
+                except Exception as e:
+                    logger.warning(f"Failed to get versions via v1 API: {e}")
+                    # Fallback: get current version only
+                    page = self.confluence.get_page_by_id(
+                        page_id=page_id, expand="version"
+                    )
+                    
+                    versions = []
+                    if version_data := page.get("version"):
+                        versions.append(ConfluenceVersion.from_api_response(version_data))
+                    
+                    return versions
 
         except HTTPError as e:
             if e.response.status_code == 401:
