@@ -279,7 +279,7 @@ async def test_get_page(client, mock_confluence_fetcher):
     response = await client.call_tool("confluence_get_page", {"page_id": "123456"})
 
     mock_confluence_fetcher.get_page_content.assert_called_once_with(
-        "123456", convert_to_markdown=True
+        "123456", convert_to_markdown=True, version=None
     )
 
     result_data = json.loads(response[0].text)
@@ -298,7 +298,7 @@ async def test_get_page_no_metadata(client, mock_confluence_fetcher):
     )
 
     mock_confluence_fetcher.get_page_content.assert_called_once_with(
-        "123456", convert_to_markdown=True
+        "123456", convert_to_markdown=True, version=None
     )
 
     result_data = json.loads(response[0].text)
@@ -328,7 +328,7 @@ async def test_get_page_no_markdown(client, mock_confluence_fetcher):
     )
 
     mock_confluence_fetcher.get_page_content.assert_called_once_with(
-        "123456", convert_to_markdown=False
+        "123456", convert_to_markdown=False, version=None
     )
 
     result_data = json.loads(response[0].text)
