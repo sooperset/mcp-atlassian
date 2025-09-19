@@ -148,7 +148,7 @@ class PagesMixin(ConfluenceClient):
                     versions = []
                     start = 0
                     limit = 50
-                    
+
                     while True:
                         url = f"{base_url}/rest/api/content/{page_id}/version"
                         params = {"start": start, "limit": limit}
@@ -157,17 +157,19 @@ class PagesMixin(ConfluenceClient):
 
                         data = response.json()
                         results = data.get("results", [])
-                        
+
                         if not results:
                             break
-                            
+
                         for version_data in results:
-                            versions.append(ConfluenceVersion.from_api_response(version_data))
-                        
+                            versions.append(
+                                ConfluenceVersion.from_api_response(version_data)
+                            )
+
                         # Check if there are more results
                         if len(results) < limit:
                             break
-                            
+
                         start += limit
 
                     return versions
