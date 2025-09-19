@@ -735,6 +735,7 @@ Here's a complete example of setting up multi-user authentication with streamabl
 
 - `confluence_search`: Search Confluence content using CQL
 - `confluence_get_page`: Get content of a specific page (supports version history)
+- `confluence_get_page_versions`: Get version information for a page
 - `confluence_create_page`: Create a new page
 - `confluence_update_page`: Update an existing page
 
@@ -744,7 +745,8 @@ Here's a complete example of setting up multi-user authentication with streamabl
 |-----------|-------------------------------------|--------------------------------|
 | **Read**  | `jira_search`                       | `confluence_search`            |
 |           | `jira_get_issue`                    | `confluence_get_page` (w/ versions) |
-|           | `jira_get_all_projects`             | `confluence_get_page_children` |
+|           | `jira_get_all_projects`             | `confluence_get_page_versions` |
+|           | `jira_get_project_issues`           | `confluence_get_page_children` |
 |           | `jira_get_project_issues`           | `confluence_get_comments`      |
 |           | `jira_get_worklog`                  | `confluence_get_labels`        |
 |           | `jira_get_transitions`              | `confluence_search_user`       |

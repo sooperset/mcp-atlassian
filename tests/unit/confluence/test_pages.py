@@ -1063,7 +1063,7 @@ class TestPagesOAuthMixin:
 
             # Assert that v2 API was used instead of v1
             mock_v2_adapter.get_page.assert_called_once_with(
-                page_id=page_id, expand="body.storage,version,space,children.attachment"
+                page_id=page_id, expand="body.storage,version,space,children.attachment", version=None
             )
 
             # Verify v1 API was NOT called
