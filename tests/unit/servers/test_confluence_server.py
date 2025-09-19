@@ -279,7 +279,7 @@ async def test_get_page(client, mock_confluence_fetcher):
     response = await client.call_tool("confluence_get_page", {"page_id": "123456"})
 
     mock_confluence_fetcher.get_page_content.assert_called_once_with(
-        "123456", convert_to_markdown=True
+        "123456", convert_to_markdown=True, version=None
     )
 
     result_data = json.loads(response[0].text)
@@ -298,7 +298,7 @@ async def test_get_page_no_metadata(client, mock_confluence_fetcher):
     )
 
     mock_confluence_fetcher.get_page_content.assert_called_once_with(
-        "123456", convert_to_markdown=True
+        "123456", convert_to_markdown=True, version=None
     )
 
     result_data = json.loads(response[0].text)
@@ -328,7 +328,7 @@ async def test_get_page_no_markdown(client, mock_confluence_fetcher):
     )
 
     mock_confluence_fetcher.get_page_content.assert_called_once_with(
-        "123456", convert_to_markdown=False
+        "123456", convert_to_markdown=False, version=None
     )
 
     result_data = json.loads(response[0].text)
@@ -358,11 +358,7 @@ async def test_get_page_with_version(client, mock_confluence_fetcher):
 async def test_get_page_version_with_title_space_error(client, mock_confluence_fetcher):
     """Test that version parameter with title/space_key returns error."""
     response = await client.call_tool(
-        "confluence_get_page", {
-            "title": "Test Page", 
-            "space_key": "TEST", 
-            "version": 3
-        }
+        "confluence_get_page", {"title": "Test Page", "space_key": "TEST", "version": 3}
     )
 
     # Should not call get_page_content because version + title/space is not supported
@@ -371,7 +367,10 @@ async def test_get_page_version_with_title_space_error(client, mock_confluence_f
 
     result_data = json.loads(response[0].text)
     assert "error" in result_data
-    assert "Version parameter is not supported when looking up pages by title and space_key" in result_data["error"]
+    assert (
+        "Version parameter is not supported when looking up pages by title and space_key"
+        in result_data["error"]
+    )
 
 
 @pytest.mark.anyio

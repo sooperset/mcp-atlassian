@@ -697,6 +697,55 @@ async def add_comment(
 
 
 @confluence_mcp.tool(tags={"confluence", "read"})
+async def get_page_versions(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(description="The ID of the page to get versions for"),
+    ],
+    version_number: Annotated[
+        int | None,
+        Field(
+            default=None,
+            description="Optional specific version number. If not provided, returns all versions.",
+        ),
+    ] = None,
+) -> str:
+    """
+    Get version information for a Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page.
+        version_number: Optional specific version number.
+
+    Returns:
+        JSON string with version information or error details.
+
+    Raises:
+        ValueError: If the Confluence client is not configured or available.
+    """
+    confluence = await get_confluence_fetcher(ctx)
+    try:
+        if version_number is not None:
+            # Get specific version
+            version = confluence.get_page_version(page_id, version_number)
+            return json.dumps(version.to_simplified_dict(), indent=2)
+        else:
+            # Get all versions
+            versions = confluence.get_page_versions(page_id)
+            versions_data = [version.to_simplified_dict() for version in versions]
+            return json.dumps({"versions": versions_data}, indent=2)
+
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error getting page versions: {e}")
+        return json.dumps({"error": "authentication_failed", "message": str(e)})
+    except Exception as e:
+        logger.error(f"Error getting page versions: {e}")
+        return json.dumps({"error": "operation_failed", "message": str(e)})
+
+
+@confluence_mcp.tool(tags={"confluence", "read"})
 async def search_user(
     ctx: Context,
     query: Annotated[
