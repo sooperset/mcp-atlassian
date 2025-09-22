@@ -146,7 +146,7 @@ async def get_page(
     include_metadata: Annotated[
         bool,
         Field(
-            description="Whether to include page metadata such as creation date, last update, version, and labels.",
+            description="Whether to include page metadata such as creation date, last update,  current version, and labels.",
             default=True,
         ),
     ] = True,
@@ -161,17 +161,6 @@ async def get_page(
             default=True,
         ),
     ] = True,
-    version: Annotated[
-        int | None,
-        Field(
-            description=(
-                "Optional version number of the page to retrieve. If not provided, gets the latest version. "
-                "Use this to access previous versions of the page."
-            ),
-            default=None,
-            ge=1,
-        ),
-    ] = None,
 ) -> str:
     """Get content of a specific Confluence page by its ID, or by its title and space key.
 
@@ -182,7 +171,6 @@ async def get_page(
         space_key: The key of the space. Must be used with 'title'.
         include_metadata: Whether to include page metadata.
         convert_to_markdown: Convert content to markdown (true) or keep raw HTML (false).
-        version: Optional version number to retrieve a specific version of the page.
 
     Returns:
         JSON string representing the page content and/or metadata, or an error if not found or parameters are invalid.
@@ -197,7 +185,7 @@ async def get_page(
             )
         try:
             page_object = confluence_fetcher.get_page_content(
-                page_id, convert_to_markdown=convert_to_markdown, version=version
+                page_id, convert_to_markdown=convert_to_markdown
             )
         except Exception as e:
             logger.error(f"Error fetching page by ID '{page_id}': {e}")
@@ -207,14 +195,6 @@ async def get_page(
                 ensure_ascii=False,
             )
     elif title and space_key:
-        if version is not None:
-            return json.dumps(
-                {
-                    "error": "Version parameter is not supported when looking up pages by title and space_key. Please use page_id to retrieve specific versions."
-                },
-                indent=2,
-                ensure_ascii=False,
-            )
         page_object = confluence_fetcher.get_page_by_title(
             space_key, title, convert_to_markdown=convert_to_markdown
         )
@@ -705,7 +685,7 @@ async def get_page_versions(
     ],
 ) -> str:
     """
-    Get all available versions of a Confluence page.
+    Get a list of all versions of a given Confluence page.
 
     Args:
         ctx: The FastMCP context.
@@ -728,6 +708,48 @@ async def get_page_versions(
         return json.dumps({"error": "authentication_failed", "message": str(e)})
     except Exception as e:
         logger.error(f"Error getting page versions: {e}")
+        return json.dumps({"error": "operation_failed", "message": str(e)})
+
+
+@confluence_mcp.tool(tags={"confluence", "read"})
+async def get_page_version(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(description="The ID of the page to get a specific version for"),
+    ],
+    version_number: Annotated[
+        int,
+        Field(description="The version number to retrieve", ge=1),
+    ],
+) -> str:
+    """
+    Get a specific version of a Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page.
+        version_number: The version number to retrieve.
+
+    Returns:
+        JSON string with the specific page version content and metadata.
+
+    Raises:
+        ValueError: If the Confluence client is not configured or available.
+    """
+    confluence = await get_confluence_fetcher(ctx)
+    try:
+        page_object = confluence.get_page_content(
+            page_id, convert_to_markdown=True, version=version_number
+        )
+        result = {"metadata": page_object.to_simplified_dict()}
+        return json.dumps(result, indent=2, ensure_ascii=False)
+
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error getting page version: {e}")
+        return json.dumps({"error": "authentication_failed", "message": str(e)})
+    except Exception as e:
+        logger.error(f"Error getting page version: {e}")
         return json.dumps({"error": "operation_failed", "message": str(e)})
 
 

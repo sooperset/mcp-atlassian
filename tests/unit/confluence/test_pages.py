@@ -1130,23 +1130,21 @@ class TestPagesVersioning:
             mixin.preprocessor = confluence_client.preprocessor
             return mixin
 
-    def test_get_page_content_with_version(self, pages_mixin):
-        """Test getting page content with a specific version number."""
+    def test_get_page_content_with_version_removed(self, pages_mixin):
+        """Test that get_page_content no longer accepts version parameter."""
         # Arrange
         page_id = "987654321"
-        version = 5
         pages_mixin.config.url = "https://example.atlassian.net/wiki"
 
-        # Act
+        # Act - version parameter should not be passed
         result = pages_mixin.get_page_content(
-            page_id, convert_to_markdown=True, version=version
+            page_id, convert_to_markdown=True
         )
 
-        # Assert
+        # Assert - version parameter should not be passed to underlying API
         pages_mixin.confluence.get_page_by_id.assert_called_once_with(
             page_id=page_id,
             expand="body.storage,version,space,children.attachment",
-            version=version,
         )
 
         # Verify result structure (same as regular get_page_content)
@@ -1169,11 +1167,10 @@ class TestPagesVersioning:
             mixin.preprocessor = oauth_confluence_client.preprocessor
             return mixin
 
-    def test_get_page_content_with_version_oauth(self, oauth_pages_mixin):
-        """Test getting page content with version using OAuth (v2 API)."""
+    def test_get_page_content_oauth_no_version(self, oauth_pages_mixin):
+        """Test getting page content using OAuth (v2 API) without version parameter."""
         # Arrange
         page_id = "oauth_get_123"
-        version = 3
 
         # Mock the v2 adapter
         with patch(
@@ -1185,36 +1182,35 @@ class TestPagesVersioning:
             # Mock v2 API response
             mock_v2_adapter.get_page.return_value = {
                 "id": page_id,
-                "title": "OAuth Test Page Version 3",
-                "body": {"storage": {"value": "<p>Version 3 content</p>"}},
+                "title": "OAuth Test Page",
+                "body": {"storage": {"value": "<p>Latest content</p>"}},
                 "space": {"key": "PROJ", "name": "Project"},
-                "version": {"number": version},
+                "version": {"number": 1},
             }
 
             # Mock the preprocessor
             oauth_pages_mixin.preprocessor.process_html_content.return_value = (
                 "<p>Processed HTML</p>",
-                "Processed Version 3 content",
+                "Processed Latest content",
             )
 
             # Act
             result = oauth_pages_mixin.get_page_content(
-                page_id, convert_to_markdown=True, version=version
+                page_id, convert_to_markdown=True
             )
 
-            # Assert that v2 API was called with version parameter
+            # Assert that v2 API was called without version parameter
             mock_v2_adapter.get_page.assert_called_once_with(
                 page_id=page_id,
                 expand="body.storage,version,space,children.attachment",
-                version=version,
+                version=None,
             )
 
             # Verify v1 API was NOT called
             oauth_pages_mixin.confluence.get_page_by_id.assert_not_called()
 
-            # Verify result contains version-specific data
+            # Verify result contains latest data
             assert isinstance(result, ConfluencePage)
             assert result.id == page_id
-            assert result.title == "OAuth Test Page Version 3"
-            assert result.content == "Processed Version 3 content"
-            assert result.version.number == version
+            assert result.title == "OAuth Test Page"
+            assert result.content == "Processed Latest content"

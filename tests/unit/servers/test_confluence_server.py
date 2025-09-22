@@ -126,6 +126,8 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_labels,
         get_page,
         get_page_children,
+        get_page_version,
+        get_page_versions,
         search,
         search_user,
         update_page,
@@ -158,6 +160,8 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.tool()(create_page)
     confluence_sub_mcp.tool()(update_page)
     confluence_sub_mcp.tool()(delete_page)
+    confluence_sub_mcp.tool()(get_page_versions)
+    confluence_sub_mcp.tool()(get_page_version)
     confluence_sub_mcp.tool()(search_user)
 
     test_mcp.mount("confluence", confluence_sub_mcp)
@@ -179,6 +183,8 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         get_labels,
         get_page,
         get_page_children,
+        get_page_version,
+        get_page_versions,
         search,
         search_user,
         update_page,
@@ -213,6 +219,8 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.tool()(create_page)
     confluence_sub_mcp.tool()(update_page)
     confluence_sub_mcp.tool()(delete_page)
+    confluence_sub_mcp.tool()(get_page_versions)
+    confluence_sub_mcp.tool()(get_page_version)
     confluence_sub_mcp.tool()(search_user)
 
     test_mcp.mount("confluence", confluence_sub_mcp)
@@ -279,7 +287,7 @@ async def test_get_page(client, mock_confluence_fetcher):
     response = await client.call_tool("confluence_get_page", {"page_id": "123456"})
 
     mock_confluence_fetcher.get_page_content.assert_called_once_with(
-        "123456", convert_to_markdown=True, version=None
+        "123456", convert_to_markdown=True
     )
 
     result_data = json.loads(response[0].text)
@@ -298,7 +306,7 @@ async def test_get_page_no_metadata(client, mock_confluence_fetcher):
     )
 
     mock_confluence_fetcher.get_page_content.assert_called_once_with(
-        "123456", convert_to_markdown=True, version=None
+        "123456", convert_to_markdown=True
     )
 
     result_data = json.loads(response[0].text)
@@ -328,7 +336,7 @@ async def test_get_page_no_markdown(client, mock_confluence_fetcher):
     )
 
     mock_confluence_fetcher.get_page_content.assert_called_once_with(
-        "123456", convert_to_markdown=False, version=None
+        "123456", convert_to_markdown=False
     )
 
     result_data = json.loads(response[0].text)
@@ -339,10 +347,10 @@ async def test_get_page_no_markdown(client, mock_confluence_fetcher):
 
 
 @pytest.mark.anyio
-async def test_get_page_with_version(client, mock_confluence_fetcher):
-    """Test the get_page tool with version parameter."""
+async def test_get_page_version(client, mock_confluence_fetcher):
+    """Test the get_page_version tool."""
     response = await client.call_tool(
-        "confluence_get_page", {"page_id": "123456", "version": 5}
+        "confluence_get_page_version", {"page_id": "123456", "version_number": 5}
     )
 
     mock_confluence_fetcher.get_page_content.assert_called_once_with(
@@ -353,24 +361,6 @@ async def test_get_page_with_version(client, mock_confluence_fetcher):
     assert "metadata" in result_data
     assert result_data["metadata"]["title"] == "Test Page Mock Title"
 
-
-@pytest.mark.anyio
-async def test_get_page_version_with_title_space_error(client, mock_confluence_fetcher):
-    """Test that version parameter with title/space_key returns error."""
-    response = await client.call_tool(
-        "confluence_get_page", {"title": "Test Page", "space_key": "TEST", "version": 3}
-    )
-
-    # Should not call get_page_content because version + title/space is not supported
-    mock_confluence_fetcher.get_page_content.assert_not_called()
-    mock_confluence_fetcher.get_page_by_title.assert_not_called()
-
-    result_data = json.loads(response[0].text)
-    assert "error" in result_data
-    assert (
-        "Version parameter is not supported when looking up pages by title and space_key"
-        in result_data["error"]
-    )
 
 
 @pytest.mark.anyio
