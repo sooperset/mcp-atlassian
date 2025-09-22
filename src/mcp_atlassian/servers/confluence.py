@@ -685,7 +685,7 @@ async def list_page_versions(
     ],
 ) -> str:
     """
-    List all versions of a given Confluence page.
+    List all historic versions of a given Confluence page.
 
     Args:
         ctx: The FastMCP context.
@@ -720,16 +720,16 @@ async def get_page_version(
     ],
     version_number: Annotated[
         int,
-        Field(description="The version number to retrieve", ge=1),
+        Field(description="The historic version number to retrieve", ge=1),
     ],
 ) -> str:
     """
-    Get a specific version of a Confluence page.
+    Get a specific historic version of a Confluence page.
 
     Args:
         ctx: The FastMCP context.
         page_id: The ID of the page.
-        version_number: The version number to retrieve.
+        version_number: The historic version number to retrieve.
 
     Returns:
         JSON string with the specific page version content and metadata.
