@@ -677,7 +677,7 @@ async def add_comment(
 
 
 @confluence_mcp.tool(tags={"confluence", "read"})
-async def get_page_versions(
+async def list_page_versions(
     ctx: Context,
     page_id: Annotated[
         str,
@@ -685,7 +685,7 @@ async def get_page_versions(
     ],
 ) -> str:
     """
-    Get a list of all versions of a given Confluence page.
+    List all versions of a given Confluence page.
 
     Args:
         ctx: The FastMCP context.
@@ -704,10 +704,10 @@ async def get_page_versions(
         return json.dumps({"versions": versions_data}, indent=2)
 
     except MCPAtlassianAuthenticationError as e:
-        logger.error(f"Authentication error getting page versions: {e}")
+        logger.error(f"Authentication error listing page versions: {e}")
         return json.dumps({"error": "authentication_failed", "message": str(e)})
     except Exception as e:
-        logger.error(f"Error getting page versions: {e}")
+        logger.error(f"Error listing page versions: {e}")
         return json.dumps({"error": "operation_failed", "message": str(e)})
 
 

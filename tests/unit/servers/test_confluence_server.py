@@ -127,7 +127,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_page,
         get_page_children,
         get_page_version,
-        get_page_versions,
+        list_page_versions,
         search,
         search_user,
         update_page,
@@ -160,7 +160,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.tool()(create_page)
     confluence_sub_mcp.tool()(update_page)
     confluence_sub_mcp.tool()(delete_page)
-    confluence_sub_mcp.tool()(get_page_versions)
+    confluence_sub_mcp.tool()(list_page_versions)
     confluence_sub_mcp.tool()(get_page_version)
     confluence_sub_mcp.tool()(search_user)
 
@@ -184,7 +184,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         get_page,
         get_page_children,
         get_page_version,
-        get_page_versions,
+        list_page_versions,
         search,
         search_user,
         update_page,
@@ -219,7 +219,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.tool()(create_page)
     confluence_sub_mcp.tool()(update_page)
     confluence_sub_mcp.tool()(delete_page)
-    confluence_sub_mcp.tool()(get_page_versions)
+    confluence_sub_mcp.tool()(list_page_versions)
     confluence_sub_mcp.tool()(get_page_version)
     confluence_sub_mcp.tool()(search_user)
 

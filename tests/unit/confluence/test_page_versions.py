@@ -7,7 +7,7 @@ import pytest
 from fastmcp import Context
 
 from mcp_atlassian.models.confluence import ConfluenceVersion
-from mcp_atlassian.servers.confluence import get_page_versions
+from mcp_atlassian.servers.confluence import list_page_versions
 
 
 class TestPageVersions:
@@ -36,14 +36,14 @@ class TestPageVersions:
 
     @pytest.mark.asyncio
     @patch("mcp_atlassian.servers.confluence.get_confluence_fetcher")
-    async def test_get_page_versions_list(
+    async def test_list_page_versions_list(
         self, mock_get_fetcher, mock_context, mock_confluence_fetcher, sample_version
     ):
         """Test getting all versions of a page."""
         mock_get_fetcher.return_value = mock_confluence_fetcher
         mock_confluence_fetcher.get_page_versions.return_value = [sample_version]
 
-        result = await get_page_versions(mock_context, "123456")
+        result = await list_page_versions(mock_context, "123456")
 
         result_data = json.loads(result)
         assert "versions" in result_data
@@ -52,7 +52,7 @@ class TestPageVersions:
 
     @pytest.mark.asyncio
     @patch("mcp_atlassian.servers.confluence.get_confluence_fetcher")
-    async def test_get_page_versions_error(
+    async def test_list_page_versions_error(
         self, mock_get_fetcher, mock_context, mock_confluence_fetcher
     ):
         """Test error handling when getting page versions."""
@@ -61,7 +61,7 @@ class TestPageVersions:
             "Page not found"
         )
 
-        result = await get_page_versions(mock_context, "invalid")
+        result = await list_page_versions(mock_context, "invalid")
 
         result_data = json.loads(result)
         assert result_data["error"] == "operation_failed"
