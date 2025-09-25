@@ -41,9 +41,16 @@ class FormattingMixin(
 
         # Use the JiraPreprocessor with the base URL from the client
         base_url = ""
+        disable_translation = False
         if hasattr(self, "config") and hasattr(self.config, "url"):
             base_url = self.config.url
-        self.preprocessor = JiraPreprocessor(base_url=base_url)
+        if hasattr(self, "config") and hasattr(
+            self.config, "disable_jira_markup_translation"
+        ):
+            disable_translation = self.config.disable_jira_markup_translation
+        self.preprocessor = JiraPreprocessor(
+            base_url=base_url, disable_translation=disable_translation
+        )
 
     def markdown_to_jira(self, markdown_text: str) -> str:
         """
