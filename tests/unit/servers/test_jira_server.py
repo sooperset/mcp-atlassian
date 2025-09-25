@@ -429,6 +429,32 @@ async def test_get_issue(jira_client, mock_jira_fetcher):
 
 
 @pytest.mark.anyio
+async def test_get_issue_invalid_key(jira_client, mock_jira_fetcher):
+    """Test that get_issue fails when a key does not exist and provides an informative error."""
+    mock_jira_fetcher.get_issue.side_effect = ValueError("Issue Does Not Exist")
+
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_get_issue",
+            {
+                "issue_key": "FAIL-123",
+                "fields": "summary,description,status",
+            },
+        )
+
+    mock_jira_fetcher.get_issue.assert_called_once_with(
+        issue_key="FAIL-123",
+        fields=["summary", "description", "status"],
+        expand=None,
+        comment_limit=10,
+        properties=None,
+        update_history=True,
+    )
+
+    assert "Error calling tool 'get_issue': Issue Does Not Exist" in str(excinfo.value)
+
+
+@pytest.mark.anyio
 async def test_search(jira_client, mock_jira_fetcher):
     """Test the search tool with fixture data."""
     response = await jira_client.call_tool(
