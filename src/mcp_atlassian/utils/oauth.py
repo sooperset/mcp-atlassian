@@ -448,6 +448,7 @@ class BYOAccessTokenOAuthConfig:
 
         return cls(cloud_id=cloud_id, access_token=access_token)
 
+
 def get_cloud_id(access_token: str) -> str | None:
     """Get the cloud ID for the Atlassian instance.
 
@@ -479,6 +480,7 @@ def get_cloud_id(access_token: str) -> str | None:
     except Exception as e:
         logger.error(f"Failed to get cloud ID: {e}")
         return None
+
 
 def get_oauth_config_from_env() -> OAuthConfig | BYOAccessTokenOAuthConfig | None:
     """Get the appropriate OAuth configuration from environment variables.
