@@ -455,28 +455,24 @@ def get_cloud_id(access_token: str) -> str | None:
     This method queries the accessible resources endpoint to get the cloud ID.
     The cloud ID is needed for API calls with OAuth.
     """
-
-    cloud_id: str | None = None
-
     if not access_token:
         logger.debug("No access token provided")
         return None
 
     try:
-        headers = {"Authorization": f"Bearer {access_token}"}
-        response = requests.get(CLOUD_ID_URL, headers=headers)
+        response = requests.get(
+            CLOUD_ID_URL, headers={"Authorization": f"Bearer {access_token}"}
+        )
         response.raise_for_status()
+        resources = response.json() or []
+        cloud_id = resources[0].get("id") if resources else None
 
-        resources = response.json()
-        if resources and len(resources) > 0:
-            # Use the first cloud site (most users have only one)
-            # For users with multiple sites, they might need to specify which one to use
-            cloud_id = resources[0]["id"]
+        if cloud_id:
             logger.debug(f"Found cloud ID: {cloud_id}")
-            return cloud_id
         else:
             logger.warning("No Atlassian sites found in the response")
-            return None
+
+        return cloud_id
     except Exception as e:
         logger.error(f"Failed to get cloud ID: {e}")
         return None
