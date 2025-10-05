@@ -139,7 +139,7 @@ class TestOAuthConfig:
         mock_post.return_value = mock_response
 
         # Mock cloud ID retrieval and token saving
-        with patch.object(OAuthConfig, "_get_cloud_id") as mock_get_cloud_id:
+        with patch("mcp_atlassian.utils.oauth.get_cloud_id") as mock_get_cloud_id:
             with patch.object(OAuthConfig, "_save_tokens") as mock_save_tokens:
                 config = OAuthConfig(
                     client_id="test-client-id",
@@ -157,7 +157,7 @@ class TestOAuthConfig:
 
                 # Verify calls
                 mock_post.assert_called_once()
-                mock_get_cloud_id.assert_called_once()
+                mock_get_cloud_id.assert_called_once_with("new-access-token")
                 mock_save_tokens.assert_called_once()
 
     @patch("requests.post")
@@ -284,42 +284,33 @@ class TestOAuthConfig:
 
     @patch("requests.get")
     def test_get_cloud_id_success(self, mock_get):
-        """Test _get_cloud_id success case."""
+        """Test get_cloud_id success case."""
         # Mock response
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = [{"id": "test-cloud-id", "name": "Test Site"}]
         mock_get.return_value = mock_response
 
-        config = OAuthConfig(
-            client_id="test-client-id",
-            client_secret="test-client-secret",
-            redirect_uri="https://example.com/callback",
-            scope="read:jira-work write:jira-work",
-            access_token="test-access-token",
-        )
-        config._get_cloud_id()
+        from mcp_atlassian.utils.oauth import get_cloud_id
+
+        cloud_id = get_cloud_id("test-access-token")
 
         # Check result
-        assert config.cloud_id == "test-cloud-id"
+        assert cloud_id == "test-cloud-id"
         mock_get.assert_called_once()
         headers = mock_get.call_args[1]["headers"]
         assert headers["Authorization"] == "Bearer test-access-token"
 
     @patch("requests.get")
     def test_get_cloud_id_no_access_token(self, mock_get):
-        """Test _get_cloud_id with no access token."""
-        config = OAuthConfig(
-            client_id="test-client-id",
-            client_secret="test-client-secret",
-            redirect_uri="https://example.com/callback",
-            scope="read:jira-work write:jira-work",
-        )
-        config._get_cloud_id()
+        """Test get_cloud_id with no access token."""
+        from mcp_atlassian.utils.oauth import get_cloud_id
+
+        cloud_id = get_cloud_id(None)
 
         # Should not make API call without token
         mock_get.assert_not_called()
-        assert config.cloud_id is None
+        assert cloud_id is None
 
     def test_get_keyring_username(self):
         """Test _get_keyring_username method."""
