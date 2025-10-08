@@ -286,6 +286,22 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                     f"auth_type='{getattr(request.state, 'user_atlassian_auth_type', 'N/A')}', "
                     f"token_present={bool(getattr(request.state, 'user_atlassian_token', None))}"
                 )
+            elif auth_header and auth_header.startswith("Basic "):
+                token = auth_header.split(" ", 1)[1].strip()
+                if not token:
+                    return JSONResponse(
+                        {"error": "Unauthorized: Empty Basic auth token"},
+                        status_code=401,
+                    )
+                logger.debug(
+                    f"UserTokenMiddleware.dispatch: Basic auth token extracted (masked): ...{mask_sensitive(token, 8)}"
+                )
+                request.state.user_atlassian_token = token
+                request.state.user_atlassian_auth_type = "basic"
+                request.state.user_atlassian_email = None
+                logger.debug(
+                    "UserTokenMiddleware.dispatch: Set request.state for Basic auth."
+                )
             elif auth_header and auth_header.startswith("Token "):
                 token = auth_header.split(" ", 1)[1].strip()
                 if not token:
@@ -310,7 +326,7 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 )
                 return JSONResponse(
                     {
-                        "error": "Unauthorized: Only 'Bearer <OAuthToken>' or 'Token <PAT>' types are supported."
+                        "error": "Unauthorized: Only 'Bearer <OAuthToken>', 'Basic <BasicAuth>' or 'Token <PAT>' types are supported."
                     },
                     status_code=401,
                 )
