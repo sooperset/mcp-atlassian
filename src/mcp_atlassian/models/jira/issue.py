@@ -425,7 +425,10 @@ class JiraIssue(ApiModel, TimestampMixin):
         custom_fields = {}
         fields_name_map = data.get("names", {})
         for orig_field_id, orig_field_value in fields.items():
-            if orig_field_id.startswith("customfield_"):
+            if (
+                orig_field_id.startswith("customfield_")
+                and orig_field_value is not None
+            ):
                 value_obj_to_store = {"value": orig_field_value}
                 human_readable_name = fields_name_map.get(orig_field_id)
                 if human_readable_name:
