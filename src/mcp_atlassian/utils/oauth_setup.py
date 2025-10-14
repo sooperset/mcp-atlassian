@@ -41,8 +41,9 @@ def _sanitize_input(user_input: str) -> str:
         return user_input
     # Remove leading/trailing whitespace and various line endings
     # Handle Windows (\r\n), Unix (\n), and Mac (\r) line endings
-    sanitized = user_input.strip().rstrip('\r\n').strip()
+    sanitized = user_input.strip().rstrip("\r\n").strip()
     return sanitized
+
 
 class CallbackHandler(http.server.BaseHTTPRequestHandler):
     """HTTP request handler for OAuth callback."""
