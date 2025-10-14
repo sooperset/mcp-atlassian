@@ -864,16 +864,9 @@ async def update_issue(
             description=(
                 "Dictionary of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
                 "Example: `{'assignee': 'user@example.com', 'summary': 'New Summary'}`"
-            )
+            ),
         ),
     ],
-    additional_fields: Annotated[
-        dict[str, Any] | None,
-        Field(
-            description="(Optional) Dictionary of additional fields to update. Use this for custom fields or more complex updates.",
-            default=None,
-        ),
-    ] = None,
     attachments: Annotated[
         str | None,
         Field(
@@ -890,8 +883,7 @@ async def update_issue(
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        fields: Dictionary of fields to update.
-        additional_fields: Optional dictionary of additional fields.
+        fields: (Required) Dictionary of fields to update.
         attachments: Optional JSON array string or comma-separated list of file paths.
 
     Returns:
@@ -905,11 +897,6 @@ async def update_issue(
     if not isinstance(fields, dict):
         raise ValueError("fields must be a dictionary.")
     update_fields = fields
-
-    # Use additional_fields directly as dict
-    extra_fields = additional_fields or {}
-    if not isinstance(extra_fields, dict):
-        raise ValueError("additional_fields must be a dictionary.")
 
     # Parse attachments
     attachment_paths = []
@@ -932,7 +919,7 @@ async def update_issue(
             )
 
     # Combine fields and additional_fields
-    all_updates = {**update_fields, **extra_fields}
+    all_updates = {**update_fields}
     if attachment_paths:
         all_updates["attachments"] = attachment_paths
 
