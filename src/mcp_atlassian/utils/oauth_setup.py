@@ -31,9 +31,9 @@ callback_error = None
 
 
 def _sanitize_input(user_input: str) -> str:
-    """Sanitize user input by removing trailing/leading whitespace and Windows line endings.    
+    """Sanitize user input by removing trailing/leading whitespace and Windows line endings.
     Args:
-        user_input: Raw input string from user        
+        user_input: Raw input string from user
     Returns:
         Sanitized string with whitespace and line endings removed
     """
@@ -42,7 +42,7 @@ def _sanitize_input(user_input: str) -> str:
     
     # Remove leading/trailing whitespace and various line endings
     # Handle Windows (\r\n), Unix (\n), and Mac (\r) line endings
-    sanitized = user_input.strip().rstrip('\r\n').strip()    
+    sanitized = user_input.strip().rstrip('\r\n').strip()
     return sanitized
 
 
