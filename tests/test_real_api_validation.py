@@ -419,8 +419,9 @@ async def test_jira_get_issue_with_fields(
     assert "key" in full_data and "key" in limited_data
     assert "id" in full_data and "id" in limited_data
     assert "summary" in full_data and "summary" in limited_data
-
-    assert "description" in limited_data
+    # Field description is not required for the issue type so it can be missing
+    if limited_issue.description:
+        assert "description" in limited_data
 
     custom_fields_found = False
     for field in limited_data:
@@ -482,7 +483,11 @@ async def test_jira_create_issue(
     test_id = str(uuid.uuid4())[:8]
     summary = f"Test Issue (API Validation) {test_id}"
     description = "This is a test issue created by the API validation tests. It should be automatically deleted."
+    required_fields = jira_client.get_required_fields("Task", test_project_key)
 
+    if required_fields:
+        # If there are required fields, skip this test
+        pytest.skip(f"Project has required fields: {list(required_fields.keys())}")
     try:
         issue = jira_client.create_issue(
             project_key=test_project_key,
@@ -573,7 +578,11 @@ async def test_jira_create_task_with_parent(
 
     try:
         parent_issue_key = test_epic_key
+        required_fields = jira_client.get_required_fields("Task", test_project_key)
 
+        if required_fields:
+            # If there are required fields, skip this test
+            pytest.skip(f"Project has required fields: {list(required_fields.keys())}")
         try:
             task_issue = jira_client.create_issue(
                 project_key=test_project_key,
@@ -1380,7 +1389,11 @@ async def test_jira_create_and_remove_issue_link(
     test_id = str(uuid.uuid4())[:8]
     summary1 = f"Link Test Issue 1 {test_id}"
     summary2 = f"Link Test Issue 2 {test_id}"
+    required_fields = jira_client.get_required_fields("Task", test_project_key)
 
+    if required_fields:
+        # If there are required fields, skip this test
+        pytest.skip(f"Project has required fields: {list(required_fields.keys())}")
     try:
         issue1 = jira_client.create_issue(
             project_key=test_project_key,

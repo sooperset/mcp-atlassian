@@ -1,3 +1,4 @@
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from functools import wraps
@@ -97,5 +98,84 @@ def handle_atlassian_api_errors(service_name: str = "Atlassian API") -> Callable
                 return []
 
         return wrapper
+
+    return decorator
+
+
+def handle_tool_errors(
+    default_return_key: str = "data", service_name: str = "Service"
+) -> Callable:
+    """
+    Decorator to handle exceptions in MCP tools and return formatted JSON error.
+
+    Args:
+        default_return_key: Key name for empty data in error response (e.g., "issue", "page")
+        service_name: Service name for error messages (e.g., "Jira", "Confluence")
+
+    Returns:
+        JSON string with error message and empty data
+
+    Example:
+        @handle_tool_errors(default_return_key="issue", service_name="Jira")
+        async def get_issue(ctx: Context, issue_key: str) -> str:
+            jira = await get_jira_fetcher(ctx)
+            issue = jira.get_issue(issue_key)
+            return issue.model_dump_json()
+    """
+
+    def decorator(func: F) -> F:
+        @wraps(func)
+        async def wrapper(*args: Any, **kwargs: Any) -> str:
+            try:
+                return await func(*args, **kwargs)
+            except MCPAtlassianAuthenticationError as auth_err:
+                logger.error(f"Authentication error in {func.__name__}: {auth_err}")
+                return json.dumps(
+                    {
+                        "error": "Authentication Failed",
+                        "message": str(auth_err),
+                        default_return_key: {},
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            except HTTPError as http_err:
+                logger.error(f"HTTP error in {func.__name__}: {http_err}")
+                status_code = (
+                    http_err.response.status_code if http_err.response else "Unknown"
+                )
+                return json.dumps(
+                    {
+                        "error": f"HTTP {status_code}",
+                        "message": f"{service_name} API error: {str(http_err)}",
+                        default_return_key: {},
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            except ValueError as val_err:
+                logger.error(f"Validation error in {func.__name__}: {val_err}")
+                return json.dumps(
+                    {
+                        "error": "Validation Error",
+                        "message": str(val_err),
+                        default_return_key: {},
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            except Exception as e:
+                logger.error(f"Unexpected error in {func.__name__}: {e}", exc_info=True)
+                return json.dumps(
+                    {
+                        "error": "Internal Error",
+                        "message": f"Error in {service_name}: {str(e)}",
+                        default_return_key: {},
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+
+        return wrapper  # type: ignore
 
     return decorator

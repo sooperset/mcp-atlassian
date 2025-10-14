@@ -7,6 +7,7 @@ to provide efficient, reusable test fixtures.
 """
 
 import pytest
+from dotenv import load_dotenv
 
 from tests.utils.factories import (
     AuthConfigFactory,
@@ -15,6 +16,10 @@ from tests.utils.factories import (
     JiraIssueFactory,
 )
 from tests.utils.mocks import MockAtlassianClient, MockEnvironment
+
+# Load environment variables from .env file
+# This allows tests to access real API credentials for integration tests
+load_dotenv()
 
 
 def pytest_addoption(parser):
