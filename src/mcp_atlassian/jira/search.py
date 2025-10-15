@@ -91,7 +91,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                     # Call 1: Get metadata (including total) using standard search API
                     metadata_params = {"jql": jql, "maxResults": 0}
                     metadata_response = self.jira.get(
-                        self.jira.resource_url("search"), params=metadata_params
+                        self.jira.resource_url("search/jql"), params=metadata_params
                     )
 
                     if (
