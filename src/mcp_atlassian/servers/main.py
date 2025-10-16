@@ -14,7 +14,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
 from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.confluence.config import ConfluenceConfig
@@ -221,127 +221,127 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
             )
 
 
-async def dispatch(
-    self: UserTokenMiddleware, request: Request, call_next: RequestResponseEndpoint
-) -> JSONResponse:
-    logger.debug(
-        f"UserTokenMiddleware.dispatch: ENTERED for request path='{request.url.path}', method='{request.method}'"
-    )
-    mcp_server_instance = self.mcp_server_ref
-    if mcp_server_instance is None:
+    async def dispatch(
+        self, request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
         logger.debug(
-            "UserTokenMiddleware.dispatch: self.mcp_server_ref is None. Skipping MCP auth logic."
+            f"UserTokenMiddleware.dispatch: ENTERED for request path='{request.url.path}', method='{request.method}'"
         )
-        return await call_next(request)
-
-    mcp_path = mcp_server_instance.settings.streamable_http_path.rstrip("/")
-    request_path = request.url.path.rstrip("/")
-    logger.debug(
-        f"UserTokenMiddleware.dispatch: Comparing request_path='{request_path}' with mcp_path='{mcp_path}'. Request method='{request.method}'"
-    )
-    if request_path == mcp_path and request.method == "POST":
-        # Check if we should ignore header-based auth (NEW)
-        ignore_header_auth = os.getenv("IGNORE_HEADER_AUTH", "false").lower() == "true"
-
-        auth_header = request.headers.get("Authorization")
-        cloud_id_header = request.headers.get("X-Atlassian-Cloud-Id")
-
-        # NEW: If IGNORE_HEADER_AUTH is set, ignore the Authorization header
-        if ignore_header_auth and auth_header:
+        mcp_server_instance = self.mcp_server_ref
+        if mcp_server_instance is None:
             logger.debug(
-                "UserTokenMiddleware.dispatch: IGNORE_HEADER_AUTH is enabled, "
-                "ignoring incoming Authorization header and using environment config"
+                "UserTokenMiddleware.dispatch: self.mcp_server_ref is None. Skipping MCP auth logic."
             )
-            auth_header = None
+            return await call_next(request)
 
-        token_for_log = mask_sensitive(
-            auth_header.split(" ", 1)[1].strip()
-            if auth_header and " " in auth_header
-            else auth_header
-        )
+        mcp_path = mcp_server_instance.settings.streamable_http_path.rstrip("/")
+        request_path = request.url.path.rstrip("/")
         logger.debug(
-            f"UserTokenMiddleware: Path='{request.url.path}', AuthHeader='{mask_sensitive(auth_header)}', ParsedToken(masked)='{token_for_log}', CloudId='{cloud_id_header}'"
+            f"UserTokenMiddleware.dispatch: Comparing request_path='{request_path}' with mcp_path='{mcp_path}'. Request method='{request.method}'"
         )
+        if request_path == mcp_path and request.method == "POST":
+            # Check if we should ignore header-based auth (NEW)
+            ignore_header_auth = os.getenv("IGNORE_HEADER_AUTH", "false").lower() == "true"
 
-        # Extract and save cloudId if provided
-        if cloud_id_header and cloud_id_header.strip():
-            request.state.user_atlassian_cloud_id = cloud_id_header.strip()
-            logger.debug(
-                f"UserTokenMiddleware: Extracted cloudId from header: {cloud_id_header.strip()}"
-            )
-        else:
-            request.state.user_atlassian_cloud_id = None
-            logger.debug(
-                "UserTokenMiddleware: No cloudId header provided, will use global config"
-            )
+            auth_header = request.headers.get("Authorization")
+            cloud_id_header = request.headers.get("X-Atlassian-Cloud-Id")
 
-        # Check for mcp-session-id header for debugging
-        mcp_session_id = request.headers.get("mcp-session-id")
-        if mcp_session_id:
-            logger.debug(
-                f"UserTokenMiddleware: MCP-Session-ID header found: {mcp_session_id}"
-            )
-        if auth_header and auth_header.startswith("Bearer "):
-            token = auth_header.split(" ", 1)[1].strip()
-            if not token:
-                return JSONResponse(
-                    {"error": "Unauthorized: Empty Bearer token"},
-                    status_code=401,
-                )
-            logger.debug(
-                f"UserTokenMiddleware.dispatch: Bearer token extracted (masked): ...{mask_sensitive(token, 8)}"
-            )
-            request.state.user_atlassian_token = token
-            request.state.user_atlassian_auth_type = "oauth"
-            request.state.user_atlassian_email = None
-            logger.debug(
-                f"UserTokenMiddleware.dispatch: Set request.state (pre-validation): "
-                f"auth_type='{getattr(request.state, 'user_atlassian_auth_type', 'N/A')}', "
-                f"token_present={bool(getattr(request.state, 'user_atlassian_token', None))}"
-            )
-        elif auth_header and auth_header.startswith("Token "):
-            token = auth_header.split(" ", 1)[1].strip()
-            if not token:
-                return JSONResponse(
-                    {"error": "Unauthorized: Empty Token (PAT)"},
-                    status_code=401,
-                )
-            logger.debug(
-                f"UserTokenMiddleware.dispatch: PAT (Token scheme) extracted (masked): ...{mask_sensitive(token, 8)}"
-            )
-            request.state.user_atlassian_token = token
-            request.state.user_atlassian_auth_type = "pat"
-            request.state.user_atlassian_email = (
-                None  # PATs don't carry email in the token itself
-            )
-            logger.debug(
-                "UserTokenMiddleware.dispatch: Set request.state for PAT auth."
-            )
-        elif auth_header:
-            logger.warning(
-                f"Unsupported Authorization type for {request.url.path}: {auth_header.split(' ', 1)[0] if ' ' in auth_header else 'UnknownType'}"  # noqa: E501
-            )
-            return JSONResponse(
-                {
-                    "error": "Unauthorized: Only 'Bearer <OAuthToken>' or 'Token <PAT>' types are supported."  # noqa: E501
-                },
-                status_code=401,
-            )
-        else:
-            if ignore_header_auth:
+            # NEW: If IGNORE_HEADER_AUTH is set, ignore the Authorization header
+            if ignore_header_auth and auth_header:
                 logger.debug(
-                    f"No Authorization header processing for {request.url.path} (IGNORE_HEADER_AUTH=true). "  # noqa: E501
-                    "Will use global/fallback server configuration."
+                    "UserTokenMiddleware.dispatch: IGNORE_HEADER_AUTH is enabled, "
+                    "ignoring incoming Authorization header and using environment config"
+                )
+                auth_header = None
+
+            token_for_log = mask_sensitive(
+                auth_header.split(" ", 1)[1].strip()
+                if auth_header and " " in auth_header
+                else auth_header
+            )
+            logger.debug(
+                f"UserTokenMiddleware: Path='{request.url.path}', AuthHeader='{mask_sensitive(auth_header)}', ParsedToken(masked)='{token_for_log}', CloudId='{cloud_id_header}'"
+            )
+
+            # Extract and save cloudId if provided
+            if cloud_id_header and cloud_id_header.strip():
+                request.state.user_atlassian_cloud_id = cloud_id_header.strip()
+                logger.debug(
+                    f"UserTokenMiddleware: Extracted cloudId from header: {cloud_id_header.strip()}"
                 )
             else:
+                request.state.user_atlassian_cloud_id = None
                 logger.debug(
-                    f"No Authorization header provided for {request.url.path}. Will proceed with global/fallback server configuration if applicable."  # noqa: E501
+                    "UserTokenMiddleware: No cloudId header provided, will use global config"
                 )
-    response = await call_next(request)
-    logger.debug(
-        f"UserTokenMiddleware.dispatch: EXITED for request path='{request.url.path}'"
-    )
-    return response
+
+            # Check for mcp-session-id header for debugging
+            mcp_session_id = request.headers.get("mcp-session-id")
+            if mcp_session_id:
+                logger.debug(
+                    f"UserTokenMiddleware: MCP-Session-ID header found: {mcp_session_id}"
+                )
+            if auth_header and auth_header.startswith("Bearer "):
+                token = auth_header.split(" ", 1)[1].strip()
+                if not token:
+                    return JSONResponse(
+                        {"error": "Unauthorized: Empty Bearer token"},
+                        status_code=401,
+                    )
+                logger.debug(
+                    f"UserTokenMiddleware.dispatch: Bearer token extracted (masked): ...{mask_sensitive(token, 8)}"
+                )
+                request.state.user_atlassian_token = token
+                request.state.user_atlassian_auth_type = "oauth"
+                request.state.user_atlassian_email = None
+                logger.debug(
+                    f"UserTokenMiddleware.dispatch: Set request.state (pre-validation): "
+                    f"auth_type='{getattr(request.state, 'user_atlassian_auth_type', 'N/A')}', "
+                    f"token_present={bool(getattr(request.state, 'user_atlassian_token', None))}"
+                )
+            elif auth_header and auth_header.startswith("Token "):
+                token = auth_header.split(" ", 1)[1].strip()
+                if not token:
+                    return JSONResponse(
+                        {"error": "Unauthorized: Empty Token (PAT)"},
+                        status_code=401,
+                    )
+                logger.debug(
+                    f"UserTokenMiddleware.dispatch: PAT (Token scheme) extracted (masked): ...{mask_sensitive(token, 8)}"
+                )
+                request.state.user_atlassian_token = token
+                request.state.user_atlassian_auth_type = "pat"
+                request.state.user_atlassian_email = (
+                    None  # PATs don't carry email in the token itself
+                )
+                logger.debug(
+                    "UserTokenMiddleware.dispatch: Set request.state for PAT auth."
+                )
+            elif auth_header:
+                logger.warning(
+                    f"Unsupported Authorization type for {request.url.path}: {auth_header.split(' ', 1)[0] if ' ' in auth_header else 'UnknownType'}"  # noqa: E501
+                )
+                return JSONResponse(
+                    {
+                        "error": "Unauthorized: Only 'Bearer <OAuthToken>' or 'Token <PAT>' types are supported."  # noqa: E501
+                    },
+                    status_code=401,
+                )
+            else:
+                if ignore_header_auth:
+                    logger.debug(
+                        f"No Authorization header processing for {request.url.path} (IGNORE_HEADER_AUTH=true). "  # noqa: E501
+                        "Will use global/fallback server configuration."
+                    )
+                else:
+                    logger.debug(
+                        f"No Authorization header provided for {request.url.path}. Will proceed with global/fallback server configuration if applicable."  # noqa: E501
+                    )
+        response = await call_next(request)
+        logger.debug(
+            f"UserTokenMiddleware.dispatch: EXITED for request path='{request.url.path}'"
+        )
+        return response
 
 
 main_mcp = AtlassianMCP(name="Atlassian MCP", lifespan=main_lifespan)
