@@ -84,8 +84,10 @@ async def test_sse_app_health_check_endpoint():
 async def test_streamable_http_app_health_check_endpoint(mock_getenv):
     """Test the /healthz endpoint on the Streamable HTTP app returns 200 and correct JSON response."""
     # Mock IGNORE_HEADER_AUTH to return default value
-    mock_getenv.side_effect = lambda key, default=None: default if key == "IGNORE_HEADER_AUTH" else None
-    
+    mock_getenv.side_effect = (
+        lambda key, default=None: default if key == "IGNORE_HEADER_AUTH" else None
+    )
+
     app = main_mcp.streamable_http_app()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -133,8 +135,12 @@ class TestUserTokenMiddleware:
     ):
         """Test successful cloud ID header extraction."""
         # Mock IGNORE_HEADER_AUTH to return default value (false)
-        mock_getenv.side_effect = lambda key, default=None: "false" if key == "IGNORE_HEADER_AUTH" else default
-        
+        mock_getenv.side_effect = (
+            lambda key, default=None: "false"
+            if key == "IGNORE_HEADER_AUTH"
+            else default
+        )
+
         # Setup request with cloud ID header
         mock_request.headers = {
             "Authorization": "Bearer test-token",
