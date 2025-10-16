@@ -220,7 +220,6 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 "UserTokenMiddleware initialized without mcp_server_ref. Path matching for MCP endpoint might fail if settings are needed."
             )
 
-
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
@@ -241,7 +240,9 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
         )
         if request_path == mcp_path and request.method == "POST":
             # Check if we should ignore header-based auth (NEW)
-            ignore_header_auth = os.getenv("IGNORE_HEADER_AUTH", "false").lower() == "true"
+            ignore_header_auth = (
+                os.getenv("IGNORE_HEADER_AUTH", "false").lower() == "true"
+            )
 
             auth_header = request.headers.get("Authorization")
             cloud_id_header = request.headers.get("X-Atlassian-Cloud-Id")
