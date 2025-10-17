@@ -3,7 +3,7 @@
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal
 
 from ..utils.env import get_custom_headers, is_env_ssl_verify
 from ..utils.oauth import (
@@ -67,18 +67,19 @@ class ConfluenceConfig:
         return self.ssl_verify
 
     @classmethod
-    def from_env(cls, request_state: Any = None) -> "ConfluenceConfig":
-        """Create ConfluenceConfig from environment variables and optional request state."""
+    def from_env(cls) -> "ConfluenceConfig":
+        """Create configuration from environment variables.
+
+        Returns:
+            ConfluenceConfig with values from environment variables
+
+        Raises:
+            ValueError: If any required environment variable is missing
+        """
         url = os.getenv("CONFLUENCE_URL")
-        if not url:
-            raise ValueError("Missing required CONFLUENCE_URL environment variable")
-
-        # NEW: Check if header auth should be ignored
-        ignore_header_auth = os.getenv("IGNORE_HEADER_AUTH", "false").lower() == "true"
-
-        # If ignoring header auth, skip request_state processing
-        if ignore_header_auth and request_state:
-            request_state = None
+        if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE"):
+            error_msg = "Missing required CONFLUENCE_URL environment variable"
+            raise ValueError(error_msg)
 
         # Determine authentication type based on available environment variables
         username = os.getenv("CONFLUENCE_USERNAME")
