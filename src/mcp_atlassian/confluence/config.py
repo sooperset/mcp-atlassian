@@ -80,7 +80,6 @@ class ConfluenceConfig:
         if ignore_header_auth and request_state:
             request_state = None
 
-
         # Determine authentication type based on available environment variables
         username = os.getenv("CONFLUENCE_USERNAME")
         api_token = os.getenv("CONFLUENCE_API_TOKEN")
