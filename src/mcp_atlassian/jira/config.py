@@ -3,7 +3,7 @@
 import logging
 import os
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from ..utils.env import get_custom_headers, is_env_ssl_verify
 from ..utils.oauth import (
@@ -67,19 +67,18 @@ class JiraConfig:
         return self.ssl_verify
 
     @classmethod
-    def from_env(cls) -> "JiraConfig":
-        """Create configuration from environment variables.
-
-        Returns:
-            JiraConfig with values from environment variables
-
-        Raises:
-            ValueError: If required environment variables are missing or invalid
-        """
+    def from_env(cls, request_state: Any = None) -> "JiraConfig":
+        """Create JiraConfig from environment variables and optional request state."""
         url = os.getenv("JIRA_URL")
-        if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE"):
-            error_msg = "Missing required JIRA_URL environment variable"
-            raise ValueError(error_msg)
+        if not url:
+            raise ValueError("JIRA_URL environment variable is required")
+
+        # NEW: Check if header auth should be ignored
+        ignore_header_auth = os.getenv("IGNORE_HEADER_AUTH", "false").lower() == "true"
+
+        # If ignoring header auth, skip request_state processing
+        if ignore_header_auth and request_state:
+            request_state = None
 
         # Determine authentication type based on available environment variables
         username = os.getenv("JIRA_USERNAME")

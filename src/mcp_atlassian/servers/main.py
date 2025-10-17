@@ -220,7 +220,7 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 "UserTokenMiddleware initialized without mcp_server_ref. Path matching for MCP endpoint might fail if settings are needed."
             )
 
-    async def dispatch(
+    async def dispatch(  # noqa: ANN001
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
         logger.debug(
@@ -239,21 +239,8 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
             f"UserTokenMiddleware.dispatch: Comparing request_path='{request_path}' with mcp_path='{mcp_path}'. Request method='{request.method}'"
         )
         if request_path == mcp_path and request.method == "POST":
-            # Check if we should ignore header-based auth (NEW)
-            ignore_header_auth = (
-                os.getenv("IGNORE_HEADER_AUTH", "false").lower() == "true"
-            )
-
             auth_header = request.headers.get("Authorization")
             cloud_id_header = request.headers.get("X-Atlassian-Cloud-Id")
-
-            # NEW: If IGNORE_HEADER_AUTH is set, ignore the Authorization header
-            if ignore_header_auth and auth_header:
-                logger.debug(
-                    "UserTokenMiddleware.dispatch: IGNORE_HEADER_AUTH is enabled, "
-                    "ignoring incoming Authorization header and using environment config"
-                )
-                auth_header = None
 
             token_for_log = mask_sensitive(
                 auth_header.split(" ", 1)[1].strip()
@@ -329,15 +316,9 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                     status_code=401,
                 )
             else:
-                if ignore_header_auth:
-                    logger.debug(
-                        f"No Authorization header processing for {request.url.path} (IGNORE_HEADER_AUTH=true). "  # noqa: E501
-                        "Will use global/fallback server configuration."
-                    )
-                else:
-                    logger.debug(
-                        f"No Authorization header provided for {request.url.path}. Will proceed with global/fallback server configuration if applicable."  # noqa: E501
-                    )
+                logger.debug(
+                    f"No Authorization header provided for {request.url.path}. Will proceed with global/fallback server configuration if applicable."  # noqa: E501
+                )
         response = await call_next(request)
         logger.debug(
             f"UserTokenMiddleware.dispatch: EXITED for request path='{request.url.path}'"
