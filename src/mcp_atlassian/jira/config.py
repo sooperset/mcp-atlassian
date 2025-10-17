@@ -71,7 +71,7 @@ class JiraConfig:
         """Create JiraConfig from environment variables and optional request state."""
         url = os.getenv("JIRA_URL")
         if not url:
-            raise ValueError("JIRA_URL environment variable is required")
+            raise ValueError("Missing required JIRA_URL environment variable")
 
         # NEW: Check if header auth should be ignored
         ignore_header_auth = os.getenv("IGNORE_HEADER_AUTH", "false").lower() == "true"

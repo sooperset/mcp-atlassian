@@ -71,7 +71,7 @@ class ConfluenceConfig:
         """Create ConfluenceConfig from environment variables and optional request state."""
         url = os.getenv("CONFLUENCE_URL")
         if not url:
-            raise ValueError("CONFLUENCE_URL environment variable is required")
+            raise ValueError("Missing required CONFLUENCE_URL environment variable")
 
         # NEW: Check if header auth should be ignored
         ignore_header_auth = os.getenv("IGNORE_HEADER_AUTH", "false").lower() == "true"
