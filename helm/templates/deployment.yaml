@@ -253,8 +253,6 @@ spec:
         {{- end }}
 
         {{- if ne .Values.transport "stdio" }}
-        livenessProbe:
-          {{- toYaml .Values.livenessProbe | nindent 12 }}
         readinessProbe:
           {{- toYaml .Values.readinessProbe | nindent 12 }}
         {{- end }}
