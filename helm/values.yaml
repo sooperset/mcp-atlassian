@@ -119,20 +119,20 @@ confluence:
   # For Cloud: https://your-company.atlassian.net/wiki
   # For Server/DC: https://confluence.your-company.com
   url: ""
-  
+
   # Cloud authentication (when authMode: api-token)
   username: ""
   apiToken: ""
-  
+
   # Server/DC authentication (when authMode: personal-token)
   personalToken: ""
-  
+
   # SSL verification for Server/DC (set to false for self-signed certs)
   sslVerify: "true"
-  
+
   # Space filter (comma-separated space keys)
   spacesFilter: ""
-  
+
   # Custom headers (comma-separated key=value pairs)
   customHeaders: ""
 
@@ -142,20 +142,20 @@ jira:
   # For Cloud: https://your-company.atlassian.net
   # For Server/DC: https://jira.your-company.com
   url: ""
-  
+
   # Cloud authentication (when authMode: api-token)
   username: ""
   apiToken: ""
-  
+
   # Server/DC authentication (when authMode: personal-token)
   personalToken: ""
-  
+
   # SSL verification for Server/DC
   sslVerify: "true"
-  
+
   # Project filter (comma-separated project keys)
   projectsFilter: ""
-  
+
   # Custom headers (comma-separated key=value pairs)
   customHeaders: ""
 
@@ -164,13 +164,13 @@ jira:
 oauth:
   # Cloud ID (from --oauth-setup wizard or known for your instance)
   cloudId: ""
-  
+
   # For standard OAuth flow (authMode: oauth)
   clientId: ""
   clientSecret: ""
   redirectUri: "http://localhost:8080/callback"
   scope: "read:jira-work write:jira-work read:confluence-content.all write:confluence-content offline_access"
-  
+
   # For BYOT mode (authMode: byot)
   # Provide pre-existing access token
   accessToken: ""
@@ -182,7 +182,7 @@ proxy:
   https: ""
   noProxy: "localhost,127.0.0.1"
   socks: ""
-  
+
   # Service-specific proxy overrides
   confluence:
     http: ""
@@ -197,16 +197,16 @@ proxy:
 config:
   # Read-only mode (disables all write operations)
   readOnlyMode: false
-  
+
   # Enable verbose logging
   verbose: false
-  
+
   # Very verbose logging (includes debug info)
   veryVerbose: false
-  
+
   # Log to stdout instead of stderr
   loggingStdout: true
-  
+
   # Comma-separated list of enabled tools
   # Leave empty to enable all tools
   # Example: "confluence_search,jira_get_issue,jira_search"
