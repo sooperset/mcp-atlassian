@@ -1,0 +1,291 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mcp-atlassian.fullname" . }}
+  labels:
+    {{- include "mcp-atlassian.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "mcp-atlassian.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "mcp-atlassian.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "mcp-atlassian.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: {{ .Chart.Name }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 12 }}
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        {{- if ne .Values.transport "stdio" }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.port }}
+          protocol: TCP
+        {{- end }}
+        args:
+        {{- if ne .Values.transport "stdio" }}
+        - --transport
+        - {{ .Values.transport }}
+        - --port
+        - "{{ .Values.port }}"
+        {{- end }}
+        {{- if .Values.config.verbose }}
+        - -v
+        {{- end }}
+        {{- if .Values.config.veryVerbose }}
+        - -vv
+        {{- end }}
+        {{- if .Values.config.enabledTools }}
+        - --enabled-tools
+        - {{ .Values.config.enabledTools | quote }}
+        {{- end }}
+        env:
+        # Confluence Configuration
+        {{- if .Values.confluence.enabled }}
+        - name: CONFLUENCE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: confluence-url
+        {{- if eq .Values.authMode "api-token" }}
+        - name: CONFLUENCE_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: confluence-username
+        - name: CONFLUENCE_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: confluence-api-token
+        {{- else if eq .Values.authMode "personal-token" }}
+        - name: CONFLUENCE_PERSONAL_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: confluence-personal-token
+        {{- end }}
+        {{- if .Values.confluence.sslVerify }}
+        - name: CONFLUENCE_SSL_VERIFY
+          value: {{ .Values.confluence.sslVerify | quote }}
+        {{- end }}
+        {{- if .Values.confluence.spacesFilter }}
+        - name: CONFLUENCE_SPACES_FILTER
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: confluence-spaces-filter
+        {{- end }}
+        {{- if .Values.confluence.customHeaders }}
+        - name: CONFLUENCE_CUSTOM_HEADERS
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: confluence-custom-headers
+        {{- end }}
+        {{- end }}
+
+        # Jira Configuration
+        {{- if .Values.jira.enabled }}
+        - name: JIRA_URL
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: jira-url
+        {{- if eq .Values.authMode "api-token" }}
+        - name: JIRA_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: jira-username
+        - name: JIRA_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: jira-api-token
+        {{- else if eq .Values.authMode "personal-token" }}
+        - name: JIRA_PERSONAL_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: jira-personal-token
+        {{- end }}
+        {{- if .Values.jira.sslVerify }}
+        - name: JIRA_SSL_VERIFY
+          value: {{ .Values.jira.sslVerify | quote }}
+        {{- end }}
+        {{- if .Values.jira.projectsFilter }}
+        - name: JIRA_PROJECTS_FILTER
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: jira-projects-filter
+        {{- end }}
+        {{- if .Values.jira.customHeaders }}
+        - name: JIRA_CUSTOM_HEADERS
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: jira-custom-headers
+        {{- end }}
+        {{- end }}
+
+        # OAuth Configuration
+        {{- if or (eq .Values.authMode "oauth") (eq .Values.authMode "byot") }}
+        - name: ATLASSIAN_OAUTH_CLOUD_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: oauth-cloud-id
+        {{- if eq .Values.authMode "oauth" }}
+        - name: ATLASSIAN_OAUTH_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: oauth-client-id
+        - name: ATLASSIAN_OAUTH_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: oauth-client-secret
+        - name: ATLASSIAN_OAUTH_REDIRECT_URI
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: oauth-redirect-uri
+        - name: ATLASSIAN_OAUTH_SCOPE
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: oauth-scope
+        {{- else if eq .Values.authMode "byot" }}
+        - name: ATLASSIAN_OAUTH_ACCESS_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: oauth-access-token
+        {{- end }}
+        {{- end }}
+
+        # Proxy Configuration
+        {{- if .Values.proxy.enabled }}
+        {{- if .Values.proxy.http }}
+        - name: HTTP_PROXY
+          value: {{ .Values.proxy.http }}
+        {{- end }}
+        {{- if .Values.proxy.https }}
+        - name: HTTPS_PROXY
+          value: {{ .Values.proxy.https }}
+        {{- end }}
+        {{- if .Values.proxy.noProxy }}
+        - name: NO_PROXY
+          value: {{ .Values.proxy.noProxy }}
+        {{- end }}
+        {{- if .Values.proxy.socks }}
+        - name: SOCKS_PROXY
+          value: {{ .Values.proxy.socks }}
+        {{- end }}
+        {{- if .Values.proxy.confluence.http }}
+        - name: CONFLUENCE_HTTP_PROXY
+          value: {{ .Values.proxy.confluence.http }}
+        {{- end }}
+        {{- if .Values.proxy.confluence.https }}
+        - name: CONFLUENCE_HTTPS_PROXY
+          value: {{ .Values.proxy.confluence.https }}
+        {{- end }}
+        {{- if .Values.proxy.confluence.noProxy }}
+        - name: CONFLUENCE_NO_PROXY
+          value: {{ .Values.proxy.confluence.noProxy }}
+        {{- end }}
+        {{- if .Values.proxy.jira.http }}
+        - name: JIRA_HTTP_PROXY
+          value: {{ .Values.proxy.jira.http }}
+        {{- end }}
+        {{- if .Values.proxy.jira.https }}
+        - name: JIRA_HTTPS_PROXY
+          value: {{ .Values.proxy.jira.https }}
+        {{- end }}
+        {{- if .Values.proxy.jira.noProxy }}
+        - name: JIRA_NO_PROXY
+          value: {{ .Values.proxy.jira.noProxy }}
+        {{- end }}
+        {{- end }}
+
+        # Server Configuration
+        {{- if .Values.config.readOnlyMode }}
+        - name: READ_ONLY_MODE
+          value: "true"
+        {{- end }}
+        {{- if .Values.config.loggingStdout }}
+        - name: MCP_LOGGING_STDOUT
+          value: "true"
+        {{- end }}
+        {{- if .Values.config.veryVerbose }}
+        - name: MCP_VERY_VERBOSE
+          value: "true"
+        {{- end }}
+
+        # Extra environment variables
+        {{- with .Values.extraEnv }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+
+        {{- if ne .Values.transport "stdio" }}
+        livenessProbe:
+          {{- toYaml .Values.livenessProbe | nindent 12 }}
+        readinessProbe:
+          {{- toYaml .Values.readinessProbe | nindent 12 }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.resources | nindent 12 }}
+        volumeMounts:
+        {{- if and (eq .Values.authMode "oauth") .Values.persistence.enabled }}
+        - name: oauth-tokens
+          mountPath: /home/app/.mcp-atlassian
+        {{- end }}
+        {{- with .Values.volumeMounts }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      volumes:
+      {{- if and (eq .Values.authMode "oauth") .Values.persistence.enabled }}
+      - name: oauth-tokens
+        persistentVolumeClaim:
+          claimName: {{ if .Values.persistence.existingClaim }}{{ .Values.persistence.existingClaim }}{{- else }}{{ include "mcp-atlassian.fullname" . }}{{- end }}
+      {{- end }}
+      {{- with .Values.volumes }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

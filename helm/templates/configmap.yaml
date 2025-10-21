@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcp-atlassian.fullname" . }}
+  labels:
+    {{- include "mcp-atlassian.labels" . | nindent 4 }}
+data:
+  {{- if .Values.confluence.enabled }}
+  confluence-url: {{ .Values.confluence.url | quote }}
+  {{- if .Values.confluence.spacesFilter }}
+  confluence-spaces-filter: {{ .Values.confluence.spacesFilter | quote }}
+  {{- end }}
+  {{- end }}
+  
+  {{- if .Values.jira.enabled }}
+  jira-url: {{ .Values.jira.url | quote }}
+  {{- if .Values.jira.projectsFilter }}
+  jira-projects-filter: {{ .Values.jira.projectsFilter | quote }}
+  {{- end }}
+  {{- end }}
+  
+  {{- if eq .Values.authMode "oauth" }}
+  oauth-redirect-uri: {{ .Values.oauth.redirectUri | quote }}
+  oauth-scope: {{ .Values.oauth.scope | quote }}
+  {{- end }}
