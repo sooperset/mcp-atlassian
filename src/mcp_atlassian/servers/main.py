@@ -404,10 +404,12 @@ class UserTokenMiddleware:
                         status_code=401,
                     )
                 try:
-                    decoded = base64.b64decode(encoded).decode('utf-8')
-                    if ':' not in decoded:
+                    decoded = base64.b64decode(encoded).decode("utf-8")
+                    if ":" not in decoded:
                         return JSONResponse(
-                            {"error": "Unauthorized: Invalid Basic auth format. Expected 'email:api_token'"},
+                            {
+                                "error": "Unauthorized: Invalid Basic auth format. Expected 'email:api_token'"
+                            },
                             status_code=401,
                         )
                     email, api_token = decoded.split(":", 1)
@@ -424,7 +426,9 @@ class UserTokenMiddleware:
                     request.state.user_atlassian_email = email
                     request.state.user_atlassian_api_token = api_token
                     request.state.user_atlassian_auth_type = "basic"
-                    request.state.user_atlassian_token = None  # basic auth doesn't use token field
+                    request.state.user_atlassian_token = (
+                        None  # basic auth doesn't use token field
+                    )
                     logger.debug(
                         "UserTokenMiddleware.dispatch: Set request.state for Basic auth."
                     )
