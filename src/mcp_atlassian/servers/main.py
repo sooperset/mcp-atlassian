@@ -1,6 +1,7 @@
 """Main FastMCP server setup for Atlassian integration."""
 
 import json
+import base64
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -377,12 +378,71 @@ class UserTokenMiddleware:
                     "UserTokenMiddleware: Bearer token extracted (masked): "
                     f"...{mask_sensitive(token, 8)}"
                 )
+            elif auth_header and auth_header.startswith("Token "):
+                token = auth_header.split(" ", 1)[1].strip()
+                if not token:
+                    return JSONResponse(
+                        {"error": "Unauthorized: Empty Token (PAT)"},
+                        status_code=401,
+                    )
+                logger.debug(
+                    f"UserTokenMiddleware.dispatch: PAT (Token scheme) extracted (masked): ...{mask_sensitive(token, 8)}"
+                )
+                request.state.user_atlassian_token = token
+                request.state.user_atlassian_auth_type = "pat"
+                request.state.user_atlassian_email = (
+                    None  # PATs don't carry email in the token itself
+                )
+                logger.debug(
+                    "UserTokenMiddleware.dispatch: Set request.state for PAT auth."
+                )
+            elif auth_header and auth_header.startswith("Basic "):
+                encoded = auth_header.split(" ", 1)[1].strip()
+                if not encoded:
+                    return JSONResponse(
+                        {"error": "Unauthorized: Empty Basic auth credentials"},
+                        status_code=401,
+                    )
+                try:
+                    decoded = base64.b64decode(encoded).decode('utf-8')
+                    if ':' not in decoded:
+                        return JSONResponse(
+                            {"error": "Unauthorized: Invalid Basic auth format. Expected 'email:api_token'"},
+                            status_code=401,
+                        )
+                    email, api_token = decoded.split(":", 1)
 
-        elif auth_header.startswith("Token "):
-            token = auth_header[6:].strip()  # Remove "Token " prefix and strip token
-            if not token:
-                scope["state"]["auth_validation_error"] = (
-                    "Unauthorized: Empty Token (PAT)"
+                    if not email or not api_token:
+                        return JSONResponse(
+                            {"error": "Unauthorized: Email or API token is empty"},
+                            status_code=401,
+                        )
+
+                    logger.debug(
+                        f"UserTokenMiddleware.dispatch: Basic auth extracted for email: {email}"
+                    )
+                    request.state.user_atlassian_email = email
+                    request.state.user_atlassian_api_token = api_token
+                    request.state.user_atlassian_auth_type = "basic"
+                    request.state.user_atlassian_token = None  # basic auth doesn't use token field
+                    logger.debug(
+                        "UserTokenMiddleware.dispatch: Set request.state for Basic auth."
+                    )
+                except (ValueError, UnicodeDecodeError) as e:
+                    logger.error(f"Failed to decode Basic auth: {e}")
+                    return JSONResponse(
+                        {"error": "Unauthorized: Invalid Basic auth encoding"},
+                        status_code=401,
+                    )
+            elif auth_header:
+                logger.warning(
+                    f"Unsupported Authorization type for {request.url.path}: {auth_header.split(' ', 1)[0] if ' ' in auth_header else 'UnknownType'}"
+                )
+                return JSONResponse(
+                    {
+                        "error": "Unauthorized: Only 'Bearer <OAuthToken>', 'Token <PAT>', or 'Basic <base64(email:api_token)>' types are supported."
+                    },
+                    status_code=401,
                 )
             else:
                 scope["state"]["user_atlassian_token"] = token

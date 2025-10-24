@@ -37,7 +37,7 @@ def _create_user_config_for_fetcher(
 
     Args:
         base_config: The base JiraConfig or ConfluenceConfig to clone and modify.
-        auth_type: The authentication type ('oauth' or 'pat').
+        auth_type: The authentication type ('oauth', 'pat', or 'basic').
         credentials: Dictionary of credentials (token, email, etc).
         cloud_id: Optional cloud ID to override the base config cloud ID.
 
@@ -48,9 +48,9 @@ def _create_user_config_for_fetcher(
         ValueError: If required credentials are missing or auth_type is unsupported.
         TypeError: If base_config is not a supported type.
     """
-    if auth_type not in ["oauth", "pat"]:
+    if auth_type not in ["oauth", "pat", "basic"]:
         raise ValueError(
-            f"Unsupported auth_type '{auth_type}' for user-specific config creation. Expected 'oauth' or 'pat'."
+            f"Unsupported auth_type '{auth_type}' for user-specific config creation. Expected 'oauth', 'pat', or 'basic'."
         )
 
     username_for_config: str | None = credentials.get("user_email_context")
@@ -137,6 +137,29 @@ def _create_user_config_for_fetcher(
                 "api_token": None,
             }
         )
+    elif auth_type == "basic":
+        user_email = credentials.get("user_email")
+        user_api_token = credentials.get("api_token")
+        if not user_email or not user_api_token:
+            raise ValueError(
+                "Email and API token missing in credentials for user auth_type 'basic'"
+            )
+
+        # Log debug if cloud_id is provided with Basic auth
+        if cloud_id:
+            logger.debug(
+                f"Cloud ID '{cloud_id}' provided with Basic auth. "
+                "This may be used for multi-cloud scenarios."
+            )
+
+        common_args.update(
+            {
+                "username": user_email,
+                "api_token": user_api_token,
+                "personal_token": None,
+                "oauth_config": None,
+            }
+        )
 
     if isinstance(base_config, JiraConfig):
         user_jira_config: UserJiraConfigType = dataclasses.replace(
@@ -181,23 +204,29 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
             return request.state.jira_fetcher
         user_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
         logger.debug(f"get_jira_fetcher: User auth type: {user_auth_type}")
-        # If OAuth or PAT token is present, create user-specific fetcher
-        if user_auth_type in ["oauth", "pat"] and hasattr(
-            request.state, "user_atlassian_token"
-        ):
-            user_token = getattr(request.state, "user_atlassian_token", None)
-            user_email = getattr(
-                request.state, "user_atlassian_email", None
-            )  # May be None for PAT
+        # If OAuth, PAT, or Basic auth is present, create user-specific fetcher
+        if user_auth_type in ["oauth", "pat", "basic"]:
+            user_email = getattr(request.state, "user_atlassian_email", None)
             user_cloud_id = getattr(request.state, "user_atlassian_cloud_id", None)
 
-            if not user_token:
-                raise ValueError("User Atlassian token found in state but is empty.")
             credentials = {"user_email_context": user_email}
+
             if user_auth_type == "oauth":
+                user_token = getattr(request.state, "user_atlassian_token", None)
+                if not user_token:
+                    raise ValueError("User Atlassian OAuth token is empty.")
                 credentials["oauth_access_token"] = user_token
             elif user_auth_type == "pat":
+                user_token = getattr(request.state, "user_atlassian_token", None)
+                if not user_token:
+                    raise ValueError("User Atlassian PAT is empty.")
                 credentials["personal_access_token"] = user_token
+            elif user_auth_type == "basic":
+                user_api_token = getattr(request.state, "user_atlassian_api_token", None)
+                if not user_email or not user_api_token:
+                    raise ValueError("User email or API token missing for basic auth.")
+                credentials["user_email"] = user_email
+                credentials["api_token"] = user_api_token
             lifespan_ctx_dict = ctx.request_context.lifespan_context  # type: ignore
             app_lifespan_ctx: MainAppContext | None = (
                 lifespan_ctx_dict.get("app_lifespan_context")
@@ -291,20 +320,28 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
             return request.state.confluence_fetcher
         user_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
         logger.debug(f"get_confluence_fetcher: User auth type: {user_auth_type}")
-        if user_auth_type in ["oauth", "pat"] and hasattr(
-            request.state, "user_atlassian_token"
-        ):
-            user_token = getattr(request.state, "user_atlassian_token", None)
+        if user_auth_type in ["oauth", "pat", "basic"]:
             user_email = getattr(request.state, "user_atlassian_email", None)
             user_cloud_id = getattr(request.state, "user_atlassian_cloud_id", None)
 
-            if not user_token:
-                raise ValueError("User Atlassian token found in state but is empty.")
             credentials = {"user_email_context": user_email}
+
             if user_auth_type == "oauth":
+                user_token = getattr(request.state, "user_atlassian_token", None)
+                if not user_token:
+                    raise ValueError("User Atlassian OAuth token is empty.")
                 credentials["oauth_access_token"] = user_token
             elif user_auth_type == "pat":
+                user_token = getattr(request.state, "user_atlassian_token", None)
+                if not user_token:
+                    raise ValueError("User Atlassian PAT is empty.")
                 credentials["personal_access_token"] = user_token
+            elif user_auth_type == "basic":
+                user_api_token = getattr(request.state, "user_atlassian_api_token", None)
+                if not user_email or not user_api_token:
+                    raise ValueError("User email or API token missing for basic auth.")
+                credentials["user_email"] = user_email
+                credentials["api_token"] = user_api_token
             lifespan_ctx_dict = ctx.request_context.lifespan_context  # type: ignore
             app_lifespan_ctx: MainAppContext | None = (
                 lifespan_ctx_dict.get("app_lifespan_context")
