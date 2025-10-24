@@ -1,5 +1,6 @@
 """Main FastMCP server setup for Atlassian integration."""
 
+import base64
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -304,13 +305,51 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 logger.debug(
                     "UserTokenMiddleware.dispatch: Set request.state for PAT auth."
                 )
+            elif auth_header and auth_header.startswith("Basic "):
+                encoded = auth_header.split(" ", 1)[1].strip()
+                if not encoded:
+                    return JSONResponse(
+                        {"error": "Unauthorized: Empty Basic auth credentials"},
+                        status_code=401,
+                    )
+                try:
+                    decoded = base64.b64decode(encoded).decode('utf-8')
+                    if ':' not in decoded:
+                        return JSONResponse(
+                            {"error": "Unauthorized: Invalid Basic auth format. Expected 'email:api_token'"},
+                            status_code=401,
+                        )
+                    email, api_token = decoded.split(":", 1)
+
+                    if not email or not api_token:
+                        return JSONResponse(
+                            {"error": "Unauthorized: Email or API token is empty"},
+                            status_code=401,
+                        )
+
+                    logger.debug(
+                        f"UserTokenMiddleware.dispatch: Basic auth extracted for email: {email}"
+                    )
+                    request.state.user_atlassian_email = email
+                    request.state.user_atlassian_api_token = api_token
+                    request.state.user_atlassian_auth_type = "basic"
+                    request.state.user_atlassian_token = None  # basic auth doesn't use token field
+                    logger.debug(
+                        "UserTokenMiddleware.dispatch: Set request.state for Basic auth."
+                    )
+                except (ValueError, UnicodeDecodeError) as e:
+                    logger.error(f"Failed to decode Basic auth: {e}")
+                    return JSONResponse(
+                        {"error": "Unauthorized: Invalid Basic auth encoding"},
+                        status_code=401,
+                    )
             elif auth_header:
                 logger.warning(
                     f"Unsupported Authorization type for {request.url.path}: {auth_header.split(' ', 1)[0] if ' ' in auth_header else 'UnknownType'}"
                 )
                 return JSONResponse(
                     {
-                        "error": "Unauthorized: Only 'Bearer <OAuthToken>' or 'Token <PAT>' types are supported."
+                        "error": "Unauthorized: Only 'Bearer <OAuthToken>', 'Token <PAT>', or 'Basic <base64(email:api_token)>' types are supported."
                     },
                     status_code=401,
                 )
