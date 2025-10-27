@@ -1,12 +1,14 @@
 """Module for Confluence page operations."""
 
 import logging
+from pathlib import Path
+from typing import Any
 
 import requests
 from requests.exceptions import HTTPError
 
 from ..exceptions import MCPAtlassianAuthenticationError
-from ..models.confluence import ConfluencePage
+from ..models.confluence import ConfluenceAttachment, ConfluencePage
 from .client import ConfluenceClient
 from .v2_adapter import ConfluenceV2Adapter
 
@@ -516,6 +518,116 @@ class PagesMixin(ConfluenceClient):
             logger.error(f"Error fetching child pages for page {page_id}: {str(e)}")
             logger.debug("Full exception details:", exc_info=True)
             return []
+
+    def attach_file(
+        self,
+        file_path: str | Path,
+        *,
+        page_id: str | None = None,
+        space_key: str | None = None,
+        title: str | None = None,
+        attachment_name: str | None = None,
+        content_type: str | None = None,
+        comment: str | None = None,
+    ) -> ConfluenceAttachment:
+        """Upload a file as an attachment to a Confluence page.
+
+        Args:
+            file_path: Local path to the file that should be attached.
+            page_id: ID of the page to attach the file to. When provided, overrides
+                ``space_key`` and ``title``.
+            space_key: Key of the space that contains the page (used with ``title``).
+            title: Title of the target page (used with ``space_key``).
+            attachment_name: Optional name for the attachment. Defaults to the
+                filename when not provided.
+            content_type: Optional MIME type for the attachment payload.
+            comment: Optional comment stored with the attachment metadata.
+
+        Returns:
+            ConfluenceAttachment representing the uploaded file.
+
+        Raises:
+            FileNotFoundError: If ``file_path`` does not exist or is not a file.
+            ValueError: If neither ``page_id`` nor a ``space_key``/``title`` pair is
+                provided, or if the API response cannot be parsed.
+            MCPAtlassianAuthenticationError: If authentication fails.
+            HTTPError: If the Confluence REST API returns an HTTP error other than
+                authentication failures.
+        """
+
+        path = Path(file_path).expanduser()
+        if not path.is_file():
+            error_msg = f"Attachment file not found: {path}"
+            logger.error(error_msg)
+            raise FileNotFoundError(error_msg)
+
+        if page_id:
+            logger.debug("Uploading attachment '%s' to page ID %s", path.name, page_id)
+        elif space_key and title:
+            logger.debug(
+                "Uploading attachment '%s' to page '%s' in space '%s'",
+                path.name,
+                title,
+                space_key,
+            )
+        else:
+            error_msg = (
+                "attach_file requires either page_id or both space_key and title"
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        try:
+            response = self.confluence.attach_file(
+                filename=str(path),
+                name=attachment_name,
+                content_type=content_type,
+                page_id=page_id,
+                title=title,
+                space=space_key,
+                comment=comment,
+            )
+        except HTTPError as http_err:
+            if http_err.response is not None and http_err.response.status_code in [
+                401,
+                403,
+            ]:
+                error_msg = (
+                    "Authentication failed when uploading attachment to Confluence "
+                    f"({http_err.response.status_code})."
+                )
+                logger.error(error_msg)
+                raise MCPAtlassianAuthenticationError(error_msg) from http_err
+            logger.error(
+                "HTTP error while uploading attachment '%s': %s",
+                path.name,
+                http_err,
+            )
+            raise
+        except Exception as exc:  # noqa: BLE001 - bubble up after logging
+            logger.error(
+                "Unexpected error uploading attachment '%s': %s", path.name, exc
+            )
+            raise
+
+        attachment_payload: dict[str, Any] | None = None
+        if isinstance(response, dict):
+            if isinstance(response.get("results"), list) and response["results"]:
+                first_result = response["results"][0]
+                if isinstance(first_result, dict):
+                    attachment_payload = first_result
+            elif response.get("type") == "attachment":
+                attachment_payload = response
+
+        if not attachment_payload:
+            logger.debug(
+                "Raw attachment response that could not be parsed: %s", response
+            )
+            error_msg = "Unable to parse attachment response from Confluence API"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        return ConfluenceAttachment.from_api_response(attachment_payload)
 
     def delete_page(self, page_id: str) -> bool:
         """

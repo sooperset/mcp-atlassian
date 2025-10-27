@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from mcp_atlassian.confluence.pages import PagesMixin
-from mcp_atlassian.models.confluence import ConfluencePage
+from mcp_atlassian.models.confluence import ConfluenceAttachment, ConfluencePage
 
 
 class TestPagesMixin:
@@ -584,6 +584,134 @@ class TestPagesMixin:
 
         # Assert - should return empty list on error, not raise exception
         assert len(results) == 0
+
+    def test_attach_file_with_page_id(self, pages_mixin, tmp_path):
+        """Upload an attachment to a page using the page ID."""
+        # Arrange
+        attachment = tmp_path / "notes.txt"
+        attachment.write_text("test content")
+
+        pages_mixin.confluence.attach_file.return_value = {
+            "results": [
+                {
+                    "id": "att123",
+                    "type": "attachment",
+                    "status": "current",
+                    "title": "notes.txt",
+                    "extensions": {
+                        "mediaType": "text/plain",
+                        "fileSize": len("test content"),
+                    },
+                }
+            ]
+        }
+
+        # Act
+        result = pages_mixin.attach_file(
+            attachment,
+            page_id="987654",
+            attachment_name="notes.txt",
+            comment="Test upload",
+        )
+
+        # Assert
+        assert isinstance(result, ConfluenceAttachment)
+        assert result.id == "att123"
+        assert result.title == "notes.txt"
+
+        pages_mixin.confluence.attach_file.assert_called_once_with(
+            filename=str(attachment),
+            name="notes.txt",
+            content_type=None,
+            page_id="987654",
+            title=None,
+            space=None,
+            comment="Test upload",
+        )
+
+    def test_attach_file_with_space_and_title(self, pages_mixin, tmp_path):
+        """Upload an attachment using space key and page title."""
+        # Arrange
+        attachment = tmp_path / "diagram.png"
+        attachment.write_bytes(b"binary data")
+
+        pages_mixin.confluence.attach_file.return_value = {
+            "results": [
+                {
+                    "id": "att999",
+                    "type": "attachment",
+                    "status": "current",
+                    "title": "diagram.png",
+                    "extensions": {
+                        "mediaType": "image/png",
+                        "fileSize": len(b"binary data"),
+                    },
+                }
+            ]
+        }
+
+        # Act
+        result = pages_mixin.attach_file(
+            attachment,
+            space_key="PROJ",
+            title="Page Title",
+        )
+
+        # Assert
+        assert isinstance(result, ConfluenceAttachment)
+        assert result.id == "att999"
+        assert result.title == "diagram.png"
+
+        pages_mixin.confluence.attach_file.assert_called_once_with(
+            filename=str(attachment),
+            name=None,
+            content_type=None,
+            page_id=None,
+            title="Page Title",
+            space="PROJ",
+            comment=None,
+        )
+
+    def test_attach_file_requires_target(self, pages_mixin, tmp_path):
+        """Ensure either page ID or space/title pair is required."""
+        attachment = tmp_path / "doc.pdf"
+        attachment.write_bytes(b"content")
+
+        with pytest.raises(ValueError):
+            pages_mixin.attach_file(attachment)
+
+    def test_attach_file_missing_file(self, pages_mixin):
+        """Raise FileNotFoundError when the attachment does not exist."""
+        with pytest.raises(FileNotFoundError):
+            pages_mixin.attach_file("/nonexistent/file.txt", page_id="123")
+
+    def test_attach_file_unexpected_response(self, pages_mixin, tmp_path):
+        """Raise ValueError when the Confluence API returns an empty response."""
+        attachment = tmp_path / "data.csv"
+        attachment.write_text("a,b,c")
+
+        pages_mixin.confluence.attach_file.return_value = {"results": []}
+
+        with pytest.raises(ValueError):
+            pages_mixin.attach_file(attachment, page_id="111222")
+
+    def test_attach_file_direct_attachment_response(self, pages_mixin, tmp_path):
+        """Handle responses where the attachment is returned as a direct dict."""
+        attachment = tmp_path / "archive.zip"
+        attachment.write_bytes(b"zip")
+
+        pages_mixin.confluence.attach_file.return_value = {
+            "id": "att-direct",
+            "type": "attachment",
+            "status": "current",
+            "title": "archive.zip",
+            "extensions": {"mediaType": "application/zip", "fileSize": 3},
+        }
+
+        result = pages_mixin.attach_file(attachment, page_id="333444")
+
+        assert isinstance(result, ConfluenceAttachment)
+        assert result.id == "att-direct"
 
     def test_get_page_success(self, pages_mixin):
         """Test successful page retrieval."""

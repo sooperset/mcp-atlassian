@@ -227,6 +227,115 @@ async def get_page(
 
 
 @confluence_mcp.tool(tags={"confluence", "read"})
+async def get_page_ancestors(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(
+            description=(
+                "The ID of the page to get ancestors for (parent pages "
+                "in hierarchical order)"
+            )
+        ),
+    ],
+) -> str:
+    """Get ancestors (parent pages) of a specific Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page to get ancestors for.
+
+    Returns:
+        JSON string representing a list of ancestor page objects in
+        hierarchical order (immediate parent first, root ancestor last).
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        ancestors = confluence_fetcher.get_page_ancestors(page_id)
+        ancestor_list = [page.to_simplified_dict() for page in ancestors]
+        result = {
+            "page_id": page_id,
+            "count": len(ancestor_list),
+            "ancestors": ancestor_list,
+        }
+    except OSError as e:
+        logger.error(f"Error getting ancestors for page ID {page_id}: {e}")
+        result = {"error": f"Failed to get ancestors: {e}"}
+
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(tags={"confluence", "read"})
+async def get_space_pages(
+    ctx: Context,
+    space_key: Annotated[
+        str,
+        Field(
+            description=(
+                "The key of the space to get pages from (e.g., 'DEV', 'TEAM', 'DOC')"
+            )
+        ),
+    ],
+    start: Annotated[
+        int,
+        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(
+            description="Maximum number of pages to return (1-50)",
+            default=10,
+            ge=1,
+            le=50,
+        ),
+    ] = 10,
+    convert_to_markdown: Annotated[
+        bool,
+        Field(
+            description=(
+                "Whether to convert page content to markdown (true) "
+                "or keep it in raw HTML format (false)"
+            ),
+            default=True,
+        ),
+    ] = True,
+) -> str:
+    """Get all pages from a specific Confluence space.
+
+    Args:
+        ctx: The FastMCP context.
+        space_key: The key of the space to get pages from.
+        start: Starting index for pagination.
+        limit: Maximum number of pages to return (1-50).
+        convert_to_markdown: Convert content to markdown or keep raw HTML.
+
+    Returns:
+        JSON string representing a list of page objects from the space.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        pages = confluence_fetcher.get_space_pages(
+            space_key=space_key,
+            start=start,
+            limit=limit,
+            convert_to_markdown=convert_to_markdown,
+        )
+        page_list = [page.to_simplified_dict() for page in pages]
+        result = {
+            "space_key": space_key,
+            "count": len(page_list),
+            "start": start,
+            "limit": limit,
+            "pages": page_list,
+        }
+    except OSError as e:
+        logger.error(f"Error getting pages from space {space_key}: {e}")
+        result = {"error": f"Failed to get pages from space: {e}"}
+
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(tags={"confluence", "read"})
 async def get_page_children(
     ctx: Context,
     parent_id: Annotated[
@@ -676,6 +785,124 @@ async def add_comment(
     return json.dumps(response, indent=2, ensure_ascii=False)
 
 
+@confluence_mcp.tool(tags={"confluence", "write"})
+@check_write_access
+async def attach_file(
+    ctx: Context,
+    file_path: Annotated[
+        str, Field(description="Local path to the file that should be attached")
+    ],
+    page_id: Annotated[
+        str | None,
+        Field(
+            description=(
+                "ID of the page to attach the file to. "
+                "When provided, overrides space_key and title"
+            ),
+            default=None,
+        ),
+    ] = None,
+    space_key: Annotated[
+        str | None,
+        Field(
+            description="Key of the space that contains the page (used with title)",
+            default=None,
+        ),
+    ] = None,
+    title: Annotated[
+        str | None,
+        Field(
+            description="Title of the target page (used with space_key)",
+            default=None,
+        ),
+    ] = None,
+    attachment_name: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional name for the attachment. "
+                "Defaults to the filename when not provided"
+            ),
+            default=None,
+        ),
+    ] = None,
+    content_type: Annotated[
+        str | None,
+        Field(
+            description="Optional MIME type for the attachment payload",
+            default=None,
+        ),
+    ] = None,
+    comment: Annotated[
+        str | None,
+        Field(
+            description="Optional comment stored with the attachment metadata",
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """Upload a file as an attachment to a Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        file_path: Local path to the file that should be attached.
+        page_id: ID of the page to attach the file to.
+        space_key: Key of the space (used with title).
+        title: Title of the target page (used with space_key).
+        attachment_name: Optional name for the attachment.
+        content_type: Optional MIME type for the attachment.
+        comment: Optional comment for the attachment.
+
+    Returns:
+        JSON string representing the uploaded attachment.
+
+    Raises:
+        ValueError: If neither page_id nor space_key/title pair is provided,
+            or if Confluence client is unavailable.
+        FileNotFoundError: If the file does not exist.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        attachment = confluence_fetcher.attach_file(
+            file_path=file_path,
+            page_id=page_id,
+            space_key=space_key,
+            title=title,
+            attachment_name=attachment_name,
+            content_type=content_type,
+            comment=comment,
+        )
+        attachment_data = attachment.to_simplified_dict()
+        response = {
+            "success": True,
+            "message": "File attached successfully",
+            "attachment": attachment_data,
+        }
+    except FileNotFoundError as e:
+        logger.error(f"File not found: {str(e)}")
+        response = {
+            "success": False,
+            "message": f"File not found: {file_path}",
+            "error": str(e),
+        }
+    except ValueError as e:
+        logger.error(f"Invalid parameters: {str(e)}")
+        response = {
+            "success": False,
+            "message": "Invalid parameters",
+            "error": str(e),
+        }
+    except OSError as e:
+        logger.error(f"Error attaching file to Confluence page: {str(e)}")
+        response = {
+            "success": False,
+            "message": "Error attaching file",
+            "error": str(e),
+        }
+
+    return json.dumps(response, indent=2, ensure_ascii=False)
+
+
 @confluence_mcp.tool(tags={"confluence", "read"})
 async def search_user(
     ctx: Context,
@@ -685,9 +912,11 @@ async def search_user(
             description=(
                 "Search query - a CQL query string for user search. "
                 "Examples of CQL:\n"
-                "- Basic user lookup by full name: 'user.fullname ~ \"First Last\"'\n"
-                'Note: Special identifiers need proper quoting in CQL: personal space keys (e.g., "~username"), '
-                "reserved words, numeric IDs, and identifiers with special characters."
+                "- Basic user lookup by full name: 'user.fullname ~ "
+                '"First Last"\'\n'
+                "Note: Special identifiers need proper quoting in CQL: "
+                'personal space keys (e.g., "~username"), reserved words, '
+                "numeric IDs, and identifiers with special characters."
             )
         ),
     ],
@@ -709,7 +938,8 @@ async def search_user(
         limit: Maximum number of results (1-50).
 
     Returns:
-        JSON string representing a list of simplified Confluence user search result objects.
+        JSON string representing a list of simplified Confluence user search
+        result objects.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
@@ -735,12 +965,11 @@ async def search_user(
             indent=2,
             ensure_ascii=False,
         )
-    except Exception as e:
+    except OSError as e:
         logger.error(f"Error searching users: {str(e)}")
+        error_msg = f"An unexpected error occurred while searching for users: {str(e)}"
         return json.dumps(
-            {
-                "error": f"An unexpected error occurred while searching for users: {str(e)}"
-            },
+            {"error": error_msg},
             indent=2,
             ensure_ascii=False,
         )
