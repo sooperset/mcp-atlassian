@@ -106,6 +106,90 @@ class PagesMixin(ConfluenceClient):
             )
             raise Exception(f"Error retrieving page content: {str(e)}") from e
 
+    def get_page_version_content(
+        self,
+        page_id: str,
+        version: int,
+        *,
+        convert_to_markdown: bool = True,
+    ) -> ConfluencePage:
+        """
+        Get content of a specific historical version of a page.
+
+        Args:
+            page_id: The ID of the page to retrieve.
+            version: The version number of the page to retrieve.
+            convert_to_markdown: When True, returns content in markdown format,
+                otherwise returns raw HTML (keyword-only).
+
+        Returns:
+            ConfluencePage model containing the page content and metadata
+            for the specific version.
+
+        Raises:
+            MCPAtlassianAuthenticationError: If authentication fails with the Confluence API (401/403).
+            Exception: If there is an error retrieving the page.
+        """
+        try:
+            logger.debug(
+                f"Using v1 API to get page '{page_id}' version '{version}'"
+            )
+            # For historical versions, always use v1 API with explicit version parameter.
+            # atlassian-python-api exposes `version` argument on get_page_by_id.
+            page = self.confluence.get_page_by_id(
+                page_id=page_id,
+                expand="body.storage,version,space,children.attachment",
+                status=None,
+                version=version,
+            )
+
+            space_key = page.get("space", {}).get("key", "")
+            content = page["body"]["storage"]["value"]
+
+            processed_html, processed_markdown = self.preprocessor.process_html_content(
+                content,
+                space_key=space_key,
+                confluence_client=self.confluence,
+            )
+
+            # Use the appropriate content format based on the convert_to_markdown flag
+            page_content = processed_markdown if convert_to_markdown else processed_html
+
+            # Create and return the ConfluencePage model
+            return ConfluencePage.from_api_response(
+                page,
+                base_url=self.config.url,
+                include_body=True,
+                # Override content with our processed version
+                content_override=page_content,
+                content_format="storage" if not convert_to_markdown else "markdown",
+                is_cloud=self.config.is_cloud,
+            )
+
+        except HTTPError as http_err:
+            if http_err.response is not None and http_err.response.status_code in [
+                401,
+                403,
+            ]:
+                error_msg = (
+                    f"Authentication failed for Confluence API ({http_err.response.status_code}). "
+                    "Token may be expired or invalid. Please verify credentials."
+                )
+                logger.error(error_msg)
+                raise MCPAtlassianAuthenticationError(error_msg) from http_err
+            else:
+                logger.error(
+                    f"HTTP error during API call: {http_err}", exc_info=False)
+                raise http_err
+        except Exception as e:
+            logger.error(
+                f"Error retrieving page content for page ID {page_id}, "
+                f"version {version}: {str(e)}"
+            )
+            raise Exception(
+                f"Error retrieving page content for version {version}: {str(e)}"
+            ) from e
+
     def get_page_ancestors(self, page_id: str) -> list[ConfluencePage]:
         """
         Get ancestors (parent pages) of a specific page.
