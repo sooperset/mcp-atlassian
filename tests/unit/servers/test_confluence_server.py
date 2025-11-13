@@ -47,6 +47,37 @@ def mock_confluence_fetcher():
     mock_fetcher.update_page.return_value = mock_page
     mock_fetcher.delete_page.return_value = True
 
+    # Mock page versions for get_page_version_content
+    mock_page_v1 = MagicMock(spec=ConfluencePage)
+    mock_page_v1.to_simplified_dict.return_value = {
+        "id": "123456",
+        "title": "Test Page v1",
+        "url": "https://example.atlassian.net/wiki/spaces/TEST/pages/123456/Test+Page",
+        "content": {"value": "Old content", "format": "markdown"},
+    }
+    mock_page_v1.content = "Old content"
+    mock_page_v1.title = "Test Page v1"
+
+    mock_page_v2 = MagicMock(spec=ConfluencePage)
+    mock_page_v2.to_simplified_dict.return_value = {
+        "id": "123456",
+        "title": "Test Page v2",
+        "url": "https://example.atlassian.net/wiki/spaces/TEST/pages/123456/Test+Page",
+        "content": {"value": "New content", "format": "markdown"},
+    }
+    mock_page_v2.content = "New content"
+    mock_page_v2.title = "Test Page v2"
+
+    # Mock get_page_version_content to return different pages based on version
+    def get_page_version_side_effect(page_id, version, **kwargs):
+        if version == 1:
+            return mock_page_v1
+        elif version == 2:
+            return mock_page_v2
+        return mock_page
+
+    mock_fetcher.get_page_version_content.side_effect = get_page_version_side_effect
+
     # Mock comment
     mock_comment = MagicMock()
     mock_comment.to_simplified_dict.return_value = {
@@ -126,6 +157,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_labels,
         get_page,
         get_page_children,
+        get_page_diff,
         search,
         search_user,
         update_page,
@@ -151,6 +183,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.tool()(search)
     confluence_sub_mcp.tool()(get_page)
     confluence_sub_mcp.tool()(get_page_children)
+    confluence_sub_mcp.tool()(get_page_diff)
     confluence_sub_mcp.tool()(get_comments)
     confluence_sub_mcp.tool()(add_comment)
     confluence_sub_mcp.tool()(get_labels)
@@ -179,6 +212,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         get_labels,
         get_page,
         get_page_children,
+        get_page_diff,
         search,
         search_user,
         update_page,
@@ -206,6 +240,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.tool()(search)
     confluence_sub_mcp.tool()(get_page)
     confluence_sub_mcp.tool()(get_page_children)
+    confluence_sub_mcp.tool()(get_page_diff)
     confluence_sub_mcp.tool()(get_comments)
     confluence_sub_mcp.tool()(add_comment)
     confluence_sub_mcp.tool()(get_labels)
@@ -357,6 +392,41 @@ async def test_get_page_children(client, mock_confluence_fetcher):
     assert "results" in result_data
     assert len(result_data["results"]) > 0
     assert result_data["results"][0]["title"] == "Test Page Mock Title"
+
+
+@pytest.mark.anyio
+async def test_get_page_diff(client, mock_confluence_fetcher):
+    """Test the get_page_diff tool comparing two page versions."""
+    response = await client.call_tool(
+        "confluence_get_page_diff",
+        {
+            "page_id": "123456",
+            "from_version": 2,
+            "to_version": 1,
+            "output_format": "unified",
+        },
+    )
+
+    # Verify that get_page_version_content was called twice (for both versions)
+    assert mock_confluence_fetcher.get_page_version_content.call_count == 2
+
+    # Check that both versions were requested
+    calls = mock_confluence_fetcher.get_page_version_content.call_args_list
+    assert calls[0].kwargs["page_id"] == "123456"
+    assert calls[0].kwargs["version"] == 1  # to_version (old)
+    assert calls[1].kwargs["page_id"] == "123456"
+    assert calls[1].kwargs["version"] == 2  # from_version (new)
+
+    result_data = json.loads(response[0].text)
+    assert "page_id" in result_data
+    assert result_data["page_id"] == "123456"
+    assert "from_version" in result_data
+    assert result_data["from_version"] == 2
+    assert "to_version" in result_data
+    assert result_data["to_version"] == 1
+    assert "diff_unified" in result_data
+    assert "title_old" in result_data
+    assert "title_new" in result_data
 
 
 @pytest.mark.anyio
