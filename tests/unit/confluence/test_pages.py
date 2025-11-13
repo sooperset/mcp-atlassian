@@ -3,8 +3,10 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from requests.exceptions import HTTPError
 
 from mcp_atlassian.confluence.pages import PagesMixin
+from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.models.confluence import ConfluencePage
 
 
@@ -153,6 +155,186 @@ class TestPagesMixin:
 
         # Assert HTML processing was used
         assert result.content == "<p>Processed HTML</p>"
+
+    def test_get_page_content_authentication_error_401(self, pages_mixin):
+        """Test handling of 401 authentication error."""
+        # Arrange
+        page_id = "987654321"
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        # Create a mock response with 401 status
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        http_error = HTTPError("Unauthorized")
+        http_error.response = mock_response
+
+        pages_mixin.confluence.get_page_by_id.side_effect = http_error
+
+        # Act & Assert
+        with pytest.raises(MCPAtlassianAuthenticationError) as exc_info:
+            pages_mixin.get_page_content(page_id)
+
+        assert "Authentication failed" in str(exc_info.value)
+        assert "401" in str(exc_info.value)
+        pages_mixin.confluence.get_page_by_id.assert_called_once_with(
+            page_id=page_id, expand="body.storage,version,space,children.attachment"
+        )
+
+    def test_get_page_content_authentication_error_403(self, pages_mixin):
+        """Test handling of 403 authentication error."""
+        # Arrange
+        page_id = "987654321"
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        # Create a mock response with 403 status
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+        http_error = HTTPError("Forbidden")
+        http_error.response = mock_response
+
+        pages_mixin.confluence.get_page_by_id.side_effect = http_error
+
+        # Act & Assert
+        with pytest.raises(MCPAtlassianAuthenticationError) as exc_info:
+            pages_mixin.get_page_content(page_id)
+
+        assert "Authentication failed" in str(exc_info.value)
+        assert "403" in str(exc_info.value)
+        pages_mixin.confluence.get_page_by_id.assert_called_once_with(
+            page_id=page_id, expand="body.storage,version,space,children.attachment"
+        )
+
+    def test_get_page_content_http_error_404(self, pages_mixin):
+        """Test handling of 404 HTTP error (page not found)."""
+        # Arrange
+        page_id = "987654321"
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        # Create a mock response with 404 status
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        http_error = HTTPError("Not Found")
+        http_error.response = mock_response
+
+        pages_mixin.confluence.get_page_by_id.side_effect = http_error
+
+        # Act & Assert
+        with pytest.raises(HTTPError):
+            pages_mixin.get_page_content(page_id)
+
+        pages_mixin.confluence.get_page_by_id.assert_called_once_with(
+            page_id=page_id, expand="body.storage,version,space,children.attachment"
+        )
+
+    def test_get_page_content_http_error_500(self, pages_mixin):
+        """Test handling of 500 HTTP error (server error)."""
+        # Arrange
+        page_id = "987654321"
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        # Create a mock response with 500 status
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        http_error = HTTPError("Internal Server Error")
+        http_error.response = mock_response
+
+        pages_mixin.confluence.get_page_by_id.side_effect = http_error
+
+        # Act & Assert
+        with pytest.raises(HTTPError):
+            pages_mixin.get_page_content(page_id)
+
+        pages_mixin.confluence.get_page_by_id.assert_called_once_with(
+            page_id=page_id, expand="body.storage,version,space,children.attachment"
+        )
+
+    def test_get_page_content_general_exception(self, pages_mixin):
+        """Test handling of general exceptions."""
+        # Arrange
+        page_id = "987654321"
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        pages_mixin.confluence.get_page_by_id.side_effect = ValueError(
+            "Unexpected error"
+        )
+
+        # Act & Assert
+        with pytest.raises(Exception) as exc_info:
+            pages_mixin.get_page_content(page_id)
+
+        assert "Error retrieving page content" in str(exc_info.value)
+        pages_mixin.confluence.get_page_by_id.assert_called_once_with(
+            page_id=page_id, expand="body.storage,version,space,children.attachment"
+        )
+
+    def test_get_page_content_missing_space_key(self, pages_mixin):
+        """Test handling when space key is missing from response."""
+        # Arrange
+        page_id = "987654321"
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        # Mock page response without space key
+        page_without_space = {
+            "id": page_id,
+            "title": "Test Page",
+            "body": {"storage": {"value": "<p>Content</p>"}},
+            "version": {"number": 1},
+        }
+        pages_mixin.confluence.get_page_by_id.return_value = page_without_space
+
+        # Mock the preprocessor
+        pages_mixin.preprocessor.process_html_content.return_value = (
+            "<p>Processed HTML</p>",
+            "Processed Markdown",
+        )
+
+        # Act
+        result = pages_mixin.get_page_content(page_id)
+
+        # Assert - should handle missing space key gracefully
+        assert isinstance(result, ConfluencePage)
+        assert result.id == page_id
+        # Preprocessor should be called with empty space_key
+        pages_mixin.preprocessor.process_html_content.assert_called_once_with(
+            "<p>Content</p>",
+            space_key="",
+            confluence_client=pages_mixin.confluence,
+        )
+
+    def test_get_page_content_default_convert_to_markdown(self, pages_mixin):
+        """Test that convert_to_markdown defaults to True."""
+        # Arrange
+        page_id = "987654321"
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        # Mock the preprocessor
+        pages_mixin.preprocessor.process_html_content.return_value = (
+            "<p>Processed HTML</p>",
+            "Processed Markdown",
+        )
+
+        # Act - call without specifying convert_to_markdown
+        result = pages_mixin.get_page_content(page_id)
+
+        # Assert - should default to markdown
+        assert result.content == "Processed Markdown"
+        assert result.content_format == "markdown"
+
+    def test_get_page_content_http_error_without_response(self, pages_mixin):
+        """Test handling of HTTPError without response object."""
+        # Arrange
+        page_id = "987654321"
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        # Create HTTPError without response
+        http_error = HTTPError("Network error")
+        http_error.response = None
+
+        pages_mixin.confluence.get_page_by_id.side_effect = http_error
+
+        # Act & Assert - should raise the HTTPError as-is
+        with pytest.raises(HTTPError):
+            pages_mixin.get_page_content(page_id)
 
     def test_get_page_by_title_success(self, pages_mixin):
         """Test getting a page by title when it exists."""
@@ -844,6 +1026,32 @@ class TestPagesMixin:
             assert isinstance(result, ConfluencePage)
             assert result.id == "v1_123456789"
             assert result.title == title
+
+    def test_get_page_version_content(self, pages_mixin):
+        """Test getting page content for a specific version."""
+        # Arrange
+        page_id = "987654321"
+        version = 3
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        # Act
+        result = pages_mixin.get_page_version_content(
+            page_id, version, convert_to_markdown=True
+        )
+
+        # Assert
+        pages_mixin.confluence.get_page_by_id.assert_called_once_with(
+            page_id=page_id,
+            expand="body.storage,version,space,children.attachment",
+            status=None,
+            version=version,
+        )
+
+        # Verify result structure
+        assert isinstance(result, ConfluencePage)
+        assert result.id == "987654321"
+        assert result.title == "Example Meeting Notes"
+        assert result.content == "Processed Markdown"
 
 
 class TestPagesOAuthMixin:
