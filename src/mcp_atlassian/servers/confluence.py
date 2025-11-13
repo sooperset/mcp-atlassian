@@ -2,7 +2,9 @@
 
 import json
 import logging
-from typing import Annotated
+import difflib
+from typing import Annotated, Literal
+from urllib.parse import urlparse, parse_qs
 
 from fastmcp import Context, FastMCP
 from pydantic import BeforeValidator, Field
@@ -224,6 +226,229 @@ async def get_page(
         result = {"content": {"value": page_object.content}}
 
     return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(tags={"confluence", "read"})
+async def get_page_diff(
+    ctx: Context,
+    diff_url: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Full Confluence diff-page URL of the form "
+                "'/pages/diffpagesbyversion.action?pageId=...&selectedPageVersions=NEW&selectedPageVersions=OLD'. "
+                "If provided, the parameters page_id/from_version/to_version may be omitted."
+            ),
+            default=None,
+        ),
+    ] = None,
+    page_id: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Confluence page ID. "
+                "May be omitted if diff_url already contains pageId."
+            ),
+            default=None,
+        ),
+    ] = None,
+    from_version: Annotated[
+        int | None,
+        Field(
+            description=(
+                "The 'new' version number (usually the larger number). "
+                "If not provided and diff_url is set, the first selectedPageVersions from the URL is used."
+            ),
+            default=None,
+        ),
+    ] = None,
+    to_version: Annotated[
+        int | None,
+        Field(
+            description=(
+                "The 'old' version number (usually the smaller number). "
+                "If not provided and diff_url is set, the second selectedPageVersions from the URL is used."
+            ),
+            default=None,
+        ),
+    ] = None,
+    output_format: Annotated[
+        Literal["unified", "lines"],
+        Field(
+            description=(
+                "Diff output format: "
+                "'unified' — unified diff text, "
+                "'lines' — list of changed line blocks."
+            ),
+            default="unified",
+        ),
+    ] = "unified",
+    convert_to_markdown: Annotated[
+        bool,
+        Field(
+            description=(
+                "Convert page content to markdown before comparison (True) "
+                "or use HTML (False). "
+                "HTML provides a more accurate diff but increases text size."
+            ),
+            default=True,
+        ),
+    ] = True,
+) -> str:
+    """
+    Get the diff between two versions of a Confluence page.
+
+    You may pass either:
+    - only diff_url (then page_id/from_version/to_version are extracted from it), or
+    - page_id + from_version + to_version.
+    """
+    # 1. Parse diff_url (if provided)
+    if diff_url:
+        parsed = urlparse(diff_url)
+        qs = parse_qs(parsed.query)
+
+        if not page_id:
+            page_id_values = qs.get("pageId") or qs.get("pageid")
+            if page_id_values:
+                page_id = page_id_values[0]
+
+        selected_versions = qs.get("selectedPageVersions") or qs.get(
+            "selectedpageversions"
+        )
+        # expecting two selectedPageVersions parameters
+        if selected_versions and len(selected_versions) >= 2:
+            if from_version is None:
+                from_version = int(selected_versions[0])
+            if to_version is None:
+                to_version = int(selected_versions[1])
+
+    # 2. Validate input parameters
+    if not page_id:
+        return json.dumps(
+            {
+                "error": (
+                    "You need to provide either diff_url with pageId "
+                    "or explicitly pass page_id."
+                )
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+
+    if from_version is None or to_version is None:
+        return json.dumps(
+            {
+                "error": (
+                    "You must specify both versions: from_version and to_version, "
+                    "or diff_url must contain two selectedPageVersions."
+                )
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+
+    if from_version == to_version:
+        return json.dumps(
+            {"error": "Cannot compare the same page version."},
+            indent=2,
+            ensure_ascii=False,
+        )
+
+    # 3. Get Confluence client
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    try:
+        # 4. Load both page versions using the new method
+        old_page = confluence_fetcher.get_page_version_content(
+            page_id=page_id,
+            version=to_version,
+            convert_to_markdown=convert_to_markdown,
+        )
+        new_page = confluence_fetcher.get_page_version_content(
+            page_id=page_id,
+            version=from_version,
+            convert_to_markdown=convert_to_markdown,
+        )
+
+        old_lines = (old_page.content or "").splitlines()
+        new_lines = (new_page.content or "").splitlines()
+
+        if output_format == "unified":
+            diff_iter = difflib.unified_diff(
+                old_lines,
+                new_lines,
+                fromfile=f"{page_id}-v{to_version}",
+                tofile=f"{page_id}-v{from_version}",
+                lineterm="",
+            )
+            diff_text = "\n".join(diff_iter)
+
+            result = {
+                "page_id": page_id,
+                "from_version": from_version,
+                "to_version": to_version,
+                "title_old": old_page.title,
+                "title_new": new_page.title,
+                "diff_unified": diff_text,
+            }
+        else:
+            # More structured format: list of change blocks
+            sm = difflib.SequenceMatcher(a=old_lines, b=new_lines)
+            chunks = []
+            for tag, i1, i2, j1, j2 in sm.get_opcodes():
+                if tag == "equal":
+                    continue
+                chunks.append(
+                    {
+                        "operation": tag,  # replace / delete / insert
+                        "old_range": [i1, i2],
+                        "new_range": [j1, j2],
+                        "old_lines": old_lines[i1:i2],
+                        "new_lines": new_lines[j1:j2],
+                    }
+                )
+
+            result = {
+                "page_id": page_id,
+                "from_version": from_version,
+                "to_version": to_version,
+                "title_old": old_page.title,
+                "title_new": new_page.title,
+                "changes": chunks,
+            }
+
+        return json.dumps(result, indent=2, ensure_ascii=False)
+
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(
+            f"Authentication error while fetching page versions for {page_id}: {e}",
+            exc_info=False,
+        )
+        return json.dumps(
+            {
+                "error": (
+                    "Authentication failed while fetching page versions. "
+                    "Please check your credentials."
+                ),
+                "details": str(e),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(
+            f"Error fetching or diffing page versions for {page_id}: {e}",
+            exc_info=True,
+        )
+        return json.dumps(
+            {
+                "error": (
+                    f"Failed to fetch or diff page versions for page '{page_id}': {e}"
+                )
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
 
 
 @confluence_mcp.tool(tags={"confluence", "read"})
