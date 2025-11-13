@@ -131,9 +131,7 @@ class PagesMixin(ConfluenceClient):
             Exception: If there is an error retrieving the page.
         """
         try:
-            logger.debug(
-                f"Using v1 API to get page '{page_id}' version '{version}'"
-            )
+            logger.debug(f"Using v1 API to get page '{page_id}' version '{version}'")
             # For historical versions, always use v1 API with explicit version parameter.
             # atlassian-python-api exposes `version` argument on get_page_by_id.
             page = self.confluence.get_page_by_id(
@@ -178,8 +176,7 @@ class PagesMixin(ConfluenceClient):
                 logger.error(error_msg)
                 raise MCPAtlassianAuthenticationError(error_msg) from http_err
             else:
-                logger.error(
-                    f"HTTP error during API call: {http_err}", exc_info=False)
+                logger.error(f"HTTP error during API call: {http_err}", exc_info=False)
                 raise http_err
         except Exception as e:
             logger.error(

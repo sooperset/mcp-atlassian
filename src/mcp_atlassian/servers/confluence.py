@@ -1,10 +1,10 @@
 """Confluence FastMCP server instance and tool definitions."""
 
+import difflib
 import json
 import logging
-import difflib
 from typing import Annotated, Literal
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
 
 from fastmcp import Context, FastMCP
 from pydantic import BeforeValidator, Field
