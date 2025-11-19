@@ -104,6 +104,10 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
 
 
 class AtlassianMCP(FastMCP[MainAppContext]):
+    def __init__(self, *args, **kwargs):
+        kwargs.pop('description', None)
+        super().__init__(*args, **kwargs)
+
     """Custom FastMCP server class for Atlassian integration with tool filtering."""
 
     async def _mcp_list_tools(self) -> list[MCPTool]:
