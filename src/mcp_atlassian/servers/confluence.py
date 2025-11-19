@@ -488,6 +488,14 @@ async def create_page(
         else False,
         content_representation=content_representation,
     )
+    
+    # Add AICreate label to the page
+    try:
+        confluence_fetcher.add_page_label(page.id, "AICreate")
+        logger.debug(f"Added AICreate label to page {page.id}")
+    except Exception as e:
+        logger.warning(f"Could not add AICreate label to page {page.id}: {e}")
+    
     result = page.to_simplified_dict()
     return json.dumps(
         {"message": "Page created successfully", "page": result},
@@ -591,6 +599,20 @@ async def update_page(
         else False,
         content_representation=content_representation,
     )
+    
+    # Add AIUpdate label to the page
+    try:
+        # Get existing labels
+        existing_labels = confluence_fetcher.get_page_labels(page_id)
+        existing_label_names = [label.name for label in existing_labels]
+        
+        # Only add if not already present
+        if "AIUpdate" not in existing_label_names:
+            confluence_fetcher.add_page_label(page_id, "AIUpdate")
+            logger.debug(f"Added AIUpdate label to page {page_id}")
+    except Exception as e:
+        logger.warning(f"Could not add AIUpdate label to page {page_id}: {e}")
+    
     page_data = updated_page.to_simplified_dict()
     return json.dumps(
         {"message": "Page updated successfully", "page": page_data},
@@ -672,6 +694,19 @@ async def add_comment(
     try:
         comment = confluence_fetcher.add_comment(page_id=page_id, content=ai_content)
         if comment:
+            # Add AIComment label to the page
+            try:
+                # Get existing labels
+                existing_labels = confluence_fetcher.get_page_labels(page_id)
+                existing_label_names = [label.name for label in existing_labels]
+                
+                # Only add if not already present
+                if "AIComment" not in existing_label_names:
+                    confluence_fetcher.add_page_label(page_id, "AIComment")
+                    logger.debug(f"Added AIComment label to page {page_id}")
+            except Exception as e:
+                logger.warning(f"Could not add AIComment label to page {page_id}: {e}")
+            
             comment_data = comment.to_simplified_dict()
             response = {
                 "success": True,
