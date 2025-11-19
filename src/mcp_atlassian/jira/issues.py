@@ -1014,9 +1014,7 @@ class IssuesMixin(
 
             # Convert description from Markdown to Jira format if present
             if "description" in update_fields:
-                update_fields["description"] = self._markdown_to_jira(
-                    update_fields["description"]
-                )
+                update_fields["description"] = self._markdown_to_jira(update_fields["description"])
 
             # Process kwargs
             for key, value in kwargs.items():

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
@@ -15,6 +16,8 @@ from mcp_atlassian.servers.dependencies import get_jira_fetcher
 from mcp_atlassian.utils.decorators import check_write_access
 
 logger = logging.getLogger(__name__)
+
+
 
 jira_mcp = FastMCP(
     name="Jira MCP Service",
@@ -695,11 +698,31 @@ async def create_issue(
     if not isinstance(extra_fields, dict):
         raise ValueError("additional_fields must be a dictionary.")
 
+    # Append AI attribution to description if provided
+    ai_description = description
+    if ai_description:
+        ai_description = f"{description}\n\nCreated by Algosec AI"
+    
+    # Add AICreate label
+    if "labels" in extra_fields:
+        # If labels already exist in extra_fields, append to them
+        if isinstance(extra_fields["labels"], list):
+            if "AICreate" not in extra_fields["labels"]:
+                extra_fields["labels"].append("AICreate")
+        else:
+            # Convert to list if it's not already
+            extra_fields["labels"] = [extra_fields["labels"], "AICreate"]
+    else:
+        # Create new labels list with AICreate
+        extra_fields["labels"] = ["AICreate"]
+    
+    logger.debug("Adding AICreate label to issue")
+
     issue = jira.create_issue(
         project_key=project_key,
         summary=summary,
         issue_type=issue_type,
-        description=description,
+        description=ai_description,
         assignee=assignee,
         components=components_list,
         **extra_fields,
@@ -906,10 +929,38 @@ async def update_issue(
         raise ValueError("fields must be a dictionary.")
     update_fields = fields
 
+    # Append AI attribution to description if it's being updated
+    if "description" in update_fields and update_fields["description"]:
+        update_fields["description"] = f"{update_fields['description']}\n\nUpdated by Algosec AI"
+
     # Use additional_fields directly as dict
     extra_fields = additional_fields or {}
     if not isinstance(extra_fields, dict):
         raise ValueError("additional_fields must be a dictionary.")
+    
+    # Add AIUpdate label
+    if "labels" in extra_fields:
+        # If labels already exist in extra_fields, append to them
+        if isinstance(extra_fields["labels"], list):
+            if "AIUpdate" not in extra_fields["labels"]:
+                extra_fields["labels"].append("AIUpdate")
+        else:
+            # Convert to list if it's not already
+            extra_fields["labels"] = [extra_fields["labels"], "AIUpdate"]
+    else:
+        # Get existing labels from the issue
+        try:
+            existing_issue = jira.get_issue(issue_key=issue_key, fields=["labels"])
+            existing_labels = existing_issue.labels or []
+            if "AIUpdate" not in existing_labels:
+                extra_fields["labels"] = existing_labels + ["AIUpdate"]
+            else:
+                extra_fields["labels"] = existing_labels
+        except Exception as e:
+            logger.debug(f"Could not fetch existing labels, creating new label list: {e}")
+            extra_fields["labels"] = ["AIUpdate"]
+    
+    logger.debug("Adding AIUpdate label to issue")
 
     # Parse attachments
     attachment_paths = []
@@ -1000,8 +1051,22 @@ async def add_comment(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
+    # Append AI attribution to comment
+    ai_comment = f"{comment}\n\nCommented by Algosec AI"
     # add_comment returns dict
-    result = jira.add_comment(issue_key, comment)
+    result = jira.add_comment(issue_key, ai_comment)
+    
+    # Add AIComment label to the issue
+    try:
+        existing_issue = jira.get_issue(issue_key=issue_key, fields=["labels"])
+        existing_labels = existing_issue.labels or []
+        if "AIComment" not in existing_labels:
+            new_labels = existing_labels + ["AIComment"]
+            jira.update_issue(issue_key=issue_key, labels=new_labels)
+            logger.debug("Added AIComment label to issue")
+    except Exception as e:
+        logger.warning(f"Could not add AIComment label to issue {issue_key}: {e}")
+    
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 

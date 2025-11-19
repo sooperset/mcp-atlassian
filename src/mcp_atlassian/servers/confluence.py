@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from typing import Annotated
 
 from fastmcp import Context, FastMCP
@@ -14,6 +15,8 @@ from mcp_atlassian.utils.decorators import (
 )
 
 logger = logging.getLogger(__name__)
+
+
 
 confluence_mcp = FastMCP(
     name="Confluence MCP Service",
@@ -463,6 +466,9 @@ async def create_page(
             f"Invalid content_format: {content_format}. Must be 'markdown', 'wiki', or 'storage'"
         )
 
+    # Append AI attribution to content
+    ai_content = f"{content}\n\nCreated By Algosec AI"
+    
     # Determine parameters based on content format
     if content_format == "markdown":
         is_markdown = True
@@ -474,7 +480,7 @@ async def create_page(
     page = confluence_fetcher.create_page(
         space_key=space_key,
         title=title,
-        body=content,
+        body=ai_content,
         parent_id=parent_id,
         is_markdown=is_markdown,
         enable_heading_anchors=enable_heading_anchors
@@ -555,6 +561,15 @@ async def update_page(
             f"Invalid content_format: {content_format}. Must be 'markdown', 'wiki', or 'storage'"
         )
 
+    # Append AI attribution to content
+    ai_content = f"{content}\n\nUpdated by Algosec AI"
+    
+    # Add AI attribution to version comment
+    if version_comment:
+        ai_version_comment = f"{version_comment} - Modified by Algosec AI"
+    else:
+        ai_version_comment = "Modified by Algosec AI"
+    
     # Determine parameters based on content format
     if content_format == "markdown":
         is_markdown = True
@@ -566,9 +581,9 @@ async def update_page(
     updated_page = confluence_fetcher.update_page(
         page_id=page_id,
         title=title,
-        body=content,
+        body=ai_content,
         is_minor_edit=is_minor_edit,
-        version_comment=version_comment,
+        version_comment=ai_version_comment,
         is_markdown=is_markdown,
         parent_id=parent_id,
         enable_heading_anchors=enable_heading_anchors
@@ -650,9 +665,12 @@ async def add_comment(
     Raises:
         ValueError: If in read-only mode or Confluence client is unavailable.
     """
+    # Add AI attribution to content before passing to mixin
+    ai_content = f"{content}\n\nCommented by Algosec AI"
+    
     confluence_fetcher = await get_confluence_fetcher(ctx)
     try:
-        comment = confluence_fetcher.add_comment(page_id=page_id, content=content)
+        comment = confluence_fetcher.add_comment(page_id=page_id, content=ai_content)
         if comment:
             comment_data = comment.to_simplified_dict()
             response = {
