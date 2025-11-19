@@ -20,17 +20,6 @@ except PackageNotFoundError:
     # package is not installed
     __version__ = "0.0.0"
 
-# Initialize logging with appropriate level
-logging_level = logging.WARNING
-if is_env_truthy("MCP_VERBOSE"):
-    logging_level = logging.DEBUG
-
-# Set up logging to STDOUT if MCP_LOGGING_STDOUT is set to true
-logging_stream = sys.stdout if is_env_truthy("MCP_LOGGING_STDOUT") else sys.stderr
-
-# Set up logging using the utility function
-logger = setup_logging(logging_level, logging_stream)
-
 
 @click.version_option(__version__, prog_name="mcp-atlassian")
 @click.command()
@@ -195,7 +184,6 @@ def main(
     # Set up logging to STDOUT if MCP_LOGGING_STDOUT is set to true
     logging_stream = sys.stdout if is_env_truthy("MCP_LOGGING_STDOUT") else sys.stderr
 
-    global logger
     logger = setup_logging(current_logging_level, logging_stream)
     logger.debug(f"Logging level set to: {logging.getLevelName(current_logging_level)}")
     logger.debug(
