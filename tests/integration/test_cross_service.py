@@ -57,7 +57,7 @@ class TestCrossServiceUserResolution:
         assert jira_user["displayName"] == confluence_user["displayName"]
         assert jira_user["accountId"] == confluence_user["accountId"]
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_user_context_propagation(self):
         """Test that user context is properly propagated between services."""
         with MockEnvironment.oauth_env() as env:
@@ -130,7 +130,7 @@ class TestSharedAuthentication:
             assert jira_config.api_token == confluence_config.api_token
             assert jira_config.auth_type == confluence_config.auth_type
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_authentication_context_in_request(self):
         """Test authentication context is properly maintained in request state."""
         request = MockFastMCP.create_request()
@@ -185,7 +185,7 @@ class TestSharedAuthentication:
 class TestCrossServiceErrorHandling:
     """Test error handling and propagation across services."""
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_jira_failure_does_not_affect_confluence(self):
         """Test that Jira failure doesn't prevent Confluence from working."""
         with MockEnvironment.basic_auth_env():
@@ -204,7 +204,7 @@ class TestCrossServiceErrorHandling:
                     assert context.full_jira_config is None
                     assert context.full_confluence_config is not None
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_confluence_failure_does_not_affect_jira(self):
         """Test that Confluence failure doesn't prevent Jira from working."""
         with MockEnvironment.basic_auth_env():
@@ -317,7 +317,7 @@ class TestSharedSSLProxyConfiguration:
 class TestConcurrentServiceInitialization:
     """Test concurrent initialization of both services."""
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_concurrent_service_startup(self):
         """Test that both services can be initialized concurrently."""
         with MockEnvironment.basic_auth_env():
@@ -358,7 +358,7 @@ class TestConcurrentServiceInitialization:
                     assert "jira_start" in init_order
                     assert "confluence_start" in init_order
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_parallel_fetcher_creation(self):
         """Test that fetchers can be created in parallel for both services."""
         with MockEnvironment.oauth_env():
@@ -500,7 +500,7 @@ class TestServiceAvailabilityDetection:
             assert services["jira"] is False
             assert services["confluence"] is False
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_service_availability_in_lifespan(self):
         """Test that service availability is properly reflected in lifespan context."""
         # Test with only Jira configured
