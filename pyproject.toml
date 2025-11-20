@@ -134,6 +134,12 @@ ignore_missing_imports = true
 module = "src.mcp_atlassian.*"
 disallow_untyped_defs = false
 
+[tool.pytest.ini_options]
+# Use asyncio backend only for anyio tests
+# Trio backend is not compatible with FastMCP Client initialization
+asyncio_mode = "auto"
+anyio_backends = ["asyncio"]
+
 [tool.hatch.version]
 source = "uv-dynamic-versioning"
 

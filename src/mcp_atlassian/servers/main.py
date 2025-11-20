@@ -189,6 +189,8 @@ class AtlassianMCP(FastMCP[MainAppContext]):
         self,
         path: str | None = None,
         middleware: list[Middleware] | None = None,
+        json_response: bool | None = None,  # noqa: FBT001
+        stateless_http: bool | None = None,  # noqa: FBT001
         transport: Literal["streamable-http", "sse"] = "streamable-http",
     ) -> "Starlette":
         user_token_mw = Middleware(UserTokenMiddleware, mcp_server_ref=self)
@@ -196,7 +198,11 @@ class AtlassianMCP(FastMCP[MainAppContext]):
         if middleware:
             final_middleware_list.extend(middleware)
         app = super().http_app(
-            path=path, middleware=final_middleware_list, transport=transport
+            path=path,
+            middleware=final_middleware_list,
+            json_response=json_response,
+            stateless_http=stateless_http,
+            transport=transport,
         )
         return app
 
