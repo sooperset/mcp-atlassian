@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 jira_mcp = FastMCP(
     name="Jira MCP Service",
-    description="Provides tools for interacting with Atlassian Jira.",
 )
 
 

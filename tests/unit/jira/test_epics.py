@@ -42,18 +42,28 @@ class TestEpicsMixin:
         # Skip if we already have both required fields
         field_ids = {"epic_link": "customfield_10014"}  # Missing epic_name
 
-        # Mock Epic search response
-        mock_epic = {
-            "key": "EPIC-123",
-            "fields": {
-                "issuetype": {"name": "Epic"},
-                "summary": "Test Epic",
-                "customfield_10011": "Epic Name Value",  # This should be discovered as epic_name
-            },
-        }
+        # Create a mock JiraIssue with custom fields
+        from mcp_atlassian.models.jira import JiraIssue, JiraSearchResult
 
-        mock_results = {"issues": [mock_epic]}
-        epics_mixin.jira.jql.return_value = mock_results
+        mock_epic = JiraIssue(
+            id="10001",
+            key="EPIC-123",
+            summary="Test Epic",
+            description="",
+            created="",
+            updated="",
+            custom_fields={
+                "customfield_10011": "Epic Name Value"
+            },  # This should be discovered as epic_name
+            requested_fields=["*all"],
+        )
+
+        mock_search_result = JiraSearchResult(
+            total=1, start_at=0, max_results=1, issues=[mock_epic], next_page_token=None
+        )
+
+        # Mock the search_issues method
+        epics_mixin.search_issues = MagicMock(return_value=mock_search_result)
 
         # Call the method
         epics_mixin._try_discover_fields_from_existing_epic(field_ids)
@@ -68,9 +78,19 @@ class TestEpicsMixin:
         """Test _try_discover_fields_from_existing_epic when no epics exist."""
         field_ids = {}
 
-        # Mock empty search response
-        mock_results = {"issues": []}
-        epics_mixin.jira.jql.return_value = mock_results
+        # Create empty search result
+        from mcp_atlassian.models.jira import JiraSearchResult
+
+        mock_search_result = JiraSearchResult(
+            total=0,
+            start_at=0,
+            max_results=1,
+            issues=[],  # No epics found
+            next_page_token=None,
+        )
+
+        # Mock the search_issues method
+        epics_mixin.search_issues = MagicMock(return_value=mock_search_result)
 
         # Call the method
         epics_mixin._try_discover_fields_from_existing_epic(field_ids)

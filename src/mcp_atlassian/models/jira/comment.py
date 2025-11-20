@@ -61,14 +61,17 @@ class JiraComment(ApiModel, TimestampMixin):
         # Get the body content
         body_content = EMPTY_STRING
         body = data.get("body")
-        if isinstance(body, dict) and "content" in body:
-            # Handle Atlassian Document Format (ADF)
-            # This is a simplified conversion - a proper implementation would
-            # parse the ADF structure
-            body_content = str(body.get("content", EMPTY_STRING))
-        elif body:
-            # Handle plain text or HTML content
-            body_content = str(body)
+        if body:
+            # Check if this is Cloud (ADF format) or Server/DC (plain text)
+            is_cloud = kwargs.get("is_cloud", False)
+            if is_cloud and isinstance(body, dict):
+                # Cloud uses ADF format
+                from .adf_parser import parse_adf_to_text
+
+                body_content = parse_adf_to_text(body)
+            else:
+                # Server/DC uses plain text
+                body_content = str(body)
 
         return cls(
             id=comment_id,
