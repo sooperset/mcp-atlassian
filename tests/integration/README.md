@@ -1,194 +1,183 @@
-# Integration Tests
+# Integration Tests Documentation
 
-This directory contains integration tests for the MCP Atlassian project. These tests validate the interaction between different components and services.
+This directory contains integration tests that validate MCP Atlassian functionality using real API calls to Atlassian instances.
 
-## Test Categories
+## Test Files Overview
 
-### 1. Authentication Integration (`test_authentication.py`)
-Tests various authentication flows including OAuth, Basic Auth, and PAT tokens.
+### 1. MCP Application Tests (`test_mcp_application.py`)
 
-- **OAuth Token Refresh**: Validates token refresh on expiration
-- **Basic Auth**: Tests username/password authentication for both services
-- **PAT Tokens**: Tests Personal Access Token authentication
-- **Fallback Patterns**: Tests authentication fallback (OAuth → Basic → PAT)
-- **Mixed Scenarios**: Tests different authentication combinations
+Comprehensive integration tests that validate MCP Atlassian functionality using real API calls. These tests validate the complete user workflow from a business perspective.
 
-### 2. Cross-Service Integration (`test_cross_service.py`)
-Tests integration between Jira and Confluence services.
+**Test Coverage**: 19 comprehensive integration tests covering all major functionality
+**Environments**: Both Cloud and Server/Data Center deployments
+**Execution**: Requires `--integration` flag and proper environment configuration
 
-- **User Resolution**: Consistent user handling across services
-- **Shared Authentication**: Auth context sharing between services
-- **Error Handling**: Service isolation during failures
-- **Configuration Sharing**: SSL and proxy settings consistency
-- **Service Discovery**: Dynamic service availability detection
+#### Running MCP Application Tests
 
-### 3. MCP Protocol Integration (`test_mcp_protocol.py`)
-Tests the FastMCP server implementation and tool management.
-
-- **Tool Discovery**: Dynamic tool listing based on configuration
-- **Tool Filtering**: Read-only mode and enabled tools filtering
-- **Middleware**: Authentication token extraction and validation
-- **Concurrent Execution**: Parallel tool execution support
-- **Error Propagation**: Proper error handling through the stack
-
-### 4. Content Processing Integration (`test_content_processing.py`)
-Tests HTML/Markdown conversion and content preprocessing.
-
-- **Roundtrip Conversion**: HTML ↔ Markdown accuracy
-- **Macro Preservation**: Confluence macro handling
-- **Performance**: Large content processing (>1MB)
-- **Edge Cases**: Empty content, malformed HTML, Unicode
-- **Cross-Platform**: Content sharing between services
-
-### 5. SSL Verification (`test_ssl_verification.py`)
-Tests SSL certificate handling and verification.
-
-- **SSL Configuration**: Enable/disable verification
-- **Custom CA Bundles**: Support for custom certificates
-- **Multiple Domains**: SSL adapter mounting for various domains
-- **Error Handling**: Certificate validation failures
-
-### 6. Proxy Configuration (`test_proxy.py`)
-Tests HTTP/HTTPS/SOCKS proxy support.
-
-- **Proxy Types**: HTTP, HTTPS, and SOCKS5 proxies
-- **Authentication**: Proxy credentials in URLs
-- **NO_PROXY**: Bypass patterns for internal domains
-- **Environment Variables**: Proxy configuration from environment
-- **Mixed Configuration**: Proxy + SSL settings
-
-### 7. Real API Tests (`test_real_api.py`)
-Tests with actual Atlassian APIs (requires `--use-real-data` flag).
-
-- **Complete Lifecycles**: Create/update/delete workflows
-- **Attachments**: File upload/download operations
-- **Search Operations**: JQL and CQL queries
-- **Bulk Operations**: Multiple item creation
-- **Rate Limiting**: API throttling behavior
-- **Cross-Service Linking**: Jira-Confluence integration
-
-## Running Integration Tests
-
-### Basic Execution
 ```bash
-# Run all integration tests (mocked)
-uv run pytest tests/integration/ --integration
+# Run all integration tests (Server/DC)
+uv run --env-file .env.test pytest tests/integration/test_mcp_application.py --integration -v
 
-# Run specific test file
-uv run pytest tests/integration/test_authentication.py --integration
+# Run all integration tests (Cloud)
+uv run --env-file .env.realcloud pytest tests/integration/test_mcp_application.py --integration -v
 
-# Run with coverage
-uv run pytest tests/integration/ --integration --cov=src/mcp_atlassian
+# Run specific test
+uv run --env-file .env.test pytest tests/integration/test_mcp_application.py::TestMCPApplication::test_search_functionality --integration -v
 ```
 
-### Real API Testing
+### 2. Real API Client Tests (`test_real_api.py`)
+
+Direct API client integration tests that validate core API functionality with real Atlassian instances. These tests focus on API client behavior, lifecycle operations, and data handling.
+
+**Test Coverage**: 11 tests covering direct API client testing (create, read, update, delete operations)
+**Environments**: Both Cloud and Server/Data Center deployments
+**Execution**: Requires `--integration` flag and proper environment configuration
+
+#### Running Real API Client Tests
+
 ```bash
-# Run tests against real Atlassian APIs
-uv run pytest tests/integration/test_real_api.py --integration --use-real-data
+# Run all real API client tests (Server/DC)
+uv run --env-file .env.test pytest tests/integration/test_real_api.py --integration -v
 
-# Required environment variables for real API tests:
-export JIRA_URL=https://your-domain.atlassian.net
-export JIRA_USERNAME=your-email@example.com
-export JIRA_API_TOKEN=your-api-token
-export JIRA_TEST_PROJECT_KEY=TEST
+# Run all real API client tests (Cloud)
+uv run --env-file .env.realcloud pytest tests/integration/test_real_api.py --integration -v
 
-export CONFLUENCE_URL=https://your-domain.atlassian.net/wiki
-export CONFLUENCE_USERNAME=your-email@example.com
-export CONFLUENCE_API_TOKEN=your-api-token
-export CONFLUENCE_TEST_SPACE_KEY=TEST
+# Run specific test
+uv run --env-file .env.test pytest tests/integration/test_real_api.py::TestRealJiraAPI::test_complete_issue_lifecycle --integration -v
 ```
 
-### Test Markers
-- `@pytest.mark.integration` - All integration tests
-- `@pytest.mark.anyio` - Async tests supporting multiple backends
+### 3. FastMCP Tool Validation Tests (`test_real_api_tool_validation.py`)
 
-## Environment Setup
+FastMCP tool validation tests that verify MCP tool functionality with real API data. These tests focus on the MCP tool layer and validate that tools return proper data structures.
 
-### For Mocked Tests
-No special setup required. Tests use the utilities from `tests/utils/` for mocking.
+**Test Coverage**: 57 tests covering FastMCP tool validation (jira_get_issue, jira_search, confluence_get_page, etc.)
+**Environments**: Both Cloud and Server/Data Center deployments
+**Execution**: No special flags needed (uses environment variables)
 
-### For Real API Tests
-1. Create a test project in Jira (e.g., "TEST")
-2. Create a test space in Confluence (e.g., "TEST")
-3. Generate API tokens from your Atlassian account
-4. Set environment variables as shown above
-5. Ensure your account has permissions to create/delete in test areas
+#### Running FastMCP Tool Validation Tests
 
-## Test Data Management
-
-### Automatic Cleanup
-Real API tests implement automatic cleanup using pytest fixtures:
-- Created issues are tracked and deleted after each test
-- Created pages are tracked and deleted after each test
-- Attachments are cleaned up with their parent items
-
-### Manual Cleanup
-If tests fail and leave data behind:
-```python
-# Use JQL to find test issues
-project = TEST AND summary ~ "Integration Test*"
-
-# Use CQL to find test pages
-space = TEST AND title ~ "Integration Test*"
-```
-
-## Writing New Integration Tests
-
-### Best Practices
-1. **Use Test Utilities**: Leverage helpers from `tests/utils/`
-2. **Mark Appropriately**: Use `@pytest.mark.integration`
-3. **Mock by Default**: Only use real APIs with explicit flag
-4. **Clean Up**: Always clean up created test data
-5. **Unique Identifiers**: Use UUIDs to avoid conflicts
-6. **Error Handling**: Test both success and failure paths
-
-### Example Test Structure
-```python
-import pytest
-from tests.utils.base import BaseAuthTest
-from tests.utils.mocks import MockEnvironment
-
-@pytest.mark.integration
-class TestNewIntegration(BaseAuthTest):
-    def test_feature(self):
-        with MockEnvironment.basic_auth_env():
-            # Test implementation
-            pass
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **SSL Errors**: Set `JIRA_SSL_VERIFY=false` or `CONFLUENCE_SSL_VERIFY=false`
-2. **Proxy Issues**: Check `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` settings
-3. **Rate Limiting**: Add delays between requests or reduce test frequency
-4. **Permission Errors**: Ensure test user has appropriate permissions
-5. **Cleanup Failures**: Manually delete test data using JQL/CQL queries
-
-### Debug Mode
 ```bash
-# Run with verbose output
-uv run pytest tests/integration/ --integration -v
+# Run all FastMCP tool validation tests (Server/DC)
+uv run --env-file .env.test pytest tests/integration/test_real_api_tool_validation.py -v
 
-# Run with debug logging
-uv run pytest tests/integration/ --integration --log-cli-level=DEBUG
+# Run all FastMCP tool validation tests (Cloud)
+uv run --env-file .env.realcloud pytest tests/integration/test_real_api_tool_validation.py -v
+
+# Run specific test
+uv run --env-file .env.test pytest tests/integration/test_real_api_tool_validation.py::TestRealJiraValidation::test_get_issue -v
 ```
 
-## CI/CD Integration
+## Environment Configuration
 
-### GitHub Actions Example
-```yaml
-- name: Run Integration Tests
-  env:
-    JIRA_URL: ${{ secrets.JIRA_URL }}
-    JIRA_USERNAME: ${{ secrets.JIRA_USERNAME }}
-    JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
-  run: |
-    uv run pytest tests/integration/ --integration
+### Required Environment Variables
+
+**Server/Data Center (.env.test)**:
+```bash
+JIRA_CLOUD=false
+JIRA_URL=https://jira.your-company.com
+JIRA_PERSONAL_TOKEN=your_personal_access_token
+JIRA_TEST_PROJECT_KEY=YOUR_PROJECT
+JIRA_TEST_ISSUE_KEY=YOUR_PROJECT-123
+JIRA_TEST_EPIC_KEY=YOUR_PROJECT-456
+JIRA_TEST_BOARD_ID=1000
+JIRA_TEST_SPRINT_ID=10001
+
+CONFLUENCE_URL=https://confluence.your-company.com
+CONFLUENCE_PERSONAL_TOKEN=your_confluence_personal_token
+CONFLUENCE_TEST_SPACE_KEY=YOUR_SPACE
+CONFLUENCE_TEST_PAGE_ID=123456789
+
+TEST_PROXY_URL=http://test-proxy.example.com:8080
 ```
 
-### Skip Patterns
-- Integration tests are skipped by default without `--integration` flag
-- Real API tests require both `--integration` and `--use-real-data` flags
-- Tests skip gracefully when required environment variables are missing
+**Cloud (.env.realcloud)**:
+```bash
+JIRA_CLOUD=true
+JIRA_URL=https://your-company.atlassian.net
+JIRA_USERNAME=your.email@company.com
+JIRA_API_TOKEN=your_api_token
+JIRA_TEST_PROJECT_KEY=YOUR_PROJECT
+JIRA_TEST_ISSUE_KEY=YOUR_PROJECT-123
+JIRA_TEST_EPIC_KEY=YOUR_PROJECT-456
+JIRA_TEST_BOARD_ID=1000
+JIRA_TEST_SPRINT_ID=10001
+
+CONFLUENCE_URL=https://your-company.atlassian.net/wiki
+CONFLUENCE_USERNAME=your.email@company.com
+CONFLUENCE_API_TOKEN=your_confluence_api_token
+CONFLUENCE_TEST_SPACE_KEY=YOUR_SPACE
+CONFLUENCE_TEST_PAGE_ID=123456789
+
+TEST_PROXY_URL=http://test-proxy.example.com:8080
+```
+
+## Test Execution Patterns
+
+### Integration Test Flags
+- `--integration`: Required for comprehensive MCP and direct API client tests
+- No special flags: FastMCP tool validation tests run with environment variables only
+
+### Environment Selection
+- `.env.test`: Server/Data Center environment with personal access tokens
+- `.env.realcloud`: Cloud environment with API tokens and usernames
+
+### Test Categories
+
+#### 1. MCP Application Tests (19 tests)
+- Search functionality, issue operations, comment handling
+- Epic management, ADF parsing, environment consistency
+- Project operations, agile boards, batch operations
+- Error handling, pagination behavior differences
+
+#### 2. Real API Client Tests (11 tests)
+- Complete issue lifecycle (CRUD operations)
+- Attachment upload/download, bulk issue creation, rate limiting
+- Page lifecycle, page hierarchy, CQL search, large content handling
+- Cross-service Jira-Confluence integration
+
+#### 3. FastMCP Tool Validation Tests (57 tests)
+- Core API validation scenarios across Cloud/DC environments
+- Tool-specific validation with proper error handling
+- Pagination testing with startAt → start_at parameter fixes
+- JQL query improvements and Epic functionality testing
+
+## Performance and Compatibility
+
+### Execution Times
+- **MCP Application Tests**: ~45s (Server/DC), ~52s (Cloud)
+- **Real API Client Tests**: ~22s (Server/DC), ~29s (Cloud)
+- **Tool Validation Tests**: Variable based on test selection
+
+### Environment Compatibility
+- **100% pass rate** verified in both Server/DC and Cloud environments
+- **Cross-environment consistency** validated for all major operations
+- **API compatibility** confirmed for pagination and search operations
+
+## Key Test Scenarios
+
+### Core Search & Retrieval
+- Validates JQL search and issue retrieval across environments
+- Tests pagination with proper startAt → start_at parameter handling
+- Verifies API response parsing for paginated results
+
+### Comment Functionality
+- Tests comment addition and verification with exact content matching
+- Validates ADF parsing for Cloud environments
+- Ensures consistent comment handling across platforms
+
+### Epic Management
+- Validates agile Epic functionality and linking
+- Tests Epic-to-issue relationships with proper JQL queries
+- Handles Epic functionality differences between Cloud and Server/DC
+
+### Environment Consistency
+- Ensures consistent behavior across Cloud and Server/DC deployments
+- Validates API compatibility for different endpoint patterns
+- Tests authentication methods (API tokens vs personal access tokens)
+
+### Error Handling
+- Validates robust error handling across environments
+- Tests skip conditions for insufficient test data
+- Ensures graceful handling of API differences
+
+This comprehensive integration test suite provides confidence in MCP Atlassian functionality across all supported Atlassian deployment types.
