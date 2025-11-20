@@ -142,25 +142,25 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
 
     test_mcp = AtlassianMCP(
         "TestConfluence",
-        description="Test Confluence MCP Server",
+        instructions="Test Confluence MCP Server",
         lifespan=test_lifespan,
     )
 
     # Create and configure the sub-MCP for Confluence tools
     confluence_sub_mcp = FastMCP(name="TestConfluenceSubMCP")
-    confluence_sub_mcp.tool()(search)
-    confluence_sub_mcp.tool()(get_page)
-    confluence_sub_mcp.tool()(get_page_children)
-    confluence_sub_mcp.tool()(get_comments)
-    confluence_sub_mcp.tool()(add_comment)
-    confluence_sub_mcp.tool()(get_labels)
-    confluence_sub_mcp.tool()(add_label)
-    confluence_sub_mcp.tool()(create_page)
-    confluence_sub_mcp.tool()(update_page)
-    confluence_sub_mcp.tool()(delete_page)
-    confluence_sub_mcp.tool()(search_user)
+    confluence_sub_mcp.add_tool(search)
+    confluence_sub_mcp.add_tool(get_page)
+    confluence_sub_mcp.add_tool(get_page_children)
+    confluence_sub_mcp.add_tool(get_comments)
+    confluence_sub_mcp.add_tool(add_comment)
+    confluence_sub_mcp.add_tool(get_labels)
+    confluence_sub_mcp.add_tool(add_label)
+    confluence_sub_mcp.add_tool(create_page)
+    confluence_sub_mcp.add_tool(update_page)
+    confluence_sub_mcp.add_tool(delete_page)
+    confluence_sub_mcp.add_tool(search_user)
 
-    test_mcp.mount("confluence", confluence_sub_mcp)
+    test_mcp.mount(confluence_sub_mcp, prefix="confluence")
 
     return test_mcp
 
@@ -197,25 +197,25 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
 
     test_mcp = AtlassianMCP(
         "NoFetcherTestConfluence",
-        description="No Fetcher Test Confluence MCP Server",
+        instructions="No Fetcher Test Confluence MCP Server",
         lifespan=no_fetcher_test_lifespan,
     )
 
     # Create and configure the sub-MCP for Confluence tools
     confluence_sub_mcp = FastMCP(name="NoFetcherTestConfluenceSubMCP")
-    confluence_sub_mcp.tool()(search)
-    confluence_sub_mcp.tool()(get_page)
-    confluence_sub_mcp.tool()(get_page_children)
-    confluence_sub_mcp.tool()(get_comments)
-    confluence_sub_mcp.tool()(add_comment)
-    confluence_sub_mcp.tool()(get_labels)
-    confluence_sub_mcp.tool()(add_label)
-    confluence_sub_mcp.tool()(create_page)
-    confluence_sub_mcp.tool()(update_page)
-    confluence_sub_mcp.tool()(delete_page)
-    confluence_sub_mcp.tool()(search_user)
+    confluence_sub_mcp.add_tool(search)
+    confluence_sub_mcp.add_tool(get_page)
+    confluence_sub_mcp.add_tool(get_page_children)
+    confluence_sub_mcp.add_tool(get_comments)
+    confluence_sub_mcp.add_tool(add_comment)
+    confluence_sub_mcp.add_tool(get_labels)
+    confluence_sub_mcp.add_tool(add_label)
+    confluence_sub_mcp.add_tool(create_page)
+    confluence_sub_mcp.add_tool(update_page)
+    confluence_sub_mcp.add_tool(delete_page)
+    confluence_sub_mcp.add_tool(search_user)
 
-    test_mcp.mount("confluence", confluence_sub_mcp)
+    test_mcp.mount(confluence_sub_mcp, prefix="confluence")
 
     return test_mcp
 

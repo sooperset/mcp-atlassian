@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Literal, Optional
 
 from cachetools import TTLCache
-from fastmcp import FastMCP
+from fastmcp import FastMCP, settings
 from fastmcp.tools import Tool as FastMCPTool
 from mcp.types import Tool as MCPTool
 from starlette.applications import Starlette
@@ -232,7 +232,7 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
             )
             return await call_next(request)
 
-        mcp_path = mcp_server_instance.settings.streamable_http_path.rstrip("/")
+        mcp_path = settings.streamable_http_path.rstrip("/")
         request_path = request.url.path.rstrip("/")
         logger.debug(
             f"UserTokenMiddleware.dispatch: Comparing request_path='{request_path}' with mcp_path='{mcp_path}'. Request method='{request.method}'"
@@ -326,8 +326,8 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
 
 
 main_mcp = AtlassianMCP(name="Atlassian MCP", lifespan=main_lifespan)
-main_mcp.mount("jira", jira_mcp)
-main_mcp.mount("confluence", confluence_mcp)
+main_mcp.mount(jira_mcp, prefix="jira")
+main_mcp.mount(confluence_mcp, prefix="confluence")
 
 
 @main_mcp.custom_route("/healthz", methods=["GET"], include_in_schema=False)
