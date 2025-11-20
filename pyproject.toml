@@ -9,7 +9,7 @@ dependencies = [
     "requests[socks]>=2.31.0",
     "beautifulsoup4>=4.12.3",
     "httpx>=0.28.0",
-    "mcp>=1.8.0,<2.0.0",
+    "mcp>=1.11.0",
     "fastmcp>=2.13.0,<2.14.0",
     "python-dotenv>=1.0.1",
     "markdownify>=0.11.6",
@@ -32,13 +32,8 @@ name = "sooperset"
 email = "soomiles.dev@gmail.com"
 
 [build-system]
-requires = [
-    "hatchling",
-    "uv-dynamic-versioning>=0.7.0",
-    "setuptools>=42",
-    "wheel",
-]
-build-backend = "hatchling.build"
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project.scripts]
 mcp-atlassian = "mcp_atlassian:main"
