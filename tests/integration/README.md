@@ -58,7 +58,7 @@ Tests HTTP/HTTPS/SOCKS proxy support.
 - **Mixed Configuration**: Proxy + SSL settings
 
 ### 7. Real API Tests (`test_real_api.py`)
-Tests with actual Atlassian APIs (requires `--integration` flag).
+Tests with actual Atlassian APIs (requires `--use-real-data` flag).
 
 - **Complete Lifecycles**: Create/update/delete workflows
 - **Attachments**: File upload/download operations
@@ -104,11 +104,7 @@ uv run pytest tests/integration/ --integration --cov=src/mcp_atlassian
 ### Real API Testing
 ```bash
 # Run tests against real Atlassian APIs
-uv run pytest tests/integration/test_real_api.py --integration
-uv run pytest tests/integration/test_mcp_application.py --integration
-
-# Run FastMCP tool validation tests (no special flag needed)
-uv run pytest tests/integration/test_real_api_tool_validation.py
+uv run pytest tests/integration/test_real_api.py --integration --use-real-data
 
 # Required environment variables for real API tests:
 export JIRA_URL=https://your-domain.atlassian.net
@@ -167,7 +163,6 @@ space = TEST AND title ~ "Integration Test*"
 4. **Clean Up**: Always clean up created test data
 5. **Unique Identifiers**: Use UUIDs to avoid conflicts
 6. **Error Handling**: Test both success and failure paths
-7. **Use AsyncIO**: Prefer `@pytest.mark.asyncio` over deprecated `@pytest.mark.anyio`
 
 ### Example Test Structure
 ```python
@@ -217,15 +212,5 @@ uv run pytest tests/integration/ --integration --log-cli-level=DEBUG
 
 ### Skip Patterns
 - Integration tests are skipped by default without `--integration` flag
-- Real API tests require `--integration` flag for comprehensive tests
-- FastMCP tool validation tests run with environment variables only
+- Real API tests require both `--integration` and `--use-real-data` flags
 - Tests skip gracefully when required environment variables are missing
-
-## Protocol and Library Updates
-
-### FastMCP Library Upgrade
-- Upgraded to FastMCP library for improved MCP protocol handling
-- Deprecated trio protocol support in favor of asyncio-based testing
-- Removed `@pytest.mark.anyio` decorators and trio backend dependencies
-- Standardized on `@pytest.mark.asyncio` for consistent async test execution
-- Improved test fixture scoping and eliminated circular dependency issues
