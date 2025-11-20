@@ -306,6 +306,8 @@ def main(
     if click_ctx and was_option_provided(click_ctx, "jira_projects_filter"):
         os.environ["JIRA_PROJECTS_FILTER"] = jira_projects_filter
 
+    from fastmcp import settings as fastmcp_settings
+
     from mcp_atlassian.servers import main_mcp
 
     run_kwargs = {
@@ -325,9 +327,9 @@ def main(
         log_display_path = final_path
         if log_display_path is None:
             if final_transport == "sse":
-                log_display_path = main_mcp.settings.sse_path or "/sse"
+                log_display_path = fastmcp_settings.sse_path or "/sse"
             else:
-                log_display_path = main_mcp.settings.streamable_http_path or "/mcp"
+                log_display_path = fastmcp_settings.streamable_http_path or "/mcp"
 
         logger.info(
             f"Starting server with {final_transport.upper()} transport on http://{final_host}:{final_port}{log_display_path}"
