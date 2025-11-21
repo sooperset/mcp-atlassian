@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Literal, Optional
 
 from cachetools import TTLCache
-from fastmcp import FastMCP, settings
+from fastmcp import FastMCP
 from fastmcp.tools import Tool as FastMCPTool
 from mcp.types import Tool as MCPTool
 from starlette.applications import Starlette
@@ -189,8 +189,6 @@ class AtlassianMCP(FastMCP[MainAppContext]):
         self,
         path: str | None = None,
         middleware: list[Middleware] | None = None,
-        json_response: bool | None = None,  # noqa: FBT001
-        stateless_http: bool | None = None,  # noqa: FBT001
         transport: Literal["streamable-http", "sse"] = "streamable-http",
     ) -> "Starlette":
         user_token_mw = Middleware(UserTokenMiddleware, mcp_server_ref=self)
@@ -198,11 +196,7 @@ class AtlassianMCP(FastMCP[MainAppContext]):
         if middleware:
             final_middleware_list.extend(middleware)
         app = super().http_app(
-            path=path,
-            middleware=final_middleware_list,
-            json_response=json_response,
-            stateless_http=stateless_http,
-            transport=transport,
+            path=path, middleware=final_middleware_list, transport=transport
         )
         return app
 
@@ -238,7 +232,7 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
             )
             return await call_next(request)
 
-        mcp_path = settings.streamable_http_path.rstrip("/")
+        mcp_path = mcp_server_instance.settings.streamable_http_path.rstrip("/")
         request_path = request.url.path.rstrip("/")
         logger.debug(
             f"UserTokenMiddleware.dispatch: Comparing request_path='{request_path}' with mcp_path='{mcp_path}'. Request method='{request.method}'"
@@ -332,8 +326,8 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
 
 
 main_mcp = AtlassianMCP(name="Atlassian MCP", lifespan=main_lifespan)
-main_mcp.mount(jira_mcp, prefix="jira")
-main_mcp.mount(confluence_mcp, prefix="confluence")
+main_mcp.mount(jira_mcp, "jira")
+main_mcp.mount(confluence_mcp, "confluence")
 
 
 @main_mcp.custom_route("/healthz", methods=["GET"], include_in_schema=False)

@@ -1092,9 +1092,9 @@ class TestJiraSearchResult:
         api_data.pop("maxResults", None)
 
         search_result = JiraSearchResult.from_api_response(api_data)
-        # Verify that -1 is used for missing metadata
+        # Verify that -1 is used for missing total/maxResults, 0 for startAt (Cloud behavior)
         assert search_result.total == -1
-        assert search_result.start_at == -1
+        assert search_result.start_at == 0  # Cloud always starts at 0
         assert search_result.max_results == -1
         assert len(search_result.issues) == 1  # Assuming mock data has issues
 

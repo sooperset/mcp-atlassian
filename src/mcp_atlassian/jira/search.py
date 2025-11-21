@@ -1,4 +1,52 @@
-"""Module for Jira search operations."""
+"""Module for Jira search operations.
+
+This module provides search functionality for both Jira Cloud and Server/Data Center deployments.
+
+Key differences between deployment types:
+
+**Cloud (API v3 - /rest/api/3/search/jql):**
+- Uses POST with JSON body containing JQL and parameters
+- Pagination via nextPageToken (token-based, sequential only)
+- Returns total=-1 (v3 API doesn't provide total count)
+- Requires non-empty JQL (returns 400 error if empty)
+- Fields must be explicitly requested (returns only IDs by default)
+- Up to 100 issues per request
+- Comments limited to 20 items per issue (use separate API for more)
+- Changelog limited to 20 items per issue (use separate API for more)
+- start parameter ignored (uses token-based pagination)
+
+**Server/DC (API v2 - /rest/api/2/search):**
+- Uses GET with query parameters
+- Pagination via startAt (offset-based, random access)
+- Returns actual total count
+- Allows empty JQL queries
+- Returns all fields by default
+- Limited to 50 issues per request
+- No comment/changelog limits
+- start parameter respected for pagination
+
+Example:
+    >>> from mcp_atlassian.jira import JiraClient
+    >>> client = JiraClient(config)
+    >>>
+    >>> # Cloud example with pagination
+    >>> result = client.search_issues(
+    ...     jql="project = DEMO AND status = Open",
+    ...     fields=["summary", "status", "assignee"],
+    ...     limit=100
+    ... )
+    >>> print(f"Found {len(result.issues)} issues")
+    >>> if result.next_page_token:
+    ...     print("More results available")
+    >>>
+    >>> # Server/DC example with offset pagination
+    >>> result = client.search_issues(
+    ...     jql="project = DEMO",
+    ...     start=50,  # Get next page
+    ...     limit=50
+    ... )
+    >>> print(f"Total: {result.total}, showing {result.start_at}-{result.start_at + len(result.issues)}")
+"""
 
 import logging
 
@@ -15,7 +63,17 @@ logger = logging.getLogger("mcp-jira")
 
 
 class SearchMixin(JiraClient, IssueOperationsProto):
-    """Mixin for Jira search operations."""
+    """Mixin providing search operations for Jira issues.
+
+    This mixin extends JiraClient with search capabilities including:
+    - JQL-based issue search with automatic project filtering
+    - Board-specific issue retrieval
+    - Sprint-specific issue retrieval
+
+    Inherits from:
+        JiraClient: Base client with configuration and API access
+        IssueOperationsProto: Protocol defining issue operation interface
+    """
 
     def search_issues(
         self,
@@ -29,22 +87,81 @@ class SearchMixin(JiraClient, IssueOperationsProto):
         """
         Search for issues using JQL (Jira Query Language).
 
+        This method automatically handles differences between Cloud and Server/DC deployments:
+
+        **Cloud Behavior (API v3):**
+        - Uses POST /rest/api/3/search/jql with JSON body
+        - Implements nextPageToken pagination (not startAt)
+        - Ignores 'start' parameter (uses token-based pagination)
+        - Can retrieve up to 100 issues per request
+        - Returns total=-1 (v3 API doesn't provide total count)
+        - Requires non-empty JQL (raises ValueError if empty)
+        - Fields must be explicitly requested (returns only IDs by default)
+        - Comments/changelog limited to 20 items (use separate requests for more)
+
+        **Server/DC Behavior (API v2):**
+        - Uses GET /rest/api/2/search with query parameters
+        - Respects 'start' parameter for offset-based pagination
+        - Limited to 50 issues per request (enforced)
+        - Returns actual total count
+        - Allows empty JQL queries
+
+        **Project Filtering:**
+        If projects_filter is provided (or configured), automatically modifies JQL:
+        - Single project: Adds 'project = "KEY"'
+        - Multiple projects: Adds 'project IN ("KEY1", "KEY2")'
+        - Preserves existing JQL logic and ORDER BY clauses
+        - Skips if JQL already contains project filter
+
         Args:
-            jql: JQL query string
-            fields: Fields to return (comma-separated string, list, tuple, set, or "*all")
-            start: Starting index if number of issues is greater than the limit
-                  Note: This parameter is ignored in Cloud environments and results will always
-                  start from the first page.
+            jql: JQL query string (e.g., "status = Open ORDER BY created DESC")
+                 Cloud: Cannot be empty (raises ValueError)
+                 Server/DC: Can be empty
+            fields: Fields to return. Accepts:
+                - None: Uses DEFAULT_READ_JIRA_FIELDS
+                - list/tuple/set: Converted to comma-separated string
+                - str: Used as-is (e.g., "summary,status,assignee" or "*all")
+            start: Starting index for pagination
+                   Cloud: Ignored (uses nextPageToken internally)
+                   Server/DC: Used for offset-based pagination
             limit: Maximum issues to return
-            expand: Optional items to expand (comma-separated)
-            projects_filter: Optional comma-separated list of project keys to filter by, overrides config
+                   Cloud: Up to 100 per request, handles pagination automatically
+                   Server/DC: Max 50 per request (enforced)
+            expand: Optional comma-separated items to expand (e.g., "changelog,renderedFields")
+            projects_filter: Comma-separated project keys (e.g., "PROJ,DEV").
+                Overrides config.projects_filter if provided.
 
         Returns:
-            JiraSearchResult object containing issues and metadata (total, start_at, max_results)
+            JiraSearchResult: Object containing:
+                - issues: List of JiraIssue models
+                - total: Total matching issues (Cloud: -1, Server/DC: actual count)
+                - start_at: Starting index (Cloud: 0, Server/DC: actual offset)
+                - max_results: Maximum results per page
+                - next_page_token: Pagination token (Cloud only, None if no more pages)
 
         Raises:
-            MCPAtlassianAuthenticationError: If authentication fails with the Jira API (401/403)
-            Exception: If there is an error searching for issues
+            ValueError: Empty JQL query on Cloud deployment
+            MCPAtlassianAuthenticationError: Authentication failed (401/403 status)
+            TypeError: Unexpected API response type
+            HTTPError: Other HTTP errors from Jira API
+            Exception: General search errors
+
+        Example:
+            >>> # Simple search
+            >>> result = client.search_issues("project = DEMO")
+            >>>
+            >>> # With specific fields and project filter
+            >>> result = client.search_issues(
+            ...     jql="status = 'In Progress'",
+            ...     fields=["summary", "assignee", "priority"],
+            ...     projects_filter="PROJ,DEV",
+            ...     limit=100
+            ... )
+            >>> print(f"Found {result.total} issues, showing {len(result.issues)}")
+            >>>
+            >>> # Cloud pagination example
+            >>> if result.next_page_token:
+            ...     print("More results available (Cloud uses token-based pagination)")
         """
         try:
             # Use projects_filter parameter if provided, otherwise fall back to config
@@ -56,6 +173,8 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                 projects = [p.strip() for p in filter_to_use.split(",")]
 
                 # Build the project filter query part
+                # Single project: project = "KEY"
+                # Multiple projects: project IN ("KEY1", "KEY2")
                 if len(projects) == 1:
                     project_query = f'project = "{projects[0]}"'
                 else:
@@ -63,7 +182,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                     projects_list = ", ".join(quoted_projects)
                     project_query = f"project IN ({projects_list})"
 
-                # Add the project filter to existing query
+                # Intelligently merge project filter with existing JQL
                 if not jql:
                     # Empty JQL - just use project filter
                     jql = project_query
@@ -76,9 +195,10 @@ class SearchMixin(JiraClient, IssueOperationsProto):
 
                 logger.info(f"Applied projects filter to query: {jql}")
 
-            # Convert fields to proper format if it's a list/tuple/set
+            # Normalize fields parameter to comma-separated string
+            # Supports: None (use defaults), list/tuple/set (convert), or string (use as-is)
             fields_param: str | None
-            if fields is None:  # Use default if None
+            if fields is None:
                 fields_param = ",".join(DEFAULT_READ_JIRA_FIELDS)
             elif isinstance(fields, list | tuple | set):
                 fields_param = ",".join(fields)
@@ -86,58 +206,68 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                 fields_param = fields
 
             if self.config.is_cloud:
-                actual_total = -1
-                try:
-                    # Call 1: Get metadata (including total) using standard search API
-                    metadata_params = {"jql": jql, "maxResults": 0}
-                    metadata_response = self.jira.get(
-                        self.jira.resource_url("search"), params=metadata_params
-                    )
+                # Cloud deployment: Use v3 API with proper request/response format
+                # Validate JQL not empty (v3 API requirement)
+                if not jql or not jql.strip():
+                    raise ValueError("JQL query cannot be empty for Jira Cloud API v3")
 
-                    if (
-                        isinstance(metadata_response, dict)
-                        and "total" in metadata_response
-                    ):
-                        try:
-                            actual_total = int(metadata_response["total"])
-                        except (ValueError, TypeError):
-                            logger.warning(
-                                f"Could not parse 'total' from metadata response for JQL: {jql}. Received: {metadata_response.get('total')}"
-                            )
-                    else:
-                        logger.warning(
-                            f"Could not retrieve total count from metadata response for JQL: {jql}. Response type: {type(metadata_response)}"
+                # Build v3 request body with explicit fields
+                fields_list = fields_param.split(",") if fields_param else ["id"]
+                request_body = {
+                    "jql": jql,
+                    "maxResults": min(limit, 100),  # v3 API max per request
+                    "fields": fields_list,
+                }
+                if expand:
+                    request_body["expand"] = expand
+
+                # Fetch issues with nextPageToken pagination
+                all_issues = []
+                next_token = None
+
+                while len(all_issues) < limit:
+                    if next_token:
+                        request_body["nextPageToken"] = next_token
+
+                    try:
+                        response = self.jira.post(
+                            "rest/api/3/search/jql", json=request_body
                         )
-                except Exception as meta_err:
-                    logger.error(
-                        f"Error fetching metadata for JQL '{jql}': {str(meta_err)}"
-                    )
 
-                # Call 2: Get the actual issues using the enhanced method
-                issues_response_list = self.jira.enhanced_jql_get_list_of_tickets(
-                    jql, fields=fields_param, limit=limit, expand=expand
-                )
+                        if not isinstance(response, dict):
+                            msg = f"Unexpected return value type from v3 search API: {type(response)}"
+                            logger.error(msg)
+                            raise TypeError(msg)
 
-                if not isinstance(issues_response_list, list):
-                    msg = f"Unexpected return value type from `jira.enhanced_jql_get_list_of_tickets`: {type(issues_response_list)}"
-                    logger.error(msg)
-                    raise TypeError(msg)
+                        issues = response.get("issues", [])
+                        all_issues.extend(issues)
 
-                response_dict_for_model = {
-                    "issues": issues_response_list,
-                    "total": actual_total,
+                        next_token = response.get("nextPageToken")
+                        if not next_token:
+                            break
+
+                    except Exception as e:
+                        logger.error(f"Error fetching issues from v3 API: {str(e)}")
+                        raise
+
+                # Build result with v3 format
+                response_dict = {
+                    "issues": all_issues[:limit],
+                    "total": -1,  # v3 doesn't provide total
+                    "startAt": 0,
+                    "maxResults": limit,
+                    "nextPageToken": next_token if len(all_issues) >= limit else None,
                 }
 
-                search_result = JiraSearchResult.from_api_response(
-                    response_dict_for_model,
+                return JiraSearchResult.from_api_response(
+                    response_dict,
                     base_url=self.config.url,
                     requested_fields=fields_param,
+                    is_cloud=True,
                 )
-
-                # Return the full search result object
-                return search_result
             else:
-                limit = min(limit, 50)
+                # Server/DC deployment: Use standard JQL API with 50-issue limit
+                limit = min(limit, 50)  # Enforce Server/DC maximum
                 response = self.jira.jql(
                     jql, fields=fields_param, start=start, limit=limit, expand=expand
                 )
@@ -148,7 +278,10 @@ class SearchMixin(JiraClient, IssueOperationsProto):
 
                 # Convert the response to a search result model
                 search_result = JiraSearchResult.from_api_response(
-                    response, base_url=self.config.url, requested_fields=fields_param
+                    response,
+                    base_url=self.config.url,
+                    requested_fields=fields_param,
+                    is_cloud=False,
                 )
 
                 # Return the full search result object
@@ -182,27 +315,39 @@ class SearchMixin(JiraClient, IssueOperationsProto):
         expand: str | None = None,
     ) -> JiraSearchResult:
         """
-        Get all issues linked to a specific board.
+        Get all issues linked to a specific Agile board.
+
+        Retrieves issues associated with a board (Scrum or Kanban) using the
+        Jira Agile API. The JQL parameter allows additional filtering beyond
+        the board's default filter.
 
         Args:
-            board_id: The ID of the board
-            jql: JQL query string
-            fields: Fields to return (comma-separated string or "*all")
-            start: Starting index
-            limit: Maximum issues to return
-            expand: Optional items to expand (comma-separated)
+            board_id: The numeric ID of the board (e.g., "123")
+            jql: Additional JQL query to filter board issues (e.g., "status = 'In Progress'")
+            fields: Comma-separated field names or "*all" (default: DEFAULT_READ_JIRA_FIELDS)
+            start: Starting index for pagination
+            limit: Maximum issues to return (default: 50)
+            expand: Optional comma-separated items to expand (e.g., "changelog")
 
         Returns:
-            JiraSearchResult object containing board issues and metadata
+            JiraSearchResult: Object containing board issues and metadata
 
         Raises:
-            Exception: If there is an error getting board issues
+            TypeError: If API returns unexpected response type
+            HTTPError: If board doesn't exist or access is denied
+            Exception: General errors during board issue retrieval
+
+        Example:
+            >>> # Get all in-progress issues from board 42
+            >>> result = client.get_board_issues(
+            ...     board_id="42",
+            ...     jql="status = 'In Progress'",
+            ...     fields="summary,assignee,status"
+            ... )
         """
         try:
-            # Determine fields_param
-            fields_param = fields
-            if fields_param is None:
-                fields_param = ",".join(DEFAULT_READ_JIRA_FIELDS)
+            # Use default fields if none specified
+            fields_param = fields if fields else ",".join(DEFAULT_READ_JIRA_FIELDS)
 
             response = self.jira.get_issues_for_board(
                 board_id=board_id,
@@ -245,23 +390,33 @@ class SearchMixin(JiraClient, IssueOperationsProto):
         """
         Get all issues linked to a specific sprint.
 
+        Retrieves all issues that are part of a sprint, including issues that
+        were added, removed, or completed during the sprint.
+
         Args:
-            sprint_id: The ID of the sprint
-            fields: Fields to return (comma-separated string or "*all")
-            start: Starting index
-            limit: Maximum issues to return
+            sprint_id: The numeric ID of the sprint (e.g., "456")
+            fields: Comma-separated field names or "*all" (default: DEFAULT_READ_JIRA_FIELDS)
+            start: Starting index for pagination
+            limit: Maximum issues to return (default: 50)
 
         Returns:
-            JiraSearchResult object containing sprint issues and metadata
+            JiraSearchResult: Object containing sprint issues and metadata
 
         Raises:
-            Exception: If there is an error getting board issues
+            TypeError: If API returns unexpected response type
+            HTTPError: If sprint doesn't exist or access is denied
+            Exception: General errors during sprint issue retrieval
+
+        Example:
+            >>> # Get all issues from sprint 456
+            >>> result = client.get_sprint_issues(
+            ...     sprint_id="456",
+            ...     fields="summary,status,storyPoints"
+            ... )
         """
         try:
-            # Determine fields_param
-            fields_param = fields
-            if fields_param is None:
-                fields_param = ",".join(DEFAULT_READ_JIRA_FIELDS)
+            # Use default fields if none specified
+            fields_param = fields if fields else ",".join(DEFAULT_READ_JIRA_FIELDS)
 
             response = self.jira.get_sprint_issues(
                 sprint_id=sprint_id,

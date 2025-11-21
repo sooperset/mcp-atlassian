@@ -44,21 +44,17 @@ class EpicsMixin(
 
             # Find an Epic in the system
             epics_jql = "issuetype = Epic ORDER BY created DESC"
-            results = self.jira.jql(epics_jql, fields="*all", limit=1)
-            if not isinstance(results, dict):
-                msg = f"Unexpected return value type from `jira.jql`: {type(results)}"
-                logger.error(msg)
-                raise TypeError(msg)
+            results = self.search_issues(epics_jql, fields="*all", limit=1)
 
             # If no epics found, we can't use this method
-            if not results or not results.get("issues"):
+            if not results or not results.issues:
                 logger.warning("No existing Epics found to analyze field structure")
                 return
 
             # Get the most recent Epic
-            epic = results["issues"][0]
-            fields = epic.get("fields", {})
-            logger.debug(f"Found existing Epic {epic.get('key')} to analyze")
+            epic = results.issues[0]
+            fields = epic.custom_fields
+            logger.debug(f"Found existing Epic {epic.key} to analyze")
 
             # Look for Epic Name and other Epic fields
             for field_id, value in fields.items():
@@ -780,14 +776,14 @@ class EpicsMixin(
         try:
             # Search for issues with type=Epic
             jql = "issuetype = Epic ORDER BY updated DESC"
-            response = self.jira.jql(jql, limit=1)
-            if not isinstance(response, dict):
-                msg = f"Unexpected return value type from `jira.jql`: {type(response)}"
-                logger.error(msg)
-                raise TypeError(msg)
+            result = self.search_issues(jql, limit=1)
 
-            if response and "issues" in response and response["issues"]:
-                return response["issues"]
+            if result and result.issues:
+                # Convert JiraIssue model back to dict format for compatibility
+                issue = result.issues[0]
+                return [
+                    {"key": issue.key, "id": issue.id, "fields": issue.custom_fields}
+                ]
         except Exception as e:
             logger.warning(f"Error finding sample epic: {str(e)}")
         return []
@@ -811,13 +807,17 @@ class EpicsMixin(
                 f"issueFunction in issuesScopedToEpic('{epic_key}')",
             ]:
                 try:
-                    response = self.jira.jql(query, limit=5)
-                    if not isinstance(response, dict):
-                        msg = f"Unexpected return value type from `jira.jql`: {type(response)}"
-                        logger.error(msg)
-                        raise TypeError(msg)
-                    if response.get("issues"):
-                        return response["issues"]
+                    result = self.search_issues(query, limit=5)
+                    if result and result.issues:
+                        # Convert JiraIssue models back to dict format for compatibility
+                        return [
+                            {
+                                "key": issue.key,
+                                "id": issue.id,
+                                "fields": issue.custom_fields,
+                            }
+                            for issue in result.issues
+                        ]
                 except Exception:
                     # Try next query format
                     continue

@@ -122,12 +122,11 @@ class JiraIssue(ApiModel, TimestampMixin):
         Get the page content from the description.
 
         This is a convenience property for treating Jira issues as documentation pages.
+        Description is parsed from ADF format if present.
 
         Returns:
             The description text or None
         """
-        # Return description without modification for now
-        # In the future, we could parse ADF content here
         return self.description
 
     @staticmethod
@@ -267,7 +266,20 @@ class JiraIssue(ApiModel, TimestampMixin):
         issue_id = str(data.get("id", JIRA_DEFAULT_ID))
         key = str(data.get("key", JIRA_DEFAULT_KEY))
         summary = str(fields.get("summary", EMPTY_STRING))
-        description = fields.get("description")
+
+        # Parse description (ADF format for Cloud, plain text for Server/DC)
+        description_raw = fields.get("description")
+        description = None
+        if description_raw:
+            # Check if this is Cloud (ADF format) or Server/DC (plain text)
+            is_cloud = kwargs.get("is_cloud", False)
+            if is_cloud and isinstance(description_raw, dict):
+                from .adf_parser import parse_adf_to_text
+
+                description = parse_adf_to_text(description_raw)
+            else:
+                # Server/DC uses plain text
+                description = str(description_raw) if description_raw else None
 
         # Timestamps
         created = str(fields.get("created", EMPTY_STRING))

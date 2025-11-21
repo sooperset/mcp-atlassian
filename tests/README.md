@@ -21,6 +21,10 @@ tests/
 │   ├── jira/conftest.py       # Jira-specific fixtures
 │   ├── confluence/conftest.py # Confluence-specific fixtures
 │   └── models/conftest.py     # Model testing fixtures
+├── integration/               # Integration tests with real APIs
+│   ├── test_mcp_application.py        # Comprehensive MCP functionality tests
+│   ├── test_real_api.py              # Direct API client integration tests
+│   └── test_real_api_tool_validation.py # FastMCP tool validation tests
 ├── utils/                     # Test utilities framework
 │   ├── factories.py          # Data factories
 │   ├── mocks.py              # Mock utilities
@@ -30,6 +34,18 @@ tests/
     ├── jira_mocks.py         # Static Jira mock data
     └── confluence_mocks.py   # Static Confluence mock data
 ```
+
+## Integration Tests
+
+### MCP Application Tests (`test_mcp_application.py`)
+
+Comprehensive integration tests that validate MCP Atlassian functionality using real API calls. These tests validate the complete user workflow from a business perspective.
+
+**Test Coverage**: 19 comprehensive integration tests covering all major functionality
+**Environments**: Both Cloud and Server/Data Center deployments
+**Execution**: Requires `--integration` flag and proper environment configuration
+
+For detailed integration test documentation, see [tests/integration/README.md](integration/README.md).
 
 ## Key Features
 

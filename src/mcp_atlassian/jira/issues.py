@@ -208,6 +208,7 @@ class IssuesMixin(
                 issue,
                 base_url=self.config.url if hasattr(self, "config") else None,
                 requested_fields=fields,
+                is_cloud=self.config.is_cloud,
             )
         except HTTPError as http_err:
             if http_err.response is not None and http_err.response.status_code in [
@@ -645,7 +646,9 @@ class IssuesMixin(
                 msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
                 logger.error(msg)
                 raise TypeError(msg)
-            return JiraIssue.from_api_response(issue_data)
+            return JiraIssue.from_api_response(
+                issue_data, is_cloud=self.config.is_cloud
+            )
 
         except Exception as e:
             self._handle_create_issue_error(e, issue_type)
@@ -1080,7 +1083,9 @@ class IssuesMixin(
                 msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
                 logger.error(msg)
                 raise TypeError(msg)
-            issue = JiraIssue.from_api_response(issue_data)
+            issue = JiraIssue.from_api_response(
+                issue_data, is_cloud=self.config.is_cloud
+            )
 
             # Add attachment results to the response if available
             if attachments_result:
@@ -1123,7 +1128,9 @@ class IssuesMixin(
                 msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
                 logger.error(msg)
                 raise TypeError(msg)
-            return JiraIssue.from_api_response(issue_data)
+            return JiraIssue.from_api_response(
+                issue_data, is_cloud=self.config.is_cloud
+            )
 
         # Get available transitions (uses TransitionsMixin's normalized implementation)
         transitions = self.get_available_transitions(issue_key)  # type: ignore[attr-defined]
@@ -1222,7 +1229,7 @@ class IssuesMixin(
             msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
             logger.error(msg)
             raise TypeError(msg)
-        return JiraIssue.from_api_response(issue_data)
+        return JiraIssue.from_api_response(issue_data, is_cloud=self.config.is_cloud)
 
     def delete_issue(self, issue_key: str) -> bool:
         """
@@ -1466,6 +1473,7 @@ class IssuesMixin(
                                 base_url=self.config.url
                                 if hasattr(self, "config")
                                 else None,
+                                is_cloud=self.config.is_cloud,
                             )
                         )
                     except Exception as e:

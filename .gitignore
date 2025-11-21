@@ -75,3 +75,7 @@ playground/
 
 # Claude
 .claude/
+
+# Amazon Q
+.amazonq/
+AmazonQ.md

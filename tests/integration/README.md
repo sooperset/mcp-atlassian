@@ -67,6 +67,26 @@ Tests with actual Atlassian APIs (requires `--use-real-data` flag).
 - **Rate Limiting**: API throttling behavior
 - **Cross-Service Linking**: Jira-Confluence integration
 
+### 8. MCP Application Tests (`test_mcp_application.py`) - **NEW**
+Comprehensive integration tests that validate MCP Atlassian functionality using real API calls.
+
+- **Search Functionality**: JQL and CQL search operations
+- **Issue Operations**: Create, update, retrieve issue workflows
+- **Comment Handling**: Comment addition and verification
+- **Epic Management**: Epic functionality and linking
+- **ADF Parsing**: Atlassian Document Format processing
+- **Environment Consistency**: Cross-platform behavior validation
+- **Batch Operations**: Bulk issue creation and changelog retrieval
+
+### 9. FastMCP Tool Validation Tests (`test_real_api_tool_validation.py`) - **NEW**
+FastMCP tool validation tests that verify MCP tool functionality with real API data.
+
+- **Tool Validation**: jira_get_issue, jira_search, confluence_get_page operations
+- **Pagination Testing**: startAt → start_at parameter compatibility
+- **API Response Parsing**: Paginated response handling
+- **JQL Query Improvements**: Enhanced Epic and search functionality
+- **Cross-Environment Testing**: Cloud and Server/DC compatibility
+
 ## Running Integration Tests
 
 ### Basic Execution
@@ -100,7 +120,9 @@ export CONFLUENCE_TEST_SPACE_KEY=TEST
 
 ### Test Markers
 - `@pytest.mark.integration` - All integration tests
-- `@pytest.mark.anyio` - Async tests supporting multiple backends
+- `@pytest.mark.asyncio` - Async tests (upgraded from deprecated `@pytest.mark.anyio`)
+
+**Note**: The `@pytest.mark.anyio` decorator has been deprecated in favor of `@pytest.mark.asyncio` due to the FastMCP library upgrade and deprecation of the trio protocol.
 
 ## Environment Setup
 

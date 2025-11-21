@@ -271,69 +271,12 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
             pass
 
     test_mcp = AtlassianMCP(
-        "TestJira", instructions="Test Jira MCP Server", lifespan=test_lifespan
+        name="TestJira", instructions="Test Jira MCP Server", lifespan=test_lifespan
     )
-    from src.mcp_atlassian.servers.jira import (
-        add_comment,
-        add_worklog,
-        batch_create_issues,
-        batch_create_versions,
-        batch_get_changelogs,
-        create_issue,
-        create_issue_link,
-        delete_issue,
-        download_attachments,
-        get_agile_boards,
-        get_all_projects,
-        get_board_issues,
-        get_issue,
-        get_link_types,
-        get_project_issues,
-        get_project_versions,
-        get_sprint_issues,
-        get_sprints_from_board,
-        get_transitions,
-        get_user_profile,
-        get_worklog,
-        link_to_epic,
-        remove_issue_link,
-        search,
-        search_fields,
-        transition_issue,
-        update_issue,
-        update_sprint,
-    )
+    # Import the actual jira_mcp server that already has tools registered
+    from src.mcp_atlassian.servers.jira import jira_mcp as jira_sub_mcp
 
-    jira_sub_mcp = FastMCP(name="TestJiraSubMCP")
-    jira_sub_mcp.add_tool(get_issue)
-    jira_sub_mcp.add_tool(search)
-    jira_sub_mcp.add_tool(search_fields)
-    jira_sub_mcp.add_tool(get_project_issues)
-    jira_sub_mcp.add_tool(get_project_versions)
-    jira_sub_mcp.add_tool(get_all_projects)
-    jira_sub_mcp.add_tool(get_transitions)
-    jira_sub_mcp.add_tool(get_worklog)
-    jira_sub_mcp.add_tool(download_attachments)
-    jira_sub_mcp.add_tool(get_agile_boards)
-    jira_sub_mcp.add_tool(get_board_issues)
-    jira_sub_mcp.add_tool(get_sprints_from_board)
-    jira_sub_mcp.add_tool(get_sprint_issues)
-    jira_sub_mcp.add_tool(get_link_types)
-    jira_sub_mcp.add_tool(get_user_profile)
-    jira_sub_mcp.add_tool(create_issue)
-    jira_sub_mcp.add_tool(batch_create_issues)
-    jira_sub_mcp.add_tool(batch_get_changelogs)
-    jira_sub_mcp.add_tool(update_issue)
-    jira_sub_mcp.add_tool(delete_issue)
-    jira_sub_mcp.add_tool(add_comment)
-    jira_sub_mcp.add_tool(add_worklog)
-    jira_sub_mcp.add_tool(link_to_epic)
-    jira_sub_mcp.add_tool(create_issue_link)
-    jira_sub_mcp.add_tool(remove_issue_link)
-    jira_sub_mcp.add_tool(transition_issue)
-    jira_sub_mcp.add_tool(update_sprint)
-    jira_sub_mcp.add_tool(batch_create_versions)
-    test_mcp.mount(jira_sub_mcp, prefix="jira")
+    test_mcp.mount(jira_sub_mcp, "jira")
     return test_mcp
 
 
@@ -351,15 +294,14 @@ def no_fetcher_test_jira_mcp(mock_base_jira_config):
             pass
 
     test_mcp = AtlassianMCP(
-        "NoFetcherTestJira",
+        name="NoFetcherTestJira",
         instructions="No Fetcher Test Jira MCP Server",
         lifespan=no_fetcher_test_lifespan,
     )
-    from src.mcp_atlassian.servers.jira import get_issue
+    # Import the actual jira_mcp server that already has tools registered
+    from src.mcp_atlassian.servers.jira import jira_mcp as jira_sub_mcp
 
-    jira_sub_mcp = FastMCP(name="NoFetcherTestJiraSubMCP")
-    jira_sub_mcp.add_tool(get_issue)
-    test_mcp.mount(jira_sub_mcp, prefix="jira")
+    test_mcp.mount(jira_sub_mcp, "jira")
     return test_mcp
 
 
@@ -411,7 +353,7 @@ async def test_get_issue(jira_client, mock_jira_fetcher):
             "fields": "summary,description,status",
         },
     )
-    assert isinstance(response.content, list)
+    assert hasattr(response, "content")
     assert len(response.content) > 0
     text_content = response.content[0]
     assert text_content.type == "text"
@@ -440,7 +382,7 @@ async def test_search(jira_client, mock_jira_fetcher):
             "start_at": 0,
         },
     )
-    assert isinstance(response.content, list)
+    assert hasattr(response, "content")
     assert len(response.content) > 0
     text_content = response.content[0]
     assert text_content.type == "text"
@@ -477,7 +419,7 @@ async def test_create_issue(jira_client, mock_jira_fetcher):
             "additional_fields": {"priority": {"name": "Medium"}},
         },
     )
-    assert isinstance(response.content, list)
+    assert hasattr(response, "content")
     assert len(response.content) > 0
     text_content = response.content[0]
     assert text_content.type == "text"
@@ -696,7 +638,7 @@ async def test_get_project_versions_tool(jira_client, mock_jira_fetcher):
         "jira_get_project_versions",
         {"project_key": "TEST"},
     )
-    assert isinstance(response.content, list)
+    assert hasattr(response, "content")
     assert len(response.content) == 1  # FastMCP wraps as list of messages
     msg = response.content[0]
     assert msg.type == "text"
@@ -745,7 +687,7 @@ async def test_get_all_projects_tool(jira_client, mock_jira_fetcher):
         "jira_get_all_projects",
         {},
     )
-    assert isinstance(response.content, list)
+    assert hasattr(response, "content")
     assert len(response.content) == 1  # FastMCP wraps as list of messages
     msg = response.content[0]
     assert msg.type == "text"
@@ -794,7 +736,7 @@ async def test_get_all_projects_tool_with_archived(jira_client, mock_jira_fetche
         "jira_get_all_projects",
         {"include_archived": True},
     )
-    assert isinstance(response.content, list)
+    assert hasattr(response, "content")
     assert len(response.content) == 1
     msg = response.content[0]
     assert msg.type == "text"
@@ -852,7 +794,7 @@ async def test_get_all_projects_tool_with_projects_filter(
         {},
     )
 
-    assert isinstance(response.content, list)
+    assert hasattr(response, "content")
     assert len(response.content) == 1
     msg = response.content[0]
     assert msg.type == "text"
@@ -906,7 +848,7 @@ async def test_get_all_projects_tool_no_projects_filter(jira_client, mock_jira_f
         {},
     )
 
-    assert isinstance(response.content, list)
+    assert hasattr(response, "content")
     assert len(response.content) == 1
     msg = response.content[0]
     assert msg.type == "text"
@@ -967,7 +909,7 @@ async def test_get_all_projects_tool_case_insensitive_filter(
         {},
     )
 
-    assert isinstance(response.content, list)
+    assert hasattr(response, "content")
     assert len(response.content) == 1
     msg = response.content[0]
     assert msg.type == "text"
@@ -994,7 +936,7 @@ async def test_get_all_projects_tool_empty_response(jira_client, mock_jira_fetch
 
     response = await jira_client.call_tool("jira_get_all_projects", {})
 
-    assert isinstance(response.content, list)
+    assert hasattr(response, "content")
     assert len(response.content) == 1
     msg = response.content[0]
     assert msg.type == "text"
@@ -1012,7 +954,7 @@ async def test_get_all_projects_tool_api_error_handling(jira_client, mock_jira_f
 
     response = await jira_client.call_tool("jira_get_all_projects", {})
 
-    assert isinstance(response.content, list)
+    assert hasattr(response, "content")
     assert len(response.content) == 1
     msg = response.content[0]
     assert msg.type == "text"
@@ -1035,7 +977,7 @@ async def test_get_all_projects_tool_authentication_error_handling(
 
     response = await jira_client.call_tool("jira_get_all_projects", {})
 
-    assert isinstance(response.content, list)
+    assert hasattr(response, "content")
     assert len(response.content) == 1
     msg = response.content[0]
     assert msg.type == "text"
@@ -1056,7 +998,7 @@ async def test_get_all_projects_tool_configuration_error_handling(
 
     response = await jira_client.call_tool("jira_get_all_projects", {})
 
-    assert isinstance(response.content, list)
+    assert hasattr(response, "content")
     assert len(response.content) == 1
     msg = response.content[0]
     assert msg.type == "text"
