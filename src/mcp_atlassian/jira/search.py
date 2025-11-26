@@ -1,6 +1,7 @@
 """Module for Jira search operations."""
 
 import logging
+from typing import Any
 
 import requests
 from requests.exceptions import HTTPError
@@ -86,55 +87,61 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                 fields_param = fields
 
             if self.config.is_cloud:
-                actual_total = -1
-                try:
-                    # Call 1: Get metadata (including total) using standard search API
-                    metadata_params = {"jql": jql, "maxResults": 0}
-                    metadata_response = self.jira.get(
-                        self.jira.resource_url("search"), params=metadata_params
+                # Cloud: Use v3 API endpoint POST /rest/api/3/search/jql
+                # The old v2 /rest/api/*/search endpoint is deprecated
+                # See: https://developer.atlassian.com/changelog/#CHANGE-2046
+
+                # Build request body for v3 API
+                fields_list = fields_param.split(",") if fields_param else ["id", "key"]
+                request_body: dict[str, Any] = {
+                    "jql": jql,
+                    "maxResults": min(limit, 100),  # v3 API max is 100 per request
+                    "fields": fields_list,
+                }
+                # Note: v3 API uses 'expand' as a comma-separated string, not an array
+                if expand:
+                    request_body["expand"] = expand
+
+                # Fetch issues using v3 API with nextPageToken pagination
+                all_issues: list[dict[str, Any]] = []
+                next_page_token: str | None = None
+
+                while len(all_issues) < limit:
+                    if next_page_token:
+                        request_body["nextPageToken"] = next_page_token
+
+                    response = self.jira.post(
+                        "rest/api/3/search/jql", json=request_body
                     )
 
-                    if (
-                        isinstance(metadata_response, dict)
-                        and "total" in metadata_response
-                    ):
-                        try:
-                            actual_total = int(metadata_response["total"])
-                        except (ValueError, TypeError):
-                            logger.warning(
-                                f"Could not parse 'total' from metadata response for JQL: {jql}. Received: {metadata_response.get('total')}"
-                            )
-                    else:
-                        logger.warning(
-                            f"Could not retrieve total count from metadata response for JQL: {jql}. Response type: {type(metadata_response)}"
-                        )
-                except Exception as meta_err:
-                    logger.error(
-                        f"Error fetching metadata for JQL '{jql}': {str(meta_err)}"
-                    )
+                    if not isinstance(response, dict):
+                        msg = f"Unexpected response type from v3 search API: {type(response)}"
+                        logger.error(msg)
+                        raise TypeError(msg)
 
-                # Call 2: Get the actual issues using the enhanced method
-                issues_response_list = self.jira.enhanced_jql_get_list_of_tickets(
-                    jql, fields=fields_param, limit=limit, expand=expand
-                )
+                    issues = response.get("issues", [])
+                    all_issues.extend(issues)
 
-                if not isinstance(issues_response_list, list):
-                    msg = f"Unexpected return value type from `jira.enhanced_jql_get_list_of_tickets`: {type(issues_response_list)}"
-                    logger.error(msg)
-                    raise TypeError(msg)
+                    # Check for more pages
+                    next_page_token = response.get("nextPageToken")
+                    if not next_page_token:
+                        break
 
-                response_dict_for_model = {
-                    "issues": issues_response_list,
-                    "total": actual_total,
+                # Build response dict for model
+                # Note: v3 API doesn't provide total count, so we use -1
+                response_dict: dict[str, Any] = {
+                    "issues": all_issues[:limit],
+                    "total": -1,
+                    "startAt": 0,
+                    "maxResults": limit,
                 }
 
                 search_result = JiraSearchResult.from_api_response(
-                    response_dict_for_model,
+                    response_dict,
                     base_url=self.config.url,
                     requested_fields=fields_param,
                 )
 
-                # Return the full search result object
                 return search_result
             else:
                 limit = min(limit, 50)
