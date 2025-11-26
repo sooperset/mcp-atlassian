@@ -68,7 +68,13 @@ class PagesMixin(ConfluenceClient):
                 )
 
             space_key = page.get("space", {}).get("key", "")
-            content = page["body"]["storage"]["value"]
+            try:
+                content = page["body"]["storage"]["value"]
+            except (KeyError, TypeError) as e:
+                logger.warning(
+                    f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
+                )
+                content = ""
             processed_html, processed_markdown = self.preprocessor.process_html_content(
                 content, space_key=space_key, confluence_client=self.confluence
             )
@@ -183,7 +189,13 @@ class PagesMixin(ConfluenceClient):
                 )
                 return None
 
-            content = page["body"]["storage"]["value"]
+            try:
+                content = page["body"]["storage"]["value"]
+            except (KeyError, TypeError) as e:
+                logger.warning(
+                    f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
+                )
+                content = ""
             processed_html, processed_markdown = self.preprocessor.process_html_content(
                 content, space_key=space_key, confluence_client=self.confluence
             )
@@ -244,7 +256,13 @@ class PagesMixin(ConfluenceClient):
 
         page_models = []
         for page in pages:
-            content = page["body"]["storage"]["value"]
+            try:
+                content = page["body"]["storage"]["value"]
+            except (KeyError, TypeError) as e:
+                logger.warning(
+                    f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
+                )
+                content = ""
             processed_html, processed_markdown = self.preprocessor.process_html_content(
                 content, space_key=space_key, confluence_client=self.confluence
             )
