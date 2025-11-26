@@ -845,6 +845,60 @@ class TestPagesMixin:
             assert result.id == "v1_123456789"
             assert result.title == title
 
+    @pytest.mark.parametrize(
+        "body",
+        [None, {"storage": None}, {"storage": {"value": None}}],
+        ids=["body=None", "storage=None", "value=None"],
+    )
+    def test_get_page_content_missing_body_regression(self, pages_mixin, body):
+        """Regression test for #760: handle missing body.storage.value."""
+        pages_mixin.confluence.get_page_by_id.return_value = {
+            "id": "123456",
+            "title": "Test",
+            "space": {"key": "TEST"},
+            "body": body,
+            "version": {"number": 1},
+        }
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+        result = pages_mixin.get_page_content("123456")
+        assert isinstance(result, ConfluencePage)
+        assert result.id == "123456"
+
+    def test_get_page_by_title_missing_body_regression(self, pages_mixin):
+        """Regression test for #760: get_page_by_title handles None body."""
+        pages_mixin.confluence.get_page_by_title.return_value = {
+            "id": "123456",
+            "title": "Test",
+            "space": {"key": "TEST"},
+            "body": None,
+            "version": {"number": 1},
+        }
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+        result = pages_mixin.get_page_by_title("TEST", "Test")
+        assert isinstance(result, ConfluencePage)
+
+    def test_get_space_pages_missing_body_regression(self, pages_mixin):
+        """Regression test for #760: get_space_pages handles None body."""
+        pages_mixin.confluence.get_all_pages_from_space.return_value = [
+            {
+                "id": "1",
+                "title": "A",
+                "space": {"key": "T"},
+                "body": None,
+                "version": {"number": 1},
+            },
+            {
+                "id": "2",
+                "title": "B",
+                "space": {"key": "T"},
+                "body": {"storage": None},
+                "version": {"number": 1},
+            },
+        ]
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+        results = pages_mixin.get_space_pages("T")
+        assert len(results) == 2
+
 
 class TestPagesOAuthMixin:
     """Tests for PagesMixin with OAuth authentication."""
