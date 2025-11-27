@@ -98,7 +98,7 @@ class TestConfluenceUser:
     """Tests for the ConfluenceUser model."""
 
     def test_from_api_response_with_valid_data(self):
-        """Test creating a ConfluenceUser from valid API data."""
+        """Test creating a ConfluenceUser from valid API data (Cloud)."""
         user_data = {
             "accountId": "user123",
             "displayName": "Test User",
@@ -120,6 +120,34 @@ class TestConfluenceUser:
         assert user.profile_picture == "/wiki/aa-avatar/user123"
         assert user.is_active is True
         assert user.locale == "en_US"
+        assert user.username is None
+        assert user.user_key is None
+
+    def test_from_api_response_with_dc_data(self):
+        """Test creating a ConfluenceUser from valid Data Center API data."""
+        user_data = {
+            "username": "dcuser",
+            "userKey": "userkey123",
+            "displayName": "DC User",
+            "email": "dc@example.com",
+            "profilePicture": {
+                "path": "/wiki/aa-avatar/dcuser",
+                "width": 48,
+                "height": 48,
+                "isDefault": False,
+            },
+            "accountStatus": "active",
+            "locale": "en_GB",
+        }
+        user = ConfluenceUser.from_api_response(user_data)
+        assert user.account_id is None
+        assert user.username == "dcuser"
+        assert user.user_key == "userkey123"
+        assert user.display_name == "DC User"
+        assert user.email == "dc@example.com"
+        assert user.profile_picture == "/wiki/aa-avatar/dcuser"
+        assert user.is_active is True
+        assert user.locale == "en_GB"
 
     def test_from_api_response_with_empty_data(self):
         """Test creating a ConfluenceUser from empty data."""
@@ -127,6 +155,8 @@ class TestConfluenceUser:
 
         # Should use default values
         assert user.account_id is None
+        assert user.username is None
+        assert user.user_key is None
         assert user.display_name == "Unassigned"
         assert user.email is None
         assert user.profile_picture is None
@@ -139,6 +169,8 @@ class TestConfluenceUser:
 
         # Should use default values
         assert user.account_id is None
+        assert user.username is None
+        assert user.user_key is None
         assert user.display_name == "Unassigned"
         assert user.email is None
         assert user.profile_picture is None

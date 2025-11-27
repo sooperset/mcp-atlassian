@@ -6,6 +6,7 @@ from typing import Any
 from requests.exceptions import HTTPError
 
 from ..exceptions import MCPAtlassianAuthenticationError
+from ..models.confluence.common import ConfluenceUser
 from .client import ConfluenceClient
 
 logger = logging.getLogger("mcp-atlassian")
@@ -50,6 +51,26 @@ class UsersMixin(ConfluenceClient):
             Various exceptions from the Atlassian API if user doesn't exist or if there are permission issues.
         """
         return self.confluence.get_user_details_by_username(username, expand)
+
+    def get_user_details_by_userkey(
+        self, userkey: str, expand: str = None
+    ) -> dict[str, Any]:
+        """Get user details by user key.
+
+        This is typically used for Confluence Server/DC instances where userkey
+        might be used as an identifier.
+
+        Args:
+            userkey: The userkey of the user.
+            expand: Optional expand for get status of user. Possible param is "status". Results are "Active, Deactivated".
+
+        Returns:
+            User details as a dictionary.
+
+        Raises:
+            Various exceptions from the Atlassian API if user doesn't exist or if there are permission issues.
+        """
+        return self.confluence.get_user_details_by_userkey(userkey, expand)
 
     def get_current_user_info(self) -> dict[str, Any]:
         """
@@ -98,3 +119,35 @@ class UsersMixin(ConfluenceClient):
             raise MCPAtlassianAuthenticationError(
                 f"Confluence token validation failed: {e}"
             ) from e
+
+    def get_user_details(
+        self, identifier: str, identifier_type: str = "accountId"
+    ) -> ConfluenceUser | None:
+        """
+        Get user details by identifier (accountId, username, or userKey).
+
+        Args:
+            identifier: The identifier value.
+            identifier_type: The type of identifier ('accountId', 'username', 'userKey').
+
+        Returns:
+            ConfluenceUser instance if found, else None.
+        """
+
+        try:
+            if identifier_type == "accountId":
+                data = self.get_user_details_by_accountid(identifier)
+            elif identifier_type == "username":
+                data = self.get_user_details_by_username(identifier)
+            elif identifier_type == "userKey":
+                data = self.get_user_details_by_userkey(identifier)
+            else:
+                raise ValueError(f"Unsupported identifier_type: {identifier_type}")
+            if data:
+                return ConfluenceUser.from_api_response(data)
+            return None
+        except Exception as e:
+            logger.error(
+                f"Error getting user details for {identifier_type}={identifier}: {e}"
+            )
+            return None
