@@ -596,7 +596,7 @@ Both transport types support single-user and multi-user authentication:
 **Authentication Options:**
 - **Single-User**: Use server-level authentication configured via environment variables
 - **Multi-User**: Each user provides their own authentication:
-  - Cloud: OAuth 2.0 Bearer tokens
+  - Cloud: OAuth 2.0 Bearer tokens OR Basic auth with API tokens
   - Server/Data Center: Personal Access Tokens (PATs)
 
 <details> <summary>Basic HTTP Transport Setup</summary>
@@ -697,6 +697,45 @@ Here's a complete example of setting up multi-user authentication with streamabl
 }
 ```
 
+**Cloud (Basic Auth with API Token) Example:**
+
+This method is useful for multi-user scenarios where each user provides their Atlassian email and API token:
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian-service": {
+      "url": "http://localhost:9000/mcp",
+      "headers": {
+        "Authorization": "Basic <BASE64_ENCODED_EMAIL_COLON_API_TOKEN>"
+      }
+    }
+  }
+}
+```
+
+To generate the Base64-encoded credentials:
+```bash
+# Format: email:api_token
+echo -n "user@example.com:your_api_token_here" | base64
+```
+
+Or in Python:
+```python
+import base64
+credentials = f"{email}:{api_token}"
+encoded = base64.b64encode(credentials.encode()).decode()
+print(f"Authorization: Basic {encoded}")
+```
+
+> [!TIP]
+> Basic auth is ideal for:
+> - Multi-user MCP gateway servers
+> - Applications managing per-user Atlassian credentials
+> - Scenarios where OAuth setup is complex or unavailable
+>
+> Each request is authenticated with the user's own Atlassian API token, ensuring proper permission enforcement and audit trails.
+
 4. Required environment variables in `.env`:
    ```bash
    JIRA_URL=https://your-company.atlassian.net
@@ -711,10 +750,11 @@ Here's a complete example of setting up multi-user authentication with streamabl
 > [!NOTE]
 > - The server should have its own fallback authentication configured (e.g., via environment variables for API token, PAT, or its own OAuth setup using --oauth-setup). This is used if a request doesn't include user-specific authentication.
 > - **OAuth**: Each user needs their own OAuth access token from your Atlassian OAuth app.
+> - **Basic Auth**: Each user provides their Atlassian email and API token (encoded as Base64).
 > - **PAT**: Each user provides their own Personal Access Token.
 > - **Multi-Cloud**: For OAuth users, optionally include `X-Atlassian-Cloud-Id` header to specify which Atlassian cloud instance to use
-> - The server will use the user's token for API calls when provided, falling back to server auth if not
-> - User tokens should have appropriate scopes for their needed operations
+> - The server will use the user's credentials for API calls when provided, falling back to server auth if not
+> - User tokens/credentials should have appropriate scopes/permissions for their needed operations
 
 </details>
 
