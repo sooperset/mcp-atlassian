@@ -200,7 +200,7 @@ class ConfluencePage(ApiModel, TimestampMixin):
         url = None
         if base_url := kwargs.get("base_url"):
             page_id = data.get("id")
-
+            base_url = base_url.rstrip("/")
             # Use different URL format based on whether it's cloud or server
             is_cloud = kwargs.get("is_cloud", False)
             if is_cloud:
