@@ -96,14 +96,10 @@ def _create_user_config_for_fetcher(
 
         # For minimal OAuth config (user-provided tokens), use empty strings for client credentials
         oauth_config_for_user = OAuthConfig(
-            client_id=global_oauth_cfg.client_id if global_oauth_cfg.client_id else "",
-            client_secret=global_oauth_cfg.client_secret
-            if global_oauth_cfg.client_secret
-            else "",
-            redirect_uri=global_oauth_cfg.redirect_uri
-            if global_oauth_cfg.redirect_uri
-            else "",
-            scope=global_oauth_cfg.scope if global_oauth_cfg.scope else "",
+            client_id=getattr(global_oauth_cfg, "client_id", ""),
+            client_secret=getattr(global_oauth_cfg, "client_secret", ""),
+            redirect_uri=getattr(global_oauth_cfg, "redirect_uri", ""),
+            scope=getattr(global_oauth_cfg, "scope", ""),
             access_token=user_access_token,
             refresh_token=None,
             expires_at=None,
