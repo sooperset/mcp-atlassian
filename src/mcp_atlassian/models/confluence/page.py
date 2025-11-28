@@ -31,6 +31,7 @@ class ConfluenceVersion(ApiModel, TimestampMixin):
     when: str = EMPTY_STRING
     message: str | None = None
     by: ConfluenceUser | None = None
+    minor_edit: bool = False
 
     @classmethod
     def from_api_response(
@@ -57,6 +58,7 @@ class ConfluenceVersion(ApiModel, TimestampMixin):
             when=data.get("when", EMPTY_STRING),
             message=data.get("message"),
             by=by_user,
+            minor_edit=data.get("minorEdit", False),
         )
 
     def to_simplified_dict(self) -> dict[str, Any]:

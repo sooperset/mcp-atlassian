@@ -126,6 +126,8 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_labels,
         get_page,
         get_page_children,
+        get_page_version,
+        list_page_versions,
         search,
         search_user,
         update_page,
@@ -158,6 +160,8 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.tool()(create_page)
     confluence_sub_mcp.tool()(update_page)
     confluence_sub_mcp.tool()(delete_page)
+    confluence_sub_mcp.tool()(list_page_versions)
+    confluence_sub_mcp.tool()(get_page_version)
     confluence_sub_mcp.tool()(search_user)
 
     test_mcp.mount("confluence", confluence_sub_mcp)
@@ -179,6 +183,8 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         get_labels,
         get_page,
         get_page_children,
+        get_page_version,
+        list_page_versions,
         search,
         search_user,
         update_page,
@@ -213,6 +219,8 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.tool()(create_page)
     confluence_sub_mcp.tool()(update_page)
     confluence_sub_mcp.tool()(delete_page)
+    confluence_sub_mcp.tool()(list_page_versions)
+    confluence_sub_mcp.tool()(get_page_version)
     confluence_sub_mcp.tool()(search_user)
 
     test_mcp.mount("confluence", confluence_sub_mcp)
@@ -336,6 +344,23 @@ async def test_get_page_no_markdown(client, mock_confluence_fetcher):
     assert result_data["metadata"]["title"] == "Test Page HTML"
     assert result_data["metadata"]["content"] == "<p>HTML Content</p>"
     assert result_data["metadata"]["content_format"] == "storage"
+
+
+@pytest.mark.anyio
+async def test_get_page_version(client, mock_confluence_fetcher):
+    """Test the get_page_version tool."""
+    response = await client.call_tool(
+        "confluence_get_page_version", {"page_id": "123456", "version_number": 5}
+    )
+
+    mock_confluence_fetcher.get_page_content.assert_called_once_with(
+        "123456", convert_to_markdown=True, version=5
+    )
+
+    result_data = json.loads(response[0].text)
+    assert "metadata" in result_data
+    assert result_data["metadata"]["title"] == "Test Page Mock Title"
+
 
 
 @pytest.mark.anyio

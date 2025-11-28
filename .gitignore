@@ -75,3 +75,6 @@ playground/
 
 # Claude
 .claude/
+
+# Credentials
+.test-credentials.json

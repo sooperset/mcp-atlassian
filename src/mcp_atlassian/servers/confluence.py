@@ -146,7 +146,7 @@ async def get_page(
     include_metadata: Annotated[
         bool,
         Field(
-            description="Whether to include page metadata such as creation date, last update, version, and labels.",
+            description="Whether to include page metadata such as creation date, last update,  current version, and labels.",
             default=True,
         ),
     ] = True,
@@ -674,6 +674,83 @@ async def add_comment(
         }
 
     return json.dumps(response, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(tags={"confluence", "read"})
+async def list_page_versions(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(description="The ID of the page to get versions for"),
+    ],
+) -> str:
+    """
+    List all historic versions of a given Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page.
+
+    Returns:
+        JSON string with list of all page versions.
+
+    Raises:
+        ValueError: If the Confluence client is not configured or available.
+    """
+    confluence = await get_confluence_fetcher(ctx)
+    try:
+        versions = confluence.get_page_versions(page_id)
+        versions_data = [version.to_simplified_dict() for version in versions]
+        return json.dumps({"versions": versions_data}, indent=2)
+
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error listing page versions: {e}")
+        return json.dumps({"error": "authentication_failed", "message": str(e)})
+    except Exception as e:
+        logger.error(f"Error listing page versions: {e}")
+        return json.dumps({"error": "operation_failed", "message": str(e)})
+
+
+@confluence_mcp.tool(tags={"confluence", "read"})
+async def get_page_version(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(description="The ID of the page to get a specific version for"),
+    ],
+    version_number: Annotated[
+        int,
+        Field(description="The historic version number to retrieve", ge=1),
+    ],
+) -> str:
+    """
+    Get a specific historic version of a Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page.
+        version_number: The historic version number to retrieve.
+
+    Returns:
+        JSON string with the specific page version content and metadata.
+
+    Raises:
+        ValueError: If the Confluence client is not configured or available.
+    """
+    confluence = await get_confluence_fetcher(ctx)
+    try:
+        page_object = confluence.get_page_content(
+            page_id, convert_to_markdown=True, version=version_number
+        )
+        result = {"metadata": page_object.to_simplified_dict()}
+        return json.dumps(result, indent=2, ensure_ascii=False)
+
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error getting page version: {e}")
+        return json.dumps({"error": "authentication_failed", "message": str(e)})
+    except Exception as e:
+        logger.error(f"Error getting page version: {e}")
+        return json.dumps({"error": "operation_failed", "message": str(e)})
 
 
 @confluence_mcp.tool(tags={"confluence", "read"})
