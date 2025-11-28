@@ -272,6 +272,19 @@ This project aims to **improve** the user experience.
 - Feature 1
 - Feature 2
 
+### Bullet Lists
+* Item A
+  * Sub-item A.1
+      * Sub-sub-item A.1.1
+* Item B
+
+### Numbered lists
+1. NumItem A
+  1. Sub-NumItem A.1
+    1. Sub-sub-NumItem A.1.1
+    2. Sub-sub-NumItem A.1.2
+2. Item B
+
 ### Code Example
 ```python
 def hello():
@@ -286,6 +299,8 @@ For more information, see [our website](https://example.com).
     assert "h2. Introduction" in converted
     assert "*improve*" in converted
     assert "* Feature 1" in converted
+    assert "*** Sub-sub-item A.1.1" in converted
+    assert "### Sub-sub-NumItem A.1.2" in converted
     assert "{code:python}" in converted
     assert "[our website|https://example.com]" in converted
 
