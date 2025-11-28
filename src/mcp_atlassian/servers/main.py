@@ -131,8 +131,20 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             if app_lifespan_state
             else None
         )
+
+        header_based_services = {"jira": False, "confluence": False}
+        if hasattr(req_context, "request") and hasattr(req_context.request, "state"):
+            service_headers = getattr(
+                req_context.request.state, "atlassian_service_headers", {}
+            )
+            if service_headers:
+                header_based_services = get_available_services(service_headers)
+                logger.debug(
+                    f"Header-based service availability: {header_based_services}"
+                )
+
         logger.debug(
-            f"_main_mcp_list_tools: read_only={read_only}, enabled_tools_filter={enabled_tools_filter}"
+            f"_main_mcp_list_tools: read_only={read_only}, enabled_tools_filter={enabled_tools_filter}, header_services={header_based_services}"
         )
 
         all_tools: dict[str, FastMCPTool] = await self.get_tools()
@@ -159,21 +171,37 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             is_confluence_tool = "confluence" in tool_tags
             service_configured_and_available = True
             if app_lifespan_state:
-                if is_jira_tool and not app_lifespan_state.full_jira_config:
+                jira_available = (
+                    app_lifespan_state.full_jira_config is not None
+                ) or header_based_services.get("jira", False)
+                confluence_available = (
+                    app_lifespan_state.full_confluence_config is not None
+                ) or header_based_services.get("confluence", False)
+
+                if is_jira_tool and not jira_available:
                     logger.debug(
-                        f"Excluding Jira tool '{registered_name}' as Jira configuration/authentication is incomplete."
+                        f"Excluding Jira tool '{registered_name}' as Jira configuration/authentication is incomplete and no header-based auth available."
                     )
                     service_configured_and_available = False
-                if is_confluence_tool and not app_lifespan_state.full_confluence_config:
+                if is_confluence_tool and not confluence_available:
                     logger.debug(
-                        f"Excluding Confluence tool '{registered_name}' as Confluence configuration/authentication is incomplete."
+                        f"Excluding Confluence tool '{registered_name}' as Confluence configuration/authentication is incomplete and no header-based auth available."
                     )
                     service_configured_and_available = False
             elif is_jira_tool or is_confluence_tool:
-                logger.warning(
-                    f"Excluding tool '{registered_name}' as application context is unavailable to verify service configuration."
-                )
-                service_configured_and_available = False
+                jira_available = header_based_services.get("jira", False)
+                confluence_available = header_based_services.get("confluence", False)
+
+                if is_jira_tool and not jira_available:
+                    logger.debug(
+                        f"Excluding Jira tool '{registered_name}' as no Jira authentication available."
+                    )
+                    service_configured_and_available = False
+                if is_confluence_tool and not confluence_available:
+                    logger.debug(
+                        f"Excluding Confluence tool '{registered_name}' as no Confluence authentication available."
+                    )
+                    service_configured_and_available = False
 
             if not service_configured_and_available:
                 continue
@@ -241,6 +269,14 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
             auth_header = request.headers.get("Authorization")
             cloud_id_header = request.headers.get("X-Atlassian-Cloud-Id")
 
+            # Extract additional Atlassian headers for service availability detection
+            jira_token_header = request.headers.get("X-Atlassian-Jira-Personal-Token")
+            jira_url_header = request.headers.get("X-Atlassian-Jira-Url")
+            confluence_token_header = request.headers.get(
+                "X-Atlassian-Confluence-Personal-Token"
+            )
+            confluence_url_header = request.headers.get("X-Atlassian-Confluence-Url")
+
             token_for_log = mask_sensitive(
                 auth_header.split(" ", 1)[1].strip()
                 if auth_header and " " in auth_header
@@ -260,6 +296,23 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 request.state.user_atlassian_cloud_id = None
                 logger.debug(
                     "UserTokenMiddleware: No cloudId header provided, will use global config"
+                )
+            service_headers = {}
+            if jira_token_header:
+                service_headers["X-Atlassian-Jira-Personal-Token"] = jira_token_header
+            if jira_url_header:
+                service_headers["X-Atlassian-Jira-Url"] = jira_url_header
+            if confluence_token_header:
+                service_headers["X-Atlassian-Confluence-Personal-Token"] = (
+                    confluence_token_header
+                )
+            if confluence_url_header:
+                service_headers["X-Atlassian-Confluence-Url"] = confluence_url_header
+
+            request.state.atlassian_service_headers = service_headers
+            if service_headers:
+                logger.debug(
+                    f"UserTokenMiddleware: Extracted service headers: {list(service_headers.keys())}"
                 )
 
             # Check for mcp-session-id header for debugging
@@ -315,9 +368,18 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                     status_code=401,
                 )
             else:
-                logger.debug(
-                    f"No Authorization header provided for {request.url.path}. Will proceed with global/fallback server configuration if applicable."
-                )
+                if (jira_token_header and jira_url_header) or (
+                    confluence_token_header and confluence_url_header
+                ):
+                    logger.debug(
+                        f"Header-based authentication detected for {request.url.path}. Setting PAT auth type."
+                    )
+                    request.state.user_atlassian_auth_type = "pat"
+                    request.state.user_atlassian_email = None
+                else:
+                    logger.debug(
+                        f"No Authorization header provided for {request.url.path}. Will proceed with global/fallback server configuration if applicable."
+                    )
         response = await call_next(request)
         logger.debug(
             f"UserTokenMiddleware.dispatch: EXITED for request path='{request.url.path}'"
