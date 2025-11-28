@@ -16,6 +16,7 @@ from ..constants import (
     JIRA_DEFAULT_ID,
     JIRA_DEFAULT_KEY,
 )
+from .agile import JiraSprint
 from .comment import JiraComment
 from .common import (
     JiraAttachment,
@@ -88,6 +89,7 @@ class JiraIssue(ApiModel, TimestampMixin):
     worklog: dict | None = None
     changelogs: list[JiraChangelog] = Field(default_factory=list)
     issuelinks: list[JiraIssueLink] = Field(default_factory=list)
+    sprint: JiraSprint | None = None
 
     def __getattribute__(self, name: str) -> Any:
         """
@@ -402,6 +404,12 @@ class JiraIssue(ApiModel, TimestampMixin):
         if timetracking_data:
             timetracking = JiraTimetracking.from_api_response(timetracking_data)
 
+        # Sprint
+        sprint = None
+        sprint_data = fields.get("sprint")
+        if sprint_data:
+            sprint = JiraSprint.from_api_response(sprint_data)
+
         # URL
         url = data.get("self")  # API URL for the issue
 
@@ -475,6 +483,7 @@ class JiraIssue(ApiModel, TimestampMixin):
             requested_fields=requested_fields_param,
             changelogs=changelogs,
             issuelinks=cls._extract_issue_links(fields),
+            sprint=sprint,
         )
 
     def to_simplified_dict(self) -> dict[str, Any]:

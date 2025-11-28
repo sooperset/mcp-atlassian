@@ -9,11 +9,12 @@ import requests
 from ..models.jira import JiraSprint
 from ..utils import parse_date
 from .client import JiraClient
+from .protocols import SprintOperationsProto
 
 logger = logging.getLogger("mcp-jira")
 
 
-class SprintsMixin(JiraClient):
+class SprintsMixin(JiraClient, SprintOperationsProto):
     """Mixin for Jira sprints operations."""
 
     def get_all_sprints_from_board(
@@ -194,4 +195,30 @@ class SprintsMixin(JiraClient):
             raise
         except Exception as e:
             logger.error(f"Error creating sprint: {str(e)}")
+            raise
+
+    def add_issues_to_sprint(self, sprint_id: str, issues: list[str]) -> None:
+        """
+        Add issues to a sprint.
+        Args:
+            sprint_id: The ID of the sprint
+            issues: A list of issue keys to add to the sprint
+        """
+        if not sprint_id or not isinstance(sprint_id, str):
+            msg = "sprint_id must be a non-empty string."
+            raise ValueError(msg)
+        if (
+            not issues
+            or not isinstance(issues, list)
+            or not all(isinstance(i, str) for i in issues)
+        ):
+            msg = "issues must be a non-empty list of strings."
+            raise ValueError(msg)
+
+        try:
+            self.jira.add_issues_to_sprint(sprint_id, issues)
+        except Exception as e:
+            logger.error(
+                f"An unexpected error occurred while adding issues to sprint: {e}"
+            )
             raise
