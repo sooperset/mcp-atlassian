@@ -730,6 +730,9 @@ Here's a complete example of setting up multi-user authentication with streamabl
 - `jira_update_issue`: Update an existing issue
 - `jira_transition_issue`: Transition an issue to a new status
 - `jira_add_comment`: Add a comment to an issue
+- `jira_get_customfield_options`: Get available options for custom fields
+- `jira_get_customfield_contexts`: Get contexts for custom fields
+- `jira_get_customfield_context_options`: Get options for custom fields within specific contexts
 
 #### Confluence Tools
 
@@ -749,6 +752,9 @@ Here's a complete example of setting up multi-user authentication with streamabl
 |           | `jira_get_worklog`                  | `confluence_get_labels`        |
 |           | `jira_get_transitions`              | `confluence_search_user`       |
 |           | `jira_search_fields`                |                                |
+|           | `jira_get_customfield_options`      |                                |
+|           | `jira_get_customfield_contexts`     |                                |
+|           | `jira_get_customfield_context_options` |                             |
 |           | `jira_get_agile_boards`             |                                |
 |           | `jira_get_board_issues`             |                                |
 |           | `jira_get_sprints_from_board`       |                                |

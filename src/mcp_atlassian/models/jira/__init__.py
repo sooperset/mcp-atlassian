@@ -17,6 +17,13 @@ from .common import (
     JiraTimetracking,
     JiraUser,
 )
+from .field_option import (
+    JiraFieldContext,
+    JiraFieldContextOptionsResponse,
+    JiraFieldContextsResponse,
+    JiraFieldOption,
+    JiraFieldOptionsResponse,
+)
 from .issue import JiraIssue
 from .link import (
     JiraIssueLink,
@@ -52,4 +59,10 @@ __all__ = [
     "JiraIssueLink",
     "JiraLinkedIssue",
     "JiraLinkedIssueFields",
+    # Field options models
+    "JiraFieldOption",
+    "JiraFieldContext",
+    "JiraFieldOptionsResponse",
+    "JiraFieldContextOptionsResponse",
+    "JiraFieldContextsResponse",
 ]

@@ -954,6 +954,88 @@ class IssuesMixin(
                 )
                 return value  # Return original on error
 
+        # Handle schema-based formatting for custom fields
+        elif schema_type == "array":
+            # Handle array-type custom fields (multi-select, checkboxes, etc.)
+            if isinstance(value, list):
+                # Check if it's an array of options (common for multi-select fields)
+                if (
+                    field_definition
+                    and field_definition.get("schema", {}).get("items") == "option"
+                ):
+                    # Multi-select option fields expect [{"value": "..."}, ...] format
+                    formatted_list = []
+                    for item in value:
+                        if isinstance(item, str):
+                            formatted_list.append({"value": item})
+                        elif isinstance(item, dict) and (
+                            "value" in item or "id" in item
+                        ):
+                            formatted_list.append(item)
+                        else:
+                            logger.warning(
+                                f"Invalid item format in array field {field_id}: {item}"
+                            )
+                    return formatted_list
+                else:
+                    # For other array types, try to format as standard objects
+                    formatted_list = []
+                    for item in value:
+                        if isinstance(item, str):
+                            formatted_list.append({"name": item})
+                        elif isinstance(item, dict):
+                            formatted_list.append(item)
+                        else:
+                            logger.warning(
+                                f"Invalid item format in array field {field_id}: {item}"
+                            )
+                    return formatted_list
+            elif isinstance(value, str):
+                # Convert comma-separated string to array
+                items = [item.strip() for item in value.split(",") if item.strip()]
+                if (
+                    field_definition
+                    and field_definition.get("schema", {}).get("items") == "option"
+                ):
+                    return [{"value": item} for item in items]
+                else:
+                    return [{"name": item} for item in items]
+            else:
+                logger.warning(
+                    f"Invalid format for array field {field_id}: {value}. Expected list or comma-separated string."
+                )
+                return None
+        elif schema_type == "option":
+            # Handle single-select option fields
+            if isinstance(value, str):
+                return {"value": value}
+            elif isinstance(value, dict) and ("value" in value or "id" in value):
+                return value
+            else:
+                logger.warning(
+                    f"Invalid format for option field {field_id}: {value}. Expected string or dict with value/id."
+                )
+                return None
+        elif schema_type == "user":
+            # Handle user fields (assignee, reporter, custom user fields)
+            if isinstance(value, str):
+                try:
+                    user_identifier = self._get_account_id(value)
+                    if self.config.is_cloud:
+                        return {"accountId": user_identifier}
+                    else:
+                        return {"name": user_identifier}
+                except ValueError as e:
+                    logger.warning(f"Could not format user field {field_id}: {str(e)}")
+                    return None
+            elif isinstance(value, dict) and ("accountId" in value or "name" in value):
+                return value
+            else:
+                logger.warning(
+                    f"Invalid format for user field {field_id}: {value}. Expected string username or dict."
+                )
+                return None
+
         # Default: return value as is if no specific formatting needed/identified
         return value
 
