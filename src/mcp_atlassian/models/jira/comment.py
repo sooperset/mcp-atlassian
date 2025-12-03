@@ -12,8 +12,8 @@ from ..constants import (
     EMPTY_STRING,
     JIRA_DEFAULT_ID,
 )
-from .common import JiraUser
 from .adf import adf_to_text
+from .common import JiraUser
 
 logger = logging.getLogger(__name__)
 

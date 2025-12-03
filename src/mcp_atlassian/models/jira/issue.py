@@ -16,6 +16,7 @@ from ..constants import (
     JIRA_DEFAULT_ID,
     JIRA_DEFAULT_KEY,
 )
+from .adf import adf_to_text
 from .comment import JiraComment
 from .common import (
     JiraAttachment,
@@ -29,8 +30,6 @@ from .common import (
 )
 from .link import JiraIssueLink
 from .project import JiraProject
-
-from .adf import adf_to_text
 
 logger = logging.getLogger(__name__)
 
