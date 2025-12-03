@@ -13,6 +13,7 @@ from ..constants import (
     JIRA_DEFAULT_ID,
 )
 from .common import JiraUser
+from .adf import adf_to_text
 
 logger = logging.getLogger(__name__)
 
@@ -58,14 +59,13 @@ class JiraComment(ApiModel, TimestampMixin):
         if comment_id is not None:
             comment_id = str(comment_id)
 
-        # Get the body content
+        # Get the body content - can be string (legacy) or ADF dict (Jira Cloud)
         body_content = EMPTY_STRING
         body = data.get("body")
-        if isinstance(body, dict) and "content" in body:
+        if isinstance(body, dict):
             # Handle Atlassian Document Format (ADF)
-            # This is a simplified conversion - a proper implementation would
-            # parse the ADF structure
-            body_content = str(body.get("content", EMPTY_STRING))
+            converted = adf_to_text(body)
+            body_content = converted if converted else EMPTY_STRING
         elif body:
             # Handle plain text or HTML content
             body_content = str(body)

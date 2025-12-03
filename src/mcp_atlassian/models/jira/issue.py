@@ -30,6 +30,8 @@ from .common import (
 from .link import JiraIssueLink
 from .project import JiraProject
 
+from .adf import adf_to_text
+
 logger = logging.getLogger(__name__)
 
 # Extended epic field name patterns to support more variations
@@ -267,7 +269,14 @@ class JiraIssue(ApiModel, TimestampMixin):
         issue_id = str(data.get("id", JIRA_DEFAULT_ID))
         key = str(data.get("key", JIRA_DEFAULT_KEY))
         summary = str(fields.get("summary", EMPTY_STRING))
-        description = fields.get("description")
+
+        # Handle description - can be string (legacy) or ADF dict (Jira Cloud new editor)
+        raw_description = fields.get("description")
+        if isinstance(raw_description, dict):
+            # Convert ADF to plain text
+            description = adf_to_text(raw_description)
+        else:
+            description = raw_description
 
         # Timestamps
         created = str(fields.get("created", EMPTY_STRING))
