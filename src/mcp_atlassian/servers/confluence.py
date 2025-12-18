@@ -245,7 +245,7 @@ async def get_page_children(
     limit: Annotated[
         int,
         Field(
-            description="Maximum number of child pages to return (1-50)",
+            description="Maximum number of child items to return (1-50)",
             default=25,
             ge=1,
             le=50,
@@ -269,20 +269,28 @@ async def get_page_children(
         int,
         Field(description="Starting index for pagination (0-based)", default=0, ge=0),
     ] = 0,
+    include_folders: Annotated[
+        bool,
+        Field(
+            description="Whether to include child folders in addition to child pages",
+            default=True,
+        ),
+    ] = True,
 ) -> str:
-    """Get child pages of a specific Confluence page.
+    """Get child pages and folders of a specific Confluence page.
 
     Args:
         ctx: The FastMCP context.
         parent_id: The ID of the parent page.
         expand: Fields to expand.
-        limit: Maximum number of child pages.
+        limit: Maximum number of child items.
         include_content: Whether to include page content.
         convert_to_markdown: Convert content to markdown if include_content is true.
         start: Starting index for pagination.
+        include_folders: Whether to include child folders (default: True).
 
     Returns:
-        JSON string representing a list of child page objects.
+        JSON string representing a list of child page and folder objects.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
     if include_content and "body" not in expand:
@@ -295,6 +303,7 @@ async def get_page_children(
             limit=limit,
             expand=expand,
             convert_to_markdown=convert_to_markdown,
+            include_folders=include_folders,
         )
         child_pages = [page.to_simplified_dict() for page in pages]
         result = {
