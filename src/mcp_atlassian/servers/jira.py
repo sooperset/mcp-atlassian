@@ -22,7 +22,10 @@ jira_mcp = FastMCP(
 )
 
 
-@jira_mcp.tool(tags={"jira", "read"})
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get User Profile", "readOnlyHint": True},
+)
 async def get_user_profile(
     ctx: Context,
     user_identifier: Annotated[
@@ -80,7 +83,10 @@ async def get_user_profile(
     return json.dumps(response_data, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "read"})
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Issue", "readOnlyHint": True},
+)
 async def get_issue(
     ctx: Context,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
@@ -163,7 +169,10 @@ async def get_issue(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "read"})
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Search Issues", "readOnlyHint": True},
+)
 async def search(
     ctx: Context,
     jql: Annotated[
@@ -250,7 +259,10 @@ async def search(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "read"})
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Search Fields", "readOnlyHint": True},
+)
 async def search_fields(
     ctx: Context,
     keyword: Annotated[
@@ -284,7 +296,10 @@ async def search_fields(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "read"})
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Project Issues", "readOnlyHint": True},
+)
 async def get_project_issues(
     ctx: Context,
     project_key: Annotated[str, Field(description="The project key")],
@@ -316,7 +331,10 @@ async def get_project_issues(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "read"})
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Transitions", "readOnlyHint": True},
+)
 async def get_transitions(
     ctx: Context,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
@@ -336,7 +354,10 @@ async def get_transitions(
     return json.dumps(transitions, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "read"})
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Worklog", "readOnlyHint": True},
+)
 async def get_worklog(
     ctx: Context,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
@@ -356,7 +377,10 @@ async def get_worklog(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "read"})
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Download Attachments", "readOnlyHint": True},
+)
 async def download_attachments(
     ctx: Context,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
@@ -379,7 +403,10 @@ async def download_attachments(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "read"})
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Agile Boards", "readOnlyHint": True},
+)
 async def get_agile_boards(
     ctx: Context,
     board_name: Annotated[
@@ -429,7 +456,10 @@ async def get_agile_boards(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "read"})
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Board Issues", "readOnlyHint": True},
+)
 async def get_board_issues(
     ctx: Context,
     board_id: Annotated[str, Field(description="The id of the board (e.g., '1001')")],
@@ -506,7 +536,10 @@ async def get_board_issues(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "read"})
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Sprints from Board", "readOnlyHint": True},
+)
 async def get_sprints_from_board(
     ctx: Context,
     board_id: Annotated[str, Field(description="The id of board (e.g., '1000')")],
@@ -543,7 +576,10 @@ async def get_sprints_from_board(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "read"})
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Sprint Issues", "readOnlyHint": True},
+)
 async def get_sprint_issues(
     ctx: Context,
     sprint_id: Annotated[str, Field(description="The id of sprint (e.g., '10001')")],
@@ -591,7 +627,10 @@ async def get_sprint_issues(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "read"})
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Link Types", "readOnlyHint": True},
+)
 async def get_link_types(ctx: Context) -> str:
     """Get all available issue link types.
 
@@ -607,7 +646,10 @@ async def get_link_types(ctx: Context) -> str:
     return json.dumps(formatted_link_types, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "write"})
+@jira_mcp.tool(
+    tags={"jira", "write"},
+    annotations={"title": "Create Issue", "destructiveHint": True},
+)
 @check_write_access
 async def create_issue(
     ctx: Context,
@@ -712,7 +754,10 @@ async def create_issue(
     )
 
 
-@jira_mcp.tool(tags={"jira", "write"})
+@jira_mcp.tool(
+    tags={"jira", "write"},
+    annotations={"title": "Batch Create Issues", "destructiveHint": True},
+)
 @check_write_access
 async def batch_create_issues(
     ctx: Context,
@@ -781,7 +826,10 @@ async def batch_create_issues(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "read"})
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Batch Get Changelogs", "readOnlyHint": True},
+)
 async def batch_get_changelogs(
     ctx: Context,
     issue_ids_or_keys: Annotated[
@@ -853,7 +901,10 @@ async def batch_get_changelogs(
     return json.dumps(results, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "write"})
+@jira_mcp.tool(
+    tags={"jira", "write"},
+    annotations={"title": "Update Issue", "destructiveHint": True},
+)
 @check_write_access
 async def update_issue(
     ctx: Context,
@@ -954,7 +1005,10 @@ async def update_issue(
         raise ValueError(f"Failed to update issue {issue_key}: {str(e)}")
 
 
-@jira_mcp.tool(tags={"jira", "write"})
+@jira_mcp.tool(
+    tags={"jira", "write"},
+    annotations={"title": "Delete Issue", "destructiveHint": True},
+)
 @check_write_access
 async def delete_issue(
     ctx: Context,
@@ -979,7 +1033,10 @@ async def delete_issue(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "write"})
+@jira_mcp.tool(
+    tags={"jira", "write"},
+    annotations={"title": "Add Comment", "destructiveHint": True},
+)
 @check_write_access
 async def add_comment(
     ctx: Context,
@@ -1005,7 +1062,10 @@ async def add_comment(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "write"})
+@jira_mcp.tool(
+    tags={"jira", "write"},
+    annotations={"title": "Add Worklog", "destructiveHint": True},
+)
 @check_write_access
 async def add_worklog(
     ctx: Context,
@@ -1072,7 +1132,10 @@ async def add_worklog(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "write"})
+@jira_mcp.tool(
+    tags={"jira", "write"},
+    annotations={"title": "Link to Epic", "destructiveHint": True},
+)
 @check_write_access
 async def link_to_epic(
     ctx: Context,
@@ -1105,7 +1168,10 @@ async def link_to_epic(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "write"})
+@jira_mcp.tool(
+    tags={"jira", "write"},
+    annotations={"title": "Create Issue Link", "destructiveHint": True},
+)
 @check_write_access
 async def create_issue_link(
     ctx: Context,
@@ -1173,7 +1239,10 @@ async def create_issue_link(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "write"})
+@jira_mcp.tool(
+    tags={"jira", "write"},
+    annotations={"title": "Create Remote Issue Link", "destructiveHint": True},
+)
 @check_write_access
 async def create_remote_issue_link(
     ctx: Context,
@@ -1255,7 +1324,10 @@ async def create_remote_issue_link(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "write"})
+@jira_mcp.tool(
+    tags={"jira", "write"},
+    annotations={"title": "Remove Issue Link", "destructiveHint": True},
+)
 @check_write_access
 async def remove_issue_link(
     ctx: Context,
@@ -1281,7 +1353,10 @@ async def remove_issue_link(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "write"})
+@jira_mcp.tool(
+    tags={"jira", "write"},
+    annotations={"title": "Transition Issue", "destructiveHint": True},
+)
 @check_write_access
 async def transition_issue(
     ctx: Context,
@@ -1354,7 +1429,10 @@ async def transition_issue(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "write"})
+@jira_mcp.tool(
+    tags={"jira", "write"},
+    annotations={"title": "Create Sprint", "destructiveHint": True},
+)
 @check_write_access
 async def create_sprint(
     ctx: Context,
@@ -1399,7 +1477,10 @@ async def create_sprint(
     return json.dumps(sprint.to_simplified_dict(), indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "write"})
+@jira_mcp.tool(
+    tags={"jira", "write"},
+    annotations={"title": "Update Sprint", "destructiveHint": True},
+)
 @check_write_access
 async def update_sprint(
     ctx: Context,
@@ -1457,7 +1538,10 @@ async def update_sprint(
         return json.dumps(sprint.to_simplified_dict(), indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "read"})
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Project Versions", "readOnlyHint": True},
+)
 async def get_project_versions(
     ctx: Context,
     project_key: Annotated[str, Field(description="Jira project key (e.g., 'PROJ')")],
@@ -1468,7 +1552,10 @@ async def get_project_versions(
     return json.dumps(versions, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "read"})
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get All Projects", "readOnlyHint": True},
+)
 async def get_all_projects(
     ctx: Context,
     include_archived: Annotated[
@@ -1533,7 +1620,10 @@ async def get_all_projects(
     return json.dumps(projects, indent=2, ensure_ascii=False)
 
 
-@jira_mcp.tool(tags={"jira", "write"})
+@jira_mcp.tool(
+    tags={"jira", "write"},
+    annotations={"title": "Create Version", "destructiveHint": True},
+)
 @check_write_access
 async def create_version(
     ctx: Context,
@@ -1581,7 +1671,11 @@ async def create_version(
         )
 
 
-@jira_mcp.tool(name="batch_create_versions", tags={"jira", "write"})
+@jira_mcp.tool(
+    name="batch_create_versions",
+    tags={"jira", "write"},
+    annotations={"title": "Batch Create Versions", "destructiveHint": True},
+)
 @check_write_access
 async def batch_create_versions(
     ctx: Context,
