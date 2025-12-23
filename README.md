@@ -146,6 +146,8 @@ There are two main approaches to configure the Docker container:
 > - `MCP_VERBOSE`: Set to "true" for more detailed logging
 > - `MCP_LOGGING_STDOUT`: Set to "true" to log to stdout instead of stderr
 > - `ENABLED_TOOLS`: Comma-separated list of tool names to enable (e.g., "confluence_search,jira_get_issue")
+> - `CLIENT_CERT_FILE`: Path to your client certificate file.
+> - `CLIENT_KEY_FILE`: Path to your client private key file.
 >
 > See the [.env.example](https://github.com/sooperset/mcp-atlassian/blob/main/.env.example) file for all available options.
 
@@ -372,6 +374,48 @@ Add the relevant proxy variables to the `args` (using `-e`) and `env` sections o
 
 Credentials in proxy URLs are masked in logs. If you set `NO_PROXY`, it will be respected for requests to matching hosts.
 
+</details>
+
+<details>
+<summary>Client Certificate Authentication (Server/Data Center)</summary>
+
+For Server/Data Center deployments that require client certificate authentication, you can configure the MCP server by providing the paths to your certificate and private key files.
+
+**Environment Variables:**
+- `CLIENT_CERT_FILE`: The path to your client certificate file (e.g., `/path/to/your/cert.pem`).
+- `CLIENT_KEY_FILE`: The path to your private key file (e.g., `/path/to/your/key.pem`).
+
+**Configuration Example:**
+When running the Docker container, you'll need to mount the certificate files and set the environment variables.
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-v", "/path/to/your/certs:/certs",
+        "-e", "JIRA_URL",
+        "-e", "JIRA_PERSONAL_TOKEN",
+        "-e", "CLIENT_CERT_FILE=/certs/your-cert.pem",
+        "-e", "CLIENT_KEY_FILE=/certs/your-key.pem",
+        "ghcr.io/sooperset/mcp-atlassian:latest"
+      ],
+      "env": {
+        "JIRA_URL": "https://jira.your-company.com",
+        "JIRA_PERSONAL_TOKEN": "your_jira_pat"
+      }
+    }
+  }
+}
+```
+
+> [!NOTE]
+> - Ensure the paths provided in `CLIENT_CERT_FILE` and `CLIENT_KEY_FILE` are accessible from within the Docker container. Mounting the directory containing your certificates is the recommended approach.
+> - This authentication method is typically used in conjunction with other methods like Personal Access Tokens for Server/Data Center.
 </details>
 <details>
 <summary>Custom HTTP Headers Configuration</summary>

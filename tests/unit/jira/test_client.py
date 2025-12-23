@@ -289,3 +289,56 @@ def test_init_no_proxies(monkeypatch):
     )
     client = JiraClient(config=config)
     assert mock_session.proxies == {}
+
+
+def test_init_with_client_cert_auth():
+    """Test initializing the client with client certificate authentication."""
+    with patch("mcp_atlassian.jira.client.Jira") as mock_jira, patch.dict(
+        "os.environ",
+        {
+            "CLIENT_CERT_FILE": "/path/to/cert.pem",
+            "CLIENT_KEY_FILE": "/path/to/key.pem",
+        },
+    ), patch(
+        "mcp_atlassian.jira.client.configure_ssl_verification"
+    ) as mock_configure_ssl:
+        mock_jira_instance = MagicMock()
+        mock_session = MagicMock()
+        mock_jira_instance._session = mock_session
+        mock_jira.return_value = mock_jira_instance
+
+        config = JiraConfig(
+            url="https://jira.example.com",
+            auth_type="pat",
+            personal_token="test_personal_token",
+        )
+
+        client = JiraClient(config=config)
+
+        # Verify that the cert attribute of the session was set
+        assert mock_session.cert == ("/path/to/cert.pem", "/path/to/key.pem")
+
+
+def test_init_with_client_cert_only_auth():
+    """Test initializing the client with only a client certificate."""
+    with patch("mcp_atlassian.jira.client.Jira") as mock_jira, patch.dict(
+        "os.environ",
+        {"CLIENT_CERT_FILE": "/path/to/cert.pem", "CLIENT_KEY_FILE": ""},
+    ), patch(
+        "mcp_atlassian.jira.client.configure_ssl_verification"
+    ) as mock_configure_ssl:
+        mock_jira_instance = MagicMock()
+        mock_session = MagicMock()
+        mock_jira_instance._session = mock_session
+        mock_jira.return_value = mock_jira_instance
+
+        config = JiraConfig(
+            url="https://jira.example.com",
+            auth_type="pat",
+            personal_token="test_personal_token",
+        )
+
+        client = JiraClient(config=config)
+
+        # Verify that the cert attribute of the session was set
+        assert mock_session.cert == "/path/to/cert.pem"

@@ -232,6 +232,26 @@ class TestRealJiraAPI(BaseAuthTest):
         elapsed = time.time() - start_time
         assert elapsed < 10  # Should complete quickly if no rate limiting
 
+    def test_client_certificate_authentication(self, jira_client):
+        """Test connection to a Jira instance requiring client certificate authentication."""
+        if not os.getenv("CLIENT_CERT_FILE") or not os.getenv("CLIENT_KEY_FILE"):
+            pytest.skip(
+                "CLIENT_CERT_FILE and CLIENT_KEY_FILE must be set for this test."
+            )
+
+        # The jira_client fixture already initializes the client.
+        # If the initialization was successful, it means the client
+        # was able to connect to the Jira instance using the client certificate.
+        # To be sure, we can try a simple, read-only API call.
+        try:
+            server_info = jira_client.jira.server_info()
+            assert server_info is not None
+            assert "baseUrl" in server_info
+        except Exception as e:
+            pytest.fail(
+                f"Failed to connect to Jira with client certificate authentication: {e}"
+            )
+
 
 @pytest.mark.integration
 class TestRealConfluenceAPI(BaseAuthTest):

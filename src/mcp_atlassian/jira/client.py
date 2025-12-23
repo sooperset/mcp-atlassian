@@ -110,6 +110,18 @@ class JiraClient:
             ssl_verify=self.config.ssl_verify,
         )
 
+        # Client certificate authentication
+        client_cert = os.environ.get("CLIENT_CERT_FILE")
+        client_key = os.environ.get("CLIENT_KEY_FILE")
+
+        if client_cert and client_key:
+            logger.debug(f"Using client certificate: {client_cert}")
+            logger.debug(f"Using client key: {client_key}")
+            self.jira._session.cert = (client_cert, client_key)
+        elif client_cert:
+            logger.debug(f"Using client certificate: {client_cert}")
+            self.jira._session.cert = client_cert
+
         # Proxy configuration
         proxies = {}
         if self.config.http_proxy:
