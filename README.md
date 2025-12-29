@@ -36,6 +36,9 @@ https://github.com/user-attachments/assets/7fe9c488-ad0c-4876-9b54-120b666bb785
 | **Jira**       | Cloud              | ✅ Fully supported           |
 | **Jira**       | Server/Data Center | ✅ Supported (version 8.14+) |
 
+> **Note**: Python 3.14 is not yet supported due to upstream pydantic-core/PyO3 limitations.
+> Use Python 3.10-3.13. Workaround: `uvx --python=3.12 mcp-atlassian`
+
 ## Quick Start Guide
 
 ### 🔐 1. Authentication Setup
