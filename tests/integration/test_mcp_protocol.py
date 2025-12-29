@@ -166,7 +166,7 @@ class TestMCPProtocolIntegration:
                 atlassian_mcp_server.get_tools = mock_get_tools
 
                 # Get filtered tools
-                tools = await atlassian_mcp_server._mcp_list_tools()
+                tools = await atlassian_mcp_server._list_tools_mcp()
 
                 # Assert all tools are available
                 tool_names = [tool.name for tool in tools]
@@ -246,7 +246,7 @@ class TestMCPProtocolIntegration:
             atlassian_mcp_server.get_tools = mock_get_tools
 
             # Get filtered tools
-            tools = await atlassian_mcp_server._mcp_list_tools()
+            tools = await atlassian_mcp_server._list_tools_mcp()
 
             # Assert only read tools are available
             tool_names = [tool.name for tool in tools]
@@ -317,7 +317,7 @@ class TestMCPProtocolIntegration:
             atlassian_mcp_server.get_tools = mock_get_tools
 
             # Get filtered tools
-            tools = await atlassian_mcp_server._mcp_list_tools()
+            tools = await atlassian_mcp_server._list_tools_mcp()
 
             # Assert only enabled tools are available
             tool_names = [tool.name for tool in tools]
@@ -383,7 +383,7 @@ class TestMCPProtocolIntegration:
             atlassian_mcp_server.get_tools = mock_get_tools
 
             # Get filtered tools
-            tools = await atlassian_mcp_server._mcp_list_tools()
+            tools = await atlassian_mcp_server._list_tools_mcp()
 
             # Assert no tools are available when services not configured
             assert len(tools) == 0
@@ -851,7 +851,7 @@ class TestMCPProtocolIntegration:
             atlassian_mcp_server.get_tools = mock_get_tools
 
             # Get filtered tools
-            tools = await atlassian_mcp_server._mcp_list_tools()
+            tools = await atlassian_mcp_server._list_tools_mcp()
 
             # Only jira_get_issue should pass all filters
             tool_names = [tool.name for tool in tools]
@@ -870,7 +870,7 @@ class TestMCPProtocolIntegration:
         atlassian_mcp_server.get_tools = mock_get_tools
 
         # Get filtered tools
-        tools = await atlassian_mcp_server._mcp_list_tools()
+        tools = await atlassian_mcp_server._list_tools_mcp()
 
         # Should return empty list
         assert tools == []
