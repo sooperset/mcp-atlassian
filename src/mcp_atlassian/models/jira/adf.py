@@ -4,6 +4,8 @@ Atlassian Document Format (ADF) utilities.
 This module provides utilities for parsing ADF content from Jira Cloud.
 """
 
+from datetime import datetime, timezone
+
 
 def adf_to_text(adf_content: dict | list | str | None) -> str | None:
     """
@@ -40,6 +42,48 @@ def adf_to_text(adf_content: dict | list | str | None) -> str | None:
         # Check if this is a hardBreak node
         if adf_content.get("type") == "hardBreak":
             return "\n"
+
+        # Check if this is a mention node
+        if adf_content.get("type") == "mention":
+            attrs = adf_content.get("attrs", {})
+            return attrs.get("text") or f"@{attrs.get('id', 'unknown')}"
+
+        # Check if this is an emoji node
+        if adf_content.get("type") == "emoji":
+            attrs = adf_content.get("attrs", {})
+            return attrs.get("text") or attrs.get("shortName", "")
+
+        # Check if this is a date node
+        if adf_content.get("type") == "date":
+            attrs = adf_content.get("attrs", {})
+            timestamp = attrs.get("timestamp")
+            if timestamp:
+                try:
+                    dt = datetime.fromtimestamp(int(timestamp) / 1000, tz=timezone.utc)
+                    return dt.strftime("%Y-%m-%d")
+                except (ValueError, OSError, TypeError):
+                    return str(timestamp)
+            return ""
+
+        # Check if this is a status node
+        if adf_content.get("type") == "status":
+            attrs = adf_content.get("attrs", {})
+            return f"[{attrs.get('text', '')}]"
+
+        # Check if this is an inlineCard node
+        if adf_content.get("type") == "inlineCard":
+            attrs = adf_content.get("attrs", {})
+            url = attrs.get("url")
+            if url:
+                return url
+            data = attrs.get("data", {})
+            return data.get("url") or data.get("name", "")
+
+        # Check if this is a codeBlock node
+        if adf_content.get("type") == "codeBlock":
+            content = adf_content.get("content", [])
+            code_text = adf_to_text(content) or ""
+            return f"```\n{code_text}\n```"
 
         # Recursively process content
         content = adf_content.get("content")
