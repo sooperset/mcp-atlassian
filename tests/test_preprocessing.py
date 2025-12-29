@@ -290,6 +290,22 @@ For more information, see [our website](https://example.com).
     assert "[our website|https://example.com]" in converted
 
 
+def test_markdown_nested_bullet_list_2space(preprocessor_with_jira):
+    """Test that 2-space indented bullet lists convert correctly to Jira format."""
+    markdown = "* Item A\n  * Sub-item A.1\n    * Sub-sub A.1.1\n* Item B"
+    expected = "* Item A\n** Sub-item A.1\n*** Sub-sub A.1.1\n* Item B"
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+    assert result == expected
+
+
+def test_markdown_nested_numbered_list_2space(preprocessor_with_jira):
+    """Test that 2-space indented numbered lists convert correctly to Jira format."""
+    markdown = "1. Item A\n  1. Sub-item A.1\n    1. Sub-sub A.1.1\n2. Item B"
+    expected = "# Item A\n## Sub-item A.1\n### Sub-sub A.1.1\n# Item B"
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+    assert result == expected
+
+
 def test_markdown_to_confluence_storage(preprocessor_with_confluence):
     """Test conversion of Markdown to Confluence storage format."""
     markdown = """# Heading 1

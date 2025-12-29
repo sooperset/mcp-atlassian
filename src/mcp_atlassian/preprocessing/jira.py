@@ -313,23 +313,27 @@ class JiraPreprocessor(BasePreprocessor):
         )
 
         # Multi-level bulleted list
+        def bulleted_list_fn(match: re.Match) -> str:
+            ident = len(match.group(1)) if match.group(1) else 0
+            level = ident // 2 + 1
+            return str("*" * level + " " + match.group(2))
+
         output = re.sub(
-            r"^(\s*)- (.*)$",
-            lambda match: (
-                "* " + match.group(2)
-                if not match.group(1)
-                else "  " * (len(match.group(1)) // 2) + "* " + match.group(2)
-            ),
+            r"^(\s+)?[-+*] (.*)$",
+            bulleted_list_fn,
             output,
             flags=re.MULTILINE,
         )
 
         # Multi-level numbered list
+        def numbered_list_fn(match: re.Match) -> str:
+            ident = len(match.group(1)) if match.group(1) else 0
+            level = ident // 2 + 1
+            return str("#" * level + " " + match.group(2))
+
         output = re.sub(
-            r"^(\s+)1\. (.*)$",
-            lambda match: "#" * (int(len(match.group(1)) / 4) + 2)
-            + " "
-            + match.group(2),
+            r"^(\s+)?\d+\. (.*)$",
+            numbered_list_fn,
             output,
             flags=re.MULTILINE,
         )
