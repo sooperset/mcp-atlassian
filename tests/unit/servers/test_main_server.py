@@ -59,7 +59,7 @@ async def test_run_server_invalid_transport():
 @pytest.mark.anyio
 async def test_health_check_endpoint():
     """Test the health check endpoint returns 200 and correct JSON response."""
-    app = main_mcp.sse_app()
+    app = main_mcp.http_app(transport="sse")
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/healthz")
@@ -71,7 +71,7 @@ async def test_health_check_endpoint():
 @pytest.mark.anyio
 async def test_sse_app_health_check_endpoint():
     """Test the /healthz endpoint on the SSE app returns 200 and correct JSON response."""
-    app = main_mcp.sse_app()
+    app = main_mcp.http_app(transport="sse")
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/healthz")
@@ -82,7 +82,7 @@ async def test_sse_app_health_check_endpoint():
 @pytest.mark.anyio
 async def test_streamable_http_app_health_check_endpoint():
     """Test the /healthz endpoint on the Streamable HTTP app returns 200 and correct JSON response."""
-    app = main_mcp.streamable_http_app()
+    app = main_mcp.http_app()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/healthz")
