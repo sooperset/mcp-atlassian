@@ -106,12 +106,12 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
 class AtlassianMCP(FastMCP[MainAppContext]):
     """Custom FastMCP server class for Atlassian integration with tool filtering."""
 
-    async def _mcp_list_tools(self) -> list[MCPTool]:
+    async def _list_tools_mcp(self) -> list[MCPTool]:
         # Filter tools based on enabled_tools, read_only mode, and service configuration from the lifespan context.
         req_context = self._mcp_server.request_context
         if req_context is None or req_context.lifespan_context is None:
             logger.warning(
-                "Lifespan context not available during _main_mcp_list_tools call."
+                "Lifespan context not available during _list_tools_mcp call."
             )
             return []
 
@@ -132,7 +132,7 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             else None
         )
         logger.debug(
-            f"_main_mcp_list_tools: read_only={read_only}, enabled_tools_filter={enabled_tools_filter}"
+            f"_list_tools_mcp: read_only={read_only}, enabled_tools_filter={enabled_tools_filter}"
         )
 
         all_tools: dict[str, FastMCPTool] = await self.get_tools()
@@ -181,7 +181,7 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             filtered_tools.append(tool_obj.to_mcp_tool(name=registered_name))
 
         logger.debug(
-            f"_main_mcp_list_tools: Total tools after filtering: {len(filtered_tools)}"
+            f"_list_tools_mcp: Total tools after filtering: {len(filtered_tools)}"
         )
         return filtered_tools
 
@@ -190,13 +190,14 @@ class AtlassianMCP(FastMCP[MainAppContext]):
         path: str | None = None,
         middleware: list[Middleware] | None = None,
         transport: Literal["streamable-http", "sse"] = "streamable-http",
+        **kwargs: Any,
     ) -> "Starlette":
         user_token_mw = Middleware(UserTokenMiddleware, mcp_server_ref=self)
         final_middleware_list = [user_token_mw]
         if middleware:
             final_middleware_list.extend(middleware)
         app = super().http_app(
-            path=path, middleware=final_middleware_list, transport=transport
+            path=path, middleware=final_middleware_list, transport=transport, **kwargs
         )
         return app
 
