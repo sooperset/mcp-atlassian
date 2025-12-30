@@ -30,6 +30,21 @@ callback_received = False
 callback_error = None
 
 
+def _sanitize_input(user_input: str) -> str:
+    """Sanitize user input by removing trailing/leading whitespace and Windows line endings.
+    Args:
+        user_input: Raw input string from user
+    Returns:
+        Sanitized string with whitespace and line endings removed
+    """
+    if not user_input:
+        return user_input
+    # Remove leading/trailing whitespace and various line endings
+    # Handle Windows (\r\n), Unix (\n), and Mac (\r) line endings
+    sanitized = user_input.strip().rstrip("\r\n").strip()
+    return sanitized
+
+
 class CallbackHandler(http.server.BaseHTTPRequestHandler):
     """HTTP request handler for OAuth callback."""
 
@@ -361,7 +376,7 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
 
 
 def _prompt_for_input(prompt: str, env_var: str = None, is_secret: bool = False) -> str:
-    """Prompt the user for input."""
+    """Prompt the user for input with sanitization for Windows line endings and whitespace."""
     value = os.getenv(env_var, "") if env_var else ""
     if value:
         if is_secret:
@@ -373,11 +388,11 @@ def _prompt_for_input(prompt: str, env_var: str = None, is_secret: bool = False)
             print(f"{prompt} [{masked}]: ", end="")
         else:
             print(f"{prompt} [{value}]: ", end="")
-        user_input = input()
+        user_input = _sanitize_input(input())
         return user_input if user_input else value
     else:
         print(f"{prompt}: ", end="")
-        return input()
+        return _sanitize_input(input())
 
 
 def run_oauth_setup() -> int:
