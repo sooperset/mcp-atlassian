@@ -1,28 +1,34 @@
+---
+title: "Tools Reference"
+description: "All available MCP Atlassian tools for Jira and Confluence"
+---
+
 # Tools Reference
 
 MCP Atlassian provides tools for interacting with Jira and Confluence.
 
 ## Key Tools
 
-### Jira
-
-| Tool | Description |
-|------|-------------|
-| `jira_get_issue` | Get details of a specific issue |
-| `jira_search` | Search issues using JQL |
-| `jira_create_issue` | Create a new issue |
-| `jira_update_issue` | Update an existing issue |
-| `jira_transition_issue` | Transition an issue to a new status |
-| `jira_add_comment` | Add a comment to an issue |
-
-### Confluence
-
-| Tool | Description |
-|------|-------------|
-| `confluence_search` | Search content using CQL |
-| `confluence_get_page` | Get content of a specific page |
-| `confluence_create_page` | Create a new page |
-| `confluence_update_page` | Update an existing page |
+<CardGroup cols={2}>
+  <Card title="Jira Tools" icon="list-check">
+    | Tool | Description |
+    |------|-------------|
+    | `jira_get_issue` | Get details of a specific issue |
+    | `jira_search` | Search issues using JQL |
+    | `jira_create_issue` | Create a new issue |
+    | `jira_update_issue` | Update an existing issue |
+    | `jira_transition_issue` | Transition issue to new status |
+    | `jira_add_comment` | Add a comment to an issue |
+  </Card>
+  <Card title="Confluence Tools" icon="book">
+    | Tool | Description |
+    |------|-------------|
+    | `confluence_search` | Search content using CQL |
+    | `confluence_get_page` | Get content of a specific page |
+    | `confluence_create_page` | Create a new page |
+    | `confluence_update_page` | Update an existing page |
+  </Card>
+</CardGroup>
 
 ## Complete Tool List
 
@@ -59,7 +65,9 @@ MCP Atlassian provides tools for interacting with Jira and Confluence.
 | | `jira_create_version` | |
 | | `jira_batch_create_versions` | |
 
-\* Tool only available on Jira Cloud
+<Note>
+\* `jira_batch_get_changelogs` is only available on Jira Cloud
+</Note>
 
 ## Tool Access Control
 

@@ -1,3 +1,8 @@
+---
+title: "Configuration"
+description: "IDE integration, environment variables, and advanced configuration options"
+---
+
 # Configuration
 
 This guide covers IDE integration, environment variables, and advanced configuration options.
@@ -15,38 +20,12 @@ This guide covers IDE integration, environment variables, and advanced configura
 
 ### Basic Configuration (uvx)
 
-The simplest configuration using uvx:
-
 ```json
 {
   "mcpServers": {
     "mcp-atlassian": {
       "command": "uvx",
       "args": ["mcp-atlassian"],
-      "env": {
-        "JIRA_URL": "https://your-company.atlassian.net",
-        "JIRA_USERNAME": "your.email@company.com",
-        "JIRA_API_TOKEN": "your_api_token"
-      }
-    }
-  }
-}
-```
-
-### Docker Configuration
-
-```json
-{
-  "mcpServers": {
-    "mcp-atlassian": {
-      "command": "docker",
-      "args": [
-        "run", "-i", "--rm",
-        "-e", "JIRA_URL",
-        "-e", "JIRA_USERNAME",
-        "-e", "JIRA_API_TOKEN",
-        "ghcr.io/sooperset/mcp-atlassian:latest"
-      ],
       "env": {
         "JIRA_URL": "https://your-company.atlassian.net",
         "JIRA_USERNAME": "your.email@company.com",
@@ -95,76 +74,44 @@ The simplest configuration using uvx:
 }
 ```
 
-### OAuth 2.0 Configuration
-
-For standard OAuth flow (after running setup wizard):
-
-```json
-{
-  "mcpServers": {
-    "mcp-atlassian": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "-v", "/path/to/home/.mcp-atlassian:/home/app/.mcp-atlassian",
-        "-e", "JIRA_URL",
-        "-e", "CONFLUENCE_URL",
-        "-e", "ATLASSIAN_OAUTH_CLIENT_ID",
-        "-e", "ATLASSIAN_OAUTH_CLIENT_SECRET",
-        "-e", "ATLASSIAN_OAUTH_REDIRECT_URI",
-        "-e", "ATLASSIAN_OAUTH_SCOPE",
-        "-e", "ATLASSIAN_OAUTH_CLOUD_ID",
-        "ghcr.io/sooperset/mcp-atlassian:latest"
-      ],
-      "env": {
-        "JIRA_URL": "https://your-company.atlassian.net",
-        "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
-        "ATLASSIAN_OAUTH_CLIENT_ID": "your_client_id",
-        "ATLASSIAN_OAUTH_CLIENT_SECRET": "your_client_secret",
-        "ATLASSIAN_OAUTH_REDIRECT_URI": "http://localhost:8080/callback",
-        "ATLASSIAN_OAUTH_SCOPE": "read:jira-work write:jira-work read:confluence-content.all write:confluence-content offline_access",
-        "ATLASSIAN_OAUTH_CLOUD_ID": "your_cloud_id"
-      }
-    }
-  }
-}
-```
-
 ### Single Service Configuration
 
-**Confluence only:**
-```json
-{
-  "mcpServers": {
-    "mcp-atlassian": {
-      "command": "uvx",
-      "args": ["mcp-atlassian"],
-      "env": {
-        "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
-        "CONFLUENCE_USERNAME": "your.email@company.com",
-        "CONFLUENCE_API_TOKEN": "your_api_token"
+<Tabs>
+  <Tab title="Confluence Only">
+    ```json
+    {
+      "mcpServers": {
+        "mcp-atlassian": {
+          "command": "uvx",
+          "args": ["mcp-atlassian"],
+          "env": {
+            "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
+            "CONFLUENCE_USERNAME": "your.email@company.com",
+            "CONFLUENCE_API_TOKEN": "your_api_token"
+          }
+        }
       }
     }
-  }
-}
-```
-
-**Jira only:**
-```json
-{
-  "mcpServers": {
-    "mcp-atlassian": {
-      "command": "uvx",
-      "args": ["mcp-atlassian"],
-      "env": {
-        "JIRA_URL": "https://your-company.atlassian.net",
-        "JIRA_USERNAME": "your.email@company.com",
-        "JIRA_API_TOKEN": "your_api_token"
+    ```
+  </Tab>
+  <Tab title="Jira Only">
+    ```json
+    {
+      "mcpServers": {
+        "mcp-atlassian": {
+          "command": "uvx",
+          "args": ["mcp-atlassian"],
+          "env": {
+            "JIRA_URL": "https://your-company.atlassian.net",
+            "JIRA_USERNAME": "your.email@company.com",
+            "JIRA_API_TOKEN": "your_api_token"
+          }
+        }
       }
     }
-  }
-}
-```
+    ```
+  </Tab>
+</Tabs>
 
 ## Environment Variables
 
@@ -217,19 +164,9 @@ MCP Atlassian supports routing API requests through HTTP/HTTPS/SOCKS proxies.
 
 Service-specific variables override global ones.
 
-**Example:**
-```json
-{
-  "env": {
-    "HTTPS_PROXY": "http://proxy.internal:8080",
-    "NO_PROXY": "localhost,.your-company.com"
-  }
-}
-```
-
 ## Custom HTTP Headers
 
-Add custom HTTP headers to all API requests. Useful in corporate environments requiring additional headers for security or routing.
+Add custom HTTP headers to all API requests. Useful in corporate environments.
 
 | Variable | Description |
 |----------|-------------|
@@ -238,30 +175,26 @@ Add custom HTTP headers to all API requests. Useful in corporate environments re
 
 **Format:** Comma-separated `key=value` pairs.
 
-**Example:**
 ```bash
 JIRA_CUSTOM_HEADERS=X-Forwarded-User=service-account,X-Custom-Auth=token
 CONFLUENCE_CUSTOM_HEADERS=X-Service=mcp-integration,X-ALB-Token=secret
 ```
 
-**Security notes:**
-- Header values are masked in debug logs
-- Avoid conflicts with standard HTTP or Atlassian API headers
-- Headers are sent with every API request
+<Note>
+Header values are masked in debug logs for security.
+</Note>
 
 ## Tool Filtering
 
 Control which tools are available:
 
-1. **Enable specific tools:**
-   ```bash
-   ENABLED_TOOLS="confluence_search,jira_get_issue,jira_search"
-   ```
+```bash
+# Enable specific tools
+ENABLED_TOOLS="confluence_search,jira_get_issue,jira_search"
 
-2. **Read-only mode:** Disables all write operations regardless of `ENABLED_TOOLS`:
-   ```bash
-   READ_ONLY_MODE=true
-   ```
+# Read-only mode (disables all write operations)
+READ_ONLY_MODE=true
+```
 
 Command-line alternative:
 ```bash

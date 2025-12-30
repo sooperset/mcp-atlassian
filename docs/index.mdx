@@ -1,0 +1,45 @@
+---
+title: "MCP Atlassian"
+description: "Model Context Protocol server for Jira and Confluence"
+---
+
+# MCP Atlassian
+
+Model Context Protocol (MCP) server for Atlassian products (Confluence and Jira). Supports both Cloud and Server/Data Center deployments.
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/installation">
+    Get started in 5 minutes with uvx
+  </Card>
+  <Card title="Authentication" icon="key" href="/authentication">
+    Set up API tokens, PATs, or OAuth 2.0
+  </Card>
+  <Card title="Tools Reference" icon="wrench" href="/tools-reference">
+    Browse all available Jira and Confluence tools
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    IDE setup and environment variables
+  </Card>
+</CardGroup>
+
+## Example Usage
+
+Ask your AI assistant to:
+
+- **"Find issues assigned to me in PROJ project"**
+- **"Search Confluence for onboarding docs"**
+- **"Create a bug ticket for the login issue"**
+- **"Update the status of PROJ-123 to Done"**
+
+## Compatibility
+
+| Product | Deployment | Support |
+|---------|------------|---------|
+| Confluence | Cloud | Fully supported |
+| Confluence | Server/Data Center | Supported (v6.0+) |
+| Jira | Cloud | Fully supported |
+| Jira | Server/Data Center | Supported (v8.14+) |
+
+<Note>
+Python 3.14 is not yet supported due to upstream pydantic-core/PyO3 limitations. Use Python 3.10-3.13.
+</Note>
