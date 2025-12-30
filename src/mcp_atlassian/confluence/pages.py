@@ -67,6 +67,11 @@ class PagesMixin(ConfluenceClient):
                     expand="body.storage,version,space,children.attachment",
                 )
 
+            # Check if API returned an error string instead of a dict
+            if isinstance(page, str):
+                error_msg = f"API returned error response: {page[:500]}"
+                raise Exception(error_msg)
+
             space_key = page.get("space", {}).get("key", "")
             try:
                 content = page["body"]["storage"]["value"]
