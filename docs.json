@@ -2,7 +2,7 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
   "name": "MCP Atlassian",
-  "favicon": "/favicon.svg",
+  "favicon": "/docs/favicon.svg",
   "colors": {
     "primary": "#0052CC",
     "light": "#4C9AFF",
@@ -38,23 +38,23 @@
           {
             "group": "Getting Started",
             "pages": [
-              "index",
-              "installation",
-              "authentication"
+              "docs/index",
+              "docs/installation",
+              "docs/authentication"
             ]
           },
           {
             "group": "Usage",
             "pages": [
-              "configuration",
-              "tools-reference",
-              "http-transport"
+              "docs/configuration",
+              "docs/tools-reference",
+              "docs/http-transport"
             ]
           },
           {
             "group": "Help",
             "pages": [
-              "troubleshooting"
+              "docs/troubleshooting"
             ]
           }
         ]
