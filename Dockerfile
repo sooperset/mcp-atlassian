@@ -52,10 +52,4 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Authorization: Bearer <your_oauth_token>
 # X-Atlassian-Cloud-Id: <your_cloud_id>
 
-# Health check for HTTP transport modes (SSE/Streamable HTTP)
-# This check is only relevant when using --transport sse or --transport streamable-http
-# For stdio mode (default), this check will fail but can be safely ignored
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 8000)); s.close()" || exit 1
-
 ENTRYPOINT ["mcp-atlassian"]
