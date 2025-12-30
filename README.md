@@ -5,6 +5,7 @@
 ![PePy - Total Downloads](https://static.pepy.tech/personalized-badge/mcp-atlassian?period=total&units=international_system&left_color=grey&right_color=blue&left_text=Total%20Downloads)
 [![Run Tests](https://github.com/sooperset/mcp-atlassian/actions/workflows/tests.yml/badge.svg)](https://github.com/sooperset/mcp-atlassian/actions/workflows/tests.yml)
 ![License](https://img.shields.io/github/license/sooperset/mcp-atlassian)
+[![Docs](https://img.shields.io/badge/docs-mintlify-blue)](https://personal-1d37018d.mintlify.app)
 
 Model Context Protocol (MCP) server for Atlassian products (Confluence and Jira). Supports both Cloud and Server/Data Center deployments.
 
@@ -23,7 +24,7 @@ https://github.com/user-attachments/assets/7fe9c488-ad0c-4876-9b54-120b666bb785
 
 Go to https://id.atlassian.com/manage-profile/security/api-tokens and create a token.
 
-> For Server/Data Center, use a Personal Access Token instead. See [Authentication](docs/authentication.md).
+> For Server/Data Center, use a Personal Access Token instead. See [Authentication](https://personal-1d37018d.mintlify.app/docs/authentication).
 
 ### 2. Configure Your IDE
 
@@ -60,14 +61,20 @@ Ask your AI assistant to:
 
 ## Documentation
 
+Full documentation is available at **[personal-1d37018d.mintlify.app](https://personal-1d37018d.mintlify.app)**.
+
+Documentation is also available in [llms.txt format](https://llmstxt.org/), which LLMs can consume easily:
+- [`llms.txt`](https://personal-1d37018d.mintlify.app/llms.txt) — documentation sitemap
+- [`llms-full.txt`](https://personal-1d37018d.mintlify.app/llms-full.txt) — complete documentation
+
 | Topic | Description |
 |-------|-------------|
-| [Installation](docs/installation.md) | uvx, Docker, pip, from source |
-| [Authentication](docs/authentication.md) | API tokens, PAT, OAuth 2.0 |
-| [Configuration](docs/configuration.md) | IDE setup, environment variables |
-| [HTTP Transport](docs/http-transport.md) | SSE, streamable-http, multi-user |
-| [Tools Reference](docs/tools-reference.md) | All Jira & Confluence tools |
-| [Troubleshooting](docs/troubleshooting.md) | Common issues & debugging |
+| [Installation](https://personal-1d37018d.mintlify.app/docs/installation) | uvx, Docker, pip, from source |
+| [Authentication](https://personal-1d37018d.mintlify.app/docs/authentication) | API tokens, PAT, OAuth 2.0 |
+| [Configuration](https://personal-1d37018d.mintlify.app/docs/configuration) | IDE setup, environment variables |
+| [HTTP Transport](https://personal-1d37018d.mintlify.app/docs/http-transport) | SSE, streamable-http, multi-user |
+| [Tools Reference](https://personal-1d37018d.mintlify.app/docs/tools-reference) | All Jira & Confluence tools |
+| [Troubleshooting](https://personal-1d37018d.mintlify.app/docs/troubleshooting) | Common issues & debugging |
 
 ## Compatibility
 
@@ -88,7 +95,7 @@ Ask your AI assistant to:
 | `jira_update_issue` - Update issues | `confluence_update_page` - Update pages |
 | `jira_transition_issue` - Change status | `confluence_add_comment` - Add comments |
 
-See [Tools Reference](docs/tools-reference.md) for the complete list.
+See [Tools Reference](https://personal-1d37018d.mintlify.app/docs/tools-reference) for the complete list.
 
 ## Security
 
