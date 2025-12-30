@@ -80,6 +80,7 @@ async def test_sse_app_health_check_endpoint():
 
 
 @pytest.mark.anyio
+@patch.dict("os.environ", {"IGNORE_HEADER_AUTH": "false"}, clear=False)
 async def test_streamable_http_app_health_check_endpoint():
     """Test the /healthz endpoint on the Streamable HTTP app returns 200 and correct JSON response."""
     app = main_mcp.http_app()
@@ -123,6 +124,7 @@ class TestUserTokenMiddleware:
         return call_next
 
     @pytest.mark.anyio
+    @patch.dict("os.environ", {"IGNORE_HEADER_AUTH": "false"}, clear=False)
     async def test_cloud_id_header_extraction_success(
         self, middleware, mock_request, mock_call_next
     ):

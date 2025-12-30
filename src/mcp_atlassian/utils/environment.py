@@ -10,13 +10,17 @@ logger = logging.getLogger("mcp-atlassian.utils.environment")
 
 def get_available_services() -> dict[str, bool | None]:
     """Determine which services are available based on environment variables."""
+    # Check if header auth should be ignored (NEW)
+    ignore_header_auth = os.getenv("IGNORE_HEADER_AUTH", "false").lower() == "true"
+
     confluence_url = os.getenv("CONFLUENCE_URL")
     confluence_is_setup = False
     if confluence_url:
         is_cloud = is_atlassian_cloud_url(confluence_url)
 
         # OAuth check (highest precedence, applies to Cloud)
-        if all(
+        # Skip OAuth detection if IGNORE_HEADER_AUTH is set (NEW)
+        if not ignore_header_auth and all(
             [
                 os.getenv("ATLASSIAN_OAUTH_CLIENT_ID"),
                 os.getenv("ATLASSIAN_OAUTH_CLIENT_SECRET"),
@@ -31,7 +35,7 @@ def get_available_services() -> dict[str, bool | None]:
             logger.info(
                 "Using Confluence OAuth 2.0 (3LO) authentication (Cloud-only features)"
             )
-        elif all(
+        elif not ignore_header_auth and all(
             [
                 os.getenv("ATLASSIAN_OAUTH_ACCESS_TOKEN"),
                 os.getenv("ATLASSIAN_OAUTH_CLOUD_ID"),
@@ -59,7 +63,11 @@ def get_available_services() -> dict[str, bool | None]:
                 logger.info(
                     "Using Confluence Server/Data Center authentication (PAT or Basic Auth)"
                 )
-    elif os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in ("true", "1", "yes"):
+    elif not ignore_header_auth and os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in (
+        "true",
+        "1",
+        "yes",
+    ):
         confluence_is_setup = True
         logger.info(
             "Using Confluence minimal OAuth configuration - expecting user-provided tokens via headers"
@@ -71,7 +79,8 @@ def get_available_services() -> dict[str, bool | None]:
         is_cloud = is_atlassian_cloud_url(jira_url)
 
         # OAuth check (highest precedence, applies to Cloud)
-        if all(
+        # Skip OAuth detection if IGNORE_HEADER_AUTH is set (NEW)
+        if not ignore_header_auth and all(
             [
                 os.getenv("ATLASSIAN_OAUTH_CLIENT_ID"),
                 os.getenv("ATLASSIAN_OAUTH_CLIENT_SECRET"),
@@ -84,7 +93,7 @@ def get_available_services() -> dict[str, bool | None]:
             logger.info(
                 "Using Jira OAuth 2.0 (3LO) authentication (Cloud-only features)"
             )
-        elif all(
+        elif not ignore_header_auth and all(
             [
                 os.getenv("ATLASSIAN_OAUTH_ACCESS_TOKEN"),
                 os.getenv("ATLASSIAN_OAUTH_CLOUD_ID"),
@@ -112,7 +121,11 @@ def get_available_services() -> dict[str, bool | None]:
                 logger.info(
                     "Using Jira Server/Data Center authentication (PAT or Basic Auth)"
                 )
-    elif os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in ("true", "1", "yes"):
+    elif not ignore_header_auth and os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in (
+        "true",
+        "1",
+        "yes",
+    ):
         jira_is_setup = True
         logger.info(
             "Using Jira minimal OAuth configuration - expecting user-provided tokens via headers"

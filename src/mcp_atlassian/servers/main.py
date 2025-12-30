@@ -3,6 +3,7 @@
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from os import getenv
 from typing import Any, Literal, Optional
 
 from cachetools import TTLCache
@@ -13,7 +14,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
 from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.confluence.config import ConfluenceConfig
@@ -220,9 +221,9 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 "UserTokenMiddleware initialized without mcp_server_ref. Path matching for MCP endpoint might fail if settings are needed."
             )
 
-    async def dispatch(
+    async def dispatch(  # noqa: ANN001
         self, request: Request, call_next: RequestResponseEndpoint
-    ) -> JSONResponse:
+    ) -> Response:
         logger.debug(
             f"UserTokenMiddleware.dispatch: ENTERED for request path='{request.url.path}', method='{request.method}'"
         )
@@ -239,8 +240,20 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
             f"UserTokenMiddleware.dispatch: Comparing request_path='{request_path}' with mcp_path='{mcp_path}'. Request method='{request.method}'"
         )
         if request_path == mcp_path and request.method == "POST":
+            # Check if we should ignore header-based auth
+            ignore_header_auth = getenv("IGNORE_HEADER_AUTH", "false").lower() == "true"
+
             auth_header = request.headers.get("Authorization")
             cloud_id_header = request.headers.get("X-Atlassian-Cloud-Id")
+
+            # If IGNORE_HEADER_AUTH is set, ignore the Authorization header
+            if ignore_header_auth and auth_header:
+                logger.debug(
+                    "UserTokenMiddleware.dispatch: IGNORE_HEADER_AUTH is enabled, "
+                    "ignoring incoming Authorization header and using environment config"
+                )
+                auth_header = None
+                cloud_id_header = None
 
             token_for_log = mask_sensitive(
                 auth_header.split(" ", 1)[1].strip()
@@ -253,12 +266,12 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
 
             # Extract and save cloudId if provided
             if cloud_id_header and cloud_id_header.strip():
-                request.state.user_atlassian_cloud_id = cloud_id_header.strip()
+                request.state.user_atlassian_cloud_id = cloud_id_header.strip()  # type: ignore[attr-defined]
                 logger.debug(
                     f"UserTokenMiddleware: Extracted cloudId from header: {cloud_id_header.strip()}"
                 )
             else:
-                request.state.user_atlassian_cloud_id = None
+                request.state.user_atlassian_cloud_id = None  # type: ignore[attr-defined]
                 logger.debug(
                     "UserTokenMiddleware: No cloudId header provided, will use global config"
                 )
@@ -269,6 +282,7 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 logger.debug(
                     f"UserTokenMiddleware: MCP-Session-ID header found: {mcp_session_id}"
                 )
+
             if auth_header and auth_header.startswith("Bearer "):
                 token = auth_header.split(" ", 1)[1].strip()
                 if not token:
@@ -279,9 +293,9 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 logger.debug(
                     f"UserTokenMiddleware.dispatch: Bearer token extracted (masked): ...{mask_sensitive(token, 8)}"
                 )
-                request.state.user_atlassian_token = token
-                request.state.user_atlassian_auth_type = "oauth"
-                request.state.user_atlassian_email = None
+                request.state.user_atlassian_token = token  # type: ignore[attr-defined]
+                request.state.user_atlassian_auth_type = "oauth"  # type: ignore[attr-defined]
+                request.state.user_atlassian_email = None  # type: ignore[attr-defined]
                 logger.debug(
                     f"UserTokenMiddleware.dispatch: Set request.state (pre-validation): "
                     f"auth_type='{getattr(request.state, 'user_atlassian_auth_type', 'N/A')}', "
@@ -297,11 +311,9 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                 logger.debug(
                     f"UserTokenMiddleware.dispatch: PAT (Token scheme) extracted (masked): ...{mask_sensitive(token, 8)}"
                 )
-                request.state.user_atlassian_token = token
-                request.state.user_atlassian_auth_type = "pat"
-                request.state.user_atlassian_email = (
-                    None  # PATs don't carry email in the token itself
-                )
+                request.state.user_atlassian_token = token  # type: ignore[attr-defined]
+                request.state.user_atlassian_auth_type = "pat"  # type: ignore[attr-defined]
+                request.state.user_atlassian_email = None  # type: ignore[attr-defined]
                 logger.debug(
                     "UserTokenMiddleware.dispatch: Set request.state for PAT auth."
                 )
@@ -316,9 +328,15 @@ class UserTokenMiddleware(BaseHTTPMiddleware):
                     status_code=401,
                 )
             else:
-                logger.debug(
-                    f"No Authorization header provided for {request.url.path}. Will proceed with global/fallback server configuration if applicable."
-                )
+                if ignore_header_auth:
+                    logger.debug(
+                        f"No Authorization header processing for {request.url.path} (IGNORE_HEADER_AUTH=true). "
+                        "Will use global/fallback server configuration."
+                    )
+                else:
+                    logger.debug(
+                        f"No Authorization header provided for {request.url.path}. Will proceed with global/fallback server configuration if applicable."
+                    )
         response = await call_next(request)
         logger.debug(
             f"UserTokenMiddleware.dispatch: EXITED for request path='{request.url.path}'"
