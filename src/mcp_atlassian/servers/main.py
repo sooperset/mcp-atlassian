@@ -1,5 +1,6 @@
 """Main FastMCP server setup for Atlassian integration."""
 
+import json
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -269,8 +270,38 @@ class UserTokenMiddleware:
                 # Re-raise unexpected errors
                 raise
 
+        # Check for auth errors and return 401 before calling app
+        auth_error = scope_copy["state"].get("auth_validation_error")
+        if auth_error:
+            logger.warning(f"Authentication failed: {auth_error}")
+            await self._send_json_error_response(safe_send, 401, auth_error)
+            return  # Don't call self.app - request is rejected
+
         # Call the next application with modified scope and safe send wrapper
         await self.app(scope_copy, receive, safe_send)
+
+    async def _send_json_error_response(
+        self, send: Send, status_code: int, error_message: str
+    ) -> None:
+        """Send a JSON error response via ASGI protocol.
+
+        Args:
+            send: ASGI send callable (should be safe_send wrapper).
+            status_code: HTTP status code (e.g., 401).
+            error_message: Error message to include in JSON body.
+        """
+        body = json.dumps({"error": error_message}).encode("utf-8")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status_code,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
 
     def _should_process_auth(self, scope: Scope) -> bool:
         """Check if this request should be processed for authentication."""
@@ -299,6 +330,14 @@ class UserTokenMiddleware:
                 cloud_id_header.decode("latin-1") if cloud_id_header else None
             )
 
+            # Log mcp-session-id for debugging
+            mcp_session_id = headers.get(b"mcp-session-id")
+            if mcp_session_id:
+                session_id_str = mcp_session_id.decode("latin-1")
+                logger.debug(
+                    f"UserTokenMiddleware: MCP-Session-ID header found: {session_id_str}"
+                )
+
             logger.debug(
                 f"UserTokenMiddleware: Processing auth for {scope.get('path')}, "
                 f"AuthHeader present: {bool(auth_header_str)}, "
@@ -324,10 +363,9 @@ class UserTokenMiddleware:
 
     def _parse_auth_header(self, auth_header: str, scope: Scope) -> None:
         """Parse the Authorization header and store credentials in scope state."""
-        auth_header = auth_header.strip()
-
+        # Check prefix BEFORE stripping to preserve "Bearer " / "Token " matching
         if auth_header.startswith("Bearer "):
-            token = auth_header[7:].strip()  # Remove "Bearer " prefix
+            token = auth_header[7:].strip()  # Remove "Bearer " prefix and strip token
             if not token:
                 scope["state"]["auth_validation_error"] = (
                     "Unauthorized: Empty Bearer token"
@@ -341,7 +379,7 @@ class UserTokenMiddleware:
                 )
 
         elif auth_header.startswith("Token "):
-            token = auth_header[6:].strip()  # Remove "Token " prefix
+            token = auth_header[6:].strip()  # Remove "Token " prefix and strip token
             if not token:
                 scope["state"]["auth_validation_error"] = (
                     "Unauthorized: Empty Token (PAT)"
@@ -354,16 +392,17 @@ class UserTokenMiddleware:
                     f"...{mask_sensitive(token, 8)}"
                 )
 
-        elif auth_header:
-            auth_type = (
-                auth_header.split(" ", 1)[0] if " " in auth_header else "Unknown"
-            )
+        elif auth_header.strip():
+            # Non-empty but unsupported auth type
+            auth_value = auth_header.strip()
+            auth_type = auth_value.split(" ", 1)[0] if " " in auth_value else auth_value
             logger.warning(f"Unsupported Authorization type: {auth_type}")
             scope["state"]["auth_validation_error"] = (
                 "Unauthorized: Only 'Bearer <OAuthToken>' or "
                 "'Token <PAT>' types are supported."
             )
         else:
+            # Empty or whitespace-only
             scope["state"]["auth_validation_error"] = (
                 "Unauthorized: Empty Authorization header"
             )
