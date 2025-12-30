@@ -4,8 +4,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-from starlette.requests import Request
-from starlette.responses import JSONResponse
 
 from mcp_atlassian.servers.main import UserTokenMiddleware, main_mcp
 
@@ -103,42 +101,59 @@ class TestUserTokenMiddleware:
         return UserTokenMiddleware(mock_app, mcp_server_ref=mock_mcp_server)
 
     @pytest.fixture
-    def mock_request(self):
-        """Create a mock request for testing."""
-        request = MagicMock(spec=Request)
-        request.url.path = "/mcp"
-        request.method = "POST"
-        request.headers = {}
-        # Create a real state object that can be modified
-        from types import SimpleNamespace
-
-        request.state = SimpleNamespace()
-        return request
+    def mock_scope(self):
+        """Create a mock ASGI scope for testing."""
+        return {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp",
+            "headers": [],
+            "state": {},
+        }
 
     @pytest.fixture
-    def mock_call_next(self):
-        """Create a mock call_next function."""
-        mock_response = JSONResponse({"test": "response"})
-        call_next = AsyncMock(return_value=mock_response)
-        return call_next
+    def mock_receive(self):
+        """Create a mock ASGI receive callable."""
+        return AsyncMock()
+
+    @pytest.fixture
+    def mock_send(self):
+        """Create a mock ASGI send callable."""
+        return AsyncMock()
 
     @pytest.mark.anyio
     async def test_cloud_id_header_extraction_success(
-        self, middleware, mock_request, mock_call_next
+        self, middleware, mock_scope, mock_receive, mock_send
     ):
         """Test successful cloud ID header extraction."""
-        # Setup request with cloud ID header
-        mock_request.headers = {
-            "Authorization": "Bearer test-token",
-            "X-Atlassian-Cloud-Id": "test-cloud-id-123",
-        }
+        # Setup scope with cloud ID header (ASGI headers are byte tuples)
+        mock_scope["headers"] = [
+            (b"authorization", b"Bearer test-token"),
+            (b"x-atlassian-cloud-id", b"test-cloud-id-123"),
+        ]
 
-        result = await middleware.dispatch(mock_request, mock_call_next)
+        # Call the middleware
+        await middleware(mock_scope, mock_receive, mock_send)
 
-        # Verify cloud ID was extracted and stored in request state
-        assert hasattr(mock_request.state, "user_atlassian_cloud_id")
-        assert mock_request.state.user_atlassian_cloud_id == "test-cloud-id-123"
+        # Verify cloud ID was extracted and stored in scope state
+        assert "user_atlassian_cloud_id" in mock_scope["state"]
+        assert mock_scope["state"]["user_atlassian_cloud_id"] == "test-cloud-id-123"
 
-        # Verify the request was processed normally
-        mock_call_next.assert_called_once_with(mock_request)
-        assert result is not None
+        # Verify authentication token was also extracted
+        assert "user_atlassian_token" in mock_scope["state"]
+        assert mock_scope["state"]["user_atlassian_token"] == "test-token"
+        assert mock_scope["state"]["user_atlassian_auth_type"] == "oauth"
+
+        # Verify the app was called (we don't check exact parameters since send is wrapped)
+        middleware.app.assert_called_once()
+
+        # Verify the scope passed to the app has the correct structure
+        call_args = middleware.app.call_args
+        assert call_args is not None
+        passed_scope, passed_receive, passed_send = call_args[0]
+
+        # Verify scope was copied and modified correctly
+        assert passed_scope["type"] == "http"
+        assert passed_scope["method"] == "POST"
+        assert passed_scope["path"] == "/mcp"
+        assert passed_scope["state"]["user_atlassian_cloud_id"] == "test-cloud-id-123"
