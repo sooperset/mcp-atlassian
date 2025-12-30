@@ -71,7 +71,9 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                 elif jql.strip().upper().startswith("ORDER BY"):
                     # JQL starts with ORDER BY - prepend project filter
                     jql = f"{project_query} {jql}"
-                elif "project = " not in jql and "project IN" not in jql:
+                elif (
+                    "project = " not in jql.lower() and "project in" not in jql.lower()
+                ):
                     # Only add if not already filtering by project
                     jql = f"({jql}) AND {project_query}"
 
