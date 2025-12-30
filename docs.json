@@ -1,5 +1,6 @@
 {
   "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
   "name": "MCP Atlassian",
   "favicon": "/favicon.svg",
   "colors": {
