@@ -203,3 +203,44 @@ def test_is_cloud_oauth_with_cloud_id():
         oauth_config=oauth_config,
     )
     assert config.is_cloud is True
+
+
+def test_from_env_with_client_cert():
+    """Test loading config with client certificate settings from environment."""
+    with patch.dict(
+        "os.environ",
+        {
+            "JIRA_URL": "https://jira.example.com",
+            "JIRA_USERNAME": "test_user",
+            "JIRA_API_TOKEN": "test_token",
+            "JIRA_CLIENT_CERT": "/path/to/cert.pem",
+            "JIRA_CLIENT_KEY": "/path/to/key.pem",
+            "JIRA_CLIENT_KEY_PASSWORD": "secret",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+
+        assert config.url == "https://jira.example.com"
+        assert config.client_cert == "/path/to/cert.pem"
+        assert config.client_key == "/path/to/key.pem"
+        assert config.client_key_password == "secret"
+
+
+def test_from_env_without_client_cert():
+    """Test loading config without client certificate settings."""
+    with patch.dict(
+        "os.environ",
+        {
+            "JIRA_URL": "https://jira.example.com",
+            "JIRA_USERNAME": "test_user",
+            "JIRA_API_TOKEN": "test_token",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+
+        assert config.url == "https://jira.example.com"
+        assert config.client_cert is None
+        assert config.client_key is None
+        assert config.client_key_password is None

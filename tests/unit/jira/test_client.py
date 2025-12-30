@@ -52,6 +52,9 @@ def test_init_with_basic_auth():
             url="https://test.atlassian.net",
             session=mock_jira.return_value._session,
             ssl_verify=True,
+            client_cert=None,
+            client_key=None,
+            client_key_password=None,
         )
 
         assert client.config == config
@@ -90,6 +93,9 @@ def test_init_with_token_auth():
             url="https://jira.example.com",
             session=mock_jira.return_value._session,
             ssl_verify=False,
+            client_cert=None,
+            client_key=None,
+            client_key_password=None,
         )
 
         assert client.config == config

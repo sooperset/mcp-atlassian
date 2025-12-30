@@ -70,20 +70,50 @@ class SSLIgnoreAdapter(HTTPAdapter):
 
 
 def configure_ssl_verification(
-    service_name: str, url: str, session: Session, ssl_verify: bool
+    service_name: str,
+    url: str,
+    session: Session,
+    ssl_verify: bool,
+    client_cert: str | None = None,
+    client_key: str | None = None,
+    client_key_password: str | None = None,
 ) -> None:
-    """Configure SSL verification for a specific service.
+    """Configure SSL verification and client certificates for a specific service.
 
     If SSL verification is disabled, this function will configure the session
     to use a custom SSL adapter that bypasses certificate validation for the
     service's domain.
+
+    If client certificate paths are provided, they will be configured for
+    mutual TLS authentication.
 
     Args:
         service_name: Name of the service for logging (e.g., "Confluence", "Jira")
         url: The base URL of the service
         session: The requests session to configure
         ssl_verify: Whether SSL verification should be enabled
+        client_cert: Path to client certificate file (.pem)
+        client_key: Path to client private key file (.pem)
+        client_key_password: Password for encrypted private key (optional)
     """
+    # Configure client certificate if provided
+    if client_cert and client_key:
+        # If password is provided, we need to handle it differently
+        # For now, we'll use a tuple format that requests understands
+        if client_key_password:
+            logger.warning(
+                f"{service_name} client certificate authentication with encrypted keys is configured. "
+                "Note: Encrypted private keys require additional handling."
+            )
+            # Note: requests doesn't directly support encrypted private keys
+            # Users would need to decrypt the key first or use a custom adapter
+
+        # Set the client certificate on the session
+        session.cert = (client_cert, client_key)
+        logger.info(
+            f"{service_name} client certificate authentication configured with cert: {client_cert}"
+        )
+
     if not ssl_verify:
         logger.warning(
             f"{service_name} SSL verification disabled. This is insecure and should only be used in testing environments."
