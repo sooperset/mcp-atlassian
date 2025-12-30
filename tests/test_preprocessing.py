@@ -22,6 +22,13 @@ def preprocessor_with_jira():
 
 
 @pytest.fixture
+def preprocessor_with_jira_markup_translation_disabled():
+    return JiraPreprocessor(
+        base_url="https://example.atlassian.net", disable_translation=True
+    )
+
+
+@pytest.fixture
 def preprocessor_with_confluence():
     return ConfluencePreprocessor(base_url="https://example.atlassian.net")
 
@@ -304,6 +311,35 @@ def test_markdown_nested_numbered_list_2space(preprocessor_with_jira):
     expected = "# Item A\n## Sub-item A.1\n### Sub-sub A.1.1\n# Item B"
     result = preprocessor_with_jira.markdown_to_jira(markdown)
     assert result == expected
+
+
+def test_jira_markup_translation_disabled(
+    preprocessor_with_jira_markup_translation_disabled,
+):
+    """Test that markup translation is disabled and original text is preserved."""
+    mixed_markup = "h1. Jira Heading with **markdown bold** and {{jira code}} and *markdown italic*"
+
+    # Both methods should return the original text unchanged
+    assert (
+        preprocessor_with_jira_markup_translation_disabled.markdown_to_jira(
+            mixed_markup
+        )
+        == mixed_markup
+    )
+    assert (
+        preprocessor_with_jira_markup_translation_disabled.jira_to_markdown(
+            mixed_markup
+        )
+        == mixed_markup
+    )
+
+    # clean_jira_text should also preserve markup (only process mentions/links)
+    result = preprocessor_with_jira_markup_translation_disabled.clean_jira_text(
+        mixed_markup
+    )
+    assert "h1. Jira Heading" in result
+    assert "**markdown bold**" in result
+    assert "{{jira code}}" in result
 
 
 def test_markdown_to_confluence_storage(preprocessor_with_confluence):

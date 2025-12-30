@@ -12,22 +12,26 @@ logger = logging.getLogger("mcp-atlassian")
 class JiraPreprocessor(BasePreprocessor):
     """Handles text preprocessing for Jira content."""
 
-    def __init__(self, base_url: str = "", **kwargs: Any) -> None:
+    def __init__(
+        self, base_url: str = "", disable_translation: bool = False, **kwargs: Any
+    ) -> None:
         """
         Initialize the Jira text preprocessor.
 
         Args:
             base_url: Base URL for Jira API
+            disable_translation: If True, disable markup translation between formats
             **kwargs: Additional arguments for the base class
         """
         super().__init__(base_url=base_url, **kwargs)
+        self.disable_translation = disable_translation
 
     def clean_jira_text(self, text: str) -> str:
         """
         Clean Jira text content by:
         1. Processing user mentions and links
-        2. Converting Jira markup to markdown
-        3. Converting HTML/wiki markup to markdown
+        2. Converting Jira markup to markdown (if translation enabled)
+        3. Converting HTML/wiki markup to markdown (if translation enabled)
         """
         if not text:
             return ""
@@ -39,11 +43,13 @@ class JiraPreprocessor(BasePreprocessor):
         # Process Jira smart links
         text = self._process_smart_links(text)
 
-        # First convert any Jira markup to Markdown
-        text = self.jira_to_markdown(text)
+        # Convert markup only if translation is enabled
+        if not self.disable_translation:
+            # First convert any Jira markup to Markdown
+            text = self.jira_to_markdown(text)
 
-        # Then convert any remaining HTML to markdown
-        text = self._convert_html_to_markdown(text)
+            # Then convert any remaining HTML to markdown
+            text = self._convert_html_to_markdown(text)
 
         return text.strip()
 
@@ -109,10 +115,13 @@ class JiraPreprocessor(BasePreprocessor):
             input_text: Text in Jira markup format
 
         Returns:
-            Text in Markdown format
+            Text in Markdown format (or original text if translation disabled)
         """
         if not input_text:
             return ""
+
+        if self.disable_translation:
+            return input_text
 
         # Block quotes
         output = re.sub(r"^bq\.(.*?)$", r"> \1\n", input_text, flags=re.MULTILINE)
@@ -238,10 +247,13 @@ class JiraPreprocessor(BasePreprocessor):
             input_text: Text in Markdown format
 
         Returns:
-            Text in Jira markup format
+            Text in Jira markup format (or original text if translation disabled)
         """
         if not input_text:
             return ""
+
+        if self.disable_translation:
+            return input_text
 
         # Save code blocks to prevent recursive processing
         code_blocks = []

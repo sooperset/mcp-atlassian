@@ -36,6 +36,9 @@ class JiraConfig:
     no_proxy: str | None = None  # Comma-separated list of hosts to bypass proxy
     socks_proxy: str | None = None  # SOCKS proxy URL (optional)
     custom_headers: dict[str, str] | None = None  # Custom HTTP headers
+    disable_jira_markup_translation: bool = (
+        False  # Disable automatic markup translation between formats
+    )
 
     @property
     def is_cloud(self) -> bool:
@@ -127,6 +130,11 @@ class JiraConfig:
         # Custom headers - service-specific only
         custom_headers = get_custom_headers("JIRA_CUSTOM_HEADERS")
 
+        # Markup translation setting
+        disable_jira_markup_translation = (
+            os.getenv("DISABLE_JIRA_MARKUP_TRANSLATION", "false").lower() == "true"
+        )
+
         return cls(
             url=url,
             auth_type=auth_type,
@@ -141,6 +149,7 @@ class JiraConfig:
             no_proxy=no_proxy,
             socks_proxy=socks_proxy,
             custom_headers=custom_headers,
+            disable_jira_markup_translation=disable_jira_markup_translation,
         )
 
     def is_auth_configured(self) -> bool:
