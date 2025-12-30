@@ -261,3 +261,84 @@ class TestGetAvailableServices:
             _assert_authentication_logs(
                 caplog, "not_configured", ["confluence", "jira"]
             )
+
+    def test_oauth_enable_without_urls(self, caplog):
+        """Test BYOT OAuth mode - ATLASSIAN_OAUTH_ENABLE=true without service URLs."""
+        with MockEnvironment.clean_env():
+            import os
+
+            os.environ["ATLASSIAN_OAUTH_ENABLE"] = "true"
+
+            result = get_available_services()
+            _assert_service_availability(
+                result, confluence_expected=True, jira_expected=True
+            )
+            # Should log the minimal OAuth configuration messages
+            assert_log_contains(
+                caplog,
+                "INFO",
+                "Using Confluence minimal OAuth configuration - expecting user-provided tokens via headers",
+            )
+            assert_log_contains(
+                caplog,
+                "INFO",
+                "Using Jira minimal OAuth configuration - expecting user-provided tokens via headers",
+            )
+
+    def test_oauth_enable_with_urls(self, caplog):
+        """Test BYOT OAuth mode - ATLASSIAN_OAUTH_ENABLE=true with service URLs."""
+        with MockEnvironment.clean_env():
+            import os
+
+            os.environ["ATLASSIAN_OAUTH_ENABLE"] = "true"
+            os.environ["CONFLUENCE_URL"] = "https://test.atlassian.net/wiki"
+            os.environ["JIRA_URL"] = "https://test.atlassian.net"
+
+            result = get_available_services()
+            _assert_service_availability(
+                result, confluence_expected=True, jira_expected=True
+            )
+            # Should log the minimal OAuth configuration messages (overrides URL-based detection)
+            assert_log_contains(
+                caplog,
+                "INFO",
+                "Using Confluence minimal OAuth configuration - expecting user-provided tokens via headers",
+            )
+            assert_log_contains(
+                caplog,
+                "INFO",
+                "Using Jira minimal OAuth configuration - expecting user-provided tokens via headers",
+            )
+
+    @pytest.mark.parametrize(
+        "oauth_enable_value", ["true", "True", "TRUE", "1", "yes", "YES"]
+    )
+    def test_oauth_enable_value_variations(self, oauth_enable_value, caplog):
+        """Test various ATLASSIAN_OAUTH_ENABLE value formats."""
+        with MockEnvironment.clean_env():
+            import os
+
+            os.environ["ATLASSIAN_OAUTH_ENABLE"] = oauth_enable_value
+
+            result = get_available_services()
+            _assert_service_availability(
+                result, confluence_expected=True, jira_expected=True
+            )
+
+    @pytest.mark.parametrize(
+        "oauth_disable_value", ["false", "False", "FALSE", "0", "no", "NO", ""]
+    )
+    def test_oauth_enable_disabled_values(self, oauth_disable_value, caplog):
+        """Test values that should NOT enable BYOT OAuth mode."""
+        with MockEnvironment.clean_env():
+            import os
+
+            os.environ["ATLASSIAN_OAUTH_ENABLE"] = oauth_disable_value
+
+            result = get_available_services()
+            _assert_service_availability(
+                result, confluence_expected=False, jira_expected=False
+            )
+            _assert_authentication_logs(
+                caplog, "not_configured", ["confluence", "jira"]
+            )
