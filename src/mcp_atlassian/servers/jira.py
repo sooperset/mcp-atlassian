@@ -1078,7 +1078,9 @@ async def edit_comment(
     ctx: Context,
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
     comment_id: Annotated[str, Field(description="The ID of the comment to edit")],
-    comment: Annotated[str, Field(description="Updated comment text in Markdown format")],
+    comment: Annotated[
+        str, Field(description="Updated comment text in Markdown format")
+    ],
     visibility: Annotated[
         dict[str, str],
         Field(
