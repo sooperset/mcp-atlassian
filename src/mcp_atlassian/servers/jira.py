@@ -953,8 +953,6 @@ async def update_issue(
     """
     jira = await get_jira_fetcher(ctx)
     # Use fields directly as dict
-    if not isinstance(fields, dict):
-        raise ValueError("fields must be a dictionary.")
     update_fields = fields
 
     # Use additional_fields directly as dict
@@ -1754,3 +1752,221 @@ async def batch_create_versions(
             )
             results.append({"success": False, "error": str(e), "input": v})
     return json.dumps(results, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Issue Forms", "readOnlyHint": True},
+)
+async def get_issue_proforma_forms(
+    ctx: Context,
+    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+) -> str:
+    """
+    Get all ProForma forms associated with a Jira issue.
+
+    Uses the new Jira Forms REST API. Form IDs are returned as UUIDs.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: The issue key to get forms for.
+
+    Returns:
+        JSON string representing the list of ProForma forms, or an error object if failed.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        forms = jira.get_issue_forms(issue_key)
+        forms_data = [form.to_simplified_dict() for form in forms]
+        response_data = {"success": True, "forms": forms_data, "count": len(forms)}
+    except Exception as e:
+        error_message = ""
+        log_level = logging.ERROR
+        if isinstance(e, ValueError) and "not found" in str(e).lower():
+            log_level = logging.WARNING
+            error_message = str(e)
+        elif isinstance(e, MCPAtlassianAuthenticationError):
+            error_message = f"Authentication/Permission Error: {str(e)}"
+        elif isinstance(e, OSError | HTTPError):
+            error_message = f"Network or API Error: {str(e)}"
+        else:
+            error_message = (
+                "An unexpected error occurred while fetching ProForma forms."
+            )
+            logger.exception(
+                f"Unexpected error in get_issue_proforma_forms for '{issue_key}':"
+            )
+        error_result = {
+            "success": False,
+            "error": str(e),
+            "issue_key": issue_key,
+        }
+        logger.log(
+            log_level,
+            f"get_issue_proforma_forms failed for '{issue_key}': {error_message}",
+        )
+        response_data = error_result
+    return json.dumps(response_data, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Form Details", "readOnlyHint": True},
+)
+async def get_proforma_form_details(
+    ctx: Context,
+    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    form_id: Annotated[
+        str,
+        Field(
+            description="ProForma form UUID (e.g., '1946b8b7-8f03-4dc0-ac2d-5fac0d960c6a')"
+        ),
+    ],
+) -> str:
+    """
+    Get detailed information about a specific ProForma form.
+
+    Uses the new Jira Forms REST API. Returns form details including ADF design structure.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: The issue key containing the form.
+        form_id: The form UUID identifier.
+
+    Returns:
+        JSON string representing the ProForma form details, or an error object if failed.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        form = jira.get_form_details(issue_key, form_id)
+        if form is None:
+            response_data = {
+                "success": False,
+                "error": f"Form {form_id} not found for issue {issue_key}",
+                "issue_key": issue_key,
+                "form_id": form_id,
+            }
+        else:
+            response_data = {"success": True, "form": form.to_simplified_dict()}
+    except Exception as e:
+        error_message = ""
+        log_level = logging.ERROR
+        if isinstance(e, ValueError) and "not found" in str(e).lower():
+            log_level = logging.WARNING
+            error_message = str(e)
+        elif isinstance(e, MCPAtlassianAuthenticationError):
+            error_message = f"Authentication/Permission Error: {str(e)}"
+        elif isinstance(e, OSError | HTTPError):
+            error_message = f"Network or API Error: {str(e)}"
+        else:
+            error_message = (
+                "An unexpected error occurred while fetching ProForma form details."
+            )
+            logger.exception(
+                f"Unexpected error in get_proforma_form_details for '{issue_key}/{form_id}':"
+            )
+        error_result = {
+            "success": False,
+            "error": str(e),
+            "issue_key": issue_key,
+            "form_id": form_id,
+        }
+        logger.log(
+            log_level,
+            f"get_proforma_form_details failed for '{issue_key}/{form_id}': {error_message}",
+        )
+        response_data = error_result
+    return json.dumps(response_data, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write"},
+    annotations={"title": "Update Form Answers", "destructiveHint": True},
+)
+@check_write_access
+async def update_proforma_form_answers(
+    ctx: Context,
+    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    form_id: Annotated[
+        str,
+        Field(
+            description="ProForma form UUID (e.g., '1946b8b7-8f03-4dc0-ac2d-5fac0d960c6a')"
+        ),
+    ],
+    answers: Annotated[
+        list[dict],
+        Field(
+            description="List of answer objects. Each answer must have: questionId (string), type (TEXT/NUMBER/SELECT/etc), value (any)"
+        ),
+    ],
+) -> str:
+    """
+    Update form field answers using the Jira Forms REST API.
+
+    This is the primary method for updating form data in the new API. Each answer object
+    must specify the question ID, answer type, and value.
+
+    Example answers:
+    [
+        {"questionId": "q1", "type": "TEXT", "value": "Updated description"},
+        {"questionId": "q2", "type": "SELECT", "value": "Product A"},
+        {"questionId": "q3", "type": "NUMBER", "value": 42}
+    ]
+
+    Common answer types:
+    - TEXT: String values
+    - NUMBER: Numeric values
+    - SELECT: Single selection from options
+    - MULTI_SELECT: Multiple selections (value as list)
+    - CHECKBOX: Boolean values
+    - DATE: Date values
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: The issue key containing the form.
+        form_id: The form UUID (get from get_issue_proforma_forms).
+        answers: List of answer objects with questionId, type, and value.
+
+    Returns:
+        JSON string with operation result.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        result = jira.update_form_answers(issue_key, form_id, answers)
+        response_data = {
+            "success": True,
+            "message": f"Successfully updated form {form_id} for issue {issue_key}",
+            "issue_key": issue_key,
+            "form_id": form_id,
+            "updated_fields": len(answers),
+            "result": result,
+        }
+    except Exception as e:
+        error_message = ""
+        log_level = logging.ERROR
+        if isinstance(e, ValueError) and "not found" in str(e).lower():
+            log_level = logging.WARNING
+            error_message = str(e)
+        elif isinstance(e, MCPAtlassianAuthenticationError):
+            error_message = f"Authentication/Permission Error: {str(e)}"
+        elif isinstance(e, OSError | HTTPError):
+            error_message = f"Network or API Error: {str(e)}"
+        else:
+            error_message = (
+                "An unexpected error occurred while updating ProForma form answers."
+            )
+            logger.exception(
+                f"Unexpected error in update_proforma_form_answers for '{issue_key}/{form_id}':"
+            )
+        error_result = {
+            "success": False,
+            "error": str(e),
+            "issue_key": issue_key,
+            "form_id": form_id,
+        }
+        logger.log(
+            log_level,
+            f"update_proforma_form_answers failed for '{issue_key}/{form_id}': {error_message}",
+        )
+        response_data = error_result
+    return json.dumps(response_data, indent=2, ensure_ascii=False)
