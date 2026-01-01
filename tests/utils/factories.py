@@ -105,6 +105,127 @@ class ErrorResponseFactory:
         """Create authentication error response."""
         return {"errorMessages": ["Authentication failed"], "status": 401}
 
+    @staticmethod
+    def create_form_not_found_error() -> dict[str, Any]:
+        """Create a form not found error response."""
+        return ErrorResponseFactory.create_api_error(
+            status_code=404, message="Form not found"
+        )
+
+    @staticmethod
+    def create_form_closed_error() -> dict[str, Any]:
+        """Create a form already closed error response."""
+        return ErrorResponseFactory.create_api_error(
+            status_code=400, message="Form is already closed"
+        )
+
+    @staticmethod
+    def create_field_validation_error() -> dict[str, Any]:
+        """Create a field validation error response."""
+        return ErrorResponseFactory.create_api_error(
+            status_code=400, message="Field validation failed"
+        )
+
+
+class ProFormaFormFactory:
+    """Factory for creating ProForma form test data."""
+
+    @staticmethod
+    def create(form_id: str = "12345", **overrides) -> dict[str, Any]:
+        """Create a ProForma form with default values."""
+        defaults = {
+            "id": form_id,
+            "name": "Test Form",
+            "version": 1,
+            "state": "ACTIVE",
+            "description": "Test form description",
+            "settings": {
+                "allowAnonymousSubmissions": False,
+                "allowMultipleSubmissions": True,
+                "submitButtonText": "Submit",
+            },
+            "fields": [
+                {
+                    "id": "field1",
+                    "type": "SHORT_TEXT",
+                    "label": "Test Field",
+                    "required": True,
+                    "value": None,
+                    "options": [],
+                    "description": "Test field description",
+                },
+            ],
+            "issueKey": "TEST-123",
+            "_links": {
+                "self": f"https://test.atlassian.net/rest/atlassian-forms/1.0/form/{form_id}",
+                "webui": f"https://test.atlassian.net/browse/TEST-123?form={form_id}",
+            },
+        }
+        return deep_merge(defaults, overrides)
+
+    @staticmethod
+    def create_field(field_id: str = "field1", **overrides) -> dict[str, Any]:
+        """Create a ProForma form field with default values."""
+        defaults = {
+            "id": field_id,
+            "type": "SHORT_TEXT",
+            "label": "Test Field",
+            "required": True,
+            "value": None,
+            "options": [],
+            "description": "Test field description",
+        }
+        return deep_merge(defaults, overrides)
+
+    @staticmethod
+    def create_minimal(form_id: str = "12345") -> dict[str, Any]:
+        """Create minimal ProForma form for basic tests."""
+        return {
+            "id": form_id,
+            "name": "Test Form",
+            "state": "ACTIVE",
+            "fields": [],
+        }
+
+    @staticmethod
+    def create_closed_form(form_id: str = "12345", **overrides) -> dict[str, Any]:
+        """Create a closed ProForma form."""
+        return ProFormaFormFactory.create(form_id, state="CLOSED", **overrides)
+
+    @staticmethod
+    def create_with_multiple_fields(
+        form_id: str = "12345", **overrides
+    ) -> dict[str, Any]:
+        """Create a ProForma form with multiple field types."""
+        fields = [
+            {
+                "id": "text_field",
+                "type": "SHORT_TEXT",
+                "label": "Text Input",
+                "required": True,
+                "value": "Default text",
+                "description": "Enter text here",
+            },
+            {
+                "id": "select_field",
+                "type": "SELECT",
+                "label": "Select Option",
+                "required": False,
+                "value": "option1",
+                "options": ["option1", "option2", "option3"],
+                "description": "Select an option",
+            },
+            {
+                "id": "checkbox_field",
+                "type": "CHECKBOX",
+                "label": "Checkbox Field",
+                "required": False,
+                "value": True,
+                "description": "Check if applicable",
+            },
+        ]
+        return ProFormaFormFactory.create(form_id, fields=fields, **overrides)
+
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Deep merge two dictionaries."""

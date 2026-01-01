@@ -2,6 +2,7 @@
 
 import json
 import logging
+from datetime import datetime
 from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
@@ -15,6 +16,92 @@ from mcp_atlassian.servers.dependencies import get_jira_fetcher
 from mcp_atlassian.utils.decorators import check_write_access
 
 logger = logging.getLogger(__name__)
+
+
+def convert_datetime_to_timestamp(value: Any, field_type: str) -> Any:
+    """
+    Convert ISO 8601 datetime strings to Unix timestamps in milliseconds for ProForma forms.
+
+    This function automatically handles datetime conversion for DATE and DATETIME field types.
+    If the value is already a number (Unix timestamp), it passes through unchanged.
+
+    Args:
+        value: The value to convert (can be ISO 8601 string, Unix timestamp, or other)
+        field_type: The ProForma field type (DATE, DATETIME, TEXT, etc.)
+
+    Returns:
+        Unix timestamp in milliseconds if conversion was needed, otherwise original value
+
+    Raises:
+        ValueError: If the datetime string is in an invalid format
+
+    Examples:
+        >>> convert_datetime_to_timestamp("2024-12-17T19:00:00.000Z", "DATETIME")
+        1734465600000
+        >>> convert_datetime_to_timestamp("2024-12-17", "DATE")
+        1734393600000
+        >>> convert_datetime_to_timestamp(1734465600000, "DATETIME")
+        1734465600000
+        >>> convert_datetime_to_timestamp("hello", "TEXT")
+        'hello'
+    """
+    # Only convert for DATE and DATETIME fields
+    if field_type not in ("DATE", "DATETIME"):
+        return value
+
+    # Check for boolean before int (since bool is subclass of int)
+    if isinstance(value, bool):
+        return value
+
+    # If already a number (Unix timestamp), pass through
+    if isinstance(value, int | float):
+        return int(value)
+
+    # If not a string, pass through unchanged
+    if not isinstance(value, str):
+        return value
+
+    # Try to parse as ISO 8601 datetime
+    try:
+        # Handle various ISO 8601 formats
+        # Replace 'Z' with '+00:00' for Python datetime compatibility
+        iso_string = value.replace("Z", "+00:00")
+
+        # Try parsing with timezone info first
+        try:
+            dt = datetime.fromisoformat(iso_string)
+        except ValueError:
+            # Try without timezone (assume UTC)
+            from datetime import timezone as tz
+
+            dt = datetime.fromisoformat(value.replace("Z", ""))
+            # Make it timezone-aware (UTC)
+            dt = dt.replace(tzinfo=tz.utc)
+
+        # Ensure we have timezone info, otherwise assume UTC
+        if dt.tzinfo is None:
+            from datetime import timezone as tz
+
+            dt = dt.replace(tzinfo=tz.utc)
+
+        # Convert to UTC timestamp
+        timestamp_seconds = dt.timestamp()
+
+        # Convert to milliseconds
+        timestamp_ms = int(timestamp_seconds * 1000)
+        logger.debug(
+            f"Converted datetime '{value}' to timestamp {timestamp_ms} for field type {field_type}"
+        )
+        return timestamp_ms
+
+    except (ValueError, AttributeError) as e:
+        error_msg = (
+            f"Invalid datetime format for {field_type} field: '{value}'. "
+            f"Expected ISO 8601 format (e.g., '2024-12-17T19:00:00Z' or '2024-12-17') "
+            f"or Unix timestamp in milliseconds. Error: {str(e)}"
+        )
+        raise ValueError(error_msg) from e
+
 
 jira_mcp = FastMCP(
     name="Jira MCP Service",
@@ -953,8 +1040,6 @@ async def update_issue(
     """
     jira = await get_jira_fetcher(ctx)
     # Use fields directly as dict
-    if not isinstance(fields, dict):
-        raise ValueError("fields must be a dictionary.")
     update_fields = fields
 
     # Use additional_fields directly as dict
@@ -1754,3 +1839,241 @@ async def batch_create_versions(
             )
             results.append({"success": False, "error": str(e), "input": v})
     return json.dumps(results, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Issue Forms", "readOnlyHint": True},
+)
+async def get_issue_proforma_forms(
+    ctx: Context,
+    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+) -> str:
+    """
+    Get all ProForma forms associated with a Jira issue.
+
+    Uses the new Jira Forms REST API. Form IDs are returned as UUIDs.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: The issue key to get forms for.
+
+    Returns:
+        JSON string representing the list of ProForma forms, or an error object if failed.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        forms = jira.get_issue_forms(issue_key)
+        forms_data = [form.to_simplified_dict() for form in forms]
+        response_data = {"success": True, "forms": forms_data, "count": len(forms)}
+    except Exception as e:
+        error_message = ""
+        log_level = logging.ERROR
+        if isinstance(e, ValueError) and "not found" in str(e).lower():
+            log_level = logging.WARNING
+            error_message = str(e)
+        elif isinstance(e, MCPAtlassianAuthenticationError):
+            error_message = f"Authentication/Permission Error: {str(e)}"
+        elif isinstance(e, OSError | HTTPError):
+            error_message = f"Network or API Error: {str(e)}"
+        else:
+            error_message = (
+                "An unexpected error occurred while fetching ProForma forms."
+            )
+            logger.exception(
+                f"Unexpected error in get_issue_proforma_forms for '{issue_key}':"
+            )
+        error_result = {
+            "success": False,
+            "error": str(e),
+            "issue_key": issue_key,
+        }
+        logger.log(
+            log_level,
+            f"get_issue_proforma_forms failed for '{issue_key}': {error_message}",
+        )
+        response_data = error_result
+    return json.dumps(response_data, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Form Details", "readOnlyHint": True},
+)
+async def get_proforma_form_details(
+    ctx: Context,
+    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    form_id: Annotated[
+        str,
+        Field(
+            description="ProForma form UUID (e.g., '1946b8b7-8f03-4dc0-ac2d-5fac0d960c6a')"
+        ),
+    ],
+) -> str:
+    """
+    Get detailed information about a specific ProForma form.
+
+    Uses the new Jira Forms REST API. Returns form details including ADF design structure.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: The issue key containing the form.
+        form_id: The form UUID identifier.
+
+    Returns:
+        JSON string representing the ProForma form details, or an error object if failed.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        form = jira.get_form_details(issue_key, form_id)
+        if form is None:
+            response_data = {
+                "success": False,
+                "error": f"Form {form_id} not found for issue {issue_key}",
+                "issue_key": issue_key,
+                "form_id": form_id,
+            }
+        else:
+            response_data = {"success": True, "form": form.to_simplified_dict()}
+    except Exception as e:
+        error_message = ""
+        log_level = logging.ERROR
+        if isinstance(e, ValueError) and "not found" in str(e).lower():
+            log_level = logging.WARNING
+            error_message = str(e)
+        elif isinstance(e, MCPAtlassianAuthenticationError):
+            error_message = f"Authentication/Permission Error: {str(e)}"
+        elif isinstance(e, OSError | HTTPError):
+            error_message = f"Network or API Error: {str(e)}"
+        else:
+            error_message = (
+                "An unexpected error occurred while fetching ProForma form details."
+            )
+            logger.exception(
+                f"Unexpected error in get_proforma_form_details for '{issue_key}/{form_id}':"
+            )
+        error_result = {
+            "success": False,
+            "error": str(e),
+            "issue_key": issue_key,
+            "form_id": form_id,
+        }
+        logger.log(
+            log_level,
+            f"get_proforma_form_details failed for '{issue_key}/{form_id}': {error_message}",
+        )
+        response_data = error_result
+    return json.dumps(response_data, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write"},
+    annotations={"title": "Update Form Answers", "destructiveHint": True},
+)
+@check_write_access
+async def update_proforma_form_answers(
+    ctx: Context,
+    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    form_id: Annotated[
+        str,
+        Field(
+            description="ProForma form UUID (e.g., '1946b8b7-8f03-4dc0-ac2d-5fac0d960c6a')"
+        ),
+    ],
+    answers: Annotated[
+        list[dict],
+        Field(
+            description="List of answer objects. Each answer must have: questionId (string), type (TEXT/NUMBER/SELECT/etc), value (any)"
+        ),
+    ],
+) -> str:
+    """
+    Update form field answers using the Jira Forms REST API.
+
+    This is the primary method for updating form data. Each answer object
+    must specify the question ID, answer type, and value.
+
+    **Automatic DateTime Conversion:**
+    For DATE and DATETIME fields, you can provide values as:
+    - ISO 8601 strings (e.g., "2024-12-17T19:00:00Z", "2024-12-17")
+    - Unix timestamps in milliseconds (e.g., 1734465600000)
+
+    The tool automatically converts ISO 8601 strings to Unix timestamps.
+
+    Example answers:
+    [
+        {"questionId": "q1", "type": "TEXT", "value": "Updated description"},
+        {"questionId": "q2", "type": "SELECT", "value": "Product A"},
+        {"questionId": "q3", "type": "NUMBER", "value": 42},
+        {"questionId": "q4", "type": "DATETIME", "value": "2024-12-17T19:00:00Z"},
+        {"questionId": "q5", "type": "DATE", "value": "2024-12-17"}
+    ]
+
+    Common answer types:
+    - TEXT: String values
+    - NUMBER: Numeric values
+    - DATE: Date values (ISO 8601 string or Unix timestamp in ms)
+    - DATETIME: DateTime values (ISO 8601 string or Unix timestamp in ms)
+    - SELECT: Single selection from options
+    - MULTI_SELECT: Multiple selections (value as list)
+    - CHECKBOX: Boolean values
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: The issue key containing the form.
+        form_id: The form UUID (get from get_issue_proforma_forms).
+        answers: List of answer objects with questionId, type, and value.
+
+    Returns:
+        JSON string with operation result.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        # Convert datetime strings to Unix timestamps for DATE/DATETIME fields
+        processed_answers = []
+        for answer in answers:
+            processed_answer = answer.copy()
+            if "type" in answer and "value" in answer:
+                processed_answer["value"] = convert_datetime_to_timestamp(
+                    answer["value"], answer["type"]
+                )
+            processed_answers.append(processed_answer)
+
+        result = jira.update_form_answers(issue_key, form_id, processed_answers)
+        response_data = {
+            "success": True,
+            "message": f"Successfully updated form {form_id} for issue {issue_key}",
+            "issue_key": issue_key,
+            "form_id": form_id,
+            "updated_fields": len(answers),
+            "result": result,
+        }
+    except Exception as e:
+        error_message = ""
+        log_level = logging.ERROR
+        if isinstance(e, ValueError) and "not found" in str(e).lower():
+            log_level = logging.WARNING
+            error_message = str(e)
+        elif isinstance(e, MCPAtlassianAuthenticationError):
+            error_message = f"Authentication/Permission Error: {str(e)}"
+        elif isinstance(e, OSError | HTTPError):
+            error_message = f"Network or API Error: {str(e)}"
+        else:
+            error_message = (
+                "An unexpected error occurred while updating ProForma form answers."
+            )
+            logger.exception(
+                f"Unexpected error in update_proforma_form_answers for '{issue_key}/{form_id}':"
+            )
+        error_result = {
+            "success": False,
+            "error": str(e),
+            "issue_key": issue_key,
+            "form_id": form_id,
+        }
+        logger.log(
+            log_level,
+            f"update_proforma_form_answers failed for '{issue_key}/{form_id}': {error_message}",
+        )
+        response_data = error_result
+    return json.dumps(response_data, indent=2, ensure_ascii=False)
