@@ -62,20 +62,19 @@ class TestDatetimeConversion:
         result = convert_datetime_to_timestamp(timestamp, "DATETIME")
         assert result == 1734465600000  # Truncated to int
 
-    def test_non_datetime_field_passthrough_string(self):
-        """Test that non-DATE/DATETIME fields pass through string values."""
-        result = convert_datetime_to_timestamp("hello world", "TEXT")
-        assert result == "hello world"
-
-    def test_non_datetime_field_passthrough_number(self):
-        """Test that non-DATE/DATETIME fields pass through numeric values."""
-        result = convert_datetime_to_timestamp(42, "NUMBER")
-        assert result == 42
-
-    def test_non_datetime_field_passthrough_list(self):
-        """Test that non-DATE/DATETIME fields pass through list values."""
-        value = ["option1", "option2"]
-        result = convert_datetime_to_timestamp(value, "MULTI_SELECT")
+    @pytest.mark.parametrize(
+        "value,field_type",
+        [
+            ("hello world", "TEXT"),
+            (42, "NUMBER"),
+            (["option1", "option2"], "MULTI_SELECT"),
+            (True, "DATETIME"),  # Boolean shouldn't convert
+            ({"key": "value"}, "DATETIME"),  # Dict shouldn't convert
+        ],
+    )
+    def test_non_string_values_passthrough(self, value, field_type):
+        """Non-string values pass through unchanged for any field type."""
+        result = convert_datetime_to_timestamp(value, field_type)
         assert result == value
 
     def test_invalid_datetime_string_raises_error(self):
@@ -101,18 +100,6 @@ class TestDatetimeConversion:
         with pytest.raises(ValueError) as exc_info:
             convert_datetime_to_timestamp("", "DATETIME")
         assert "Invalid datetime format" in str(exc_info.value)
-
-    def test_boolean_passthrough_for_datetime(self):
-        """Test that boolean values pass through for DATETIME fields."""
-        # Boolean is not a string, so should pass through
-        result = convert_datetime_to_timestamp(True, "DATETIME")  # noqa: FBT003
-        assert result is True
-
-    def test_dict_passthrough_for_datetime(self):
-        """Test that dict values pass through for DATETIME fields."""
-        value = {"key": "value"}
-        result = convert_datetime_to_timestamp(value, "DATETIME")
-        assert result == value
 
     def test_multiple_datetime_formats(self):
         """Test various valid ISO 8601 formats."""
@@ -147,15 +134,3 @@ class TestDatetimeConversion:
         # "datetime" (lowercase) should not trigger conversion
         result = convert_datetime_to_timestamp("2024-12-17T19:00:00Z", "datetime")
         assert result == "2024-12-17T19:00:00Z"  # Passthrough
-
-    def test_date_field_type_conversion(self):
-        """Test that DATE field type triggers conversion."""
-        result = convert_datetime_to_timestamp("2024-12-17", "DATE")
-        assert isinstance(result, int)
-        assert result > 0
-
-    def test_datetime_field_type_conversion(self):
-        """Test that DATETIME field type triggers conversion."""
-        result = convert_datetime_to_timestamp("2024-12-17T19:00:00Z", "DATETIME")
-        assert isinstance(result, int)
-        assert result > 0
