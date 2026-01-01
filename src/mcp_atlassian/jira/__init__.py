@@ -13,6 +13,7 @@ from .comments import CommentsMixin
 from .config import JiraConfig
 from .epics import EpicsMixin
 from .fields import FieldsMixin
+from .forms_api import FormsApiMixin  # Forms REST API
 from .formatting import FormattingMixin
 from .issues import IssuesMixin
 from .links import LinksMixin
@@ -29,6 +30,7 @@ from .attachments import AttachmentsMixin
 class JiraFetcher(
     ProjectsMixin,
     FieldsMixin,
+    FormsApiMixin,  # Use new Forms REST API instead of FormsMixin
     FormattingMixin,
     TransitionsMixin,
     WorklogMixin,
