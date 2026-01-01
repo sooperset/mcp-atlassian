@@ -746,7 +746,7 @@ MCP Atlassian includes support for ProForma forms (Jira Cloud):
 - **Update Answers**: Modify form field values programmatically
 
 **Important Notes:**
-- **DateTime Format**: Datetime fields require Unix timestamps in milliseconds (e.g., `1734465600000` for 2024-12-17T11:00:00 PST)
+- **DateTime Format**: Datetime fields accept ISO 8601 strings (e.g., `"2024-12-17T19:00:00Z"` or `"2024-12-17"`) which are automatically converted to Unix timestamps
 - **Field Types**: Supports TEXT, NUMBER, DATE, DATETIME, SELECT, MULTI_SELECT, CHECKBOX, USER, and more
 - **Answer Format**: Each answer requires `questionId`, `type`, and `value` matching the field specification
 
@@ -759,7 +759,7 @@ jira_update_proforma_form_answers(
     answers=[
         {"questionId": "27", "type": "NUMBER", "value": 127},
         {"questionId": "46", "type": "TEXT", "value": "Detailed timeline..."},
-        {"questionId": "56", "type": "DATETIME", "value": 1734465600000}
+        {"questionId": "56", "type": "DATETIME", "value": "2024-12-17T19:00:00Z"}
     ]
 )
 ```
