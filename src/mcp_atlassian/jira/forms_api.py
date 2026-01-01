@@ -34,27 +34,16 @@ class FormsApiMixin(JiraClient):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Initialize the Forms API mixin.
 
-        Raises:
-            ValueError: If cloud_id cannot be determined from config
+        Note:
+            cloud_id is validated lazily when Forms API methods are called.
         """
         super().__init__(*args, **kwargs)
 
         # Get cloud_id from OAuth config if available
         if self.config.oauth_config and self.config.oauth_config.cloud_id:
-            self._cloud_id = self.config.oauth_config.cloud_id
+            self._cloud_id: str | None = self.config.oauth_config.cloud_id
         else:
-            # cloud_id is required for Forms API
-            error_msg = (
-                "Forms API requires a cloud_id. "
-                "For OAuth, this is automatically retrieved. "
-                "For other auth types, provide it via ATLASSIAN_OAUTH_CLOUD_ID environment variable "
-                "or X-Atlassian-Cloud-Id header."
-            )
-            raise ValueError(error_msg)
-
-        self._forms_api_base = (
-            f"https://api.atlassian.com/jira/forms/cloud/{self._cloud_id}"
-        )
+            self._cloud_id = None
 
     def _make_forms_api_request(
         self,
@@ -75,11 +64,22 @@ class FormsApiMixin(JiraClient):
             Response data from the API as a dictionary
 
         Raises:
+            ValueError: If cloud_id is not configured
             MCPAtlassianAuthenticationError: For 403 permission errors
             ValueError: For 404 not found errors
             Exception: For other HTTP errors
         """
-        url = f"{self._forms_api_base}{endpoint}"
+        # Validate cloud_id is available
+        if not self._cloud_id:
+            error_msg = (
+                "Forms API requires a cloud_id. "
+                "For OAuth, this is automatically retrieved. "
+                "For other auth types, provide it via ATLASSIAN_OAUTH_CLOUD_ID environment variable "
+                "or X-Atlassian-Cloud-Id header."
+            )
+            raise ValueError(error_msg)
+
+        url = f"https://api.atlassian.com/jira/forms/cloud/{self._cloud_id}{endpoint}"
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
 
         # Determine authentication method based on config
@@ -148,8 +148,7 @@ class FormsApiMixin(JiraClient):
                 if not response.content:
                     return {}
 
-                json_response: dict[str, Any] = response.json()
-                return json_response
+                return response.json()
 
             except HTTPError as e:
                 logger.error(
@@ -224,9 +223,7 @@ class FormsApiMixin(JiraClient):
             )
 
             # API returns ADF (Atlassian Document Format) structure
-            form = ProFormaForm.from_api_response(
-                response, issue_key=issue_key
-            )
+            form = ProFormaForm.from_api_response(response, issue_key=issue_key)
             return form
 
         except ValueError:
