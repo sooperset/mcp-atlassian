@@ -53,7 +53,7 @@ class CommentsMixin(JiraClient):
             raise Exception(f"Error getting comments: {str(e)}") from e
 
     def add_comment(
-        self, issue_key: str, comment: str, visibility: dict[str, str] = None
+        self, issue_key: str, comment: str, visibility: dict[str, str] | None = None
     ) -> dict[str, Any]:
         """
         Add a comment to an issue.
@@ -96,7 +96,7 @@ class CommentsMixin(JiraClient):
         issue_key: str,
         comment_id: str,
         comment: str,
-        visibility: dict[str, str] = None,
+        visibility: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """
         Edit an existing comment on an issue.
