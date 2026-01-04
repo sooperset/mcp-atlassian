@@ -7,6 +7,13 @@ from importlib.metadata import PackageNotFoundError, version
 import click
 from dotenv import load_dotenv
 
+# Fix high CPU usage on Windows - use SelectorEventLoop instead of ProactorEventLoop
+# ProactorEventLoop uses IOCP which can cause busy-waiting when combined with
+# synchronous libraries (like requests) that use select() for socket operations.
+# This reduces idle CPU usage from ~3-5% per process to near zero.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 from mcp_atlassian.utils.env import is_env_truthy
 from mcp_atlassian.utils.lifecycle import (
     ensure_clean_exit,
