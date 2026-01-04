@@ -419,3 +419,93 @@ class ConfluenceV2Adapter:
             }
 
         return v1_compatible
+
+    # =========================================================================
+    # Analytics API Methods (Cloud only)
+    # =========================================================================
+
+    def get_content_views(
+        self,
+        content_id: str,
+        from_date: str | None = None,
+    ) -> dict[str, Any]:
+        """Get the total number of views for a piece of content.
+
+        This endpoint is only available on Confluence Cloud.
+
+        Args:
+            content_id: The ID of the content to get views for
+            from_date: Optional date to filter views from (ISO format: YYYY-MM-DD)
+
+        Returns:
+            Dictionary containing the view count
+
+        Raises:
+            ValueError: If the API call fails
+        """
+        try:
+            url = f"{self.base_url}/rest/api/analytics/content/{content_id}/views"
+            params = {}
+            if from_date:
+                params["fromDate"] = from_date
+
+            response = self.session.get(url, params=params)
+            response.raise_for_status()
+
+            return response.json()
+
+        except HTTPError as e:
+            logger.error(f"HTTP error getting views for content '{content_id}': {e}")
+            if e.response is not None:
+                logger.error(f"Response content: {e.response.text}")
+            raise ValueError(
+                f"Failed to get views for content '{content_id}': {e}"
+            ) from e
+        except Exception as e:
+            logger.error(f"Error getting views for content '{content_id}': {e}")
+            raise ValueError(
+                f"Failed to get views for content '{content_id}': {e}"
+            ) from e
+
+    def get_content_viewers(
+        self,
+        content_id: str,
+        from_date: str | None = None,
+    ) -> dict[str, Any]:
+        """Get the total number of distinct viewers for a piece of content.
+
+        This endpoint is only available on Confluence Cloud.
+
+        Args:
+            content_id: The ID of the content to get viewers for
+            from_date: Optional date to filter viewers from (ISO format: YYYY-MM-DD)
+
+        Returns:
+            Dictionary containing the viewer count
+
+        Raises:
+            ValueError: If the API call fails
+        """
+        try:
+            url = f"{self.base_url}/rest/api/analytics/content/{content_id}/viewers"
+            params = {}
+            if from_date:
+                params["fromDate"] = from_date
+
+            response = self.session.get(url, params=params)
+            response.raise_for_status()
+
+            return response.json()
+
+        except HTTPError as e:
+            logger.error(f"HTTP error getting viewers for content '{content_id}': {e}")
+            if e.response is not None:
+                logger.error(f"Response content: {e.response.text}")
+            raise ValueError(
+                f"Failed to get viewers for content '{content_id}': {e}"
+            ) from e
+        except Exception as e:
+            logger.error(f"Error getting viewers for content '{content_id}': {e}")
+            raise ValueError(
+                f"Failed to get viewers for content '{content_id}': {e}"
+            ) from e

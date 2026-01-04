@@ -24,6 +24,8 @@ from .users import UsersMixin
 from .worklog import WorklogMixin
 from .boards import BoardsMixin
 from .attachments import AttachmentsMixin
+from .metrics import MetricsMixin
+from .sla import SLAMixin
 
 
 class JiraFetcher(
@@ -41,6 +43,8 @@ class JiraFetcher(
     SprintsMixin,
     AttachmentsMixin,
     LinksMixin,
+    MetricsMixin,
+    SLAMixin,
 ):
     """
     The main Jira client class providing access to all Jira operations.
@@ -60,6 +64,8 @@ class JiraFetcher(
     - SprintsMixin: Sprint operations
     - AttachmentsMixin: Attachment download operations
     - LinksMixin: Issue link operations
+    - MetricsMixin: Issue metrics and date operations
+    - SLAMixin: SLA calculation operations
 
     The class structure is designed to maintain backward compatibility while
     improving code organization and maintainability.

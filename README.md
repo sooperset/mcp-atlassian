@@ -96,8 +96,57 @@ Documentation is also available in [llms.txt format](https://llmstxt.org/), whic
 | `jira_create_issue` - Create issues | `confluence_create_page` - Create pages |
 | `jira_update_issue` - Update issues | `confluence_update_page` - Update pages |
 | `jira_transition_issue` - Change status | `confluence_add_comment` - Add comments |
+| `jira_get_issue_sla` - SLA metrics | `confluence_get_page_analytics` - Engagement metrics* |
+
+*Cloud only
 
 See [Tools Reference](https://personal-1d37018d.mintlify.app/docs/tools-reference) for the complete list.
+
+## Analytics & SLA Tools
+
+New tools for workflow analysis and content health monitoring.
+
+### Jira SLA Metrics
+
+| Tool | Description |
+|------|-------------|
+| `jira_get_issue_dates` | Extract dates and status transition history |
+| `jira_get_issue_sla` | Calculate cycle time, lead time, time in status, due date compliance |
+
+**Features:**
+- Working hours filtering (exclude weekends/non-business hours)
+- Configurable via environment variables
+- Batch operations supported
+
+**Configuration:**
+```bash
+JIRA_SLA_WORKING_HOURS_ONLY=true
+JIRA_SLA_WORKING_HOURS_START=09:00
+JIRA_SLA_WORKING_HOURS_END=17:00
+JIRA_SLA_TIMEZONE=America/New_York
+```
+
+### Confluence Analytics (Cloud Only)
+
+| Tool | Description |
+|------|-------------|
+| `confluence_get_page_views` | View counts and unique viewers |
+| `confluence_get_page_analytics` | Engagement score, view velocity, staleness |
+| `confluence_get_space_analytics` | Space-wide analytics with popular/stale pages |
+
+**Metrics:**
+- **Engagement Score** (0-100): Based on views, viewers, and recency
+- **View Velocity**: Trending direction (increasing/stable/decreasing)
+- **Staleness**: Content freshness (active/stale/abandoned)
+- **Viewer Diversity**: Audience breadth (narrow/moderate/broad)
+
+**Configuration:**
+```bash
+CONFLUENCE_ANALYTICS_METRICS=engagement_score,staleness
+CONFLUENCE_ANALYTICS_PERIOD_DAYS=30
+```
+
+> **Note:** Confluence Analytics API is only available on Cloud. Server/Data Center does not support these tools.
 
 ## Security
 

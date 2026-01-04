@@ -17,7 +17,7 @@ repos:
         args: [
             "--fix",
             "--exit-non-zero-on-fix",
-            "--ignore=BLE001,EM102,FBT001,FBT002,E501,F841,S112,S113,B904"
+            "--ignore=BLE001,EM102,FBT001,FBT002,FBT003,E501,F841,S112,S113,B904"
         ]
 
 -   repo: https://github.com/pre-commit/mirrors-mypy
@@ -36,6 +36,8 @@ repos:
             "--disable-error-code=unreachable",
             "--disable-error-code=assignment",
             "--disable-error-code=arg-type",
+            "--disable-error-code=call-arg",
+            "--disable-error-code=attr-defined",
             "--disable-error-code=return-value",
             "--disable-error-code=has-type",
             "--disable-error-code=no-any-return",

@@ -4,6 +4,7 @@ from abc import abstractmethod
 from typing import Any, Protocol, runtime_checkable
 
 from ..models.jira import JiraIssue
+from ..models.jira.metrics import IssueDatesResponse
 from ..models.jira.search import JiraSearchResult
 
 
@@ -204,4 +205,34 @@ class UsersOperationsProto(Protocol):
 
         Raises:
             ValueError: If the account ID could not be found
+        """
+
+
+class MetricsOperationsProto(Protocol):
+    """Protocol defining metrics operations interface."""
+
+    @abstractmethod
+    def get_issue_dates(
+        self,
+        issue_key: str,
+        include_created: bool = True,
+        include_updated: bool = True,
+        include_due_date: bool = True,
+        include_resolution_date: bool = True,
+        include_status_changes: bool = True,
+        include_status_summary: bool = True,
+    ) -> IssueDatesResponse:
+        """Get raw date information for a single Jira issue.
+
+        Args:
+            issue_key: The issue key (e.g., PROJECT-123)
+            include_created: Include the created date
+            include_updated: Include the updated date
+            include_due_date: Include the due date
+            include_resolution_date: Include the resolution date
+            include_status_changes: Include status change history
+            include_status_summary: Include aggregated time per status
+
+        Returns:
+            IssueDatesResponse with the requested date information
         """

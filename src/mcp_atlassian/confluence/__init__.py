@@ -3,6 +3,7 @@
 This module provides access to Confluence content through the Model Context Protocol.
 """
 
+from .analytics import AnalyticsMixin
 from .client import ConfluenceClient
 from .comments import CommentsMixin
 from .config import ConfluenceConfig
@@ -14,7 +15,13 @@ from .users import UsersMixin
 
 
 class ConfluenceFetcher(
-    SearchMixin, SpacesMixin, PagesMixin, CommentsMixin, LabelsMixin, UsersMixin
+    SearchMixin,
+    SpacesMixin,
+    PagesMixin,
+    CommentsMixin,
+    LabelsMixin,
+    UsersMixin,
+    AnalyticsMixin,
 ):
     """Main entry point for Confluence operations, providing backward compatibility.
 

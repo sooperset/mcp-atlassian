@@ -15,6 +15,61 @@ from ..utils.urls import is_atlassian_cloud_url
 
 
 @dataclass
+class SLAConfig:
+    """SLA calculation configuration.
+
+    Configures how SLA metrics are calculated, including working hours settings.
+    """
+
+    default_metrics: list[str]  # Default metrics to calculate
+    working_hours_only: bool = False  # Exclude non-working hours
+    working_hours_start: str = "09:00"  # Start of working day (24h format)
+    working_hours_end: str = "17:00"  # End of working day (24h format)
+    working_days: list[int] | None = None  # Working days (1=Mon, 7=Sun)
+    timezone: str = "UTC"  # IANA timezone for calculations
+
+    def __post_init__(self) -> None:
+        """Set defaults after initialization."""
+        if self.working_days is None:
+            self.working_days = [1, 2, 3, 4, 5]  # Monday-Friday
+
+    @classmethod
+    def from_env(cls) -> "SLAConfig":
+        """Create SLA configuration from environment variables.
+
+        Returns:
+            SLAConfig with values from environment variables
+        """
+        # Default metrics
+        metrics_str = os.getenv("JIRA_SLA_METRICS", "cycle_time,time_in_status")
+        default_metrics = [m.strip() for m in metrics_str.split(",")]
+
+        # Working hours settings
+        working_hours_only = os.getenv(
+            "JIRA_SLA_WORKING_HOURS_ONLY", "false"
+        ).lower() in ("true", "1", "yes")
+
+        working_hours_start = os.getenv("JIRA_SLA_WORKING_HOURS_START", "09:00")
+        working_hours_end = os.getenv("JIRA_SLA_WORKING_HOURS_END", "17:00")
+
+        # Working days (1=Monday, 7=Sunday)
+        working_days_str = os.getenv("JIRA_SLA_WORKING_DAYS", "1,2,3,4,5")
+        working_days = [int(d.strip()) for d in working_days_str.split(",")]
+
+        # Timezone
+        timezone = os.getenv("JIRA_SLA_TIMEZONE", "UTC")
+
+        return cls(
+            default_metrics=default_metrics,
+            working_hours_only=working_hours_only,
+            working_hours_start=working_hours_start,
+            working_hours_end=working_hours_end,
+            working_days=working_days,
+            timezone=timezone,
+        )
+
+
+@dataclass
 class JiraConfig:
     """Jira API configuration.
 
@@ -36,6 +91,7 @@ class JiraConfig:
     no_proxy: str | None = None  # Comma-separated list of hosts to bypass proxy
     socks_proxy: str | None = None  # SOCKS proxy URL (optional)
     custom_headers: dict[str, str] | None = None  # Custom HTTP headers
+    sla_config: SLAConfig | None = None  # SLA calculation configuration
     disable_jira_markup_translation: bool = (
         False  # Disable automatic markup translation between formats
     )
@@ -130,6 +186,9 @@ class JiraConfig:
         # Custom headers - service-specific only
         custom_headers = get_custom_headers("JIRA_CUSTOM_HEADERS")
 
+        # SLA configuration
+        sla_config = SLAConfig.from_env()
+
         # Markup translation setting
         disable_jira_markup_translation = (
             os.getenv("DISABLE_JIRA_MARKUP_TRANSLATION", "false").lower() == "true"
@@ -149,6 +208,7 @@ class JiraConfig:
             no_proxy=no_proxy,
             socks_proxy=socks_proxy,
             custom_headers=custom_headers,
+            sla_config=sla_config,
             disable_jira_markup_translation=disable_jira_markup_translation,
         )
 

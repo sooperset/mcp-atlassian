@@ -2,7 +2,7 @@
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from ..utils.env import get_custom_headers, is_env_ssl_verify
@@ -12,6 +12,57 @@ from ..utils.oauth import (
     get_oauth_config_from_env,
 )
 from ..utils.urls import is_atlassian_cloud_url
+
+# Default analytics metrics to calculate
+DEFAULT_ANALYTICS_METRICS = ["engagement_score", "staleness"]
+
+# Default analytics period in days
+DEFAULT_ANALYTICS_PERIOD_DAYS = 30
+
+
+@dataclass
+class AnalyticsConfig:
+    """Configuration for Confluence analytics calculations.
+
+    These settings control how engagement metrics are calculated.
+    All can be overridden per-request via tool parameters.
+    """
+
+    # Default metrics to calculate (can be overridden per-request)
+    metrics: list[str] = field(default_factory=lambda: DEFAULT_ANALYTICS_METRICS.copy())
+
+    # Default analysis period in days
+    period_days: int = DEFAULT_ANALYTICS_PERIOD_DAYS
+
+    @classmethod
+    def from_env(cls) -> "AnalyticsConfig":
+        """Create configuration from environment variables.
+
+        Environment variables:
+            CONFLUENCE_ANALYTICS_METRICS: Comma-separated list of default metrics
+            CONFLUENCE_ANALYTICS_PERIOD_DAYS: Default analysis period in days
+
+        Returns:
+            AnalyticsConfig with values from environment or defaults
+        """
+        # Parse metrics from environment
+        metrics_str = os.getenv("CONFLUENCE_ANALYTICS_METRICS")
+        if metrics_str:
+            metrics = [m.strip() for m in metrics_str.split(",") if m.strip()]
+        else:
+            metrics = DEFAULT_ANALYTICS_METRICS.copy()
+
+        # Parse period days from environment
+        period_days_str = os.getenv("CONFLUENCE_ANALYTICS_PERIOD_DAYS")
+        if period_days_str:
+            try:
+                period_days = int(period_days_str)
+            except ValueError:
+                period_days = DEFAULT_ANALYTICS_PERIOD_DAYS
+        else:
+            period_days = DEFAULT_ANALYTICS_PERIOD_DAYS
+
+        return cls(metrics=metrics, period_days=period_days)
 
 
 @dataclass
