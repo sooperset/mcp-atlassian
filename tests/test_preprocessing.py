@@ -561,3 +561,51 @@ More content.
     # Note: md2conf may use different anchor formats, so we check for presence of id attributes
     assert "<h1>" in result_with_anchors
     assert "<h2>" in result_with_anchors
+
+
+# Issue #786 regression tests - Wiki Markup Corruption
+
+
+def test_markdown_to_jira_header_requires_space(preprocessor_with_jira):
+    """Test that # requires space to be converted to heading (issue #786)."""
+    # With space - Markdown heading, should convert
+    assert preprocessor_with_jira.markdown_to_jira("# Heading") == "h1. Heading"
+    assert preprocessor_with_jira.markdown_to_jira("## Subheading") == "h2. Subheading"
+    assert preprocessor_with_jira.markdown_to_jira("### Level 3") == "h3. Level 3"
+
+    # Without space - could be Jira numbered list, should NOT convert
+    assert preprocessor_with_jira.markdown_to_jira("#item") == "#item"
+    assert preprocessor_with_jira.markdown_to_jira("##nested") == "##nested"
+    assert preprocessor_with_jira.markdown_to_jira("###deep") == "###deep"
+
+
+def test_markdown_to_jira_preserves_jira_list_syntax(preprocessor_with_jira):
+    """Test that Jira list syntax (asterisks + space) is preserved (issue #786)."""
+    # Jira nested bullets - should NOT be converted to bold
+    jira_list = "* First level\n** Second level\n*** Third level"
+    result = preprocessor_with_jira.markdown_to_jira(jira_list)
+    assert "** Second level" in result  # Preserved, not converted
+    assert "*** Third level" in result  # Preserved, not converted
+
+    # Single Jira bullet should also be preserved
+    assert preprocessor_with_jira.markdown_to_jira("* Item") == "* Item"
+
+
+def test_markdown_to_jira_inline_bold_still_converts(preprocessor_with_jira):
+    """Test that inline Markdown bold/italic still converts (issue #786)."""
+    # Inline bold should still work
+    assert (
+        preprocessor_with_jira.markdown_to_jira("text **bold** text")
+        == "text *bold* text"
+    )
+    assert (
+        preprocessor_with_jira.markdown_to_jira("text *italic* text")
+        == "text _italic_ text"
+    )
+
+
+def test_markdown_to_jira_bold_without_space_still_converts(preprocessor_with_jira):
+    """Test that Markdown bold (no space after **) still converts (issue #786)."""
+    # These should still be converted (existing behavior preserved)
+    assert preprocessor_with_jira.markdown_to_jira("**bold text**") == "*bold text*"
+    assert preprocessor_with_jira.markdown_to_jira("*italic text*") == "_italic text_"
