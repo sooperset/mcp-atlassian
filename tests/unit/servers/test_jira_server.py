@@ -504,6 +504,36 @@ async def test_create_issue(jira_client, mock_jira_fetcher):
 
 
 @pytest.mark.anyio
+async def test_create_issue_accepts_json_string(jira_client, mock_jira_fetcher):
+    """Ensure additional_fields can be a JSON string."""
+    response = await jira_client.call_tool(
+        "jira_create_issue",
+        {
+            "project_key": "TEST",
+            "summary": "JSON Issue",
+            "issue_type": "Task",
+            "additional_fields": '{"labels": ["ai", "test"]}',
+        },
+    )
+    assert hasattr(response, "content")
+    assert len(response.content) > 0
+    text_content = response.content[0]
+    assert text_content.type == "text"
+    content = json.loads(text_content.text)
+    assert content["message"] == "Issue created successfully"
+    assert "issue" in content
+    mock_jira_fetcher.create_issue.assert_called_with(
+        project_key="TEST",
+        summary="JSON Issue",
+        issue_type="Task",
+        description=None,
+        assignee=None,
+        components=None,
+        labels=["ai", "test"],
+    )
+
+
+@pytest.mark.anyio
 async def test_batch_create_issues(jira_client, mock_jira_fetcher):
     """Test batch creation of Jira issues."""
     test_issues = [
