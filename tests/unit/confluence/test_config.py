@@ -183,3 +183,21 @@ def test_is_cloud_oauth_with_cloud_id():
         oauth_config=oauth_config,
     )
     assert config.is_cloud is True
+
+
+def test_from_env_pat_priority_over_oauth(caplog):
+    """Test that PAT takes priority over OAuth for Server/DC (fixes #824)."""
+    with patch.dict(
+        os.environ,
+        {
+            "CONFLUENCE_URL": "https://confluence.example.com",  # Server/DC URL
+            "CONFLUENCE_PERSONAL_TOKEN": "test_pat",
+            "ATLASSIAN_OAUTH_ENABLE": "true",  # OAuth also enabled
+        },
+        clear=True,
+    ):
+        config = ConfluenceConfig.from_env()
+        assert config.auth_type == "pat"
+        assert config.personal_token == "test_pat"
+        # Verify warning is logged when both are configured
+        assert "Both PAT and OAuth configured for Server/DC. Using PAT." in caplog.text

@@ -93,20 +93,27 @@ class ConfluenceConfig:
         # Use the shared utility function directly
         is_cloud = is_atlassian_cloud_url(url)
 
-        if oauth_config:
-            # OAuth is available - could be full config or minimal config for user-provided tokens
-            auth_type = "oauth"
-        elif is_cloud:
-            if username and api_token:
+        if is_cloud:
+            # Cloud: OAuth takes priority, then basic auth
+            if oauth_config:
+                auth_type = "oauth"
+            elif username and api_token:
                 auth_type = "basic"
             else:
                 error_msg = "Cloud authentication requires CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN, or OAuth configuration (set ATLASSIAN_OAUTH_ENABLE=true for user-provided tokens)"
                 raise ValueError(error_msg)
         else:  # Server/Data Center
+            # Server/DC: PAT takes priority over OAuth (fixes #824)
             if personal_token:
+                if oauth_config:
+                    logger = logging.getLogger("mcp-atlassian.confluence.config")
+                    logger.warning(
+                        "Both PAT and OAuth configured for Server/DC. Using PAT."
+                    )
                 auth_type = "pat"
+            elif oauth_config:
+                auth_type = "oauth"
             elif username and api_token:
-                # Allow basic auth for Server/DC too
                 auth_type = "basic"
             else:
                 error_msg = "Server/Data Center authentication requires CONFLUENCE_PERSONAL_TOKEN or CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN"
