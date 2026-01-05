@@ -14,6 +14,28 @@ Instead of using `stdio`, you can run the server as a persistent HTTP service. T
 | `sse` | `/sse` | Server-Sent Events, good for streaming |
 | `streamable-http` | `/mcp` | HTTP-based, good for multi-user |
 
+## Stateless Mode
+
+For Kubernetes deployments or environments where session state should be ephemeral, use the `--stateless` flag with streamable-http transport:
+
+```bash
+# Using uvx
+uvx mcp-atlassian --transport streamable-http --stateless --port 9000 -vv
+
+# Or using Docker
+docker run --rm -p 9000:9000 \
+  --env-file /path/to/your/.env \
+  ghcr.io/sooperset/mcp-atlassian:latest \
+  --transport streamable-http --stateless --port 9000 -vv
+
+# Or via environment variable
+STATELESS=true uvx mcp-atlassian --transport streamable-http --port 9000
+```
+
+<Note>
+The `--stateless` flag is only supported with `streamable-http` transport. Using it with `stdio` or `sse` will result in an error.
+</Note>
+
 ## Basic Setup
 
 <Tabs>

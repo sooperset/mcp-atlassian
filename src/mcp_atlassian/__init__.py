@@ -62,6 +62,11 @@ logger = setup_logging(logging_level, logging_stream)
     help="Transport type (stdio, sse, or streamable-http)",
 )
 @click.option(
+    "--stateless",
+    is_flag=True,
+    help="Whether the server should be stateless (streamable-http only)",
+)
+@click.option(
     "--port",
     default=8000,
     help="Port to listen on for SSE or Streamable HTTP transport",
@@ -153,6 +158,7 @@ def main(
     env_file: str | None,
     oauth_setup: bool,
     transport: str,
+    stateless: bool,
     port: int,
     host: str,
     path: str | None,
@@ -249,6 +255,19 @@ def main(
         final_transport = "stdio"
     logger.debug(f"Final transport determined: {final_transport}")
 
+    # Stateless precedence
+    final_stateless = is_env_truthy("STATELESS", "false")
+    if click_ctx and was_option_provided(click_ctx, "stateless"):
+        final_stateless = stateless
+    logger.debug(f"Final stateless determined: {final_stateless}")
+
+    # Validate stateless is only used with streamable-http
+    if final_stateless and final_transport != "streamable-http":
+        logger.error(
+            "--stateless flag is only supported with streamable-http transport"
+        )
+        sys.exit(1)
+
     # Port precedence
     final_port = 8000
     if os.getenv("PORT") and os.getenv("PORT").isdigit():
@@ -335,6 +354,8 @@ def main(
                 log_display_path = main_mcp.settings.sse_path or "/sse"
             else:
                 log_display_path = main_mcp.settings.streamable_http_path or "/mcp"
+
+        main_mcp.settings.stateless_http = final_stateless
 
         logger.info(
             f"Starting server with {final_transport.upper()} transport on http://{final_host}:{final_port}{log_display_path}"
