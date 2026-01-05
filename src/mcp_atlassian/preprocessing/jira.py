@@ -307,22 +307,32 @@ class JiraPreprocessor(BasePreprocessor):
             flags=re.MULTILINE,
         )
 
-        # Headers with # prefix
+        # Headers with # prefix - require space after # to distinguish from Jira lists
+        # Fixes issue #786: #item should not become h1.item (it's a Jira numbered list)
         output = re.sub(
-            r"^([#]+)(.*?)$",
-            lambda match: f"h{len(match.group(1))}." + match.group(2),
+            r"^([#]+) (.*)$",
+            lambda match: f"h{len(match.group(1))}. " + match.group(2),
             output,
             flags=re.MULTILINE,
         )
 
-        # Bold and italic
-        output = re.sub(
-            r"([*_]+)(.*?)\1",
-            lambda match: ("_" if len(match.group(1)) == 1 else "*")
-            + match.group(2)
-            + ("_" if len(match.group(1)) == 1 else "*"),
-            output,
-        )
+        # Bold and italic - skip lines starting with asterisks+space (Jira list syntax)
+        # Fixes issue #786: ** item should not be converted (it's a Jira nested list)
+        def convert_bold_italic_line(line: str) -> str:
+            # Skip if line starts with asterisks/underscores followed by space (list syntax)
+            if re.match(r"^[*_]+\s", line):
+                return line
+            # Apply bold/italic conversion
+            return re.sub(
+                r"([*_]+)(.*?)\1",
+                lambda m: ("_" if len(m.group(1)) == 1 else "*")
+                + m.group(2)
+                + ("_" if len(m.group(1)) == 1 else "*"),
+                line,
+            )
+
+        lines = output.split("\n")
+        output = "\n".join(convert_bold_italic_line(line) for line in lines)
 
         # Multi-level bulleted list
         def bulleted_list_fn(match: re.Match) -> str:
