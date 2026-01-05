@@ -3,6 +3,7 @@
 import ssl
 from unittest.mock import MagicMock, patch
 
+import pytest
 from requests.adapters import HTTPAdapter
 from requests.sessions import Session
 
@@ -190,13 +191,12 @@ def test_configure_ssl_with_client_cert():
 
 
 def test_configure_ssl_with_encrypted_key():
-    """Test configure_ssl_verification with encrypted private key."""
+    """Test configure_ssl_verification raises error for encrypted private key."""
     # Arrange
     session = MagicMock()
-    logger_mock = MagicMock()
 
-    with patch("mcp_atlassian.utils.ssl.logger", logger_mock):
-        # Act
+    # Act & Assert - encrypted keys should raise ValueError
+    with pytest.raises(ValueError) as exc_info:
         configure_ssl_verification(
             service_name="TestService",
             url="https://example.com",
@@ -207,11 +207,9 @@ def test_configure_ssl_with_encrypted_key():
             client_key_password="secret",
         )
 
-        # Assert
-        assert session.cert == ("/path/to/cert.pem", "/path/to/key.pem")
-        # Should warn about encrypted keys
-        logger_mock.warning.assert_called_once()
-        assert "encrypted keys" in logger_mock.warning.call_args[0][0]
+    # Verify error message is helpful
+    assert "encrypted" in str(exc_info.value).lower()
+    assert "not supported" in str(exc_info.value).lower()
 
 
 def test_configure_ssl_without_client_cert():

@@ -98,20 +98,19 @@ def configure_ssl_verification(
     """
     # Configure client certificate if provided
     if client_cert and client_key:
-        # If password is provided, we need to handle it differently
-        # For now, we'll use a tuple format that requests understands
+        # Encrypted private keys are not supported by the requests library
         if client_key_password:
-            logger.warning(
-                f"{service_name} client certificate authentication with encrypted keys is configured. "
-                "Note: Encrypted private keys require additional handling."
+            raise ValueError(
+                f"{service_name} client certificate authentication with encrypted "
+                "private keys is not supported. Please decrypt your private key first "
+                "(e.g., using 'openssl rsa -in encrypted.key -out decrypted.key')."
             )
-            # Note: requests doesn't directly support encrypted private keys
-            # Users would need to decrypt the key first or use a custom adapter
 
         # Set the client certificate on the session
         session.cert = (client_cert, client_key)
         logger.info(
-            f"{service_name} client certificate authentication configured with cert: {client_cert}"
+            f"{service_name} client certificate authentication configured "
+            f"with cert: {client_cert}"
         )
 
     if not ssl_verify:
