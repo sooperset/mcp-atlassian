@@ -96,10 +96,10 @@ def configure_ssl_verification(
         client_key: Path to client private key file (.pem)
         client_key_password: Password for encrypted private key (optional)
     """
-    # Configure client certificate if provided
-    if client_cert and client_key:
+    # Configure client certificate if provided (must be actual string paths)
+    if isinstance(client_cert, str) and isinstance(client_key, str):
         # Encrypted private keys are not supported by the requests library
-        if client_key_password:
+        if isinstance(client_key_password, str) and client_key_password:
             raise ValueError(
                 f"{service_name} client certificate authentication with encrypted "
                 "private keys is not supported. Please decrypt your private key first "
