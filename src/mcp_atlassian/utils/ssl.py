@@ -49,7 +49,7 @@ class SSLIgnoreAdapter(HTTPAdapter):
         self.poolmanager = PoolManager(
             num_pools=connections,
             maxsize=maxsize,
-            block=True,  # Force blocking to prevent CPU busy-wait (#820)
+            block=block,
             ssl_context=context,
             **pool_kwargs,
         )
