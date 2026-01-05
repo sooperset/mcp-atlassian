@@ -39,6 +39,9 @@ class JiraConfig:
     disable_jira_markup_translation: bool = (
         False  # Disable automatic markup translation between formats
     )
+    client_cert: str | None = None  # Client certificate file path (.pem)
+    client_key: str | None = None  # Client private key file path (.pem)
+    client_key_password: str | None = None  # Password for encrypted private key
 
     @property
     def is_cloud(self) -> bool:
@@ -142,6 +145,11 @@ class JiraConfig:
             os.getenv("DISABLE_JIRA_MARKUP_TRANSLATION", "false").lower() == "true"
         )
 
+        # Client certificate settings
+        client_cert = os.getenv("JIRA_CLIENT_CERT")
+        client_key = os.getenv("JIRA_CLIENT_KEY")
+        client_key_password = os.getenv("JIRA_CLIENT_KEY_PASSWORD")
+
         return cls(
             url=url,
             auth_type=auth_type,
@@ -157,6 +165,9 @@ class JiraConfig:
             socks_proxy=socks_proxy,
             custom_headers=custom_headers,
             disable_jira_markup_translation=disable_jira_markup_translation,
+            client_cert=client_cert,
+            client_key=client_key,
+            client_key_password=client_key_password,
         )
 
     def is_auth_configured(self) -> bool:

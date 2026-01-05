@@ -3,6 +3,7 @@
 import ssl
 from unittest.mock import MagicMock, patch
 
+import pytest
 from requests.adapters import HTTPAdapter
 from requests.sessions import Session
 
@@ -163,3 +164,96 @@ def test_ssl_ignore_adapter():
     with patch.object(HTTPAdapter, "cert_verify") as mock_cert_verify:
         adapter.cert_verify(conn, url, verify=False, cert=cert)
         mock_cert_verify.assert_called_once_with(conn, url, verify=False, cert=cert)
+
+
+def test_configure_ssl_with_client_cert():
+    """Test configure_ssl_verification with client certificate."""
+    # Arrange
+    session = MagicMock()
+    logger_mock = MagicMock()
+
+    with patch("mcp_atlassian.utils.ssl.logger", logger_mock):
+        # Act
+        configure_ssl_verification(
+            service_name="TestService",
+            url="https://example.com",
+            session=session,
+            ssl_verify=True,
+            client_cert="/path/to/cert.pem",
+            client_key="/path/to/key.pem",
+        )
+
+        # Assert
+        assert session.cert == ("/path/to/cert.pem", "/path/to/key.pem")
+        logger_mock.info.assert_called_once_with(
+            "TestService client certificate authentication configured with cert: /path/to/cert.pem"
+        )
+
+
+def test_configure_ssl_with_encrypted_key():
+    """Test configure_ssl_verification raises error for encrypted private key."""
+    # Arrange
+    session = MagicMock()
+
+    # Act & Assert - encrypted keys should raise ValueError
+    with pytest.raises(ValueError) as exc_info:
+        configure_ssl_verification(
+            service_name="TestService",
+            url="https://example.com",
+            session=session,
+            ssl_verify=True,
+            client_cert="/path/to/cert.pem",
+            client_key="/path/to/key.pem",
+            client_key_password="secret",
+        )
+
+    # Verify error message is helpful
+    assert "encrypted" in str(exc_info.value).lower()
+    assert "not supported" in str(exc_info.value).lower()
+
+
+def test_configure_ssl_without_client_cert():
+    """Test configure_ssl_verification without client certificate."""
+    # Arrange
+    session = MagicMock()
+    logger_mock = MagicMock()
+
+    with patch("mcp_atlassian.utils.ssl.logger", logger_mock):
+        # Act
+        configure_ssl_verification(
+            service_name="TestService",
+            url="https://example.com",
+            session=session,
+            ssl_verify=True,
+        )
+
+        # Assert - session.cert should not be set
+        assert not hasattr(session, "cert") or session.cert != ("", "")
+        logger_mock.info.assert_not_called()
+
+
+def test_configure_ssl_disabled_with_client_cert():
+    """Test configure_ssl_verification with both SSL disabled and client certificate."""
+    # Arrange
+    session = MagicMock()
+    logger_mock = MagicMock()
+
+    with patch("mcp_atlassian.utils.ssl.logger", logger_mock):
+        with patch("mcp_atlassian.utils.ssl.SSLIgnoreAdapter") as mock_adapter_class:
+            mock_adapter = MagicMock()
+            mock_adapter_class.return_value = mock_adapter
+
+            # Act
+            configure_ssl_verification(
+                service_name="TestService",
+                url="https://example.com",
+                session=session,
+                ssl_verify=False,
+                client_cert="/path/to/cert.pem",
+                client_key="/path/to/key.pem",
+            )
+
+            # Assert - Both client cert and SSL adapter should be configured
+            assert session.cert == ("/path/to/cert.pem", "/path/to/key.pem")
+            mock_adapter_class.assert_called_once()
+            assert session.mount.call_count == 2
