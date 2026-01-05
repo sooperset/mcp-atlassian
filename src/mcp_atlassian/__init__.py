@@ -254,6 +254,13 @@ def main(
         final_stateless = stateless
     logger.debug(f"Final stateless determined: {final_stateless}")
 
+    # Validate stateless is only used with streamable-http
+    if final_stateless and final_transport != "streamable-http":
+        logger.error(
+            "--stateless flag is only supported with streamable-http transport"
+        )
+        sys.exit(1)
+
     # Port precedence
     final_port = 8000
     if os.getenv("PORT") and os.getenv("PORT").isdigit():
