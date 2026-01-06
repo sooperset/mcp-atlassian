@@ -609,3 +609,10 @@ def test_markdown_to_jira_bold_without_space_still_converts(preprocessor_with_ji
     # These should still be converted (existing behavior preserved)
     assert preprocessor_with_jira.markdown_to_jira("**bold text**") == "*bold text*"
     assert preprocessor_with_jira.markdown_to_jira("*italic text*") == "_italic text_"
+
+
+def test_md2conf_elements_from_string_available():
+    """Test that elements_from_string is importable with fallback (issue #817)."""
+    from mcp_atlassian.preprocessing.confluence import elements_from_string
+
+    assert callable(elements_from_string)
