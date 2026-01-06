@@ -224,6 +224,34 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
         scope=args.scope,
     )
 
+    # Apply instance-specific settings from environment (.env should already be loaded by the CLI entrypoint)
+    env_instance_type = os.getenv("ATLASSIAN_OAUTH_INSTANCE_TYPE")
+    if env_instance_type:
+        normalized = env_instance_type.strip().lower()
+        if normalized in {"cloud", "datacenter"}:
+            oauth_config.instance_type = normalized
+        else:
+            logger.warning(
+                "Ignoring invalid ATLASSIAN_OAUTH_INSTANCE_TYPE=%r (expected 'cloud' or 'datacenter')",
+                env_instance_type,
+            )
+
+    # Data Center requires instance_url to build authorize/token URLs
+    if oauth_config.is_datacenter:
+        env_instance_url = os.getenv("ATLASSIAN_OAUTH_INSTANCE_URL")
+        if env_instance_url and env_instance_url.strip():
+            oauth_config.instance_url = env_instance_url.strip()
+        else:
+            logger.error(
+                "Data Center OAuth requires ATLASSIAN_OAUTH_INSTANCE_URL to be set (e.g. https://uat.confluence.arm.com)"
+            )
+            return False
+    else:
+        # Optional: allow pre-setting cloud_id from env (not required for the auth URL)
+        env_cloud_id = os.getenv("ATLASSIAN_OAUTH_CLOUD_ID")
+        if env_cloud_id and env_cloud_id.strip():
+            oauth_config.cloud_id = env_cloud_id.strip()
+            
     # Generate a random state for CSRF protection
     import secrets
 

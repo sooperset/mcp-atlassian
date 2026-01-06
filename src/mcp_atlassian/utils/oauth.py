@@ -187,8 +187,9 @@ class OAuthConfig:
 
             logger.info(f"Exchanging authorization code for tokens at {self.token_url}")
             logger.debug(f"Token exchange payload: {pprint.pformat(payload)}")
-
-            response = requests.post(TOKEN_URL, data=payload, timeout=HTTP_TIMEOUT)
+            
+            # Use the instance-specific token URL (Cloud: auth.atlassian.com, Data Center: <base>/rest/oauth2/latest/token)
+            response = requests.post(self.token_url, data=payload, timeout=HTTP_TIMEOUT)
 
             # Log more details about the response
             logger.debug(f"Token exchange response status: {response.status_code}")
@@ -214,10 +215,17 @@ class OAuthConfig:
                 return False
 
             if "refresh_token" not in token_data:
-                logger.error(
-                    "Refresh token not found in response. Ensure 'offline_access' scope is included. "
-                    f"Keys found: {list(token_data.keys())}"
-                )
+                if self.is_cloud:
+                    logger.error(
+                        "Refresh token not found in response. Ensure 'offline_access' scope is included. "
+                        f"Keys found: {list(token_data.keys())}"
+                    )
+                else:
+                    logger.error(
+                        "Refresh token not found in response. Data Center should typically return a refresh_token. "
+                        "Verify the incoming link is configured as a confidential client (client secret) and that the requested scopes are allowed. "
+                        f"Keys found: {list(token_data.keys())}"
+                    )
                 return False
 
             self.access_token = token_data["access_token"]
@@ -288,7 +296,13 @@ class OAuthConfig:
             }
 
             logger.debug("Refreshing access token...")
-            response = requests.post(TOKEN_URL, data=payload, timeout=HTTP_TIMEOUT)
+            # Confluence/Jira Data Center examples include redirect_uri on refresh requests.
+            # Cloud doesn't require it, so only add it for Data Center to avoid behavior changes.
+            if self.is_datacenter and self.redirect_uri:
+                payload["redirect_uri"] = self.redirect_uri
+
+            logger.debug(f"Refreshing access token at {self.token_url}")
+            response = requests.post(self.token_url, data=payload, timeout=HTTP_TIMEOUT)
             response.raise_for_status()
 
             # Parse the response
