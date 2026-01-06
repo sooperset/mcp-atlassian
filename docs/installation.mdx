@@ -1,0 +1,142 @@
+---
+title: "Installation"
+description: "Install MCP Atlassian using uvx, Docker, pip, or from source"
+---
+
+# Installation
+
+MCP Atlassian can be installed using several methods. Choose the one that best fits your workflow.
+
+## uvx (Recommended)
+
+The simplest way to run MCP Atlassian without permanent installation using [uvx](https://docs.astral.sh/uv/guides/tools/):
+
+```bash
+# Run directly (downloads on first use, cached for subsequent runs)
+uvx mcp-atlassian --help
+
+# Run with specific Python version (required for Python 3.14+)
+uvx --python=3.12 mcp-atlassian --help
+```
+
+### IDE Configuration with uvx
+
+<Tabs>
+  <Tab title="Claude Desktop">
+    Edit your config file:
+    - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+    - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+    - **Linux**: `~/.config/Claude/claude_desktop_config.json`
+
+    ```json
+    {
+      "mcpServers": {
+        "mcp-atlassian": {
+          "command": "uvx",
+          "args": ["mcp-atlassian"],
+          "env": {
+            "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
+            "CONFLUENCE_USERNAME": "your.email@company.com",
+            "CONFLUENCE_API_TOKEN": "your_confluence_api_token",
+            "JIRA_URL": "https://your-company.atlassian.net",
+            "JIRA_USERNAME": "your.email@company.com",
+            "JIRA_API_TOKEN": "your_jira_api_token"
+          }
+        }
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Cursor">
+    Open **Settings** → **MCP** → **+ Add new global MCP server**, then use the same JSON configuration.
+  </Tab>
+</Tabs>
+
+<Note>
+Python 3.14 is not yet supported due to upstream pydantic-core/PyO3 limitations.
+Use `["--python=3.12", "mcp-atlassian"]` as args if needed.
+</Note>
+
+## Docker
+
+Docker provides an isolated environment and is recommended for production deployments or when you need specific version control.
+
+```bash
+# Pull the latest image
+docker pull ghcr.io/sooperset/mcp-atlassian:latest
+
+# Run with environment variables
+docker run --rm -i \
+  -e JIRA_URL=https://your-company.atlassian.net \
+  -e JIRA_USERNAME=your.email@company.com \
+  -e JIRA_API_TOKEN=your_api_token \
+  ghcr.io/sooperset/mcp-atlassian:latest
+```
+
+### IDE Configuration with Docker
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-e", "CONFLUENCE_URL",
+        "-e", "CONFLUENCE_USERNAME",
+        "-e", "CONFLUENCE_API_TOKEN",
+        "-e", "JIRA_URL",
+        "-e", "JIRA_USERNAME",
+        "-e", "JIRA_API_TOKEN",
+        "ghcr.io/sooperset/mcp-atlassian:latest"
+      ],
+      "env": {
+        "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
+        "CONFLUENCE_USERNAME": "your.email@company.com",
+        "CONFLUENCE_API_TOKEN": "your_confluence_api_token",
+        "JIRA_URL": "https://your-company.atlassian.net",
+        "JIRA_USERNAME": "your.email@company.com",
+        "JIRA_API_TOKEN": "your_jira_api_token"
+      }
+    }
+  }
+}
+```
+
+See [Configuration](/configuration) for more Docker options including environment files.
+
+## pip
+
+Install directly with pip for development or when you need the package in your Python environment:
+
+```bash
+pip install mcp-atlassian
+
+# Run the server
+mcp-atlassian --help
+```
+
+## uv
+
+If you're using [uv](https://docs.astral.sh/uv/) for package management:
+
+```bash
+# Add to your project
+uv add mcp-atlassian
+
+# Run
+uv run mcp-atlassian --help
+```
+
+## From Source
+
+For development or contributing:
+
+```bash
+git clone https://github.com/sooperset/mcp-atlassian.git
+cd mcp-atlassian
+uv sync --frozen --all-extras --dev
+uv run mcp-atlassian --help
+```
+
+See [CONTRIBUTING.md](https://github.com/sooperset/mcp-atlassian/blob/main/CONTRIBUTING.md) for development setup details.

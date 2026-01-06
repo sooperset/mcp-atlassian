@@ -36,6 +36,9 @@ class ConfluenceConfig:
     no_proxy: str | None = None  # Comma-separated list of hosts to bypass proxy
     socks_proxy: str | None = None  # SOCKS proxy URL (optional)
     custom_headers: dict[str, str] | None = None  # Custom HTTP headers
+    client_cert: str | None = None  # Client certificate file path (.pem)
+    client_key: str | None = None  # Client private key file path (.pem)
+    client_key_password: str | None = None  # Password for encrypted private key
 
     @property
     def is_cloud(self) -> bool:
@@ -93,20 +96,27 @@ class ConfluenceConfig:
         # Use the shared utility function directly
         is_cloud = is_atlassian_cloud_url(url) if url else False
 
-        if oauth_config:
-            # OAuth is available - could be full config or minimal config for user-provided tokens
-            auth_type = "oauth"
-        elif is_cloud:
-            if username and api_token:
+        if is_cloud:
+            # Cloud: OAuth takes priority, then basic auth
+            if oauth_config:
+                auth_type = "oauth"
+            elif username and api_token:
                 auth_type = "basic"
             else:
                 error_msg = "Cloud authentication requires CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN, or OAuth configuration (set ATLASSIAN_OAUTH_ENABLE=true for user-provided tokens)"
                 raise ValueError(error_msg)
         else:  # Server/Data Center
+            # Server/DC: PAT takes priority over OAuth (fixes #824)
             if personal_token:
+                if oauth_config:
+                    logger = logging.getLogger("mcp-atlassian.confluence.config")
+                    logger.warning(
+                        "Both PAT and OAuth configured for Server/DC. Using PAT."
+                    )
                 auth_type = "pat"
+            elif oauth_config:
+                auth_type = "oauth"
             elif username and api_token:
-                # Allow basic auth for Server/DC too
                 auth_type = "basic"
             else:
                 error_msg = "Server/Data Center authentication requires CONFLUENCE_PERSONAL_TOKEN or CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN"
@@ -126,6 +136,23 @@ class ConfluenceConfig:
 
         # Custom headers - service-specific only
         custom_headers = get_custom_headers("CONFLUENCE_CUSTOM_HEADERS")
+        
+        # Client certificate settings
+        client_cert = os.getenv("CONFLUENCE_CLIENT_CERT")
+        client_key = os.getenv("CONFLUENCE_CLIENT_KEY")
+        client_key_password = os.getenv("CONFLUENCE_CLIENT_KEY_PASSWORD")
+
+        if not url and not oauth_config:
+            error_msg = "CONFLUENCE_URL is required"
+            raise ValueError(error_msg)
+
+        if not auth_type:
+            error_msg = "No authentication method configured"
+            raise ValueError(error_msg)
+        # Client certificate settings
+        client_cert = os.getenv("CONFLUENCE_CLIENT_CERT")
+        client_key = os.getenv("CONFLUENCE_CLIENT_KEY")
+        client_key_password = os.getenv("CONFLUENCE_CLIENT_KEY_PASSWORD")
 
         if not url and not oauth_config:
             error_msg = "CONFLUENCE_URL is required"
@@ -149,7 +176,42 @@ class ConfluenceConfig:
             no_proxy=no_proxy,
             socks_proxy=socks_proxy,
             custom_headers=custom_headers,
+            client_cert=client_cert,
+            client_key=client_key,
+            client_key_password=client_key_password,
         )
+
+    @staticmethod
+    def _is_oauth_fully_configured(oauth_config: "OAuthConfig") -> bool:
+        """Check if OAuth configuration is complete for either Cloud or Data Center.
+
+        Args:
+            oauth_config: The OAuth configuration to check
+
+        Returns:
+            True if OAuth is fully configured, False otherwise
+        """
+        if not oauth_config:
+            return False
+
+        # Check basic required fields
+        if not all(
+            [
+                oauth_config.client_id,
+                oauth_config.client_secret,
+                oauth_config.redirect_uri,
+                oauth_config.scope,
+            ]
+        ):
+            return False
+
+        # Check instance-specific requirements
+        if oauth_config.is_cloud:
+            # For Cloud, we need a cloud_id
+            return bool(oauth_config.cloud_id)
+        else:
+            # For Data Center, we need an instance_url
+            return bool(oauth_config.instance_url)
 
     @staticmethod
     def _is_oauth_fully_configured(oauth_config: "OAuthConfig") -> bool:

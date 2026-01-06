@@ -21,8 +21,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     uv sync --frozen --no-install-project --no-dev --no-editable
 
-# Then, add the rest of the project source code and install it
-ADD . /app
+# Then, copy the rest of the project source code and install it
+COPY . /app
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     uv sync --frozen --no-dev --no-editable
@@ -45,6 +45,9 @@ COPY --from=uv --chown=app:app /app/.venv /app/.venv
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
+
+# Disable Python output buffering for proper stdio communication
+ENV PYTHONUNBUFFERED=1
 
 # For minimal OAuth setup without environment variables, use:
 # docker run -e ATLASSIAN_OAUTH_ENABLE=true -p 8000:8000 your-image

@@ -1,0 +1,219 @@
+---
+title: "HTTP Transport"
+description: "Run MCP Atlassian as an HTTP service for multi-user scenarios"
+---
+
+# HTTP Transport
+
+Instead of using `stdio`, you can run the server as a persistent HTTP service. This enables multi-user scenarios and remote deployment.
+
+## Transport Types
+
+| Transport | Endpoint | Use Case |
+|-----------|----------|----------|
+| `sse` | `/sse` | Server-Sent Events, good for streaming |
+| `streamable-http` | `/mcp` | HTTP-based, good for multi-user |
+
+## Stateless Mode
+
+For Kubernetes deployments or environments where session state should be ephemeral, use the `--stateless` flag with streamable-http transport:
+
+```bash
+# Using uvx
+uvx mcp-atlassian --transport streamable-http --stateless --port 9000 -vv
+
+# Or using Docker
+docker run --rm -p 9000:9000 \
+  --env-file /path/to/your/.env \
+  ghcr.io/sooperset/mcp-atlassian:latest \
+  --transport streamable-http --stateless --port 9000 -vv
+
+# Or via environment variable
+STATELESS=true uvx mcp-atlassian --transport streamable-http --port 9000
+```
+
+<Note>
+The `--stateless` flag is only supported with `streamable-http` transport. Using it with `stdio` or `sse` will result in an error.
+</Note>
+
+## Basic Setup
+
+<Tabs>
+  <Tab title="SSE Transport">
+    ```bash
+    # Using uvx
+    uvx mcp-atlassian --transport sse --port 9000 -vv
+
+    # Or using Docker
+    docker run --rm -p 9000:9000 \
+      --env-file /path/to/your/.env \
+      ghcr.io/sooperset/mcp-atlassian:latest \
+      --transport sse --port 9000 -vv
+    ```
+
+    **IDE Configuration:**
+    ```json
+    {
+      "mcpServers": {
+        "mcp-atlassian-http": {
+          "url": "http://localhost:9000/sse"
+        }
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Streamable-HTTP">
+    ```bash
+    # Using uvx
+    uvx mcp-atlassian --transport streamable-http --port 9000 -vv
+
+    # Or using Docker
+    docker run --rm -p 9000:9000 \
+      --env-file /path/to/your/.env \
+      ghcr.io/sooperset/mcp-atlassian:latest \
+      --transport streamable-http --port 9000 -vv
+    ```
+
+    **IDE Configuration:**
+    ```json
+    {
+      "mcpServers": {
+        "mcp-atlassian-service": {
+          "url": "http://localhost:9000/mcp"
+        }
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Multi-User Authentication
+
+Both transport types support per-request authentication where each user provides their own credentials.
+
+### Authentication Methods
+
+<Tabs>
+  <Tab title="Cloud (OAuth)">
+    ```json
+    {
+      "mcpServers": {
+        "mcp-atlassian-service": {
+          "url": "http://localhost:9000/mcp",
+          "headers": {
+            "Authorization": "Bearer <USER_OAUTH_ACCESS_TOKEN>"
+          }
+        }
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Server/DC (PAT)">
+    ```json
+    {
+      "mcpServers": {
+        "mcp-atlassian-service": {
+          "url": "http://localhost:9000/mcp",
+          "headers": {
+            "Authorization": "Token <USER_PERSONAL_ACCESS_TOKEN>"
+          }
+        }
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Server Setup for Multi-User
+
+<Steps>
+  <Step title="Run OAuth Setup (if using OAuth)">
+    ```bash
+    # Using uvx
+    uvx mcp-atlassian --oauth-setup -v
+
+    # Or using Docker
+    docker run --rm -i \
+      -p 8080:8080 \
+      -v "${HOME}/.mcp-atlassian:/home/app/.mcp-atlassian" \
+      ghcr.io/sooperset/mcp-atlassian:latest --oauth-setup -v
+    ```
+  </Step>
+  <Step title="Start HTTP Server">
+    ```bash
+    # Using uvx (with env vars set)
+    uvx mcp-atlassian --transport streamable-http --port 9000 -vv
+
+    # Or using Docker
+    docker run --rm -p 9000:9000 \
+      --env-file /path/to/your/.env \
+      ghcr.io/sooperset/mcp-atlassian:latest \
+      --transport streamable-http --port 9000 -vv
+    ```
+  </Step>
+  <Step title="Configure Environment">
+    ```bash
+    JIRA_URL=https://your-company.atlassian.net
+    CONFLUENCE_URL=https://your-company.atlassian.net/wiki
+    ATLASSIAN_OAUTH_CLIENT_ID=your_oauth_app_client_id
+    ATLASSIAN_OAUTH_CLIENT_SECRET=your_oauth_app_client_secret
+    ATLASSIAN_OAUTH_REDIRECT_URI=http://localhost:8080/callback
+    ATLASSIAN_OAUTH_SCOPE=read:jira-work write:jira-work read:confluence-content.all write:confluence-content offline_access
+    ATLASSIAN_OAUTH_CLOUD_ID=your_cloud_id_from_setup_wizard
+    ```
+  </Step>
+</Steps>
+
+### Multi-Cloud Support
+
+For multi-tenant applications where each user connects to their own Atlassian cloud instance:
+
+1. Enable minimal OAuth mode:
+   ```bash
+   # Using uvx
+   ATLASSIAN_OAUTH_ENABLE=true uvx mcp-atlassian --transport streamable-http --port 9000
+
+   # Or using Docker
+   docker run -e ATLASSIAN_OAUTH_ENABLE=true -p 9000:9000 \
+     ghcr.io/sooperset/mcp-atlassian:latest \
+     --transport streamable-http --port 9000
+   ```
+
+2. Users provide authentication via HTTP headers:
+   - `Authorization: Bearer <user_oauth_token>`
+   - `X-Atlassian-Cloud-Id: <user_cloud_id>`
+
+### Python Example
+
+```python
+import asyncio
+from mcp.client.streamable_http import streamablehttp_client
+from mcp import ClientSession
+
+user_token = "user-specific-oauth-token"
+user_cloud_id = "user-specific-cloud-id"
+
+async def main():
+    async with streamablehttp_client(
+        "http://localhost:9000/mcp",
+        headers={
+            "Authorization": f"Bearer {user_token}",
+            "X-Atlassian-Cloud-Id": user_cloud_id
+        }
+    ) as (read_stream, write_stream, _):
+        async with ClientSession(read_stream, write_stream) as session:
+            await session.initialize()
+            result = await session.call_tool(
+                "jira_get_issue",
+                {"issue_key": "PROJ-123"}
+            )
+            print(result)
+
+asyncio.run(main())
+```
+
+<Note>
+- The server uses fallback authentication when requests don't include user-specific credentials
+- User tokens are isolated per request - no cross-tenant data leakage
+- Falls back to global `ATLASSIAN_OAUTH_CLOUD_ID` if header not provided
+</Note>

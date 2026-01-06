@@ -52,13 +52,16 @@ class CommentsMixin(JiraClient):
             logger.error(f"Error getting comments for issue {issue_key}: {str(e)}")
             raise Exception(f"Error getting comments: {str(e)}") from e
 
-    def add_comment(self, issue_key: str, comment: str) -> dict[str, Any]:
+    def add_comment(
+        self, issue_key: str, comment: str, visibility: dict[str, str] | None = None
+    ) -> dict[str, Any]:
         """
         Add a comment to an issue.
 
         Args:
             issue_key: The issue key (e.g. 'PROJ-123')
             comment: Comment text to add (in Markdown format)
+            visibility: (optional) Restrict comment visibility (e.g. {"type":"group","value:"jira-users"})
 
         Returns:
             The created comment details
@@ -70,7 +73,9 @@ class CommentsMixin(JiraClient):
             # Convert Markdown to Jira's markup format
             jira_formatted_comment = self._markdown_to_jira(comment)
 
-            result = self.jira.issue_add_comment(issue_key, jira_formatted_comment)
+            result = self.jira.issue_add_comment(
+                issue_key, jira_formatted_comment, visibility
+            )
             if not isinstance(result, dict):
                 msg = f"Unexpected return value type from `jira.issue_add_comment`: {type(result)}"
                 logger.error(msg)
@@ -85,6 +90,52 @@ class CommentsMixin(JiraClient):
         except Exception as e:
             logger.error(f"Error adding comment to issue {issue_key}: {str(e)}")
             raise Exception(f"Error adding comment: {str(e)}") from e
+
+    def edit_comment(
+        self,
+        issue_key: str,
+        comment_id: str,
+        comment: str,
+        visibility: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Edit an existing comment on an issue.
+
+        Args:
+            issue_key: The issue key (e.g. 'PROJ-123')
+            comment_id: The ID of the comment to edit
+            comment: Updated comment text (in Markdown format)
+            visibility: (optional) Restrict comment visibility (e.g. {"type":"group","value":"jira-users"})
+
+        Returns:
+            The updated comment details
+
+        Raises:
+            Exception: If there is an error editing the comment
+        """
+        try:
+            # Convert Markdown to Jira's markup format
+            jira_formatted_comment = self._markdown_to_jira(comment)
+
+            result = self.jira.issue_edit_comment(
+                issue_key, comment_id, jira_formatted_comment, visibility
+            )
+            if not isinstance(result, dict):
+                msg = f"Unexpected return value type from `jira.issue_edit_comment`: {type(result)}"
+                logger.error(msg)
+                raise TypeError(msg)
+
+            return {
+                "id": result.get("id"),
+                "body": self._clean_text(result.get("body", "")),
+                "updated": str(parse_date(result.get("updated"))),
+                "author": result.get("author", {}).get("displayName", "Unknown"),
+            }
+        except Exception as e:
+            logger.error(
+                f"Error editing comment {comment_id} on issue {issue_key}: {str(e)}"
+            )
+            raise Exception(f"Error editing comment: {str(e)}") from e
 
     def _markdown_to_jira(self, markdown_text: str) -> str:
         """

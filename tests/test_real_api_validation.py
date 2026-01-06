@@ -112,12 +112,16 @@ class ResourceTracker:
 @pytest.fixture
 def jira_config() -> JiraConfig:
     """Create a JiraConfig from environment variables."""
+    if not os.getenv("JIRA_URL") and not os.getenv("ATLASSIAN_OAUTH_ENABLE"):
+        pytest.skip("JIRA_URL environment variable not set")
     return JiraConfig.from_env()
 
 
 @pytest.fixture
 def confluence_config() -> ConfluenceConfig:
     """Create a ConfluenceConfig from environment variables."""
+    if not os.getenv("CONFLUENCE_URL") and not os.getenv("ATLASSIAN_OAUTH_ENABLE"):
+        pytest.skip("CONFLUENCE_URL environment variable not set")
     return ConfluenceConfig.from_env()
 
 
@@ -214,7 +218,7 @@ def cleanup_resources(
 pytestmark = pytest.mark.anyio(backends=["asyncio"])
 
 
-@pytest.fixture(scope="class")
+@pytest.fixture
 async def api_validation_client():
     """Provides a FastMCP client connected to the main server for tool calls."""
     transport = FastMCPTransport(main_mcp)

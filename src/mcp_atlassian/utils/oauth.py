@@ -49,6 +49,13 @@ DATACENTER_AUTHORIZE_PATH = "/rest/oauth2/latest/authorize"
 
 # Common constants
 TOKEN_EXPIRY_MARGIN = 300  # 5 minutes in seconds
+
+# HTTP request timeouts (in seconds)
+# Connection timeout: Time to establish TCP connection
+# Read timeout: Time to receive response after connection established
+HTTP_CONNECT_TIMEOUT = 5
+HTTP_READ_TIMEOUT = 20
+HTTP_TIMEOUT = (HTTP_CONNECT_TIMEOUT, HTTP_READ_TIMEOUT)
 KEYRING_SERVICE_NAME = "mcp-atlassian-oauth"
 
 
@@ -181,7 +188,7 @@ class OAuthConfig:
             logger.info(f"Exchanging authorization code for tokens at {self.token_url}")
             logger.debug(f"Token exchange payload: {pprint.pformat(payload)}")
 
-            response = requests.post(self.token_url, data=payload)
+            response = requests.post(TOKEN_URL, data=payload, timeout=HTTP_TIMEOUT)
 
             # Log more details about the response
             logger.debug(f"Token exchange response status: {response.status_code}")
@@ -281,7 +288,7 @@ class OAuthConfig:
             }
 
             logger.debug("Refreshing access token...")
-            response = requests.post(self.token_url, data=payload)
+            response = requests.post(TOKEN_URL, data=payload, timeout=HTTP_TIMEOUT)
             response.raise_for_status()
 
             # Parse the response
@@ -322,7 +329,7 @@ class OAuthConfig:
 
         try:
             headers = {"Authorization": f"Bearer {self.access_token}"}
-            response = requests.get(CLOUD_ID_URL, headers=headers)
+            response = requests.get(CLOUD_ID_URL, headers=headers, timeout=HTTP_TIMEOUT)
             response.raise_for_status()
 
             resources = response.json()

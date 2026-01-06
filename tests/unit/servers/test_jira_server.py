@@ -271,7 +271,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
             pass
 
     test_mcp = AtlassianMCP(
-        "TestJira", description="Test Jira MCP Server", lifespan=test_lifespan
+        "TestJira", instructions="Test Jira MCP Server", lifespan=test_lifespan
     )
     from src.mcp_atlassian.servers.jira import (
         add_comment,
@@ -305,35 +305,35 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     )
 
     jira_sub_mcp = FastMCP(name="TestJiraSubMCP")
-    jira_sub_mcp.tool()(get_issue)
-    jira_sub_mcp.tool()(search)
-    jira_sub_mcp.tool()(search_fields)
-    jira_sub_mcp.tool()(get_project_issues)
-    jira_sub_mcp.tool()(get_project_versions)
-    jira_sub_mcp.tool()(get_all_projects)
-    jira_sub_mcp.tool()(get_transitions)
-    jira_sub_mcp.tool()(get_worklog)
-    jira_sub_mcp.tool()(download_attachments)
-    jira_sub_mcp.tool()(get_agile_boards)
-    jira_sub_mcp.tool()(get_board_issues)
-    jira_sub_mcp.tool()(get_sprints_from_board)
-    jira_sub_mcp.tool()(get_sprint_issues)
-    jira_sub_mcp.tool()(get_link_types)
-    jira_sub_mcp.tool()(get_user_profile)
-    jira_sub_mcp.tool()(create_issue)
-    jira_sub_mcp.tool()(batch_create_issues)
-    jira_sub_mcp.tool()(batch_get_changelogs)
-    jira_sub_mcp.tool()(update_issue)
-    jira_sub_mcp.tool()(delete_issue)
-    jira_sub_mcp.tool()(add_comment)
-    jira_sub_mcp.tool()(add_worklog)
-    jira_sub_mcp.tool()(link_to_epic)
-    jira_sub_mcp.tool()(create_issue_link)
-    jira_sub_mcp.tool()(remove_issue_link)
-    jira_sub_mcp.tool()(transition_issue)
-    jira_sub_mcp.tool()(update_sprint)
-    jira_sub_mcp.tool()(batch_create_versions)
-    test_mcp.mount("jira", jira_sub_mcp)
+    jira_sub_mcp.add_tool(get_issue)
+    jira_sub_mcp.add_tool(search)
+    jira_sub_mcp.add_tool(search_fields)
+    jira_sub_mcp.add_tool(get_project_issues)
+    jira_sub_mcp.add_tool(get_project_versions)
+    jira_sub_mcp.add_tool(get_all_projects)
+    jira_sub_mcp.add_tool(get_transitions)
+    jira_sub_mcp.add_tool(get_worklog)
+    jira_sub_mcp.add_tool(download_attachments)
+    jira_sub_mcp.add_tool(get_agile_boards)
+    jira_sub_mcp.add_tool(get_board_issues)
+    jira_sub_mcp.add_tool(get_sprints_from_board)
+    jira_sub_mcp.add_tool(get_sprint_issues)
+    jira_sub_mcp.add_tool(get_link_types)
+    jira_sub_mcp.add_tool(get_user_profile)
+    jira_sub_mcp.add_tool(create_issue)
+    jira_sub_mcp.add_tool(batch_create_issues)
+    jira_sub_mcp.add_tool(batch_get_changelogs)
+    jira_sub_mcp.add_tool(update_issue)
+    jira_sub_mcp.add_tool(delete_issue)
+    jira_sub_mcp.add_tool(add_comment)
+    jira_sub_mcp.add_tool(add_worklog)
+    jira_sub_mcp.add_tool(link_to_epic)
+    jira_sub_mcp.add_tool(create_issue_link)
+    jira_sub_mcp.add_tool(remove_issue_link)
+    jira_sub_mcp.add_tool(transition_issue)
+    jira_sub_mcp.add_tool(update_sprint)
+    jira_sub_mcp.add_tool(batch_create_versions)
+    test_mcp.mount(jira_sub_mcp, prefix="jira")
     return test_mcp
 
 
@@ -352,14 +352,14 @@ def no_fetcher_test_jira_mcp(mock_base_jira_config):
 
     test_mcp = AtlassianMCP(
         "NoFetcherTestJira",
-        description="No Fetcher Test Jira MCP Server",
+        instructions="No Fetcher Test Jira MCP Server",
         lifespan=no_fetcher_test_lifespan,
     )
     from src.mcp_atlassian.servers.jira import get_issue
 
     jira_sub_mcp = FastMCP(name="NoFetcherTestJiraSubMCP")
-    jira_sub_mcp.tool()(get_issue)
-    test_mcp.mount("jira", jira_sub_mcp)
+    jira_sub_mcp.add_tool(get_issue)
+    test_mcp.mount(jira_sub_mcp, prefix="jira")
     return test_mcp
 
 
@@ -411,9 +411,9 @@ async def test_get_issue(jira_client, mock_jira_fetcher):
             "fields": "summary,description,status",
         },
     )
-    assert isinstance(response, list)
-    assert len(response) > 0
-    text_content = response[0]
+    assert hasattr(response, "content")
+    assert len(response.content) > 0
+    text_content = response.content[0]
     assert text_content.type == "text"
     content = json.loads(text_content.text)
     assert content["key"] == "TEST-123"
@@ -440,9 +440,9 @@ async def test_search(jira_client, mock_jira_fetcher):
             "start_at": 0,
         },
     )
-    assert isinstance(response, list)
-    assert len(response) > 0
-    text_content = response[0]
+    assert hasattr(response, "content")
+    assert len(response.content) > 0
+    text_content = response.content[0]
     assert text_content.type == "text"
     content = json.loads(text_content.text)
     assert isinstance(content, dict)
@@ -477,9 +477,9 @@ async def test_create_issue(jira_client, mock_jira_fetcher):
             "additional_fields": {"priority": {"name": "Medium"}},
         },
     )
-    assert isinstance(response, list)
-    assert len(response) > 0
-    text_content = response[0]
+    assert hasattr(response, "content")
+    assert len(response.content) > 0
+    text_content = response.content[0]
     assert text_content.type == "text"
     content = json.loads(text_content.text)
     assert content["message"] == "Issue created successfully"
@@ -501,6 +501,84 @@ async def test_create_issue(jira_client, mock_jira_fetcher):
         components=["Frontend", "API"],
         priority={"name": "Medium"},
     )
+
+
+@pytest.mark.anyio
+async def test_create_issue_accepts_json_string(jira_client, mock_jira_fetcher):
+    """Ensure additional_fields can be a JSON string."""
+    response = await jira_client.call_tool(
+        "jira_create_issue",
+        {
+            "project_key": "TEST",
+            "summary": "JSON Issue",
+            "issue_type": "Task",
+            "additional_fields": '{"labels": ["ai", "test"]}',
+        },
+    )
+    assert hasattr(response, "content")
+    assert len(response.content) > 0
+    text_content = response.content[0]
+    assert text_content.type == "text"
+    content = json.loads(text_content.text)
+    assert content["message"] == "Issue created successfully"
+    assert "issue" in content
+    mock_jira_fetcher.create_issue.assert_called_with(
+        project_key="TEST",
+        summary="JSON Issue",
+        issue_type="Task",
+        description=None,
+        assignee=None,
+        components=None,
+        labels=["ai", "test"],
+    )
+
+
+@pytest.mark.anyio
+async def test_create_issue_additional_fields_empty_string(jira_client):
+    """Test that empty string additional_fields raises ValueError."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_create_issue",
+            {
+                "project_key": "TEST",
+                "summary": "Test issue",
+                "issue_type": "Task",
+                "additional_fields": "",
+            },
+        )
+    assert "not valid JSON" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_create_issue_additional_fields_invalid_json(jira_client):
+    """Test that invalid JSON additional_fields raises ValueError."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_create_issue",
+            {
+                "project_key": "TEST",
+                "summary": "Test issue",
+                "issue_type": "Task",
+                "additional_fields": "{invalid json",
+            },
+        )
+    assert "not valid JSON" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_create_issue_additional_fields_non_dict_json(jira_client):
+    """Test that JSON array additional_fields raises ValueError."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_create_issue",
+            {
+                "project_key": "TEST",
+                "summary": "Test issue",
+                "issue_type": "Task",
+                "additional_fields": '["item1", "item2"]',
+            },
+        )
+    assert "not a JSON object" in str(excinfo.value)
 
 
 @pytest.mark.anyio
@@ -527,8 +605,8 @@ async def test_batch_create_issues(jira_client, mock_jira_fetcher):
         "jira_batch_create_issues",
         {"issues": test_issues_json, "validate_only": False},
     )
-    assert len(response) == 1
-    text_content = response[0]
+    assert len(response.content) == 1
+    text_content = response.content[0]
     assert text_content.type == "text"
     content = json.loads(text_content.text)
     assert "message" in content
@@ -562,8 +640,8 @@ async def test_get_user_profile_tool_success(jira_client, mock_jira_fetcher):
     mock_jira_fetcher.get_user_profile_by_identifier.assert_called_once_with(
         "test.profile@example.com"
     )
-    assert len(response) == 1
-    result_data = json.loads(response[0].text)
+    assert len(response.content) == 1
+    result_data = json.loads(response.content[0].text)
     assert result_data["success"] is True
     assert "user" in result_data
     user_info = result_data["user"]
@@ -581,8 +659,8 @@ async def test_get_user_profile_tool_not_found(jira_client, mock_jira_fetcher):
     response = await jira_client.call_tool(
         "jira_get_user_profile", {"user_identifier": "nonexistent@example.com"}
     )
-    assert len(response) == 1
-    result_data = json.loads(response[0].text)
+    assert len(response.content) == 1
+    result_data = json.loads(response.content[0].text)
     assert result_data["success"] is False
     assert "error" in result_data
     assert "not found" in result_data["error"]
@@ -665,7 +743,7 @@ async def test_get_issue_with_user_specific_fetcher_in_state(
         properties=None,
         update_history=True,
     )
-    result_data = json.loads(response[0].text)
+    result_data = json.loads(response.content[0].text)
     assert result_data["key"] == "USER-STATE-1"
 
 
@@ -696,9 +774,9 @@ async def test_get_project_versions_tool(jira_client, mock_jira_fetcher):
         "jira_get_project_versions",
         {"project_key": "TEST"},
     )
-    assert isinstance(response, list)
-    assert len(response) == 1  # FastMCP wraps as list of messages
-    msg = response[0]
+    assert hasattr(response, "content")
+    assert len(response.content) == 1  # FastMCP wraps as list of messages
+    msg = response.content[0]
     assert msg.type == "text"
     import json
 
@@ -745,9 +823,9 @@ async def test_get_all_projects_tool(jira_client, mock_jira_fetcher):
         "jira_get_all_projects",
         {},
     )
-    assert isinstance(response, list)
-    assert len(response) == 1  # FastMCP wraps as list of messages
-    msg = response[0]
+    assert hasattr(response, "content")
+    assert len(response.content) == 1  # FastMCP wraps as list of messages
+    msg = response.content[0]
     assert msg.type == "text"
 
     data = json.loads(msg.text)
@@ -794,9 +872,9 @@ async def test_get_all_projects_tool_with_archived(jira_client, mock_jira_fetche
         "jira_get_all_projects",
         {"include_archived": True},
     )
-    assert isinstance(response, list)
-    assert len(response) == 1
-    msg = response[0]
+    assert hasattr(response, "content")
+    assert len(response.content) == 1
+    msg = response.content[0]
     assert msg.type == "text"
 
     data = json.loads(msg.text)
@@ -852,9 +930,9 @@ async def test_get_all_projects_tool_with_projects_filter(
         {},
     )
 
-    assert isinstance(response, list)
-    assert len(response) == 1
-    msg = response[0]
+    assert hasattr(response, "content")
+    assert len(response.content) == 1
+    msg = response.content[0]
     assert msg.type == "text"
 
     data = json.loads(msg.text)
@@ -906,9 +984,9 @@ async def test_get_all_projects_tool_no_projects_filter(jira_client, mock_jira_f
         {},
     )
 
-    assert isinstance(response, list)
-    assert len(response) == 1
-    msg = response[0]
+    assert hasattr(response, "content")
+    assert len(response.content) == 1
+    msg = response.content[0]
     assert msg.type == "text"
 
     data = json.loads(msg.text)
@@ -967,9 +1045,9 @@ async def test_get_all_projects_tool_case_insensitive_filter(
         {},
     )
 
-    assert isinstance(response, list)
-    assert len(response) == 1
-    msg = response[0]
+    assert hasattr(response, "content")
+    assert len(response.content) == 1
+    msg = response.content[0]
     assert msg.type == "text"
 
     data = json.loads(msg.text)
@@ -994,9 +1072,9 @@ async def test_get_all_projects_tool_empty_response(jira_client, mock_jira_fetch
 
     response = await jira_client.call_tool("jira_get_all_projects", {})
 
-    assert isinstance(response, list)
-    assert len(response) == 1
-    msg = response[0]
+    assert hasattr(response, "content")
+    assert len(response.content) == 1
+    msg = response.content[0]
     assert msg.type == "text"
 
     data = json.loads(msg.text)
@@ -1012,9 +1090,9 @@ async def test_get_all_projects_tool_api_error_handling(jira_client, mock_jira_f
 
     response = await jira_client.call_tool("jira_get_all_projects", {})
 
-    assert isinstance(response, list)
-    assert len(response) == 1
-    msg = response[0]
+    assert hasattr(response, "content")
+    assert len(response.content) == 1
+    msg = response.content[0]
     assert msg.type == "text"
 
     data = json.loads(msg.text)
@@ -1035,9 +1113,9 @@ async def test_get_all_projects_tool_authentication_error_handling(
 
     response = await jira_client.call_tool("jira_get_all_projects", {})
 
-    assert isinstance(response, list)
-    assert len(response) == 1
-    msg = response[0]
+    assert hasattr(response, "content")
+    assert len(response.content) == 1
+    msg = response.content[0]
     assert msg.type == "text"
 
     data = json.loads(msg.text)
@@ -1056,9 +1134,9 @@ async def test_get_all_projects_tool_configuration_error_handling(
 
     response = await jira_client.call_tool("jira_get_all_projects", {})
 
-    assert isinstance(response, list)
-    assert len(response) == 1
-    msg = response[0]
+    assert hasattr(response, "content")
+    assert len(response.content) == 1
+    msg = response.content[0]
     assert msg.type == "text"
 
     data = json.loads(msg.text)
@@ -1087,8 +1165,8 @@ async def test_batch_create_versions_all_success(jira_client, mock_jira_fetcher)
         "jira_batch_create_versions",
         {"project_key": "TEST", "versions": json.dumps(versions)},
     )
-    assert len(response) == 1
-    content = json.loads(response[0].text)
+    assert len(response.content) == 1
+    content = json.loads(response.content[0].text)
     assert all(item["success"] for item in content)
     assert content[0]["version"]["name"] == "v1.0"
     assert content[1]["version"]["name"] == "v2.0"
@@ -1115,7 +1193,7 @@ async def test_batch_create_versions_partial_failure(jira_client, mock_jira_fetc
         "jira_batch_create_versions",
         {"project_key": "TEST", "versions": json.dumps(versions)},
     )
-    content = json.loads(response[0].text)
+    content = json.loads(response.content[0].text)
     assert content[0]["success"] is True
     assert content[1]["success"] is False
     assert "Simulated failure" in content[1]["error"]
@@ -1134,7 +1212,7 @@ async def test_batch_create_versions_all_failure(jira_client, mock_jira_fetcher)
         "jira_batch_create_versions",
         {"project_key": "TEST", "versions": json.dumps(versions)},
     )
-    content = json.loads(response[0].text)
+    content = json.loads(response.content[0].text)
     assert all(not item["success"] for item in content)
     assert all("API down" in item["error"] for item in content)
 
@@ -1146,5 +1224,5 @@ async def test_batch_create_versions_empty(jira_client, mock_jira_fetcher):
         "jira_batch_create_versions",
         {"project_key": "TEST", "versions": json.dumps([])},
     )
-    content = json.loads(response[0].text)
+    content = json.loads(response.content[0].text)
     assert content == []

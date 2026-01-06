@@ -8,10 +8,15 @@ from pathlib import Path
 from md2conf.converter import (
     ConfluenceConverterOptions,
     ConfluenceStorageFormatConverter,
-    elements_from_string,
     elements_to_string,
     markdown_to_html,
 )
+
+# Handle md2conf API changes: elements_from_string may be renamed to elements_from_strings
+try:
+    from md2conf.converter import elements_from_string
+except ImportError:
+    from md2conf.converter import elements_from_strings as elements_from_string
 
 from .base import BasePreprocessor
 

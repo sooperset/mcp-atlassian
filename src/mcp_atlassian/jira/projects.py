@@ -250,9 +250,9 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             List of issue type data dictionaries
         """
         try:
-            meta = self.jira.issue_createmeta(project=project_key)
+            meta = self.jira.issue_createmeta_issuetypes(project=project_key)
             if not isinstance(meta, dict):
-                msg = f"Unexpected return value type from `jira.issue_createmeta`: {type(meta)}"
+                msg = f"Unexpected return value type from `jira.issue_createmeta_issuetypes`: {type(meta)}"
                 logger.error(msg)
                 raise TypeError(msg)
 

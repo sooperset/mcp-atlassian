@@ -1,0 +1,94 @@
+---
+title: "Tools Reference"
+description: "All available MCP Atlassian tools for Jira and Confluence"
+---
+
+# Tools Reference
+
+MCP Atlassian provides tools for interacting with Jira and Confluence.
+
+## Key Tools
+
+<CardGroup cols={2}>
+  <Card title="Jira Tools" icon="list-check">
+    | Tool | Description |
+    |------|-------------|
+    | `jira_get_issue` | Get details of a specific issue |
+    | `jira_search` | Search issues using JQL |
+    | `jira_create_issue` | Create a new issue |
+    | `jira_update_issue` | Update an existing issue |
+    | `jira_transition_issue` | Transition issue to new status |
+    | `jira_add_comment` | Add a comment to an issue |
+  </Card>
+  <Card title="Confluence Tools" icon="book">
+    | Tool | Description |
+    |------|-------------|
+    | `confluence_search` | Search content using CQL |
+    | `confluence_get_page` | Get content of a specific page |
+    | `confluence_create_page` | Create a new page |
+    | `confluence_update_page` | Update an existing page |
+  </Card>
+</CardGroup>
+
+## Complete Tool List
+
+| Operation | Jira Tools | Confluence Tools |
+|-----------|------------|------------------|
+| **Read** | `jira_search` | `confluence_search` |
+| | `jira_get_issue` | `confluence_get_page` |
+| | `jira_get_all_projects` | `confluence_get_page_children` |
+| | `jira_get_project_issues` | `confluence_get_comments` |
+| | `jira_get_worklog` | `confluence_get_labels` |
+| | `jira_get_transitions` | `confluence_search_user` |
+| | `jira_search_fields` | |
+| | `jira_get_agile_boards` | |
+| | `jira_get_board_issues` | |
+| | `jira_get_sprints_from_board` | |
+| | `jira_get_sprint_issues` | |
+| | `jira_get_issue_link_types` | |
+| | `jira_batch_get_changelogs`* | |
+| | `jira_get_user_profile` | |
+| | `jira_download_attachments` | |
+| | `jira_get_project_versions` | |
+| **Write** | `jira_create_issue` | `confluence_create_page` |
+| | `jira_update_issue` | `confluence_update_page` |
+| | `jira_delete_issue` | `confluence_delete_page` |
+| | `jira_batch_create_issues` | `confluence_add_label` |
+| | `jira_add_comment` | `confluence_add_comment` |
+| | `jira_transition_issue` | |
+| | `jira_add_worklog` | |
+| | `jira_link_to_epic` | |
+| | `jira_create_sprint` | |
+| | `jira_update_sprint` | |
+| | `jira_create_issue_link` | |
+| | `jira_remove_issue_link` | |
+| | `jira_create_version` | |
+| | `jira_batch_create_versions` | |
+
+<Note>
+\* `jira_batch_get_changelogs` is only available on Jira Cloud
+</Note>
+
+## Tool Access Control
+
+### Enable Specific Tools
+
+Use `ENABLED_TOOLS` environment variable or `--enabled-tools` flag:
+
+```bash
+# Environment variable
+ENABLED_TOOLS="confluence_search,jira_get_issue,jira_search"
+
+# Command line
+uvx mcp-atlassian --enabled-tools "confluence_search,jira_get_issue,jira_search"
+```
+
+### Read-Only Mode
+
+Disable all write operations:
+
+```bash
+READ_ONLY_MODE=true
+```
+
+When enabled, only read operations are available regardless of `ENABLED_TOOLS` setting.

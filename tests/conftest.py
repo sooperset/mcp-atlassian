@@ -16,6 +16,15 @@ from tests.utils.factories import (
 )
 from tests.utils.mocks import MockAtlassianClient, MockEnvironment
 
+# Restrict anyio tests to asyncio backend only (FastMCP client requires asyncio)
+pytest_plugins = ("anyio",)
+
+
+@pytest.fixture(params=["asyncio"])
+def anyio_backend(request):
+    """Override anyio backend to only use asyncio."""
+    return request.param
+
 
 def pytest_addoption(parser):
     """Add command-line options for tests."""

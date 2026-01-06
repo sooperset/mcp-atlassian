@@ -1,0 +1,206 @@
+---
+title: "Configuration"
+description: "IDE integration, environment variables, and advanced configuration options"
+---
+
+# Configuration
+
+This guide covers IDE integration, environment variables, and advanced configuration options.
+
+## IDE Integration
+
+### Configuration File Locations
+
+| IDE | Location |
+|-----|----------|
+| Claude Desktop (Windows) | `%APPDATA%\Claude\claude_desktop_config.json` |
+| Claude Desktop (macOS) | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Claude Desktop (Linux) | `~/.config/Claude/claude_desktop_config.json` |
+| Cursor | Settings → MCP → + Add new global MCP server |
+
+### Basic Configuration (uvx)
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "uvx",
+      "args": ["mcp-atlassian"],
+      "env": {
+        "JIRA_URL": "https://your-company.atlassian.net",
+        "JIRA_USERNAME": "your.email@company.com",
+        "JIRA_API_TOKEN": "your_api_token"
+      }
+    }
+  }
+}
+```
+
+### Docker with Environment File
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "--env-file", "/path/to/your/mcp-atlassian.env",
+        "ghcr.io/sooperset/mcp-atlassian:latest"
+      ]
+    }
+  }
+}
+```
+
+### Server/Data Center Configuration
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "uvx",
+      "args": ["mcp-atlassian"],
+      "env": {
+        "JIRA_URL": "https://jira.your-company.com",
+        "JIRA_PERSONAL_TOKEN": "your_pat",
+        "JIRA_SSL_VERIFY": "false",
+        "CONFLUENCE_URL": "https://confluence.your-company.com",
+        "CONFLUENCE_PERSONAL_TOKEN": "your_pat",
+        "CONFLUENCE_SSL_VERIFY": "false"
+      }
+    }
+  }
+}
+```
+
+### Single Service Configuration
+
+<Tabs>
+  <Tab title="Confluence Only">
+    ```json
+    {
+      "mcpServers": {
+        "mcp-atlassian": {
+          "command": "uvx",
+          "args": ["mcp-atlassian"],
+          "env": {
+            "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
+            "CONFLUENCE_USERNAME": "your.email@company.com",
+            "CONFLUENCE_API_TOKEN": "your_api_token"
+          }
+        }
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Jira Only">
+    ```json
+    {
+      "mcpServers": {
+        "mcp-atlassian": {
+          "command": "uvx",
+          "args": ["mcp-atlassian"],
+          "env": {
+            "JIRA_URL": "https://your-company.atlassian.net",
+            "JIRA_USERNAME": "your.email@company.com",
+            "JIRA_API_TOKEN": "your_api_token"
+          }
+        }
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Environment Variables
+
+### Connection Settings
+
+| Variable | Description |
+|----------|-------------|
+| `JIRA_URL` | Jira instance URL |
+| `JIRA_USERNAME` | Jira username (email for Cloud) |
+| `JIRA_API_TOKEN` | Jira API token (Cloud) |
+| `JIRA_PERSONAL_TOKEN` | Jira Personal Access Token (Server/DC) |
+| `JIRA_SSL_VERIFY` | SSL verification (`true`/`false`) |
+| `CONFLUENCE_URL` | Confluence instance URL |
+| `CONFLUENCE_USERNAME` | Confluence username (email for Cloud) |
+| `CONFLUENCE_API_TOKEN` | Confluence API token (Cloud) |
+| `CONFLUENCE_PERSONAL_TOKEN` | Confluence Personal Access Token (Server/DC) |
+| `CONFLUENCE_SSL_VERIFY` | SSL verification (`true`/`false`) |
+
+### Filtering Options
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `JIRA_PROJECTS_FILTER` | Limit to specific Jira projects | `PROJ,DEV,SUPPORT` |
+| `CONFLUENCE_SPACES_FILTER` | Limit to specific Confluence spaces | `DEV,TEAM,DOC` |
+| `ENABLED_TOOLS` | Enable only specific tools | `confluence_search,jira_get_issue` |
+
+### Server Options
+
+| Variable | Description |
+|----------|-------------|
+| `TRANSPORT` | Transport type (`stdio`, `sse`, `streamable-http`) |
+| `STATELESS` | Enable stateless mode for streamable-http (`true`/`false`) |
+| `PORT` | Port for HTTP transports (default: `8000`) |
+| `HOST` | Host for HTTP transports (default: `0.0.0.0`) |
+| `READ_ONLY_MODE` | Disable write operations (`true`/`false`) |
+| `MCP_VERBOSE` | Enable verbose logging (`true`/`false`) |
+| `MCP_VERY_VERBOSE` | Enable debug logging (`true`/`false`) |
+| `MCP_LOGGING_STDOUT` | Log to stdout instead of stderr (`true`/`false`) |
+
+See [.env.example](https://github.com/sooperset/mcp-atlassian/blob/main/.env.example) for all available options.
+
+## Proxy Configuration
+
+MCP Atlassian supports routing API requests through HTTP/HTTPS/SOCKS proxies.
+
+| Variable | Description |
+|----------|-------------|
+| `HTTP_PROXY` | HTTP proxy URL |
+| `HTTPS_PROXY` | HTTPS proxy URL |
+| `SOCKS_PROXY` | SOCKS proxy URL |
+| `NO_PROXY` | Hosts to bypass proxy |
+| `JIRA_HTTPS_PROXY` | Jira-specific HTTPS proxy |
+| `CONFLUENCE_HTTPS_PROXY` | Confluence-specific HTTPS proxy |
+
+Service-specific variables override global ones.
+
+## Custom HTTP Headers
+
+Add custom HTTP headers to all API requests. Useful in corporate environments.
+
+| Variable | Description |
+|----------|-------------|
+| `JIRA_CUSTOM_HEADERS` | Custom headers for Jira requests |
+| `CONFLUENCE_CUSTOM_HEADERS` | Custom headers for Confluence requests |
+
+**Format:** Comma-separated `key=value` pairs.
+
+```bash
+JIRA_CUSTOM_HEADERS=X-Forwarded-User=service-account,X-Custom-Auth=token
+CONFLUENCE_CUSTOM_HEADERS=X-Service=mcp-integration,X-ALB-Token=secret
+```
+
+<Note>
+Header values are masked in debug logs for security.
+</Note>
+
+## Tool Filtering
+
+Control which tools are available:
+
+```bash
+# Enable specific tools
+ENABLED_TOOLS="confluence_search,jira_get_issue,jira_search"
+
+# Read-only mode (disables all write operations)
+READ_ONLY_MODE=true
+```
+
+Command-line alternative:
+```bash
+uvx mcp-atlassian --enabled-tools "confluence_search,jira_get_issue"
+```

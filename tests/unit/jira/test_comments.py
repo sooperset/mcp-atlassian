@@ -171,7 +171,7 @@ class TestCommentsMixin:
             "Test comment"
         )
         comments_mixin.jira.issue_add_comment.assert_called_once_with(
-            "TEST-123", "*This* is _Jira_ formatted"
+            "TEST-123", "*This* is _Jira_ formatted", None
         )
         assert result["id"] == "10001"
         assert result["body"] == "This is a comment"
@@ -211,7 +211,7 @@ class TestCommentsMixin:
             markdown_comment
         )
         comments_mixin.jira.issue_add_comment.assert_called_once_with(
-            "TEST-123", "*This* is _Jira_ formatted"
+            "TEST-123", "*This* is _Jira_ formatted", None
         )
         assert result["body"] == "*This* is _Jira_ formatted"
 
@@ -230,8 +230,39 @@ class TestCommentsMixin:
 
         # Verify - for empty comments, markdown_to_jira should NOT be called as per implementation
         comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
-        comments_mixin.jira.issue_add_comment.assert_called_once_with("TEST-123", "")
+        comments_mixin.jira.issue_add_comment.assert_called_once_with(
+            "TEST-123", "", None
+        )
         assert result["body"] == ""
+
+    def test_add_comment_with_restricted_visibility(self, comments_mixin):
+        """Test add_comment with visibility set."""
+        # Setup mock response
+        comments_mixin.jira.issue_add_comment.return_value = {
+            "id": "10001",
+            "body": "This is a comment",
+            "created": "2024-01-01T10:00:00.000+0000",
+            "author": {"displayName": "John Doe"},
+        }
+
+        # Call the method
+        result = comments_mixin.add_comment(
+            "TEST-123", "Test comment", {"type": "group", "value": "restricted"}
+        )
+
+        # Verify
+        comments_mixin.preprocessor.markdown_to_jira.assert_called_once_with(
+            "Test comment"
+        )
+        comments_mixin.jira.issue_add_comment.assert_called_once_with(
+            "TEST-123",
+            "*This* is _Jira_ formatted",
+            {"type": "group", "value": "restricted"},
+        )
+        assert result["id"] == "10001"
+        assert result["body"] == "This is a comment"
+        assert result["created"] == "2024-01-01 10:00:00+00:00"  # Parsed date
+        assert result["author"] == "John Doe"
 
     def test_add_comment_with_error(self, comments_mixin):
         """Test add_comment with an error response."""
@@ -241,6 +272,130 @@ class TestCommentsMixin:
         # Verify it raises the wrapped exception
         with pytest.raises(Exception, match="Error adding comment"):
             comments_mixin.add_comment("TEST-123", "Test comment")
+
+    def test_edit_comment_basic(self, comments_mixin):
+        """Test edit_comment with basic data."""
+        # Setup mock response
+        comments_mixin.jira.issue_edit_comment.return_value = {
+            "id": "10001",
+            "body": "This is an updated comment",
+            "updated": "2024-01-01T12:00:00.000+0000",
+            "author": {"displayName": "John Doe"},
+        }
+
+        # Call the method
+        result = comments_mixin.edit_comment("TEST-123", "10001", "Updated comment")
+
+        # Verify
+        comments_mixin.preprocessor.markdown_to_jira.assert_called_once_with(
+            "Updated comment"
+        )
+        comments_mixin.jira.issue_edit_comment.assert_called_once_with(
+            "TEST-123", "10001", "*This* is _Jira_ formatted", None
+        )
+        assert result["id"] == "10001"
+        assert result["body"] == "This is an updated comment"
+        assert result["updated"] == "2024-01-01 12:00:00+00:00"  # Parsed date
+        assert result["author"] == "John Doe"
+
+    def test_edit_comment_with_markdown_conversion(self, comments_mixin):
+        """Test edit_comment with markdown conversion."""
+        # Setup mock response
+        comments_mixin.jira.issue_edit_comment.return_value = {
+            "id": "10001",
+            "body": "*This* is _Jira_ formatted",
+            "updated": "2024-01-01T12:00:00.000+0000",
+            "author": {"displayName": "John Doe"},
+        }
+
+        # Create a complex markdown comment
+        markdown_comment = """
+        # Updated Heading
+
+        This is an **updated** paragraph with *italic* text.
+
+        - Updated list item 1
+        - Updated list item 2
+
+        ```python
+        def updated():
+            print("Updated code")
+        ```
+        """
+
+        # Call the method
+        result = comments_mixin.edit_comment("TEST-123", "10001", markdown_comment)
+
+        # Verify
+        comments_mixin.preprocessor.markdown_to_jira.assert_called_once_with(
+            markdown_comment
+        )
+        comments_mixin.jira.issue_edit_comment.assert_called_once_with(
+            "TEST-123", "10001", "*This* is _Jira_ formatted", None
+        )
+        assert result["body"] == "*This* is _Jira_ formatted"
+
+    def test_edit_comment_with_empty_comment(self, comments_mixin):
+        """Test edit_comment with an empty comment."""
+        # Setup mock response
+        comments_mixin.jira.issue_edit_comment.return_value = {
+            "id": "10001",
+            "body": "",
+            "updated": "2024-01-01T12:00:00.000+0000",
+            "author": {"displayName": "John Doe"},
+        }
+
+        # Call the method with empty comment
+        result = comments_mixin.edit_comment("TEST-123", "10001", "")
+
+        # Verify - for empty comments, markdown_to_jira should NOT be called as per implementation
+        comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
+        comments_mixin.jira.issue_edit_comment.assert_called_once_with(
+            "TEST-123", "10001", "", None
+        )
+        assert result["body"] == ""
+
+    def test_edit_comment_with_restricted_visibility(self, comments_mixin):
+        """Test edit_comment with visibility set."""
+        # Setup mock response
+        comments_mixin.jira.issue_edit_comment.return_value = {
+            "id": "10001",
+            "body": "This is an updated comment",
+            "updated": "2024-01-01T12:00:00.000+0000",
+            "author": {"displayName": "John Doe"},
+        }
+
+        # Call the method
+        result = comments_mixin.edit_comment(
+            "TEST-123",
+            "10001",
+            "Updated comment",
+            {"type": "group", "value": "restricted"},
+        )
+
+        # Verify
+        comments_mixin.preprocessor.markdown_to_jira.assert_called_once_with(
+            "Updated comment"
+        )
+        comments_mixin.jira.issue_edit_comment.assert_called_once_with(
+            "TEST-123",
+            "10001",
+            "*This* is _Jira_ formatted",
+            {"type": "group", "value": "restricted"},
+        )
+        assert result["id"] == "10001"
+        assert result["body"] == "This is an updated comment"
+        assert result["updated"] == "2024-01-01 12:00:00+00:00"  # Parsed date
+        assert result["author"] == "John Doe"
+
+    def test_edit_comment_with_error(self, comments_mixin):
+        """Test edit_comment with an error response."""
+        # Setup mock to raise exception
+        comments_mixin.jira.issue_edit_comment.side_effect = Exception("API Error")
+
+        # Verify it raises the wrapped exception
+        with pytest.raises(Exception, match="Error editing comment"):
+            comments_mixin.edit_comment("TEST-123", "10001", "Updated comment")
 
     def test_markdown_to_jira(self, comments_mixin):
         """Test markdown to Jira conversion."""
