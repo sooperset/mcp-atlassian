@@ -1,10 +1,13 @@
 """Module for Jira protocol definitions."""
 
 from abc import abstractmethod
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from ..models.jira import JiraIssue
 from ..models.jira.search import JiraSearchResult
+
+if TYPE_CHECKING:
+    from ..models.jira.metrics import IssueDatesResponse
 
 
 class AttachmentsOperationsProto(Protocol):
@@ -204,4 +207,35 @@ class UsersOperationsProto(Protocol):
 
         Raises:
             ValueError: If the account ID could not be found
+        """
+
+
+@runtime_checkable
+class MetricsOperationsProto(Protocol):
+    """Protocol defining metrics operations interface."""
+
+    @abstractmethod
+    def get_issue_dates(
+        self,
+        issue_key: str,
+        include_created: bool = True,
+        include_updated: bool = True,
+        include_due_date: bool = True,
+        include_resolution_date: bool = True,
+        include_status_changes: bool = True,
+        include_status_summary: bool = True,
+    ) -> "IssueDatesResponse":
+        """Get date information and status history for an issue.
+
+        Args:
+            issue_key: The Jira issue key (e.g., 'PROJ-123')
+            include_created: Include created date
+            include_updated: Include updated date
+            include_due_date: Include due date
+            include_resolution_date: Include resolution date
+            include_status_changes: Include status change history
+            include_status_summary: Include time in status summary
+
+        Returns:
+            IssueDatesResponse with date information
         """
