@@ -534,6 +534,54 @@ async def test_create_issue_accepts_json_string(jira_client, mock_jira_fetcher):
 
 
 @pytest.mark.anyio
+async def test_create_issue_additional_fields_empty_string(jira_client):
+    """Test that empty string additional_fields raises ValueError."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_create_issue",
+            {
+                "project_key": "TEST",
+                "summary": "Test issue",
+                "issue_type": "Task",
+                "additional_fields": "",
+            },
+        )
+    assert "not valid JSON" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_create_issue_additional_fields_invalid_json(jira_client):
+    """Test that invalid JSON additional_fields raises ValueError."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_create_issue",
+            {
+                "project_key": "TEST",
+                "summary": "Test issue",
+                "issue_type": "Task",
+                "additional_fields": "{invalid json",
+            },
+        )
+    assert "not valid JSON" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_create_issue_additional_fields_non_dict_json(jira_client):
+    """Test that JSON array additional_fields raises ValueError."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_create_issue",
+            {
+                "project_key": "TEST",
+                "summary": "Test issue",
+                "issue_type": "Task",
+                "additional_fields": '["item1", "item2"]',
+            },
+        )
+    assert "not a JSON object" in str(excinfo.value)
+
+
+@pytest.mark.anyio
 async def test_batch_create_issues(jira_client, mock_jira_fetcher):
     """Test batch creation of Jira issues."""
     test_issues = [
