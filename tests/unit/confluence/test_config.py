@@ -272,9 +272,9 @@ class TestConfluenceDataCenterOAuth:
         ):
             config = ConfluenceConfig.from_env()
 
-            # OAuth is present, so auth_type should be oauth even if incomplete
+            # For Server/DC, when both PAT and OAuth are present, PAT takes precedence
             assert config.url == "https://confluence.mycompany.com"
-            assert config.auth_type == "oauth"
+            assert config.auth_type == "pat"
             assert config.personal_token == "my-pat-token"
             assert config.oauth_config == mock_oauth_config
             assert not config.is_cloud
