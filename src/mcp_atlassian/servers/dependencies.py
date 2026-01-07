@@ -53,14 +53,31 @@ def _create_user_config_for_fetcher(
             f"Unsupported auth_type '{auth_type}' for user-specific config creation. Expected 'oauth', 'pat', or 'basic'."
         )
 
+    # Determine the URL to use
+    url = base_config.url
+    if not url and cloud_id:
+        if isinstance(base_config, JiraConfig):
+            url = f"https://api.atlassian.com/ex/jira/{cloud_id}"
+            logger.debug(f"Inferred Jira URL from cloud_id: {url}")
+        elif isinstance(base_config, ConfluenceConfig):
+            url = f"https://api.atlassian.com/ex/confluence/{cloud_id}"
+            logger.debug(f"Inferred Confluence URL from cloud_id: {url}")
+
+    if auth_type in ["pat", "basic"] and not url:
+        raise ValueError(
+            f"URL is required for '{auth_type}' authentication but is missing in the global configuration "
+            "and could not be inferred (no cloud_id provided). "
+            "Please ensure JIRA_URL (or CONFLUENCE_URL) is set."
+        )
+
     username_for_config: str | None = credentials.get("user_email_context")
 
     logger.debug(
-        f"Creating user config for fetcher. Auth type: {auth_type}, Credentials keys: {credentials.keys()}, Cloud ID: {cloud_id}"
+        f"Creating user config for fetcher. Auth type: {auth_type}, Credentials keys: {credentials.keys()}, Cloud ID: {cloud_id}, URL: {url}"
     )
 
     common_args: dict[str, Any] = {
-        "url": base_config.url,
+        "url": url,
         "auth_type": auth_type,
         "ssl_verify": base_config.ssl_verify,
         "http_proxy": base_config.http_proxy,
