@@ -1,4 +1,3 @@
-from __future__ import annotations
 """
 Test file for validating the refactored FastMCP tools with real API data.
 
@@ -17,7 +16,7 @@ Required environment variables:
     - JIRA_TEST_ISSUE_KEY, JIRA_TEST_EPIC_KEY
     - CONFLUENCE_TEST_PAGE_ID, JIRA_TEST_PROJECT_KEY, CONFLUENCE_TEST_SPACE_KEY, CONFLUENCE_TEST_SPACE_KEY
 """
-
+from __future__ import annotations
 import datetime
 import json
 import os
