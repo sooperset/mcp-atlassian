@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Test file for validating the refactored FastMCP tools with real API data.
 
@@ -24,6 +25,7 @@ import uuid
 from collections.abc import Callable, Generator, Sequence
 
 import pytest
+
 from fastmcp import Client
 from fastmcp.client import FastMCPTransport
 from mcp.types import TextContent
@@ -108,22 +110,37 @@ class ResourceTracker:
                 except Exception as e:
                     print(f"Failed to delete Confluence page {page_id}: {e}")
 
+@pytest.fixture(autouse=True, scope="module")
+def _require_use_real_data(request) -> None:
+    """
+    This entire module is *real API* validation and should not run in the default suite.
+    Enforce the documented behavior: only run when --use-real-data is passed.
+    """
+    if not request.config.getoption("--use-real-data", default=False):
+        pytest.skip("Real API validation tests only run with --use-real-data")
+
 
 @pytest.fixture
 def jira_config() -> JiraConfig:
     """Create a JiraConfig from environment variables."""
-    if not os.getenv("JIRA_URL") and not os.getenv("ATLASSIAN_OAUTH_ENABLE"):
+    if not os.getenv("JIRA_URL"):
         pytest.skip("JIRA_URL environment variable not set")
-    return JiraConfig.from_env()
+    try:
+        return JiraConfig.from_env()
+    except ValueError as e:
+        # Skip instead of failing the entire suite when Jira isn't configured
+        pytest.skip(f"Jira not configured for real-data tests: {e}")
 
 
 @pytest.fixture
 def confluence_config() -> ConfluenceConfig:
     """Create a ConfluenceConfig from environment variables."""
-    if not os.getenv("CONFLUENCE_URL") and not os.getenv("ATLASSIAN_OAUTH_ENABLE"):
+    if not os.getenv("CONFLUENCE_URL"):
         pytest.skip("CONFLUENCE_URL environment variable not set")
-    return ConfluenceConfig.from_env()
-
+    try:
+        return ConfluenceConfig.from_env()
+    except ValueError as e:
+        pytest.skip(f"Confluence not configured for real-data tests: {e}")
 
 @pytest.fixture
 def jira_client(jira_config: JiraConfig) -> JiraFetcher:
