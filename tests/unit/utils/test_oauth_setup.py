@@ -70,7 +70,7 @@ class TestOAuthFlow:
     """Tests for OAuth flow orchestration."""
 
     @pytest.fixture(autouse=True)
-    def reset_oauth_state(self):
+    def reset_oauth_state(self, monkeypatch):
         """Reset OAuth global state before each test."""
         import mcp_atlassian.utils.oauth_setup as oauth_module
 
@@ -78,6 +78,11 @@ class TestOAuthFlow:
         oauth_module.authorization_state = None
         oauth_module.callback_received = False
         oauth_module.callback_error = None
+
+        # Ensure tests are not affected by CI env vars
+        monkeypatch.delenv("ATLASSIAN_OAUTH_INSTANCE_TYPE", raising=False)
+        monkeypatch.delenv("ATLASSIAN_OAUTH_INSTANCE_URL", raising=False)
+        monkeypatch.delenv("ATLASSIAN_OAUTH_CLOUD_ID", raising=False)
 
     def test_run_oauth_flow_success_localhost(self):
         """Test successful OAuth flow with localhost redirect."""

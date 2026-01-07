@@ -236,8 +236,17 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
                 env_instance_type,
             )
 
+    # Determine instance type robustly (OAuthConfig may be mocked in unit tests)
+    raw_instance_type = getattr(oauth_config, "instance_type", "cloud")
+    instance_type = (
+        raw_instance_type.strip().lower()
+        if isinstance(raw_instance_type, str) and raw_instance_type.strip()
+        else "cloud"
+    )
+    is_datacenter = instance_type == "datacenter"
+
     # Data Center requires instance_url to build authorize/token URLs
-    if oauth_config.is_datacenter:
+    if is_datacenter:
         env_instance_url = os.getenv("ATLASSIAN_OAUTH_INSTANCE_URL")
         if env_instance_url and env_instance_url.strip():
             oauth_config.instance_url = env_instance_url.strip()
