@@ -243,7 +243,7 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
             oauth_config.instance_url = env_instance_url.strip()
         else:
             logger.error(
-                "Data Center OAuth requires ATLASSIAN_OAUTH_INSTANCE_URL to be set (e.g. https://uat.confluence.arm.com)"
+                "Data Center OAuth requires ATLASSIAN_OAUTH_INSTANCE_URL to be set (e.g. https://your.confluence.com)"
             )
             return False
     else:
