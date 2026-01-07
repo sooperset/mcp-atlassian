@@ -229,6 +229,7 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
                     raise ValueError("User email or API token missing for basic auth.")
                 credentials["user_email"] = user_email
                 credentials["api_token"] = user_api_token
+                user_token = user_api_token
             lifespan_ctx_dict = ctx.request_context.lifespan_context  # type: ignore
             app_lifespan_ctx: MainAppContext | None = (
                 lifespan_ctx_dict.get("app_lifespan_context")
@@ -346,6 +347,7 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
                     raise ValueError("User email or API token missing for basic auth.")
                 credentials["user_email"] = user_email
                 credentials["api_token"] = user_api_token
+                user_token = user_api_token
             lifespan_ctx_dict = ctx.request_context.lifespan_context  # type: ignore
             app_lifespan_ctx: MainAppContext | None = (
                 lifespan_ctx_dict.get("app_lifespan_context")
