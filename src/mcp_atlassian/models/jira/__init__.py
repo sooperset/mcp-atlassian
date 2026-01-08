@@ -24,8 +24,27 @@ from .link import (
     JiraLinkedIssue,
     JiraLinkedIssueFields,
 )
+from .metrics import (
+    IssueDatesBatchResponse,
+    IssueDatesResponse,
+    StatusChangeEntry,
+    StatusTimeSummary,
+)
 from .project import JiraProject
 from .search import JiraSearchResult
+from .sla import (
+    CycleTimeMetric,
+    DueDateComplianceMetric,
+    FirstResponseTimeMetric,
+    IssueSLABatchResponse,
+    IssueSLAMetrics,
+    IssueSLAResponse,
+    LeadTimeMetric,
+    ResolutionTimeMetric,
+    TimeInStatusEntry,
+    TimeInStatusMetric,
+    WorkingHoursConfig,
+)
 from .workflow import JiraTransition
 from .worklog import JiraWorklog
 
@@ -52,4 +71,21 @@ __all__ = [
     "JiraIssueLink",
     "JiraLinkedIssue",
     "JiraLinkedIssueFields",
+    # Metrics models
+    "IssueDatesResponse",
+    "IssueDatesBatchResponse",
+    "StatusChangeEntry",
+    "StatusTimeSummary",
+    # SLA models
+    "IssueSLAResponse",
+    "IssueSLABatchResponse",
+    "IssueSLAMetrics",
+    "CycleTimeMetric",
+    "LeadTimeMetric",
+    "TimeInStatusEntry",
+    "TimeInStatusMetric",
+    "DueDateComplianceMetric",
+    "ResolutionTimeMetric",
+    "FirstResponseTimeMetric",
+    "WorkingHoursConfig",
 ]

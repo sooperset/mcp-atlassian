@@ -15,6 +15,78 @@ from ..utils.urls import is_atlassian_cloud_url
 
 
 @dataclass
+class SLAConfig:
+    """SLA calculation configuration.
+
+    Configures how SLA metrics are calculated, including working hours settings.
+    """
+
+    default_metrics: list[str]  # Default metrics to calculate
+    working_hours_only: bool = False  # Exclude non-working hours
+    working_hours_start: str = "09:00"  # Start of working day (24h format)
+    working_hours_end: str = "17:00"  # End of working day (24h format)
+    working_days: list[int] | None = None  # Working days (1=Mon, 7=Sun)
+    timezone: str = "UTC"  # IANA timezone for calculations
+
+    def __post_init__(self) -> None:
+        """Set defaults and validate after initialization."""
+        if self.working_days is None:
+            self.working_days = [1, 2, 3, 4, 5]  # Monday-Friday
+        else:
+            # Validate working_days values are in range 1-7
+            invalid_days = [d for d in self.working_days if d < 1 or d > 7]
+            if invalid_days:
+                raise ValueError(
+                    f"Invalid working days: {invalid_days}. Must be 1-7 (Mon-Sun)"
+                )
+
+    @classmethod
+    def from_env(cls) -> "SLAConfig":
+        """Create SLA configuration from environment variables.
+
+        Returns:
+            SLAConfig with values from environment variables
+
+        Raises:
+            ValueError: If working_days contains invalid values
+        """
+        # Default metrics
+        metrics_str = os.getenv("JIRA_SLA_METRICS", "cycle_time,time_in_status")
+        default_metrics = [m.strip() for m in metrics_str.split(",")]
+
+        # Working hours settings
+        working_hours_only = os.getenv(
+            "JIRA_SLA_WORKING_HOURS_ONLY", "false"
+        ).lower() in ("true", "1", "yes")
+
+        working_hours_start = os.getenv("JIRA_SLA_WORKING_HOURS_START", "09:00")
+        working_hours_end = os.getenv("JIRA_SLA_WORKING_HOURS_END", "17:00")
+
+        # Working days (1=Monday, 7=Sunday)
+        working_days_str = os.getenv("JIRA_SLA_WORKING_DAYS", "1,2,3,4,5")
+        working_days = [int(d.strip()) for d in working_days_str.split(",")]
+
+        # Validate working_days
+        invalid_days = [d for d in working_days if d < 1 or d > 7]
+        if invalid_days:
+            raise ValueError(
+                f"Invalid JIRA_SLA_WORKING_DAYS: {invalid_days}. Must be 1-7 (Mon-Sun)"
+            )
+
+        # Timezone
+        timezone = os.getenv("JIRA_SLA_TIMEZONE", "UTC")
+
+        return cls(
+            default_metrics=default_metrics,
+            working_hours_only=working_hours_only,
+            working_hours_start=working_hours_start,
+            working_hours_end=working_hours_end,
+            working_days=working_days,
+            timezone=timezone,
+        )
+
+
+@dataclass
 class JiraConfig:
     """Jira API configuration.
 
@@ -42,6 +114,7 @@ class JiraConfig:
     client_cert: str | None = None  # Client certificate file path (.pem)
     client_key: str | None = None  # Client private key file path (.pem)
     client_key_password: str | None = None  # Password for encrypted private key
+    sla_config: SLAConfig | None = None  # Optional SLA configuration
 
     @property
     def is_cloud(self) -> bool:
