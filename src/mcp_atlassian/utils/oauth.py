@@ -22,10 +22,12 @@ Data Center OAuth Setup:
 4. Configure client credentials and scope as needed
 """
 
+import hashlib
 import json
 import logging
 import os
 import pprint
+import re
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -357,6 +359,86 @@ class OAuthConfig:
         except Exception as e:
             logger.error(f"Failed to get cloud ID: {e}")
 
+
+    @staticmethod
+    def _slugify(text: str, max_len: int = 40) -> str:
+        """Create a filesystem/keyring-safe slug from arbitrary text."""
+        if not text:
+            return "unknown"
+        text = text.strip().lower()
+        text = re.sub(r"[^a-z0-9._-]+", "-", text)
+        text = re.sub(r"-{2,}", "-", text).strip("-")
+        return text[:max_len] or "unknown"
+
+    @staticmethod
+    def _normalize_instance_key(
+        *,
+        instance_type: str | None,
+        instance_url: str | None,
+        cloud_id: str | None,
+    ) -> str:
+        """Return a stable instance identity string for token storage."""
+        it = (instance_type or "cloud").lower()
+
+        if it == "datacenter":
+            if not instance_url:
+                return "datacenter:unknown"
+            parsed = urllib.parse.urlparse(instance_url.rstrip("/"))
+            scheme = (parsed.scheme or "https").lower()
+            netloc = (parsed.netloc or "").lower()
+            path = (parsed.path or "").rstrip("/")
+            return f"datacenter:{scheme}://{netloc}{path}"
+
+        # Cloud (default)
+        return f"cloud:{cloud_id}" if cloud_id else "cloud:unknown"
+
+    @staticmethod
+    def _make_storage_id(
+        *,
+        client_id: str,
+        instance_type: str | None,
+        instance_url: str | None,
+        cloud_id: str | None,
+    ) -> str:
+        """Build the scoped storage identifier for keyring username and token filename."""
+        it = (instance_type or "cloud").lower()
+        instance_key = OAuthConfig._normalize_instance_key(
+            instance_type=it,
+            instance_url=instance_url,
+            cloud_id=cloud_id,
+        )
+
+        digest = hashlib.sha256(instance_key.encode("utf-8")).hexdigest()[:12]
+
+        hint = "unknown"
+        if it == "datacenter" and instance_url:
+            hint = urllib.parse.urlparse(instance_url).netloc or "datacenter"
+        elif it == "cloud" and cloud_id:
+            hint = cloud_id[:8]
+
+        client_part = OAuthConfig._slugify(client_id, max_len=32)
+        hint_part = OAuthConfig._slugify(hint, max_len=40)
+
+        # Example: oauth-<client>-datacenter-uat.confluence.arm.com-1a2b3c4d5e6f
+        return f"oauth-{client_part}-{it}-{hint_part}-{digest}"
+
+    def _storage_id(self) -> str:
+        return OAuthConfig._make_storage_id(
+            client_id=self.client_id,
+            instance_type=self.instance_type,
+            instance_url=self.instance_url,
+            cloud_id=self.cloud_id,
+        )
+
+    def _token_file_path(self) -> Path:
+        token_dir = Path.home() / ".mcp-atlassian"
+        return token_dir / f"{self._storage_id()}.json"
+
+    def token_file_display_path(self) -> str:
+        """Human-friendly path used in logs/UX."""
+        return str(self._token_file_path())
+
+
     def _get_keyring_username(self) -> str:
         """Get the keyring username for storing tokens.
 
@@ -365,7 +447,7 @@ class OAuthConfig:
         Returns:
             A username string for keyring
         """
-        return f"oauth-{self.client_id}"
+        return self._storage_id()
 
     def _save_tokens(self) -> None:
         """Save the tokens securely using keyring for later use.
@@ -413,7 +495,7 @@ class OAuthConfig:
             token_dir.mkdir(exist_ok=True)
 
             # Save the tokens to a file
-            token_path = token_dir / f"oauth-{self.client_id}.json"
+            token_path = self._token_file_path()
 
             if token_data is None:
                 token_data = {
@@ -433,33 +515,110 @@ class OAuthConfig:
             logger.error(f"Failed to save tokens to file: {e}")
 
     @staticmethod
-    def load_tokens(client_id: str) -> dict[str, Any]:
-        """Load tokens securely from keyring.
+    def load_tokens(
+        client_id: str,
+        *,
+        instance_type: str | None = None,
+        instance_url: str | None = None,
+        cloud_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Load tokens securely from keyring, falling back to file storage.
 
         Args:
             client_id: The OAuth client ID
+            instance_type: "cloud" or "datacenter" (optional, used to scope storage keys)
+            instance_url: Base URL for Data Center instances (optional)
+            cloud_id: Cloud ID for Atlassian Cloud (optional)
 
         Returns:
             Dict with the token data or empty dict if no tokens found
         """
-        username = f"oauth-{client_id}"
+        legacy_username = f"oauth-{client_id}"
 
-        # Try to load tokens from keyring first
-        try:
-            token_json = keyring.get_password(KEYRING_SERVICE_NAME, username)
-            if token_json:
-                logger.debug(f"Loaded OAuth tokens from keyring for {username}")
-                return json.loads(token_json)
-        except Exception as e:
-            logger.warning(
-                f"Failed to load tokens from keyring: {e}. Trying file fallback."
+        scoped_username: str | None = None
+        it = (instance_type or "").lower() or None
+        if it == "datacenter" and instance_url:
+            scoped_username = OAuthConfig._make_storage_id(
+                client_id=client_id,
+                instance_type=it,
+                instance_url=instance_url,
+                cloud_id=None,
+            )
+        elif it == "cloud" and cloud_id:
+            scoped_username = OAuthConfig._make_storage_id(
+                client_id=client_id,
+                instance_type=it,
+                instance_url=None,
+                cloud_id=cloud_id,
             )
 
+        # Try to load tokens from keyring first (scoped, then legacy)
+        for username in [u for u in (scoped_username, legacy_username) if u]:
+            try:
+                token_json = keyring.get_password(KEYRING_SERVICE_NAME, username)
+                if token_json:
+                    logger.debug(f"Loaded OAuth tokens from keyring for {username}")
+                    token_data: dict[str, Any] = json.loads(token_json)
+
+                    # Best-effort migration: if we loaded legacy but can compute scoped, store it too.
+                    if username == legacy_username:
+                        inferred_it = (
+                            instance_type or token_data.get("instance_type") or "cloud"
+                        ).lower()
+                        inferred_instance_url = instance_url or token_data.get("instance_url")
+                        inferred_cloud_id = cloud_id or token_data.get("cloud_id")
+
+                        scoped: str | None = None
+                        if inferred_it == "datacenter" and inferred_instance_url:
+                            scoped = OAuthConfig._make_storage_id(
+                                client_id=client_id,
+                                instance_type=inferred_it,
+                                instance_url=inferred_instance_url,
+                                cloud_id=None,
+                            )
+                        elif inferred_it == "cloud" and inferred_cloud_id:
+                            scoped = OAuthConfig._make_storage_id(
+                                client_id=client_id,
+                                instance_type=inferred_it,
+                                instance_url=None,
+                                cloud_id=inferred_cloud_id,
+                            )
+
+                        if scoped and scoped != legacy_username:
+                            try:
+                                keyring.set_password(
+                                    KEYRING_SERVICE_NAME,
+                                    scoped,
+                                    json.dumps(token_data),
+                                )
+                                logger.debug(
+                                    f"Migrated OAuth tokens in keyring from {legacy_username} to {scoped}"
+                                )
+                            except Exception as e:
+                                logger.debug(f"Keyring migration skipped/failed: {e}")
+
+                    return token_data
+            except Exception as e:
+                logger.warning(
+                    f"Failed to load tokens from keyring: {e}. Trying file fallback."
+                )
+
         # Fall back to loading from file if keyring fails or returns None
-        return OAuthConfig._load_tokens_from_file(client_id)
+        return OAuthConfig._load_tokens_from_file(
+            client_id,
+            instance_type=instance_type,
+            instance_url=instance_url,
+            cloud_id=cloud_id,
+        )
 
     @staticmethod
-    def _load_tokens_from_file(client_id: str) -> dict[str, Any]:
+    def _load_tokens_from_file(
+        client_id: str,
+        *,
+        instance_type: str | None = None,
+        instance_url: str | None = None,
+        cloud_id: str | None = None,
+    ) -> dict[str, Any]:
         """Load tokens from a file as fallback.
 
         Args:
@@ -468,24 +627,107 @@ class OAuthConfig:
         Returns:
             Dict with the token data or empty dict if no tokens found
         """
-        token_path = Path.home() / ".mcp-atlassian" / f"oauth-{client_id}.json"
+        token_dir = Path.home() / ".mcp-atlassian"
+        legacy_path = token_dir / f"oauth-{client_id}.json"
 
-        if not token_path.exists():
-            return {}
-
-        try:
-            with open(token_path) as f:
-                token_data = json.load(f)
-                logger.debug(
-                    f"Loaded OAuth tokens from file {token_path} (fallback storage)"
-                )
+        def load_path(p: Path) -> dict[str, Any] | None:
+            if not p.exists():
+                return None
+            try:
+                with open(p) as f:
+                    token_data = json.load(f)
+                logger.debug(f"Loaded OAuth tokens from file {p} (fallback storage)")
                 return token_data
-        except Exception as e:
-            logger.error(f"Failed to load tokens from file: {e}")
+            except Exception as e:
+                logger.error(f"Failed to load tokens from file {p}: {e}")
+                return None
+
+        it = (instance_type or "").lower() or None
+
+        # 1) Try the new scoped filename if we can compute it.
+        if it == "datacenter" and instance_url:
+            scoped_name = OAuthConfig._make_storage_id(
+                client_id=client_id,
+                instance_type="datacenter",
+                instance_url=instance_url,
+                cloud_id=None,
+            )
+            scoped_path = token_dir / f"{scoped_name}.json"
+            data = load_path(scoped_path)
+            if data:
+                return data
+
+        if it == "cloud":
+            if cloud_id:
+                scoped_name = OAuthConfig._make_storage_id(
+                    client_id=client_id,
+                    instance_type="cloud",
+                    instance_url=None,
+                    cloud_id=cloud_id,
+                )
+                scoped_path = token_dir / f"{scoped_name}.json"
+                data = load_path(scoped_path)
+                if data:
+                    return data
+            else:
+                # Cloud ID may not be known yet. Prefer a single matching scoped file,
+                # otherwise use the most recently modified file.
+                client_part = OAuthConfig._slugify(client_id, max_len=32)
+                matches = list(token_dir.glob(f"oauth-{client_part}-cloud-*.json"))
+                if matches:
+                    matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+                    if len(matches) > 1:
+                        logger.warning(
+                            f"Multiple scoped cloud token files found for client_id={client_id}. "
+                            f"Using most recent: {matches[0]}"
+                        )
+                    data = load_path(matches[0])
+                    if data:
+                        return data
+
+        # 2) Fall back to legacy filename.
+        legacy_data = load_path(legacy_path)
+        if not legacy_data:
             return {}
+
+        # Best-effort migration: if we can compute a scoped name using loaded data, write it.
+        inferred_it = (it or legacy_data.get("instance_type") or "cloud").lower()
+        inferred_instance_url = instance_url or legacy_data.get("instance_url")
+        inferred_cloud_id = cloud_id or legacy_data.get("cloud_id")
+
+        scoped_name: str | None = None
+        if inferred_it == "datacenter" and inferred_instance_url:
+            scoped_name = OAuthConfig._make_storage_id(
+                client_id=client_id,
+                instance_type="datacenter",
+                instance_url=inferred_instance_url,
+                cloud_id=None,
+            )
+        elif inferred_it == "cloud" and inferred_cloud_id:
+            scoped_name = OAuthConfig._make_storage_id(
+                client_id=client_id,
+                instance_type="cloud",
+                instance_url=None,
+                cloud_id=inferred_cloud_id,
+            )
+
+        if scoped_name:
+            scoped_path = token_dir / f"{scoped_name}.json"
+            if not scoped_path.exists():
+                try:
+                    token_dir.mkdir(exist_ok=True)
+                    with open(scoped_path, "w") as f:
+                        json.dump(legacy_data, f)
+                    logger.debug(
+                        f"Migrated legacy token file {legacy_path} to {scoped_path}"
+                    )
+                except Exception as e:
+                    logger.debug(f"Token file migration skipped/failed: {e}")
+
+        return legacy_data
 
     @classmethod
-    def from_env(cls) -> Optional["OAuthConfig"]:
+    def from_env(cls, *, prefix: str = "ATLASSIAN_OAUTH_") -> Optional["OAuthConfig"]:
         """Create an OAuth configuration from environment variables.
 
         Environment variables:
@@ -500,32 +742,24 @@ class OAuthConfig:
         Returns:
             OAuthConfig instance or None if OAuth is not enabled
         """
-        # Check if OAuth is explicitly enabled (allows minimal config)
-        oauth_enabled = os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in (
-            "true",
-            "1",
-            "yes",
-        )
+        def g(name: str) -> str | None:
+            return os.getenv(f"{prefix}{name}")
+        
+        oauth_enabled = (g("ENABLE") or "").lower() in ("true", "1", "yes")
 
         # Check for required environment variables
-        client_id = os.getenv("ATLASSIAN_OAUTH_CLIENT_ID")
-        client_secret = os.getenv("ATLASSIAN_OAUTH_CLIENT_SECRET")
-        redirect_uri = os.getenv("ATLASSIAN_OAUTH_REDIRECT_URI")
-        scope = os.getenv("ATLASSIAN_OAUTH_SCOPE")
+        client_id = g("CLIENT_ID")
+        client_secret = g("CLIENT_SECRET")
+        redirect_uri = g("REDIRECT_URI")
+        scope = g("SCOPE")
 
         # Full OAuth configuration (traditional mode)
         if all([client_id, client_secret, redirect_uri, scope]):
             # Determine instance type
             instance_type = os.getenv("ATLASSIAN_OAUTH_INSTANCE_TYPE", "cloud").lower()
-            if instance_type not in ["cloud", "datacenter"]:
-                logger.warning(
-                    f"Invalid ATLASSIAN_OAUTH_INSTANCE_TYPE: {instance_type}. Defaulting to 'cloud'."
-                )
-                instance_type = "cloud"
-
-            # Get instance-specific configuration
-            instance_url = os.getenv("ATLASSIAN_OAUTH_INSTANCE_URL")
-            cloud_id = os.getenv("ATLASSIAN_OAUTH_CLOUD_ID")
+            instance_type = (g("INSTANCE_TYPE") or "cloud").lower()
+            instance_url = g("INSTANCE_URL")
+            cloud_id = g("CLOUD_ID")
 
             # Debug logging for environment variables
             if instance_type == "datacenter":
@@ -552,7 +786,12 @@ class OAuthConfig:
             )
 
             # Try to load existing tokens
-            token_data = cls.load_tokens(client_id)
+            token_data = cls.load_tokens(
+                client_id,
+                instance_type=instance_type,
+                instance_url=instance_url,
+                cloud_id=cloud_id,
+            )
             if token_data:
                 config.refresh_token = token_data.get("refresh_token")
                 config.access_token = token_data.get("access_token")
@@ -603,7 +842,7 @@ class BYOAccessTokenOAuthConfig:
     expires_at: None = None
 
     @classmethod
-    def from_env(cls) -> Optional["BYOAccessTokenOAuthConfig"]:
+    def from_env(cls, *, prefix: str = "ATLASSIAN_OAUTH_") -> Optional["BYOAccessTokenOAuthConfig"]:
         """Create a BYOAccessTokenOAuthConfig from environment variables.
 
         Reads `ATLASSIAN_OAUTH_CLOUD_ID` and `ATLASSIAN_OAUTH_ACCESS_TOKEN`.
@@ -612,16 +851,21 @@ class BYOAccessTokenOAuthConfig:
             BYOAccessTokenOAuthConfig instance or None if required
             environment variables are missing.
         """
-        cloud_id = os.getenv("ATLASSIAN_OAUTH_CLOUD_ID")
-        access_token = os.getenv("ATLASSIAN_OAUTH_ACCESS_TOKEN")
+        def g(name: str) -> str | None:
+            return os.getenv(f"{prefix}{name}")
 
+        instance_type = (g("INSTANCE_TYPE") or "cloud").lower()
+        if instance_type == "datacenter":
+            return None  # Cloud-only by design
+
+        cloud_id = g("CLOUD_ID")
+        access_token = g("ACCESS_TOKEN")
         if not all([cloud_id, access_token]):
             return None
-
         return cls(cloud_id=cloud_id, access_token=access_token)
 
 
-def get_oauth_config_from_env() -> OAuthConfig | BYOAccessTokenOAuthConfig | None:
+def get_oauth_config_from_env(*, prefixes: tuple[str, ...] = ("ATLASSIAN_OAUTH_",)) -> OAuthConfig | BYOAccessTokenOAuthConfig | None:
     """Get the appropriate OAuth configuration from environment variables.
 
     This function attempts to load standard OAuth configuration first (OAuthConfig).
@@ -632,7 +876,14 @@ def get_oauth_config_from_env() -> OAuthConfig | BYOAccessTokenOAuthConfig | Non
         An instance of OAuthConfig or BYOAccessTokenOAuthConfig if environment
         variables are set for either, otherwise None.
     """
-    return BYOAccessTokenOAuthConfig.from_env() or OAuthConfig.from_env()
+    for prefix in prefixes:
+        cfg = BYOAccessTokenOAuthConfig.from_env(prefix=prefix)
+        if cfg:
+            return cfg
+        cfg = OAuthConfig.from_env(prefix=prefix)
+        if cfg:
+            return cfg
+    return None
 
 
 def configure_oauth_session(

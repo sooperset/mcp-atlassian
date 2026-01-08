@@ -1,7 +1,7 @@
 """
 OAuth 2.0 Authorization Flow Helper for MCP Atlassian
 
-This module helps with the OAuth 2.0 (3LO) authorization flow for Atlassian Cloud:
+This module helps with the OAuth 2.0 authorization flow for Atlassian Cloud and Data Center:
 1. Opens a browser to the authorization URL
 2. Starts a local server to receive the callback with the authorization code
 3. Exchanges the authorization code for access and refresh tokens
@@ -17,6 +17,7 @@ import time
 import urllib.parse
 import webbrowser
 from dataclasses import dataclass
+from typing import Literal, Sequence
 
 from ..utils.oauth import OAuthConfig
 
@@ -29,6 +30,34 @@ authorization_state = None
 callback_received = False
 callback_error = None
 
+OAuthPrefix = Literal["CONFLUENCE_OAUTH_", "JIRA_OAUTH_", "ATLASSIAN_OAUTH_"]
+OAUTH_PREFIXES: tuple[OAuthPrefix, ...] = ("CONFLUENCE_OAUTH_", "JIRA_OAUTH_", "ATLASSIAN_OAUTH_")
+
+def _detect_oauth_prefix() -> OAuthPrefix:
+    """Pick the most relevant OAuth env prefix based on what is set."""
+    keys = (
+        "CLIENT_ID",
+        "CLIENT_SECRET",
+        "REDIRECT_URI",
+        "SCOPE",
+        "INSTANCE_TYPE",
+        "INSTANCE_URL",
+        "CLOUD_ID",
+        "ENABLE",
+    )
+    for prefix in OAUTH_PREFIXES:
+        for k in keys:
+            v = os.getenv(f"{prefix}{k}")
+            if v and v.strip():
+                return prefix
+    return "ATLASSIAN_OAUTH_"
+
+def _get_first_env(var_names: Sequence[str]) -> str | None:
+    for name in var_names:
+        v = os.getenv(name)
+        if v and v.strip():
+            return v.strip()
+    return None
 
 def _sanitize_input(user_input: str) -> str:
     """Sanitize user input by removing trailing/leading whitespace and Windows line endings.
@@ -194,7 +223,10 @@ def parse_redirect_uri(redirect_uri: str) -> tuple[str, int]:
     """Parse the redirect URI to extract host and port."""
     parsed = urllib.parse.urlparse(redirect_uri)
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    return parsed.hostname, port
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError(f"Invalid redirect URI (missing hostname): {redirect_uri!r}")
+    return hostname, port
 
 
 @dataclass
@@ -205,6 +237,7 @@ class OAuthSetupArgs:
     client_secret: str
     redirect_uri: str
     scope: str
+    env_prefix: OAuthPrefix = "ATLASSIAN_OAUTH_"
 
 
 def run_oauth_flow(args: OAuthSetupArgs) -> bool:
@@ -225,14 +258,23 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
     )
 
     # Apply instance-specific settings from environment (.env should already be loaded by the CLI entrypoint)
-    env_instance_type = os.getenv("ATLASSIAN_OAUTH_INSTANCE_TYPE")
+    # Prefer the selected env_prefix, but fall back to other known prefixes for robustness.
+    prefixes = list(OAUTH_PREFIXES)
+    if args.env_prefix in prefixes:
+        prefixes.remove(args.env_prefix)
+    prefixes.insert(0, args.env_prefix)
+
+    env_instance_type = _get_first_env([f"{p}INSTANCE_TYPE" for p in prefixes])
     if env_instance_type:
         normalized = env_instance_type.strip().lower()
-        if normalized in {"cloud", "datacenter"}:
-            oauth_config.instance_type = normalized
+        normalized = normalized.replace("-", "_").replace(" ", "_")
+        if normalized == "cloud":
+            oauth_config.instance_type = "cloud"
+        elif normalized in {"datacenter", "data_center", "dc", "server"}:
+            oauth_config.instance_type = "datacenter"
         else:
             logger.warning(
-                "Ignoring invalid ATLASSIAN_OAUTH_INSTANCE_TYPE=%r (expected 'cloud' or 'datacenter')",
+                "Ignoring invalid OAuth INSTANCE_TYPE=%r (expected 'cloud' or 'datacenter')",
                 env_instance_type,
             )
 
@@ -247,17 +289,26 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
 
     # Data Center requires instance_url to build authorize/token URLs
     if is_datacenter:
-        env_instance_url = os.getenv("ATLASSIAN_OAUTH_INSTANCE_URL")
+        env_instance_url = _get_first_env([f"{p}INSTANCE_URL" for p in prefixes])
+        # Convenience fallback: if CONFLUENCE_URL/JIRA_URL are set and look non-cloud,
+        # allow using them as instance_url when INSTANCE_URL wasn't provided.
+        if not env_instance_url and args.env_prefix == "CONFLUENCE_OAUTH_":
+            env_instance_url = os.getenv("CONFLUENCE_URL")
+            if env_instance_url and env_instance_url.rstrip("/").endswith("/wiki"):
+                env_instance_url = env_instance_url.rstrip("/")[:-4]
+        if not env_instance_url and args.env_prefix == "JIRA_OAUTH_":
+            env_instance_url = os.getenv("JIRA_URL")
+
         if env_instance_url and env_instance_url.strip():
             oauth_config.instance_url = env_instance_url.strip()
         else:
             logger.error(
-                "Data Center OAuth requires ATLASSIAN_OAUTH_INSTANCE_URL to be set (e.g. https://your.confluence.com)"
+                f"Data Center OAuth requires {args.env_prefix}INSTANCE_URL (or CONFLUENCE_URL/JIRA_URL) to be set (e.g. https://your.confluence.com)"
             )
             return False
     else:
         # Optional: allow pre-setting cloud_id from env (not required for the auth URL)
-        env_cloud_id = os.getenv("ATLASSIAN_OAUTH_CLOUD_ID")
+        env_cloud_id = _get_first_env([f"{p}CLOUD_ID" for p in prefixes])
         if env_cloud_id and env_cloud_id.strip():
             oauth_config.cloud_id = env_cloud_id.strip()
             
@@ -267,7 +318,11 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
     state = secrets.token_urlsafe(16)
 
     # Start local callback server if using localhost
-    hostname, port = parse_redirect_uri(args.redirect_uri)
+    try:
+        hostname, port = parse_redirect_uri(args.redirect_uri)
+    except ValueError as e:
+        logger.error(str(e))
+        return False
     httpd = None
 
     if hostname in ["localhost", "127.0.0.1"]:
@@ -284,7 +339,12 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
 
     # Open the browser for authorization
     logger.info(f"Opening browser for authorization at {auth_url}")
-    webbrowser.open(auth_url)
+    try:
+        opened = webbrowser.open(auth_url)
+        if not opened:
+            logger.info("Browser did not open automatically (webbrowser.open returned False).")
+    except Exception as e:
+        logger.warning("Failed to open browser automatically: %s", e)
     logger.info(
         "If the browser doesn't open automatically, please visit this URL manually."
     )
@@ -303,15 +363,20 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
         return False
 
     # Exchange the code for tokens
+    if not authorization_code:
+        logger.error("Authorization code missing in callback.")
+        if httpd:
+            httpd.shutdown()
+        return False
     logger.info("Exchanging authorization code for tokens...")
     if oauth_config.exchange_code_for_tokens(authorization_code):
-        logger.info("✅ OAuth authorization successful!")
-        logger.info(
-            f"Access token: {oauth_config.access_token[:10]}...{oauth_config.access_token[-5:]}"
-        )
-        logger.info(
-            f"Refresh token saved: {oauth_config.refresh_token[:5]}...{oauth_config.refresh_token[-3:]}"
-        )
+        logger.info("OAuth authorization successful!")
+        access_token = getattr(oauth_config, "access_token", None)
+        refresh_token = getattr(oauth_config, "refresh_token", None)
+        if isinstance(access_token, str) and access_token:
+            logger.info(f"Access token: {access_token[:10]}...{access_token[-5:]}")
+        if isinstance(refresh_token, str) and refresh_token:
+            logger.info(f"Refresh token saved: {refresh_token[:5]}...{refresh_token[-3:]}")
 
         if oauth_config.is_cloud and oauth_config.cloud_id:
             logger.info(f"Cloud ID: {oauth_config.cloud_id}")
@@ -340,10 +405,10 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
                 "Note: The tokens themselves are not set as environment variables for security reasons."
             )
             logger.info(
-                "They are stored securely in your system keyring and will be loaded automatically."
+                "They are stored securely in your system keyring when available and will be loaded automatically."
             )
             logger.info(
-                f"Token storage location (backup): ~/.mcp-atlassian/oauth-{oauth_config.client_id}.json"
+                f"Token storage location (backup): ~/.mcp-atlassian/{oauth_config._get_keyring_username()}.json"
             )
 
             # Generate VS Code configuration JSON snippet
@@ -427,10 +492,10 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
                 "Note: The tokens themselves are not set as environment variables for security reasons."
             )
             logger.info(
-                "They are stored securely in your system keyring and will be loaded automatically."
+                "They are stored securely in your system keyring when available and will be loaded automatically."
             )
             logger.info(
-                f"Token storage location (backup): ~/.mcp-atlassian/oauth-{oauth_config.client_id}.json"
+                f"Token storage location (backup): ~/.mcp-atlassian/{oauth_config._get_keyring_username()}.json"
             )
         else:
             logger.error("Failed to obtain cloud ID!")
@@ -445,9 +510,10 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
         return False
 
 
-def _prompt_for_input(prompt: str, env_var: str = None, is_secret: bool = False) -> str:
+def _prompt_for_input(prompt: str, env_var: str | Sequence[str] | None = None, is_secret: bool = False) -> str:
     """Prompt the user for input with sanitization for Windows line endings and whitespace."""
-    value = os.getenv(env_var, "") if env_var else ""
+    env_vars = [env_var] if isinstance(env_var, str) else (env_var or [])
+    value = _get_first_env([v for v in env_vars if v]) or ""
     if value:
         if is_secret:
             masked = (
@@ -475,27 +541,35 @@ def run_oauth_setup() -> int:
     print("You can create one at: https://developer.atlassian.com/console/myapps/")
     print("\nPlease provide the following information:\n")
 
+    prefix = _detect_oauth_prefix()
+ 
     # Check for environment variables first
-    client_id = _prompt_for_input("OAuth Client ID", "ATLASSIAN_OAUTH_CLIENT_ID")
+    client_id = _prompt_for_input("OAuth Client ID", [f"{prefix}CLIENT_ID", "ATLASSIAN_OAUTH_CLIENT_ID"])
 
     client_secret = _prompt_for_input(
-        "OAuth Client Secret", "ATLASSIAN_OAUTH_CLIENT_SECRET", is_secret=True
+        "OAuth Client Secret", [f"{prefix}CLIENT_SECRET", "ATLASSIAN_OAUTH_CLIENT_SECRET"], is_secret=True
     )
 
     default_redirect = os.getenv(
-        "ATLASSIAN_OAUTH_REDIRECT_URI", "http://localhost:8080/callback"
+        f"{prefix}REDIRECT_URI", os.getenv("ATLASSIAN_OAUTH_REDIRECT_URI", "http://localhost:8080/callback")
     )
     redirect_uri = (
-        _prompt_for_input("OAuth Redirect URI", "ATLASSIAN_OAUTH_REDIRECT_URI")
+        _prompt_for_input("OAuth Redirect URI", [f"{prefix}REDIRECT_URI", "ATLASSIAN_OAUTH_REDIRECT_URI"])
         or default_redirect
     )
 
     default_scope = os.getenv(
-        "ATLASSIAN_OAUTH_SCOPE",
-        "read:jira-work write:jira-work read:confluence-space.summary offline_access",
+        f"{prefix}SCOPE",
+        os.getenv(
+            "ATLASSIAN_OAUTH_SCOPE",
+            "read:jira-work write:jira-work read:confluence-space.summary offline_access",
+        ),
     )
     scope = (
-        _prompt_for_input("OAuth Scopes (space-separated)", "ATLASSIAN_OAUTH_SCOPE")
+        _prompt_for_input(
+            "OAuth Scopes (space-separated)",
+            [f"{prefix}SCOPE", "ATLASSIAN_OAUTH_SCOPE"],
+        )
         or default_scope
     )
 
@@ -513,6 +587,7 @@ def run_oauth_setup() -> int:
         client_secret=client_secret,
         redirect_uri=redirect_uri,
         scope=scope,
+        env_prefix=prefix,
     )
 
     success = run_oauth_flow(args)

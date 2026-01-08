@@ -90,7 +90,7 @@ class ConfluenceConfig:
         personal_token = os.getenv("CONFLUENCE_PERSONAL_TOKEN")
 
         # Check for OAuth configuration
-        oauth_config = get_oauth_config_from_env()
+        oauth_config = get_oauth_config_from_env(prefixes=("CONFLUENCE_OAUTH_", "ATLASSIAN_OAUTH_"))
         auth_type: Literal["basic", "pat", "oauth"] | None = None
 
         # Use the shared utility function directly

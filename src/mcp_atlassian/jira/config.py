@@ -93,7 +93,7 @@ class JiraConfig:
         personal_token = os.getenv("JIRA_PERSONAL_TOKEN")
 
         # Check for OAuth configuration
-        oauth_config = get_oauth_config_from_env()
+        oauth_config = get_oauth_config_from_env(prefixes=("JIRA_OAUTH_", "ATLASSIAN_OAUTH_"))
         auth_type = None
 
         # Use the shared utility function directly

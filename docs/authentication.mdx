@@ -63,11 +63,22 @@ CONFLUENCE_PERSONAL_TOKEN=your_personal_access_token
 For self-signed certificates, set `JIRA_SSL_VERIFY=false` and/or `CONFLUENCE_SSL_VERIFY=false`.
 </Note>
 
-## OAuth 2.0 (Cloud) - Advanced
+## OAuth 2.0 (Cloud and Data Center) - Advanced
 
-OAuth 2.0 provides enhanced security features but requires more setup. For most users, API Token authentication is simpler and sufficient.
+OAuth 2.0 provides enhanced security features but requires more setup. For most users, API Token (Cloud) or PAT (Server/Data Center) is simpler and sufficient.
 
-### Setup Steps
+### Service-scoped OAuth variables (recommended)
+
+To support mixed deployments (for example: Jira Data Center + Confluence Cloud) and separate OAuth clients per product/instance, configure OAuth per service:
+
+- Confluence: `CONFLUENCE_OAUTH_*`
+- Jira: `JIRA_OAUTH_*`
+
+If you do not set service-scoped variables, the server falls back to legacy global variables (`ATLASSIAN_OAUTH_*`) for backward compatibility.
+
+### Cloud OAuth (3LO)
+
+#### Setup Steps
 
 <Steps>
   <Step title="Create OAuth App">
@@ -96,10 +107,14 @@ OAuth 2.0 provides enhanced security features but requires more setup. For most 
   </Step>
 </Steps>
 
-**Environment variables (after setup):**
+#### Environment variables (Cloud)
+
+Option A (legacy / single shared Cloud app for both products):
+
 ```bash
 JIRA_URL=https://your-company.atlassian.net
 CONFLUENCE_URL=https://your-company.atlassian.net/wiki
+
 ATLASSIAN_OAUTH_CLOUD_ID=your_cloud_id_from_wizard
 ATLASSIAN_OAUTH_CLIENT_ID=your_oauth_client_id
 ATLASSIAN_OAUTH_CLIENT_SECRET=your_oauth_client_secret
@@ -107,13 +122,75 @@ ATLASSIAN_OAUTH_REDIRECT_URI=http://localhost:8080/callback
 ATLASSIAN_OAUTH_SCOPE=read:jira-work write:jira-work read:confluence-content.all write:confluence-content offline_access
 ```
 
+Option B (recommended / service-scoped Cloud OAuth):
+
+```bash
+JIRA_URL=https://your-company.atlassian.net
+CONFLUENCE_URL=https://your-company.atlassian.net/wiki
+
+JIRA_OAUTH_INSTANCE_TYPE=cloud
+JIRA_OAUTH_CLOUD_ID=your_jira_cloud_id_from_wizard
+JIRA_OAUTH_CLIENT_ID=your_jira_oauth_client_id
+JIRA_OAUTH_CLIENT_SECRET=your_jira_oauth_client_secret
+JIRA_OAUTH_REDIRECT_URI=http://localhost:8080/callback
+JIRA_OAUTH_SCOPE=read:jira-work write:jira-work offline_access
+
+CONFLUENCE_OAUTH_INSTANCE_TYPE=cloud
+CONFLUENCE_OAUTH_CLOUD_ID=your_confluence_cloud_id_from_wizard
+CONFLUENCE_OAUTH_CLIENT_ID=your_confluence_oauth_client_id
+CONFLUENCE_OAUTH_CLIENT_SECRET=your_confluence_oauth_client_secret
+CONFLUENCE_OAUTH_REDIRECT_URI=http://localhost:8080/callback
+CONFLUENCE_OAUTH_SCOPE=read:confluence-content.all read:confluence-space.summary offline_access
+```
+
 <Warning>
-Include `offline_access` in your scope to allow automatic token refresh.
+Include `offline_access` in your scope to allow automatic token refresh on Cloud.
 </Warning>
 
-### Bring Your Own Token (BYOT)
+### Data Center OAuth 2.0 (Application Links) - Advanced
 
-If you manage OAuth tokens externally (e.g., through a central identity provider):
+Data Center OAuth is configured per instance. If you use both Jira Data Center and Confluence Data Center, you will typically have distinct client credentials for each instance. Use service-scoped variables.
+
+<Steps>
+  <Step title="Create OAuth 2.0 Application Link">
+    In your Jira/Confluence Data Center instance, create/configure an Application Link (OAuth 2.0) for an incoming link/integration.
+  </Step>
+  <Step title="Run Setup Wizard">
+    ```bash
+    uvx mcp-atlassian --oauth-setup -v
+    ```
+  </Step>
+  <Step title="Complete Authorization">
+    Use the instance authorize URL and complete the authorization flow in your browser.
+  </Step>
+</Steps>
+
+Example (Confluence Data Center):
+
+```bash
+CONFLUENCE_URL=https://confluence.your-company.com
+
+CONFLUENCE_OAUTH_INSTANCE_TYPE=datacenter
+CONFLUENCE_OAUTH_INSTANCE_URL=https://confluence.your-company.com
+CONFLUENCE_OAUTH_CLIENT_ID=your_confluence_dc_client_id
+CONFLUENCE_OAUTH_CLIENT_SECRET=your_confluence_dc_client_secret
+CONFLUENCE_OAUTH_REDIRECT_URI=http://localhost:8080/callback
+CONFLUENCE_OAUTH_SCOPE=READ WRITE
+```
+
+### Bring Your Own Token (BYOT) (Cloud only)
+
+If you manage OAuth tokens externally (for example: through a gateway or central identity provider), provide the access token and Cloud ID.
+
+Service-scoped BYOT (recommended):
+
+```bash
+JIRA_OAUTH_INSTANCE_TYPE=cloud
+JIRA_OAUTH_CLOUD_ID=your_cloud_id
+JIRA_OAUTH_ACCESS_TOKEN=your_pre_existing_access_token
+```
+
+Legacy global BYOT (fallback):
 
 ```bash
 ATLASSIAN_OAUTH_CLOUD_ID=your_cloud_id
@@ -124,9 +201,9 @@ ATLASSIAN_OAUTH_ACCESS_TOKEN=your_pre_existing_access_token
 Token refresh is your responsibility - the server does not handle it for BYOT.
 </Warning>
 
-### Multi-Cloud OAuth
+### Multi-Cloud OAuth (per-request, Cloud only)
 
-For multi-tenant applications where users provide their own OAuth tokens:
+For multi-tenant applications where users provide their own OAuth tokens per request:
 
 1. Enable minimal OAuth mode:
    ```bash

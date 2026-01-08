@@ -155,11 +155,28 @@ Both transport types support per-request authentication where each user provides
     ```bash
     JIRA_URL=https://your-company.atlassian.net
     CONFLUENCE_URL=https://your-company.atlassian.net/wiki
+
+    # Option A (legacy global Cloud OAuth; single shared app):
     ATLASSIAN_OAUTH_CLIENT_ID=your_oauth_app_client_id
     ATLASSIAN_OAUTH_CLIENT_SECRET=your_oauth_app_client_secret
     ATLASSIAN_OAUTH_REDIRECT_URI=http://localhost:8080/callback
     ATLASSIAN_OAUTH_SCOPE=read:jira-work write:jira-work read:confluence-content.all write:confluence-content offline_access
     ATLASSIAN_OAUTH_CLOUD_ID=your_cloud_id_from_setup_wizard
+
+    # Option B (service-scoped; required for mixed Cloud/DC or separate OAuth clients):
+    #JIRA_OAUTH_INSTANCE_TYPE=cloud
+    #JIRA_OAUTH_CLOUD_ID=your_jira_cloud_id_from_setup_wizard
+    #JIRA_OAUTH_CLIENT_ID=your_jira_oauth_client_id
+    #JIRA_OAUTH_CLIENT_SECRET=your_jira_oauth_client_secret
+    #JIRA_OAUTH_REDIRECT_URI=http://localhost:8080/callback
+    #JIRA_OAUTH_SCOPE=read:jira-work write:jira-work offline_access
+    #
+    #CONFLUENCE_OAUTH_INSTANCE_TYPE=cloud
+    #CONFLUENCE_OAUTH_CLOUD_ID=your_confluence_cloud_id_from_setup_wizard
+    #CONFLUENCE_OAUTH_CLIENT_ID=your_confluence_oauth_client_id
+    #CONFLUENCE_OAUTH_CLIENT_SECRET=your_confluence_oauth_client_secret
+    #CONFLUENCE_OAUTH_REDIRECT_URI=http://localhost:8080/callback
+    #CONFLUENCE_OAUTH_SCOPE=read:confluence-content.all read:confluence-space.summary offline_access
     ```
   </Step>
 </Steps>
@@ -215,5 +232,6 @@ asyncio.run(main())
 <Note>
 - The server uses fallback authentication when requests don't include user-specific credentials
 - User tokens are isolated per request - no cross-tenant data leakage
-- Falls back to global `ATLASSIAN_OAUTH_CLOUD_ID` if header not provided
+- Falls back to service-scoped `JIRA_OAUTH_CLOUD_ID` / `CONFLUENCE_OAUTH_CLOUD_ID` if configured
+- Otherwise falls back to global `ATLASSIAN_OAUTH_CLOUD_ID`
 </Note>
