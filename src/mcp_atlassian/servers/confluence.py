@@ -787,3 +787,70 @@ async def search_user(
             indent=2,
             ensure_ascii=False,
         )
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "analytics"},
+    annotations={"title": "Get Page Views", "readOnlyHint": True},
+)
+async def confluence_get_page_views(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(
+            description=(
+                "Confluence page ID (numeric ID, can be found in the page URL). "
+                "For example, in 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', "
+                "the page ID is '123456789'."
+            )
+        ),
+    ],
+    include_title: Annotated[
+        bool,
+        Field(description="Whether to fetch and include the page title"),
+    ] = True,
+) -> str:
+    """Get view statistics for a Confluence page.
+
+    Note: This tool is only available for Confluence Cloud. Server/Data Center
+    instances do not support the Analytics API.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The Confluence page ID.
+        include_title: Whether to include the page title in the response.
+
+    Returns:
+        JSON string with page view statistics including total views and last viewed date.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        result = confluence_fetcher.get_page_views(
+            page_id=page_id,
+            include_title=include_title,
+        )
+        return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error getting page views: {e}")
+        return json.dumps(
+            {
+                "error": "Authentication failed. Please check your credentials.",
+                "details": str(e),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except ValueError as e:
+        logger.error(f"Error getting page views for {page_id}: {e}")
+        return json.dumps(
+            {"error": str(e), "page_id": page_id},
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error getting page views for {page_id}: {e}")
+        return json.dumps(
+            {"error": f"Failed to get page views: {e}", "page_id": page_id},
+            indent=2,
+            ensure_ascii=False,
+        )
