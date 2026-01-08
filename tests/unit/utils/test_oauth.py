@@ -5,9 +5,12 @@ import time
 import urllib.parse
 from unittest.mock import MagicMock, patch
 
+import pytest
 import requests
 
 from mcp_atlassian.utils.oauth import (
+    CLOUD_AUTHORIZE_URL,
+    CLOUD_TOKEN_URL,
     KEYRING_SERVICE_NAME,
     TOKEN_EXPIRY_MARGIN,
     BYOAccessTokenOAuthConfig,
@@ -835,3 +838,295 @@ def test_configure_oauth_session_byo_config_no_refresh_token_direct_use(mock_log
     mock_logger.info.assert_any_call(
         "configure_oauth_session: Using provided OAuth access token directly (no refresh_token)."
     )
+
+
+class TestDataCenterOAuth:
+    """Tests for Data Center OAuth functionality."""
+
+    def test_init_data_center_config(self):
+        """Test initialization of Data Center OAuth configuration."""
+        config = OAuthConfig(
+            client_id="dc-client-id",
+            client_secret="dc-client-secret",
+            redirect_uri="https://localhost:8080/callback",
+            scope="READ WRITE",
+            instance_type="datacenter",
+            instance_url="https://confluence.mycompany.com",
+        )
+        assert config.client_id == "dc-client-id"
+        assert config.client_secret == "dc-client-secret"
+        assert config.instance_type == "datacenter"
+        assert config.instance_url == "https://confluence.mycompany.com"
+        assert config.cloud_id is None
+        assert config.is_datacenter is True
+        assert config.is_cloud is False
+
+    def test_data_center_token_url(self):
+        """Test Data Center token URL generation."""
+        config = OAuthConfig(
+            client_id="dc-client-id",
+            client_secret="dc-client-secret",
+            redirect_uri="https://localhost:8080/callback",
+            scope="READ WRITE",
+            instance_type="datacenter",
+            instance_url="https://confluence.mycompany.com",
+        )
+        expected_url = "https://confluence.mycompany.com/rest/oauth2/latest/token"
+        assert config.token_url == expected_url
+
+    def test_data_center_token_url_with_trailing_slash(self):
+        """Test Data Center token URL generation with trailing slash in instance URL."""
+        config = OAuthConfig(
+            client_id="dc-client-id",
+            client_secret="dc-client-secret",
+            redirect_uri="https://localhost:8080/callback",
+            scope="READ WRITE",
+            instance_type="datacenter",
+            instance_url="https://confluence.mycompany.com/",
+        )
+        expected_url = "https://confluence.mycompany.com/rest/oauth2/latest/token"
+        assert config.token_url == expected_url
+
+    def test_data_center_authorize_url_base(self):
+        """Test Data Center authorize URL base generation."""
+        config = OAuthConfig(
+            client_id="dc-client-id",
+            client_secret="dc-client-secret",
+            redirect_uri="https://localhost:8080/callback",
+            scope="READ WRITE",
+            instance_type="datacenter",
+            instance_url="https://confluence.mycompany.com",
+        )
+        expected_url = "https://confluence.mycompany.com/rest/oauth2/latest/authorize"
+        assert config.authorize_url_base == expected_url
+
+    def test_data_center_authorization_url(self):
+        """Test Data Center authorization URL generation."""
+        config = OAuthConfig(
+            client_id="dc-client-id",
+            client_secret="dc-client-secret",
+            redirect_uri="https://localhost:8080/callback",
+            scope="READ WRITE",
+            instance_type="datacenter",
+            instance_url="https://confluence.mycompany.com",
+        )
+        state = "test-state-123"
+        auth_url = config.get_authorization_url(state)
+
+        # Parse the URL
+        parsed = urllib.parse.urlparse(auth_url)
+        query_params = urllib.parse.parse_qs(parsed.query)
+
+        # Check base URL
+        base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        assert (
+            base_url == "https://confluence.mycompany.com/rest/oauth2/latest/authorize"
+        )
+
+        # Check parameters
+        assert query_params["client_id"][0] == "dc-client-id"
+        assert query_params["scope"][0] == "READ WRITE"
+        assert query_params["redirect_uri"][0] == "https://localhost:8080/callback"
+        assert query_params["response_type"][0] == "code"
+        assert query_params["state"][0] == "test-state-123"
+
+        # Data Center should not have Cloud-specific parameters
+        assert "audience" not in query_params
+        assert "prompt" not in query_params
+
+    def test_cloud_authorization_url_has_cloud_params(self):
+        """Test that Cloud authorization URL includes Cloud-specific parameters."""
+        config = OAuthConfig(
+            client_id="cloud-client-id",
+            client_secret="cloud-client-secret",
+            redirect_uri="https://localhost:8080/callback",
+            scope="read:jira-work write:jira-work",
+            instance_type="cloud",
+            cloud_id="test-cloud-id",
+        )
+        state = "test-state-123"
+        auth_url = config.get_authorization_url(state)
+
+        # Parse the URL
+        parsed = urllib.parse.urlparse(auth_url)
+        query_params = urllib.parse.parse_qs(parsed.query)
+
+        # Check that Cloud-specific parameters are present
+        assert query_params["audience"][0] == "api.atlassian.com"
+        assert query_params["prompt"][0] == "consent"
+
+    def test_cloud_token_url(self):
+        """Test Cloud token URL."""
+        config = OAuthConfig(
+            client_id="cloud-client-id",
+            client_secret="cloud-client-secret",
+            redirect_uri="https://localhost:8080/callback",
+            scope="read:jira-work write:jira-work",
+            instance_type="cloud",
+            cloud_id="test-cloud-id",
+        )
+        assert config.token_url == CLOUD_TOKEN_URL
+
+    def test_cloud_authorize_url_base(self):
+        """Test Cloud authorize URL base."""
+        config = OAuthConfig(
+            client_id="cloud-client-id",
+            client_secret="cloud-client-secret",
+            redirect_uri="https://localhost:8080/callback",
+            scope="read:jira-work write:jira-work",
+            instance_type="cloud",
+            cloud_id="test-cloud-id",
+        )
+        assert config.authorize_url_base == CLOUD_AUTHORIZE_URL
+
+    def test_data_center_missing_instance_url_error(self):
+        """Test that Data Center config raises error when instance_url is missing."""
+        config = OAuthConfig(
+            client_id="dc-client-id",
+            client_secret="dc-client-secret",
+            redirect_uri="https://localhost:8080/callback",
+            scope="READ WRITE",
+            instance_type="datacenter",
+            # instance_url is missing
+        )
+
+        with pytest.raises(
+            ValueError, match="instance_url is required for Data Center OAuth"
+        ):
+            _ = config.token_url
+
+        with pytest.raises(
+            ValueError, match="instance_url is required for Data Center OAuth"
+        ):
+            _ = config.authorize_url_base
+
+    @patch("requests.post")
+    @patch.object(OAuthConfig, "_save_tokens")
+    def test_data_center_exchange_code_for_tokens(self, mock_save_tokens, mock_post):
+        """Test Data Center token exchange."""
+        # Mock successful response
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "access_token": "dc-access-token",
+            "refresh_token": "dc-refresh-token",
+            "expires_in": 3600,
+        }
+        mock_post.return_value = mock_response
+
+        config = OAuthConfig(
+            client_id="dc-client-id",
+            client_secret="dc-client-secret",
+            redirect_uri="https://localhost:8080/callback",
+            scope="READ WRITE",
+            instance_type="datacenter",
+            instance_url="https://confluence.mycompany.com",
+        )
+
+        result = config.exchange_code_for_tokens("test-code")
+
+        # Check result
+        assert result is True
+        assert config.access_token == "dc-access-token"
+        assert config.refresh_token == "dc-refresh-token"
+        assert config.expires_at is not None
+
+        # Verify the correct endpoint was called
+        expected_url = "https://confluence.mycompany.com/rest/oauth2/latest/token"
+        mock_post.assert_called_once()
+        call_args = mock_post.call_args
+        assert call_args[0][0] == expected_url
+
+        # Verify no cloud ID retrieval was attempted (Data Center doesn't need it)
+        mock_save_tokens.assert_called_once()
+
+    @patch("os.getenv")
+    def test_from_env_data_center_success(self, mock_getenv):
+        """Test from_env with Data Center configuration."""
+        mock_getenv.side_effect = lambda key, default=None: {
+            "ATLASSIAN_OAUTH_CLIENT_ID": "dc-client-id",
+            "ATLASSIAN_OAUTH_CLIENT_SECRET": "dc-client-secret",
+            "ATLASSIAN_OAUTH_REDIRECT_URI": "https://localhost:8080/callback",
+            "ATLASSIAN_OAUTH_SCOPE": "READ WRITE",
+            "ATLASSIAN_OAUTH_INSTANCE_TYPE": "datacenter",
+            "ATLASSIAN_OAUTH_INSTANCE_URL": "https://confluence.mycompany.com",
+        }.get(key, default)
+
+        config = OAuthConfig.from_env()
+
+        assert config is not None
+        assert config.client_id == "dc-client-id"
+        assert config.instance_type == "datacenter"
+        assert config.instance_url == "https://confluence.mycompany.com"
+        assert config.cloud_id is None
+        assert config.is_datacenter is True
+
+    @patch("os.getenv")
+    def test_from_env_data_center_missing_instance_url(self, mock_getenv):
+        """Test from_env with Data Center but missing instance URL."""
+        mock_getenv.side_effect = lambda key, default=None: {
+            "ATLASSIAN_OAUTH_CLIENT_ID": "dc-client-id",
+            "ATLASSIAN_OAUTH_CLIENT_SECRET": "dc-client-secret",
+            "ATLASSIAN_OAUTH_REDIRECT_URI": "https://localhost:8080/callback",
+            "ATLASSIAN_OAUTH_SCOPE": "READ WRITE",
+            "ATLASSIAN_OAUTH_INSTANCE_TYPE": "datacenter",
+            # Missing ATLASSIAN_OAUTH_INSTANCE_URL
+        }.get(key, default)
+
+        config = OAuthConfig.from_env()
+
+        # Should return None when Data Center instance URL is missing
+        assert config is None
+
+    @patch("os.getenv")
+    def test_from_env_invalid_instance_type(self, mock_getenv):
+        """Test from_env with invalid instance type defaults to cloud."""
+        mock_getenv.side_effect = lambda key, default=None: {
+            "ATLASSIAN_OAUTH_CLIENT_ID": "client-id",
+            "ATLASSIAN_OAUTH_CLIENT_SECRET": "client-secret",
+            "ATLASSIAN_OAUTH_REDIRECT_URI": "https://localhost:8080/callback",
+            "ATLASSIAN_OAUTH_SCOPE": "READ WRITE",
+            "ATLASSIAN_OAUTH_INSTANCE_TYPE": "invalid-type",
+            "ATLASSIAN_OAUTH_CLOUD_ID": "test-cloud-id",
+        }.get(key, default)
+
+        config = OAuthConfig.from_env()
+
+        assert config is not None
+        assert config.instance_type == "cloud"  # Should default to cloud
+        assert config.is_cloud is True
+
+    def test_save_tokens_includes_data_center_fields(self):
+        """Test that token saving includes Data Center-specific fields."""
+        config = OAuthConfig(
+            client_id="dc-client-id",
+            client_secret="dc-client-secret",
+            redirect_uri="https://localhost:8080/callback",
+            scope="READ WRITE",
+            instance_type="datacenter",
+            instance_url="https://confluence.mycompany.com",
+            access_token="test-access-token",
+            refresh_token="test-refresh-token",
+            expires_at=time.time() + 3600,
+        )
+
+        with (
+            patch("keyring.set_password") as mock_keyring,
+            patch("builtins.open") as mock_open,
+            patch("json.dump") as mock_json_dump,
+        ):
+            config._save_tokens()
+
+            # Check that keyring.set_password was called
+            mock_keyring.assert_called_once()
+
+            # Get the JSON data that was saved
+            call_args = mock_keyring.call_args
+            token_json = call_args[0][2]  # Third argument
+            token_data = json.loads(token_json)
+
+            # Verify Data Center-specific fields are included
+            assert token_data["instance_type"] == "datacenter"
+            assert token_data["instance_url"] == "https://confluence.mycompany.com"
+            assert token_data["access_token"] == "test-access-token"
+            assert token_data["refresh_token"] == "test-refresh-token"

@@ -20,7 +20,7 @@ class ConfluenceConfig:
 
     Handles authentication for Confluence Cloud and Server/Data Center:
     - Cloud: username/API token (basic auth) or OAuth 2.0 (3LO)
-    - Server/DC: personal access token or basic auth
+    - Server/DC: personal access token, basic auth, or OAuth 2.0
     """
 
     url: str  # Base URL for Confluence
@@ -90,11 +90,11 @@ class ConfluenceConfig:
         personal_token = os.getenv("CONFLUENCE_PERSONAL_TOKEN")
 
         # Check for OAuth configuration
-        oauth_config = get_oauth_config_from_env()
-        auth_type = None
+        oauth_config = get_oauth_config_from_env(prefixes=("CONFLUENCE_OAUTH_", "ATLASSIAN_OAUTH_"))
+        auth_type: Literal["basic", "pat", "oauth"] | None = None
 
         # Use the shared utility function directly
-        is_cloud = is_atlassian_cloud_url(url)
+        is_cloud = is_atlassian_cloud_url(url) if url else False
 
         if is_cloud:
             # Cloud: OAuth takes priority, then basic auth
@@ -136,11 +136,31 @@ class ConfluenceConfig:
 
         # Custom headers - service-specific only
         custom_headers = get_custom_headers("CONFLUENCE_CUSTOM_HEADERS")
-
+        
         # Client certificate settings
         client_cert = os.getenv("CONFLUENCE_CLIENT_CERT")
         client_key = os.getenv("CONFLUENCE_CLIENT_KEY")
         client_key_password = os.getenv("CONFLUENCE_CLIENT_KEY_PASSWORD")
+
+        if not url and not oauth_config:
+            error_msg = "CONFLUENCE_URL is required"
+            raise ValueError(error_msg)
+
+        if not auth_type:
+            error_msg = "No authentication method configured"
+            raise ValueError(error_msg)
+        # Client certificate settings
+        client_cert = os.getenv("CONFLUENCE_CLIENT_CERT")
+        client_key = os.getenv("CONFLUENCE_CLIENT_KEY")
+        client_key_password = os.getenv("CONFLUENCE_CLIENT_KEY_PASSWORD")
+
+        if not url and not oauth_config:
+            error_msg = "CONFLUENCE_URL is required"
+            raise ValueError(error_msg)
+
+        if not auth_type:
+            error_msg = "No authentication method configured"
+            raise ValueError(error_msg)
 
         return cls(
             url=url,
@@ -161,6 +181,70 @@ class ConfluenceConfig:
             client_key_password=client_key_password,
         )
 
+    @staticmethod
+    def _is_oauth_fully_configured(oauth_config: "OAuthConfig") -> bool:
+        """Check if OAuth configuration is complete for either Cloud or Data Center.
+
+        Args:
+            oauth_config: The OAuth configuration to check
+
+        Returns:
+            True if OAuth is fully configured, False otherwise
+        """
+        if not oauth_config:
+            return False
+
+        # Check basic required fields
+        if not all(
+            [
+                oauth_config.client_id,
+                oauth_config.client_secret,
+                oauth_config.redirect_uri,
+                oauth_config.scope,
+            ]
+        ):
+            return False
+
+        # Check instance-specific requirements
+        if oauth_config.is_cloud:
+            # For Cloud, we need a cloud_id
+            return bool(oauth_config.cloud_id)
+        else:
+            # For Data Center, we need an instance_url
+            return bool(oauth_config.instance_url)
+
+    @staticmethod
+    def _is_oauth_fully_configured(oauth_config: "OAuthConfig") -> bool:
+        """Check if OAuth configuration is complete for either Cloud or Data Center.
+
+        Args:
+            oauth_config: The OAuth configuration to check
+
+        Returns:
+            True if OAuth is fully configured, False otherwise
+        """
+        if not oauth_config:
+            return False
+
+        # Check basic required fields
+        if not all(
+            [
+                oauth_config.client_id,
+                oauth_config.client_secret,
+                oauth_config.redirect_uri,
+                oauth_config.scope,
+            ]
+        ):
+            return False
+
+        # Check instance-specific requirements
+        if oauth_config.is_cloud:
+            # For Cloud, we need a cloud_id
+            return bool(oauth_config.cloud_id)
+        else:
+            # For Data Center, we need an instance_url
+            return bool(oauth_config.instance_url)
+
     def is_auth_configured(self) -> bool:
         """Check if the current authentication configuration is complete and valid for making API calls.
 
@@ -173,7 +257,14 @@ class ConfluenceConfig:
             if self.oauth_config:
                 # Full OAuth configuration (traditional mode)
                 if isinstance(self.oauth_config, OAuthConfig):
+                    # For Data Center OAuth, check if it's fully configured
                     if (
+                        not self.oauth_config.is_cloud
+                        and self._is_oauth_fully_configured(self.oauth_config)
+                    ):
+                        return True
+                    # For Cloud OAuth
+                    elif (
                         self.oauth_config.client_id
                         and self.oauth_config.client_secret
                         and self.oauth_config.redirect_uri
