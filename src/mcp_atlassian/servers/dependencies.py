@@ -239,9 +239,7 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
                     raise ValueError("User Atlassian PAT is empty.")
                 credentials["personal_access_token"] = user_token
             elif user_auth_type == "basic":
-                user_api_token = getattr(
-                    request.state, "user_atlassian_api_token", None
-                )
+                user_api_token = getattr(request.state, "user_atlassian_token", None)
                 if not user_email or not user_api_token:
                     raise ValueError("User email or API token missing for basic auth.")
                 credentials["user_email"] = user_email
@@ -357,9 +355,7 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
                     raise ValueError("User Atlassian PAT is empty.")
                 credentials["personal_access_token"] = user_token
             elif user_auth_type == "basic":
-                user_api_token = getattr(
-                    request.state, "user_atlassian_api_token", None
-                )
+                user_api_token = getattr(request.state, "user_atlassian_token", None)
                 if not user_email or not user_api_token:
                     raise ValueError("User email or API token missing for basic auth.")
                 credentials["user_email"] = user_email

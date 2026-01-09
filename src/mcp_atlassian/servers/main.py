@@ -1,7 +1,7 @@
 """Main FastMCP server setup for Atlassian integration."""
 
-import json
 import base64
+import json
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
