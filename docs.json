@@ -27,7 +27,7 @@
     {
       "name": "PyPI",
       "icon": "python",
-      "url": "https://pypi.org/project/mcp-atlassian/"
+     \  "url": "https://pypi.org/project/mcp-atlassian/"
     }
   ],
   "navigation": {
@@ -64,4 +64,28 @@
   "footerSocials": {
     "github": "https://github.com/sooperset/mcp-atlassian"
   }
+}
+{
+  "mcpServers": {
+    "forge-knowledge": {
+      "url": "https://mcp.atlassian.com/v1/forge/mcp",
+      "transport": "http"
+    }
+  }
+}
+{
+  "mcpServers": {
+    "forge-knowledge": {
+      "url": "https://mcp.atlassian.com/v1/forge/mcp"
+    }
+  }
+}
+{
+  "servers": {
+    "forge-knowledge": {
+      "url": "https://mcp.atlassian.com/v1/forge/mcp",
+      "type": "http"
+    }
+  },
+  "inputs": []
 }
