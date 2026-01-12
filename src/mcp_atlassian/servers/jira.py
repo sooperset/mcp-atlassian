@@ -1858,3 +1858,78 @@ async def jira_get_issue_dates(
         logger.error(f"Error getting issue dates for {issue_key}: {str(e)}")
         error_result = {"success": False, "error": str(e), "issue_key": issue_key}
         return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "metrics", "sla"},
+    annotations={"title": "Get Issue SLA", "readOnlyHint": True},
+)
+async def jira_get_issue_sla(
+    ctx: Context,
+    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    metrics: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Comma-separated list of SLA metrics to calculate. "
+                "Available: cycle_time, lead_time, time_in_status, due_date_compliance, "
+                "resolution_time, first_response_time. "
+                "Defaults to configured metrics or 'cycle_time,time_in_status'."
+            )
+        ),
+    ] = None,
+    working_hours_only: Annotated[
+        bool | None,
+        Field(
+            description=(
+                "Calculate using working hours only (excludes weekends/non-business hours). "
+                "Defaults to value from JIRA_SLA_WORKING_HOURS_ONLY environment variable."
+            )
+        ),
+    ] = None,
+    include_raw_dates: Annotated[
+        bool,
+        Field(description="Include raw date values in the response"),
+    ] = False,
+) -> str:
+    """
+    Calculate SLA metrics for a Jira issue.
+
+    Computes various time-based metrics including cycle time, lead time,
+    time spent in each status, due date compliance, and more.
+
+    Working hours can be configured via environment variables:
+    - JIRA_SLA_WORKING_HOURS_ONLY: Enable working hours filtering (true/false)
+    - JIRA_SLA_WORKING_HOURS_START: Start time (e.g., "09:00")
+    - JIRA_SLA_WORKING_HOURS_END: End time (e.g., "17:00")
+    - JIRA_SLA_WORKING_DAYS: Working days (e.g., "1,2,3,4,5" for Mon-Fri)
+    - JIRA_SLA_TIMEZONE: Timezone for calculations (e.g., "America/New_York")
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: The Jira issue key.
+        metrics: Comma-separated list of metrics to calculate.
+        working_hours_only: Use working hours only for calculations.
+        include_raw_dates: Include raw date values in response.
+
+    Returns:
+        JSON string with calculated SLA metrics.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        # Parse metrics from comma-separated string
+        metrics_list = None
+        if metrics:
+            metrics_list = [m.strip() for m in metrics.split(",") if m.strip()]
+
+        result = jira.get_issue_sla(
+            issue_key=issue_key,
+            metrics=metrics_list,
+            working_hours_only=working_hours_only,
+            include_raw_dates=include_raw_dates,
+        )
+        return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Error calculating SLA for {issue_key}: {str(e)}")
+        error_result = {"success": False, "error": str(e), "issue_key": issue_key}
+        return json.dumps(error_result, indent=2, ensure_ascii=False)
