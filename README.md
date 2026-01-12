@@ -588,6 +588,19 @@ For Jira Server/DC, use:
 
 </details>
 
+> **Server/Data Center users**: Use `JIRA_PERSONAL_TOKEN` instead of `JIRA_USERNAME` + `JIRA_API_TOKEN`. See [Authentication](https://personal-1d37018d.mintlify.app/docs/authentication) for details.
+
+### 3. Start Using
+
+| Jira | Confluence |
+|------|------------|
+| `jira_search` - Search with JQL | `confluence_search` - Search with CQL |
+| `jira_get_issue` - Get issue details | `confluence_get_page` - Get page content |
+| `jira_create_issue` - Create issues | `confluence_create_page` - Create pages |
+| `jira_update_issue` - Update issues | `confluence_update_page` - Update pages |
+| `jira_transition_issue` - Change status | `confluence_add_comment` - Add comments |
+| | `confluence_get_page_views` - Get page view stats (Cloud only) |
+
 ### 👥 HTTP Transport Configuration
 
 Instead of using `stdio`, you can run the server as a persistent HTTP service using either:

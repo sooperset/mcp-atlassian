@@ -232,6 +232,74 @@ class TestRealJiraAPI(BaseAuthTest):
         elapsed = time.time() - start_time
         assert elapsed < 10  # Should complete quickly if no rate limiting
 
+    def test_edit_comment_lifecycle(
+        self, jira_client, test_project_key, created_issues
+    ):
+        """Test edit_comment feature with real API (v0.13.0 feature #813)."""
+        unique_id = str(uuid.uuid4())[:8]
+
+        # Create issue
+        issue = jira_client.create_issue(
+            project_key=test_project_key,
+            summary=f"Edit Comment Test {unique_id}",
+            description="Test issue for edit comment testing",
+            issue_type="Task",
+        )
+        created_issues.append(issue.key)
+
+        try:
+            # Add comment
+            comment = jira_client.add_comment(
+                issue_key=issue.key, comment="Original comment text"
+            )
+
+            assert comment is not None
+            comment_id = comment.id if hasattr(comment, "id") else comment["id"]
+
+            # Edit comment
+            edited = jira_client.edit_comment(
+                issue_key=issue.key,
+                comment_id=comment_id,
+                comment="**Edited** comment with _markdown_",
+            )
+
+            assert edited is not None
+            edited_body = edited.body if hasattr(edited, "body") else edited["body"]
+            # Verify the edit was applied (markdown may be converted to Jira markup)
+            assert "Edited" in edited_body or "*Edited*" in edited_body
+
+        finally:
+            jira_client.delete_issue(issue_key=issue.key)
+            created_issues.remove(issue.key)
+
+    def test_create_issue_with_additional_fields(
+        self, jira_client, test_project_key, created_issues
+    ):
+        """Test additional_fields feature with real API (v0.13.0 feature #829)."""
+        unique_id = str(uuid.uuid4())[:8]
+
+        # Create issue with additional fields (labels)
+        issue = jira_client.create_issue(
+            project_key=test_project_key,
+            summary=f"Additional Fields Test {unique_id}",
+            description="Test issue for additional fields testing",
+            issue_type="Task",
+            labels=["integration-test", "v0130"],
+        )
+        created_issues.append(issue.key)
+
+        try:
+            # Verify labels were applied
+            fetched = jira_client.get_issue(issue_key=issue.key)
+            labels = (
+                fetched.labels if hasattr(fetched, "labels") else fetched.fields.labels
+            )
+            assert "integration-test" in labels or "v0130" in labels
+
+        finally:
+            jira_client.delete_issue(issue_key=issue.key)
+            created_issues.remove(issue.key)
+
 
 @pytest.mark.integration
 class TestRealConfluenceAPI(BaseAuthTest):
