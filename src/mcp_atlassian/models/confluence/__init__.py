@@ -12,6 +12,7 @@ Key models:
 - ConfluenceVersion: Content versioning information
 """
 
+from .analytics import PageViews, PageViewsBatchResponse
 from .comment import ConfluenceComment
 from .common import ConfluenceAttachment, ConfluenceUser
 from .label import ConfluenceLabel
@@ -31,4 +32,7 @@ __all__ = [
     "ConfluenceSearchResult",
     "ConfluenceUserSearchResult",
     "ConfluenceUserSearchResults",
+    # Analytics models
+    "PageViews",
+    "PageViewsBatchResponse",
 ]
