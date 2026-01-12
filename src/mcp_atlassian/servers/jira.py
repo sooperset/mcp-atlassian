@@ -204,6 +204,16 @@ async def search(
         int,
         Field(description="Maximum number of results (1-50)", default=10, ge=1),
     ] = 10,
+    fetch_all: Annotated[
+        bool,
+        Field(
+            description=(
+                "If true, fetches all matching issues by paging through results. "
+                "Cloud uses nextPageToken; Server/DC uses startAt."
+            ),
+            default=False,
+        ),
+    ] = False,
     start_at: Annotated[
         int,
         Field(description="Starting index for pagination (0-based)", default=0, ge=0),
@@ -247,11 +257,170 @@ async def search(
     if fields and fields != "*all":
         fields_list = [f.strip() for f in fields.split(",")]
 
-    search_result = jira.search_issues(
+    if not fetch_all:
+        search_result = jira.search_issues(
+            jql=jql,
+            fields=fields_list,
+            limit=limit,
+            start=start_at,
+            expand=expand,
+            projects_filter=projects_filter,
+        )
+        result = search_result.to_simplified_dict()
+        return json.dumps(result, indent=2, ensure_ascii=False)
+
+    # fetch_all: internally page through all results
+    all_issues: list[dict[str, Any]] = []
+
+    if jira.config.is_cloud:
+        # Cloud: token-based pagination
+        page_token: str | None = None
+        while True:
+            page = jira.search_issues_page(
+                jql=jql,
+                fields=fields_list,
+                page_size=limit,
+                page_token=page_token,
+                expand=expand,
+                projects_filter=projects_filter,
+            )
+            page_dict = page.to_simplified_dict()
+            page_issues = page_dict.get("issues", [])
+            if isinstance(page_issues, list):
+                all_issues.extend(page_issues)
+
+            page_token = page_dict.get("next_page_token")
+            is_last = page_dict.get("is_last")
+            if is_last is True or not page_token:
+                break
+
+        result = {
+            "total": -1,
+            "start_at": 0,
+            "max_results": len(all_issues),
+            "issues": all_issues,
+        }
+        return json.dumps(result, indent=2, ensure_ascii=False)
+
+    # Server/DC: offset-based pagination
+    start = start_at
+    while True:
+        page = jira.search_issues(
+            jql=jql,
+            fields=fields_list,
+            limit=limit,
+            start=start,
+            expand=expand,
+            projects_filter=projects_filter,
+        )
+        page_dict = page.to_simplified_dict()
+        page_issues = page_dict.get("issues", [])
+        if isinstance(page_issues, list):
+            all_issues.extend(page_issues)
+
+        total = page_dict.get("total")
+        if isinstance(total, int) and total >= 0:
+            if start + len(page_issues) >= total:
+                break
+
+        if not page_issues:
+            break
+
+        start += len(page_issues)
+
+    result = {
+        "total": len(all_issues),
+        "start_at": start_at,
+        "max_results": len(all_issues),
+        "issues": all_issues,
+    }
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    name="search_page",
+    tags={"jira", "read"},
+    annotations={"title": "Search Issues (Page)", "readOnlyHint": True},
+)
+async def search_page(
+    ctx: Context,
+    jql: Annotated[
+        str,
+        Field(
+            description=(
+                "JQL query string (Jira Query Language). Returns ONE page of results.\n"
+                "Use `next_page_token` from the response to fetch the next page (Cloud).\n"
+                "Examples:\n"
+                "- Find by status: \"status = 'In Progress' AND project = PROJ\"\n"
+                '- Find by assignee: "assignee = currentUser()"'
+            )
+        ),
+    ],
+    fields: Annotated[
+        str,
+        Field(
+            description=(
+                "(Optional) Comma-separated fields to return in the results. "
+                "Use '*all' for all fields, or specify individual fields like 'summary,status,assignee,priority'"
+            ),
+            default=",".join(DEFAULT_READ_JIRA_FIELDS),
+        ),
+    ] = ",".join(DEFAULT_READ_JIRA_FIELDS),
+    page_size: Annotated[
+        int,
+        Field(
+            description="Number of issues per page (Cloud max 100).",
+            default=10,
+            ge=1,
+            le=100,
+        ),
+    ] = 10,
+    page_token: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Cloud pagination token. "
+                "Pass the `next_page_token` from the previous response."
+            ),
+            default=None,
+        ),
+    ] = None,
+    projects_filter: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Comma-separated list of project keys to filter results by. "
+                "Overrides the environment variable JIRA_PROJECTS_FILTER if provided."
+            ),
+            default=None,
+        ),
+    ] = None,
+    expand: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) fields to expand. Examples: 'renderedFields', 'transitions', 'changelog'"
+            ),
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """
+    Search Jira issues using JQL and return a SINGLE page.
+
+    For Jira Cloud, uses token-based pagination and returns `next_page_token`.
+    For Server/DC, returns the first page (offset-based pagination is not exposed here).
+    """
+    jira = await get_jira_fetcher(ctx)
+    fields_list: str | list[str] | None = fields
+    if fields and fields != "*all":
+        fields_list = [f.strip() for f in fields.split(",")]
+
+    search_result = jira.search_issues_page(
         jql=jql,
         fields=fields_list,
-        limit=limit,
-        start=start_at,
+        page_token=page_token,
+        page_size=page_size,
         expand=expand,
         projects_filter=projects_filter,
     )
