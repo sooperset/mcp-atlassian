@@ -96,7 +96,9 @@ Documentation is also available in [llms.txt format](https://llmstxt.org/), whic
 | `jira_create_issue` - Create issues | `confluence_create_page` - Create pages |
 | `jira_update_issue` - Update issues | `confluence_update_page` - Update pages |
 | `jira_transition_issue` - Change status | `confluence_add_comment` - Add comments |
-| | `confluence_get_page_views` - Get page view stats (Cloud only) |
+| `jira_get_issue_proforma_forms` - Get ProForma forms | `confluence_get_page_views` - Get page view stats (Cloud only) |
+| `jira_get_proforma_form_details` - Get form details | |
+| `jira_update_proforma_form_answers` - Update form answers | |
 
 See [Tools Reference](https://personal-1d37018d.mintlify.app/docs/tools-reference) for the complete list.
 
