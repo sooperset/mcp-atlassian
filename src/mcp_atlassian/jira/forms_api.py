@@ -11,6 +11,7 @@ Features:
 """
 
 import logging
+import os
 from typing import Any
 
 import requests
@@ -39,11 +40,12 @@ class FormsApiMixin(JiraClient):
         """
         super().__init__(*args, **kwargs)
 
-        # Get cloud_id from OAuth config if available
+        # Get cloud_id from OAuth config if available, otherwise from environment variable
         if self.config.oauth_config and self.config.oauth_config.cloud_id:
             self._cloud_id: str | None = self.config.oauth_config.cloud_id
         else:
-            self._cloud_id = None
+            # For non-OAuth auth types, check environment variable
+            self._cloud_id = os.getenv("ATLASSIAN_OAUTH_CLOUD_ID")
 
     def _make_forms_api_request(
         self,
@@ -179,8 +181,10 @@ class FormsApiMixin(JiraClient):
         try:
             response = self._make_forms_api_request("GET", f"/issue/{issue_key}/form")
 
-            # API should return a list wrapped in a forms key
-            forms_data = response.get("forms", []) if isinstance(response, dict) else []
+            # API returns a plain array of forms
+            forms_data = (
+                response if isinstance(response, list) else response.get("forms", [])
+            )
 
             forms = []
             for form_data in forms_data:
@@ -197,8 +201,11 @@ class FormsApiMixin(JiraClient):
 
             return forms
 
-        except ValueError:
-            # 404 - no forms found
+        except ValueError as e:
+            # Re-raise configuration errors (e.g., missing cloud_id) to fail fast
+            if "cloud_id" in str(e).lower() or "forms api requires" in str(e).lower():
+                raise
+            # 404 - no forms found, return empty list
             return []
         except Exception as e:
             logger.error(f"Error getting forms for issue {issue_key}: {str(e)}")
@@ -226,8 +233,11 @@ class FormsApiMixin(JiraClient):
             form = ProFormaForm.from_api_response(response, issue_key=issue_key)
             return form
 
-        except ValueError:
-            # 404 - form not found
+        except ValueError as e:
+            # Re-raise configuration errors (e.g., missing cloud_id) to fail fast
+            if "cloud_id" in str(e).lower() or "forms api requires" in str(e).lower():
+                raise
+            # 404 - form not found, return None
             return None
         except Exception as e:
             logger.error(
