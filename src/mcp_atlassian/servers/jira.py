@@ -1961,6 +1961,24 @@ async def update_proforma_form_answers(
     This is the primary method for updating form data. Each answer object
     must specify the question ID, answer type, and value.
 
+    **⚠️ KNOWN LIMITATION - DATETIME fields:**
+    The Jira Forms API does NOT properly preserve time components in DATETIME fields.
+    Only the date portion is stored; times are reset to midnight (00:00:00).
+
+    **Workaround for DATETIME fields:**
+    Use jira_update_issue to directly update the underlying custom fields instead:
+    1. Get the custom field ID from the form details (question's "jiraField" property)
+    2. Use jira_update_issue with fields like: {"customfield_XXXXX": "2026-01-09T11:50:00-08:00"}
+
+    Example:
+    ```python
+    # Instead of updating via form (loses time):
+    # jira_update_proforma_form_answers(issue_key, form_id, [{"questionId": "91", "type": "DATETIME", "value": "..."}])
+
+    # Use direct field update (preserves time):
+    jira_update_issue(issue_key, {"customfield_10542": "2026-01-09T11:50:00-08:00"})
+    ```
+
     **Automatic DateTime Conversion:**
     For DATE and DATETIME fields, you can provide values as:
     - ISO 8601 strings (e.g., "2024-12-17T19:00:00Z", "2024-12-17")
@@ -1973,15 +1991,14 @@ async def update_proforma_form_answers(
         {"questionId": "q1", "type": "TEXT", "value": "Updated description"},
         {"questionId": "q2", "type": "SELECT", "value": "Product A"},
         {"questionId": "q3", "type": "NUMBER", "value": 42},
-        {"questionId": "q4", "type": "DATETIME", "value": "2024-12-17T19:00:00Z"},
-        {"questionId": "q5", "type": "DATE", "value": "2024-12-17"}
+        {"questionId": "q4", "type": "DATE", "value": "2024-12-17"}
     ]
 
     Common answer types:
     - TEXT: String values
     - NUMBER: Numeric values
     - DATE: Date values (ISO 8601 string or Unix timestamp in ms)
-    - DATETIME: DateTime values (ISO 8601 string or Unix timestamp in ms)
+    - DATETIME: DateTime values - ⚠️ USE WORKAROUND ABOVE
     - SELECT: Single selection from options
     - MULTI_SELECT: Multiple selections (value as list)
     - CHECKBOX: Boolean values

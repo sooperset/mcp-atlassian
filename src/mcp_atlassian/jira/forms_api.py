@@ -250,6 +250,20 @@ class FormsApiMixin(JiraClient):
     ) -> dict[str, Any]:
         """Update form field answers directly via the Forms API.
 
+        **Known Limitation - DATETIME fields:**
+        The Jira Forms API does not properly preserve time components in DATETIME fields.
+        When updating DATETIME fields through this method, only the date is stored and the
+        time is reset to midnight (00:00:00).
+
+        **Workaround for DATETIME fields:**
+        Use the regular Jira API to update the underlying custom fields directly:
+        ```python
+        jira.update_issue(issue_key, fields={
+            "customfield_XXXXX": "2026-01-09T11:50:00-08:00"
+        })
+        ```
+        The custom field ID can be found in the form's question definition (jiraField property).
+
         Args:
             issue_key: The issue key (e.g. 'PROJ-123')
             form_id: The form UUID
@@ -275,11 +289,15 @@ class FormsApiMixin(JiraClient):
                 value = answer.get("value")
 
                 # Map answer types to API field names
+                # NOTE: DATETIME maps to "date" because the Forms API doesn't support
+                # separate datetime fields. This is a known API limitation - only the
+                # date portion is stored and time is lost. For datetime fields that need
+                # time precision, use the regular Jira API to update the custom field directly.
                 type_mapping = {
                     "TEXT": "text",
                     "NUMBER": "number",
                     "DATE": "date",
-                    "DATETIME": "date",
+                    "DATETIME": "date",  # ⚠️ API limitation: loses time component
                     "TIME": "time",
                     "SELECT": "choices",
                     "MULTI_SELECT": "choices",
