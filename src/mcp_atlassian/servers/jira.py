@@ -647,6 +647,52 @@ async def get_link_types(ctx: Context) -> str:
 
 
 @jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get All Labels", "readOnlyHint": True},
+)
+async def get_all_labels(
+    ctx: Context,
+    start_at: Annotated[
+        int,
+        Field(
+            description="Starting index for pagination (0-based)",
+            default=0,
+            ge=0,
+        ),
+    ] = 0,
+    max_results: Annotated[
+        int,
+        Field(
+            description="Maximum number of labels to return (1-1000)",
+            default=50,
+            ge=1,
+            le=1000,
+        ),
+    ] = 50,
+) -> str:
+    """Get all available labels from Jira with pagination support.
+
+    Args:
+        ctx: The FastMCP context.
+        start_at: Starting index for pagination (0-based).
+        max_results: Maximum number of labels to return.
+
+    Returns:
+        JSON string containing pagination info and list of labels:
+        {
+            "startAt": 0,
+            "maxResults": 50,
+            "total": 100,
+            "isLast": false,
+            "values": ["label1", "label2", ...]
+        }
+    """
+    jira = await get_jira_fetcher(ctx)
+    labels_response = jira.get_all_labels(start_at=start_at, max_results=max_results)
+    return json.dumps(labels_response, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
     tags={"jira", "write"},
     annotations={"title": "Create Issue", "destructiveHint": True},
 )

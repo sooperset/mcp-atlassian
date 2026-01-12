@@ -1,5 +1,6 @@
 """Main FastMCP server setup for Atlassian integration."""
 
+import base64
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -377,9 +378,8 @@ class UserTokenMiddleware:
                     "UserTokenMiddleware: Bearer token extracted (masked): "
                     f"...{mask_sensitive(token, 8)}"
                 )
-
         elif auth_header.startswith("Token "):
-            token = auth_header[6:].strip()  # Remove "Token " prefix and strip token
+            token = auth_header.split(" ", 1)[1].strip()
             if not token:
                 scope["state"]["auth_validation_error"] = (
                     "Unauthorized: Empty Token (PAT)"
@@ -391,15 +391,45 @@ class UserTokenMiddleware:
                     "UserTokenMiddleware: PAT token extracted (masked): "
                     f"...{mask_sensitive(token, 8)}"
                 )
-
+        elif auth_header.startswith("Basic "):
+            encoded = auth_header.split(" ", 1)[1].strip()
+            if not encoded:
+                scope["state"]["auth_validation_error"] = (
+                    "Unauthorized: Empty Basic auth credentials"
+                )
+            else:
+                try:
+                    decoded = base64.b64decode(encoded).decode("utf-8")
+                    if ":" not in decoded:
+                        scope["state"]["auth_validation_error"] = (
+                            "Unauthorized: Invalid Basic auth format. Expected 'email:api_token'"
+                        )
+                    else:
+                        email, api_token = decoded.split(":", 1)
+                        if not email or not api_token:
+                            scope["state"]["auth_validation_error"] = (
+                                "Unauthorized: Email or API token is empty"
+                            )
+                        else:
+                            scope["state"]["user_atlassian_email"] = email
+                            scope["state"]["user_atlassian_token"] = api_token
+                            scope["state"]["user_atlassian_auth_type"] = "basic"
+                            logger.debug(
+                                f"UserTokenMiddleware: Basic auth extracted for email: {email}"
+                            )
+                except (ValueError, UnicodeDecodeError) as e:
+                    logger.error(f"Failed to decode Basic auth: {e}")
+                    scope["state"]["auth_validation_error"] = (
+                        "Unauthorized: Invalid Basic auth encoding"
+                    )
         elif auth_header.strip():
             # Non-empty but unsupported auth type
             auth_value = auth_header.strip()
             auth_type = auth_value.split(" ", 1)[0] if " " in auth_value else auth_value
             logger.warning(f"Unsupported Authorization type: {auth_type}")
             scope["state"]["auth_validation_error"] = (
-                "Unauthorized: Only 'Bearer <OAuthToken>' or "
-                "'Token <PAT>' types are supported."
+                "Unauthorized: Only 'Bearer <OAuthToken>', 'Token <PAT>', or "
+                "'Basic <base64(email:api_token)>' types are supported."
             )
         else:
             # Empty or whitespace-only
