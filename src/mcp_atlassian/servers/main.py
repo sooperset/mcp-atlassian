@@ -132,8 +132,20 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             if app_lifespan_state
             else None
         )
+
+        header_based_services = {"jira": False, "confluence": False}
+        if hasattr(req_context, "request") and hasattr(req_context.request, "state"):
+            service_headers = getattr(
+                req_context.request.state, "atlassian_service_headers", {}
+            )
+            if service_headers:
+                header_based_services = get_available_services(service_headers)
+                logger.debug(
+                    f"Header-based service availability: {header_based_services}"
+                )
+
         logger.debug(
-            f"_list_tools_mcp: read_only={read_only}, enabled_tools_filter={enabled_tools_filter}"
+            f"_list_tools_mcp: read_only={read_only}, enabled_tools_filter={enabled_tools_filter}, header_services={header_based_services}"
         )
 
         all_tools: dict[str, FastMCPTool] = await self.get_tools()
@@ -160,21 +172,37 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             is_confluence_tool = "confluence" in tool_tags
             service_configured_and_available = True
             if app_lifespan_state:
-                if is_jira_tool and not app_lifespan_state.full_jira_config:
+                jira_available = (
+                    app_lifespan_state.full_jira_config is not None
+                ) or header_based_services.get("jira", False)
+                confluence_available = (
+                    app_lifespan_state.full_confluence_config is not None
+                ) or header_based_services.get("confluence", False)
+
+                if is_jira_tool and not jira_available:
                     logger.debug(
-                        f"Excluding Jira tool '{registered_name}' as Jira configuration/authentication is incomplete."
+                        f"Excluding Jira tool '{registered_name}' as Jira configuration/authentication is incomplete and no header-based auth available."
                     )
                     service_configured_and_available = False
-                if is_confluence_tool and not app_lifespan_state.full_confluence_config:
+                if is_confluence_tool and not confluence_available:
                     logger.debug(
-                        f"Excluding Confluence tool '{registered_name}' as Confluence configuration/authentication is incomplete."
+                        f"Excluding Confluence tool '{registered_name}' as Confluence configuration/authentication is incomplete and no header-based auth available."
                     )
                     service_configured_and_available = False
             elif is_jira_tool or is_confluence_tool:
-                logger.warning(
-                    f"Excluding tool '{registered_name}' as application context is unavailable to verify service configuration."
-                )
-                service_configured_and_available = False
+                jira_available = header_based_services.get("jira", False)
+                confluence_available = header_based_services.get("confluence", False)
+
+                if is_jira_tool and not jira_available:
+                    logger.debug(
+                        f"Excluding Jira tool '{registered_name}' as no Jira authentication available."
+                    )
+                    service_configured_and_available = False
+                if is_confluence_tool and not confluence_available:
+                    logger.debug(
+                        f"Excluding Confluence tool '{registered_name}' as no Confluence authentication available."
+                    )
+                    service_configured_and_available = False
 
             if not service_configured_and_available:
                 continue
@@ -190,6 +218,8 @@ class AtlassianMCP(FastMCP[MainAppContext]):
         self,
         path: str | None = None,
         middleware: list[Middleware] | None = None,
+        json_response: bool | None = None,
+        stateless_http: bool | None = None,
         transport: Literal["streamable-http", "sse"] = "streamable-http",
         **kwargs: Any,
     ) -> "Starlette":
@@ -198,7 +228,12 @@ class AtlassianMCP(FastMCP[MainAppContext]):
         if middleware:
             final_middleware_list.extend(middleware)
         app = super().http_app(
-            path=path, middleware=final_middleware_list, transport=transport, **kwargs
+            path=path,
+            middleware=final_middleware_list,
+            json_response=json_response,
+            stateless_http=stateless_http,
+            transport=transport,
+            **kwargs,
         )
         return app
 
@@ -239,9 +274,9 @@ class UserTokenMiddleware:
         if "state" not in scope_copy:
             scope_copy["state"] = {}
 
-        # Initialize default authentication state
-        scope_copy["state"]["user_atlassian_token"] = None
-        scope_copy["state"]["user_atlassian_auth_type"] = None
+        # Initialize default authentication state (only initialize fields that should always exist)
+        # Note: user_atlassian_token and user_atlassian_auth_type are NOT initialized
+        # They are only set when present, so hasattr() checks work correctly
         scope_copy["state"]["user_atlassian_email"] = None
         scope_copy["state"]["user_atlassian_cloud_id"] = None
         scope_copy["state"]["auth_validation_error"] = None
@@ -330,6 +365,51 @@ class UserTokenMiddleware:
                 cloud_id_header.decode("latin-1") if cloud_id_header else None
             )
 
+            # Extract additional Atlassian service headers for service availability detection
+            jira_token_header = headers.get(b"x-atlassian-jira-personal-token")
+            jira_url_header = headers.get(b"x-atlassian-jira-url")
+            confluence_token_header = headers.get(
+                b"x-atlassian-confluence-personal-token"
+            )
+            confluence_url_header = headers.get(b"x-atlassian-confluence-url")
+
+            # Convert service header bytes to strings
+            jira_token_str = (
+                jira_token_header.decode("latin-1") if jira_token_header else None
+            )
+            jira_url_str = (
+                jira_url_header.decode("latin-1") if jira_url_header else None
+            )
+            confluence_token_str = (
+                confluence_token_header.decode("latin-1")
+                if confluence_token_header
+                else None
+            )
+            confluence_url_str = (
+                confluence_url_header.decode("latin-1")
+                if confluence_url_header
+                else None
+            )
+
+            # Build service headers dict
+            service_headers = {}
+            if jira_token_str:
+                service_headers["X-Atlassian-Jira-Personal-Token"] = jira_token_str
+            if jira_url_str:
+                service_headers["X-Atlassian-Jira-Url"] = jira_url_str
+            if confluence_token_str:
+                service_headers["X-Atlassian-Confluence-Personal-Token"] = (
+                    confluence_token_str
+                )
+            if confluence_url_str:
+                service_headers["X-Atlassian-Confluence-Url"] = confluence_url_str
+
+            scope["state"]["atlassian_service_headers"] = service_headers
+            if service_headers:
+                logger.debug(
+                    f"UserTokenMiddleware: Extracted service headers: {list(service_headers.keys())}"
+                )
+
             # Log mcp-session-id for debugging
             mcp_session_id = headers.get(b"mcp-session-id")
             if mcp_session_id:
@@ -356,6 +436,16 @@ class UserTokenMiddleware:
                 self._parse_auth_header(auth_header_str, scope)
             else:
                 logger.debug("UserTokenMiddleware: No Authorization header provided")
+                # If service headers are present without Authorization header, set PAT auth type
+                if service_headers and (
+                    (jira_token_str and jira_url_str)
+                    or (confluence_token_str and confluence_url_str)
+                ):
+                    scope["state"]["user_atlassian_auth_type"] = "pat"
+                    scope["state"]["user_atlassian_email"] = None
+                    logger.debug(
+                        "UserTokenMiddleware: Header-based authentication detected. Setting PAT auth type."
+                    )
 
         except Exception as e:
             logger.error(f"Error processing authentication headers: {e}", exc_info=True)
@@ -409,8 +499,8 @@ class UserTokenMiddleware:
 
 
 main_mcp = AtlassianMCP(name="Atlassian MCP", lifespan=main_lifespan)
-main_mcp.mount(jira_mcp, prefix="jira")
-main_mcp.mount(confluence_mcp, prefix="confluence")
+main_mcp.mount(jira_mcp, "jira")
+main_mcp.mount(confluence_mcp, "confluence")
 
 
 @main_mcp.custom_route("/healthz", methods=["GET"], include_in_schema=False)
