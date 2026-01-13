@@ -5,7 +5,9 @@ from typing import Any, TypeVar
 
 import requests
 from fastmcp import Context
+from fastmcp.server.dependencies import get_http_request
 from requests.exceptions import HTTPError
+from starlette.requests import Request
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 
@@ -20,18 +22,46 @@ def check_write_access(func: F) -> F:
     Decorator for FastMCP tools to check if the application is in read-only mode.
     If in read-only mode, it raises a ValueError.
     Assumes the decorated function is async and has `ctx: Context` as its first argument.
+
+    Supports per-request read-only mode override via X-Read-Only-Mode header,
+    which takes precedence over the lifespan context (environment variable).
     """
 
     @wraps(func)
     async def wrapper(ctx: Context, *args: Any, **kwargs: Any) -> Any:
-        lifespan_ctx_dict = ctx.request_context.lifespan_context
-        app_lifespan_ctx = (
-            lifespan_ctx_dict.get("app_lifespan_context")
-            if isinstance(lifespan_ctx_dict, dict)
-            else None
-        )  # type: ignore
+        is_read_only = False
 
-        if app_lifespan_ctx is not None and app_lifespan_ctx.read_only:
+        # First, check for per-request override from HTTP request state
+        try:
+            request: Request = get_http_request()
+            header_value = getattr(request.state, "read_only_mode", None)
+            if header_value is not None:
+                is_read_only = str(header_value).lower() == "true"
+                logger.debug(
+                    f"check_write_access: Using per-request read_only_mode={is_read_only}"
+                )
+            else:
+                # Fall back to lifespan context
+                lifespan_ctx_dict = ctx.request_context.lifespan_context
+                app_lifespan_ctx = (
+                    lifespan_ctx_dict.get("app_lifespan_context")
+                    if isinstance(lifespan_ctx_dict, dict)
+                    else None
+                )  # type: ignore
+                if app_lifespan_ctx is not None:
+                    is_read_only = app_lifespan_ctx.read_only
+        except RuntimeError:
+            # Not in HTTP request context, fall back to lifespan context
+            lifespan_ctx_dict = ctx.request_context.lifespan_context
+            app_lifespan_ctx = (
+                lifespan_ctx_dict.get("app_lifespan_context")
+                if isinstance(lifespan_ctx_dict, dict)
+                else None
+            )  # type: ignore
+            if app_lifespan_ctx is not None:
+                is_read_only = app_lifespan_ctx.read_only
+
+        if is_read_only:
             tool_name = func.__name__
             action_description = tool_name.replace(
                 "_", " "

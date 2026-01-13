@@ -107,6 +107,34 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
 class AtlassianMCP(FastMCP[MainAppContext]):
     """Custom FastMCP server class for Atlassian integration with tool filtering."""
 
+    def _get_per_request_config(
+        self,
+    ) -> tuple[bool | None, str | None]:
+        """Get per-request configuration overrides from HTTP request state.
+
+        Returns:
+            Tuple of (read_only_mode, enabled_tools) from request headers,
+            or (None, None) if not in HTTP context or headers not present.
+        """
+        try:
+            from fastmcp.server.dependencies import get_http_request
+
+            request = get_http_request()
+
+            # Get per-request read_only_mode
+            read_only_header = getattr(request.state, "read_only_mode", None)
+            read_only = None
+            if read_only_header is not None:
+                read_only = str(read_only_header).lower() == "true"
+
+            # Get per-request enabled_tools
+            enabled_tools_header = getattr(request.state, "enabled_tools", None)
+
+            return read_only, enabled_tools_header
+        except RuntimeError:
+            # Not in HTTP request context
+            return None, None
+
     async def _list_tools_mcp(self) -> list[MCPTool]:
         # Filter tools based on enabled_tools, read_only mode, and service configuration from the lifespan context.
         req_context = self._mcp_server.request_context
@@ -122,17 +150,20 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             if isinstance(lifespan_ctx_dict, dict)
             else None
         )
-        read_only = (
+
+        # Get lifespan defaults
+        lifespan_read_only = (
             getattr(app_lifespan_state, "read_only", False)
             if app_lifespan_state
             else False
         )
-        enabled_tools_filter = (
+        lifespan_enabled_tools = (
             getattr(app_lifespan_state, "enabled_tools", None)
             if app_lifespan_state
             else None
         )
 
+        # Check for header-based service availability (from PR #683)
         header_based_services = {"jira": False, "confluence": False}
         if hasattr(req_context, "request") and hasattr(req_context.request, "state"):
             service_headers = getattr(
@@ -144,8 +175,29 @@ class AtlassianMCP(FastMCP[MainAppContext]):
                     f"Header-based service availability: {header_based_services}"
                 )
 
+        # Check for per-request configuration overrides (from HTTP headers - Issue #850)
+        per_request_read_only, per_request_enabled_tools = (
+            self._get_per_request_config()
+        )
+
+        # Per-request headers take precedence over lifespan context
+        read_only = (
+            per_request_read_only
+            if per_request_read_only is not None
+            else lifespan_read_only
+        )
+
+        # Parse per-request enabled_tools if provided as comma-separated string
+        enabled_tools_filter = lifespan_enabled_tools
+        if per_request_enabled_tools is not None:
+            tools_list = [
+                t.strip() for t in per_request_enabled_tools.split(",") if t.strip()
+            ]
+            enabled_tools_filter = tools_list if tools_list else None
+
         logger.debug(
-            f"_list_tools_mcp: read_only={read_only}, enabled_tools_filter={enabled_tools_filter}, header_services={header_based_services}"
+            f"_list_tools_mcp: read_only={read_only} (per_request={per_request_read_only}, lifespan={lifespan_read_only}), "
+            f"enabled_tools_filter={enabled_tools_filter}, header_services={header_based_services}"
         )
 
         all_tools: dict[str, FastMCPTool] = await self.get_tools()
@@ -280,6 +332,13 @@ class UserTokenMiddleware:
         scope_copy["state"]["user_atlassian_email"] = None
         scope_copy["state"]["user_atlassian_cloud_id"] = None
         scope_copy["state"]["auth_validation_error"] = None
+
+        # Initialize per-request configuration overrides (for multi-user HTTP deployments - Issue #850)
+        # Note: Authentication is handled by PR #683 via atlassian_service_headers
+        scope_copy["state"]["read_only_mode"] = None
+        scope_copy["state"]["jira_projects_filter"] = None
+        scope_copy["state"]["confluence_spaces_filter"] = None
+        scope_copy["state"]["enabled_tools"] = None
 
         logger.debug(
             f"UserTokenMiddleware: Processing {scope_copy.get('method', 'UNKNOWN')} "
@@ -447,9 +506,78 @@ class UserTokenMiddleware:
                         "UserTokenMiddleware: Header-based authentication detected. Setting PAT auth type."
                     )
 
+            # Process per-request configuration headers (for multi-user HTTP deployments)
+            self._process_config_headers(headers, scope)
+
         except Exception as e:
             logger.error(f"Error processing authentication headers: {e}", exc_info=True)
             scope["state"]["auth_validation_error"] = "Authentication processing error"
+
+    def _get_header_str(self, headers: dict, header_name: bytes) -> str | None:
+        """Get a header value as a string, or None if not present or empty.
+
+        Args:
+            headers: Dictionary of headers (byte keys and values).
+            header_name: The header name as bytes.
+
+        Returns:
+            The header value as a stripped string, or None if not present/empty.
+        """
+        header_value = headers.get(header_name)
+        if header_value:
+            decoded = header_value.decode("latin-1").strip()
+            return decoded if decoded else None
+        return None
+
+    def _process_config_headers(self, headers: dict, scope: Scope) -> None:
+        """Process per-request configuration headers and store in scope state.
+
+        These headers allow multi-user HTTP deployments to override configuration
+        on a per-request basis. Headers take precedence over environment variables.
+
+        Follows the X-Atlassian-* naming convention established by PR #683.
+        
+        Note: Authentication is handled separately via X-Atlassian-Jira-Personal-Token
+        and X-Atlassian-Confluence-Personal-Token headers (see PR #683).
+
+        Args:
+            headers: Dictionary of headers (byte keys and values).
+            scope: The ASGI scope to store config in.
+        """
+        # Per-request read-only mode
+        read_only_mode = self._get_header_str(headers, b"x-atlassian-read-only-mode")
+        if read_only_mode:
+            scope["state"]["read_only_mode"] = read_only_mode
+            logger.debug(
+                f"UserTokenMiddleware: X-Atlassian-Read-Only-Mode header found: {read_only_mode}"
+            )
+
+        # Per-request filters
+        jira_projects_filter = self._get_header_str(
+            headers, b"x-atlassian-jira-projects-filter"
+        )
+        if jira_projects_filter:
+            scope["state"]["jira_projects_filter"] = jira_projects_filter
+            logger.debug(
+                f"UserTokenMiddleware: X-Atlassian-Jira-Projects-Filter header found: {jira_projects_filter}"
+            )
+
+        confluence_spaces_filter = self._get_header_str(
+            headers, b"x-atlassian-confluence-spaces-filter"
+        )
+        if confluence_spaces_filter:
+            scope["state"]["confluence_spaces_filter"] = confluence_spaces_filter
+            logger.debug(
+                f"UserTokenMiddleware: X-Atlassian-Confluence-Spaces-Filter header found: {confluence_spaces_filter}"
+            )
+
+        # Per-request enabled tools
+        enabled_tools = self._get_header_str(headers, b"x-atlassian-enabled-tools")
+        if enabled_tools:
+            scope["state"]["enabled_tools"] = enabled_tools
+            logger.debug(
+                f"UserTokenMiddleware: X-Atlassian-Enabled-Tools header found: {enabled_tools}"
+            )
 
     def _parse_auth_header(self, auth_header: str, scope: Scope) -> None:
         """Parse the Authorization header and store credentials in scope state."""
