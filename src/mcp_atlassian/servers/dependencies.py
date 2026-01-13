@@ -157,6 +157,13 @@ def _create_user_config_for_fetcher(
 async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
     """Returns a JiraFetcher instance appropriate for the current request context.
 
+    Supports multiple token sources in order of priority:
+    1. Service-specific token (X-Jira-Token header) - for dual-token deployments
+    2. Unified token (Authorization header) - existing behavior
+    3. Global configuration - fallback
+
+    Also supports per-request project filter override via X-Jira-Projects-Filter header.
+
     Args:
         ctx: The FastMCP context.
 
@@ -173,31 +180,53 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
             f"get_jira_fetcher: In HTTP request context. Request URL: {request.url}. "
             f"State.jira_fetcher exists: {hasattr(request.state, 'jira_fetcher') and request.state.jira_fetcher is not None}. "
             f"State.user_auth_type: {getattr(request.state, 'user_atlassian_auth_type', 'N/A')}. "
-            f"State.user_token_present: {hasattr(request.state, 'user_atlassian_token') and request.state.user_atlassian_token is not None}."
+            f"State.user_token_present: {hasattr(request.state, 'user_atlassian_token') and request.state.user_atlassian_token is not None}. "
+            f"State.jira_token_present: {hasattr(request.state, 'jira_token') and request.state.jira_token is not None}."
         )
         # Use fetcher from request.state if already present
         if hasattr(request.state, "jira_fetcher") and request.state.jira_fetcher:
             logger.debug("get_jira_fetcher: Returning JiraFetcher from request.state.")
             return request.state.jira_fetcher
+
+        # Determine token source: service-specific (X-Jira-Token) takes priority
+        jira_specific_token = getattr(request.state, "jira_token", None)
         user_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
-        logger.debug(f"get_jira_fetcher: User auth type: {user_auth_type}")
-        # If OAuth or PAT token is present, create user-specific fetcher
-        if user_auth_type in ["oauth", "pat"] and hasattr(
-            request.state, "user_atlassian_token"
+        user_token = getattr(request.state, "user_atlassian_token", None)
+
+        # Get per-request project filter override
+        jira_projects_filter = getattr(request.state, "jira_projects_filter", None)
+
+        # Priority: X-Jira-Token > Authorization header token
+        effective_token = jira_specific_token or user_token
+        # Service-specific tokens are treated as PAT (most common for Server/DC)
+        effective_auth_type = "pat" if jira_specific_token else user_auth_type
+
+        logger.debug(
+            f"get_jira_fetcher: effective_token_present={bool(effective_token)}, "
+            f"effective_auth_type={effective_auth_type}, "
+            f"jira_projects_filter={jira_projects_filter}"
+        )
+
+        # Check for empty token when auth type is set (backward compatibility)
+        if (
+            user_auth_type in ["oauth", "pat"]
+            and user_token is not None
+            and not user_token
         ):
-            user_token = getattr(request.state, "user_atlassian_token", None)
+            raise ValueError("User Atlassian token found in state but is empty.")
+
+        # If a token is present, create user-specific fetcher
+        if effective_auth_type in ["oauth", "pat"] and effective_token:
             user_email = getattr(
                 request.state, "user_atlassian_email", None
             )  # May be None for PAT
             user_cloud_id = getattr(request.state, "user_atlassian_cloud_id", None)
 
-            if not user_token:
-                raise ValueError("User Atlassian token found in state but is empty.")
             credentials = {"user_email_context": user_email}
-            if user_auth_type == "oauth":
-                credentials["oauth_access_token"] = user_token
-            elif user_auth_type == "pat":
-                credentials["personal_access_token"] = user_token
+            if effective_auth_type == "oauth":
+                credentials["oauth_access_token"] = effective_token
+            elif effective_auth_type == "pat":
+                credentials["personal_access_token"] = effective_token
             lifespan_ctx_dict = ctx.request_context.lifespan_context  # type: ignore
             app_lifespan_ctx: MainAppContext | None = (
                 lifespan_ctx_dict.get("app_lifespan_context")
@@ -210,15 +239,25 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
                 )
 
             cloud_id_info = f" with cloudId {user_cloud_id}" if user_cloud_id else ""
+            token_source = "X-Jira-Token" if jira_specific_token else "Authorization"
             logger.info(
-                f"Creating user-specific JiraFetcher (type: {user_auth_type}) for user {user_email or 'unknown'} (token ...{str(user_token)[-8:]}){cloud_id_info}"
+                f"Creating user-specific JiraFetcher (type: {effective_auth_type}, source: {token_source}) "
+                f"for user {user_email or 'unknown'} (token ...{str(effective_token)[-8:]}){cloud_id_info}"
             )
             user_specific_config = _create_user_config_for_fetcher(
                 base_config=app_lifespan_ctx.full_jira_config,
-                auth_type=user_auth_type,
+                auth_type=effective_auth_type,
                 credentials=credentials,
                 cloud_id=user_cloud_id,
             )
+
+            # Apply per-request project filter override if provided
+            if jira_projects_filter is not None:
+                user_specific_config.projects_filter = jira_projects_filter
+                logger.debug(
+                    f"get_jira_fetcher: Applied per-request projects_filter: {jira_projects_filter}"
+                )
+
             try:
                 user_jira_fetcher = JiraFetcher(config=user_specific_config)
                 current_user_id = user_jira_fetcher.get_current_user_account_id()
@@ -263,6 +302,13 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
 async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
     """Returns a ConfluenceFetcher instance appropriate for the current request context.
 
+    Supports multiple token sources in order of priority:
+    1. Service-specific token (X-Confluence-Token header) - for dual-token deployments
+    2. Unified token (Authorization header) - existing behavior
+    3. Global configuration - fallback
+
+    Also supports per-request space filter override via X-Confluence-Spaces-Filter header.
+
     Args:
         ctx: The FastMCP context.
 
@@ -279,7 +325,8 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
             f"get_confluence_fetcher: In HTTP request context. Request URL: {request.url}. "
             f"State.confluence_fetcher exists: {hasattr(request.state, 'confluence_fetcher') and request.state.confluence_fetcher is not None}. "
             f"State.user_auth_type: {getattr(request.state, 'user_atlassian_auth_type', 'N/A')}. "
-            f"State.user_token_present: {hasattr(request.state, 'user_atlassian_token') and request.state.user_atlassian_token is not None}."
+            f"State.user_token_present: {hasattr(request.state, 'user_atlassian_token') and request.state.user_atlassian_token is not None}. "
+            f"State.confluence_token_present: {hasattr(request.state, 'confluence_token') and request.state.confluence_token is not None}."
         )
         if (
             hasattr(request.state, "confluence_fetcher")
@@ -289,22 +336,46 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
                 "get_confluence_fetcher: Returning ConfluenceFetcher from request.state."
             )
             return request.state.confluence_fetcher
+
+        # Determine token source: service-specific (X-Confluence-Token) takes priority
+        confluence_specific_token = getattr(request.state, "confluence_token", None)
         user_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
-        logger.debug(f"get_confluence_fetcher: User auth type: {user_auth_type}")
-        if user_auth_type in ["oauth", "pat"] and hasattr(
-            request.state, "user_atlassian_token"
+        user_token = getattr(request.state, "user_atlassian_token", None)
+
+        # Get per-request space filter override
+        confluence_spaces_filter = getattr(
+            request.state, "confluence_spaces_filter", None
+        )
+
+        # Priority: X-Confluence-Token > Authorization header token
+        effective_token = confluence_specific_token or user_token
+        # Service-specific tokens are treated as PAT (most common for Server/DC)
+        effective_auth_type = "pat" if confluence_specific_token else user_auth_type
+
+        logger.debug(
+            f"get_confluence_fetcher: effective_token_present={bool(effective_token)}, "
+            f"effective_auth_type={effective_auth_type}, "
+            f"confluence_spaces_filter={confluence_spaces_filter}"
+        )
+
+        # Check for empty token when auth type is set (backward compatibility)
+        if (
+            user_auth_type in ["oauth", "pat"]
+            and user_token is not None
+            and not user_token
         ):
-            user_token = getattr(request.state, "user_atlassian_token", None)
+            raise ValueError("User Atlassian token found in state but is empty.")
+
+        # If a token is present, create user-specific fetcher
+        if effective_auth_type in ["oauth", "pat"] and effective_token:
             user_email = getattr(request.state, "user_atlassian_email", None)
             user_cloud_id = getattr(request.state, "user_atlassian_cloud_id", None)
 
-            if not user_token:
-                raise ValueError("User Atlassian token found in state but is empty.")
             credentials = {"user_email_context": user_email}
-            if user_auth_type == "oauth":
-                credentials["oauth_access_token"] = user_token
-            elif user_auth_type == "pat":
-                credentials["personal_access_token"] = user_token
+            if effective_auth_type == "oauth":
+                credentials["oauth_access_token"] = effective_token
+            elif effective_auth_type == "pat":
+                credentials["personal_access_token"] = effective_token
             lifespan_ctx_dict = ctx.request_context.lifespan_context  # type: ignore
             app_lifespan_ctx: MainAppContext | None = (
                 lifespan_ctx_dict.get("app_lifespan_context")
@@ -317,15 +388,27 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
                 )
 
             cloud_id_info = f" with cloudId {user_cloud_id}" if user_cloud_id else ""
+            token_source = (
+                "X-Confluence-Token" if confluence_specific_token else "Authorization"
+            )
             logger.info(
-                f"Creating user-specific ConfluenceFetcher (type: {user_auth_type}) for user {user_email or 'unknown'} (token ...{str(user_token)[-8:]}){cloud_id_info}"
+                f"Creating user-specific ConfluenceFetcher (type: {effective_auth_type}, source: {token_source}) "
+                f"for user {user_email or 'unknown'} (token ...{str(effective_token)[-8:]}){cloud_id_info}"
             )
             user_specific_config = _create_user_config_for_fetcher(
                 base_config=app_lifespan_ctx.full_confluence_config,
-                auth_type=user_auth_type,
+                auth_type=effective_auth_type,
                 credentials=credentials,
                 cloud_id=user_cloud_id,
             )
+
+            # Apply per-request space filter override if provided
+            if confluence_spaces_filter is not None:
+                user_specific_config.spaces_filter = confluence_spaces_filter
+                logger.debug(
+                    f"get_confluence_fetcher: Applied per-request spaces_filter: {confluence_spaces_filter}"
+                )
+
             try:
                 user_confluence_fetcher = ConfluenceFetcher(config=user_specific_config)
                 current_user_data = user_confluence_fetcher.get_current_user_info()
@@ -360,7 +443,8 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
                 raise ValueError(f"Invalid user Confluence token or configuration: {e}")
         else:
             logger.debug(
-                f"get_confluence_fetcher: No user-specific ConfluenceFetcher. Auth type: {user_auth_type}. Token present: {hasattr(request.state, 'user_atlassian_token')}. Will use global fallback."
+                f"get_confluence_fetcher: No user-specific ConfluenceFetcher. Auth type: {effective_auth_type}. "
+                f"Token present: {bool(effective_token)}. Will use global fallback."
             )
     except RuntimeError:
         logger.debug(

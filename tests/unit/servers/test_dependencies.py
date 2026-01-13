@@ -378,6 +378,14 @@ def _setup_mock_request_state(mock_request, auth_scenario=None, cached_fetcher=N
     mock_request.state.jira_fetcher = None
     mock_request.state.confluence_fetcher = None
 
+    # Per-request configuration overrides (must be set to None to avoid MagicMock)
+    mock_request.state.jira_token = None
+    mock_request.state.confluence_token = None
+    mock_request.state.jira_projects_filter = None
+    mock_request.state.confluence_spaces_filter = None
+    mock_request.state.read_only_mode = None
+    mock_request.state.enabled_tools = None
+
     if auth_scenario:
         mock_request.state.user_atlassian_auth_type = auth_scenario["auth_type"]
         mock_request.state.user_atlassian_token = auth_scenario["token"]
