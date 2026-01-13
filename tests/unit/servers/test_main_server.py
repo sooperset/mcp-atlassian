@@ -1,11 +1,11 @@
 """Tests for the main MCP server implementation."""
 
+import json
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-from starlette.requests import Request
-from starlette.responses import JSONResponse
 
 from mcp_atlassian.servers.main import UserTokenMiddleware, main_mcp
 
@@ -46,6 +46,30 @@ async def test_run_server_streamable_http():
 
 
 @pytest.mark.anyio
+async def test_run_server_streamable_http_stateless():
+    """Test that main_mcp.run_async is called with streamable-http transport and correct parameters."""
+    with patch.object(main_mcp, "run_async") as mock_run_async:
+        mock_run_async.return_value = None
+        test_port = 9001
+        test_host = "127.0.0.1"
+        test_path = "/custom_mcp"
+        await main_mcp.run_async(
+            transport="streamable-http",
+            port=test_port,
+            host=test_host,
+            path=test_path,
+            stateless_http=True,
+        )
+        mock_run_async.assert_called_once_with(
+            transport="streamable-http",
+            port=test_port,
+            host=test_host,
+            path=test_path,
+            stateless_http=True,
+        )
+
+
+@pytest.mark.anyio
 async def test_run_server_invalid_transport():
     """Test that run_server raises ValueError for invalid transport."""
     # We don't need to patch run_async here as the error occurs before it's called
@@ -59,7 +83,7 @@ async def test_run_server_invalid_transport():
 @pytest.mark.anyio
 async def test_health_check_endpoint():
     """Test the health check endpoint returns 200 and correct JSON response."""
-    app = main_mcp.sse_app()
+    app = main_mcp.http_app(transport="sse")
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/healthz")
@@ -71,7 +95,7 @@ async def test_health_check_endpoint():
 @pytest.mark.anyio
 async def test_sse_app_health_check_endpoint():
     """Test the /healthz endpoint on the SSE app returns 200 and correct JSON response."""
-    app = main_mcp.sse_app()
+    app = main_mcp.http_app(transport="sse")
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/healthz")
@@ -82,7 +106,7 @@ async def test_sse_app_health_check_endpoint():
 @pytest.mark.anyio
 async def test_streamable_http_app_health_check_endpoint():
     """Test the /healthz endpoint on the Streamable HTTP app returns 200 and correct JSON response."""
-    app = main_mcp.streamable_http_app()
+    app = main_mcp.http_app()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/healthz")
@@ -103,148 +127,261 @@ class TestUserTokenMiddleware:
         return UserTokenMiddleware(mock_app, mcp_server_ref=mock_mcp_server)
 
     @pytest.fixture
-    def mock_request(self):
-        """Create a mock request for testing."""
-        request = MagicMock(spec=Request)
-        request.url.path = "/mcp"
-        request.method = "POST"
-        request.headers = {}
-        # Create a real state object that can be modified
-        from types import SimpleNamespace
-
-        request.state = SimpleNamespace()
-        return request
+    def mock_scope(self):
+        """Create a mock ASGI scope for testing."""
+        return {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp",
+            "headers": [],
+            "state": {},
+        }
 
     @pytest.fixture
-    def mock_call_next(self):
-        """Create a mock call_next function."""
-        mock_response = JSONResponse({"test": "response"})
-        call_next = AsyncMock(return_value=mock_response)
-        return call_next
+    def mock_receive(self):
+        """Create a mock ASGI receive callable."""
+        return AsyncMock()
+
+    @pytest.fixture
+    def mock_send(self):
+        """Create a mock ASGI send callable."""
+        return AsyncMock()
 
     @pytest.mark.anyio
     async def test_cloud_id_header_extraction_success(
-        self, middleware, mock_request, mock_call_next
+        self, middleware, mock_scope, mock_receive, mock_send
     ):
         """Test successful cloud ID header extraction."""
-        # Setup request with cloud ID header
-        mock_request.headers = {
-            "Authorization": "Bearer test-token",
-            "X-Atlassian-Cloud-Id": "test-cloud-id-123",
-        }
+        # Setup scope with cloud ID header (ASGI headers are byte tuples)
+        mock_scope["headers"] = [
+            (b"authorization", b"Bearer test-token"),
+            (b"x-atlassian-cloud-id", b"test-cloud-id-123"),
+        ]
 
-        result = await middleware.dispatch(mock_request, mock_call_next)
+        # Call the middleware
+        await middleware(mock_scope, mock_receive, mock_send)
 
-        # Verify cloud ID was extracted and stored in request state
-        assert hasattr(mock_request.state, "user_atlassian_cloud_id")
-        assert mock_request.state.user_atlassian_cloud_id == "test-cloud-id-123"
+        # Verify cloud ID was extracted and stored in scope state
+        assert "user_atlassian_cloud_id" in mock_scope["state"]
+        assert mock_scope["state"]["user_atlassian_cloud_id"] == "test-cloud-id-123"
 
-        # Verify the request was processed normally
-        mock_call_next.assert_called_once_with(mock_request)
-        assert result is not None
+        # Verify authentication token was also extracted
+        assert "user_atlassian_token" in mock_scope["state"]
+        assert mock_scope["state"]["user_atlassian_token"] == "test-token"
+        assert mock_scope["state"]["user_atlassian_auth_type"] == "oauth"
 
-    @pytest.mark.anyio
-    async def test_service_headers_extraction_jira_only(
-        self, middleware, mock_request, mock_call_next
-    ):
-        """Test extraction of Jira service headers for header-based authentication."""
-        mock_request.headers = {
-            "X-Atlassian-Jira-Url": "https://test.atlassian.net",
-            "X-Atlassian-Jira-Personal-Token": "test-jira-pat-token",
-        }
+        # Verify the app was called (we don't check exact parameters since send is wrapped)
+        middleware.app.assert_called_once()
 
-        result = await middleware.dispatch(mock_request, mock_call_next)
+        # Verify the scope passed to the app has the correct structure
+        call_args = middleware.app.call_args
+        assert call_args is not None
+        passed_scope, passed_receive, passed_send = call_args[0]
 
-        assert hasattr(mock_request.state, "atlassian_service_headers")
-        service_headers = mock_request.state.atlassian_service_headers
-        assert service_headers["X-Atlassian-Jira-Url"] == "https://test.atlassian.net"
-        assert (
-            service_headers["X-Atlassian-Jira-Personal-Token"] == "test-jira-pat-token"
-        )
-
-        assert hasattr(mock_request.state, "user_atlassian_auth_type")
-        assert mock_request.state.user_atlassian_auth_type == "pat"
-        assert mock_request.state.user_atlassian_email is None
-
-        mock_call_next.assert_called_once_with(mock_request)
+        # Verify scope was copied and modified correctly
+        assert passed_scope["type"] == "http"
+        assert passed_scope["method"] == "POST"
+        assert passed_scope["path"] == "/mcp"
+        assert passed_scope["state"]["user_atlassian_cloud_id"] == "test-cloud-id-123"
 
     @pytest.mark.anyio
-    async def test_service_headers_extraction_confluence_only(
-        self, middleware, mock_request, mock_call_next
+    async def test_empty_bearer_token_returns_401(
+        self, middleware, mock_scope, mock_receive, mock_send
     ):
-        """Test extraction of Confluence service headers for header-based authentication."""
-        mock_request.headers = {
-            "X-Atlassian-Confluence-Url": "https://test.atlassian.net",
-            "X-Atlassian-Confluence-Personal-Token": "test-confluence-pat-token",
-        }
+        """Test that empty Bearer token returns 401 Unauthorized."""
+        mock_scope["headers"] = [(b"authorization", b"Bearer ")]
 
-        result = await middleware.dispatch(mock_request, mock_call_next)
+        await middleware(mock_scope, mock_receive, mock_send)
 
-        assert hasattr(mock_request.state, "atlassian_service_headers")
-        service_headers = mock_request.state.atlassian_service_headers
-        assert (
-            service_headers["X-Atlassian-Confluence-Url"]
-            == "https://test.atlassian.net"
-        )
-        assert (
-            service_headers["X-Atlassian-Confluence-Personal-Token"]
-            == "test-confluence-pat-token"
-        )
+        # Verify 401 response was sent (response.start + response.body)
+        assert mock_send.call_count == 2
+        start_call = mock_send.call_args_list[0][0][0]
+        assert start_call["type"] == "http.response.start"
+        assert start_call["status"] == 401
 
-        assert hasattr(mock_request.state, "user_atlassian_auth_type")
-        assert mock_request.state.user_atlassian_auth_type == "pat"
+        body_call = mock_send.call_args_list[1][0][0]
+        assert body_call["type"] == "http.response.body"
+        body = json.loads(body_call["body"].decode())
+        assert "error" in body
+        assert "Empty Bearer token" in body["error"]
 
-        mock_call_next.assert_called_once_with(mock_request)
+        # Verify app was NOT called
+        middleware.app.assert_not_called()
 
     @pytest.mark.anyio
-    async def test_service_headers_extraction_both_services(
-        self, middleware, mock_request, mock_call_next
+    async def test_empty_pat_token_returns_401(
+        self, middleware, mock_scope, mock_receive, mock_send
     ):
-        """Test extraction of both Jira and Confluence service headers."""
-        mock_request.headers = {
-            "X-Atlassian-Jira-Url": "https://jira.atlassian.net",
-            "X-Atlassian-Jira-Personal-Token": "test-jira-pat-token",
-            "X-Atlassian-Confluence-Url": "https://confluence.atlassian.net",
-            "X-Atlassian-Confluence-Personal-Token": "test-confluence-pat-token",
-        }
+        """Test that empty Token (PAT) returns 401 Unauthorized."""
+        mock_scope["headers"] = [(b"authorization", b"Token ")]
 
-        result = await middleware.dispatch(mock_request, mock_call_next)
+        await middleware(mock_scope, mock_receive, mock_send)
 
-        assert hasattr(mock_request.state, "atlassian_service_headers")
-        service_headers = mock_request.state.atlassian_service_headers
-        assert len(service_headers) == 4
-        assert service_headers["X-Atlassian-Jira-Url"] == "https://jira.atlassian.net"
-        assert (
-            service_headers["X-Atlassian-Jira-Personal-Token"] == "test-jira-pat-token"
-        )
-        assert (
-            service_headers["X-Atlassian-Confluence-Url"]
-            == "https://confluence.atlassian.net"
-        )
-        assert (
-            service_headers["X-Atlassian-Confluence-Personal-Token"]
-            == "test-confluence-pat-token"
-        )
+        # Verify 401 response was sent
+        assert mock_send.call_count == 2
+        start_call = mock_send.call_args_list[0][0][0]
+        assert start_call["status"] == 401
 
-        mock_call_next.assert_called_once_with(mock_request)
+        body_call = mock_send.call_args_list[1][0][0]
+        body = json.loads(body_call["body"].decode())
+        assert "Empty Token (PAT)" in body["error"]
+
+        # Verify app was NOT called
+        middleware.app.assert_not_called()
 
     @pytest.mark.anyio
-    async def test_no_service_headers_no_auth_header(
-        self, middleware, mock_request, mock_call_next
+    async def test_unsupported_auth_type_returns_401(
+        self, middleware, mock_scope, mock_receive, mock_send
     ):
-        """Test behavior when no service headers or auth headers are present."""
+        """Test that unsupported auth types (e.g., Basic) return 401 Unauthorized."""
+        mock_scope["headers"] = [(b"authorization", b"Basic dXNlcjpwYXNz")]
 
-        mock_request.headers = {"Content-Type": "application/json"}
+        await middleware(mock_scope, mock_receive, mock_send)
 
-        result = await middleware.dispatch(mock_request, mock_call_next)
+        # Verify 401 response was sent
+        assert mock_send.call_count == 2
+        start_call = mock_send.call_args_list[0][0][0]
+        assert start_call["status"] == 401
 
-        assert hasattr(mock_request.state, "atlassian_service_headers")
-        service_headers = mock_request.state.atlassian_service_headers
-        assert service_headers == {}
+        body_call = mock_send.call_args_list[1][0][0]
+        body = json.loads(body_call["body"].decode())
+        assert "Bearer" in body["error"] or "Token" in body["error"]
 
-        assert (
-            not hasattr(mock_request.state, "user_atlassian_auth_type")
-            or mock_request.state.user_atlassian_auth_type is None
+        # Verify app was NOT called
+        middleware.app.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_whitespace_only_auth_returns_401(
+        self, middleware, mock_scope, mock_receive, mock_send
+    ):
+        """Test that whitespace-only Authorization header returns 401."""
+        mock_scope["headers"] = [(b"authorization", b"   ")]
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        # Verify 401 response was sent
+        assert mock_send.call_count == 2
+        start_call = mock_send.call_args_list[0][0][0]
+        assert start_call["status"] == 401
+
+        body_call = mock_send.call_args_list[1][0][0]
+        body = json.loads(body_call["body"].decode())
+        assert "Empty Authorization header" in body["error"]
+
+        # Verify app was NOT called
+        middleware.app.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_client_disconnect_connection_reset(
+        self, middleware, mock_scope, mock_receive
+    ):
+        """Test that ConnectionResetError during send is handled gracefully."""
+        mock_scope["headers"] = [(b"authorization", b"Bearer valid-token")]
+
+        # Mock send that raises ConnectionResetError
+        disconnect_send = AsyncMock(
+            side_effect=ConnectionResetError("Connection reset")
         )
 
-        mock_call_next.assert_called_once_with(mock_request)
+        # Should not raise - should handle gracefully
+        await middleware(mock_scope, mock_receive, disconnect_send)
+
+        # Verify middleware completed without raising
+        middleware.app.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_client_disconnect_broken_pipe(
+        self, middleware, mock_scope, mock_receive
+    ):
+        """Test that BrokenPipeError during send is handled gracefully."""
+        mock_scope["headers"] = [(b"authorization", b"Bearer valid-token")]
+
+        disconnect_send = AsyncMock(side_effect=BrokenPipeError("Broken pipe"))
+
+        # Should not raise
+        await middleware(mock_scope, mock_receive, disconnect_send)
+
+        middleware.app.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_client_disconnect_oserror(
+        self, middleware, mock_scope, mock_receive
+    ):
+        """Test that OSError during send is handled gracefully."""
+        mock_scope["headers"] = [(b"authorization", b"Bearer valid-token")]
+
+        disconnect_send = AsyncMock(side_effect=OSError("Network error"))
+
+        await middleware(mock_scope, mock_receive, disconnect_send)
+
+        middleware.app.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_non_http_scope_passthrough(
+        self, middleware, mock_receive, mock_send
+    ):
+        """Test that non-HTTP requests are passed through unchanged."""
+        websocket_scope = {
+            "type": "websocket",
+            "path": "/ws",
+        }
+
+        await middleware(websocket_scope, mock_receive, mock_send)
+
+        # Verify app was called with original scope (not modified)
+        middleware.app.assert_called_once()
+        passed_scope = middleware.app.call_args[0][0]
+        assert passed_scope["type"] == "websocket"
+        assert "state" not in passed_scope  # No auth state added
+
+    @pytest.mark.anyio
+    async def test_mcp_session_id_logged(
+        self, middleware, mock_scope, mock_receive, mock_send, caplog
+    ):
+        """Test that mcp-session-id header is logged for debugging."""
+        mock_scope["headers"] = [
+            (b"authorization", b"Bearer valid-token"),
+            (b"mcp-session-id", b"test-session-123"),
+        ]
+
+        with caplog.at_level(logging.DEBUG, logger="mcp-atlassian.server.main"):
+            await middleware(mock_scope, mock_receive, mock_send)
+
+        assert "MCP-Session-ID header found: test-session-123" in caplog.text
+
+    @pytest.mark.anyio
+    async def test_valid_bearer_token_proceeds(
+        self, middleware, mock_scope, mock_receive, mock_send
+    ):
+        """Test that valid Bearer token allows request to proceed."""
+        mock_scope["headers"] = [(b"authorization", b"Bearer valid-token-123")]
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        # Verify app was called
+        middleware.app.assert_called_once()
+
+        # Verify no 401 was sent (send should not be called directly by middleware)
+        mock_send.assert_not_called()
+
+        # Verify token was extracted
+        passed_scope = middleware.app.call_args[0][0]
+        assert passed_scope["state"]["user_atlassian_token"] == "valid-token-123"
+        assert passed_scope["state"]["user_atlassian_auth_type"] == "oauth"
+
+    @pytest.mark.anyio
+    async def test_valid_pat_token_proceeds(
+        self, middleware, mock_scope, mock_receive, mock_send
+    ):
+        """Test that valid PAT token allows request to proceed."""
+        mock_scope["headers"] = [(b"authorization", b"Token my-pat-token")]
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        # Verify app was called
+        middleware.app.assert_called_once()
+
+        # Verify token was extracted
+        passed_scope = middleware.app.call_args[0][0]
+        assert passed_scope["state"]["user_atlassian_token"] == "my-pat-token"
+        assert passed_scope["state"]["user_atlassian_auth_type"] == "pat"

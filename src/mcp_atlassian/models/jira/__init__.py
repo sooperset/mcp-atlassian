@@ -24,6 +24,12 @@ from .link import (
     JiraLinkedIssue,
     JiraLinkedIssueFields,
 )
+from .metrics import (
+    IssueDatesBatchResponse,
+    IssueDatesResponse,
+    StatusChangeEntry,
+    StatusTimeSummary,
+)
 from .project import JiraProject
 from .search import JiraSearchResult
 from .workflow import JiraTransition
@@ -52,4 +58,9 @@ __all__ = [
     "JiraIssueLink",
     "JiraLinkedIssue",
     "JiraLinkedIssueFields",
+    # Metrics models
+    "IssueDatesResponse",
+    "IssueDatesBatchResponse",
+    "StatusChangeEntry",
+    "StatusTimeSummary",
 ]

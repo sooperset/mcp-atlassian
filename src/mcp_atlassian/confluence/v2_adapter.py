@@ -419,3 +419,49 @@ class ConfluenceV2Adapter:
             }
 
         return v1_compatible
+
+    def get_page_views(self, page_id: str) -> dict[str, Any]:
+        """Get view statistics for a page using the Analytics API.
+
+        Note: This API is only available for Confluence Cloud.
+
+        Args:
+            page_id: The ID of the page
+
+        Returns:
+            Dictionary containing view statistics:
+            - count: Total view count
+            - lastSeen: Last viewed timestamp (if available)
+
+        Raises:
+            HTTPError: If the API request fails (propagates 401/403)
+            ValueError: If page not found or other errors
+        """
+        try:
+            # Use the Analytics API endpoint
+            url = f"{self.base_url}/wiki/rest/api/analytics/content/{page_id}/views"
+
+            response = self.session.get(url)
+            response.raise_for_status()
+
+            data = response.json()
+            logger.debug(f"Successfully retrieved view stats for page '{page_id}'")
+
+            return data
+
+        except HTTPError as e:
+            # Propagate auth errors (401, 403)
+            if e.response is not None and e.response.status_code in [401, 403]:
+                logger.error(
+                    f"Authentication error getting views for page '{page_id}': {e}"
+                )
+                raise
+            logger.warning(f"HTTP error getting views for page '{page_id}': {e}")
+            raise ValueError(
+                f"Failed to get view statistics for page '{page_id}': {e}"
+            ) from e
+        except Exception as e:
+            logger.error(f"Error getting views for page '{page_id}': {e}")
+            raise ValueError(
+                f"Failed to get view statistics for page '{page_id}': {e}"
+            ) from e

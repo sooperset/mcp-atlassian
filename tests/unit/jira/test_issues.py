@@ -1357,7 +1357,7 @@ class TestIssuesMixin:
                             "email": None,
                             "name": "Test User 1",
                         },
-                        "created": "2024-01-05 10:06:03.548000+08:00",
+                        "created": "2024-01-05T10:06:03.548000+08:00",
                         "items": [
                             {
                                 "field": "IssueParentAssociation",
@@ -1382,7 +1382,7 @@ class TestIssuesMixin:
                             "email": None,
                             "name": "Test User 2",
                         },
-                        "created": "2024-01-01 11:00:00+00:00",
+                        "created": "2024-01-01T11:00:00+00:00",
                         "items": [
                             {
                                 "field": "Parent",
@@ -1399,7 +1399,7 @@ class TestIssuesMixin:
                             "email": None,
                             "name": "Test User 3",
                         },
-                        "created": "2024-01-06 10:06:03.548000+08:00",
+                        "created": "2024-01-06T10:06:03.548000+08:00",
                         "items": [
                             {
                                 "field": "Parent",
@@ -1418,7 +1418,7 @@ class TestIssuesMixin:
                             "email": None,
                             "name": "Test User 1",
                         },
-                        "created": "2024-01-10 10:06:03.548000+08:00",
+                        "created": "2024-01-10T10:06:03.548000+08:00",
                         "items": [
                             {
                                 "field": "Parent",

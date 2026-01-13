@@ -142,25 +142,25 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
 
     test_mcp = AtlassianMCP(
         "TestConfluence",
-        description="Test Confluence MCP Server",
+        instructions="Test Confluence MCP Server",
         lifespan=test_lifespan,
     )
 
     # Create and configure the sub-MCP for Confluence tools
     confluence_sub_mcp = FastMCP(name="TestConfluenceSubMCP")
-    confluence_sub_mcp.tool()(search)
-    confluence_sub_mcp.tool()(get_page)
-    confluence_sub_mcp.tool()(get_page_children)
-    confluence_sub_mcp.tool()(get_comments)
-    confluence_sub_mcp.tool()(add_comment)
-    confluence_sub_mcp.tool()(get_labels)
-    confluence_sub_mcp.tool()(add_label)
-    confluence_sub_mcp.tool()(create_page)
-    confluence_sub_mcp.tool()(update_page)
-    confluence_sub_mcp.tool()(delete_page)
-    confluence_sub_mcp.tool()(search_user)
+    confluence_sub_mcp.add_tool(search)
+    confluence_sub_mcp.add_tool(get_page)
+    confluence_sub_mcp.add_tool(get_page_children)
+    confluence_sub_mcp.add_tool(get_comments)
+    confluence_sub_mcp.add_tool(add_comment)
+    confluence_sub_mcp.add_tool(get_labels)
+    confluence_sub_mcp.add_tool(add_label)
+    confluence_sub_mcp.add_tool(create_page)
+    confluence_sub_mcp.add_tool(update_page)
+    confluence_sub_mcp.add_tool(delete_page)
+    confluence_sub_mcp.add_tool(search_user)
 
-    test_mcp.mount("confluence", confluence_sub_mcp)
+    test_mcp.mount(confluence_sub_mcp, prefix="confluence")
 
     return test_mcp
 
@@ -197,25 +197,25 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
 
     test_mcp = AtlassianMCP(
         "NoFetcherTestConfluence",
-        description="No Fetcher Test Confluence MCP Server",
+        instructions="No Fetcher Test Confluence MCP Server",
         lifespan=no_fetcher_test_lifespan,
     )
 
     # Create and configure the sub-MCP for Confluence tools
     confluence_sub_mcp = FastMCP(name="NoFetcherTestConfluenceSubMCP")
-    confluence_sub_mcp.tool()(search)
-    confluence_sub_mcp.tool()(get_page)
-    confluence_sub_mcp.tool()(get_page_children)
-    confluence_sub_mcp.tool()(get_comments)
-    confluence_sub_mcp.tool()(add_comment)
-    confluence_sub_mcp.tool()(get_labels)
-    confluence_sub_mcp.tool()(add_label)
-    confluence_sub_mcp.tool()(create_page)
-    confluence_sub_mcp.tool()(update_page)
-    confluence_sub_mcp.tool()(delete_page)
-    confluence_sub_mcp.tool()(search_user)
+    confluence_sub_mcp.add_tool(search)
+    confluence_sub_mcp.add_tool(get_page)
+    confluence_sub_mcp.add_tool(get_page_children)
+    confluence_sub_mcp.add_tool(get_comments)
+    confluence_sub_mcp.add_tool(add_comment)
+    confluence_sub_mcp.add_tool(get_labels)
+    confluence_sub_mcp.add_tool(add_label)
+    confluence_sub_mcp.add_tool(create_page)
+    confluence_sub_mcp.add_tool(update_page)
+    confluence_sub_mcp.add_tool(delete_page)
+    confluence_sub_mcp.add_tool(search_user)
 
-    test_mcp.mount("confluence", confluence_sub_mcp)
+    test_mcp.mount(confluence_sub_mcp, prefix="confluence")
 
     return test_mcp
 
@@ -267,7 +267,7 @@ async def test_search(client, mock_confluence_fetcher):
     assert kwargs.get("limit") == 10
     assert kwargs.get("spaces_filter") is None
 
-    result_data = json.loads(response[0].text)
+    result_data = json.loads(response.content[0].text)
     assert isinstance(result_data, list)
     assert len(result_data) > 0
     assert result_data[0]["title"] == "Test Page Mock Title"
@@ -282,7 +282,7 @@ async def test_get_page(client, mock_confluence_fetcher):
         "123456", convert_to_markdown=True
     )
 
-    result_data = json.loads(response[0].text)
+    result_data = json.loads(response.content[0].text)
     assert "metadata" in result_data
     assert result_data["metadata"]["title"] == "Test Page Mock Title"
     assert "content" in result_data["metadata"]
@@ -301,7 +301,7 @@ async def test_get_page_no_metadata(client, mock_confluence_fetcher):
         "123456", convert_to_markdown=True
     )
 
-    result_data = json.loads(response[0].text)
+    result_data = json.loads(response.content[0].text)
     assert "metadata" not in result_data
     assert "content" in result_data
     assert "This is a test page content" in result_data["content"]["value"]
@@ -331,7 +331,7 @@ async def test_get_page_no_markdown(client, mock_confluence_fetcher):
         "123456", convert_to_markdown=False
     )
 
-    result_data = json.loads(response[0].text)
+    result_data = json.loads(response.content[0].text)
     assert "metadata" in result_data
     assert result_data["metadata"]["title"] == "Test Page HTML"
     assert result_data["metadata"]["content"] == "<p>HTML Content</p>"
@@ -352,7 +352,7 @@ async def test_get_page_children(client, mock_confluence_fetcher):
     assert call_kwargs.get("limit") == 25
     assert call_kwargs.get("expand") == "version"
 
-    result_data = json.loads(response[0].text)
+    result_data = json.loads(response.content[0].text)
     assert "parent_id" in result_data
     assert "results" in result_data
     assert len(result_data["results"]) > 0
@@ -366,7 +366,7 @@ async def test_get_comments(client, mock_confluence_fetcher):
 
     mock_confluence_fetcher.get_page_comments.assert_called_once_with("123456")
 
-    result_data = json.loads(response[0].text)
+    result_data = json.loads(response.content[0].text)
     assert isinstance(result_data, list)
     assert len(result_data) > 0
     assert result_data[0]["author"] == "Test User"
@@ -384,7 +384,7 @@ async def test_add_comment(client, mock_confluence_fetcher):
         page_id="123456", content="Test comment content"
     )
 
-    result_data = json.loads(response[0].text)
+    result_data = json.loads(response.content[0].text)
     assert isinstance(result_data, dict)
     assert result_data["success"] is True
     assert "comment" in result_data
@@ -399,7 +399,7 @@ async def test_get_labels(client, mock_confluence_fetcher):
     """Test retrieving page labels."""
     response = await client.call_tool("confluence_get_labels", {"page_id": "123456"})
     mock_confluence_fetcher.get_page_labels.assert_called_once_with("123456")
-    result_data = json.loads(response[0].text)
+    result_data = json.loads(response.content[0].text)
     assert isinstance(result_data, list)
     assert result_data[0]["name"] == "test-label"
 
@@ -413,7 +413,7 @@ async def test_add_label(client, mock_confluence_fetcher):
     mock_confluence_fetcher.add_page_label.assert_called_once_with(
         "123456", "new-label"
     )
-    result_data = json.loads(response[0].text)
+    result_data = json.loads(response.content[0].text)
     assert isinstance(result_data, list)
     assert result_data[0]["name"] == "test-label"
 
@@ -429,7 +429,7 @@ async def test_search_user(client, mock_confluence_fetcher):
         'user.fullname ~ "First Last"', limit=10
     )
 
-    result_data = json.loads(response[0].text)
+    result_data = json.loads(response.content[0].text)
     assert isinstance(result_data, list)
     assert len(result_data) == 1
     assert result_data[0]["entity_type"] == "user"
@@ -458,7 +458,7 @@ async def test_create_page_with_numeric_parent_id(client, mock_confluence_fetche
     assert call_kwargs["space_key"] == "TEST"
     assert call_kwargs["title"] == "Test Page"
 
-    result_data = json.loads(response[0].text)
+    result_data = json.loads(response.content[0].text)
     assert result_data["message"] == "Page created successfully"
     assert result_data["page"]["title"] == "Test Page Mock Title"
 
@@ -482,7 +482,7 @@ async def test_create_page_with_string_parent_id(client, mock_confluence_fetcher
     assert call_kwargs["space_key"] == "TEST"
     assert call_kwargs["title"] == "Test Page"
 
-    result_data = json.loads(response[0].text)
+    result_data = json.loads(response.content[0].text)
     assert result_data["message"] == "Page created successfully"
     assert result_data["page"]["title"] == "Test Page Mock Title"
 
@@ -506,7 +506,7 @@ async def test_update_page_with_numeric_parent_id(client, mock_confluence_fetche
     assert call_kwargs["page_id"] == "999999"
     assert call_kwargs["title"] == "Updated Page"
 
-    result_data = json.loads(response[0].text)
+    result_data = json.loads(response.content[0].text)
     assert result_data["message"] == "Page updated successfully"
     assert result_data["page"]["title"] == "Test Page Mock Title"
 
@@ -530,6 +530,6 @@ async def test_update_page_with_string_parent_id(client, mock_confluence_fetcher
     assert call_kwargs["page_id"] == "999999"
     assert call_kwargs["title"] == "Updated Page"
 
-    result_data = json.loads(response[0].text)
+    result_data = json.loads(response.content[0].text)
     assert result_data["message"] == "Page updated successfully"
     assert result_data["page"]["title"] == "Test Page Mock Title"

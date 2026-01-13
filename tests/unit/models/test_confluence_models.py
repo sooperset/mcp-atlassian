@@ -550,6 +550,61 @@ class TestConfluencePage:
             == "https://wiki.corp.example.com/pages/viewpage.action?pageId=123456"
         )
 
+    def test_attachment_url_uses_parent_page_id_server(self):
+        """Test that attachment URLs use parent page ID for server format."""
+        attachment_data = {
+            "id": "att105348",
+            "type": "attachment",
+            "title": "document.pdf",
+            "container": {"id": "12345", "type": "page"},
+        }
+
+        page = ConfluencePage.from_api_response(
+            attachment_data,
+            base_url="http://wiki.example.com",
+            is_cloud=False,
+        )
+
+        assert "pageId=12345" in page.url
+        assert "att105348" not in page.url
+
+    def test_attachment_url_uses_parent_page_id_cloud(self):
+        """Test that attachment URLs use parent page ID for cloud format."""
+        attachment_data = {
+            "id": "att105348",
+            "type": "attachment",
+            "title": "document.pdf",
+            "space": {"key": "TEST"},
+            "container": {"id": "12345", "type": "page"},
+        }
+
+        page = ConfluencePage.from_api_response(
+            attachment_data,
+            base_url="https://example.atlassian.net/wiki",
+            is_cloud=True,
+        )
+
+        assert "/pages/12345" in page.url
+        assert "att105348" not in page.url
+
+    def test_attachment_without_container_falls_back_to_own_id(self):
+        """Test that attachments without container fall back to their own ID."""
+        attachment_data = {
+            "id": "att105348",
+            "type": "attachment",
+            "title": "document.pdf",
+            # No container field
+        }
+
+        page = ConfluencePage.from_api_response(
+            attachment_data,
+            base_url="http://wiki.example.com",
+            is_cloud=False,
+        )
+
+        # Falls back to attachment ID when no container
+        assert "pageId=att105348" in page.url
+
 
 class TestConfluenceSearchResult:
     """Tests for the ConfluenceSearchResult model."""

@@ -473,7 +473,69 @@ class TestPagesMixin:
             pages_mixin.delete_page(page_id)
 
     def test_get_page_children_success(self, pages_mixin):
-        """Test successfully getting child pages."""
+        """Test successfully getting child pages and folders."""
+        # Arrange
+        parent_id = "123456"
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        # Mock the response from get_page_child_by_type for pages
+        child_pages_data = {
+            "results": [
+                {
+                    "id": "789012",
+                    "title": "Child Page 1",
+                    "type": "page",
+                    "space": {"key": "DEMO"},
+                    "version": {"number": 1},
+                },
+                {
+                    "id": "345678",
+                    "title": "Child Page 2",
+                    "type": "page",
+                    "space": {"key": "DEMO"},
+                    "version": {"number": 3},
+                },
+            ]
+        }
+        # Mock the response for folders
+        child_folders_data = {
+            "results": [
+                {
+                    "id": "111222",
+                    "title": "Child Folder 1",
+                    "type": "folder",
+                    "space": {"key": "DEMO"},
+                    "version": {"number": 1},
+                },
+            ]
+        }
+
+        # Mock to return pages first, then folders
+        pages_mixin.confluence.get_page_child_by_type.side_effect = [
+            child_pages_data,
+            child_folders_data,
+        ]
+
+        # Act
+        results = pages_mixin.get_page_children(
+            page_id=parent_id, limit=10, expand="version"
+        )
+
+        # Assert - should be called twice (once for pages, once for folders)
+        assert pages_mixin.confluence.get_page_child_by_type.call_count == 2
+
+        # Verify the results include both pages and folders
+        assert len(results) == 3
+        assert isinstance(results[0], ConfluencePage)
+        assert results[0].id == "789012"
+        assert results[0].title == "Child Page 1"
+        assert results[1].id == "345678"
+        assert results[1].title == "Child Page 2"
+        assert results[2].id == "111222"
+        assert results[2].title == "Child Folder 1"
+
+    def test_get_page_children_without_folders(self, pages_mixin):
+        """Test getting child pages only (without folders)."""
         # Arrange
         parent_id = "123456"
         pages_mixin.config.url = "https://example.atlassian.net/wiki"
@@ -487,33 +549,23 @@ class TestPagesMixin:
                     "space": {"key": "DEMO"},
                     "version": {"number": 1},
                 },
-                {
-                    "id": "345678",
-                    "title": "Child Page 2",
-                    "space": {"key": "DEMO"},
-                    "version": {"number": 3},
-                },
             ]
         }
         pages_mixin.confluence.get_page_child_by_type.return_value = child_pages_data
 
         # Act
         results = pages_mixin.get_page_children(
-            page_id=parent_id, limit=10, expand="version"
+            page_id=parent_id, limit=10, expand="version", include_folders=False
         )
 
-        # Assert
+        # Assert - should only be called once (for pages only)
         pages_mixin.confluence.get_page_child_by_type.assert_called_once_with(
             page_id=parent_id, type="page", start=0, limit=10, expand="version"
         )
 
         # Verify the results
-        assert len(results) == 2
-        assert isinstance(results[0], ConfluencePage)
+        assert len(results) == 1
         assert results[0].id == "789012"
-        assert results[0].title == "Child Page 1"
-        assert results[1].id == "345678"
-        assert results[1].title == "Child Page 2"
 
     def test_get_page_children_with_content(self, pages_mixin):
         """Test getting child pages with content."""
@@ -533,7 +585,13 @@ class TestPagesMixin:
                 }
             ]
         }
-        pages_mixin.confluence.get_page_child_by_type.return_value = child_pages_data
+        # Mock empty folders response
+        child_folders_data = {"results": []}
+
+        pages_mixin.confluence.get_page_child_by_type.side_effect = [
+            child_pages_data,
+            child_folders_data,
+        ]
 
         # Mock the preprocessor
         pages_mixin.preprocessor.process_html_content.return_value = (
@@ -560,7 +618,7 @@ class TestPagesMixin:
         # Arrange
         parent_id = "123456"
 
-        # Mock empty response
+        # Mock empty response for both pages and folders
         pages_mixin.confluence.get_page_child_by_type.return_value = {"results": []}
 
         # Act
@@ -574,7 +632,7 @@ class TestPagesMixin:
         # Arrange
         parent_id = "123456"
 
-        # Mock an exception
+        # Mock an exception on the first call (pages)
         pages_mixin.confluence.get_page_child_by_type.side_effect = Exception(
             "API Error"
         )
@@ -584,6 +642,35 @@ class TestPagesMixin:
 
         # Assert - should return empty list on error, not raise exception
         assert len(results) == 0
+
+    def test_get_page_children_folder_error_graceful(self, pages_mixin):
+        """Test that folder fetch errors don't fail the whole operation."""
+        # Arrange
+        parent_id = "123456"
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        # Mock pages success, folders failure
+        child_pages_data = {
+            "results": [
+                {
+                    "id": "789012",
+                    "title": "Child Page 1",
+                    "space": {"key": "DEMO"},
+                    "version": {"number": 1},
+                },
+            ]
+        }
+        pages_mixin.confluence.get_page_child_by_type.side_effect = [
+            child_pages_data,
+            Exception("Folder API not supported"),
+        ]
+
+        # Act
+        results = pages_mixin.get_page_children(page_id=parent_id)
+
+        # Assert - should still return pages even if folder fetch fails
+        assert len(results) == 1
+        assert results[0].id == "789012"
 
     def test_get_page_success(self, pages_mixin):
         """Test successful page retrieval."""
@@ -844,6 +931,60 @@ class TestPagesMixin:
             assert isinstance(result, ConfluencePage)
             assert result.id == "v1_123456789"
             assert result.title == title
+
+    @pytest.mark.parametrize(
+        "body",
+        [None, {"storage": None}, {"storage": {"value": None}}],
+        ids=["body=None", "storage=None", "value=None"],
+    )
+    def test_get_page_content_missing_body_regression(self, pages_mixin, body):
+        """Regression test for #760: handle missing body.storage.value."""
+        pages_mixin.confluence.get_page_by_id.return_value = {
+            "id": "123456",
+            "title": "Test",
+            "space": {"key": "TEST"},
+            "body": body,
+            "version": {"number": 1},
+        }
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+        result = pages_mixin.get_page_content("123456")
+        assert isinstance(result, ConfluencePage)
+        assert result.id == "123456"
+
+    def test_get_page_by_title_missing_body_regression(self, pages_mixin):
+        """Regression test for #760: get_page_by_title handles None body."""
+        pages_mixin.confluence.get_page_by_title.return_value = {
+            "id": "123456",
+            "title": "Test",
+            "space": {"key": "TEST"},
+            "body": None,
+            "version": {"number": 1},
+        }
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+        result = pages_mixin.get_page_by_title("TEST", "Test")
+        assert isinstance(result, ConfluencePage)
+
+    def test_get_space_pages_missing_body_regression(self, pages_mixin):
+        """Regression test for #760: get_space_pages handles None body."""
+        pages_mixin.confluence.get_all_pages_from_space.return_value = [
+            {
+                "id": "1",
+                "title": "A",
+                "space": {"key": "T"},
+                "body": None,
+                "version": {"number": 1},
+            },
+            {
+                "id": "2",
+                "title": "B",
+                "space": {"key": "T"},
+                "body": {"storage": None},
+                "version": {"number": 1},
+            },
+        ]
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+        results = pages_mixin.get_space_pages("T")
+        assert len(results) == 2
 
 
 class TestPagesOAuthMixin:

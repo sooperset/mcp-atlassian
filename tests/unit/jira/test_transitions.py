@@ -253,6 +253,165 @@ class TestTransitionsMixin:
         transitions_mixin.get_issue.assert_called_once_with("TEST-123")
         assert isinstance(result, JiraIssue)
 
+    def test_get_transitions_uses_full_api(self, transitions_mixin: TransitionsMixin):
+        """Test that get_transitions uses get_issue_transitions_full for complete data.
+
+        This is the fix for issue #602 - we need the full 'to' object from the API,
+        not the simplified version that only contains the status name as a string.
+        """
+        # Setup mock response matching real Jira API format
+        mock_response = {
+            "expand": "transitions",
+            "transitions": [
+                {
+                    "id": "731",
+                    "name": "Close Issue",
+                    "to": {
+                        "self": "https://jira.example.com/rest/api/2/status/6",
+                        "name": "Closed",
+                        "id": "6",
+                        "statusCategory": {
+                            "id": 3,
+                            "key": "done",
+                            "name": "Done",
+                        },
+                    },
+                },
+                {
+                    "id": "711",
+                    "name": "Wait",
+                    "to": {
+                        "name": "Waiting",
+                        "id": "10100",
+                    },
+                },
+            ],
+        }
+        transitions_mixin.jira.get_issue_transitions_full = MagicMock(
+            return_value=mock_response
+        )
+
+        # Call the method
+        result = transitions_mixin.get_transitions("TEST-123")
+
+        # Verify get_issue_transitions_full was called (not get_issue_transitions)
+        transitions_mixin.jira.get_issue_transitions_full.assert_called_once_with(
+            "TEST-123"
+        )
+
+        # Verify we get the full transitions list with complete 'to' objects
+        assert len(result) == 2
+        assert result[0]["id"] == "731"
+        assert result[0]["name"] == "Close Issue"
+        assert isinstance(result[0]["to"], dict)  # Full dict, not string!
+        assert result[0]["to"]["name"] == "Closed"
+        assert result[0]["to"]["id"] == "6"
+
+    def test_get_transitions_models_with_full_to_status(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test that get_transitions_models correctly parses full 'to' status objects.
+
+        This verifies that when get_issue_transitions_full returns complete 'to' objects,
+        the JiraTransition models are created with proper to_status.
+        """
+        # Setup mock response matching real Jira API format
+        mock_response = {
+            "transitions": [
+                {
+                    "id": "731",
+                    "name": "Close Issue",
+                    "to": {
+                        "name": "Closed",
+                        "id": "6",
+                        "statusCategory": {
+                            "id": 3,
+                            "key": "done",
+                            "name": "Done",
+                            "colorName": "success",
+                        },
+                    },
+                },
+            ],
+        }
+        transitions_mixin.jira.get_issue_transitions_full = MagicMock(
+            return_value=mock_response
+        )
+
+        # Use real implementation, not the mocked one from fixture
+        transitions_mixin.get_transitions_models = (
+            TransitionsMixin.get_transitions_models.__get__(
+                transitions_mixin, type(transitions_mixin)
+            )
+        )
+        transitions_mixin.get_transitions = TransitionsMixin.get_transitions.__get__(
+            transitions_mixin, type(transitions_mixin)
+        )
+
+        # Call the method
+        result = transitions_mixin.get_transitions_models("TEST-123")
+
+        # Verify the model has proper to_status
+        assert len(result) == 1
+        assert result[0].id == "731"
+        assert result[0].name == "Close Issue"
+        assert result[0].to_status is not None  # Should NOT be None!
+        assert result[0].to_status.name == "Closed"
+        assert result[0].to_status.id == "6"
+
+    def test_transition_issue_with_resolution_field(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test transition_issue with resolution field uses correct code path.
+
+        This is the end-to-end test for issue #602 - when transitioning with fields
+        like resolution, the to_status should be available (from get_issue_transitions_full)
+        so set_issue_status is used which properly includes fields.
+        """
+        # Setup mock for get_issue_transitions_full (used by get_transitions)
+        mock_response = {
+            "transitions": [
+                {
+                    "id": "731",
+                    "name": "Close Issue",
+                    "to": {
+                        "name": "Closed",
+                        "id": "6",
+                    },
+                },
+            ],
+        }
+        transitions_mixin.jira.get_issue_transitions_full = MagicMock(
+            return_value=mock_response
+        )
+
+        # Don't mock get_transitions_models - let it use real implementation
+        # to test the full flow
+        transitions_mixin.get_transitions_models = (
+            TransitionsMixin.get_transitions_models.__get__(
+                transitions_mixin, type(transitions_mixin)
+            )
+        )
+        transitions_mixin.get_transitions = TransitionsMixin.get_transitions.__get__(
+            transitions_mixin, type(transitions_mixin)
+        )
+
+        # Call with resolution field
+        transitions_mixin.transition_issue(
+            "TEST-123",
+            "731",
+            fields={"resolution": {"id": "10001"}},
+        )
+
+        # Verify set_issue_status was called (not set_issue_status_by_transition_id)
+        # because to_status should now be available
+        transitions_mixin.jira.set_issue_status.assert_called_once_with(
+            issue_key="TEST-123",
+            status_name="Closed",
+            fields={"resolution": {"id": "10001"}},
+            update=None,
+        )
+
     def test_normalize_transition_id(self, transitions_mixin: TransitionsMixin):
         """Test _normalize_transition_id with various input types."""
         # Test with string

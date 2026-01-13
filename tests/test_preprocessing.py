@@ -22,6 +22,13 @@ def preprocessor_with_jira():
 
 
 @pytest.fixture
+def preprocessor_with_jira_markup_translation_disabled():
+    return JiraPreprocessor(
+        base_url="https://example.atlassian.net", disable_translation=True
+    )
+
+
+@pytest.fixture
 def preprocessor_with_confluence():
     return ConfluencePreprocessor(base_url="https://example.atlassian.net")
 
@@ -290,6 +297,51 @@ For more information, see [our website](https://example.com).
     assert "[our website|https://example.com]" in converted
 
 
+def test_markdown_nested_bullet_list_2space(preprocessor_with_jira):
+    """Test that 2-space indented bullet lists convert correctly to Jira format."""
+    markdown = "* Item A\n  * Sub-item A.1\n    * Sub-sub A.1.1\n* Item B"
+    expected = "* Item A\n** Sub-item A.1\n*** Sub-sub A.1.1\n* Item B"
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+    assert result == expected
+
+
+def test_markdown_nested_numbered_list_2space(preprocessor_with_jira):
+    """Test that 2-space indented numbered lists convert correctly to Jira format."""
+    markdown = "1. Item A\n  1. Sub-item A.1\n    1. Sub-sub A.1.1\n2. Item B"
+    expected = "# Item A\n## Sub-item A.1\n### Sub-sub A.1.1\n# Item B"
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+    assert result == expected
+
+
+def test_jira_markup_translation_disabled(
+    preprocessor_with_jira_markup_translation_disabled,
+):
+    """Test that markup translation is disabled and original text is preserved."""
+    mixed_markup = "h1. Jira Heading with **markdown bold** and {{jira code}} and *markdown italic*"
+
+    # Both methods should return the original text unchanged
+    assert (
+        preprocessor_with_jira_markup_translation_disabled.markdown_to_jira(
+            mixed_markup
+        )
+        == mixed_markup
+    )
+    assert (
+        preprocessor_with_jira_markup_translation_disabled.jira_to_markdown(
+            mixed_markup
+        )
+        == mixed_markup
+    )
+
+    # clean_jira_text should also preserve markup (only process mentions/links)
+    result = preprocessor_with_jira_markup_translation_disabled.clean_jira_text(
+        mixed_markup
+    )
+    assert "h1. Jira Heading" in result
+    assert "**markdown bold**" in result
+    assert "{{jira code}}" in result
+
+
 def test_markdown_to_confluence_storage(preprocessor_with_confluence):
     """Test conversion of Markdown to Confluence storage format."""
     markdown = """# Heading 1
@@ -509,3 +561,58 @@ More content.
     # Note: md2conf may use different anchor formats, so we check for presence of id attributes
     assert "<h1>" in result_with_anchors
     assert "<h2>" in result_with_anchors
+
+
+# Issue #786 regression tests - Wiki Markup Corruption
+
+
+def test_markdown_to_jira_header_requires_space(preprocessor_with_jira):
+    """Test that # requires space to be converted to heading (issue #786)."""
+    # With space - Markdown heading, should convert
+    assert preprocessor_with_jira.markdown_to_jira("# Heading") == "h1. Heading"
+    assert preprocessor_with_jira.markdown_to_jira("## Subheading") == "h2. Subheading"
+    assert preprocessor_with_jira.markdown_to_jira("### Level 3") == "h3. Level 3"
+
+    # Without space - could be Jira numbered list, should NOT convert
+    assert preprocessor_with_jira.markdown_to_jira("#item") == "#item"
+    assert preprocessor_with_jira.markdown_to_jira("##nested") == "##nested"
+    assert preprocessor_with_jira.markdown_to_jira("###deep") == "###deep"
+
+
+def test_markdown_to_jira_preserves_jira_list_syntax(preprocessor_with_jira):
+    """Test that Jira list syntax (asterisks + space) is preserved (issue #786)."""
+    # Jira nested bullets - should NOT be converted to bold
+    jira_list = "* First level\n** Second level\n*** Third level"
+    result = preprocessor_with_jira.markdown_to_jira(jira_list)
+    assert "** Second level" in result  # Preserved, not converted
+    assert "*** Third level" in result  # Preserved, not converted
+
+    # Single Jira bullet should also be preserved
+    assert preprocessor_with_jira.markdown_to_jira("* Item") == "* Item"
+
+
+def test_markdown_to_jira_inline_bold_still_converts(preprocessor_with_jira):
+    """Test that inline Markdown bold/italic still converts (issue #786)."""
+    # Inline bold should still work
+    assert (
+        preprocessor_with_jira.markdown_to_jira("text **bold** text")
+        == "text *bold* text"
+    )
+    assert (
+        preprocessor_with_jira.markdown_to_jira("text *italic* text")
+        == "text _italic_ text"
+    )
+
+
+def test_markdown_to_jira_bold_without_space_still_converts(preprocessor_with_jira):
+    """Test that Markdown bold (no space after **) still converts (issue #786)."""
+    # These should still be converted (existing behavior preserved)
+    assert preprocessor_with_jira.markdown_to_jira("**bold text**") == "*bold text*"
+    assert preprocessor_with_jira.markdown_to_jira("*italic text*") == "_italic text_"
+
+
+def test_md2conf_elements_from_string_available():
+    """Test that elements_from_string is importable with fallback (issue #817)."""
+    from mcp_atlassian.preprocessing.confluence import elements_from_string
+
+    assert callable(elements_from_string)

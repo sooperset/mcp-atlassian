@@ -1,5 +1,6 @@
 """Main FastMCP server setup for Atlassian integration."""
 
+import json
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -11,9 +12,9 @@ from fastmcp.tools import Tool as FastMCPTool
 from mcp.types import Tool as MCPTool
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.confluence.config import ConfluenceConfig
@@ -106,12 +107,12 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
 class AtlassianMCP(FastMCP[MainAppContext]):
     """Custom FastMCP server class for Atlassian integration with tool filtering."""
 
-    async def _mcp_list_tools(self) -> list[MCPTool]:
+    async def _list_tools_mcp(self) -> list[MCPTool]:
         # Filter tools based on enabled_tools, read_only mode, and service configuration from the lifespan context.
         req_context = self._mcp_server.request_context
         if req_context is None or req_context.lifespan_context is None:
             logger.warning(
-                "Lifespan context not available during _main_mcp_list_tools call."
+                "Lifespan context not available during _list_tools_mcp call."
             )
             return []
 
@@ -144,7 +145,7 @@ class AtlassianMCP(FastMCP[MainAppContext]):
                 )
 
         logger.debug(
-            f"_main_mcp_list_tools: read_only={read_only}, enabled_tools_filter={enabled_tools_filter}, header_services={header_based_services}"
+            f"_list_tools_mcp: read_only={read_only}, enabled_tools_filter={enabled_tools_filter}, header_services={header_based_services}"
         )
 
         all_tools: dict[str, FastMCPTool] = await self.get_tools()
@@ -209,7 +210,7 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             filtered_tools.append(tool_obj.to_mcp_tool(name=registered_name))
 
         logger.debug(
-            f"_main_mcp_list_tools: Total tools after filtering: {len(filtered_tools)}"
+            f"_list_tools_mcp: Total tools after filtering: {len(filtered_tools)}"
         )
         return filtered_tools
 
@@ -220,6 +221,7 @@ class AtlassianMCP(FastMCP[MainAppContext]):
         json_response: bool | None = None,
         stateless_http: bool | None = None,
         transport: Literal["streamable-http", "sse"] = "streamable-http",
+        **kwargs: Any,
     ) -> "Starlette":
         user_token_mw = Middleware(UserTokenMiddleware, mcp_server_ref=self)
         final_middleware_list = [user_token_mw]
@@ -231,6 +233,7 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             json_response=json_response,
             stateless_http=stateless_http,
             transport=transport,
+            **kwargs,
         )
         return app
 
@@ -240,157 +243,259 @@ token_validation_cache: TTLCache[
 ] = TTLCache(maxsize=100, ttl=300)
 
 
-class UserTokenMiddleware(BaseHTTPMiddleware):
-    """Middleware to extract Atlassian user tokens/credentials from Authorization headers."""
+class UserTokenMiddleware:
+    """ASGI-compliant middleware to extract Atlassian user tokens/credentials.
+
+    Based on PR #700 by @isaacpalomero - fixes ASGI protocol violations that caused
+    server crashes when MCP clients disconnect during HTTP requests.
+    """
 
     def __init__(
-        self, app: Any, mcp_server_ref: Optional["AtlassianMCP"] = None
+        self, app: ASGIApp, mcp_server_ref: Optional["AtlassianMCP"] = None
     ) -> None:
-        super().__init__(app)
+        self.app = app
         self.mcp_server_ref = mcp_server_ref
         if not self.mcp_server_ref:
             logger.warning(
-                "UserTokenMiddleware initialized without mcp_server_ref. Path matching for MCP endpoint might fail if settings are needed."
+                "UserTokenMiddleware initialized without mcp_server_ref. "
+                "Path matching for MCP endpoint might fail if settings are needed."
             )
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> JSONResponse:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        # Pass through non-HTTP requests directly per ASGI spec
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # According to ASGI spec, middleware should copy scope when modifying it
+        scope_copy: Scope = dict(scope)
+
+        # Ensure state exists in scope - this is where Starlette stores request state
+        if "state" not in scope_copy:
+            scope_copy["state"] = {}
+
+        # Initialize default authentication state (only initialize fields that should always exist)
+        # Note: user_atlassian_token and user_atlassian_auth_type are NOT initialized
+        # They are only set when present, so hasattr() checks work correctly
+        scope_copy["state"]["user_atlassian_email"] = None
+        scope_copy["state"]["user_atlassian_cloud_id"] = None
+        scope_copy["state"]["auth_validation_error"] = None
+
         logger.debug(
-            f"UserTokenMiddleware.dispatch: ENTERED for request path='{request.url.path}', method='{request.method}'"
+            f"UserTokenMiddleware: Processing {scope_copy.get('method', 'UNKNOWN')} "
+            f"{scope_copy.get('path', 'UNKNOWN')}"
         )
-        mcp_server_instance = self.mcp_server_ref
-        if mcp_server_instance is None:
-            logger.debug(
-                "UserTokenMiddleware.dispatch: self.mcp_server_ref is None. Skipping MCP auth logic."
-            )
-            return await call_next(request)
 
-        mcp_path = mcp_server_instance.settings.streamable_http_path.rstrip("/")
-        request_path = request.url.path.rstrip("/")
-        logger.debug(
-            f"UserTokenMiddleware.dispatch: Comparing request_path='{request_path}' with mcp_path='{mcp_path}'. Request method='{request.method}'"
+        # Only process authentication for our MCP endpoint
+        if self.mcp_server_ref and self._should_process_auth(scope_copy):
+            self._process_authentication_headers(scope_copy)
+
+        # Create wrapped send function to handle client disconnections gracefully
+        async def safe_send(message: Message) -> None:
+            try:
+                await send(message)
+            except (ConnectionResetError, BrokenPipeError, OSError) as e:
+                # Client disconnected - log but don't propagate to avoid ASGI violations
+                logger.debug(
+                    f"Client disconnected during response: {type(e).__name__}: {e}"
+                )
+                # Don't re-raise - this prevents the ASGI protocol violation
+                return
+            except Exception:
+                # Re-raise unexpected errors
+                raise
+
+        # Check for auth errors and return 401 before calling app
+        auth_error = scope_copy["state"].get("auth_validation_error")
+        if auth_error:
+            logger.warning(f"Authentication failed: {auth_error}")
+            await self._send_json_error_response(safe_send, 401, auth_error)
+            return  # Don't call self.app - request is rejected
+
+        # Call the next application with modified scope and safe send wrapper
+        await self.app(scope_copy, receive, safe_send)
+
+    async def _send_json_error_response(
+        self, send: Send, status_code: int, error_message: str
+    ) -> None:
+        """Send a JSON error response via ASGI protocol.
+
+        Args:
+            send: ASGI send callable (should be safe_send wrapper).
+            status_code: HTTP status code (e.g., 401).
+            error_message: Error message to include in JSON body.
+        """
+        body = json.dumps({"error": error_message}).encode("utf-8")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status_code,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                ],
+            }
         )
-        if request_path == mcp_path and request.method == "POST":
-            auth_header = request.headers.get("Authorization")
-            cloud_id_header = request.headers.get("X-Atlassian-Cloud-Id")
+        await send({"type": "http.response.body", "body": body})
 
-            # Extract additional Atlassian headers for service availability detection
-            jira_token_header = request.headers.get("X-Atlassian-Jira-Personal-Token")
-            jira_url_header = request.headers.get("X-Atlassian-Jira-Url")
-            confluence_token_header = request.headers.get(
-                "X-Atlassian-Confluence-Personal-Token"
-            )
-            confluence_url_header = request.headers.get("X-Atlassian-Confluence-Url")
+    def _should_process_auth(self, scope: Scope) -> bool:
+        """Check if this request should be processed for authentication."""
+        if not self.mcp_server_ref or scope.get("method") != "POST":
+            return False
 
-            token_for_log = mask_sensitive(
-                auth_header.split(" ", 1)[1].strip()
-                if auth_header and " " in auth_header
-                else auth_header
-            )
-            logger.debug(
-                f"UserTokenMiddleware: Path='{request.url.path}', AuthHeader='{mask_sensitive(auth_header)}', ParsedToken(masked)='{token_for_log}', CloudId='{cloud_id_header}'"
+        try:
+            mcp_path = self.mcp_server_ref.settings.streamable_http_path.rstrip("/")
+            request_path = scope.get("path", "").rstrip("/")
+            return request_path == mcp_path
+        except (AttributeError, ValueError) as e:
+            logger.warning(f"Error checking auth path: {e}")
+            return False
+
+    def _process_authentication_headers(self, scope: Scope) -> None:
+        """Process authentication headers and store in scope state."""
+        try:
+            # Parse headers from scope (headers are byte tuples per ASGI spec)
+            headers = dict(scope.get("headers", []))
+            auth_header = headers.get(b"authorization")
+            cloud_id_header = headers.get(b"x-atlassian-cloud-id")
+
+            # Convert bytes to strings (ASGI headers are always bytes)
+            auth_header_str = auth_header.decode("latin-1") if auth_header else None
+            cloud_id_str = (
+                cloud_id_header.decode("latin-1") if cloud_id_header else None
             )
 
-            # Extract and save cloudId if provided
-            if cloud_id_header and cloud_id_header.strip():
-                request.state.user_atlassian_cloud_id = cloud_id_header.strip()
-                logger.debug(
-                    f"UserTokenMiddleware: Extracted cloudId from header: {cloud_id_header.strip()}"
-                )
-            else:
-                request.state.user_atlassian_cloud_id = None
-                logger.debug(
-                    "UserTokenMiddleware: No cloudId header provided, will use global config"
-                )
+            # Extract additional Atlassian service headers for service availability detection
+            jira_token_header = headers.get(b"x-atlassian-jira-personal-token")
+            jira_url_header = headers.get(b"x-atlassian-jira-url")
+            confluence_token_header = headers.get(
+                b"x-atlassian-confluence-personal-token"
+            )
+            confluence_url_header = headers.get(b"x-atlassian-confluence-url")
+
+            # Convert service header bytes to strings
+            jira_token_str = (
+                jira_token_header.decode("latin-1") if jira_token_header else None
+            )
+            jira_url_str = (
+                jira_url_header.decode("latin-1") if jira_url_header else None
+            )
+            confluence_token_str = (
+                confluence_token_header.decode("latin-1")
+                if confluence_token_header
+                else None
+            )
+            confluence_url_str = (
+                confluence_url_header.decode("latin-1")
+                if confluence_url_header
+                else None
+            )
+
+            # Build service headers dict
             service_headers = {}
-            if jira_token_header:
-                service_headers["X-Atlassian-Jira-Personal-Token"] = jira_token_header
-            if jira_url_header:
-                service_headers["X-Atlassian-Jira-Url"] = jira_url_header
-            if confluence_token_header:
+            if jira_token_str:
+                service_headers["X-Atlassian-Jira-Personal-Token"] = jira_token_str
+            if jira_url_str:
+                service_headers["X-Atlassian-Jira-Url"] = jira_url_str
+            if confluence_token_str:
                 service_headers["X-Atlassian-Confluence-Personal-Token"] = (
-                    confluence_token_header
+                    confluence_token_str
                 )
-            if confluence_url_header:
-                service_headers["X-Atlassian-Confluence-Url"] = confluence_url_header
+            if confluence_url_str:
+                service_headers["X-Atlassian-Confluence-Url"] = confluence_url_str
 
-            request.state.atlassian_service_headers = service_headers
+            scope["state"]["atlassian_service_headers"] = service_headers
             if service_headers:
                 logger.debug(
                     f"UserTokenMiddleware: Extracted service headers: {list(service_headers.keys())}"
                 )
 
-            # Check for mcp-session-id header for debugging
-            mcp_session_id = request.headers.get("mcp-session-id")
+            # Log mcp-session-id for debugging
+            mcp_session_id = headers.get(b"mcp-session-id")
             if mcp_session_id:
+                session_id_str = mcp_session_id.decode("latin-1")
                 logger.debug(
-                    f"UserTokenMiddleware: MCP-Session-ID header found: {mcp_session_id}"
+                    f"UserTokenMiddleware: MCP-Session-ID header found: {session_id_str}"
                 )
-            if auth_header and auth_header.startswith("Bearer "):
-                token = auth_header.split(" ", 1)[1].strip()
-                if not token:
-                    return JSONResponse(
-                        {"error": "Unauthorized: Empty Bearer token"},
-                        status_code=401,
+
+            logger.debug(
+                f"UserTokenMiddleware: Processing auth for {scope.get('path')}, "
+                f"AuthHeader present: {bool(auth_header_str)}, "
+                f"CloudId present: {bool(cloud_id_str)}"
+            )
+
+            # Process Cloud ID
+            if cloud_id_str and cloud_id_str.strip():
+                scope["state"]["user_atlassian_cloud_id"] = cloud_id_str.strip()
+                logger.debug(
+                    f"UserTokenMiddleware: Extracted cloudId: {cloud_id_str.strip()}"
+                )
+
+            # Process Authorization header
+            if auth_header_str:
+                self._parse_auth_header(auth_header_str, scope)
+            else:
+                logger.debug("UserTokenMiddleware: No Authorization header provided")
+                # If service headers are present without Authorization header, set PAT auth type
+                if service_headers and (
+                    (jira_token_str and jira_url_str)
+                    or (confluence_token_str and confluence_url_str)
+                ):
+                    scope["state"]["user_atlassian_auth_type"] = "pat"
+                    scope["state"]["user_atlassian_email"] = None
+                    logger.debug(
+                        "UserTokenMiddleware: Header-based authentication detected. Setting PAT auth type."
                     )
-                logger.debug(
-                    f"UserTokenMiddleware.dispatch: Bearer token extracted (masked): ...{mask_sensitive(token, 8)}"
-                )
-                request.state.user_atlassian_token = token
-                request.state.user_atlassian_auth_type = "oauth"
-                request.state.user_atlassian_email = None
-                logger.debug(
-                    f"UserTokenMiddleware.dispatch: Set request.state (pre-validation): "
-                    f"auth_type='{getattr(request.state, 'user_atlassian_auth_type', 'N/A')}', "
-                    f"token_present={bool(getattr(request.state, 'user_atlassian_token', None))}"
-                )
-            elif auth_header and auth_header.startswith("Token "):
-                token = auth_header.split(" ", 1)[1].strip()
-                if not token:
-                    return JSONResponse(
-                        {"error": "Unauthorized: Empty Token (PAT)"},
-                        status_code=401,
-                    )
-                logger.debug(
-                    f"UserTokenMiddleware.dispatch: PAT (Token scheme) extracted (masked): ...{mask_sensitive(token, 8)}"
-                )
-                request.state.user_atlassian_token = token
-                request.state.user_atlassian_auth_type = "pat"
-                request.state.user_atlassian_email = (
-                    None  # PATs don't carry email in the token itself
-                )
-                logger.debug(
-                    "UserTokenMiddleware.dispatch: Set request.state for PAT auth."
-                )
-            elif auth_header:
-                logger.warning(
-                    f"Unsupported Authorization type for {request.url.path}: {auth_header.split(' ', 1)[0] if ' ' in auth_header else 'UnknownType'}"
-                )
-                return JSONResponse(
-                    {
-                        "error": "Unauthorized: Only 'Bearer <OAuthToken>' or 'Token <PAT>' types are supported."
-                    },
-                    status_code=401,
+
+        except Exception as e:
+            logger.error(f"Error processing authentication headers: {e}", exc_info=True)
+            scope["state"]["auth_validation_error"] = "Authentication processing error"
+
+    def _parse_auth_header(self, auth_header: str, scope: Scope) -> None:
+        """Parse the Authorization header and store credentials in scope state."""
+        # Check prefix BEFORE stripping to preserve "Bearer " / "Token " matching
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:].strip()  # Remove "Bearer " prefix and strip token
+            if not token:
+                scope["state"]["auth_validation_error"] = (
+                    "Unauthorized: Empty Bearer token"
                 )
             else:
-                if (jira_token_header and jira_url_header) or (
-                    confluence_token_header and confluence_url_header
-                ):
-                    logger.debug(
-                        f"Header-based authentication detected for {request.url.path}. Setting PAT auth type."
-                    )
-                    request.state.user_atlassian_auth_type = "pat"
-                    request.state.user_atlassian_email = None
-                else:
-                    logger.debug(
-                        f"No Authorization header provided for {request.url.path}. Will proceed with global/fallback server configuration if applicable."
-                    )
-        response = await call_next(request)
-        logger.debug(
-            f"UserTokenMiddleware.dispatch: EXITED for request path='{request.url.path}'"
-        )
-        return response
+                scope["state"]["user_atlassian_token"] = token
+                scope["state"]["user_atlassian_auth_type"] = "oauth"
+                logger.debug(
+                    "UserTokenMiddleware: Bearer token extracted (masked): "
+                    f"...{mask_sensitive(token, 8)}"
+                )
+
+        elif auth_header.startswith("Token "):
+            token = auth_header[6:].strip()  # Remove "Token " prefix and strip token
+            if not token:
+                scope["state"]["auth_validation_error"] = (
+                    "Unauthorized: Empty Token (PAT)"
+                )
+            else:
+                scope["state"]["user_atlassian_token"] = token
+                scope["state"]["user_atlassian_auth_type"] = "pat"
+                logger.debug(
+                    "UserTokenMiddleware: PAT token extracted (masked): "
+                    f"...{mask_sensitive(token, 8)}"
+                )
+
+        elif auth_header.strip():
+            # Non-empty but unsupported auth type
+            auth_value = auth_header.strip()
+            auth_type = auth_value.split(" ", 1)[0] if " " in auth_value else auth_value
+            logger.warning(f"Unsupported Authorization type: {auth_type}")
+            scope["state"]["auth_validation_error"] = (
+                "Unauthorized: Only 'Bearer <OAuthToken>' or "
+                "'Token <PAT>' types are supported."
+            )
+        else:
+            # Empty or whitespace-only
+            scope["state"]["auth_validation_error"] = (
+                "Unauthorized: Empty Authorization header"
+            )
 
 
 main_mcp = AtlassianMCP(name="Atlassian MCP", lifespan=main_lifespan)

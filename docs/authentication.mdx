@@ -1,0 +1,146 @@
+---
+title: "Authentication"
+description: "Configure authentication for MCP Atlassian - API tokens, PATs, and OAuth 2.0"
+---
+
+# Authentication
+
+MCP Atlassian supports three authentication methods depending on your Atlassian deployment type.
+
+## API Token (Cloud) - Recommended
+
+The simplest method for Atlassian Cloud users.
+
+<Steps>
+  <Step title="Create API Token">
+    Go to https://id.atlassian.com/manage-profile/security/api-tokens
+  </Step>
+  <Step title="Generate Token">
+    Click **Create API token**, give it a name
+  </Step>
+  <Step title="Copy Token">
+    Copy the token immediately - you won't see it again
+  </Step>
+</Steps>
+
+**Environment variables:**
+```bash
+JIRA_URL=https://your-company.atlassian.net
+JIRA_USERNAME=your.email@company.com
+JIRA_API_TOKEN=your_api_token
+
+CONFLUENCE_URL=https://your-company.atlassian.net/wiki
+CONFLUENCE_USERNAME=your.email@company.com
+CONFLUENCE_API_TOKEN=your_api_token
+```
+
+## Personal Access Token (Server/Data Center)
+
+For Server or Data Center deployments.
+
+<Steps>
+  <Step title="Access Profile">
+    Go to your profile (avatar) → **Profile** → **Personal Access Tokens**
+  </Step>
+  <Step title="Create Token">
+    Click **Create token**, name it, set expiry
+  </Step>
+  <Step title="Copy Token">
+    Copy the token immediately
+  </Step>
+</Steps>
+
+**Environment variables:**
+```bash
+JIRA_URL=https://jira.your-company.com
+JIRA_PERSONAL_TOKEN=your_personal_access_token
+
+CONFLUENCE_URL=https://confluence.your-company.com
+CONFLUENCE_PERSONAL_TOKEN=your_personal_access_token
+```
+
+<Note>
+For self-signed certificates, set `JIRA_SSL_VERIFY=false` and/or `CONFLUENCE_SSL_VERIFY=false`.
+</Note>
+
+## OAuth 2.0 (Cloud) - Advanced
+
+OAuth 2.0 provides enhanced security features but requires more setup. For most users, API Token authentication is simpler and sufficient.
+
+### Setup Steps
+
+<Steps>
+  <Step title="Create OAuth App">
+    Go to [Atlassian Developer Console](https://developer.atlassian.com/console/myapps/) and create an "OAuth 2.0 (3LO) integration" app
+  </Step>
+  <Step title="Configure Permissions">
+    Add scopes for Jira/Confluence as needed
+  </Step>
+  <Step title="Set Callback URL">
+    Set to `http://localhost:8080/callback`
+  </Step>
+  <Step title="Run Setup Wizard">
+    ```bash
+    # Using uvx
+    uvx mcp-atlassian --oauth-setup -v
+
+    # Or using Docker
+    docker run --rm -i \
+      -p 8080:8080 \
+      -v "${HOME}/.mcp-atlassian:/home/app/.mcp-atlassian" \
+      ghcr.io/sooperset/mcp-atlassian:latest --oauth-setup -v
+    ```
+  </Step>
+  <Step title="Complete Authorization">
+    Follow prompts for Client ID, Secret, URI, and Scope, then complete browser authorization
+  </Step>
+</Steps>
+
+**Environment variables (after setup):**
+```bash
+JIRA_URL=https://your-company.atlassian.net
+CONFLUENCE_URL=https://your-company.atlassian.net/wiki
+ATLASSIAN_OAUTH_CLOUD_ID=your_cloud_id_from_wizard
+ATLASSIAN_OAUTH_CLIENT_ID=your_oauth_client_id
+ATLASSIAN_OAUTH_CLIENT_SECRET=your_oauth_client_secret
+ATLASSIAN_OAUTH_REDIRECT_URI=http://localhost:8080/callback
+ATLASSIAN_OAUTH_SCOPE=read:jira-work write:jira-work read:confluence-content.all write:confluence-content offline_access
+```
+
+<Warning>
+Include `offline_access` in your scope to allow automatic token refresh.
+</Warning>
+
+### Bring Your Own Token (BYOT)
+
+If you manage OAuth tokens externally (e.g., through a central identity provider):
+
+```bash
+ATLASSIAN_OAUTH_CLOUD_ID=your_cloud_id
+ATLASSIAN_OAUTH_ACCESS_TOKEN=your_pre_existing_access_token
+```
+
+<Warning>
+Token refresh is your responsibility - the server does not handle it for BYOT.
+</Warning>
+
+### Multi-Cloud OAuth
+
+For multi-tenant applications where users provide their own OAuth tokens:
+
+1. Enable minimal OAuth mode:
+   ```bash
+   # Using uvx
+   ATLASSIAN_OAUTH_ENABLE=true uvx mcp-atlassian --transport streamable-http --port 9000
+
+   # Or using Docker
+   docker run -e ATLASSIAN_OAUTH_ENABLE=true -p 9000:9000 \
+     ghcr.io/sooperset/mcp-atlassian:latest \
+     --transport streamable-http --port 9000
+   ```
+
+2. Users provide authentication via HTTP headers:
+   - `Authorization: Bearer <user_oauth_token>`
+   - `X-Atlassian-Cloud-Id: <user_cloud_id>`
+
+See [HTTP Transport](/http-transport) for more details on multi-user authentication.

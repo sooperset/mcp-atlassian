@@ -67,8 +67,19 @@ class PagesMixin(ConfluenceClient):
                     expand="body.storage,version,space,children.attachment",
                 )
 
+            # Check if API returned an error string instead of a dict
+            if isinstance(page, str):
+                error_msg = f"API returned error response: {page[:500]}"
+                raise Exception(error_msg)
+
             space_key = page.get("space", {}).get("key", "")
-            content = page["body"]["storage"]["value"]
+            try:
+                content = page["body"]["storage"]["value"]
+            except (KeyError, TypeError) as e:
+                logger.warning(
+                    f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
+                )
+                content = ""
             processed_html, processed_markdown = self.preprocessor.process_html_content(
                 content, space_key=space_key, confluence_client=self.confluence
             )
@@ -183,7 +194,13 @@ class PagesMixin(ConfluenceClient):
                 )
                 return None
 
-            content = page["body"]["storage"]["value"]
+            try:
+                content = page["body"]["storage"]["value"]
+            except (KeyError, TypeError) as e:
+                logger.warning(
+                    f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
+                )
+                content = ""
             processed_html, processed_markdown = self.preprocessor.process_html_content(
                 content, space_key=space_key, confluence_client=self.confluence
             )
@@ -244,7 +261,13 @@ class PagesMixin(ConfluenceClient):
 
         page_models = []
         for page in pages:
-            content = page["body"]["storage"]["value"]
+            try:
+                content = page["body"]["storage"]["value"]
+            except (KeyError, TypeError) as e:
+                logger.warning(
+                    f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
+                )
+                content = ""
             processed_html, processed_markdown = self.preprocessor.process_html_content(
                 content, space_key=space_key, confluence_client=self.confluence
             )
@@ -449,48 +472,76 @@ class PagesMixin(ConfluenceClient):
         expand: str = "version",
         *,
         convert_to_markdown: bool = True,
+        include_folders: bool = True,
     ) -> list[ConfluencePage]:
         """
-        Get child pages of a specific Confluence page.
+        Get child pages and folders of a specific Confluence page.
 
         Args:
             page_id: The ID of the parent page
             start: The starting index for pagination
-            limit: Maximum number of child pages to return
+            limit: Maximum number of child items to return
             expand: Fields to expand in the response
             convert_to_markdown: When True, returns content in markdown format,
                                otherwise returns raw HTML (keyword-only)
+            include_folders: When True, also returns child folders (keyword-only)
 
         Returns:
-            List of ConfluencePage models containing the child pages
+            List of ConfluencePage models containing the child pages and folders
         """
         try:
             # Use the Atlassian Python API's get_page_child_by_type method
-            results = self.confluence.get_page_child_by_type(
+            # First, get child pages
+            page_results = self.confluence.get_page_child_by_type(
                 page_id=page_id, type="page", start=start, limit=limit, expand=expand
             )
 
+            # Handle both pagination modes for pages
+            if isinstance(page_results, dict) and "results" in page_results:
+                child_items = page_results.get("results", [])
+            else:
+                child_items = page_results or []
+
+            # Also get child folders if requested
+            if include_folders:
+                try:
+                    folder_results = self.confluence.get_page_child_by_type(
+                        page_id=page_id,
+                        type="folder",
+                        start=start,
+                        limit=limit,
+                        expand=expand,
+                    )
+
+                    # Handle both pagination modes for folders
+                    if isinstance(folder_results, dict) and "results" in folder_results:
+                        child_folders = folder_results.get("results", [])
+                    else:
+                        child_folders = folder_results or []
+
+                    # Combine pages and folders
+                    child_items = child_items + child_folders
+                except Exception as folder_err:
+                    # Log but don't fail if folder fetching fails
+                    # (e.g., older Confluence versions might not support folders)
+                    logger.debug(
+                        f"Could not fetch child folders for page {page_id}: {folder_err}"
+                    )
+
             # Process results
             page_models = []
-
-            # Handle both pagination modes
-            if isinstance(results, dict) and "results" in results:
-                child_pages = results.get("results", [])
-            else:
-                child_pages = results or []
-
             space_key = ""
 
             # Get space key from the first result if available
-            if child_pages and "space" in child_pages[0]:
-                space_key = child_pages[0].get("space", {}).get("key", "")
+            if child_items and "space" in child_items[0]:
+                space_key = child_items[0].get("space", {}).get("key", "")
 
-            # Process each child page
-            for page in child_pages:
+            # Process each child item (page or folder)
+            for item in child_items:
                 # Only process content if we have "body" expanded
                 content_override = None
-                if "body" in page and convert_to_markdown:
-                    content = page.get("body", {}).get("storage", {}).get("value", "")
+                if "body" in item and convert_to_markdown:
+                    content = item.get("body", {}).get("storage", {}).get("value", "")
                     if content:
                         _, processed_markdown = self.preprocessor.process_html_content(
                             content,
@@ -499,9 +550,9 @@ class PagesMixin(ConfluenceClient):
                         )
                         content_override = processed_markdown
 
-                # Create the page model
+                # Create the page model (works for both pages and folders)
                 page_model = ConfluencePage.from_api_response(
-                    page,
+                    item,
                     base_url=self.config.url,
                     include_body=True,
                     content_override=content_override,

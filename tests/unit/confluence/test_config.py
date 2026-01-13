@@ -183,3 +183,60 @@ def test_is_cloud_oauth_with_cloud_id():
         oauth_config=oauth_config,
     )
     assert config.is_cloud is True
+
+
+def test_from_env_pat_priority_over_oauth(caplog):
+    """Test that PAT takes priority over OAuth for Server/DC (fixes #824)."""
+    with patch.dict(
+        os.environ,
+        {
+            "CONFLUENCE_URL": "https://confluence.example.com",  # Server/DC URL
+            "CONFLUENCE_PERSONAL_TOKEN": "test_pat",
+            "ATLASSIAN_OAUTH_ENABLE": "true",  # OAuth also enabled
+        },
+        clear=True,
+    ):
+        config = ConfluenceConfig.from_env()
+        assert config.auth_type == "pat"
+        assert config.personal_token == "test_pat"
+        # Verify warning is logged when both are configured
+        assert "Both PAT and OAuth configured for Server/DC. Using PAT." in caplog.text
+
+
+def test_from_env_with_client_cert():
+    """Test loading config with client certificate settings from environment."""
+    with patch.dict(
+        "os.environ",
+        {
+            "CONFLUENCE_URL": "https://confluence.example.com",
+            "CONFLUENCE_PERSONAL_TOKEN": "test_pat",
+            "CONFLUENCE_CLIENT_CERT": "/path/to/cert.pem",
+            "CONFLUENCE_CLIENT_KEY": "/path/to/key.pem",
+            "CONFLUENCE_CLIENT_KEY_PASSWORD": "secret",
+        },
+        clear=True,
+    ):
+        config = ConfluenceConfig.from_env()
+
+        assert config.url == "https://confluence.example.com"
+        assert config.client_cert == "/path/to/cert.pem"
+        assert config.client_key == "/path/to/key.pem"
+        assert config.client_key_password == "secret"
+
+
+def test_from_env_without_client_cert():
+    """Test loading config without client certificate settings."""
+    with patch.dict(
+        "os.environ",
+        {
+            "CONFLUENCE_URL": "https://confluence.example.com",
+            "CONFLUENCE_PERSONAL_TOKEN": "test_pat",
+        },
+        clear=True,
+    ):
+        config = ConfluenceConfig.from_env()
+
+        assert config.url == "https://confluence.example.com"
+        assert config.client_cert is None
+        assert config.client_key is None
+        assert config.client_key_password is None

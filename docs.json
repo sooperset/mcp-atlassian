@@ -1,0 +1,67 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "MCP Atlassian",
+  "favicon": "/docs/favicon.svg",
+  "colors": {
+    "primary": "#0052CC",
+    "light": "#4C9AFF",
+    "dark": "#0747A6"
+  },
+  "topbarCtaButton": {
+    "name": "GitHub",
+    "url": "https://github.com/sooperset/mcp-atlassian"
+  },
+  "topbarLinks": [
+    {
+      "name": "PyPI",
+      "url": "https://pypi.org/project/mcp-atlassian/"
+    }
+  ],
+  "anchors": [
+    {
+      "name": "GitHub",
+      "icon": "github",
+      "url": "https://github.com/sooperset/mcp-atlassian"
+    },
+    {
+      "name": "PyPI",
+      "icon": "python",
+      "url": "https://pypi.org/project/mcp-atlassian/"
+    }
+  ],
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "docs/index",
+              "docs/installation",
+              "docs/authentication"
+            ]
+          },
+          {
+            "group": "Usage",
+            "pages": [
+              "docs/configuration",
+              "docs/tools-reference",
+              "docs/http-transport"
+            ]
+          },
+          {
+            "group": "Help",
+            "pages": [
+              "docs/troubleshooting"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "footerSocials": {
+    "github": "https://github.com/sooperset/mcp-atlassian"
+  }
+}
