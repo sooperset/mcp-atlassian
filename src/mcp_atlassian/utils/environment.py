@@ -16,7 +16,11 @@ def get_available_services() -> dict[str, bool | None]:
         is_cloud = is_atlassian_cloud_url(confluence_url)
 
         # OAuth check (highest precedence, applies to Cloud)
-        if all(
+        confluence_auth_type = os.getenv("CONFLUENCE_AUTH_TYPE", "").strip().lower()
+        if confluence_auth_type == "sspi":
+            confluence_is_setup = True
+            logger.info("Using Confluence SSPI (Windows integrated) authentication")
+        elif all(
             [
                 os.getenv("ATLASSIAN_OAUTH_CLIENT_ID"),
                 os.getenv("ATLASSIAN_OAUTH_CLIENT_SECRET"),
@@ -71,7 +75,11 @@ def get_available_services() -> dict[str, bool | None]:
         is_cloud = is_atlassian_cloud_url(jira_url)
 
         # OAuth check (highest precedence, applies to Cloud)
-        if all(
+        jira_auth_type = os.getenv("JIRA_AUTH_TYPE", "").strip().lower()
+        if jira_auth_type == "sspi":
+            jira_is_setup = True
+            logger.info("Using Jira SSPI (Windows integrated) authentication")
+        elif all(
             [
                 os.getenv("ATLASSIAN_OAUTH_CLIENT_ID"),
                 os.getenv("ATLASSIAN_OAUTH_CLIENT_SECRET"),

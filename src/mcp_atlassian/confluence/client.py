@@ -68,6 +68,28 @@ class ConfluenceClient:
                 cloud=self.config.is_cloud,
                 verify_ssl=self.config.ssl_verify,
             )
+        elif self.config.auth_type == "sspi":
+            logger.debug(
+                "Initializing Confluence client with SSPI (Windows integrated) auth. "
+                f"URL: {self.config.url}"
+            )
+            try:
+                from requests_negotiate_sspi import HttpNegotiateAuth
+            except ImportError as exc:
+                error_msg = (
+                    "SSPI authentication requires the requests-negotiate-sspi package. "
+                    "Install it with: uv add requests-negotiate-sspi"
+                )
+                raise ValueError(error_msg) from exc
+
+            session = Session()
+            session.auth = HttpNegotiateAuth()
+            self.confluence = Confluence(
+                url=self.config.url,
+                session=session,
+                cloud=self.config.is_cloud,
+                verify_ssl=self.config.ssl_verify,
+            )
         else:  # basic auth
             logger.debug(
                 f"Initializing Confluence client with Basic auth. "

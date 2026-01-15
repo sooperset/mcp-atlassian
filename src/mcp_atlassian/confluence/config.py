@@ -20,11 +20,11 @@ class ConfluenceConfig:
 
     Handles authentication for Confluence Cloud and Server/Data Center:
     - Cloud: username/API token (basic auth) or OAuth 2.0 (3LO)
-    - Server/DC: personal access token or basic auth
+    - Server/DC: personal access token, basic auth, or SSPI (Windows integrated)
     """
 
     url: str  # Base URL for Confluence
-    auth_type: Literal["basic", "pat", "oauth"]  # Authentication type
+    auth_type: Literal["basic", "pat", "oauth", "sspi"]  # Authentication type
     username: str | None = None  # Email or username
     api_token: str | None = None  # API token used as password
     personal_token: str | None = None  # Personal access token (Server/DC)
@@ -93,34 +93,46 @@ class ConfluenceConfig:
         oauth_config = get_oauth_config_from_env()
         auth_type = None
 
-        # Use the shared utility function directly
-        is_cloud = is_atlassian_cloud_url(url)
+        auth_type_override = os.getenv("CONFLUENCE_AUTH_TYPE")
+        if auth_type_override:
+            normalized_auth_type = auth_type_override.strip().lower()
+            if normalized_auth_type == "sspi":
+                auth_type = "sspi"
+            else:
+                error_msg = (
+                    "Unsupported CONFLUENCE_AUTH_TYPE. "
+                    "Expected 'sspi' or leave unset to auto-detect."
+                )
+                raise ValueError(error_msg)
+        else:
+            # Use the shared utility function directly
+            is_cloud = is_atlassian_cloud_url(url)
 
-        if is_cloud:
-            # Cloud: OAuth takes priority, then basic auth
-            if oauth_config:
-                auth_type = "oauth"
-            elif username and api_token:
-                auth_type = "basic"
-            else:
-                error_msg = "Cloud authentication requires CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN, or OAuth configuration (set ATLASSIAN_OAUTH_ENABLE=true for user-provided tokens)"
-                raise ValueError(error_msg)
-        else:  # Server/Data Center
-            # Server/DC: PAT takes priority over OAuth (fixes #824)
-            if personal_token:
+            if is_cloud:
+                # Cloud: OAuth takes priority, then basic auth
                 if oauth_config:
-                    logger = logging.getLogger("mcp-atlassian.confluence.config")
-                    logger.warning(
-                        "Both PAT and OAuth configured for Server/DC. Using PAT."
-                    )
-                auth_type = "pat"
-            elif oauth_config:
-                auth_type = "oauth"
-            elif username and api_token:
-                auth_type = "basic"
-            else:
-                error_msg = "Server/Data Center authentication requires CONFLUENCE_PERSONAL_TOKEN or CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN"
-                raise ValueError(error_msg)
+                    auth_type = "oauth"
+                elif username and api_token:
+                    auth_type = "basic"
+                else:
+                    error_msg = "Cloud authentication requires CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN, or OAuth configuration (set ATLASSIAN_OAUTH_ENABLE=true for user-provided tokens)"
+                    raise ValueError(error_msg)
+            else:  # Server/Data Center
+                # Server/DC: PAT takes priority over OAuth (fixes #824)
+                if personal_token:
+                    if oauth_config:
+                        logger = logging.getLogger("mcp-atlassian.confluence.config")
+                        logger.warning(
+                            "Both PAT and OAuth configured for Server/DC. Using PAT."
+                        )
+                    auth_type = "pat"
+                elif oauth_config:
+                    auth_type = "oauth"
+                elif username and api_token:
+                    auth_type = "basic"
+                else:
+                    error_msg = "Server/Data Center authentication requires CONFLUENCE_PERSONAL_TOKEN or CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN"
+                    raise ValueError(error_msg)
 
         # SSL verification (for Server/DC)
         ssl_verify = is_env_ssl_verify("CONFLUENCE_SSL_VERIFY")
@@ -204,6 +216,8 @@ class ConfluenceConfig:
             return bool(self.personal_token)
         elif self.auth_type == "basic":
             return bool(self.username and self.api_token)
+        elif self.auth_type == "sspi":
+            return True
         logger.warning(
             f"Unknown or unsupported auth_type: {self.auth_type} in ConfluenceConfig"
         )
