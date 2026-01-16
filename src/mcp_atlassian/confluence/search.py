@@ -97,14 +97,18 @@ class SearchMixin(ConfluenceClient):
 
     @handle_atlassian_api_errors("Confluence API")
     def search_user(
-        self, cql: str, limit: int = 10
+        self, cql: str, limit: int = 10, group_name: str = "confluence-users"
     ) -> list[ConfluenceUserSearchResult]:
         """
-        Search users using Confluence Query Language (CQL).
+        Search users using Confluence Query Language (CQL) for Cloud,
+        or group member API with fuzzy matching for Server/DC.
 
         Args:
-            cql: Confluence Query Language string for user search
+            cql: Confluence Query Language string for user search (Cloud),
+                 or search term for fuzzy matching (Server/DC)
             limit: Maximum number of results to return
+            group_name: (Server/DC only) Group name to search users from.
+                       Defaults to 'confluence-users'.
 
         Returns:
             List of ConfluenceUserSearchResult models containing user search results
@@ -113,13 +117,87 @@ class SearchMixin(ConfluenceClient):
             MCPAtlassianAuthenticationError: If authentication fails with the
                 Confluence API (401/403)
         """
-        # Execute the user search query using the direct API endpoint
-        results = self.confluence.get(
-            "rest/api/search/user", params={"cql": cql, "limit": limit}
-        )
+        if self.config.is_cloud:
+            # Cloud: Use CQL search API
+            results = self.confluence.get(
+                "rest/api/search/user", params={"cql": cql, "limit": limit}
+            )
+            search_result = ConfluenceUserSearchResults.from_api_response(results or {})
+            return search_result.results
+        else:
+            # Server/DC: Use group member API with fuzzy matching
+            return self._search_user_server_dc(cql, limit, group_name)
 
-        # Convert the response to a user search result model
-        search_result = ConfluenceUserSearchResults.from_api_response(results or {})
+    def _search_user_server_dc(
+        self, search_term: str, limit: int = 10, group_name: str = "confluence-users"
+    ) -> list[ConfluenceUserSearchResult]:
+        """
+        Search users in Confluence Server/DC using group member API.
 
-        # Return the list of user search results
-        return search_result.results
+        Args:
+            search_term: Search term for fuzzy matching against username/displayName
+            limit: Maximum number of results to return
+            group_name: Group name to search users from
+
+        Returns:
+            List of ConfluenceUserSearchResult models
+        """
+        # Extract search term from CQL-like query if present
+        # e.g., 'user.fullname ~ "张"' -> '张'
+        import re
+        match = re.search(r'~\s*["\']([^"\']+)["\']', search_term)
+        if match:
+            search_term = match.group(1)
+
+        # Get all members from the specified group
+        try:
+            results = self.confluence.get(
+                f"rest/api/group/{group_name}/member",
+                params={"limit": 200}  # Get more users for local filtering
+            )
+        except Exception as e:
+            logger.warning(f"Failed to get group members from '{group_name}': {e}")
+            # Try alternative endpoint for older Confluence versions
+            try:
+                results = self.confluence.get(
+                    "rest/api/user/list",
+                    params={"limit": 200}
+                )
+            except Exception:
+                logger.error("Failed to get user list from Server/DC")
+                return []
+
+        if not results:
+            return []
+
+        # Get the results list
+        users_data = results.get("results", [])
+        if not users_data:
+            return []
+
+        # Filter users based on search term (fuzzy matching)
+        matched_users = []
+        search_lower = search_term.lower() if search_term else ""
+
+        for user_data in users_data:
+            username = user_data.get("username", "").lower()
+            display_name = user_data.get("displayName", "").lower()
+
+            # If no search term, include all users
+            if not search_term:
+                matched_users.append(user_data)
+            # Match against username or display name
+            elif search_lower in username or search_lower in display_name:
+                matched_users.append(user_data)
+
+            # Stop if we have enough results
+            if len(matched_users) >= limit:
+                break
+
+        # Convert to ConfluenceUserSearchResult models
+        user_results = []
+        for user_data in matched_users:
+            user_result = ConfluenceUserSearchResult.from_server_dc_response(user_data)
+            user_results.append(user_result)
+
+        return user_results

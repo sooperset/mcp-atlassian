@@ -726,11 +726,12 @@ async def search_user(
         str,
         Field(
             description=(
-                "Search query - a CQL query string for user search. "
-                "Examples of CQL:\n"
-                "- Basic user lookup by full name: 'user.fullname ~ \"First Last\"'\n"
-                'Note: Special identifiers need proper quoting in CQL: personal space keys (e.g., "~username"), '
-                "reserved words, numeric IDs, and identifiers with special characters."
+                "Search query - for Cloud: a CQL query string for user search. "
+                "For Server/DC: a simple search term to match against username or display name.\n"
+                "Examples:\n"
+                "- Cloud CQL: 'user.fullname ~ \"First Last\"'\n"
+                "- Server/DC: '张' (matches users with '张' in username or display name)\n"
+                "- Server/DC: 'zhang' (matches users with 'zhang' in username)"
             )
         ),
     ],
@@ -743,6 +744,17 @@ async def search_user(
             le=50,
         ),
     ] = 10,
+    group_name: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Server/DC only) Group name to search users from. "
+                "Defaults to 'confluence-users'. Common groups include: "
+                "'confluence-users', 'confluence-administrators'."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Search Confluence users using CQL.
 
@@ -750,6 +762,7 @@ async def search_user(
         ctx: The FastMCP context.
         query: Search query - a CQL query string for user search.
         limit: Maximum number of results (1-50).
+        group_name: (Server/DC only) Group name to search users from.
 
     Returns:
         JSON string representing a list of simplified Confluence user search result objects.
@@ -765,7 +778,10 @@ async def search_user(
         logger.info(f"Converting simple search term to user CQL: {query}")
 
     try:
-        user_results = confluence_fetcher.search_user(query, limit=limit)
+        # Pass group_name for Server/DC support
+        user_results = confluence_fetcher.search_user(
+            query, limit=limit, group_name=group_name or "confluence-users"
+        )
         search_results = [user.to_simplified_dict() for user in user_results]
         return json.dumps(search_results, indent=2, ensure_ascii=False)
     except MCPAtlassianAuthenticationError as e:
@@ -788,69 +804,3 @@ async def search_user(
             ensure_ascii=False,
         )
 
-
-@confluence_mcp.tool(
-    tags={"confluence", "read", "analytics"},
-    annotations={"title": "Get Page Views", "readOnlyHint": True},
-)
-async def confluence_get_page_views(
-    ctx: Context,
-    page_id: Annotated[
-        str,
-        Field(
-            description=(
-                "Confluence page ID (numeric ID, can be found in the page URL). "
-                "For example, in 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', "
-                "the page ID is '123456789'."
-            )
-        ),
-    ],
-    include_title: Annotated[
-        bool,
-        Field(description="Whether to fetch and include the page title"),
-    ] = True,
-) -> str:
-    """Get view statistics for a Confluence page.
-
-    Note: This tool is only available for Confluence Cloud. Server/Data Center
-    instances do not support the Analytics API.
-
-    Args:
-        ctx: The FastMCP context.
-        page_id: The Confluence page ID.
-        include_title: Whether to include the page title in the response.
-
-    Returns:
-        JSON string with page view statistics including total views and last viewed date.
-    """
-    confluence_fetcher = await get_confluence_fetcher(ctx)
-    try:
-        result = confluence_fetcher.get_page_views(
-            page_id=page_id,
-            include_title=include_title,
-        )
-        return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
-    except MCPAtlassianAuthenticationError as e:
-        logger.error(f"Authentication error getting page views: {e}")
-        return json.dumps(
-            {
-                "error": "Authentication failed. Please check your credentials.",
-                "details": str(e),
-            },
-            indent=2,
-            ensure_ascii=False,
-        )
-    except ValueError as e:
-        logger.error(f"Error getting page views for {page_id}: {e}")
-        return json.dumps(
-            {"error": str(e), "page_id": page_id},
-            indent=2,
-            ensure_ascii=False,
-        )
-    except Exception as e:
-        logger.error(f"Unexpected error getting page views for {page_id}: {e}")
-        return json.dumps(
-            {"error": f"Failed to get page views: {e}", "page_id": page_id},
-            indent=2,
-            ensure_ascii=False,
-        )

@@ -58,6 +58,53 @@ class ConfluenceUserSearchResult(ApiModel):
             score=data.get("score", 0.0),
         )
 
+    @classmethod
+    def from_server_dc_response(
+        cls, data: dict[str, Any], **kwargs: Any
+    ) -> "ConfluenceUserSearchResult":
+        """
+        Create a ConfluenceUserSearchResult from a Confluence Server/DC API response.
+
+        Server/DC returns user data in a different format:
+        {
+            "type": "known",
+            "username": "zhangsan",
+            "userKey": "xxx",
+            "displayName": "张三",
+            "profilePicture": {...},
+            "_links": {...}
+        }
+
+        Args:
+            data: The user data from the Confluence Server/DC API
+            **kwargs: Additional context parameters
+
+        Returns:
+            A ConfluenceUserSearchResult instance
+        """
+        if not data:
+            return cls()
+
+        # Build user object from Server/DC format
+        user = ConfluenceUser(
+            account_id=data.get("userKey", ""),
+            display_name=data.get("displayName", data.get("username", "")),
+            email=data.get("email"),
+            profile_picture=data.get("profilePicture", {}).get("path"),
+            is_active=data.get("type") == "known",
+        )
+
+        # Build URL from _links if available
+        links = data.get("_links", {})
+        url = links.get("self", "")
+
+        return cls(
+            user=user,
+            title=data.get("displayName", data.get("username")),
+            url=url,
+            entity_type="user",
+        )
+
     def to_simplified_dict(self) -> dict[str, Any]:
         """Convert to simplified dictionary for API response."""
         result = {
