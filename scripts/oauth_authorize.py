@@ -29,7 +29,7 @@ Environment variables can also be used:
 - ATLASSIAN_OAUTH_CLIENT_SECRET
 - ATLASSIAN_OAUTH_REDIRECT_URI
 - ATLASSIAN_OAUTH_SCOPE
-- ATLASSIAN_OAUTH_BASE_URL (Data Center instance URL)
+- JIRA_URL or CONFLUENCE_URL (for Data Center base URL)
 """
 
 import argparse
@@ -284,15 +284,37 @@ def run_oauth_flow(args: argparse.Namespace) -> bool:
         logger.info(
             "\n💡 Tip: Add/update the following in your .env file or environment variables:"
         )
-        logger.info(f"ATLASSIAN_OAUTH_CLIENT_ID={oauth_config.client_id}")
-        logger.info(f"ATLASSIAN_OAUTH_CLIENT_SECRET={oauth_config.client_secret}")
-        logger.info(f"ATLASSIAN_OAUTH_REDIRECT_URI={oauth_config.redirect_uri}")
-        logger.info(f"ATLASSIAN_OAUTH_SCOPE={oauth_config.scope}")
 
         if oauth_config.is_data_center:
-            logger.info(f"ATLASSIAN_OAUTH_BASE_URL={oauth_config.base_url}")
-            logger.info("\nData Center OAuth configured successfully!")
+            # Data Center - use service-specific env vars
+            logger.info("")
+            logger.info("For Jira Data Center:")
+            logger.info(f"  JIRA_URL={oauth_config.base_url}")
+            logger.info(f"  JIRA_OAUTH_CLIENT_ID={oauth_config.client_id}")
+            logger.info(f"  JIRA_OAUTH_CLIENT_SECRET={oauth_config.client_secret}")
+            logger.info("")
+            logger.info("For Confluence Data Center:")
+            logger.info(f"  CONFLUENCE_URL={oauth_config.base_url}")
+            logger.info(f"  CONFLUENCE_OAUTH_CLIENT_ID={oauth_config.client_id}")
+            logger.info(
+                f"  CONFLUENCE_OAUTH_CLIENT_SECRET={oauth_config.client_secret}"
+            )
+            logger.info("")
+            logger.info(
+                "Note: If Jira and Confluence use the same OAuth app, you can use the shared"
+            )
+            logger.info(
+                "ATLASSIAN_OAUTH_CLIENT_ID/SECRET instead of service-specific vars."
+            )
+            logger.info("")
+            logger.info("Data Center OAuth configured successfully!")
+            logger.info(f"Instance URL: {oauth_config.base_url}")
         elif oauth_config.cloud_id:
+            # Cloud uses shared env vars and needs redirect_uri, scope, cloud_id
+            logger.info(f"ATLASSIAN_OAUTH_CLIENT_ID={oauth_config.client_id}")
+            logger.info(f"ATLASSIAN_OAUTH_CLIENT_SECRET={oauth_config.client_secret}")
+            logger.info(f"ATLASSIAN_OAUTH_REDIRECT_URI={oauth_config.redirect_uri}")
+            logger.info(f"ATLASSIAN_OAUTH_SCOPE={oauth_config.scope}")
             logger.info(f"ATLASSIAN_OAUTH_CLOUD_ID={oauth_config.cloud_id}")
             logger.info(f"\nRetrieved Cloud ID: {oauth_config.cloud_id}")
         else:
@@ -339,8 +361,9 @@ def main() -> int:
         args.redirect_uri = os.getenv("ATLASSIAN_OAUTH_REDIRECT_URI")
     if not args.scope:
         args.scope = os.getenv("ATLASSIAN_OAUTH_SCOPE")
+    # base_url for Data Center - check JIRA_URL or CONFLUENCE_URL as fallback
     if not args.base_url:
-        args.base_url = os.getenv("ATLASSIAN_OAUTH_BASE_URL")
+        args.base_url = os.getenv("JIRA_URL") or os.getenv("CONFLUENCE_URL")
 
     # Validate required arguments
     missing = []

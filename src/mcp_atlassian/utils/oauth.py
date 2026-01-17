@@ -471,11 +471,20 @@ class OAuthConfig:
             return {}
 
     @classmethod
-    def from_env(cls) -> Optional["OAuthConfig"]:
+    def from_env(
+        cls, service_url: str | None = None, service_type: str | None = None
+    ) -> Optional["OAuthConfig"]:
         """Create an OAuth configuration from environment variables.
 
-        For Data Center OAuth, set ATLASSIAN_OAUTH_BASE_URL to the instance URL.
-        This will use the Data Center OAuth endpoints instead of Cloud.
+        For Data Center OAuth, pass service_url to derive base_url from the service URL.
+
+        Args:
+            service_url: Optional service URL (JIRA_URL or CONFLUENCE_URL).
+                        If provided and it's a Data Center URL, it will be used
+                        as the OAuth base_url for token endpoints.
+            service_type: Optional service type ("jira" or "confluence").
+                        Used to check service-specific OAuth env vars first
+                        (e.g., JIRA_OAUTH_CLIENT_ID before ATLASSIAN_OAUTH_CLIENT_ID).
 
         Returns:
             OAuthConfig instance or None if OAuth is not enabled
@@ -487,22 +496,58 @@ class OAuthConfig:
             "yes",
         )
 
-        # Check for required environment variables
-        client_id = os.getenv("ATLASSIAN_OAUTH_CLIENT_ID")
-        client_secret = os.getenv("ATLASSIAN_OAUTH_CLIENT_SECRET")
+        # Check for service-specific env vars first, then fall back to shared ones
+        # This allows different OAuth credentials for Jira and Confluence on Data Center
+        if service_type == "jira":
+            client_id = os.getenv("JIRA_OAUTH_CLIENT_ID") or os.getenv(
+                "ATLASSIAN_OAUTH_CLIENT_ID"
+            )
+            client_secret = os.getenv("JIRA_OAUTH_CLIENT_SECRET") or os.getenv(
+                "ATLASSIAN_OAUTH_CLIENT_SECRET"
+            )
+        elif service_type == "confluence":
+            client_id = os.getenv("CONFLUENCE_OAUTH_CLIENT_ID") or os.getenv(
+                "ATLASSIAN_OAUTH_CLIENT_ID"
+            )
+            client_secret = os.getenv("CONFLUENCE_OAUTH_CLIENT_SECRET") or os.getenv(
+                "ATLASSIAN_OAUTH_CLIENT_SECRET"
+            )
+        else:
+            client_id = os.getenv("ATLASSIAN_OAUTH_CLIENT_ID")
+            client_secret = os.getenv("ATLASSIAN_OAUTH_CLIENT_SECRET")
+
         redirect_uri = os.getenv("ATLASSIAN_OAUTH_REDIRECT_URI")
         scope = os.getenv("ATLASSIAN_OAUTH_SCOPE")
-        base_url = os.getenv("ATLASSIAN_OAUTH_BASE_URL")  # Data Center instance URL
+        cloud_id = os.getenv("ATLASSIAN_OAUTH_CLOUD_ID")
 
-        # Full OAuth configuration (traditional mode)
-        if all([client_id, client_secret, redirect_uri, scope]):
+        # Determine base_url for Data Center (derived from service_url)
+        base_url = None
+        if service_url and "atlassian.net" not in service_url:
+            # Derive base_url from service URL for Data Center
+            # Strip /wiki suffix for Confluence URLs
+            base_url = service_url.rstrip("/")
+            if base_url.endswith("/wiki"):
+                base_url = base_url[:-5]
+            logger.debug(f"Derived OAuth base_url from service URL: {base_url}")
+
+        # Determine if this is Data Center
+        is_dc = base_url and "atlassian.net" not in base_url
+
+        # For Data Center, redirect_uri and scope are optional
+        if is_dc and client_id and client_secret:
+            redirect_uri = redirect_uri or "http://localhost:8080/callback"
+            scope = scope or ""  # Scope is optional for DC
+
+        # Full OAuth configuration
+        # For Cloud: all params required
+        if client_id and client_secret and redirect_uri and (scope or is_dc):
             # Create the OAuth configuration with full credentials
             config = cls(
                 client_id=client_id,
                 client_secret=client_secret,
                 redirect_uri=redirect_uri,
                 scope=scope,
-                cloud_id=os.getenv("ATLASSIAN_OAUTH_CLOUD_ID"),
+                cloud_id=cloud_id,
                 base_url=base_url,
             )
 
@@ -514,7 +559,7 @@ class OAuthConfig:
                 config.expires_at = token_data.get("expires_at")
                 if not config.cloud_id and "cloud_id" in token_data:
                     config.cloud_id = token_data["cloud_id"]
-                # Restore base_url from saved tokens if not set via env
+                # Restore base_url from saved tokens if not set
                 if not config.base_url and "base_url" in token_data:
                     config.base_url = token_data["base_url"]
 
@@ -524,14 +569,15 @@ class OAuthConfig:
         elif oauth_enabled:
             # Create minimal config that works with user-provided tokens
             logger.info(
-                "Creating minimal OAuth config for user-provided tokens (ATLASSIAN_OAUTH_ENABLE=true)"
+                "Creating minimal OAuth config for user-provided tokens "
+                "(ATLASSIAN_OAUTH_ENABLE=true)"
             )
             return cls(
                 client_id="",  # Will be provided by user tokens
                 client_secret="",  # Not needed for user tokens
                 redirect_uri="",  # Not needed for user tokens
                 scope="",  # Will be determined by user token permissions
-                cloud_id=os.getenv("ATLASSIAN_OAUTH_CLOUD_ID"),  # Optional fallback
+                cloud_id=cloud_id,  # Optional fallback
                 base_url=base_url,  # Data Center instance URL if applicable
             )
 
@@ -567,25 +613,49 @@ class BYOAccessTokenOAuthConfig:
         return "atlassian.net" not in self.base_url
 
     @classmethod
-    def from_env(cls) -> Optional["BYOAccessTokenOAuthConfig"]:
+    def from_env(
+        cls, service_url: str | None = None, service_type: str | None = None
+    ) -> Optional["BYOAccessTokenOAuthConfig"]:
         """Create a BYOAccessTokenOAuthConfig from environment variables.
 
         Reads `ATLASSIAN_OAUTH_ACCESS_TOKEN` (required) and optionally:
         - `ATLASSIAN_OAUTH_CLOUD_ID` for Cloud
-        - `ATLASSIAN_OAUTH_BASE_URL` for Data Center
+
+        For Data Center, pass service_url to derive base_url.
+
+        Args:
+            service_url: Optional service URL (JIRA_URL or CONFLUENCE_URL).
+                        For Data Center, this is used to derive the base_url.
+            service_type: Optional service type ("jira" or "confluence").
+                        Used to check service-specific OAuth env vars first.
 
         Returns:
             BYOAccessTokenOAuthConfig instance or None if access_token is missing.
         """
-        access_token = os.getenv("ATLASSIAN_OAUTH_ACCESS_TOKEN")
+        # Check for service-specific access token first
+        if service_type == "jira":
+            access_token = os.getenv("JIRA_OAUTH_ACCESS_TOKEN") or os.getenv(
+                "ATLASSIAN_OAUTH_ACCESS_TOKEN"
+            )
+        elif service_type == "confluence":
+            access_token = os.getenv("CONFLUENCE_OAUTH_ACCESS_TOKEN") or os.getenv(
+                "ATLASSIAN_OAUTH_ACCESS_TOKEN"
+            )
+        else:
+            access_token = os.getenv("ATLASSIAN_OAUTH_ACCESS_TOKEN")
         cloud_id = os.getenv("ATLASSIAN_OAUTH_CLOUD_ID")
-        base_url = os.getenv("ATLASSIAN_OAUTH_BASE_URL")
 
         if not access_token:
             return None
 
+        # Derive base_url from service_url for Data Center
+        base_url = None
+        if service_url and "atlassian.net" not in service_url:
+            base_url = service_url.rstrip("/")
+            if base_url.endswith("/wiki"):
+                base_url = base_url[:-5]
+
         # For Cloud, we need cloud_id; for Data Center, we need base_url
-        # But we allow either to be set
         if not cloud_id and not base_url:
             # Neither set - could be per-request tokens mode
             return None
@@ -593,18 +663,30 @@ class BYOAccessTokenOAuthConfig:
         return cls(access_token=access_token, cloud_id=cloud_id, base_url=base_url)
 
 
-def get_oauth_config_from_env() -> OAuthConfig | BYOAccessTokenOAuthConfig | None:
+def get_oauth_config_from_env(
+    service_url: str | None = None,
+    service_type: str | None = None,
+) -> OAuthConfig | BYOAccessTokenOAuthConfig | None:
     """Get the appropriate OAuth configuration from environment variables.
 
-    This function attempts to load standard OAuth configuration first (OAuthConfig).
-    If that's not available, it tries to load a "Bring Your Own Access Token"
-    configuration (BYOAccessTokenOAuthConfig).
+    This function attempts to load BYO access token configuration first.
+    If that's not available, it tries to load standard OAuth configuration.
+
+    Args:
+        service_url: Optional service URL (JIRA_URL or CONFLUENCE_URL).
+                    For Data Center, this is used to derive the OAuth base_url
+                    and to load the correct tokens for that instance.
+        service_type: Optional service type ("jira" or "confluence").
+                    Used to check service-specific OAuth env vars first
+                    (e.g., JIRA_OAUTH_CLIENT_ID before ATLASSIAN_OAUTH_CLIENT_ID).
 
     Returns:
         An instance of OAuthConfig or BYOAccessTokenOAuthConfig if environment
         variables are set for either, otherwise None.
     """
-    return BYOAccessTokenOAuthConfig.from_env() or OAuthConfig.from_env()
+    return BYOAccessTokenOAuthConfig.from_env(
+        service_url, service_type
+    ) or OAuthConfig.from_env(service_url, service_type)
 
 
 def configure_oauth_session(

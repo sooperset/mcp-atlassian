@@ -648,6 +648,90 @@ class TestOAuthConfig:
             assert config.scope == "read:jira-work"
             assert config.cloud_id == "full-cloud-id"
 
+    @patch("os.getenv")
+    def test_from_env_jira_service_specific_oauth(self, mock_getenv):
+        """Test from_env with Jira-specific OAuth credentials."""
+        mock_getenv.side_effect = lambda key, default=None: {
+            "JIRA_OAUTH_CLIENT_ID": "jira-client-id",
+            "JIRA_OAUTH_CLIENT_SECRET": "jira-client-secret",
+            "ATLASSIAN_OAUTH_CLIENT_ID": "shared-client-id",
+            "ATLASSIAN_OAUTH_CLIENT_SECRET": "shared-client-secret",
+            "ATLASSIAN_OAUTH_REDIRECT_URI": "https://example.com/callback",
+            "ATLASSIAN_OAUTH_SCOPE": "read:jira-work",
+            "ATLASSIAN_OAUTH_CLOUD_ID": "cloud-id",
+        }.get(key, default)
+
+        with patch.object(OAuthConfig, "load_tokens", return_value={}):
+            # When service_type is "jira", should use JIRA_OAUTH_* env vars
+            config = OAuthConfig.from_env(service_type="jira")
+
+            assert config is not None
+            assert config.client_id == "jira-client-id"
+            assert config.client_secret == "jira-client-secret"
+
+    @patch("os.getenv")
+    def test_from_env_confluence_service_specific_oauth(self, mock_getenv):
+        """Test from_env with Confluence-specific OAuth credentials."""
+        mock_getenv.side_effect = lambda key, default=None: {
+            "CONFLUENCE_OAUTH_CLIENT_ID": "confluence-client-id",
+            "CONFLUENCE_OAUTH_CLIENT_SECRET": "confluence-client-secret",
+            "ATLASSIAN_OAUTH_CLIENT_ID": "shared-client-id",
+            "ATLASSIAN_OAUTH_CLIENT_SECRET": "shared-client-secret",
+            "ATLASSIAN_OAUTH_REDIRECT_URI": "https://example.com/callback",
+            "ATLASSIAN_OAUTH_SCOPE": "read:confluence-content.all",
+            "ATLASSIAN_OAUTH_CLOUD_ID": "cloud-id",
+        }.get(key, default)
+
+        with patch.object(OAuthConfig, "load_tokens", return_value={}):
+            # When service_type is "confluence", should use CONFLUENCE_OAUTH_* env vars
+            config = OAuthConfig.from_env(service_type="confluence")
+
+            assert config is not None
+            assert config.client_id == "confluence-client-id"
+            assert config.client_secret == "confluence-client-secret"
+
+    @patch("os.getenv")
+    def test_from_env_service_specific_fallback_to_shared(self, mock_getenv):
+        """Test from_env falls back to shared credentials when service-specific are missing."""
+        mock_getenv.side_effect = lambda key, default=None: {
+            # No JIRA_OAUTH_* variables set
+            "ATLASSIAN_OAUTH_CLIENT_ID": "shared-client-id",
+            "ATLASSIAN_OAUTH_CLIENT_SECRET": "shared-client-secret",
+            "ATLASSIAN_OAUTH_REDIRECT_URI": "https://example.com/callback",
+            "ATLASSIAN_OAUTH_SCOPE": "read:jira-work",
+            "ATLASSIAN_OAUTH_CLOUD_ID": "cloud-id",
+        }.get(key, default)
+
+        with patch.object(OAuthConfig, "load_tokens", return_value={}):
+            # When service-specific vars are missing, should fall back to shared
+            config = OAuthConfig.from_env(service_type="jira")
+
+            assert config is not None
+            assert config.client_id == "shared-client-id"
+            assert config.client_secret == "shared-client-secret"
+
+    @patch("os.getenv")
+    def test_from_env_data_center_with_service_specific_oauth(self, mock_getenv):
+        """Test from_env for Data Center with service-specific OAuth credentials."""
+        mock_getenv.side_effect = lambda key, default=None: {
+            "JIRA_OAUTH_CLIENT_ID": "jira-dc-client-id",
+            "JIRA_OAUTH_CLIENT_SECRET": "jira-dc-client-secret",
+            "ATLASSIAN_OAUTH_REDIRECT_URI": "http://localhost:8080/callback",
+        }.get(key, default)
+
+        with patch.object(OAuthConfig, "load_tokens", return_value={}):
+            # Data Center URL - should use service-specific credentials
+            config = OAuthConfig.from_env(
+                service_url="https://jira.example.com",
+                service_type="jira",
+            )
+
+            assert config is not None
+            assert config.client_id == "jira-dc-client-id"
+            assert config.client_secret == "jira-dc-client-secret"
+            assert config.base_url == "https://jira.example.com"
+            assert config.is_data_center is True
+
 
 class TestBYOAccessTokenOAuthConfig:
     """Tests for the BYOAccessTokenOAuthConfig class."""
@@ -704,6 +788,38 @@ class TestBYOAccessTokenOAuthConfig:
         mock_getenv.return_value = None  # Covers all calls returning None
         config = BYOAccessTokenOAuthConfig.from_env()
         assert config is None
+
+    @patch("os.getenv")
+    def test_from_env_jira_service_specific_access_token(self, mock_getenv):
+        """Test from_env with Jira-specific access token."""
+        mock_getenv.side_effect = lambda key, default=None: {
+            "JIRA_OAUTH_ACCESS_TOKEN": "jira-access-token",
+            "ATLASSIAN_OAUTH_ACCESS_TOKEN": "shared-access-token",
+            "ATLASSIAN_OAUTH_CLOUD_ID": "cloud-id",
+        }.get(key, default)
+
+        # When service_type is "jira", should use JIRA_OAUTH_ACCESS_TOKEN
+        config = BYOAccessTokenOAuthConfig.from_env(service_type="jira")
+
+        assert config is not None
+        assert config.access_token == "jira-access-token"
+        assert config.cloud_id == "cloud-id"
+
+    @patch("os.getenv")
+    def test_from_env_confluence_service_specific_access_token(self, mock_getenv):
+        """Test from_env with Confluence-specific access token."""
+        mock_getenv.side_effect = lambda key, default=None: {
+            "CONFLUENCE_OAUTH_ACCESS_TOKEN": "confluence-access-token",
+            "ATLASSIAN_OAUTH_ACCESS_TOKEN": "shared-access-token",
+            "ATLASSIAN_OAUTH_CLOUD_ID": "cloud-id",
+        }.get(key, default)
+
+        # When service_type is "confluence", should use CONFLUENCE_OAUTH_ACCESS_TOKEN
+        config = BYOAccessTokenOAuthConfig.from_env(service_type="confluence")
+
+        assert config is not None
+        assert config.access_token == "confluence-access-token"
+        assert config.cloud_id == "cloud-id"
 
 
 @patch("mcp_atlassian.utils.oauth.BYOAccessTokenOAuthConfig.from_env")

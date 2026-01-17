@@ -59,6 +59,17 @@ def get_available_services() -> dict[str, bool | None]:
                 logger.info(
                     "Using Confluence Server/Data Center authentication (PAT or Basic Auth)"
                 )
+            elif all(
+                [
+                    os.getenv("CONFLUENCE_OAUTH_CLIENT_ID")
+                    or os.getenv("ATLASSIAN_OAUTH_CLIENT_ID"),
+                    os.getenv("CONFLUENCE_OAUTH_CLIENT_SECRET")
+                    or os.getenv("ATLASSIAN_OAUTH_CLIENT_SECRET"),
+                ]
+            ):
+                # Data Center OAuth with client credentials (service-specific or shared)
+                confluence_is_setup = True
+                logger.info("Using Confluence Data Center OAuth 2.0 authentication")
             elif os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in (
                 "true",
                 "1",
@@ -122,6 +133,17 @@ def get_available_services() -> dict[str, bool | None]:
                 logger.info(
                     "Using Jira Server/Data Center authentication (PAT or Basic Auth)"
                 )
+            elif all(
+                [
+                    os.getenv("JIRA_OAUTH_CLIENT_ID")
+                    or os.getenv("ATLASSIAN_OAUTH_CLIENT_ID"),
+                    os.getenv("JIRA_OAUTH_CLIENT_SECRET")
+                    or os.getenv("ATLASSIAN_OAUTH_CLIENT_SECRET"),
+                ]
+            ):
+                # Data Center OAuth with client credentials (service-specific or shared)
+                jira_is_setup = True
+                logger.info("Using Jira Data Center OAuth 2.0 authentication")
             elif os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in (
                 "true",
                 "1",

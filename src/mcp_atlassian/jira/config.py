@@ -95,8 +95,8 @@ class JiraConfig:
         api_token = os.getenv("JIRA_API_TOKEN")
         personal_token = os.getenv("JIRA_PERSONAL_TOKEN")
 
-        # Check for OAuth configuration
-        oauth_config = get_oauth_config_from_env()
+        # Check for OAuth configuration (pass URL for Data Center token separation)
+        oauth_config = get_oauth_config_from_env(service_url=url, service_type="jira")
         auth_type = None
 
         # Use the shared utility function directly
@@ -185,18 +185,9 @@ class JiraConfig:
             if self.oauth_config:
                 # Full OAuth configuration (traditional mode)
                 if isinstance(self.oauth_config, OAuthConfig):
-                    if (
-                        self.oauth_config.client_id
-                        and self.oauth_config.client_secret
-                        and self.oauth_config.redirect_uri
-                        and self.oauth_config.scope
-                        and self.oauth_config.cloud_id
-                    ):
-                        return True
                     # Minimal OAuth configuration (user-provided tokens mode)
-                    # This is valid if we have oauth_config but missing client credentials
-                    # In this case, we expect authentication to come from user-provided headers
-                    elif (
+                    # Check this FIRST - if no client credentials, we expect user-provided tokens
+                    if (
                         not self.oauth_config.client_id
                         and not self.oauth_config.client_secret
                     ):
@@ -204,9 +195,30 @@ class JiraConfig:
                             "Minimal OAuth config detected - expecting user-provided tokens via headers"
                         )
                         return True
+                    # Data Center OAuth: only needs client_id and client_secret
+                    if self.oauth_config.is_data_center:
+                        if (
+                            self.oauth_config.client_id
+                            and self.oauth_config.client_secret
+                        ):
+                            return True
+                    # Cloud OAuth: needs all credentials including cloud_id
+                    elif (
+                        self.oauth_config.client_id
+                        and self.oauth_config.client_secret
+                        and self.oauth_config.redirect_uri
+                        and self.oauth_config.scope
+                        and self.oauth_config.cloud_id
+                    ):
+                        return True
                 # Bring Your Own Access Token mode
                 elif isinstance(self.oauth_config, BYOAccessTokenOAuthConfig):
-                    if self.oauth_config.cloud_id and self.oauth_config.access_token:
+                    # Data Center BYO: needs access_token and base_url
+                    if self.oauth_config.is_data_center:
+                        if self.oauth_config.access_token:
+                            return True
+                    # Cloud BYO: needs access_token and cloud_id
+                    elif self.oauth_config.cloud_id and self.oauth_config.access_token:
                         return True
 
             # Partial configuration is invalid
