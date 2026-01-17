@@ -51,13 +51,23 @@ def get_available_services() -> dict[str, bool | None]:
             ):
                 confluence_is_setup = True
                 logger.info("Using Confluence Cloud Basic Authentication (API Token)")
-        else:  # Server/Data Center non-OAuth
+        else:  # Server/Data Center
             if os.getenv("CONFLUENCE_PERSONAL_TOKEN") or (
                 os.getenv("CONFLUENCE_USERNAME") and os.getenv("CONFLUENCE_API_TOKEN")
             ):
                 confluence_is_setup = True
                 logger.info(
                     "Using Confluence Server/Data Center authentication (PAT or Basic Auth)"
+                )
+            elif os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in (
+                "true",
+                "1",
+                "yes",
+            ):
+                # Data Center with per-request bearer tokens
+                confluence_is_setup = True
+                logger.info(
+                    "Using Confluence Data Center OAuth - expecting user-provided tokens via headers"
                 )
     elif os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in ("true", "1", "yes"):
         confluence_is_setup = True
@@ -104,13 +114,23 @@ def get_available_services() -> dict[str, bool | None]:
             ):
                 jira_is_setup = True
                 logger.info("Using Jira Cloud Basic Authentication (API Token)")
-        else:  # Server/Data Center non-OAuth
+        else:  # Server/Data Center
             if os.getenv("JIRA_PERSONAL_TOKEN") or (
                 os.getenv("JIRA_USERNAME") and os.getenv("JIRA_API_TOKEN")
             ):
                 jira_is_setup = True
                 logger.info(
                     "Using Jira Server/Data Center authentication (PAT or Basic Auth)"
+                )
+            elif os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in (
+                "true",
+                "1",
+                "yes",
+            ):
+                # Data Center with per-request bearer tokens
+                jira_is_setup = True
+                logger.info(
+                    "Using Jira Data Center OAuth - expecting user-provided tokens via headers"
                 )
     elif os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in ("true", "1", "yes"):
         jira_is_setup = True

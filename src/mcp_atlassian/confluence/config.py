@@ -48,17 +48,20 @@ class ConfluenceConfig:
             True if this is a cloud instance (atlassian.net), False otherwise.
             Localhost URLs are always considered non-cloud (Server/Data Center).
         """
-        # Multi-Cloud OAuth mode: URL might be None, but we use api.atlassian.com
+        # If OAuth with cloud_id is set, it's always Cloud
+        # (cloud_id is specific to Atlassian Cloud)
         if (
             self.auth_type == "oauth"
             and self.oauth_config
             and self.oauth_config.cloud_id
         ):
-            # OAuth with cloud_id uses api.atlassian.com which is always Cloud
             return True
 
-        # For other auth types, check the URL
-        return is_atlassian_cloud_url(self.url) if self.url else False
+        # Check the URL
+        if self.url:
+            return is_atlassian_cloud_url(self.url)
+
+        return False
 
     @property
     def verify_ssl(self) -> bool:

@@ -2,25 +2,34 @@
 """
 OAuth 2.0 Authorization Flow Helper for MCP Atlassian
 
-This script helps with the OAuth 2.0 (3LO) authorization flow for Atlassian Cloud:
+This script helps with the OAuth 2.0 (3LO) authorization flow for Atlassian Cloud
+and Data Center:
 1. Opens a browser to the authorization URL
 2. Starts a local server to receive the callback with the authorization code
 3. Exchanges the authorization code for access and refresh tokens
 4. Saves the tokens for later use by MCP Atlassian
 
-Usage:
+Usage (Cloud):
     python oauth_authorize.py --client-id YOUR_CLIENT_ID --client-secret YOUR_CLIENT_SECRET
                              --redirect-uri http://localhost:8080/callback
                              --scope "read:jira-work write:jira-work read:confluence-space.summary offline_access"
 
-IMPORTANT: The 'offline_access' scope is required for refresh tokens to work properly.
+Usage (Data Center):
+    python oauth_authorize.py --client-id YOUR_CLIENT_ID --client-secret YOUR_CLIENT_SECRET
+                             --redirect-uri http://localhost:8080/callback
+                             --scope "WRITE"
+                             --base-url https://jira.example.com
+
+IMPORTANT (Cloud only): The 'offline_access' scope is required for refresh tokens to work properly.
 Without this scope, tokens will expire quickly and authentication will fail.
+Data Center does NOT require 'offline_access' scope for refresh tokens.
 
 Environment variables can also be used:
 - ATLASSIAN_OAUTH_CLIENT_ID
 - ATLASSIAN_OAUTH_CLIENT_SECRET
 - ATLASSIAN_OAUTH_REDIRECT_URI
 - ATLASSIAN_OAUTH_SCOPE
+- ATLASSIAN_OAUTH_BASE_URL (Data Center instance URL)
 """
 
 import argparse
@@ -213,7 +222,11 @@ def run_oauth_flow(args: argparse.Namespace) -> bool:
         client_secret=args.client_secret,
         redirect_uri=args.redirect_uri,
         scope=args.scope,
+        base_url=getattr(args, "base_url", None),
     )
+
+    if oauth_config.is_data_center:
+        logger.info(f"Running Data Center OAuth flow for: {args.base_url}")
 
     # Generate a random state for CSRF protection
     state = secrets.token_urlsafe(16)
@@ -268,16 +281,20 @@ def run_oauth_flow(args: argparse.Namespace) -> bool:
     if oauth_config.exchange_code_for_tokens(authorization_code):
         logger.info("🎉 OAuth authorization flow completed successfully!")
 
-        if oauth_config.cloud_id:
-            logger.info(f"Retrieved Cloud ID: {oauth_config.cloud_id}")
-            logger.info(
-                "\n💡 Tip: Add/update the following in your .env file or environment variables:"
-            )
-            logger.info(f"ATLASSIAN_OAUTH_CLIENT_ID={oauth_config.client_id}")
-            logger.info(f"ATLASSIAN_OAUTH_CLIENT_SECRET={oauth_config.client_secret}")
-            logger.info(f"ATLASSIAN_OAUTH_REDIRECT_URI={oauth_config.redirect_uri}")
-            logger.info(f"ATLASSIAN_OAUTH_SCOPE={oauth_config.scope}")
+        logger.info(
+            "\n💡 Tip: Add/update the following in your .env file or environment variables:"
+        )
+        logger.info(f"ATLASSIAN_OAUTH_CLIENT_ID={oauth_config.client_id}")
+        logger.info(f"ATLASSIAN_OAUTH_CLIENT_SECRET={oauth_config.client_secret}")
+        logger.info(f"ATLASSIAN_OAUTH_REDIRECT_URI={oauth_config.redirect_uri}")
+        logger.info(f"ATLASSIAN_OAUTH_SCOPE={oauth_config.scope}")
+
+        if oauth_config.is_data_center:
+            logger.info(f"ATLASSIAN_OAUTH_BASE_URL={oauth_config.base_url}")
+            logger.info("\nData Center OAuth configured successfully!")
+        elif oauth_config.cloud_id:
             logger.info(f"ATLASSIAN_OAUTH_CLOUD_ID={oauth_config.cloud_id}")
+            logger.info(f"\nRetrieved Cloud ID: {oauth_config.cloud_id}")
         else:
             logger.warning(
                 "Cloud ID could not be obtained. Some API calls might require it."
@@ -296,7 +313,7 @@ def run_oauth_flow(args: argparse.Namespace) -> bool:
 def main() -> int:
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="OAuth 2.0 Authorization Flow Helper for MCP Atlassian"
+        description="OAuth 2.0 Authorization Flow Helper for MCP Atlassian (Cloud and Data Center)"
     )
     parser.add_argument("--client-id", help="OAuth Client ID")
     parser.add_argument("--client-secret", help="OAuth Client Secret")
@@ -305,6 +322,11 @@ def main() -> int:
         help="OAuth Redirect URI (e.g., http://localhost:8080/callback)",
     )
     parser.add_argument("--scope", help="OAuth Scope (space-separated)")
+    parser.add_argument(
+        "--base-url",
+        help="Data Center instance URL (e.g., https://jira.example.com). "
+        "If not provided, Cloud OAuth will be used.",
+    )
 
     args = parser.parse_args()
 
@@ -317,6 +339,8 @@ def main() -> int:
         args.redirect_uri = os.getenv("ATLASSIAN_OAUTH_REDIRECT_URI")
     if not args.scope:
         args.scope = os.getenv("ATLASSIAN_OAUTH_SCOPE")
+    if not args.base_url:
+        args.base_url = os.getenv("ATLASSIAN_OAUTH_BASE_URL")
 
     # Validate required arguments
     missing = []
@@ -334,8 +358,9 @@ def main() -> int:
         parser.print_help()
         return 1
 
-    # Check for offline_access scope
-    if args.scope and "offline_access" not in args.scope.split():
+    # Check for offline_access scope (Cloud only - Data Center doesn't need it)
+    is_data_center = args.base_url and "atlassian.net" not in args.base_url
+    if not is_data_center and args.scope and "offline_access" not in args.scope.split():
         logger.warning("\n⚠️ WARNING: The 'offline_access' scope is missing!")
         logger.warning(
             "Without this scope, refresh tokens will not be issued and authentication will fail when tokens expire."
@@ -344,6 +369,11 @@ def main() -> int:
         proceed = input("Do you want to proceed anyway? (y/n): ")
         if proceed.lower() != "y":
             return 1
+
+    if is_data_center:
+        logger.info(f"Using Data Center OAuth for: {args.base_url}")
+    else:
+        logger.info("Using Cloud OAuth")
 
     success = run_oauth_flow(args)
     return 0 if success else 1

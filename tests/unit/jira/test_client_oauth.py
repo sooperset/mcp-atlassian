@@ -77,7 +77,7 @@ class TestJiraClientOAuth:
             mock_configure_ssl.assert_called_once()
 
     def test_init_with_oauth_missing_cloud_id(self):
-        """Test initializing the client with OAuth but missing cloud_id."""
+        """Test initializing the client with Cloud OAuth but missing cloud_id."""
         # Create a mock OAuth config without cloud_id
         oauth_config = OAuthConfig(
             client_id="test-client-id",
@@ -88,16 +88,16 @@ class TestJiraClientOAuth:
             access_token="test-access-token",
         )
 
-        # Create a Jira config with OAuth
+        # Create a Jira config with OAuth and Cloud URL - requires cloud_id
         config = JiraConfig(
             url="https://test.atlassian.net",
             auth_type="oauth",
             oauth_config=oauth_config,
         )
 
-        # Verify error is raised
+        # Verify error is raised for Cloud URL without cloud_id
         with pytest.raises(
-            ValueError, match="OAuth authentication requires a valid cloud_id"
+            ValueError, match="Cloud OAuth authentication requires a valid cloud_id"
         ):
             JiraClient(config=config)
 
@@ -201,22 +201,22 @@ class TestJiraClientOAuth:
             mock_configure_ssl.assert_called_once()
 
     def test_init_with_byo_oauth_missing_cloud_id(self):
-        """Test initializing with BYO OAuth but missing cloud_id."""
+        """Test initializing with BYO OAuth and Cloud URL but missing cloud_id."""
         # Create a mock BYO OAuth config with an empty cloud_id
         byo_oauth_config = BYOAccessTokenOAuthConfig(
             cloud_id="", access_token="my-byo-token"
         )
 
-        # Create a Jira config with OAuth
+        # Create a Jira config with OAuth and Cloud URL - requires cloud_id
         config = JiraConfig(
             url="https://test.atlassian.net",
             auth_type="oauth",
             oauth_config=byo_oauth_config,
         )
 
-        # Verify error is raised
+        # Verify error is raised for Cloud URL without cloud_id
         with pytest.raises(
-            ValueError, match="OAuth authentication requires a valid cloud_id"
+            ValueError, match="Cloud OAuth authentication requires a valid cloud_id"
         ):
             JiraClient(config=config)
 
