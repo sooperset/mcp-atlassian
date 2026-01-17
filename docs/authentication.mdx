@@ -111,6 +111,55 @@ ATLASSIAN_OAUTH_SCOPE=read:jira-work write:jira-work read:confluence-content.all
 Include `offline_access` in your scope to allow automatic token refresh.
 </Warning>
 
+## OAuth 2.0 (Data Center)
+
+OAuth 2.0 is also supported for Atlassian Data Center deployments. Data Center OAuth uses instance-specific endpoints and does not require the `offline_access` scope for refresh tokens.
+
+### Setup Steps
+
+<Steps>
+  <Step title="Configure OAuth in Data Center">
+    In your Data Center instance, go to **Administration** → **Application Links** → **Create link** and configure an OAuth 2.0 application
+  </Step>
+  <Step title="Set Callback URL">
+    Set to `http://localhost:8080/callback`
+  </Step>
+  <Step title="Run Setup Wizard">
+    ```bash
+    # Using uvx - provide your Data Center URL
+    uvx mcp-atlassian --oauth-setup -v
+
+    # When prompted for "Data Center URL", enter your instance URL
+    # e.g., https://jira.your-company.com
+    ```
+  </Step>
+  <Step title="Complete Authorization">
+    Follow prompts and complete browser authorization
+  </Step>
+</Steps>
+
+**Environment variables (after setup):**
+```bash
+# For Jira Data Center
+JIRA_URL=https://jira.your-company.com
+JIRA_OAUTH_CLIENT_ID=your_jira_oauth_client_id
+JIRA_OAUTH_CLIENT_SECRET=your_jira_oauth_client_secret
+
+# For Confluence Data Center
+CONFLUENCE_URL=https://confluence.your-company.com
+CONFLUENCE_OAUTH_CLIENT_ID=your_confluence_oauth_client_id
+CONFLUENCE_OAUTH_CLIENT_SECRET=your_confluence_oauth_client_secret
+```
+
+<Note>
+If Jira and Confluence share the same OAuth app, you can use the shared variables instead:
+```bash
+ATLASSIAN_OAUTH_CLIENT_ID=your_oauth_client_id
+ATLASSIAN_OAUTH_CLIENT_SECRET=your_oauth_client_secret
+```
+Service-specific variables take precedence over shared ones.
+</Note>
+
 ### Bring Your Own Token (BYOT)
 
 If you manage OAuth tokens externally (e.g., through a central identity provider):
@@ -124,23 +173,40 @@ ATLASSIAN_OAUTH_ACCESS_TOKEN=your_pre_existing_access_token
 Token refresh is your responsibility - the server does not handle it for BYOT.
 </Warning>
 
-### Multi-Cloud OAuth
+### Multi-User OAuth (Cloud and Data Center)
 
 For multi-tenant applications where users provide their own OAuth tokens:
 
 1. Enable minimal OAuth mode:
    ```bash
-   # Using uvx
+   # For Cloud - using uvx
    ATLASSIAN_OAUTH_ENABLE=true uvx mcp-atlassian --transport streamable-http --port 9000
 
-   # Or using Docker
+   # For Cloud - using Docker
    docker run -e ATLASSIAN_OAUTH_ENABLE=true -p 9000:9000 \
+     ghcr.io/sooperset/mcp-atlassian:latest \
+     --transport streamable-http --port 9000
+
+   # For Data Center - using uvx
+   CONFLUENCE_URL=https://confluence.your-company.com \
+   ATLASSIAN_OAUTH_ENABLE=true \
+   uvx mcp-atlassian --transport streamable-http --port 9000
+
+   # For Data Center - using Docker
+   docker run -e ATLASSIAN_OAUTH_ENABLE=true \
+     -e CONFLUENCE_URL=https://confluence.your-company.com \
+     -p 9000:9000 \
      ghcr.io/sooperset/mcp-atlassian:latest \
      --transport streamable-http --port 9000
    ```
 
 2. Users provide authentication via HTTP headers:
+
+   **For Cloud:**
    - `Authorization: Bearer <user_oauth_token>`
    - `X-Atlassian-Cloud-Id: <user_cloud_id>`
+
+   **For Data Center:**
+   - `Authorization: Bearer <user_oauth_token>`
 
 See [HTTP Transport](/http-transport) for more details on multi-user authentication.
