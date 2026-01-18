@@ -209,4 +209,13 @@ For multi-tenant applications where users provide their own OAuth tokens:
    **For Data Center:**
    - `Authorization: Bearer <user_oauth_token>`
 
+   **Service-Specific Headers (Optional):**
+
+   When Jira and Confluence require different authentication tokens (e.g., different OAuth apps or PATs), use service-specific headers:
+
+   - `X-Jira-Authorization: Bearer <jira_oauth_token>` or `X-Jira-Authorization: Token <jira_pat>`
+   - `X-Confluence-Authorization: Bearer <confluence_oauth_token>` or `X-Confluence-Authorization: Token <confluence_pat>`
+
+   Service-specific headers take precedence over the generic `Authorization` header. If only the generic header is provided, it will be used for both services.
+
 See [HTTP Transport](/http-transport) for more details on multi-user authentication.

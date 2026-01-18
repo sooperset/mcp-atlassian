@@ -324,10 +324,22 @@ class UserTokenMiddleware:
             auth_header = headers.get(b"authorization")
             cloud_id_header = headers.get(b"x-atlassian-cloud-id")
 
+            # Service-specific auth headers
+            jira_auth_header = headers.get(b"x-jira-authorization")
+            confluence_auth_header = headers.get(b"x-confluence-authorization")
+
             # Convert bytes to strings (ASGI headers are always bytes)
             auth_header_str = auth_header.decode("latin-1") if auth_header else None
             cloud_id_str = (
                 cloud_id_header.decode("latin-1") if cloud_id_header else None
+            )
+            jira_auth_str = (
+                jira_auth_header.decode("latin-1") if jira_auth_header else None
+            )
+            confluence_auth_str = (
+                confluence_auth_header.decode("latin-1")
+                if confluence_auth_header
+                else None
             )
 
             # Log mcp-session-id for debugging
@@ -341,6 +353,8 @@ class UserTokenMiddleware:
             logger.debug(
                 f"UserTokenMiddleware: Processing auth for {scope.get('path')}, "
                 f"AuthHeader present: {bool(auth_header_str)}, "
+                f"JiraAuthHeader present: {bool(jira_auth_str)}, "
+                f"ConfluenceAuthHeader present: {bool(confluence_auth_str)}, "
                 f"CloudId present: {bool(cloud_id_str)}"
             )
 
@@ -351,18 +365,43 @@ class UserTokenMiddleware:
                     f"UserTokenMiddleware: Extracted cloudId: {cloud_id_str.strip()}"
                 )
 
-            # Process Authorization header
+            # Process service-specific authorization headers first
+            if jira_auth_str:
+                self._parse_auth_header(
+                    jira_auth_str, scope, service_prefix="user_jira"
+                )
+            if confluence_auth_str:
+                self._parse_auth_header(
+                    confluence_auth_str, scope, service_prefix="user_confluence"
+                )
+
+            # Process generic Authorization header (fallback for both services)
             if auth_header_str:
                 self._parse_auth_header(auth_header_str, scope)
-            else:
+            elif not jira_auth_str and not confluence_auth_str:
                 logger.debug("UserTokenMiddleware: No Authorization header provided")
 
         except Exception as e:
             logger.error(f"Error processing authentication headers: {e}", exc_info=True)
             scope["state"]["auth_validation_error"] = "Authentication processing error"
 
-    def _parse_auth_header(self, auth_header: str, scope: Scope) -> None:
-        """Parse the Authorization header and store credentials in scope state."""
+    def _parse_auth_header(
+        self,
+        auth_header: str,
+        scope: Scope,
+        service_prefix: str = "user_atlassian",
+    ) -> None:
+        """Parse the Authorization header and store credentials in scope state.
+
+        Args:
+            auth_header: The authorization header value to parse.
+            scope: The ASGI scope to store credentials in.
+            service_prefix: Prefix for state keys. Use "user_atlassian" for generic,
+                "user_jira" for Jira-specific, or "user_confluence" for Confluence-specific.
+        """
+        token_key = f"{service_prefix}_token"
+        auth_type_key = f"{service_prefix}_auth_type"
+
         # Check prefix BEFORE stripping to preserve "Bearer " / "Token " matching
         if auth_header.startswith("Bearer "):
             token = auth_header[7:].strip()  # Remove "Bearer " prefix and strip token
@@ -371,10 +410,10 @@ class UserTokenMiddleware:
                     "Unauthorized: Empty Bearer token"
                 )
             else:
-                scope["state"]["user_atlassian_token"] = token
-                scope["state"]["user_atlassian_auth_type"] = "oauth"
+                scope["state"][token_key] = token
+                scope["state"][auth_type_key] = "oauth"
                 logger.debug(
-                    "UserTokenMiddleware: Bearer token extracted (masked): "
+                    f"UserTokenMiddleware: Bearer token extracted for {service_prefix} (masked): "
                     f"...{mask_sensitive(token, 8)}"
                 )
 
@@ -385,10 +424,10 @@ class UserTokenMiddleware:
                     "Unauthorized: Empty Token (PAT)"
                 )
             else:
-                scope["state"]["user_atlassian_token"] = token
-                scope["state"]["user_atlassian_auth_type"] = "pat"
+                scope["state"][token_key] = token
+                scope["state"][auth_type_key] = "pat"
                 logger.debug(
-                    "UserTokenMiddleware: PAT token extracted (masked): "
+                    f"UserTokenMiddleware: PAT token extracted for {service_prefix} (masked): "
                     f"...{mask_sensitive(token, 8)}"
                 )
 
