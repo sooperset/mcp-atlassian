@@ -378,6 +378,13 @@ def _setup_mock_request_state(mock_request, auth_scenario=None, cached_fetcher=N
     mock_request.state.jira_fetcher = None
     mock_request.state.confluence_fetcher = None
 
+    # Initialize service-specific token attributes to None
+    # (prevents MagicMock from auto-creating them as MagicMock objects)
+    mock_request.state.user_jira_token = None
+    mock_request.state.user_jira_auth_type = None
+    mock_request.state.user_confluence_token = None
+    mock_request.state.user_confluence_auth_type = None
+
     if auth_scenario:
         mock_request.state.user_atlassian_auth_type = auth_scenario["auth_type"]
         mock_request.state.user_atlassian_token = auth_scenario["token"]
@@ -483,6 +490,48 @@ class TestGetJiraFetcher:
         elif scenario["auth_type"] == "pat":
             assert called_config.personal_token == scenario["token"]
 
+    @pytest.mark.parametrize("scenario_key", ["oauth", "pat"])
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_jira_specific_token_takes_precedence(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+        auth_scenarios,
+        scenario_key,
+    ):
+        """Test that Jira-specific token takes precedence over generic token."""
+        scenario = auth_scenarios[scenario_key]
+
+        # Setup request state with BOTH generic and Jira-specific tokens
+        _setup_mock_request_state(mock_request, scenario)
+        # Override with Jira-specific token
+        mock_request.state.user_jira_token = "jira-specific-token"
+        mock_request.state.user_jira_auth_type = scenario["auth_type"]
+        mock_get_http_request.return_value = mock_request
+
+        # Setup context
+        jira_config = config_factory.create_jira_config(auth_type=scenario["auth_type"])
+        app_context = config_factory.create_app_context(jira_config)
+        _setup_mock_context(mock_context, app_context)
+
+        # Setup mock fetcher
+        mock_fetcher = _create_mock_fetcher(JiraFetcher)
+        mock_jira_fetcher_class.return_value = mock_fetcher
+
+        result = await get_jira_fetcher(mock_context)
+
+        assert result == mock_fetcher
+        # Verify the Jira-specific token was used, not the generic one
+        called_config = mock_jira_fetcher_class.call_args[1]["config"]
+        if scenario["auth_type"] == "oauth":
+            assert called_config.oauth_config.access_token == "jira-specific-token"
+        elif scenario["auth_type"] == "pat":
+            assert called_config.personal_token == "jira-specific-token"
+
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
     async def test_global_fallback_scenarios(
@@ -531,7 +580,6 @@ class TestGetJiraFetcher:
         "error_scenario,expected_error_match",
         [
             ("missing_global_config", "Jira client \\(fetcher\\) not available"),
-            ("empty_user_token", "User Atlassian token found in state but is empty"),
             ("validation_failure", "Invalid user Jira token or configuration"),
             (
                 "missing_lifespan_context",
@@ -556,14 +604,6 @@ class TestGetJiraFetcher:
         if error_scenario == "missing_global_config":
             mock_get_http_request.side_effect = RuntimeError("No HTTP context")
             mock_context.request_context.lifespan_context = {}
-
-        elif error_scenario == "empty_user_token":
-            scenario = auth_scenarios["oauth"].copy()
-            scenario["token"] = ""  # Empty token
-            _setup_mock_request_state(mock_request, scenario)
-            mock_get_http_request.return_value = mock_request
-            app_context = config_factory.create_app_context()
-            _setup_mock_context(mock_context, app_context)
 
         elif error_scenario == "validation_failure":
             scenario = auth_scenarios["pat"]
@@ -656,6 +696,54 @@ class TestGetConfluenceFetcher:
             assert called_config.oauth_config.access_token == scenario["token"]
         elif scenario["auth_type"] == "pat":
             assert called_config.personal_token == scenario["token"]
+
+    @pytest.mark.parametrize("scenario_key", ["oauth", "pat"])
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_confluence_specific_token_takes_precedence(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+        auth_scenarios,
+        scenario_key,
+    ):
+        """Test that Confluence-specific token takes precedence over generic token."""
+        scenario = auth_scenarios[scenario_key]
+
+        # Setup request state with BOTH generic and Confluence-specific tokens
+        _setup_mock_request_state(mock_request, scenario)
+        # Override with Confluence-specific token
+        mock_request.state.user_confluence_token = "confluence-specific-token"
+        mock_request.state.user_confluence_auth_type = scenario["auth_type"]
+        mock_get_http_request.return_value = mock_request
+
+        # Setup context
+        confluence_config = config_factory.create_confluence_config(
+            auth_type=scenario["auth_type"]
+        )
+        app_context = config_factory.create_app_context(
+            confluence_config=confluence_config
+        )
+        _setup_mock_context(mock_context, app_context)
+
+        # Setup mock fetcher
+        mock_fetcher = _create_mock_fetcher(ConfluenceFetcher)
+        mock_confluence_fetcher_class.return_value = mock_fetcher
+
+        result = await get_confluence_fetcher(mock_context)
+
+        assert result == mock_fetcher
+        # Verify the Confluence-specific token was used, not the generic one
+        called_config = mock_confluence_fetcher_class.call_args[1]["config"]
+        if scenario["auth_type"] == "oauth":
+            assert (
+                called_config.oauth_config.access_token == "confluence-specific-token"
+            )
+        elif scenario["auth_type"] == "pat":
+            assert called_config.personal_token == "confluence-specific-token"
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
@@ -759,7 +847,7 @@ class TestGetConfluenceFetcher:
         "error_scenario,expected_error_match",
         [
             ("missing_global_config", "Confluence client \\(fetcher\\) not available"),
-            ("empty_user_token", "User Atlassian token found in state but is empty"),
+            # Note: empty_user_token no longer raises - it gracefully falls back to global
             ("validation_failure", "Invalid user Confluence token or configuration"),
             (
                 "missing_lifespan_context",
@@ -784,14 +872,6 @@ class TestGetConfluenceFetcher:
         if error_scenario == "missing_global_config":
             mock_get_http_request.side_effect = RuntimeError("No HTTP context")
             mock_context.request_context.lifespan_context = {}
-
-        elif error_scenario == "empty_user_token":
-            scenario = auth_scenarios["oauth"].copy()
-            scenario["token"] = ""  # Empty token
-            _setup_mock_request_state(mock_request, scenario)
-            mock_get_http_request.return_value = mock_request
-            app_context = config_factory.create_app_context()
-            _setup_mock_context(mock_context, app_context)
 
         elif error_scenario == "validation_failure":
             scenario = auth_scenarios["pat"]

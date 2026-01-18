@@ -136,23 +136,23 @@ class TestConfluenceClientOAuth:
             assert client.preprocessor == mock_preprocessor.return_value
 
     def test_init_with_byo_oauth_missing_cloud_id(self):
-        """Test initializing the client with BYO OAuth but missing cloud_id."""
+        """Test initializing the client with BYO OAuth and Cloud URL but missing cloud_id."""
         # Create a mock BYO OAuth config without cloud_id
         byo_oauth_config = BYOAccessTokenOAuthConfig(
             access_token="test-byo-access-token",
             cloud_id="",  # Explicitly empty or None
         )
 
-        # Create a Confluence config with BYO OAuth
+        # Create a Confluence config with BYO OAuth and Cloud URL - requires cloud_id
         config = ConfluenceConfig(
             url="https://test.atlassian.net/wiki",
             auth_type="oauth",
             oauth_config=byo_oauth_config,
         )
 
-        # Verify error is raised by ConfluenceClient's validation
+        # Verify error is raised for Cloud URL without cloud_id
         with pytest.raises(
-            ValueError, match="OAuth authentication requires a valid cloud_id"
+            ValueError, match="Cloud OAuth authentication requires a valid cloud_id"
         ):
             ConfluenceClient(config=config)
 
@@ -218,7 +218,7 @@ class TestConfluenceClientOAuth:
                 ConfluenceClient(config=config)
 
     def test_init_with_oauth_missing_cloud_id(self):
-        """Test initializing the client with OAuth but missing cloud_id."""
+        """Test initializing the client with Cloud OAuth but missing cloud_id."""
         # Create a mock OAuth config without cloud_id
         oauth_config = OAuthConfig(
             client_id="test-client-id",
@@ -229,16 +229,16 @@ class TestConfluenceClientOAuth:
             access_token="test-access-token",
         )
 
-        # Create a Confluence config with OAuth
+        # Create a Confluence config with OAuth and Cloud URL - requires cloud_id
         config = ConfluenceConfig(
             url="https://test.atlassian.net/wiki",
             auth_type="oauth",
             oauth_config=oauth_config,
         )
 
-        # Verify error is raised
+        # Verify error is raised for Cloud URL without cloud_id
         with pytest.raises(
-            ValueError, match="OAuth authentication requires a valid cloud_id"
+            ValueError, match="Cloud OAuth authentication requires a valid cloud_id"
         ):
             ConfluenceClient(config=config)
 

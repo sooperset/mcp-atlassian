@@ -130,19 +130,19 @@ logger = setup_logging(logging_level, logging_stream)
 )
 @click.option(
     "--oauth-client-id",
-    help="OAuth 2.0 client ID for Atlassian Cloud",
+    help="OAuth 2.0 client ID for Cloud (also fallback for Data Center)",
 )
 @click.option(
     "--oauth-client-secret",
-    help="OAuth 2.0 client secret for Atlassian Cloud",
+    help="OAuth 2.0 client secret for Cloud (also fallback for Data Center)",
 )
 @click.option(
     "--oauth-redirect-uri",
-    help="OAuth 2.0 redirect URI for Atlassian Cloud",
+    help="OAuth 2.0 redirect URI",
 )
 @click.option(
     "--oauth-scope",
-    help="OAuth 2.0 scopes (space-separated) for Atlassian Cloud",
+    help="OAuth 2.0 scopes (space-separated)",
 )
 @click.option(
     "--oauth-cloud-id",
@@ -150,8 +150,23 @@ logger = setup_logging(logging_level, logging_stream)
 )
 @click.option(
     "--oauth-access-token",
-    help="Atlassian Cloud OAuth 2.0 access token (if you have your own you'd like to "
-    "use for the session.)",
+    help="OAuth 2.0 access token (if you have your own you'd like to use for the session)",
+)
+@click.option(
+    "--jira-oauth-client-id",
+    help="Jira-specific OAuth 2.0 client ID (for Data Center with separate OAuth apps)",
+)
+@click.option(
+    "--jira-oauth-client-secret",
+    help="Jira-specific OAuth 2.0 client secret (for Data Center with separate OAuth apps)",
+)
+@click.option(
+    "--confluence-oauth-client-id",
+    help="Confluence-specific OAuth 2.0 client ID (for Data Center with separate OAuth apps)",
+)
+@click.option(
+    "--confluence-oauth-client-secret",
+    help="Confluence-specific OAuth 2.0 client secret (for Data Center with separate OAuth apps)",
 )
 def main(
     verbose: int,
@@ -182,6 +197,10 @@ def main(
     oauth_scope: str | None,
     oauth_cloud_id: str | None,
     oauth_access_token: str | None,
+    jira_oauth_client_id: str | None,
+    jira_oauth_client_secret: str | None,
+    confluence_oauth_client_id: str | None,
+    confluence_oauth_client_secret: str | None,
 ) -> None:
     """MCP Atlassian Server - Jira and Confluence functionality for MCP
 
@@ -189,7 +208,7 @@ def main(
     Authentication methods supported:
     - Username and API token (Cloud)
     - Personal Access Token (Server/Data Center)
-    - OAuth 2.0 (Cloud only)
+    - OAuth 2.0 (Cloud and Data Center)
     """
     # Logging level logic
     if verbose == 1:
@@ -321,6 +340,14 @@ def main(
         os.environ["ATLASSIAN_OAUTH_CLOUD_ID"] = oauth_cloud_id
     if click_ctx and was_option_provided(click_ctx, "oauth_access_token"):
         os.environ["ATLASSIAN_OAUTH_ACCESS_TOKEN"] = oauth_access_token
+    if click_ctx and was_option_provided(click_ctx, "jira_oauth_client_id"):
+        os.environ["JIRA_OAUTH_CLIENT_ID"] = jira_oauth_client_id
+    if click_ctx and was_option_provided(click_ctx, "jira_oauth_client_secret"):
+        os.environ["JIRA_OAUTH_CLIENT_SECRET"] = jira_oauth_client_secret
+    if click_ctx and was_option_provided(click_ctx, "confluence_oauth_client_id"):
+        os.environ["CONFLUENCE_OAUTH_CLIENT_ID"] = confluence_oauth_client_id
+    if click_ctx and was_option_provided(click_ctx, "confluence_oauth_client_secret"):
+        os.environ["CONFLUENCE_OAUTH_CLIENT_SECRET"] = confluence_oauth_client_secret
     if click_ctx and was_option_provided(click_ctx, "read_only"):
         os.environ["READ_ONLY_MODE"] = str(read_only).lower()
     if click_ctx and was_option_provided(click_ctx, "confluence_ssl_verify"):

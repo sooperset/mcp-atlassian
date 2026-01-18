@@ -88,10 +88,20 @@ def _create_user_config_for_fetcher(
 
         # Use provided cloud_id or fall back to global config cloud_id
         effective_cloud_id = cloud_id if cloud_id else global_oauth_cfg.cloud_id
-        if not effective_cloud_id:
+
+        # Check if this is Cloud or Data Center based on URL
+        is_cloud_url = base_config.url and "atlassian.net" in base_config.url
+
+        # Cloud OAuth requires cloud_id; Data Center OAuth does not
+        if is_cloud_url and not effective_cloud_id:
             raise ValueError(
-                "Cloud ID is required for OAuth authentication. "
+                "Cloud ID is required for Cloud OAuth authentication. "
                 "Provide it via X-Atlassian-Cloud-Id header or configure it globally."
+            )
+
+        if not is_cloud_url:
+            logger.debug(
+                f"Data Center OAuth: Using URL {base_config.url} with Bearer token (no cloud_id required)"
             )
 
         # For minimal OAuth config (user-provided tokens), use empty strings for client credentials
@@ -107,7 +117,7 @@ def _create_user_config_for_fetcher(
             access_token=user_access_token,
             refresh_token=None,
             expires_at=None,
-            cloud_id=effective_cloud_id,
+            cloud_id=effective_cloud_id,  # May be None for Data Center
         )
         common_args.update(
             {
@@ -169,30 +179,37 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
     logger.debug(f"get_jira_fetcher: ENTERED. Context ID: {id(ctx)}")
     try:
         request: Request = get_http_request()
+        # Check for Jira-specific token first, then fall back to generic
+        jira_token = getattr(request.state, "user_jira_token", None)
+        jira_auth_type = getattr(request.state, "user_jira_auth_type", None)
+        generic_token = getattr(request.state, "user_atlassian_token", None)
+        generic_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
+
+        # Use Jira-specific token if available, otherwise fall back to generic
+        user_token = jira_token or generic_token
+        user_auth_type = jira_auth_type or generic_auth_type
+
         logger.debug(
             f"get_jira_fetcher: In HTTP request context. Request URL: {request.url}. "
             f"State.jira_fetcher exists: {hasattr(request.state, 'jira_fetcher') and request.state.jira_fetcher is not None}. "
-            f"State.user_auth_type: {getattr(request.state, 'user_atlassian_auth_type', 'N/A')}. "
-            f"State.user_token_present: {hasattr(request.state, 'user_atlassian_token') and request.state.user_atlassian_token is not None}."
+            f"State.user_jira_auth_type: {jira_auth_type}. "
+            f"State.user_atlassian_auth_type: {generic_auth_type}. "
+            f"Using auth_type: {user_auth_type}. "
+            f"State.user_jira_token_present: {bool(jira_token)}. "
+            f"State.user_atlassian_token_present: {bool(generic_token)}."
         )
         # Use fetcher from request.state if already present
         if hasattr(request.state, "jira_fetcher") and request.state.jira_fetcher:
             logger.debug("get_jira_fetcher: Returning JiraFetcher from request.state.")
             return request.state.jira_fetcher
-        user_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
         logger.debug(f"get_jira_fetcher: User auth type: {user_auth_type}")
         # If OAuth or PAT token is present, create user-specific fetcher
-        if user_auth_type in ["oauth", "pat"] and hasattr(
-            request.state, "user_atlassian_token"
-        ):
-            user_token = getattr(request.state, "user_atlassian_token", None)
+        if user_auth_type in ["oauth", "pat"] and user_token:
             user_email = getattr(
                 request.state, "user_atlassian_email", None
             )  # May be None for PAT
             user_cloud_id = getattr(request.state, "user_atlassian_cloud_id", None)
 
-            if not user_token:
-                raise ValueError("User Atlassian token found in state but is empty.")
             credentials = {"user_email_context": user_email}
             if user_auth_type == "oauth":
                 credentials["oauth_access_token"] = user_token
@@ -235,7 +252,9 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
                 raise ValueError(f"Invalid user Jira token or configuration: {e}")
         else:
             logger.debug(
-                f"get_jira_fetcher: No user-specific JiraFetcher. Auth type: {user_auth_type}. Token present: {hasattr(request.state, 'user_atlassian_token')}. Will use global fallback."
+                f"get_jira_fetcher: No user-specific JiraFetcher. Auth type: {user_auth_type}. "
+                f"Jira token present: {bool(jira_token)}. Generic token present: {bool(generic_token)}. "
+                "Will use global fallback."
             )
     except RuntimeError:
         logger.debug(
@@ -275,11 +294,24 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
     logger.debug(f"get_confluence_fetcher: ENTERED. Context ID: {id(ctx)}")
     try:
         request: Request = get_http_request()
+        # Check for Confluence-specific token first, then fall back to generic
+        confluence_token = getattr(request.state, "user_confluence_token", None)
+        confluence_auth_type = getattr(request.state, "user_confluence_auth_type", None)
+        generic_token = getattr(request.state, "user_atlassian_token", None)
+        generic_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
+
+        # Use Confluence-specific token if available, otherwise fall back to generic
+        user_token = confluence_token or generic_token
+        user_auth_type = confluence_auth_type or generic_auth_type
+
         logger.debug(
             f"get_confluence_fetcher: In HTTP request context. Request URL: {request.url}. "
             f"State.confluence_fetcher exists: {hasattr(request.state, 'confluence_fetcher') and request.state.confluence_fetcher is not None}. "
-            f"State.user_auth_type: {getattr(request.state, 'user_atlassian_auth_type', 'N/A')}. "
-            f"State.user_token_present: {hasattr(request.state, 'user_atlassian_token') and request.state.user_atlassian_token is not None}."
+            f"State.user_confluence_auth_type: {confluence_auth_type}. "
+            f"State.user_atlassian_auth_type: {generic_auth_type}. "
+            f"Using auth_type: {user_auth_type}. "
+            f"State.user_confluence_token_present: {bool(confluence_token)}. "
+            f"State.user_atlassian_token_present: {bool(generic_token)}."
         )
         if (
             hasattr(request.state, "confluence_fetcher")
@@ -289,17 +321,11 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
                 "get_confluence_fetcher: Returning ConfluenceFetcher from request.state."
             )
             return request.state.confluence_fetcher
-        user_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
         logger.debug(f"get_confluence_fetcher: User auth type: {user_auth_type}")
-        if user_auth_type in ["oauth", "pat"] and hasattr(
-            request.state, "user_atlassian_token"
-        ):
-            user_token = getattr(request.state, "user_atlassian_token", None)
+        if user_auth_type in ["oauth", "pat"] and user_token:
             user_email = getattr(request.state, "user_atlassian_email", None)
             user_cloud_id = getattr(request.state, "user_atlassian_cloud_id", None)
 
-            if not user_token:
-                raise ValueError("User Atlassian token found in state but is empty.")
             credentials = {"user_email_context": user_email}
             if user_auth_type == "oauth":
                 credentials["oauth_access_token"] = user_token
@@ -360,7 +386,9 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
                 raise ValueError(f"Invalid user Confluence token or configuration: {e}")
         else:
             logger.debug(
-                f"get_confluence_fetcher: No user-specific ConfluenceFetcher. Auth type: {user_auth_type}. Token present: {hasattr(request.state, 'user_atlassian_token')}. Will use global fallback."
+                f"get_confluence_fetcher: No user-specific ConfluenceFetcher. Auth type: {user_auth_type}. "
+                f"Confluence token present: {bool(confluence_token)}. Generic token present: {bool(generic_token)}. "
+                "Will use global fallback."
             )
     except RuntimeError:
         logger.debug(
