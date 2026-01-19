@@ -11,6 +11,8 @@ from typing import Any
 import requests
 from requests.exceptions import HTTPError
 
+from .utils import emoji_to_hex_id, extract_emoji_from_property
+
 logger = logging.getLogger("mcp-atlassian")
 
 
@@ -447,7 +449,7 @@ class ConfluenceV2Adapter:
                 key = prop.get("key", "")
                 if key in ("emoji-title-published", "emoji-title-draft"):
                     value = prop.get("value", {})
-                    return self._extract_emoji_from_property(value)
+                    return extract_emoji_from_property(value)
 
             return None
 
@@ -457,59 +459,6 @@ class ConfluenceV2Adapter:
         except Exception as e:
             logger.debug(f"Error getting emoji for page '{page_id}': {e}")
             return None
-
-    def _extract_emoji_from_property(self, value: Any) -> str | None:
-        """Extract emoji character from a property value.
-
-        The emoji property value can be in different formats:
-        - Dict with 'fallback', 'shortName', or 'id' keys
-        - Direct string value
-
-        Args:
-            value: The property value from the API
-
-        Returns:
-            The emoji character if found, None otherwise
-        """
-        if isinstance(value, dict):
-            # Format: {"id": "1f4dd", "shortName": ":memo:", "fallback": "📝"}
-            # Prefer fallback (actual emoji), then try to convert from id
-            emoji = value.get("fallback")
-            if emoji:
-                return emoji
-
-            # Try shortName (e.g., ":memo:")
-            short_name = value.get("shortName")
-            if short_name:
-                return short_name
-
-            # Try to convert from id (hex code point)
-            emoji_id = value.get("id")
-            if emoji_id:
-                try:
-                    return chr(int(emoji_id, 16))
-                except (ValueError, OverflowError):
-                    logger.debug(f"Could not convert emoji id '{emoji_id}' to unicode")
-
-        elif isinstance(value, str):
-            return value
-
-        return None
-
-    def _emoji_to_hex_id(self, emoji: str) -> str:
-        """Convert an emoji character to its Unicode hex code point(s).
-
-        For single code point emojis, returns the hex (e.g., "1f4dd" for 📝).
-        For multi-codepoint emojis (like flags or skin tones), joins with hyphens.
-
-        Args:
-            emoji: The emoji character(s)
-
-        Returns:
-            Hex code point string (e.g., "1f4dd" or "1f1fa-1f1f8")
-        """
-        code_points = [f"{ord(char):x}" for char in emoji]
-        return "-".join(code_points)
 
     def _set_page_property(self, page_id: str, property_key: str, value: str | None) -> bool:
         """Set or remove a single page property.
@@ -578,7 +527,7 @@ class ConfluenceV2Adapter:
         """
         try:
             # Convert emoji to hex code, or None to delete
-            emoji_value = self._emoji_to_hex_id(emoji) if emoji else None
+            emoji_value = emoji_to_hex_id(emoji) if emoji else None
 
             # Set both published and draft properties
             published_ok = self._set_page_property(page_id, "emoji-title-published", emoji_value)

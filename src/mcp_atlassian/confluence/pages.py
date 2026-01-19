@@ -8,6 +8,7 @@ from requests.exceptions import HTTPError
 from ..exceptions import MCPAtlassianAuthenticationError
 from ..models.confluence import ConfluencePage
 from .client import ConfluenceClient
+from .utils import emoji_to_hex_id, extract_emoji_from_property
 from .v2_adapter import ConfluenceV2Adapter
 
 logger = logging.getLogger("mcp-atlassian")
@@ -198,59 +199,13 @@ class PagesMixin(ConfluenceClient):
                 key = prop.get("key", "")
                 if key in ("emoji-title-published", "emoji-title-draft"):
                     value = prop.get("value", {})
-                    return self._extract_emoji_from_property(value)
+                    return extract_emoji_from_property(value)
 
             return None
 
         except Exception as e:
             logger.debug(f"Error fetching emoji for page {page_id}: {str(e)}")
             return None
-
-    def _extract_emoji_from_property(self, value: dict | str | None) -> str | None:
-        """Extract emoji character from a property value.
-
-        Args:
-            value: The property value from the API
-
-        Returns:
-            The emoji character if found, None otherwise
-        """
-        if isinstance(value, dict):
-            # Format: {"id": "1f4dd", "shortName": ":memo:", "fallback": "📝"}
-            emoji = value.get("fallback")
-            if emoji:
-                return emoji
-
-            short_name = value.get("shortName")
-            if short_name:
-                return short_name
-
-            emoji_id = value.get("id")
-            if emoji_id:
-                try:
-                    return chr(int(emoji_id, 16))
-                except (ValueError, OverflowError):
-                    pass
-
-        elif isinstance(value, str):
-            return value
-
-        return None
-
-    def _emoji_to_hex_id(self, emoji: str) -> str:
-        """Convert an emoji character to its Unicode hex code point(s).
-
-        For single code point emojis, returns the hex (e.g., "1f4dd" for 📝).
-        For multi-codepoint emojis (like flags or skin tones), joins with hyphens.
-
-        Args:
-            emoji: The emoji character(s)
-
-        Returns:
-            Hex code point string (e.g., "1f4dd" or "1f1fa-1f1f8")
-        """
-        code_points = [f"{ord(char):x}" for char in emoji]
-        return "-".join(code_points)
 
     def _set_single_property(self, page_id: str, property_key: str, value: str | None) -> bool:
         """Set or remove a single page property via v1 API.
@@ -307,7 +262,7 @@ class PagesMixin(ConfluenceClient):
 
             # For token/basic auth, use v1 API via atlassian library
             # Convert emoji to hex code, or None to delete
-            emoji_value = self._emoji_to_hex_id(emoji) if emoji else None
+            emoji_value = emoji_to_hex_id(emoji) if emoji else None
 
             # Set both published and draft properties
             published_ok = self._set_single_property(page_id, "emoji-title-published", emoji_value)

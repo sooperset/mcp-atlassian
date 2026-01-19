@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from mcp_atlassian.confluence.pages import PagesMixin
+from mcp_atlassian.confluence.utils import extract_emoji_from_property
 from mcp_atlassian.models.confluence import ConfluencePage
 
 
@@ -1273,34 +1274,34 @@ class TestPageEmoji:
     def test_extract_emoji_from_property_with_fallback(self, pages_mixin):
         """Test extracting emoji from property with fallback attribute."""
         value = {"id": "1f4dd", "shortName": ":memo:", "fallback": "📝"}
-        result = pages_mixin._extract_emoji_from_property(value)
+        result = extract_emoji_from_property(value)
         assert result == "📝"
 
     def test_extract_emoji_from_property_with_shortname(self, pages_mixin):
         """Test extracting emoji from property with shortName when no fallback."""
         value = {"id": "1f4dd", "shortName": ":memo:"}
-        result = pages_mixin._extract_emoji_from_property(value)
+        result = extract_emoji_from_property(value)
         assert result == ":memo:"
 
     def test_extract_emoji_from_property_with_id(self, pages_mixin):
         """Test extracting emoji from property using hex id conversion."""
         value = {"id": "1f4dd"}  # Memo emoji code point
-        result = pages_mixin._extract_emoji_from_property(value)
+        result = extract_emoji_from_property(value)
         assert result == "📝"
 
     def test_extract_emoji_from_property_string(self, pages_mixin):
         """Test extracting emoji from string property value."""
-        result = pages_mixin._extract_emoji_from_property("🚀")
+        result = extract_emoji_from_property("🚀")
         assert result == "🚀"
 
     def test_extract_emoji_from_property_none(self, pages_mixin):
         """Test extracting emoji from None value."""
-        result = pages_mixin._extract_emoji_from_property(None)
+        result = extract_emoji_from_property(None)
         assert result is None
 
     def test_extract_emoji_from_property_empty_dict(self, pages_mixin):
         """Test extracting emoji from empty dict."""
-        result = pages_mixin._extract_emoji_from_property({})
+        result = extract_emoji_from_property({})
         assert result is None
 
     def test_get_page_emoji_v1_api(self, pages_mixin):
