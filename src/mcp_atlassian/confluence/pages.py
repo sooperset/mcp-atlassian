@@ -283,13 +283,10 @@ class PagesMixin(ConfluenceClient):
                     # Property might not exist, which is fine
                     return True
 
-            # Set/update the property with id (hex code) and fallback
+            # Set/update the property - Confluence expects just the hex code as a plain string
             property_data = {
                 "key": property_key,
-                "value": {
-                    "id": self._emoji_to_hex_id(emoji),
-                    "fallback": emoji,
-                },
+                "value": self._emoji_to_hex_id(emoji),
             }
             self.confluence.set_page_property(page_id, property_data)
             return True

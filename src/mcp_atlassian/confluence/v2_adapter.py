@@ -534,11 +534,8 @@ class ConfluenceV2Adapter:
                 # 204 No Content or 404 Not Found are both success cases
                 return response.status_code in [200, 204, 404]
 
-            # Build emoji value with id (hex code) and fallback
-            emoji_value = {
-                "id": self._emoji_to_hex_id(emoji),
-                "fallback": emoji,
-            }
+            # Confluence expects just the hex code as a plain string
+            emoji_value = self._emoji_to_hex_id(emoji)
 
             # First, check if the property already exists
             existing_property = self._get_property(page_id, property_key)

@@ -1422,10 +1422,10 @@ class TestPageEmoji:
         result = pages_mixin._set_page_emoji(page_id, "🚀")
 
         assert result is True
-        # Emoji 🚀 has Unicode code point U+1F680
+        # Emoji 🚀 has Unicode code point U+1F680 - Confluence expects just the hex string
         pages_mixin.confluence.set_page_property.assert_called_once_with(
             page_id,
-            {"key": "emoji-title-published", "value": {"id": "1f680", "fallback": "🚀"}},
+            {"key": "emoji-title-published", "value": "1f680"},
         )
 
     def test_set_page_emoji_update_existing(self, pages_mixin):
@@ -1438,10 +1438,10 @@ class TestPageEmoji:
         result = pages_mixin._set_page_emoji(page_id, "🎉")
 
         assert result is True
-        # Emoji 🎉 has Unicode code point U+1F389
+        # Emoji 🎉 has Unicode code point U+1F389 - Confluence expects just the hex string
         pages_mixin.confluence.set_page_property.assert_called_once_with(
             page_id,
-            {"key": "emoji-title-published", "value": {"id": "1f389", "fallback": "🎉"}},
+            {"key": "emoji-title-published", "value": "1f389"},
         )
 
     def test_set_page_emoji_remove(self, pages_mixin):
