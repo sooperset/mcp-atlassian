@@ -237,6 +237,21 @@ class PagesMixin(ConfluenceClient):
 
         return None
 
+    def _emoji_to_hex_id(self, emoji: str) -> str:
+        """Convert an emoji character to its Unicode hex code point(s).
+
+        For single code point emojis, returns the hex (e.g., "1f4dd" for 📝).
+        For multi-codepoint emojis (like flags or skin tones), joins with hyphens.
+
+        Args:
+            emoji: The emoji character(s)
+
+        Returns:
+            Hex code point string (e.g., "1f4dd" or "1f1fa-1f1f8")
+        """
+        code_points = [f"{ord(char):x}" for char in emoji]
+        return "-".join(code_points)
+
     def _set_page_emoji(self, page_id: str, emoji: str | None) -> bool:
         """Set or remove the page title emoji.
 
@@ -268,10 +283,13 @@ class PagesMixin(ConfluenceClient):
                     # Property might not exist, which is fine
                     return True
 
-            # Set/update the property
+            # Set/update the property with id (hex code) and fallback
             property_data = {
                 "key": property_key,
-                "value": {"fallback": emoji},
+                "value": {
+                    "id": self._emoji_to_hex_id(emoji),
+                    "fallback": emoji,
+                },
             }
             self.confluence.set_page_property(page_id, property_data)
             return True

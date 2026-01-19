@@ -496,6 +496,21 @@ class ConfluenceV2Adapter:
 
         return None
 
+    def _emoji_to_hex_id(self, emoji: str) -> str:
+        """Convert an emoji character to its Unicode hex code point(s).
+
+        For single code point emojis, returns the hex (e.g., "1f4dd" for 📝).
+        For multi-codepoint emojis (like flags or skin tones), joins with hyphens.
+
+        Args:
+            emoji: The emoji character(s)
+
+        Returns:
+            Hex code point string (e.g., "1f4dd" or "1f1fa-1f1f8")
+        """
+        code_points = [f"{ord(char):x}" for char in emoji]
+        return "-".join(code_points)
+
     def set_page_emoji(self, page_id: str, emoji: str | None) -> bool:
         """Set or remove the page title emoji using v2 API.
 
@@ -519,6 +534,12 @@ class ConfluenceV2Adapter:
                 # 204 No Content or 404 Not Found are both success cases
                 return response.status_code in [200, 204, 404]
 
+            # Build emoji value with id (hex code) and fallback
+            emoji_value = {
+                "id": self._emoji_to_hex_id(emoji),
+                "fallback": emoji,
+            }
+
             # First, check if the property already exists
             existing_property = self._get_property(page_id, property_key)
 
@@ -528,7 +549,7 @@ class ConfluenceV2Adapter:
                 current_version = existing_property.get("version", {}).get("number", 1)
                 data = {
                     "key": property_key,
-                    "value": {"fallback": emoji},
+                    "value": emoji_value,
                     "version": {"number": current_version + 1},
                 }
                 response = self.session.put(url, json=data)
@@ -537,7 +558,7 @@ class ConfluenceV2Adapter:
                 url = f"{self.base_url}/api/v2/pages/{page_id}/properties"
                 data = {
                     "key": property_key,
-                    "value": {"fallback": emoji},
+                    "value": emoji_value,
                 }
                 response = self.session.post(url, json=data)
 
