@@ -1423,9 +1423,15 @@ class TestPageEmoji:
 
         assert result is True
         # Emoji 🚀 has Unicode code point U+1F680 - Confluence expects just the hex string
-        pages_mixin.confluence.set_page_property.assert_called_once_with(
+        # Both published and draft properties should be set
+        assert pages_mixin.confluence.set_page_property.call_count == 2
+        pages_mixin.confluence.set_page_property.assert_any_call(
             page_id,
             {"key": "emoji-title-published", "value": "1f680"},
+        )
+        pages_mixin.confluence.set_page_property.assert_any_call(
+            page_id,
+            {"key": "emoji-title-draft", "value": "1f680"},
         )
 
     def test_set_page_emoji_update_existing(self, pages_mixin):
@@ -1439,9 +1445,15 @@ class TestPageEmoji:
 
         assert result is True
         # Emoji 🎉 has Unicode code point U+1F389 - Confluence expects just the hex string
-        pages_mixin.confluence.set_page_property.assert_called_once_with(
+        # Both published and draft properties should be set
+        assert pages_mixin.confluence.set_page_property.call_count == 2
+        pages_mixin.confluence.set_page_property.assert_any_call(
             page_id,
             {"key": "emoji-title-published", "value": "1f389"},
+        )
+        pages_mixin.confluence.set_page_property.assert_any_call(
+            page_id,
+            {"key": "emoji-title-draft", "value": "1f389"},
         )
 
     def test_set_page_emoji_remove(self, pages_mixin):
@@ -1463,8 +1475,13 @@ class TestPageEmoji:
         result = pages_mixin._set_page_emoji(page_id, None)
 
         assert result is True
-        pages_mixin.confluence.delete_page_property.assert_called_once_with(
+        # Both published and draft properties should be deleted
+        assert pages_mixin.confluence.delete_page_property.call_count == 2
+        pages_mixin.confluence.delete_page_property.assert_any_call(
             page_id, "emoji-title-published"
+        )
+        pages_mixin.confluence.delete_page_property.assert_any_call(
+            page_id, "emoji-title-draft"
         )
 
     def test_set_page_emoji_remove_nonexistent(self, pages_mixin):
@@ -1478,8 +1495,13 @@ class TestPageEmoji:
 
         # Should succeed even if property doesn't exist (exception caught)
         assert result is True
-        pages_mixin.confluence.delete_page_property.assert_called_once_with(
+        # Both published and draft properties should be attempted to delete
+        assert pages_mixin.confluence.delete_page_property.call_count == 2
+        pages_mixin.confluence.delete_page_property.assert_any_call(
             page_id, "emoji-title-published"
+        )
+        pages_mixin.confluence.delete_page_property.assert_any_call(
+            page_id, "emoji-title-draft"
         )
 
     def test_set_page_emoji_failure(self, pages_mixin):

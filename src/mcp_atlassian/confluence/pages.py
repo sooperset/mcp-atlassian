@@ -252,11 +252,45 @@ class PagesMixin(ConfluenceClient):
         code_points = [f"{ord(char):x}" for char in emoji]
         return "-".join(code_points)
 
+    def _set_single_property(self, page_id: str, property_key: str, value: str | None) -> bool:
+        """Set or remove a single page property via v1 API.
+
+        Args:
+            page_id: The ID of the page
+            property_key: The property key to set
+            value: The value to set, or None to delete the property
+
+        Returns:
+            True if the operation succeeded, False otherwise
+        """
+        try:
+            if value is None:
+                # Delete the property
+                try:
+                    self.confluence.delete_page_property(page_id, property_key)
+                except Exception:
+                    # Property might not exist, which is fine
+                    pass
+                return True
+
+            # Set/update the property
+            property_data = {
+                "key": property_key,
+                "value": value,
+            }
+            self.confluence.set_page_property(page_id, property_data)
+            return True
+
+        except Exception as e:
+            logger.debug(f"Error setting property '{property_key}' for page {page_id}: {str(e)}")
+            return False
+
     def _set_page_emoji(self, page_id: str, emoji: str | None) -> bool:
         """Set or remove the page title emoji.
 
-        The page emoji (icon shown in navigation) is stored as a content property
-        with key 'emoji-title-published'.
+        The page emoji (icon shown in navigation) is stored as content properties.
+        Both 'emoji-title-published' and 'emoji-title-draft' are set to ensure
+        the emoji appears in both view and edit modes.
 
         Args:
             page_id: The ID of the page
@@ -272,24 +306,19 @@ class PagesMixin(ConfluenceClient):
                 return v2_adapter.set_page_emoji(page_id, emoji)
 
             # For token/basic auth, use v1 API via atlassian library
-            property_key = "emoji-title-published"
+            # Convert emoji to hex code, or None to delete
+            emoji_value = self._emoji_to_hex_id(emoji) if emoji else None
 
-            if emoji is None:
-                # Delete the emoji property
-                try:
-                    self.confluence.delete_page_property(page_id, property_key)
-                    return True
-                except Exception:
-                    # Property might not exist, which is fine
-                    return True
+            # Set both published and draft properties
+            published_ok = self._set_single_property(page_id, "emoji-title-published", emoji_value)
+            draft_ok = self._set_single_property(page_id, "emoji-title-draft", emoji_value)
 
-            # Set/update the property - Confluence expects just the hex code as a plain string
-            property_data = {
-                "key": property_key,
-                "value": self._emoji_to_hex_id(emoji),
-            }
-            self.confluence.set_page_property(page_id, property_data)
-            return True
+            if not published_ok:
+                logger.warning(f"Failed to set emoji-title-published for page {page_id}")
+            if not draft_ok:
+                logger.warning(f"Failed to set emoji-title-draft for page {page_id}")
+
+            return published_ok and draft_ok
 
         except Exception as e:
             logger.warning(f"Error setting emoji for page {page_id}: {str(e)}")

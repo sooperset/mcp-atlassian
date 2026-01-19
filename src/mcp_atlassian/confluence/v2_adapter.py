@@ -511,33 +511,26 @@ class ConfluenceV2Adapter:
         code_points = [f"{ord(char):x}" for char in emoji]
         return "-".join(code_points)
 
-    def set_page_emoji(self, page_id: str, emoji: str | None) -> bool:
-        """Set or remove the page title emoji using v2 API.
-
-        The page emoji (icon shown in navigation) is stored as a content property
-        with key 'emoji-title-published'.
+    def _set_page_property(self, page_id: str, property_key: str, value: str | None) -> bool:
+        """Set or remove a single page property.
 
         Args:
             page_id: The ID of the page
-            emoji: The emoji character to set, or None to remove the emoji
+            property_key: The property key to set
+            value: The value to set, or None to delete the property
 
         Returns:
             True if the operation succeeded, False otherwise
         """
-        property_key = "emoji-title-published"
-
         try:
-            if emoji is None:
-                # Delete the emoji property
+            if value is None:
+                # Delete the property
                 url = f"{self.base_url}/api/v2/pages/{page_id}/properties/{property_key}"
                 response = self.session.delete(url)
                 # 204 No Content or 404 Not Found are both success cases
                 return response.status_code in [200, 204, 404]
 
-            # Confluence expects just the hex code as a plain string
-            emoji_value = self._emoji_to_hex_id(emoji)
-
-            # First, check if the property already exists
+            # Check if the property already exists
             existing_property = self._get_property(page_id, property_key)
 
             if existing_property:
@@ -546,7 +539,7 @@ class ConfluenceV2Adapter:
                 current_version = existing_property.get("version", {}).get("number", 1)
                 data = {
                     "key": property_key,
-                    "value": emoji_value,
+                    "value": value,
                     "version": {"number": current_version + 1},
                 }
                 response = self.session.put(url, json=data)
@@ -555,7 +548,7 @@ class ConfluenceV2Adapter:
                 url = f"{self.base_url}/api/v2/pages/{page_id}/properties"
                 data = {
                     "key": property_key,
-                    "value": emoji_value,
+                    "value": value,
                 }
                 response = self.session.post(url, json=data)
 
@@ -563,8 +556,41 @@ class ConfluenceV2Adapter:
             return True
 
         except HTTPError as e:
-            logger.warning(f"HTTP error setting emoji for page '{page_id}': {e}")
+            logger.debug(f"HTTP error setting property '{property_key}' for page '{page_id}': {e}")
             return False
+        except Exception as e:
+            logger.debug(f"Error setting property '{property_key}' for page '{page_id}': {e}")
+            return False
+
+    def set_page_emoji(self, page_id: str, emoji: str | None) -> bool:
+        """Set or remove the page title emoji using v2 API.
+
+        The page emoji (icon shown in navigation) is stored as content properties.
+        Both 'emoji-title-published' and 'emoji-title-draft' are set to ensure
+        the emoji appears in both view and edit modes.
+
+        Args:
+            page_id: The ID of the page
+            emoji: The emoji character to set, or None to remove the emoji
+
+        Returns:
+            True if the operation succeeded, False otherwise
+        """
+        try:
+            # Convert emoji to hex code, or None to delete
+            emoji_value = self._emoji_to_hex_id(emoji) if emoji else None
+
+            # Set both published and draft properties
+            published_ok = self._set_page_property(page_id, "emoji-title-published", emoji_value)
+            draft_ok = self._set_page_property(page_id, "emoji-title-draft", emoji_value)
+
+            if not published_ok:
+                logger.warning(f"Failed to set emoji-title-published for page '{page_id}'")
+            if not draft_ok:
+                logger.warning(f"Failed to set emoji-title-draft for page '{page_id}'")
+
+            return published_ok and draft_ok
+
         except Exception as e:
             logger.warning(f"Error setting emoji for page '{page_id}': {e}")
             return False
