@@ -95,6 +95,7 @@ class ConfluencePage(ApiModel, TimestampMixin):
     children: dict[str, Any] = Field(default_factory=dict)
     attachments: list[ConfluenceAttachment] = Field(default_factory=list)
     url: str | None = None
+    emoji: str | None = None  # Page title emoji (icon shown in navigation)
 
     @property
     def page_content(self) -> str:
@@ -217,6 +218,9 @@ class ConfluencePage(ApiModel, TimestampMixin):
                 # Server format: {base_url}/pages/viewpage.action?pageId={page_id}
                 url = f"{base_url}/pages/viewpage.action?pageId={url_id}"
 
+        # Extract emoji from kwargs if provided
+        emoji = kwargs.get("emoji")
+
         return cls(
             id=str(data.get("id", CONFLUENCE_DEFAULT_ID)),
             title=data.get("title", EMPTY_STRING),
@@ -233,6 +237,7 @@ class ConfluencePage(ApiModel, TimestampMixin):
             children=data.get("children", {}),
             attachments=attachments,
             url=url,
+            emoji=emoji,
         )
 
     def to_simplified_dict(self) -> dict[str, Any]:
@@ -274,5 +279,9 @@ class ConfluencePage(ApiModel, TimestampMixin):
                 for a in self.ancestors
                 if "id" in a
             ]
+
+        # Add emoji if available
+        if self.emoji:
+            result["emoji"] = self.emoji
 
         return result

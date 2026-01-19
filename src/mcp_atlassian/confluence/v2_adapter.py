@@ -420,6 +420,82 @@ class ConfluenceV2Adapter:
 
         return v1_compatible
 
+    def get_page_emoji(self, page_id: str) -> str | None:
+        """Get the page title emoji from content properties using v2 API.
+
+        The page emoji (icon shown in navigation) is stored as a content property
+        with key 'emoji-title-published' or 'emoji-title-draft'.
+
+        Args:
+            page_id: The ID of the page
+
+        Returns:
+            The emoji character if set, None otherwise
+        """
+        try:
+            # Use v2 content properties API
+            url = f"{self.base_url}/api/v2/pages/{page_id}/properties"
+
+            response = self.session.get(url)
+            response.raise_for_status()
+
+            data = response.json()
+            properties = data.get("results", [])
+
+            # Look for emoji-title-published first, then emoji-title-draft
+            for prop in properties:
+                key = prop.get("key", "")
+                if key in ("emoji-title-published", "emoji-title-draft"):
+                    value = prop.get("value", {})
+                    return self._extract_emoji_from_property(value)
+
+            return None
+
+        except HTTPError as e:
+            logger.debug(f"HTTP error getting emoji for page '{page_id}': {e}")
+            return None
+        except Exception as e:
+            logger.debug(f"Error getting emoji for page '{page_id}': {e}")
+            return None
+
+    def _extract_emoji_from_property(self, value: Any) -> str | None:
+        """Extract emoji character from a property value.
+
+        The emoji property value can be in different formats:
+        - Dict with 'fallback', 'shortName', or 'id' keys
+        - Direct string value
+
+        Args:
+            value: The property value from the API
+
+        Returns:
+            The emoji character if found, None otherwise
+        """
+        if isinstance(value, dict):
+            # Format: {"id": "1f4dd", "shortName": ":memo:", "fallback": "📝"}
+            # Prefer fallback (actual emoji), then try to convert from id
+            emoji = value.get("fallback")
+            if emoji:
+                return emoji
+
+            # Try shortName (e.g., ":memo:")
+            short_name = value.get("shortName")
+            if short_name:
+                return short_name
+
+            # Try to convert from id (hex code point)
+            emoji_id = value.get("id")
+            if emoji_id:
+                try:
+                    return chr(int(emoji_id, 16))
+                except (ValueError, OverflowError):
+                    logger.debug(f"Could not convert emoji id '{emoji_id}' to unicode")
+
+        elif isinstance(value, str):
+            return value
+
+        return None
+
     def get_page_views(self, page_id: str) -> dict[str, Any]:
         """Get view statistics for a page using the Analytics API.
 

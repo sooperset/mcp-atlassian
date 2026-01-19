@@ -87,6 +87,9 @@ class PagesMixin(ConfluenceClient):
             # Use the appropriate content format based on the convert_to_markdown flag
             page_content = processed_markdown if convert_to_markdown else processed_html
 
+            # Fetch page emoji from content properties
+            emoji = self._get_page_emoji(page_id)
+
             # Create and return the ConfluencePage model
             return ConfluencePage.from_api_response(
                 page,
@@ -96,6 +99,7 @@ class PagesMixin(ConfluenceClient):
                 content_override=page_content,
                 content_format="storage" if not convert_to_markdown else "markdown",
                 is_cloud=self.config.is_cloud,
+                emoji=emoji,
             )
         except HTTPError as http_err:
             if http_err.response is not None and http_err.response.status_code in [
@@ -166,6 +170,73 @@ class PagesMixin(ConfluenceClient):
             logger.debug("Full exception details:", exc_info=True)
             return []
 
+    def _get_page_emoji(self, page_id: str) -> str | None:
+        """Get the page title emoji from content properties.
+
+        The page emoji (icon shown in navigation) is stored as a content property
+        with key 'emoji-title-published' or 'emoji-title-draft'.
+
+        Args:
+            page_id: The ID of the page
+
+        Returns:
+            The emoji character if set, None otherwise
+        """
+        try:
+            # Use v2 API for OAuth authentication
+            v2_adapter = self._v2_adapter
+            if v2_adapter:
+                return v2_adapter.get_page_emoji(page_id)
+
+            # For token/basic auth, use v1 API via atlassian library
+            properties = self.confluence.get_page_properties(page_id)
+            if not properties:
+                return None
+
+            results = properties.get("results", [])
+            for prop in results:
+                key = prop.get("key", "")
+                if key in ("emoji-title-published", "emoji-title-draft"):
+                    value = prop.get("value", {})
+                    return self._extract_emoji_from_property(value)
+
+            return None
+
+        except Exception as e:
+            logger.debug(f"Error fetching emoji for page {page_id}: {str(e)}")
+            return None
+
+    def _extract_emoji_from_property(self, value: dict | str | None) -> str | None:
+        """Extract emoji character from a property value.
+
+        Args:
+            value: The property value from the API
+
+        Returns:
+            The emoji character if found, None otherwise
+        """
+        if isinstance(value, dict):
+            # Format: {"id": "1f4dd", "shortName": ":memo:", "fallback": "📝"}
+            emoji = value.get("fallback")
+            if emoji:
+                return emoji
+
+            short_name = value.get("shortName")
+            if short_name:
+                return short_name
+
+            emoji_id = value.get("id")
+            if emoji_id:
+                try:
+                    return chr(int(emoji_id, 16))
+                except (ValueError, OverflowError):
+                    pass
+
+        elif isinstance(value, str):
+            return value
+
+        return None
+
     def get_page_by_title(
         self, space_key: str, title: str, *, convert_to_markdown: bool = True
     ) -> ConfluencePage | None:
@@ -208,6 +279,9 @@ class PagesMixin(ConfluenceClient):
             # Use the appropriate content format based on the convert_to_markdown flag
             page_content = processed_markdown if convert_to_markdown else processed_html
 
+            # Fetch page emoji from content properties
+            emoji = self._get_page_emoji(str(page.get("id", "")))
+
             # Create and return the ConfluencePage model
             return ConfluencePage.from_api_response(
                 page,
@@ -217,6 +291,7 @@ class PagesMixin(ConfluenceClient):
                 content_override=page_content,
                 content_format="storage" if not convert_to_markdown else "markdown",
                 is_cloud=self.config.is_cloud,
+                emoji=emoji,
             )
 
         except KeyError as e:
