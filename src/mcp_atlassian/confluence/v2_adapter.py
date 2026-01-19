@@ -460,7 +460,9 @@ class ConfluenceV2Adapter:
             logger.debug(f"Error getting emoji for page '{page_id}': {e}")
             return None
 
-    def _set_page_property(self, page_id: str, property_key: str, value: str | None) -> bool:
+    def _set_page_property(
+        self, page_id: str, property_key: str, value: str | None
+    ) -> bool:
         """Set or remove a single page property.
 
         Args:
@@ -474,7 +476,9 @@ class ConfluenceV2Adapter:
         try:
             if value is None:
                 # Delete the property
-                url = f"{self.base_url}/api/v2/pages/{page_id}/properties/{property_key}"
+                url = (
+                    f"{self.base_url}/api/v2/pages/{page_id}/properties/{property_key}"
+                )
                 response = self.session.delete(url)
                 # 204 No Content or 404 Not Found are both success cases
                 return response.status_code in [200, 204, 404]
@@ -484,7 +488,9 @@ class ConfluenceV2Adapter:
 
             if existing_property:
                 # Update existing property
-                url = f"{self.base_url}/api/v2/pages/{page_id}/properties/{property_key}"
+                url = (
+                    f"{self.base_url}/api/v2/pages/{page_id}/properties/{property_key}"
+                )
                 current_version = existing_property.get("version", {}).get("number", 1)
                 data = {
                     "key": property_key,
@@ -505,10 +511,14 @@ class ConfluenceV2Adapter:
             return True
 
         except HTTPError as e:
-            logger.debug(f"HTTP error setting property '{property_key}' for page '{page_id}': {e}")
+            logger.debug(
+                f"HTTP error setting property '{property_key}' for page '{page_id}': {e}"
+            )
             return False
         except Exception as e:
-            logger.debug(f"Error setting property '{property_key}' for page '{page_id}': {e}")
+            logger.debug(
+                f"Error setting property '{property_key}' for page '{page_id}': {e}"
+            )
             return False
 
     def set_page_emoji(self, page_id: str, emoji: str | None) -> bool:
@@ -530,11 +540,17 @@ class ConfluenceV2Adapter:
             emoji_value = emoji_to_hex_id(emoji) if emoji else None
 
             # Set both published and draft properties
-            published_ok = self._set_page_property(page_id, "emoji-title-published", emoji_value)
-            draft_ok = self._set_page_property(page_id, "emoji-title-draft", emoji_value)
+            published_ok = self._set_page_property(
+                page_id, "emoji-title-published", emoji_value
+            )
+            draft_ok = self._set_page_property(
+                page_id, "emoji-title-draft", emoji_value
+            )
 
             if not published_ok:
-                logger.warning(f"Failed to set emoji-title-published for page '{page_id}'")
+                logger.warning(
+                    f"Failed to set emoji-title-published for page '{page_id}'"
+                )
             if not draft_ok:
                 logger.warning(f"Failed to set emoji-title-draft for page '{page_id}'")
 

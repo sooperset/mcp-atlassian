@@ -1418,7 +1418,9 @@ class TestPageEmoji:
 
         # Mock set_page_property for creating new property
         pages_mixin.confluence.get_page_properties.return_value = {"results": []}
-        pages_mixin.confluence.set_page_property.return_value = {"key": "emoji-title-published"}
+        pages_mixin.confluence.set_page_property.return_value = {
+            "key": "emoji-title-published"
+        }
 
         result = pages_mixin._set_page_emoji(page_id, "🚀")
 
@@ -1440,7 +1442,9 @@ class TestPageEmoji:
         page_id = "update_emoji_123"
 
         # The v1 API doesn't need to fetch existing properties - it just sets the value
-        pages_mixin.confluence.set_page_property.return_value = {"key": "emoji-title-published"}
+        pages_mixin.confluence.set_page_property.return_value = {
+            "key": "emoji-title-published"
+        }
 
         result = pages_mixin._set_page_emoji(page_id, "🎉")
 
@@ -1490,7 +1494,9 @@ class TestPageEmoji:
         page_id = "no_emoji_123"
 
         # Mock delete returning an error (property doesn't exist)
-        pages_mixin.confluence.delete_page_property.side_effect = Exception("Property not found")
+        pages_mixin.confluence.delete_page_property.side_effect = Exception(
+            "Property not found"
+        )
 
         result = pages_mixin._set_page_emoji(page_id, None)
 

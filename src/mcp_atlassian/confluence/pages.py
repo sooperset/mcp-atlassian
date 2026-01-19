@@ -207,7 +207,9 @@ class PagesMixin(ConfluenceClient):
             logger.debug(f"Error fetching emoji for page {page_id}: {str(e)}")
             return None
 
-    def _set_single_property(self, page_id: str, property_key: str, value: str | None) -> bool:
+    def _set_single_property(
+        self, page_id: str, property_key: str, value: str | None
+    ) -> bool:
         """Set or remove a single page property via v1 API.
 
         Args:
@@ -223,9 +225,9 @@ class PagesMixin(ConfluenceClient):
                 # Delete the property
                 try:
                     self.confluence.delete_page_property(page_id, property_key)
-                except Exception:
+                except Exception as e:
                     # Property might not exist, which is fine
-                    pass
+                    logger.debug(f"Could not delete property '{property_key}': {e}")
                 return True
 
             # Set/update the property
@@ -237,7 +239,9 @@ class PagesMixin(ConfluenceClient):
             return True
 
         except Exception as e:
-            logger.debug(f"Error setting property '{property_key}' for page {page_id}: {str(e)}")
+            logger.debug(
+                f"Error setting property '{property_key}' for page {page_id}: {str(e)}"
+            )
             return False
 
     def _set_page_emoji(self, page_id: str, emoji: str | None) -> bool:
@@ -265,11 +269,17 @@ class PagesMixin(ConfluenceClient):
             emoji_value = emoji_to_hex_id(emoji) if emoji else None
 
             # Set both published and draft properties
-            published_ok = self._set_single_property(page_id, "emoji-title-published", emoji_value)
-            draft_ok = self._set_single_property(page_id, "emoji-title-draft", emoji_value)
+            published_ok = self._set_single_property(
+                page_id, "emoji-title-published", emoji_value
+            )
+            draft_ok = self._set_single_property(
+                page_id, "emoji-title-draft", emoji_value
+            )
 
             if not published_ok:
-                logger.warning(f"Failed to set emoji-title-published for page {page_id}")
+                logger.warning(
+                    f"Failed to set emoji-title-published for page {page_id}"
+                )
             if not draft_ok:
                 logger.warning(f"Failed to set emoji-title-draft for page {page_id}")
 
