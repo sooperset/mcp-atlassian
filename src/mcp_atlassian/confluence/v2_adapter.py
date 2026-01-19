@@ -496,6 +496,81 @@ class ConfluenceV2Adapter:
 
         return None
 
+    def set_page_emoji(self, page_id: str, emoji: str | None) -> bool:
+        """Set or remove the page title emoji using v2 API.
+
+        The page emoji (icon shown in navigation) is stored as a content property
+        with key 'emoji-title-published'.
+
+        Args:
+            page_id: The ID of the page
+            emoji: The emoji character to set, or None to remove the emoji
+
+        Returns:
+            True if the operation succeeded, False otherwise
+        """
+        property_key = "emoji-title-published"
+
+        try:
+            if emoji is None:
+                # Delete the emoji property
+                url = f"{self.base_url}/api/v2/pages/{page_id}/properties/{property_key}"
+                response = self.session.delete(url)
+                # 204 No Content or 404 Not Found are both success cases
+                return response.status_code in [200, 204, 404]
+
+            # First, check if the property already exists
+            existing_property = self._get_property(page_id, property_key)
+
+            if existing_property:
+                # Update existing property
+                url = f"{self.base_url}/api/v2/pages/{page_id}/properties/{property_key}"
+                current_version = existing_property.get("version", {}).get("number", 1)
+                data = {
+                    "key": property_key,
+                    "value": {"fallback": emoji},
+                    "version": {"number": current_version + 1},
+                }
+                response = self.session.put(url, json=data)
+            else:
+                # Create new property
+                url = f"{self.base_url}/api/v2/pages/{page_id}/properties"
+                data = {
+                    "key": property_key,
+                    "value": {"fallback": emoji},
+                }
+                response = self.session.post(url, json=data)
+
+            response.raise_for_status()
+            return True
+
+        except HTTPError as e:
+            logger.warning(f"HTTP error setting emoji for page '{page_id}': {e}")
+            return False
+        except Exception as e:
+            logger.warning(f"Error setting emoji for page '{page_id}': {e}")
+            return False
+
+    def _get_property(self, page_id: str, property_key: str) -> dict[str, Any] | None:
+        """Get a specific content property by key.
+
+        Args:
+            page_id: The ID of the page
+            property_key: The property key to retrieve
+
+        Returns:
+            The property data if found, None otherwise
+        """
+        try:
+            url = f"{self.base_url}/api/v2/pages/{page_id}/properties/{property_key}"
+            response = self.session.get(url)
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            return response.json()
+        except Exception:
+            return None
+
     def get_page_views(self, page_id: str) -> dict[str, Any]:
         """Get view statistics for a page using the Analytics API.
 

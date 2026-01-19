@@ -237,6 +237,49 @@ class PagesMixin(ConfluenceClient):
 
         return None
 
+    def _set_page_emoji(self, page_id: str, emoji: str | None) -> bool:
+        """Set or remove the page title emoji.
+
+        The page emoji (icon shown in navigation) is stored as a content property
+        with key 'emoji-title-published'.
+
+        Args:
+            page_id: The ID of the page
+            emoji: The emoji character to set, or None to remove the emoji
+
+        Returns:
+            True if the operation succeeded, False otherwise
+        """
+        try:
+            # Use v2 API for OAuth authentication
+            v2_adapter = self._v2_adapter
+            if v2_adapter:
+                return v2_adapter.set_page_emoji(page_id, emoji)
+
+            # For token/basic auth, use v1 API via atlassian library
+            property_key = "emoji-title-published"
+
+            if emoji is None:
+                # Delete the emoji property
+                try:
+                    self.confluence.delete_page_property(page_id, property_key)
+                    return True
+                except Exception:
+                    # Property might not exist, which is fine
+                    return True
+
+            # Set/update the property
+            property_data = {
+                "key": property_key,
+                "value": {"fallback": emoji},
+            }
+            self.confluence.set_page_property(page_id, property_data)
+            return True
+
+        except Exception as e:
+            logger.warning(f"Error setting emoji for page {page_id}: {str(e)}")
+            return False
+
     def get_page_by_title(
         self, space_key: str, title: str, *, convert_to_markdown: bool = True
     ) -> ConfluencePage | None:
@@ -382,6 +425,7 @@ class PagesMixin(ConfluenceClient):
         is_markdown: bool = True,
         enable_heading_anchors: bool = False,
         content_representation: str | None = None,
+        emoji: str | None = None,
     ) -> ConfluencePage:
         """
         Create a new page in a Confluence space.
@@ -394,6 +438,7 @@ class PagesMixin(ConfluenceClient):
             is_markdown: Whether the body content is in markdown format (default: True, keyword-only)
             enable_heading_anchors: Whether to enable automatic heading anchor generation (default: False, keyword-only)
             content_representation: Content format when is_markdown=False ('wiki' or 'storage', keyword-only)
+            emoji: Optional emoji character for the page title icon (keyword-only)
 
         Returns:
             ConfluencePage model containing the new page's data
@@ -444,6 +489,10 @@ class PagesMixin(ConfluenceClient):
             if not page_id:
                 raise ValueError("Create page response did not contain an ID")
 
+            # Set the page emoji if provided
+            if emoji:
+                self._set_page_emoji(page_id, emoji)
+
             return self.get_page_content(page_id)
         except Exception as e:
             logger.error(
@@ -465,6 +514,7 @@ class PagesMixin(ConfluenceClient):
         parent_id: str | None = None,
         enable_heading_anchors: bool = False,
         content_representation: str | None = None,
+        emoji: str | None = None,
     ) -> ConfluencePage:
         """
         Update an existing page in Confluence.
@@ -479,6 +529,7 @@ class PagesMixin(ConfluenceClient):
             parent_id: Optional new parent page ID (keyword-only)
             enable_heading_anchors: Whether to enable automatic heading anchor generation (default: False, keyword-only)
             content_representation: Content format when is_markdown=False ('wiki' or 'storage', keyword-only)
+            emoji: Optional emoji character for the page title icon (keyword-only). Pass empty string to remove emoji.
 
         Returns:
             ConfluencePage model containing the updated page's data
@@ -532,6 +583,12 @@ class PagesMixin(ConfluenceClient):
                     update_kwargs["parent_id"] = parent_id
 
                 self.confluence.update_page(**update_kwargs)
+
+            # Set or remove the page emoji if provided
+            if emoji is not None:
+                # Empty string means remove emoji, otherwise set it
+                emoji_to_set = emoji if emoji else None
+                self._set_page_emoji(page_id, emoji_to_set)
 
             # After update, refresh the page data
             return self.get_page_content(page_id)

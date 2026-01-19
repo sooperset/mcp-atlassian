@@ -468,6 +468,13 @@ async def create_page(
             default=False,
         ),
     ] = False,
+    emoji: Annotated[
+        str | None,
+        Field(
+            description="(Optional) Page title emoji (icon shown in navigation). Can be any emoji character like '📝', '🚀', '📚'. Set to null/None to remove.",
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Create a new Confluence page.
 
@@ -479,6 +486,7 @@ async def create_page(
         parent_id: Optional parent page ID.
         content_format: The format of the content ('markdown', 'wiki', or 'storage').
         enable_heading_anchors: Whether to enable heading anchors (markdown only).
+        emoji: Optional page title emoji (icon shown in navigation).
 
     Returns:
         JSON string representing the created page object.
@@ -512,6 +520,7 @@ async def create_page(
         if content_format == "markdown"
         else False,
         content_representation=content_representation,
+        emoji=emoji,
     )
     result = page.to_simplified_dict()
     return json.dumps(
@@ -561,6 +570,13 @@ async def update_page(
             default=False,
         ),
     ] = False,
+    emoji: Annotated[
+        str | None,
+        Field(
+            description="(Optional) Page title emoji (icon shown in navigation). Can be any emoji character like '📝', '🚀', '📚'. Set to null/None to remove.",
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Update an existing Confluence page.
 
@@ -574,6 +590,7 @@ async def update_page(
         parent_id: Optional new parent page ID.
         content_format: The format of the content ('markdown', 'wiki', or 'storage').
         enable_heading_anchors: Whether to enable heading anchors (markdown only).
+        emoji: Optional page title emoji (icon shown in navigation).
 
     Returns:
         JSON string representing the updated page object.
@@ -609,6 +626,7 @@ async def update_page(
         if content_format == "markdown"
         else False,
         content_representation=content_representation,
+        emoji=emoji,
     )
     page_data = updated_page.to_simplified_dict()
     return json.dumps(
