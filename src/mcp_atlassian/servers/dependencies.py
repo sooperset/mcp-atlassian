@@ -159,7 +159,7 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
 
     Supports multiple authentication methods:
     1. Header-based PAT (X-Atlassian-Jira-Personal-Token + X-Atlassian-Jira-Url) - from PR #683
-    2. Authorization header (Bearer/Token) - existing behavior  
+    2. Authorization header (Bearer/Token) - existing behavior
     3. Global configuration - fallback
 
     Also supports per-request project filter override via X-Atlassian-Jira-Projects-Filter header (Issue #850).
@@ -502,8 +502,8 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
                 raise ValueError(f"Invalid user Confluence token or configuration: {e}")
         else:
             logger.debug(
-                f"get_confluence_fetcher: No user-specific ConfluenceFetcher. Auth type: {effective_auth_type}. "
-                f"Token present: {bool(effective_token)}. Will use global fallback."
+                f"get_confluence_fetcher: No user-specific ConfluenceFetcher. Auth type: {user_auth_type}. "
+                f"Token present: {hasattr(request.state, 'user_atlassian_token')}. Will use global fallback."
             )
     except RuntimeError:
         logger.debug(

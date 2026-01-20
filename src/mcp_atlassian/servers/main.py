@@ -536,7 +536,7 @@ class UserTokenMiddleware:
         on a per-request basis. Headers take precedence over environment variables.
 
         Follows the X-Atlassian-* naming convention established by PR #683.
-        
+
         Note: Authentication is handled separately via X-Atlassian-Jira-Personal-Token
         and X-Atlassian-Confluence-Personal-Token headers (see PR #683).
 
