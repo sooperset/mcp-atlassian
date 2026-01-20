@@ -629,7 +629,7 @@ class TestGetJiraFetcher:
         "error_scenario,expected_error_match",
         [
             ("missing_global_config", "Jira client \\(fetcher\\) not available"),
-            ("empty_user_token", "User Atlassian token found in state but is empty"),
+            ("empty_user_token", "OAuth access token missing in credentials"),
             ("validation_failure", "Invalid user Jira token or configuration"),
             (
                 "missing_lifespan_context",
@@ -952,7 +952,7 @@ class TestGetConfluenceFetcher:
         "error_scenario,expected_error_match",
         [
             ("missing_global_config", "Confluence client \\(fetcher\\) not available"),
-            ("empty_user_token", "User Atlassian token found in state but is empty"),
+            ("empty_user_token", "OAuth access token missing in credentials"),
             ("validation_failure", "Invalid user Confluence token or configuration"),
             (
                 "missing_lifespan_context",
