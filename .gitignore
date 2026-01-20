@@ -75,3 +75,7 @@ playground/
 
 # Claude
 .claude/
+
+# Local documentation
+MERGE_CONFLICT_RESOLUTION.md
+pr-guide-mcp-atlassian-850.md
