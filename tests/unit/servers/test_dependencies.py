@@ -380,7 +380,14 @@ def _setup_mock_request_state(
     mock_request.state.jira_fetcher = None
     mock_request.state.confluence_fetcher = None
 
+    # Service headers from PR #683
     mock_request.state.atlassian_service_headers = service_headers or {}
+
+    # Per-request configuration overrides (Issue #850)
+    mock_request.state.jira_projects_filter = None
+    mock_request.state.confluence_spaces_filter = None
+    mock_request.state.read_only_mode = None
+    mock_request.state.enabled_tools = None
 
     if auth_scenario:
         mock_request.state.user_atlassian_auth_type = auth_scenario["auth_type"]
@@ -622,7 +629,7 @@ class TestGetJiraFetcher:
         "error_scenario,expected_error_match",
         [
             ("missing_global_config", "Jira client \\(fetcher\\) not available"),
-            ("empty_user_token", "User Atlassian token found in state but is empty"),
+            ("empty_user_token", "OAuth access token missing in credentials"),
             ("validation_failure", "Invalid user Jira token or configuration"),
             (
                 "missing_lifespan_context",
@@ -945,7 +952,7 @@ class TestGetConfluenceFetcher:
         "error_scenario,expected_error_match",
         [
             ("missing_global_config", "Confluence client \\(fetcher\\) not available"),
-            ("empty_user_token", "User Atlassian token found in state but is empty"),
+            ("empty_user_token", "OAuth access token missing in credentials"),
             ("validation_failure", "Invalid user Confluence token or configuration"),
             (
                 "missing_lifespan_context",
