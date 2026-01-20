@@ -8,6 +8,7 @@ from atlassian import Jira
 from requests import Session
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
+from mcp_atlassian.models.jira.adf import markdown_to_adf
 from mcp_atlassian.preprocessing import JiraPreprocessor
 from mcp_atlassian.utils.logging import (
     get_masked_session_headers,
@@ -210,25 +211,32 @@ class JiraClient:
         _ = self.config.url if hasattr(self, "config") else ""
         return self.preprocessor.clean_jira_text(text)
 
-    def _markdown_to_jira(self, markdown_text: str) -> str:
+    def _markdown_to_jira(self, markdown_text: str) -> str | dict[str, Any]:
         """
-        Convert Markdown syntax to Jira markup syntax.
+        Convert Markdown syntax to Jira format.
+
+        For Jira Cloud: Converts to Atlassian Document Format (ADF) dict
+        For Jira Server/Data Center: Converts to Jira wiki markup string
 
         Args:
             markdown_text: Text in Markdown format
 
         Returns:
-            Text in Jira markup format
+            For Cloud: ADF document as a dictionary
+            For Server/Data Center: Text in Jira wiki markup format
         """
         if not markdown_text:
-            return ""
+            return "" if not self.config.is_cloud else markdown_to_adf("")
 
-        # Use the shared preprocessor if available
+        # For Jira Cloud, use ADF format
+        if self.config.is_cloud:
+            return markdown_to_adf(markdown_text)
+
+        # For Jira Server/Data Center, use wiki markup
         if hasattr(self, "preprocessor"):
             return self.preprocessor.markdown_to_jira(markdown_text)
 
-        # Otherwise create a temporary one
-        _ = self.config.url if hasattr(self, "config") else ""
+        # Fallback: create a temporary preprocessor
         return self.preprocessor.markdown_to_jira(markdown_text)
 
     def get_paged(
