@@ -368,7 +368,9 @@ class TestCreateUserConfigForFetcher:
             )
 
 
-def _setup_mock_request_state(mock_request, auth_scenario=None, cached_fetcher=None):
+def _setup_mock_request_state(
+    mock_request, auth_scenario=None, cached_fetcher=None, service_headers=None
+):
     """Helper to setup mock request state."""
     if cached_fetcher:
         mock_request.state.jira_fetcher = cached_fetcher
@@ -377,6 +379,8 @@ def _setup_mock_request_state(mock_request, auth_scenario=None, cached_fetcher=N
 
     mock_request.state.jira_fetcher = None
     mock_request.state.confluence_fetcher = None
+
+    mock_request.state.atlassian_service_headers = service_headers or {}
 
     if auth_scenario:
         mock_request.state.user_atlassian_auth_type = auth_scenario["auth_type"]
@@ -435,6 +439,93 @@ class TestGetJiraFetcher:
 
         assert result == cached_fetcher
         mock_jira_fetcher_class.assert_not_called()
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_header_based_jira_fetcher_creation(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ):
+        """Test creating header-based JiraFetcher with PAT token from headers."""
+        service_headers = {
+            "X-Atlassian-Jira-Url": "https://test.atlassian.net",
+            "X-Atlassian-Jira-Personal-Token": "test-pat-token",
+        }
+
+        # Create a special state mock that controls hasattr() behavior
+        class MockState:
+            def __init__(self):
+                self.jira_fetcher = None
+                self.user_atlassian_auth_type = "pat"
+                self.user_atlassian_email = None
+                self.atlassian_service_headers = service_headers
+
+            def __getattr__(self, name):
+                if name == "user_atlassian_token":
+                    raise AttributeError(
+                        f"'{type(self).__name__}' object has no attribute '{name}'"
+                    )
+                return None
+
+        mock_request.state = MockState()
+        mock_get_http_request.return_value = mock_request
+
+        mock_fetcher = _create_mock_fetcher(JiraFetcher)
+        mock_jira_fetcher_class.return_value = mock_fetcher
+
+        result = await get_jira_fetcher(mock_context)
+
+        assert result == mock_fetcher
+        assert mock_request.state.jira_fetcher == mock_fetcher
+        mock_jira_fetcher_class.assert_called_once()
+
+        called_config = mock_jira_fetcher_class.call_args[1]["config"]
+        assert called_config.auth_type == "pat"
+        assert called_config.url == "https://test.atlassian.net"
+        assert called_config.personal_token == "test-pat-token"
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_header_based_jira_fetcher_validation_failure(
+        self, mock_jira_fetcher_class, mock_get_http_request, mock_context, mock_request
+    ):
+        """Test header-based JiraFetcher creation failure when validation fails."""
+
+        service_headers = {
+            "X-Atlassian-Jira-Url": "https://test.atlassian.net",
+            "X-Atlassian-Jira-Personal-Token": "invalid-token",
+        }
+
+        # Create a special state mock that controls hasattr() behavior
+        class MockState:
+            def __init__(self):
+                self.jira_fetcher = None
+                self.user_atlassian_auth_type = "pat"
+                self.atlassian_service_headers = service_headers
+
+            def __getattr__(self, name):
+                if name == "user_atlassian_token":
+                    raise AttributeError(
+                        f"'{type(self).__name__}' object has no attribute '{name}'"
+                    )
+                return None
+
+        mock_request.state = MockState()
+        mock_get_http_request.return_value = mock_request
+
+        mock_fetcher = _create_mock_fetcher(
+            JiraFetcher, validation_error=Exception("Invalid token")
+        )
+        mock_jira_fetcher_class.return_value = mock_fetcher
+
+        with pytest.raises(
+            ValueError, match="Invalid header-based Jira token or configuration"
+        ):
+            await get_jira_fetcher(mock_context)
 
     @pytest.mark.parametrize("scenario_key", ["oauth", "pat"])
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
@@ -609,6 +700,101 @@ class TestGetConfluenceFetcher:
 
         assert result == cached_fetcher
         mock_confluence_fetcher_class.assert_not_called()
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_header_based_confluence_fetcher_creation(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+    ):
+        """Test creating header-based ConfluenceFetcher with PAT token from headers."""
+        service_headers = {
+            "X-Atlassian-Confluence-Url": "https://test.atlassian.net",
+            "X-Atlassian-Confluence-Personal-Token": "test-confluence-pat-token",
+        }
+
+        # Create a special state mock that controls hasattr() behavior
+        class MockState:
+            def __init__(self):
+                self.confluence_fetcher = None
+                self.user_atlassian_auth_type = "pat"
+                self.user_atlassian_email = None
+                self.atlassian_service_headers = service_headers
+
+            def __getattr__(self, name):
+                if name == "user_atlassian_token":
+                    raise AttributeError(
+                        f"'{type(self).__name__}' object has no attribute '{name}'"
+                    )
+                return None
+
+        mock_request.state = MockState()
+        mock_get_http_request.return_value = mock_request
+
+        user_info = {"email": "user@example.com", "displayName": "Test User"}
+        mock_fetcher = _create_mock_fetcher(
+            ConfluenceFetcher, validation_return=user_info
+        )
+        mock_confluence_fetcher_class.return_value = mock_fetcher
+
+        result = await get_confluence_fetcher(mock_context)
+
+        assert result == mock_fetcher
+        assert mock_request.state.confluence_fetcher == mock_fetcher
+        assert mock_request.state.user_atlassian_email == "user@example.com"
+        mock_confluence_fetcher_class.assert_called_once()
+
+        called_config = mock_confluence_fetcher_class.call_args[1]["config"]
+        assert called_config.auth_type == "pat"
+        assert called_config.url == "https://test.atlassian.net"
+        assert called_config.personal_token == "test-confluence-pat-token"
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_header_based_confluence_fetcher_validation_failure(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+    ):
+        """Test header-based ConfluenceFetcher creation failure when validation fails."""
+        # Setup service headers for header-based auth
+        service_headers = {
+            "X-Atlassian-Confluence-Url": "https://test.atlassian.net",
+            "X-Atlassian-Confluence-Personal-Token": "invalid-token",
+        }
+
+        # Create a special state mock that controls hasattr() behavior
+        class MockState:
+            def __init__(self):
+                self.confluence_fetcher = None
+                self.user_atlassian_auth_type = "pat"
+                self.atlassian_service_headers = service_headers
+
+            def __getattr__(self, name):
+                if name == "user_atlassian_token":
+                    raise AttributeError(
+                        f"'{type(self).__name__}' object has no attribute '{name}'"
+                    )
+                return None
+
+        mock_request.state = MockState()
+        mock_get_http_request.return_value = mock_request
+
+        # Setup mock fetcher to fail validation
+        mock_fetcher = _create_mock_fetcher(
+            ConfluenceFetcher, validation_error=Exception("Invalid token")
+        )
+        mock_confluence_fetcher_class.return_value = mock_fetcher
+
+        with pytest.raises(
+            ValueError, match="Invalid header-based Confluence token or configuration"
+        ):
+            await get_confluence_fetcher(mock_context)
 
     @pytest.mark.parametrize("scenario_key", ["oauth", "pat"])
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
