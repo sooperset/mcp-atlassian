@@ -3,6 +3,7 @@
 import logging
 from typing import Any
 
+from ..models.jira.adf import markdown_to_adf
 from ..utils import parse_date
 from .client import JiraClient
 
@@ -137,23 +138,33 @@ class CommentsMixin(JiraClient):
             )
             raise Exception(f"Error editing comment: {str(e)}") from e
 
-    def _markdown_to_jira(self, markdown_text: str) -> str:
+    def _markdown_to_jira(self, markdown_text: str) -> str | dict[str, Any]:
         """
-        Convert Markdown syntax to Jira markup syntax.
+        Convert Markdown syntax to Jira format.
 
-        This method uses the TextPreprocessor implementation for consistent
-        conversion between Markdown and Jira markup.
+        For Jira Cloud: Converts to Atlassian Document Format (ADF) dict
+        For Jira Server/Data Center: Converts to Jira wiki markup string
 
         Args:
             markdown_text: Text in Markdown format
 
         Returns:
-            Text in Jira markup format
+            For Cloud: ADF document as a dictionary
+            For Server/Data Center: Text in Jira wiki markup format
         """
         if not markdown_text:
-            return ""
+            return markdown_to_adf("") if self.config.is_cloud else ""
 
-        # Use the existing preprocessor
+        # For Jira Cloud, use ADF format
+        if self.config.is_cloud:
+            try:
+                return markdown_to_adf(markdown_text)
+            except Exception as e:
+                logger.warning(f"Error converting markdown to ADF: {str(e)}")
+                # Return plain text ADF as fallback
+                return markdown_to_adf(markdown_text)
+
+        # For Jira Server/Data Center, use wiki markup
         try:
             return self.preprocessor.markdown_to_jira(markdown_text)
         except Exception as e:
