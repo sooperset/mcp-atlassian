@@ -561,3 +561,137 @@ class TestSLAModels:
         assert len(result["errors"]) == 1
         assert result["working_hours_applied"] is True
         assert result["working_hours_config"]["start"] == "09:00"
+
+
+class TestStatusCategoryCaching:
+    """Tests for status category caching in SLA calculations."""
+
+    @pytest.fixture
+    def sla_mixin(self, jira_fetcher: JiraFetcher) -> SLAMixin:
+        """Create an SLAMixin instance with mocked dependencies."""
+        return jira_fetcher
+
+    @pytest.fixture
+    def mock_statuses(self) -> list[dict]:
+        """Create mock status list from Jira API."""
+        return [
+            {
+                "name": "Open",
+                "statusCategory": {"key": "new"},
+            },
+            {
+                "name": "In Progress",
+                "statusCategory": {"key": "indeterminate"},
+            },
+            {
+                "name": "In Development",
+                "statusCategory": {"key": "indeterminate"},
+            },
+            {
+                "name": "Done",
+                "statusCategory": {"key": "done"},
+            },
+        ]
+
+    def test_status_category_cache_called_once(
+        self, sla_mixin: SLAMixin, mock_statuses: list[dict]
+    ):
+        """Test that get_all_statuses is only called once per instance."""
+        sla_mixin.jira.get_all_statuses = MagicMock(return_value=mock_statuses)
+
+        # Call multiple times
+        sla_mixin._get_status_category_map()
+        sla_mixin._get_status_category_map()
+        sla_mixin._get_status_category_map()
+
+        # Should only call API once
+        assert sla_mixin.jira.get_all_statuses.call_count == 1
+
+    def test_is_in_progress_uses_cache(
+        self, sla_mixin: SLAMixin, mock_statuses: list[dict]
+    ):
+        """Test that _is_in_progress_status uses cached data."""
+        sla_mixin.jira.get_all_statuses = MagicMock(return_value=mock_statuses)
+
+        # Check multiple statuses
+        assert sla_mixin._is_in_progress_status("TEST-1", "In Progress") is True
+        assert sla_mixin._is_in_progress_status("TEST-1", "In Development") is True
+        assert sla_mixin._is_in_progress_status("TEST-1", "Open") is False
+        assert sla_mixin._is_in_progress_status("TEST-1", "Done") is False
+
+        # Should only call API once despite multiple status checks
+        assert sla_mixin.jira.get_all_statuses.call_count == 1
+
+    def test_is_in_progress_case_insensitive(
+        self, sla_mixin: SLAMixin, mock_statuses: list[dict]
+    ):
+        """Test that status lookup is case-insensitive."""
+        sla_mixin.jira.get_all_statuses = MagicMock(return_value=mock_statuses)
+
+        assert sla_mixin._is_in_progress_status("TEST-1", "in progress") is True
+        assert sla_mixin._is_in_progress_status("TEST-1", "IN PROGRESS") is True
+        assert sla_mixin._is_in_progress_status("TEST-1", "In Progress") is True
+
+    def test_fallback_when_api_fails(self, sla_mixin: SLAMixin):
+        """Test fallback to name-based check when API fails."""
+        sla_mixin.jira.get_all_statuses = MagicMock(side_effect=Exception("API error"))
+
+        # Should fallback to name-based check
+        assert sla_mixin._is_in_progress_status("TEST-1", "in progress") is True
+        assert sla_mixin._is_in_progress_status("TEST-1", "in development") is True
+        assert sla_mixin._is_in_progress_status("TEST-1", "working") is True
+        assert sla_mixin._is_in_progress_status("TEST-1", "open") is False
+
+    def test_fallback_for_unknown_status(
+        self, sla_mixin: SLAMixin, mock_statuses: list[dict]
+    ):
+        """Test fallback when status not in cache."""
+        sla_mixin.jira.get_all_statuses = MagicMock(return_value=mock_statuses)
+
+        # Unknown status not in cache falls back to name-based check
+        assert sla_mixin._is_in_progress_status("TEST-1", "in progress") is True
+        # "Custom Status" not in mock_statuses, falls back to name check
+        assert sla_mixin._is_in_progress_status("TEST-1", "Custom Status") is False
+
+    def test_cache_persists_across_resolution_time_calls(
+        self, sla_mixin: SLAMixin, mock_statuses: list[dict]
+    ):
+        """Test cache persists when calculating resolution time for multiple issues."""
+        sla_mixin.jira.get_all_statuses = MagicMock(return_value=mock_statuses)
+
+        # Create mock issue dates with status changes
+        issue_dates = IssueDatesResponse(
+            issue_key="TEST-123",
+            created=datetime(2023, 1, 1, 10, 0, tzinfo=timezone.utc),
+            resolution_date=datetime(2023, 1, 20, 10, 0, tzinfo=timezone.utc),
+            current_status="Done",
+            status_changes=[
+                StatusChangeEntry(
+                    status="Open",
+                    entered_at=datetime(2023, 1, 1, 10, 0, tzinfo=timezone.utc),
+                    exited_at=datetime(2023, 1, 2, 10, 0, tzinfo=timezone.utc),
+                    duration_minutes=1440,
+                ),
+                StatusChangeEntry(
+                    status="In Progress",
+                    entered_at=datetime(2023, 1, 2, 10, 0, tzinfo=timezone.utc),
+                    exited_at=datetime(2023, 1, 10, 10, 0, tzinfo=timezone.utc),
+                    duration_minutes=11520,
+                ),
+                StatusChangeEntry(
+                    status="Done",
+                    entered_at=datetime(2023, 1, 10, 10, 0, tzinfo=timezone.utc),
+                    exited_at=None,
+                    duration_minutes=None,
+                ),
+            ],
+        )
+        sla_mixin.get_issue_dates = MagicMock(return_value=issue_dates)
+
+        # Calculate SLA for multiple issues
+        sla_mixin.get_issue_sla("TEST-1", metrics=["resolution_time"])
+        sla_mixin.get_issue_sla("TEST-2", metrics=["resolution_time"])
+        sla_mixin.get_issue_sla("TEST-3", metrics=["resolution_time"])
+
+        # API should only be called once across all issues
+        assert sla_mixin.jira.get_all_statuses.call_count == 1
