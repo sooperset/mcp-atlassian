@@ -463,31 +463,49 @@ class SLAMixin(JiraClient, MetricsOperationsProto):
                 ),
             )
 
+    def _get_status_category_map(self) -> dict[str, str]:
+        """
+        Get cached map of status name (lowercase) -> category key.
+
+        Uses lazy initialization to fetch and cache status categories
+        from the Jira API. The cache persists for the lifetime of the instance.
+
+        Returns:
+            Dictionary mapping lowercase status names to category keys
+        """
+        if not hasattr(self, "_status_category_cache"):
+            self._status_category_cache: dict[str, str] = {}
+            try:
+                statuses = self.jira.get_all_statuses()
+                for status in statuses:
+                    name = status.get("name", "").lower()
+                    category_key = status.get("statusCategory", {}).get("key", "")
+                    if name:
+                        self._status_category_cache[name] = category_key
+            except Exception as e:
+                logger.debug(f"Could not fetch status categories: {e}")
+        return self._status_category_cache
+
     def _is_in_progress_status(self, issue_key: str, status_name: str) -> bool:
         """
         Check if a status represents "in progress" work using Jira status category.
 
-        Uses the Jira API to check the status category, which is more reliable
-        than hardcoding status names across different Jira instances.
+        Uses cached status category data to avoid repeated API calls.
 
         Args:
-            issue_key: The issue key (used to get project context)
+            issue_key: The issue key (unused, kept for API compatibility)
             status_name: The status name to check
 
         Returns:
             True if the status is in the "In Progress" category
         """
-        try:
-            # Get all statuses and find the matching one
-            statuses = self.jira.get_all_statuses()
-            for status in statuses:
-                if status.get("name", "").lower() == status_name.lower():
-                    category = status.get("statusCategory", {})
-                    return category.get("key") == IN_PROGRESS_CATEGORY_KEY
-        except Exception as e:
-            logger.debug(f"Could not fetch status category for {status_name}: {e}")
+        category_map = self._get_status_category_map()
+        if category_map:
+            category_key = category_map.get(status_name.lower())
+            if category_key is not None:
+                return category_key == IN_PROGRESS_CATEGORY_KEY
 
-        # Fallback to name-based check if API fails
+        # Fallback to name-based check if cache is empty or status not found
         return status_name.lower() in ("in progress", "in development", "working")
 
     def _calculate_resolution_time(
