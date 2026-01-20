@@ -98,6 +98,41 @@ def mock_jira_fetcher():
 
     mock_fetcher.search_issues.side_effect = mock_search_issues
 
+    # Configure search_issues_page (token-based pagination for Cloud)
+    def mock_search_issues_page(jql, **kwargs):
+        page_size = int(kwargs.get("page_size", 10))
+        page_token = kwargs.get("page_token")
+
+        mock_search_result = MagicMock()
+        issues = []
+        fixture_issues = MOCK_JIRA_JQL_RESPONSE_SIMPLIFIED.get("issues", [])
+        for issue_data in fixture_issues[:page_size]:
+            mock_issue = MagicMock()
+            mock_issue.to_simplified_dict.return_value = issue_data
+            issues.append(mock_issue)
+
+        # One-page behavior: if page_token is provided, treat as last page
+        next_page_token = None if page_token else "dummy-next-page-token"
+        is_last = bool(page_token)
+
+        mock_search_result.issues = issues
+        mock_search_result.total = -1
+        mock_search_result.start_at = -1
+        mock_search_result.max_results = -1
+        mock_search_result.next_page_token = next_page_token
+        mock_search_result.is_last = is_last
+        mock_search_result.to_simplified_dict.return_value = {
+            "total": -1,
+            "start_at": -1,
+            "max_results": -1,
+            "next_page_token": next_page_token,
+            "is_last": is_last,
+            "issues": [issue.to_simplified_dict() for issue in issues],
+        }
+        return mock_search_result
+
+    mock_fetcher.search_issues_page.side_effect = mock_search_issues_page
+
     # Configure create_issue
     def mock_create_issue(
         project_key,
@@ -299,6 +334,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         remove_issue_link,
         search,
         search_fields,
+        search_page,
         transition_issue,
         update_issue,
         update_sprint,
@@ -307,6 +343,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp = FastMCP(name="TestJiraSubMCP")
     jira_sub_mcp.add_tool(get_issue)
     jira_sub_mcp.add_tool(search)
+    jira_sub_mcp.add_tool(search_page)
     jira_sub_mcp.add_tool(search_fields)
     jira_sub_mcp.add_tool(get_project_issues)
     jira_sub_mcp.add_tool(get_project_versions)
@@ -460,6 +497,63 @@ async def test_search(jira_client, mock_jira_fetcher):
         start=0,
         projects_filter=None,
         expand=None,
+    )
+
+
+@pytest.mark.anyio
+async def test_search_fetch_all_uses_paging(jira_client, mock_jira_fetcher):
+    """If fetch_all=true, jira_search should page internally and ignore start_at semantics."""
+    response = await jira_client.call_tool(
+        "jira_search",
+        {
+            "jql": "project = TEST",
+            "fields": "summary,status",
+            "limit": 2,
+            "start_at": 0,
+            "fetch_all": True,
+        },
+    )
+    assert hasattr(response, "content")
+    msg = response.content[0]
+    data = json.loads(msg.text)
+    assert "issues" in data
+    assert isinstance(data["issues"], list)
+    assert data["max_results"] == len(data["issues"])
+    # For Cloud paging, the server uses search_issues_page
+    assert mock_jira_fetcher.search_issues_page.call_count >= 1
+
+
+@pytest.mark.anyio
+async def test_search_page(jira_client, mock_jira_fetcher):
+    """Test the search_page tool returns one page and exposes next_page_token."""
+    response = await jira_client.call_tool(
+        "jira_search_page",
+        {
+            "jql": "project = TEST",
+            "fields": "summary,status",
+            "page_size": 5,
+        },
+    )
+    assert hasattr(response, "content")
+    assert len(response.content) > 0
+    text_content = response.content[0]
+    assert text_content.type == "text"
+    content = json.loads(text_content.text)
+    assert isinstance(content, dict)
+    assert "issues" in content
+    # Fixture may contain fewer issues than requested page_size
+    assert len(content["issues"]) == min(
+        5, len(MOCK_JIRA_JQL_RESPONSE_SIMPLIFIED["issues"])
+    )
+    assert content["next_page_token"] == "dummy-next-page-token"
+    assert content["is_last"] is False
+    mock_jira_fetcher.search_issues_page.assert_called_once_with(
+        jql="project = TEST",
+        fields=["summary", "status"],
+        page_token=None,
+        page_size=5,
+        expand=None,
+        projects_filter=None,
     )
 
 

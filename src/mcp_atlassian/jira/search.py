@@ -18,6 +18,123 @@ logger = logging.getLogger("mcp-jira")
 class SearchMixin(JiraClient, IssueOperationsProto):
     """Mixin for Jira search operations."""
 
+    def search_issues_page(
+        self,
+        jql: str,
+        fields: list[str] | tuple[str, ...] | set[str] | str | None = None,
+        page_token: str | None = None,
+        page_size: int = 50,
+        expand: str | None = None,
+        projects_filter: str | None = None,
+    ) -> JiraSearchResult:
+        """
+        Search for issues using JQL and return a single page.
+
+        Cloud environments use the v3 enhanced JQL search endpoint that returns a
+        `nextPageToken` for token-based pagination. Server/DC environments use
+        offset-based pagination.
+
+        Args:
+            jql: JQL query string
+            fields: Fields to return (comma-separated string, list, tuple, set, or "*all")
+            page_token: Cloud pagination token returned by the previous call
+            page_size: Number of issues to return in this page (Cloud max 100)
+            expand: Optional items to expand (comma-separated)
+            projects_filter: Optional comma-separated list of project keys to filter by, overrides config
+
+        Returns:
+            JiraSearchResult containing one page of issues and pagination metadata.
+        """
+        try:
+            filter_to_use = projects_filter or self.config.projects_filter
+
+            if filter_to_use:
+                projects = [p.strip() for p in filter_to_use.split(",")]
+                if len(projects) == 1:
+                    project_query = f'project = "{projects[0]}"'
+                else:
+                    quoted_projects = [f'"{p}"' for p in projects]
+                    projects_list = ", ".join(quoted_projects)
+                    project_query = f"project IN ({projects_list})"
+
+                if not jql:
+                    jql = project_query
+                elif jql.strip().upper().startswith("ORDER BY"):
+                    jql = f"{project_query} {jql}"
+                elif (
+                    "project = " not in jql.lower() and "project in" not in jql.lower()
+                ):
+                    jql = f"({jql}) AND {project_query}"
+
+                logger.info(f"Applied projects filter to query: {jql}")
+
+            fields_param: str | None
+            if fields is None:
+                fields_param = ",".join(DEFAULT_READ_JIRA_FIELDS)
+            elif isinstance(fields, list | tuple | set):
+                fields_param = ",".join(fields)
+            else:
+                fields_param = fields
+
+            if self.config.is_cloud:
+                fields_list = fields_param.split(",") if fields_param else ["id", "key"]
+                request_body: dict[str, Any] = {
+                    "jql": jql,
+                    "maxResults": min(max(page_size, 1), 100),
+                    "fields": fields_list,
+                }
+                if expand:
+                    request_body["expand"] = expand
+                if page_token:
+                    request_body["nextPageToken"] = page_token
+
+                response = self.jira.post("rest/api/3/search/jql", json=request_body)
+                if not isinstance(response, dict):
+                    msg = (
+                        f"Unexpected response type from v3 search API: {type(response)}"
+                    )
+                    logger.error(msg)
+                    raise TypeError(msg)
+
+                search_result = JiraSearchResult.from_api_response(
+                    response,
+                    base_url=self.config.url,
+                    requested_fields=fields_param,
+                )
+                return search_result
+
+            # Server/DC: offset-based paging
+            page_size = min(max(page_size, 1), 50)
+            response = self.jira.jql(
+                jql, fields=fields_param, start=0, limit=page_size, expand=expand
+            )
+            if not isinstance(response, dict):
+                msg = f"Unexpected return value type from `jira.jql`: {type(response)}"
+                logger.error(msg)
+                raise TypeError(msg)
+
+            search_result = JiraSearchResult.from_api_response(
+                response, base_url=self.config.url, requested_fields=fields_param
+            )
+            return search_result
+
+        except HTTPError as http_err:
+            if http_err.response is not None and http_err.response.status_code in [
+                401,
+                403,
+            ]:
+                error_msg = (
+                    f"Authentication failed for Jira API ({http_err.response.status_code}). "
+                    "Token may be expired or invalid. Please verify credentials."
+                )
+                logger.error(error_msg)
+                raise MCPAtlassianAuthenticationError(error_msg) from http_err
+            logger.error(f"HTTP error during API call: {http_err}", exc_info=False)
+            raise http_err
+        except Exception as e:
+            logger.error(f"Error searching issues with JQL '{jql}': {str(e)}")
+            raise Exception(f"Error searching issues: {str(e)}") from e
+
     def search_issues(
         self,
         jql: str,
