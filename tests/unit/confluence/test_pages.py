@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from mcp_atlassian.confluence.pages import PagesMixin
+from mcp_atlassian.confluence.utils import extract_emoji_from_property
 from mcp_atlassian.models.confluence import ConfluencePage
 
 
@@ -1191,6 +1192,9 @@ class TestPagesOAuthMixin:
                 "version": {"number": 3},
             }
 
+            # Mock get_page_emoji
+            mock_v2_adapter.get_page_emoji.return_value = None
+
             # Mock the preprocessor
             oauth_pages_mixin.preprocessor.process_html_content.return_value = (
                 "<p>Processed HTML</p>",
@@ -1248,4 +1252,368 @@ class TestPagesOAuthMixin:
             oauth_pages_mixin.confluence.remove_page.assert_not_called()
 
             # Verify result
+            assert result is True
+
+
+class TestPageEmoji:
+    """Tests for page title emoji functionality."""
+
+    @pytest.fixture
+    def pages_mixin(self, confluence_client):
+        """Create a PagesMixin instance for testing."""
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = PagesMixin()
+            mixin.confluence = confluence_client.confluence
+            mixin.config = confluence_client.config
+            mixin.preprocessor = confluence_client.preprocessor
+            return mixin
+
+    def test_extract_emoji_from_property_with_fallback(self, pages_mixin):
+        """Test extracting emoji from property with fallback attribute."""
+        value = {"id": "1f4dd", "shortName": ":memo:", "fallback": "📝"}
+        result = extract_emoji_from_property(value)
+        assert result == "📝"
+
+    def test_extract_emoji_from_property_with_shortname(self, pages_mixin):
+        """Test extracting emoji from property with shortName when no fallback."""
+        value = {"id": "1f4dd", "shortName": ":memo:"}
+        result = extract_emoji_from_property(value)
+        assert result == ":memo:"
+
+    def test_extract_emoji_from_property_with_id(self, pages_mixin):
+        """Test extracting emoji from property using hex id conversion."""
+        value = {"id": "1f4dd"}  # Memo emoji code point
+        result = extract_emoji_from_property(value)
+        assert result == "📝"
+
+    def test_extract_emoji_from_property_string(self, pages_mixin):
+        """Test extracting emoji from string property value."""
+        result = extract_emoji_from_property("🚀")
+        assert result == "🚀"
+
+    def test_extract_emoji_from_property_none(self, pages_mixin):
+        """Test extracting emoji from None value."""
+        result = extract_emoji_from_property(None)
+        assert result is None
+
+    def test_extract_emoji_from_property_empty_dict(self, pages_mixin):
+        """Test extracting emoji from empty dict."""
+        result = extract_emoji_from_property({})
+        assert result is None
+
+    def test_get_page_emoji_v1_api(self, pages_mixin):
+        """Test getting page emoji via v1 API (non-OAuth)."""
+        # Mock the properties API response
+        pages_mixin.confluence.get_page_properties.return_value = {
+            "results": [
+                {
+                    "key": "emoji-title-published",
+                    "value": {"id": "1f680", "shortName": ":rocket:", "fallback": "🚀"},
+                },
+            ]
+        }
+
+        result = pages_mixin._get_page_emoji("123456")
+        assert result == "🚀"
+        pages_mixin.confluence.get_page_properties.assert_called_once_with("123456")
+
+    def test_get_page_emoji_draft_fallback(self, pages_mixin):
+        """Test getting page emoji from draft when published not available."""
+        pages_mixin.confluence.get_page_properties.return_value = {
+            "results": [
+                {
+                    "key": "emoji-title-draft",
+                    "value": {"fallback": "📋"},
+                },
+            ]
+        }
+
+        result = pages_mixin._get_page_emoji("123456")
+        assert result == "📋"
+
+    def test_get_page_emoji_no_emoji(self, pages_mixin):
+        """Test getting page emoji when none is set."""
+        pages_mixin.confluence.get_page_properties.return_value = {
+            "results": [
+                {"key": "some-other-property", "value": "something"},
+            ]
+        }
+
+        result = pages_mixin._get_page_emoji("123456")
+        assert result is None
+
+    def test_get_page_emoji_empty_properties(self, pages_mixin):
+        """Test getting page emoji with empty properties."""
+        pages_mixin.confluence.get_page_properties.return_value = {"results": []}
+
+        result = pages_mixin._get_page_emoji("123456")
+        assert result is None
+
+    def test_get_page_emoji_api_error(self, pages_mixin):
+        """Test that API errors return None gracefully."""
+        pages_mixin.confluence.get_page_properties.side_effect = Exception("API Error")
+
+        result = pages_mixin._get_page_emoji("123456")
+        assert result is None
+
+    def test_get_page_content_includes_emoji(self, pages_mixin):
+        """Test that get_page_content includes emoji in result."""
+        page_id = "987654321"
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        # Mock the emoji properties
+        pages_mixin.confluence.get_page_properties.return_value = {
+            "results": [
+                {
+                    "key": "emoji-title-published",
+                    "value": {"fallback": "📖"},
+                },
+            ]
+        }
+
+        result = pages_mixin.get_page_content(page_id, convert_to_markdown=True)
+
+        assert isinstance(result, ConfluencePage)
+        assert result.emoji == "📖"
+
+    def test_get_page_by_title_includes_emoji(self, pages_mixin):
+        """Test that get_page_by_title includes emoji in result."""
+        space_key = "DEMO"
+        title = "Example Page"
+
+        pages_mixin.confluence.get_page_by_title.return_value = {
+            "id": "987654321",
+            "title": title,
+            "space": {"key": space_key},
+            "body": {"storage": {"value": "<p>Example content</p>"}},
+            "version": {"number": 1},
+        }
+
+        pages_mixin.preprocessor.process_html_content.return_value = (
+            "<p>Processed HTML</p>",
+            "Processed Markdown",
+        )
+
+        # Mock the emoji properties
+        pages_mixin.confluence.get_page_properties.return_value = {
+            "results": [
+                {
+                    "key": "emoji-title-published",
+                    "value": {"fallback": "✨"},
+                },
+            ]
+        }
+
+        result = pages_mixin.get_page_by_title(space_key, title)
+
+        assert result is not None
+        assert result.emoji == "✨"
+
+    def test_set_page_emoji_success(self, pages_mixin):
+        """Test successfully setting a page emoji."""
+        page_id = "set_emoji_123"
+
+        # Mock set_page_property for creating new property
+        pages_mixin.confluence.get_page_properties.return_value = {"results": []}
+        pages_mixin.confluence.set_page_property.return_value = {
+            "key": "emoji-title-published"
+        }
+
+        result = pages_mixin._set_page_emoji(page_id, "🚀")
+
+        assert result is True
+        # Emoji 🚀 has Unicode code point U+1F680 - Confluence expects just the hex string
+        # Both published and draft properties should be set
+        assert pages_mixin.confluence.set_page_property.call_count == 2
+        pages_mixin.confluence.set_page_property.assert_any_call(
+            page_id,
+            {"key": "emoji-title-published", "value": "1f680"},
+        )
+        pages_mixin.confluence.set_page_property.assert_any_call(
+            page_id,
+            {"key": "emoji-title-draft", "value": "1f680"},
+        )
+
+    def test_set_page_emoji_update_existing(self, pages_mixin):
+        """Test updating an existing page emoji."""
+        page_id = "update_emoji_123"
+
+        # The v1 API doesn't need to fetch existing properties - it just sets the value
+        pages_mixin.confluence.set_page_property.return_value = {
+            "key": "emoji-title-published"
+        }
+
+        result = pages_mixin._set_page_emoji(page_id, "🎉")
+
+        assert result is True
+        # Emoji 🎉 has Unicode code point U+1F389 - Confluence expects just the hex string
+        # Both published and draft properties should be set
+        assert pages_mixin.confluence.set_page_property.call_count == 2
+        pages_mixin.confluence.set_page_property.assert_any_call(
+            page_id,
+            {"key": "emoji-title-published", "value": "1f389"},
+        )
+        pages_mixin.confluence.set_page_property.assert_any_call(
+            page_id,
+            {"key": "emoji-title-draft", "value": "1f389"},
+        )
+
+    def test_set_page_emoji_remove(self, pages_mixin):
+        """Test removing a page emoji by setting to None."""
+        page_id = "remove_emoji_123"
+
+        # Mock existing emoji property
+        pages_mixin.confluence.get_page_properties.return_value = {
+            "results": [
+                {
+                    "key": "emoji-title-published",
+                    "value": {"fallback": "📝"},
+                    "version": {"number": 1},
+                }
+            ]
+        }
+        pages_mixin.confluence.delete_page_property.return_value = True
+
+        result = pages_mixin._set_page_emoji(page_id, None)
+
+        assert result is True
+        # Both published and draft properties should be deleted
+        assert pages_mixin.confluence.delete_page_property.call_count == 2
+        pages_mixin.confluence.delete_page_property.assert_any_call(
+            page_id, "emoji-title-published"
+        )
+        pages_mixin.confluence.delete_page_property.assert_any_call(
+            page_id, "emoji-title-draft"
+        )
+
+    def test_set_page_emoji_remove_nonexistent(self, pages_mixin):
+        """Test removing emoji when none exists still succeeds."""
+        page_id = "no_emoji_123"
+
+        # Mock delete returning an error (property doesn't exist)
+        pages_mixin.confluence.delete_page_property.side_effect = Exception(
+            "Property not found"
+        )
+
+        result = pages_mixin._set_page_emoji(page_id, None)
+
+        # Should succeed even if property doesn't exist (exception caught)
+        assert result is True
+        # Both published and draft properties should be attempted to delete
+        assert pages_mixin.confluence.delete_page_property.call_count == 2
+        pages_mixin.confluence.delete_page_property.assert_any_call(
+            page_id, "emoji-title-published"
+        )
+        pages_mixin.confluence.delete_page_property.assert_any_call(
+            page_id, "emoji-title-draft"
+        )
+
+    def test_set_page_emoji_failure(self, pages_mixin):
+        """Test handling failure when setting emoji."""
+        page_id = "fail_emoji_123"
+
+        pages_mixin.confluence.get_page_properties.return_value = {"results": []}
+        pages_mixin.confluence.set_page_property.side_effect = Exception("API error")
+
+        result = pages_mixin._set_page_emoji(page_id, "💥")
+
+        assert result is False
+
+
+class TestPageEmojiOAuth:
+    """Tests for page emoji with OAuth authentication."""
+
+    @pytest.fixture
+    def oauth_pages_mixin(self, oauth_confluence_client):
+        """Create a PagesMixin instance for OAuth testing."""
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = PagesMixin()
+            mixin.confluence = oauth_confluence_client.confluence
+            mixin.config = oauth_confluence_client.config
+            mixin.preprocessor = oauth_confluence_client.preprocessor
+            return mixin
+
+    def test_get_page_emoji_oauth_uses_v2_api(self, oauth_pages_mixin):
+        """Test that OAuth authentication uses v2 API for getting page emoji."""
+        page_id = "oauth_emoji_123"
+
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceV2Adapter"
+        ) as mock_v2_adapter_class:
+            mock_v2_adapter = MagicMock()
+            mock_v2_adapter_class.return_value = mock_v2_adapter
+            mock_v2_adapter.get_page_emoji.return_value = "🎉"
+
+            result = oauth_pages_mixin._get_page_emoji(page_id)
+
+            mock_v2_adapter.get_page_emoji.assert_called_once_with(page_id)
+            assert result == "🎉"
+
+    def test_get_page_content_oauth_includes_emoji(self, oauth_pages_mixin):
+        """Test that OAuth get_page_content includes emoji in result."""
+        page_id = "oauth_get_123"
+
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceV2Adapter"
+        ) as mock_v2_adapter_class:
+            mock_v2_adapter = MagicMock()
+            mock_v2_adapter_class.return_value = mock_v2_adapter
+
+            mock_v2_adapter.get_page.return_value = {
+                "id": page_id,
+                "title": "OAuth Test Page",
+                "body": {"storage": {"value": "<p>OAuth page content</p>"}},
+                "space": {"key": "PROJ", "name": "Project"},
+                "version": {"number": 3},
+            }
+            mock_v2_adapter.get_page_emoji.return_value = "🔥"
+
+            oauth_pages_mixin.preprocessor.process_html_content.return_value = (
+                "<p>Processed HTML</p>",
+                "Processed OAuth content",
+            )
+
+            result = oauth_pages_mixin.get_page_content(
+                page_id, convert_to_markdown=True
+            )
+
+            assert isinstance(result, ConfluencePage)
+            assert result.emoji == "🔥"
+
+    def test_set_page_emoji_oauth_uses_v2_api(self, oauth_pages_mixin):
+        """Test that OAuth authentication uses v2 API for setting page emoji."""
+        page_id = "oauth_set_emoji_123"
+
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceV2Adapter"
+        ) as mock_v2_adapter_class:
+            mock_v2_adapter = MagicMock()
+            mock_v2_adapter_class.return_value = mock_v2_adapter
+            mock_v2_adapter.set_page_emoji.return_value = True
+
+            result = oauth_pages_mixin._set_page_emoji(page_id, "🚀")
+
+            mock_v2_adapter.set_page_emoji.assert_called_once_with(page_id, "🚀")
+            assert result is True
+
+    def test_set_page_emoji_oauth_remove(self, oauth_pages_mixin):
+        """Test that OAuth can remove emoji by setting to None."""
+        page_id = "oauth_remove_emoji_123"
+
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceV2Adapter"
+        ) as mock_v2_adapter_class:
+            mock_v2_adapter = MagicMock()
+            mock_v2_adapter_class.return_value = mock_v2_adapter
+            mock_v2_adapter.set_page_emoji.return_value = True
+
+            result = oauth_pages_mixin._set_page_emoji(page_id, None)
+
+            mock_v2_adapter.set_page_emoji.assert_called_once_with(page_id, None)
             assert result is True

@@ -8,6 +8,7 @@ from requests.exceptions import HTTPError
 from ..exceptions import MCPAtlassianAuthenticationError
 from ..models.confluence import ConfluencePage
 from .client import ConfluenceClient
+from .utils import emoji_to_hex_id, extract_emoji_from_property
 from .v2_adapter import ConfluenceV2Adapter
 
 logger = logging.getLogger("mcp-atlassian")
@@ -87,6 +88,9 @@ class PagesMixin(ConfluenceClient):
             # Use the appropriate content format based on the convert_to_markdown flag
             page_content = processed_markdown if convert_to_markdown else processed_html
 
+            # Fetch page emoji from content properties
+            emoji = self._get_page_emoji(page_id)
+
             # Create and return the ConfluencePage model
             return ConfluencePage.from_api_response(
                 page,
@@ -96,6 +100,7 @@ class PagesMixin(ConfluenceClient):
                 content_override=page_content,
                 content_format="storage" if not convert_to_markdown else "markdown",
                 is_cloud=self.config.is_cloud,
+                emoji=emoji,
             )
         except HTTPError as http_err:
             if http_err.response is not None and http_err.response.status_code in [
@@ -166,6 +171,124 @@ class PagesMixin(ConfluenceClient):
             logger.debug("Full exception details:", exc_info=True)
             return []
 
+    def _get_page_emoji(self, page_id: str) -> str | None:
+        """Get the page title emoji from content properties.
+
+        The page emoji (icon shown in navigation) is stored as a content property
+        with key 'emoji-title-published' or 'emoji-title-draft'.
+
+        Args:
+            page_id: The ID of the page
+
+        Returns:
+            The emoji character if set, None otherwise
+        """
+        try:
+            # Use v2 API for OAuth authentication
+            v2_adapter = self._v2_adapter
+            if v2_adapter:
+                return v2_adapter.get_page_emoji(page_id)
+
+            # For token/basic auth, use v1 API via atlassian library
+            properties = self.confluence.get_page_properties(page_id)
+            if not properties:
+                return None
+
+            results = properties.get("results", [])
+            for prop in results:
+                key = prop.get("key", "")
+                if key in ("emoji-title-published", "emoji-title-draft"):
+                    value = prop.get("value", {})
+                    return extract_emoji_from_property(value)
+
+            return None
+
+        except Exception as e:
+            logger.debug(f"Error fetching emoji for page {page_id}: {str(e)}")
+            return None
+
+    def _set_single_property(
+        self, page_id: str, property_key: str, value: str | None
+    ) -> bool:
+        """Set or remove a single page property via v1 API.
+
+        Args:
+            page_id: The ID of the page
+            property_key: The property key to set
+            value: The value to set, or None to delete the property
+
+        Returns:
+            True if the operation succeeded, False otherwise
+        """
+        try:
+            if value is None:
+                # Delete the property
+                try:
+                    self.confluence.delete_page_property(page_id, property_key)
+                except Exception as e:
+                    # Property might not exist, which is fine
+                    logger.debug(f"Could not delete property '{property_key}': {e}")
+                return True
+
+            # Set/update the property
+            property_data = {
+                "key": property_key,
+                "value": value,
+            }
+            self.confluence.set_page_property(page_id, property_data)
+            return True
+
+        except Exception as e:
+            logger.debug(
+                f"Error setting property '{property_key}' for page {page_id}: {str(e)}"
+            )
+            return False
+
+    def _set_page_emoji(self, page_id: str, emoji: str | None) -> bool:
+        """Set or remove the page title emoji.
+
+        The page emoji (icon shown in navigation) is stored as content properties.
+        Both 'emoji-title-published' and 'emoji-title-draft' are set to ensure
+        the emoji appears in both view and edit modes.
+
+        Args:
+            page_id: The ID of the page
+            emoji: The emoji character to set, or None to remove the emoji
+
+        Returns:
+            True if the operation succeeded, False otherwise
+        """
+        try:
+            # Use v2 API for OAuth authentication
+            v2_adapter = self._v2_adapter
+            if v2_adapter:
+                return v2_adapter.set_page_emoji(page_id, emoji)
+
+            # For token/basic auth, use v1 API via atlassian library
+            # Convert emoji to hex code, or None to delete
+            emoji_value = emoji_to_hex_id(emoji) if emoji else None
+
+            # Set both published and draft properties
+            published_ok = self._set_single_property(
+                page_id, "emoji-title-published", emoji_value
+            )
+            draft_ok = self._set_single_property(
+                page_id, "emoji-title-draft", emoji_value
+            )
+
+            if not published_ok:
+                logger.warning(
+                    f"Failed to set emoji-title-published for page {page_id}"
+                )
+            if not draft_ok:
+                logger.warning(f"Failed to set emoji-title-draft for page {page_id}")
+
+            return published_ok and draft_ok
+
+        except Exception as e:
+            logger.warning(f"Error setting emoji for page {page_id}: {str(e)}")
+            return False
+
     def get_page_by_title(
         self, space_key: str, title: str, *, convert_to_markdown: bool = True
     ) -> ConfluencePage | None:
@@ -208,6 +331,9 @@ class PagesMixin(ConfluenceClient):
             # Use the appropriate content format based on the convert_to_markdown flag
             page_content = processed_markdown if convert_to_markdown else processed_html
 
+            # Fetch page emoji from content properties
+            emoji = self._get_page_emoji(str(page.get("id", "")))
+
             # Create and return the ConfluencePage model
             return ConfluencePage.from_api_response(
                 page,
@@ -217,6 +343,7 @@ class PagesMixin(ConfluenceClient):
                 content_override=page_content,
                 content_format="storage" if not convert_to_markdown else "markdown",
                 is_cloud=self.config.is_cloud,
+                emoji=emoji,
             )
 
         except KeyError as e:
@@ -307,6 +434,7 @@ class PagesMixin(ConfluenceClient):
         is_markdown: bool = True,
         enable_heading_anchors: bool = False,
         content_representation: str | None = None,
+        emoji: str | None = None,
     ) -> ConfluencePage:
         """
         Create a new page in a Confluence space.
@@ -319,6 +447,7 @@ class PagesMixin(ConfluenceClient):
             is_markdown: Whether the body content is in markdown format (default: True, keyword-only)
             enable_heading_anchors: Whether to enable automatic heading anchor generation (default: False, keyword-only)
             content_representation: Content format when is_markdown=False ('wiki' or 'storage', keyword-only)
+            emoji: Optional emoji character for the page title icon (keyword-only)
 
         Returns:
             ConfluencePage model containing the new page's data
@@ -369,6 +498,10 @@ class PagesMixin(ConfluenceClient):
             if not page_id:
                 raise ValueError("Create page response did not contain an ID")
 
+            # Set the page emoji if provided
+            if emoji:
+                self._set_page_emoji(page_id, emoji)
+
             return self.get_page_content(page_id)
         except Exception as e:
             logger.error(
@@ -390,6 +523,7 @@ class PagesMixin(ConfluenceClient):
         parent_id: str | None = None,
         enable_heading_anchors: bool = False,
         content_representation: str | None = None,
+        emoji: str | None = None,
     ) -> ConfluencePage:
         """
         Update an existing page in Confluence.
@@ -404,6 +538,7 @@ class PagesMixin(ConfluenceClient):
             parent_id: Optional new parent page ID (keyword-only)
             enable_heading_anchors: Whether to enable automatic heading anchor generation (default: False, keyword-only)
             content_representation: Content format when is_markdown=False ('wiki' or 'storage', keyword-only)
+            emoji: Optional emoji character for the page title icon (keyword-only). Pass empty string to remove emoji.
 
         Returns:
             ConfluencePage model containing the updated page's data
@@ -457,6 +592,12 @@ class PagesMixin(ConfluenceClient):
                     update_kwargs["parent_id"] = parent_id
 
                 self.confluence.update_page(**update_kwargs)
+
+            # Set or remove the page emoji if provided
+            if emoji is not None:
+                # Empty string means remove emoji, otherwise set it
+                emoji_to_set = emoji if emoji else None
+                self._set_page_emoji(page_id, emoji_to_set)
 
             # After update, refresh the page data
             return self.get_page_content(page_id)

@@ -21,6 +21,7 @@ from .issues import IssuesMixin
 from .links import LinksMixin
 from .metrics import MetricsMixin
 from .projects import ProjectsMixin
+from .sla import SLAMixin
 from .search import SearchMixin
 from .sprints import SprintsMixin
 from .transitions import TransitionsMixin
@@ -45,6 +46,7 @@ class JiraFetcher(
     AttachmentsMixin,
     LinksMixin,
     MetricsMixin,
+    SLAMixin,
 ):
     """
     The main Jira client class providing access to all Jira operations.
@@ -65,6 +67,7 @@ class JiraFetcher(
     - AttachmentsMixin: Attachment download operations
     - LinksMixin: Issue link operations
     - MetricsMixin: Issue metrics and date operations
+    - SLAMixin: SLA calculations
 
     The class structure is designed to maintain backward compatibility while
     improving code organization and maintainability.
@@ -73,4 +76,11 @@ class JiraFetcher(
     pass
 
 
-__all__ = ["JiraFetcher", "JiraConfig", "JiraClient", "Jira", "MetricsMixin"]
+__all__ = [
+    "JiraFetcher",
+    "JiraConfig",
+    "JiraClient",
+    "Jira",
+    "MetricsMixin",
+    "SLAMixin",
+]
