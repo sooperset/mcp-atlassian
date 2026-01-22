@@ -53,7 +53,11 @@ class CommentsMixin(JiraClient):
             raise Exception(f"Error getting comments: {str(e)}") from e
 
     def add_comment(
-        self, issue_key: str, comment: str, visibility: dict[str, str] | None = None
+        self,
+        issue_key: str,
+        comment: str,
+        visibility: dict[str, str] | None = None,
+        public: bool | None = None,
     ) -> dict[str, Any]:
         """
         Add a comment to an issue.
@@ -62,6 +66,9 @@ class CommentsMixin(JiraClient):
             issue_key: The issue key (e.g. 'PROJ-123')
             comment: Comment text to add (in Markdown format)
             visibility: (optional) Restrict comment visibility (e.g. {"type":"group","value:"jira-users"})
+            public: (optional) For JSM projects only. Set to False to create an internal
+                comment that is hidden from customers. When specified, uses the ServiceDesk
+                API instead of the standard Jira API.
 
         Returns:
             The created comment details
@@ -73,11 +80,24 @@ class CommentsMixin(JiraClient):
             # Convert Markdown to Jira's markup format
             jira_formatted_comment = self._markdown_to_jira(comment)
 
-            result = self.jira.issue_add_comment(
-                issue_key, jira_formatted_comment, visibility
-            )
+            # If public parameter is specified, use the ServiceDesk API for JSM internal comments
+            method_used = "jira.issue_add_comment"
+            if public is not None:
+                logger.debug(
+                    f"Using ServiceDesk API for comment on {issue_key} (public={public})"
+                )
+                result = self.service_desk.create_request_comment(
+                    issue_key, jira_formatted_comment, public=public
+                )
+                method_used = "service_desk.create_request_comment"
+            else:
+                # Use standard Jira API
+                result = self.jira.issue_add_comment(
+                    issue_key, jira_formatted_comment, visibility
+                )
+
             if not isinstance(result, dict):
-                msg = f"Unexpected return value type from `jira.issue_add_comment`: {type(result)}"
+                msg = f"Unexpected return value type from `{method_used}`: {type(result)}"
                 logger.error(msg)
                 raise TypeError(msg)
 
@@ -86,6 +106,7 @@ class CommentsMixin(JiraClient):
                 "body": self._clean_text(result.get("body", "")),
                 "created": str(parse_date(result.get("created"))),
                 "author": result.get("author", {}).get("displayName", "Unknown"),
+                "public": result.get("public"),
             }
         except Exception as e:
             logger.error(f"Error adding comment to issue {issue_key}: {str(e)}")
