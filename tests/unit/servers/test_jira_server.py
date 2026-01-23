@@ -301,6 +301,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         get_board_issues,
         get_issue,
         get_link_types,
+        get_project_components,
         get_project_issues,
         get_project_versions,
         get_sprint_issues,
@@ -323,6 +324,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(search_fields)
     jira_sub_mcp.add_tool(get_project_issues)
     jira_sub_mcp.add_tool(get_project_versions)
+    jira_sub_mcp.add_tool(get_project_components)
     jira_sub_mcp.add_tool(get_all_projects)
     jira_sub_mcp.add_tool(get_transitions)
     jira_sub_mcp.add_tool(get_worklog)
@@ -799,6 +801,32 @@ async def test_get_project_versions_tool(jira_client, mock_jira_fetcher):
     assert data[0]["id"] == "100"
     assert data[0]["name"] == "v1.0"
     assert data[0]["description"] == "First"
+
+
+@pytest.mark.anyio
+async def test_get_project_components_tool(jira_client, mock_jira_fetcher):
+    """Test the jira_get_project_components tool returns component list."""
+    mock_components = [
+        {"id": "10000", "name": "Backend", "description": "Backend services"},
+        {"id": "10001", "name": "Frontend", "description": "UI components"},
+    ]
+    mock_jira_fetcher.get_project_components.return_value = mock_components
+
+    response = await jira_client.call_tool(
+        "jira_get_project_components",
+        {"project_key": "TEST"},
+    )
+    assert hasattr(response, "content")
+    assert len(response.content) == 1
+    msg = response.content[0]
+    assert msg.type == "text"
+    import json
+
+    data = json.loads(msg.text)
+    assert isinstance(data, list)
+    assert len(data) == 2
+    assert data[0]["id"] == "10000"
+    assert data[0]["name"] == "Backend"
 
 
 @pytest.mark.anyio
