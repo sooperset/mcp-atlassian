@@ -5,6 +5,7 @@ import os
 from typing import Any, Literal
 
 from atlassian import Jira
+from atlassian.service_desk import ServiceDesk
 from requests import Session
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
@@ -28,6 +29,7 @@ class JiraClient:
 
     _field_ids_cache: list[dict[str, Any]] | None
     _current_user_account_id: str | None
+    _service_desk: ServiceDesk | None
 
     config: JiraConfig
     preprocessor: JiraPreprocessor
@@ -142,6 +144,7 @@ class JiraClient:
         )
         self._field_ids_cache = None
         self._current_user_account_id = None
+        self._service_desk = None
 
         # Test authentication during initialization (in debug mode only)
         if logger.isEnabledFor(logging.DEBUG):
@@ -179,6 +182,104 @@ class JiraClient:
                 f"{get_masked_session_headers(dict(self.jira._session.headers))}"
             )
             raise MCPAtlassianAuthenticationError(error_msg) from e
+
+    @property
+    def service_desk(self) -> ServiceDesk:
+        """Lazily initialize and return the ServiceDesk client.
+
+        The ServiceDesk client uses the same authentication configuration
+        as the Jira client, enabling access to JSM-specific APIs like
+        internal comments.
+
+        Returns:
+            ServiceDesk client instance
+
+        Raises:
+            ValueError: If OAuth authentication is used (not yet supported for ServiceDesk)
+            MCPAtlassianAuthenticationError: If authentication fails
+        """
+        if self._service_desk is not None:
+            return self._service_desk
+
+        logger.debug("Initializing ServiceDesk client with same auth as Jira client")
+
+        # Initialize the ServiceDesk client based on auth type
+        if self.config.auth_type == "oauth":
+            if not self.config.oauth_config or not self.config.oauth_config.cloud_id:
+                error_msg = "OAuth authentication requires a valid cloud_id"
+                raise ValueError(error_msg)
+
+            # Create a session for OAuth
+            session = Session()
+
+            # Configure the session with OAuth authentication
+            if not configure_oauth_session(session, self.config.oauth_config):
+                error_msg = "Failed to configure OAuth session for ServiceDesk"
+                raise MCPAtlassianAuthenticationError(error_msg)
+
+            # The ServiceDesk API URL with OAuth
+            api_url = (
+                f"https://api.atlassian.com/ex/jira/{self.config.oauth_config.cloud_id}"
+            )
+
+            self._service_desk = ServiceDesk(
+                url=api_url,
+                session=session,
+                cloud=True,
+                verify_ssl=self.config.ssl_verify,
+            )
+        elif self.config.auth_type == "pat":
+            logger.debug(
+                f"Initializing ServiceDesk client with Token (PAT) auth. "
+                f"URL: {self.config.url}"
+            )
+            self._service_desk = ServiceDesk(
+                url=self.config.url,
+                token=self.config.personal_token,
+                cloud=self.config.is_cloud,
+                verify_ssl=self.config.ssl_verify,
+            )
+        else:  # basic auth
+            logger.debug(
+                f"Initializing ServiceDesk client with Basic auth. "
+                f"URL: {self.config.url}"
+            )
+            self._service_desk = ServiceDesk(
+                url=self.config.url,
+                username=self.config.username,
+                password=self.config.api_token,
+                cloud=self.config.is_cloud,
+                verify_ssl=self.config.ssl_verify,
+            )
+
+        # Configure SSL verification using the shared utility
+        configure_ssl_verification(
+            service_name="ServiceDesk",
+            url=self.config.url,
+            session=self._service_desk._session,
+            ssl_verify=self.config.ssl_verify,
+            client_cert=self.config.client_cert,
+            client_key=self.config.client_key,
+            client_key_password=self.config.client_key_password,
+        )
+
+        # Proxy configuration
+        proxies = {}
+        if self.config.http_proxy:
+            proxies["http"] = self.config.http_proxy
+        if self.config.https_proxy:
+            proxies["https"] = self.config.https_proxy
+        if self.config.socks_proxy:
+            proxies["socks"] = self.config.socks_proxy
+        if proxies:
+            self._service_desk._session.proxies.update(proxies)
+
+        # Apply custom headers if configured
+        if self.config.custom_headers:
+            for header_name, header_value in self.config.custom_headers.items():
+                self._service_desk._session.headers[header_name] = header_value
+
+        return self._service_desk
 
     def _apply_custom_headers(self) -> None:
         """Apply custom headers to the Jira session."""
