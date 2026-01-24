@@ -264,6 +264,85 @@ class TestCommentsMixin:
         assert result["created"] == "2024-01-01 10:00:00+00:00"  # Parsed date
         assert result["author"] == "John Doe"
 
+    def test_add_comment_with_public_false(self, comments_mixin):
+        """Test add_comment with public=False uses ServiceDesk API for internal comments."""
+        # Setup mock service_desk
+        mock_service_desk = MagicMock()
+        mock_service_desk.create_request_comment.return_value = {
+            "id": "10001",
+            "body": "This is an internal comment",
+            "created": {
+                "iso8601": "2024-01-01T10:00:00+0000",
+                "jira": "2024-01-01T10:00:00.000+0000",
+                "friendly": "Today 10:00",
+                "epochMillis": 1704103200000,
+            },
+            "author": {"displayName": "John Doe"},
+            "public": False,
+        }
+        comments_mixin._service_desk = mock_service_desk
+
+        # Call the method with public=False
+        result = comments_mixin.add_comment("TEST-123", "Internal note", public=False)
+
+        # Verify ServiceDesk API was called, not Jira API
+        comments_mixin.preprocessor.markdown_to_jira.assert_called_once_with(
+            "Internal note"
+        )
+        mock_service_desk.create_request_comment.assert_called_once_with(
+            "TEST-123", "*This* is _Jira_ formatted", public=False
+        )
+        comments_mixin.jira.issue_add_comment.assert_not_called()
+        assert result["id"] == "10001"
+        assert result["public"] is False
+        assert result["created"] == "2024-01-01 10:00:00+00:00"
+
+    def test_add_comment_with_public_true(self, comments_mixin):
+        """Test add_comment with public=True uses ServiceDesk API for public comments."""
+        # Setup mock service_desk
+        mock_service_desk = MagicMock()
+        mock_service_desk.create_request_comment.return_value = {
+            "id": "10002",
+            "body": "This is a public comment",
+            "created": {
+                "iso8601": "2024-01-01T10:00:00+0000",
+                "jira": "2024-01-01T10:00:00.000+0000",
+                "friendly": "Today 10:00",
+                "epochMillis": 1704103200000,
+            },
+            "author": {"displayName": "Jane Doe"},
+            "public": True,
+        }
+        comments_mixin._service_desk = mock_service_desk
+
+        # Call the method with public=True
+        result = comments_mixin.add_comment("TEST-123", "Public comment", public=True)
+
+        # Verify ServiceDesk API was called with public=True
+        mock_service_desk.create_request_comment.assert_called_once_with(
+            "TEST-123", "*This* is _Jira_ formatted", public=True
+        )
+        comments_mixin.jira.issue_add_comment.assert_not_called()
+        assert result["public"] is True
+
+    def test_add_comment_without_public_uses_jira_api(self, comments_mixin):
+        """Test add_comment without public parameter uses standard Jira API."""
+        # Setup mock response
+        comments_mixin.jira.issue_add_comment.return_value = {
+            "id": "10001",
+            "body": "This is a comment",
+            "created": "2024-01-01T10:00:00.000+0000",
+            "author": {"displayName": "John Doe"},
+        }
+
+        # Call the method without public parameter
+        result = comments_mixin.add_comment("TEST-123", "Test comment")
+
+        # Verify Jira API was called, not ServiceDesk API
+        comments_mixin.jira.issue_add_comment.assert_called_once()
+        assert result["id"] == "10001"
+        assert result.get("public") is None
+
     def test_add_comment_with_error(self, comments_mixin):
         """Test add_comment with an error response."""
         # Setup mock to raise exception
