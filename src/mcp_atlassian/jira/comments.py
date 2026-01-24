@@ -97,14 +97,22 @@ class CommentsMixin(JiraClient):
                 )
 
             if not isinstance(result, dict):
-                msg = f"Unexpected return value type from `{method_used}`: {type(result)}"
+                msg = (
+                    f"Unexpected return value type from `{method_used}`: {type(result)}"
+                )
                 logger.error(msg)
                 raise TypeError(msg)
+
+            created_raw = result.get("created")
+            if isinstance(created_raw, dict):
+                created_str = created_raw.get("jira") or created_raw.get("iso8601")
+            else:
+                created_str = created_raw
 
             return {
                 "id": result.get("id"),
                 "body": self._clean_text(result.get("body", "")),
-                "created": str(parse_date(result.get("created"))),
+                "created": str(parse_date(created_str)) if created_str else None,
                 "author": result.get("author", {}).get("displayName", "Unknown"),
                 "public": result.get("public"),
             }
