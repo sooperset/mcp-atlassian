@@ -28,23 +28,10 @@ class TestIssuesMixin:
 
         return mixin
 
-    def test_get_issue_basic(self, issues_mixin: IssuesMixin):
+    def test_get_issue_basic(self, issues_mixin: IssuesMixin, make_issue_data):
         """Test retrieving an issue by key."""
-        # Mock the API response
-        issues_mixin.jira.get_issue.return_value = {
-            "id": "10001",
-            "key": "TEST-123",
-            "fields": {
-                "summary": "Test Issue",
-                "description": "This is a test issue",
-                "status": {"name": "Open"},
-                "issuetype": {"name": "Bug"},
-                "created": "2023-01-01T00:00:00.000+0000",
-                "updated": "2023-01-02T00:00:00.000+0000",
-            },
-        }
+        issues_mixin.jira.get_issue.return_value = make_issue_data()
 
-        # Call the method
         result = issues_mixin.get_issue("TEST-123")
 
         # Verify API calls
@@ -67,9 +54,8 @@ class TestIssuesMixin:
         assert result.status.name == "Open"
         assert result.issue_type.name == "Bug"
 
-    def test_get_issue_with_comments(self, issues_mixin: IssuesMixin):
+    def test_get_issue_with_comments(self, issues_mixin: IssuesMixin, make_issue_data):
         """Test get_issue with comments."""
-        # Mock the comments data
         comments_data = {
             "comments": [
                 {
@@ -82,26 +68,13 @@ class TestIssuesMixin:
             ]
         }
 
-        # Mock the issue data
-        issue_data = {
-            "id": "12345",
-            "key": "TEST-123",
-            "fields": {
-                "comment": comments_data,
-                "summary": "Test Issue",
-                "description": "Test Description",
-                "status": {"name": "Open"},
-                "issuetype": {"name": "Bug"},
-                "created": "2023-01-01T00:00:00.000+0000",
-                "updated": "2023-01-02T00:00:00.000+0000",
-            },
-        }
+        issue_data = make_issue_data(
+            description="Test Description", comment=comments_data
+        )
 
-        # Set up the mocked responses
         issues_mixin.jira.get_issue.return_value = issue_data
         issues_mixin.jira.issue_get_comments.return_value = comments_data
 
-        # Call the method
         issue = issues_mixin.get_issue(
             "TEST-123",
             fields="summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype,comment",
@@ -122,39 +95,25 @@ class TestIssuesMixin:
         assert len(issue.comments) == 1
         assert issue.comments[0].body == "This is a comment"
 
-    def test_get_issue_with_epic_info(self, issues_mixin: IssuesMixin):
+    def test_get_issue_with_epic_info(self, issues_mixin: IssuesMixin, make_issue_data):
         """Test retrieving issue with epic information."""
         try:
-            # Mock the API responses for get_issue
             issues_mixin.jira.get_issue.side_effect = [
-                # First call - the issue
-                {
-                    "id": "10001",
-                    "key": "TEST-123",
-                    "fields": {
-                        "summary": "Test Issue",
-                        "description": "This is a test issue",
-                        "status": {"name": "Open"},
-                        "issuetype": {"name": "Story"},
-                        "customfield_10010": "EPIC-456",  # Epic Link field
-                        "created": "2023-01-01T00:00:00.000+0000",
-                        "updated": "2023-01-02T00:00:00.000+0000",
-                    },
-                },
-                # Second call - the epic
-                {
-                    "id": "10002",
-                    "key": "EPIC-456",
-                    "fields": {
-                        "summary": "Epic Issue",
-                        "description": "This is an epic",
-                        "status": {"name": "In Progress"},
-                        "issuetype": {"name": "Epic"},
-                        "customfield_10011": "Epic Name Value",  # Epic Name field
-                        "created": "2023-01-01T00:00:00.000+0000",
-                        "updated": "2023-01-02T00:00:00.000+0000",
-                    },
-                },
+                make_issue_data(
+                    key="TEST-123",
+                    issue_id="10001",
+                    issue_type="Story",
+                    customfield_10010="EPIC-456",
+                ),
+                make_issue_data(
+                    key="EPIC-456",
+                    issue_id="10002",
+                    summary="Epic Issue",
+                    description="This is an epic",
+                    status="In Progress",
+                    issue_type="Epic",
+                    customfield_10011="Epic Name Value",
+                ),
             ]
 
             # Mock get_field_ids_to_epic
@@ -225,26 +184,13 @@ class TestIssuesMixin:
         # Test with invalid string
         assert issues_mixin._normalize_comment_limit("invalid") == 10
 
-    def test_create_issue_basic(self, issues_mixin: IssuesMixin):
+    def test_create_issue_basic(self, issues_mixin: IssuesMixin, make_issue_data):
         """Test creating a basic issue."""
-        # Mock create_issue response
         create_response = {"id": "12345", "key": "TEST-123"}
         issues_mixin.jira.create_issue.return_value = create_response
 
-        # Mock the issue data for get_issue
-        issue_data = {
-            "id": "12345",
-            "key": "TEST-123",
-            "fields": {
-                "summary": "Test Issue",
-                "description": "This is a test issue",
-                "status": {"name": "Open"},
-                "issuetype": {"name": "Bug"},
-            },
-        }
-        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.get_issue.return_value = make_issue_data()
 
-        # Mock empty comments
         issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
 
         # Call create_issue
@@ -269,26 +215,15 @@ class TestIssuesMixin:
         assert issue.key == "TEST-123"
         assert issue.summary == "Test Issue"
 
-    def test_create_issue_no_components(self, issues_mixin: IssuesMixin):
+    def test_create_issue_no_components(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
         """Test creating an issue with no components specified."""
-        # Mock create_issue response
         create_response = {"id": "12345", "key": "TEST-123"}
         issues_mixin.jira.create_issue.return_value = create_response
 
-        # Mock the issue data for get_issue
-        issue_data = {
-            "id": "12345",
-            "key": "TEST-123",
-            "fields": {
-                "summary": "Test Issue",
-                "description": "This is a test issue",
-                "status": {"name": "Open"},
-                "issuetype": {"name": "Bug"},
-            },
-        }
-        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.get_issue.return_value = make_issue_data()
 
-        # Mock empty comments
         issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
 
         # Call create_issue with components=None
@@ -312,27 +247,17 @@ class TestIssuesMixin:
         # Verify 'components' is not in the fields
         assert "components" not in issues_mixin.jira.create_issue.call_args[1]["fields"]
 
-    def test_create_issue_single_component(self, issues_mixin: IssuesMixin):
+    def test_create_issue_single_component(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
         """Test creating an issue with a single component."""
-        # Mock create_issue response
         create_response = {"id": "12345", "key": "TEST-123"}
         issues_mixin.jira.create_issue.return_value = create_response
 
-        # Mock the issue data for get_issue
-        issue_data = {
-            "id": "12345",
-            "key": "TEST-123",
-            "fields": {
-                "summary": "Test Issue",
-                "description": "This is a test issue",
-                "status": {"name": "Open"},
-                "issuetype": {"name": "Bug"},
-                "components": [{"name": "UI"}],
-            },
-        }
-        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            components=[{"name": "UI"}]
+        )
 
-        # Mock empty comments
         issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
 
         # Call create_issue with a single component
@@ -359,27 +284,17 @@ class TestIssuesMixin:
             {"name": "UI"}
         ]
 
-    def test_create_issue_multiple_components(self, issues_mixin: IssuesMixin):
+    def test_create_issue_multiple_components(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
         """Test creating an issue with multiple components."""
-        # Mock create_issue response
         create_response = {"id": "12345", "key": "TEST-123"}
         issues_mixin.jira.create_issue.return_value = create_response
 
-        # Mock the issue data for get_issue
-        issue_data = {
-            "id": "12345",
-            "key": "TEST-123",
-            "fields": {
-                "summary": "Test Issue",
-                "description": "This is a test issue",
-                "status": {"name": "Open"},
-                "issuetype": {"name": "Bug"},
-                "components": [{"name": "UI"}, {"name": "API"}],
-            },
-        }
-        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            components=[{"name": "UI"}, {"name": "API"}]
+        )
 
-        # Mock empty comments
         issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
 
         # Call create_issue with multiple components
@@ -408,28 +323,16 @@ class TestIssuesMixin:
         ]
 
     def test_create_issue_components_with_invalid_entries(
-        self, issues_mixin: IssuesMixin
+        self, issues_mixin: IssuesMixin, make_issue_data
     ):
         """Test creating an issue with components list containing invalid entries."""
-        # Mock create_issue response
         create_response = {"id": "12345", "key": "TEST-123"}
         issues_mixin.jira.create_issue.return_value = create_response
 
-        # Mock the issue data for get_issue
-        issue_data = {
-            "id": "12345",
-            "key": "TEST-123",
-            "fields": {
-                "summary": "Test Issue",
-                "description": "This is a test issue",
-                "status": {"name": "Open"},
-                "issuetype": {"name": "Bug"},
-                "components": [{"name": "Valid"}, {"name": "Backend"}],
-            },
-        }
-        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            components=[{"name": "Valid"}, {"name": "Backend"}]
+        )
 
-        # Mock empty comments
         issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
 
         # Call create_issue with components list containing invalid entries
@@ -457,27 +360,17 @@ class TestIssuesMixin:
             {"name": "Backend"},
         ]
 
-    def test_create_issue_components_precedence(self, issues_mixin, caplog):
+    def test_create_issue_components_precedence(
+        self, issues_mixin, make_issue_data, caplog
+    ):
         """Test that explicit components take precedence over components in additional_fields."""
-        # Mock create_issue response
         create_response = {"id": "12345", "key": "TEST-123"}
         issues_mixin.jira.create_issue.return_value = create_response
 
-        # Mock the issue data for get_issue
-        issue_data = {
-            "id": "12345",
-            "key": "TEST-123",
-            "fields": {
-                "summary": "Test Issue",
-                "description": "This is a test issue",
-                "status": {"name": "Open"},
-                "issuetype": {"name": "Bug"},
-                "components": [{"name": "Explicit"}],
-            },
-        }
-        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            components=[{"name": "Explicit"}]
+        )
 
-        # Mock empty comments
         issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
 
         # Direct test for the precedence handling logic
@@ -634,22 +527,12 @@ class TestIssuesMixin:
                 assert issues_mixin.get_issue.called
                 assert result.key == "EPIC-123"
 
-    def test_update_issue_basic(self, issues_mixin: IssuesMixin):
+    def test_update_issue_basic(self, issues_mixin: IssuesMixin, make_issue_data):
         """Test updating an issue with basic fields."""
-        # Mock the issue data for get_issue
-        issue_data = {
-            "id": "12345",
-            "key": "TEST-123",
-            "fields": {
-                "summary": "Updated Summary",
-                "description": "This is a test issue",
-                "status": {"name": "In Progress"},
-                "issuetype": {"name": "Bug"},
-            },
-        }
-        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            summary="Updated Summary", status="In Progress"
+        )
 
-        # Mock empty comments
         issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
 
         # Call the method
@@ -690,19 +573,11 @@ class TestIssuesMixin:
         # Call the method with status in kwargs instead of fields
         issues_mixin.update_issue(issue_key="TEST-123", status="In Progress")
 
-    def test_update_issue_unassign(self, issues_mixin: IssuesMixin):
+    def test_update_issue_unassign(self, issues_mixin: IssuesMixin, make_issue_data):
         """Test unassigning an issue."""
-        issue_data = {
-            "id": "12345",
-            "key": "TEST-123",
-            "fields": {
-                "summary": "Test Issue",
-                "description": "This is a test",
-                "status": {"name": "Open"},
-                "issuetype": {"name": "Bug"},
-            },
-        }
-        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            description="This is a test"
+        )
         issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
         issues_mixin._get_account_id = MagicMock()
 
@@ -749,9 +624,10 @@ class TestIssuesMixin:
         assert "fixVersions" in fields
         assert fields["fixVersions"] == [{"name": "TestRelease"}]
 
-    def test_create_issue_with_parent_for_task(self, issues_mixin: IssuesMixin):
+    def test_create_issue_with_parent_for_task(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
         """Test creating a regular task issue with a parent field."""
-        # Setup mock response for create_issue
         create_response = {
             "id": "12345",
             "key": "TEST-456",
@@ -759,19 +635,13 @@ class TestIssuesMixin:
         }
         issues_mixin.jira.create_issue.return_value = create_response
 
-        # Setup mock response for issue retrieval
-        issue_response = {
-            "id": "12345",
-            "key": "TEST-456",
-            "fields": {
-                "summary": "Test Task with Parent",
-                "description": "This is a test",
-                "status": {"name": "Open"},
-                "issuetype": {"name": "Task"},
-                "parent": {"key": "TEST-123"},
-            },
-        }
-        issues_mixin.jira.get_issue.return_value = issue_response
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            key="TEST-456",
+            summary="Test Task with Parent",
+            description="This is a test",
+            issue_type="Task",
+            parent={"key": "TEST-123"},
+        )
 
         issues_mixin._get_account_id = MagicMock(return_value="user123")
 
@@ -803,25 +673,16 @@ class TestIssuesMixin:
         assert result is not None
         assert result.key == "TEST-456"
 
-    def test_create_issue_with_fixversions(self, issues_mixin: IssuesMixin):
+    def test_create_issue_with_fixversions(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
         """Test creating an issue with fixVersions in additional_fields."""
-        # Mock create_issue response
         create_response = {"id": "12345", "key": "TEST-123"}
         issues_mixin.jira.create_issue.return_value = create_response
 
-        # Mock the issue data for get_issue
-        issue_data = {
-            "id": "12345",
-            "key": "TEST-123",
-            "fields": {
-                "summary": "Test Issue",
-                "description": "This is a test issue",
-                "status": {"name": "Open"},
-                "issuetype": {"name": "Bug"},
-                "fixVersions": [{"name": "1.0.0"}],
-            },
-        }
-        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            fixVersions=[{"name": "1.0.0"}]
+        )
 
         # Create the issue with fixVersions in additional_fields
         result = issues_mixin.create_issue(
@@ -861,20 +722,17 @@ class TestIssuesMixin:
             # If it's a list of strings or other format, adjust accordingly:
             assert "1.0.0" in str(result.fix_versions[0])
 
-    def test_get_issue_with_custom_fields(self, issues_mixin: IssuesMixin):
+    def test_get_issue_with_custom_fields(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
         """Test get_issue with custom fields parameter."""
-        # Mock the response with custom fields
-        mock_issue = {
-            "id": "10001",
-            "key": "TEST-123",
-            "fields": {
-                "summary": "Test issue with custom field",
-                "customfield_10049": "Custom value",
-                "customfield_10050": {"value": "Option value"},
-                "description": "Issue description",
-            },
-        }
-        issues_mixin.jira.get_issue.return_value = mock_issue
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            issue_id="10001",
+            summary="Test issue with custom field",
+            description="Issue description",
+            customfield_10049="Custom value",
+            customfield_10050={"value": "Option value"},
+        )
 
         # Test with string format
         issue = issues_mixin.get_issue("TEST-123", fields="summary,customfield_10049")
@@ -914,19 +772,16 @@ class TestIssuesMixin:
         assert "customfield_10050" in simplified
         assert simplified["customfield_10050"] == {"value": "Option value"}
 
-    def test_get_issue_with_all_fields(self, issues_mixin: IssuesMixin):
+    def test_get_issue_with_all_fields(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
         """Test get_issue with '*all' fields parameter."""
-        # Mock the response
-        mock_issue = {
-            "id": "10001",
-            "key": "TEST-123",
-            "fields": {
-                "summary": "Test issue",
-                "description": "Description",
-                "customfield_10049": "Custom value",
-            },
-        }
-        issues_mixin.jira.get_issue.return_value = mock_issue
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            issue_id="10001",
+            summary="Test issue",
+            description="Description",
+            customfield_10049="Custom value",
+        )
 
         # Test with "*all" parameter
         issue = issues_mixin.get_issue("TEST-123", fields="*all")
@@ -937,14 +792,11 @@ class TestIssuesMixin:
         assert "description" in simplified
         assert "customfield_10049" in simplified
 
-    def test_get_issue_with_properties(self, issues_mixin: IssuesMixin):
+    def test_get_issue_with_properties(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
         """Test get_issue with properties parameter."""
-        # Mock the response
-        issues_mixin.jira.get_issue.return_value = {
-            "id": "10001",
-            "key": "TEST-123",
-            "fields": {},
-        }
+        issues_mixin.jira.get_issue.return_value = make_issue_data(issue_id="10001")
 
         # Test with properties parameter as string
         issues_mixin.get_issue("TEST-123", properties="property1,property2")
@@ -971,14 +823,11 @@ class TestIssuesMixin:
             update_history=True,
         )
 
-    def test_get_issue_with_update_history(self, issues_mixin: IssuesMixin):
+    def test_get_issue_with_update_history(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
         """Test get_issue with update_history parameter."""
-        # Mock the response
-        issues_mixin.jira.get_issue.return_value = {
-            "id": "10001",
-            "key": "TEST-123",
-            "fields": {},
-        }
+        issues_mixin.jira.get_issue.return_value = make_issue_data(issue_id="10001")
 
         # Test with update_history=False
         issues_mixin.get_issue("TEST-123", update_history=False)
@@ -1460,25 +1309,14 @@ class TestIssuesMixin:
             },
         )
 
-    def test_create_issue_with_labels(self, issues_mixin: IssuesMixin):
+    def test_create_issue_with_labels(self, issues_mixin: IssuesMixin, make_issue_data):
         """Test creating an issue with labels in additional_fields."""
-        # Mock create_issue response
         create_response = {"id": "12345", "key": "TEST-123"}
         issues_mixin.jira.create_issue.return_value = create_response
 
-        # Mock the issue data for get_issue
-        issue_data = {
-            "id": "12345",
-            "key": "TEST-123",
-            "fields": {
-                "summary": "Test Issue",
-                "description": "This is a test issue",
-                "status": {"name": "Open"},
-                "issuetype": {"name": "Bug"},
-                "labels": ["bug", "frontend"],
-            },
-        }
-        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            labels=["bug", "frontend"]
+        )
 
         # Create the issue with labels as a list
         result = issues_mixin.create_issue(
@@ -1503,25 +1341,16 @@ class TestIssuesMixin:
         assert result.key == "TEST-123"
         assert result.labels == ["bug", "frontend"]
 
-    def test_create_issue_with_labels_as_string(self, issues_mixin: IssuesMixin):
+    def test_create_issue_with_labels_as_string(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
         """Test creating an issue with labels as comma-separated string in additional_fields."""
-        # Mock create_issue response
         create_response = {"id": "12345", "key": "TEST-123"}
         issues_mixin.jira.create_issue.return_value = create_response
 
-        # Mock the issue data for get_issue
-        issue_data = {
-            "id": "12345",
-            "key": "TEST-123",
-            "fields": {
-                "summary": "Test Issue",
-                "description": "This is a test issue",
-                "status": {"name": "Open"},
-                "issuetype": {"name": "Bug"},
-                "labels": ["bug", "frontend"],
-            },
-        }
-        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            labels=["bug", "frontend"]
+        )
 
         # Create the issue with labels as a comma-separated string
         # Pass labels directly instead of through additional_fields
@@ -1586,21 +1415,14 @@ class TestIssuesMixin:
             issues_mixin.get_issue("TEST-123")
 
     def test_get_issue_with_config_projects_filter_allowed(
-        self, issues_mixin: IssuesMixin
+        self, issues_mixin: IssuesMixin, make_issue_data
     ):
         """Test get_issue with projects filter from config - allowed case."""
-        # Setup mock response for a project that matches the filter
-        mock_issue_data = {
-            "id": "10001",
-            "key": "DEV-123",
-            "fields": {
-                "summary": "Test issue",
-                "description": "This is a test issue",
-                "status": {"name": "Open"},
-                "issuetype": {"name": "Bug"},
-            },
-        }
-        issues_mixin.jira.get_issue.return_value = mock_issue_data
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            issue_id="10001",
+            key="DEV-123",
+            summary="Test issue",
+        )
         issues_mixin.config.url = "https://example.atlassian.net"
         issues_mixin.config.projects_filter = "DEV"
 
@@ -1621,20 +1443,16 @@ class TestIssuesMixin:
         assert result.key == "DEV-123"
         assert result.summary == "Test issue"
 
-    def test_get_issue_with_multiple_projects_filter(self, issues_mixin: IssuesMixin):
+    def test_get_issue_with_multiple_projects_filter(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
         """Test get_issue with multiple projects in the filter."""
-        # Setup mock response for a project that matches one of the multiple filters
-        mock_issue_data = {
-            "id": "10001",
-            "key": "PROD-123",
-            "fields": {
-                "summary": "Production issue",
-                "description": "This is a production issue",
-                "status": {"name": "Open"},
-                "issuetype": {"name": "Bug"},
-            },
-        }
-        issues_mixin.jira.get_issue.return_value = mock_issue_data
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            issue_id="10001",
+            key="PROD-123",
+            summary="Production issue",
+            description="This is a production issue",
+        )
         issues_mixin.config.url = "https://example.atlassian.net"
         issues_mixin.config.projects_filter = "DEV,PROD"
 
@@ -1656,21 +1474,15 @@ class TestIssuesMixin:
         assert result.summary == "Production issue"
 
     def test_get_issue_with_whitespace_in_projects_filter(
-        self, issues_mixin: IssuesMixin
+        self, issues_mixin: IssuesMixin, make_issue_data
     ):
         """Test get_issue with extra whitespace in the projects filter."""
-        # Setup mock response for a project that matches the filter with whitespace
-        mock_issue_data = {
-            "id": "10001",
-            "key": "DEV-123",
-            "fields": {
-                "summary": "Development issue",
-                "description": "This is a development issue",
-                "status": {"name": "Open"},
-                "issuetype": {"name": "Bug"},
-            },
-        }
-        issues_mixin.jira.get_issue.return_value = mock_issue_data
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            issue_id="10001",
+            key="DEV-123",
+            summary="Development issue",
+            description="This is a development issue",
+        )
         issues_mixin.config.url = "https://example.atlassian.net"
         issues_mixin.config.projects_filter = " DEV , PROD "  # Extra whitespace
 
