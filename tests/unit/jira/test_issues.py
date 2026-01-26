@@ -95,6 +95,77 @@ class TestIssuesMixin:
         assert len(issue.comments) == 1
         assert issue.comments[0].body == "This is a comment"
 
+    def test_get_issue_includes_comment_field_when_comment_limit_positive(
+        self, issues_mixin: IssuesMixin
+    ):
+        """Test that comment field is auto-included when comment_limit > 0."""
+        comments_data = {
+            "comments": [
+                {
+                    "id": "1",
+                    "body": "Auto-fetched comment",
+                    "author": {"displayName": "Jane Doe"},
+                    "created": "2023-01-02T00:00:00.000+0000",
+                    "updated": "2023-01-02T00:00:00.000+0000",
+                }
+            ]
+        }
+
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "comment": comments_data,
+                "summary": "Test Issue",
+                "description": "Test Description",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Bug"},
+                "created": "2023-01-01T00:00:00.000+0000",
+                "updated": "2023-01-02T00:00:00.000+0000",
+            },
+        }
+
+        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.issue_get_comments.return_value = comments_data
+
+        issue = issues_mixin.get_issue("TEST-123", comment_limit=10)
+
+        call_args = issues_mixin.jira.get_issue.call_args
+        fields_param = call_args[1]["fields"]
+        assert "comment" in fields_param
+
+        issues_mixin.jira.issue_get_comments.assert_called_once_with("TEST-123")
+        assert hasattr(issue, "comments")
+        assert len(issue.comments) == 1
+        assert issue.comments[0].body == "Auto-fetched comment"
+
+    def test_get_issue_excludes_comment_field_when_comment_limit_zero(
+        self, issues_mixin: IssuesMixin
+    ):
+        """Test that comment field is not included when comment_limit is 0."""
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test Issue",
+                "description": "Test Description",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Bug"},
+                "created": "2023-01-01T00:00:00.000+0000",
+                "updated": "2023-01-02T00:00:00.000+0000",
+            },
+        }
+
+        issues_mixin.jira.get_issue.return_value = issue_data
+
+        issue = issues_mixin.get_issue("TEST-123", comment_limit=0)
+
+        call_args = issues_mixin.jira.get_issue.call_args
+        fields_param = call_args[1]["fields"]
+        assert "comment" not in fields_param
+
+        issues_mixin.jira.issue_get_comments.assert_not_called()
+
     def test_get_issue_with_epic_info(self, issues_mixin: IssuesMixin, make_issue_data):
         """Test retrieving issue with epic information."""
         try:
