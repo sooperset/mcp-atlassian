@@ -10,15 +10,23 @@ on:
   workflow_dispatch: {} # Allow manual triggering from the Actions tab
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  # DroneDeploy Internal Registry
+  GAR_REGISTRY: us-docker.pkg.dev
+  GAR_PROJECT: dronedeploy-code-delivery-0
+  GAR_REPOSITORY: docker-dronedeploy-us
+  IMAGE_NAME: mcp-atlassian
+  # Full image path for GAR
+  GAR_IMAGE: us-docker.pkg.dev/dronedeploy-code-delivery-0/docker-dronedeploy-us/mcp-atlassian
+  # GitHub Container Registry (fallback for personal forks)
+  GHCR_REGISTRY: ghcr.io
+  GHCR_IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
-      contents: read  # Needed for checkout
-      packages: write # Needed to push packages to ghcr.io
+      contents: read
+      id-token: write  # Needed for GAR authentication via workload identity
 
     steps:
       - name: Checkout repository
@@ -32,12 +40,44 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # Authenticate to Google Cloud (for DroneDeploy GAR)
+      # This will only work if the repo is in dronedeploy org with workload identity configured
+      - name: Authenticate to Google Cloud Platform
+        id: auth
+        if: github.repository_owner == 'dronedeploy'
+        uses: dronedeploy/google-github-actions-auth@v2
+        with:
+          token_format: access_token
+          workload_identity_provider: projects/485676764037/locations/global/workloadIdentityPools/dronedeploy-github-actions/providers/dronedeploy-github-actions
+          service_account: dronedeploy-github-actions@dronedeploy-code-delivery-0.iam.gserviceaccount.com
+          access_token_lifetime: "1800s"
+
+      # Docker login to Google Artifact Registry (DroneDeploy internal)
+      - name: Docker login to GAR
+        if: github.repository_owner == 'dronedeploy' && steps.auth.outputs.access_token
+        uses: dronedeploy/docker-login-action@v3
+        with:
+          registry: ${{ env.GAR_REGISTRY }}/${{ env.GAR_PROJECT }}/${{ env.GAR_REPOSITORY }}
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      # Fallback: GitHub Container Registry (for personal forks)
+      - name: Log in to GitHub Container Registry
+        if: github.repository_owner != 'dronedeploy'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GHCR_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       # Extract metadata (tags, labels) for Docker
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: |
+            ${{ env.GAR_IMAGE }}
+            ${{ env.GHCR_IMAGE }}
           tags: |
             # Create 'main' tag on push to main branch
             type=ref,event=branch,branch=main
@@ -51,15 +91,6 @@ jobs:
             type=ref,event=pr
             # For manual workflow runs, use branch name with 'manual' suffix
             type=raw,value={{branch}}-manual,enable=${{ github.event_name == 'workflow_dispatch' }}
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        # Only login for pushes and manual runs, not for PRs
-        if: github.event_name != 'pull_request'
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image
         id: docker_build

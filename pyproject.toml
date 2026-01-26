@@ -27,6 +27,8 @@ dependencies = [
     "keyring>=25.6.0",
     "cachetools>=5.0.0",
     "types-cachetools>=5.5.0.20240820",
+    "pip>=25.3",
+    "pymdown-extensions>=10.16.1",
 ]
 [[project.authors]]
 name = "sooperset"
