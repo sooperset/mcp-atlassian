@@ -90,11 +90,11 @@ class IssuesMixin(
             elif isinstance(fields_param, list | tuple | set):
                 fields_param = ",".join(fields_param)
 
-            # Ensure necessary fields are included based on special parameters
-            if (
-                fields_param == ",".join(DEFAULT_READ_JIRA_FIELDS)
-                or fields_param == "*all"
-            ):
+            # Compare as sets to avoid hash randomization issues across processes
+            fields_set = (
+                set(fields_param.split(",")) if fields_param != "*all" else None
+            )
+            if fields_param == "*all" or fields_set == DEFAULT_READ_JIRA_FIELDS:
                 # Default fields are being used - preserve the order
                 default_fields_list = (
                     fields_param.split(",")
@@ -126,6 +126,14 @@ class IssuesMixin(
                     and "properties" not in additional_fields
                 ):
                     additional_fields.append("properties")
+
+                comment_limit_int = self._normalize_comment_limit(comment_limit)
+                if (
+                    (comment_limit_int is None or comment_limit_int > 0)
+                    and "comment" not in default_fields_list
+                    and "comment" not in additional_fields
+                ):
+                    additional_fields.append("comment")
 
                 # Combine default fields with additional fields, preserving order
                 if additional_fields:
@@ -204,10 +212,11 @@ class IssuesMixin(
             issue["fields"] = fields_data
 
             # Create and return the JiraIssue model, passing requested_fields
+            model_fields = "*all" if fields == "*all" else fields_param
             return JiraIssue.from_api_response(
                 issue,
                 base_url=self.config.url if hasattr(self, "config") else None,
-                requested_fields=fields,
+                requested_fields=model_fields,
             )
         except HTTPError as http_err:
             if http_err.response is not None and http_err.response.status_code in [
