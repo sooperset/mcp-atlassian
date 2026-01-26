@@ -5,6 +5,8 @@ repos:
     -   id: trailing-whitespace
     -   id: end-of-file-fixer
     -   id: check-yaml
+        # The check-yaml hook validates that files are well-formed YAML, 
+        # but  Helm templates are only valid YAML after Helm processes them.
         exclude: ^helm/templates/
     -   id: check-added-large-files
     -   id: check-toml

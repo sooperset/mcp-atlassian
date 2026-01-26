@@ -6,7 +6,7 @@ replicaCount: 1
 image:
   repository: ghcr.io/sooperset/mcp-atlassian
   pullPolicy: IfNotPresent
-  tag: "latest"
+  tag: "0.13"
 
 imagePullSecrets: []
 nameOverride: ""
@@ -14,7 +14,7 @@ fullnameOverride: ""
 
 # Transport mode: "stdio", "sse", or "streamable-http"
 # For HTTP modes, service will be created automatically
-transport: "streamable-http"
+transport: "stdio"
 
 # Port for HTTP transport modes (sse or streamable-http)
 port: 9000

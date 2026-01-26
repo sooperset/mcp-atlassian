@@ -1,0 +1,100 @@
+🎉 MCP Atlassian has been deployed!
+
+Release: {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+Transport: {{ .Values.transport }}
+
+{{- if eq .Values.transport "stdio" }}
+═══════════════════════════════════════════════════════════════════════════════
+📋 STDIO TRANSPORT MODE
+═══════════════════════════════════════════════════════════════════════════════
+
+The server is running in stdio mode. This mode is typically used for direct
+integration with MCP clients that communicate via standard input/output.
+
+To connect to the pod:
+
+  kubectl exec -it -n {{ .Release.Namespace }} \
+    $(kubectl get pods -n {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "mcp-atlassian.name" . }},app.kubernetes.io/instance={{ .Release.Name }}" -o jsonpath="{.items[0].metadata.name}") \
+    -- /bin/sh
+
+Note: No HTTP endpoints or health checks are available in stdio mode.
+
+{{- else }}
+═══════════════════════════════════════════════════════════════════════════════
+🌐 HTTP TRANSPORT MODE ({{ .Values.transport | upper }})
+═══════════════════════════════════════════════════════════════════════════════
+
+The server is running in {{ .Values.transport }} mode on port {{ .Values.port }}.
+
+{{- if .Values.ingress.enabled }}
+
+📡 INGRESS ACCESS:
+{{- range $host := .Values.ingress.hosts }}
+  {{- range .paths }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $host.host }}{{ .path }}
+  {{- end }}
+{{- end }}
+
+{{- else }}
+
+📡 ACCESS THE SERVICE:
+
+Option 1 - Port Forward (for local testing):
+
+  kubectl port-forward -n {{ .Release.Namespace }} \
+    svc/{{ include "mcp-atlassian.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+
+  Then access at: http://localhost:{{ .Values.service.port }}
+
+Option 2 - Within Cluster:
+
+  Service URL: http://{{ include "mcp-atlassian.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+
+{{- end }}
+
+🏥 HEALTH CHECK:
+
+  The /healthz endpoint is available for readiness probes:
+
+  curl http://<service-address>:{{ .Values.service.port }}/healthz
+  # Expected response: {"status": "ok"}
+
+{{- end }}
+
+═══════════════════════════════════════════════════════════════════════════════
+⚙️  CONFIGURATION SUMMARY
+═══════════════════════════════════════════════════════════════════════════════
+
+Authentication Mode: {{ .Values.authMode }}
+{{- if .Values.confluence.enabled }}
+Confluence: ✅ Enabled ({{ .Values.confluence.url | default "URL not set" }})
+{{- else }}
+Confluence: ❌ Disabled
+{{- end }}
+{{- if .Values.jira.enabled }}
+Jira: ✅ Enabled ({{ .Values.jira.url | default "URL not set" }})
+{{- else }}
+Jira: ❌ Disabled
+{{- end }}
+{{- if .Values.config.readOnlyMode }}
+Read-Only Mode: ✅ Enabled (write operations disabled)
+{{- else }}
+Read-Only Mode: ❌ Disabled
+{{- end }}
+
+═══════════════════════════════════════════════════════════════════════════════
+📚 USEFUL COMMANDS
+═══════════════════════════════════════════════════════════════════════════════
+
+Check pod status:
+  kubectl get pods -n {{ .Release.Namespace }} -l "app.kubernetes.io/instance={{ .Release.Name }}"
+
+View logs:
+  kubectl logs -n {{ .Release.Namespace }} -l "app.kubernetes.io/instance={{ .Release.Name }}" -f
+
+Describe deployment:
+  kubectl describe deployment -n {{ .Release.Namespace }} {{ include "mcp-atlassian.fullname" . }}
+
+For more information, visit: https://github.com/sooperset/mcp-atlassian
+

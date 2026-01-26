@@ -62,6 +62,38 @@ See the `values.yaml` file for all configuration options.
 - **config.readOnlyMode**: Disable all write operations
 - **persistence.enabled**: Enable OAuth token persistence
 
+### Health Checks and Readiness Probe
+
+The MCP server exposes a `/healthz` endpoint that returns `{"status": "ok"}` for Kubernetes health checks. This endpoint is automatically used for the readiness probe when using HTTP transport modes (`sse` or `streamable-http`).
+
+> **Note:** The readiness probe is only enabled for HTTP transports. When using `stdio` transport, no HTTP server is exposed, so the probe is disabled.
+
+Default readiness probe configuration in `values.yaml`:
+
+```yaml
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+```
+
+You can customize these values in your `values.yaml` file:
+
+```yaml
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 15
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 5
+```
+
 ## Upgrading
 
 ```bash
