@@ -120,7 +120,7 @@ async def search(
 async def get_page(
     ctx: Context,
     page_id: Annotated[
-        str | int | None,
+        str | None,
         Field(
             description=(
                 "Confluence page ID (numeric ID, can be found in the page URL). "
@@ -130,6 +130,7 @@ async def get_page(
             ),
             default=None,
         ),
+        BeforeValidator(lambda x: str(x) if x is not None else None),
     ] = None,
     title: Annotated[
         str | None,
