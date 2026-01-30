@@ -608,6 +608,21 @@ async def test_update_page_with_string_parent_id(client, mock_confluence_fetcher
     assert result_data["page"]["title"] == "Test Page Mock Title"
 
 
+@pytest.mark.anyio
+async def test_get_page_with_numeric_id(client, mock_confluence_fetcher):
+    """Test get_page with numeric page_id (integer) - should convert to string."""
+    response = await client.call_tool("confluence_get_page", {"page_id": 123456})
+
+    # Verify the page_id was converted to string when calling the underlying method
+    mock_confluence_fetcher.get_page_content.assert_called_once_with(
+        "123456", convert_to_markdown=True
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert "metadata" in result_data
+    assert result_data["metadata"]["id"] == "123456"
+
+
 # Phase 5: MCP Attachment Tools Tests (TDD RED Phase)
 @pytest.mark.anyio
 async def test_upload_attachment(client, mock_confluence_fetcher):
