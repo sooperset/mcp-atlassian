@@ -9,6 +9,12 @@ simplified dictionaries for API responses.
 # Re-export models for easier imports
 from .base import ApiModel, TimestampMixin
 
+# Bitbucket models
+from .bitbucket import (
+    BitbucketProject,
+    BitbucketPullRequest,
+)
+
 # Confluence models (Import from the new structure)
 from .confluence import (
     ConfluenceAttachment,
@@ -78,6 +84,9 @@ __all__ = [
     "NONE_VALUE",
     "UNASSIGNED",
     "UNKNOWN",
+    # Bitbucket models
+    "BitbucketProject",
+    "BitbucketPullRequest",
     # Jira models
     "JiraUser",
     "JiraStatus",

@@ -13,12 +13,16 @@ from fastmcp import Context
 from fastmcp.server.dependencies import get_http_request
 from starlette.requests import Request
 
+from mcp_atlassian.bitbucket import BitbucketConfig, BitbucketFetcher
 from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
 from mcp_atlassian.jira import JiraConfig, JiraFetcher
 from mcp_atlassian.servers.context import MainAppContext
 from mcp_atlassian.utils.oauth import OAuthConfig
 
 if TYPE_CHECKING:
+    from mcp_atlassian.bitbucket.config import (
+        BitbucketConfig as UserBitbucketConfigType,
+    )
     from mcp_atlassian.confluence.config import (
         ConfluenceConfig as UserConfluenceConfigType,
     )
@@ -28,21 +32,21 @@ logger = logging.getLogger("mcp-atlassian.servers.dependencies")
 
 
 def _create_user_config_for_fetcher(
-    base_config: JiraConfig | ConfluenceConfig,
+    base_config: JiraConfig | ConfluenceConfig | BitbucketConfig,
     auth_type: str,
     credentials: dict[str, Any],
     cloud_id: str | None = None,
-) -> JiraConfig | ConfluenceConfig:
-    """Create a user-specific configuration for Jira or Confluence fetchers.
+) -> JiraConfig | ConfluenceConfig | BitbucketConfig:
+    """Create a user-specific configuration for Jira, Confluence, or Bitbucket fetchers.
 
     Args:
-        base_config: The base JiraConfig or ConfluenceConfig to clone and modify.
+        base_config: The base JiraConfig, ConfluenceConfig, or BitbucketConfig to clone and modify.
         auth_type: The authentication type ('oauth' or 'pat').
         credentials: Dictionary of credentials (token, email, etc).
         cloud_id: Optional cloud ID to override the base config cloud ID.
 
     Returns:
-        JiraConfig or ConfluenceConfig with user-specific credentials.
+        JiraConfig, ConfluenceConfig, or BitbucketConfig with user-specific credentials.
 
     Raises:
         ValueError: If required credentials are missing or auth_type is unsupported.
@@ -150,6 +154,11 @@ def _create_user_config_for_fetcher(
         )
         user_confluence_config.spaces_filter = base_config.spaces_filter
         return user_confluence_config
+    elif isinstance(base_config, BitbucketConfig):
+        user_bitbucket_config: UserBitbucketConfigType = dataclasses.replace(
+            base_config, **common_args
+        )
+        return user_bitbucket_config
     else:
         raise TypeError(f"Unsupported base_config type: {type(base_config)}")
 
@@ -482,4 +491,149 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
     logger.error("Confluence configuration could not be resolved.")
     raise ValueError(
         "Confluence client (fetcher) not available. Ensure server is configured correctly."
+    )
+
+
+async def get_bitbucket_fetcher(ctx: Context) -> BitbucketFetcher:
+    """Returns a BitbucketFetcher instance appropriate for the current request context.
+
+    Args:
+        ctx: The FastMCP context.
+
+    Returns:
+        BitbucketFetcher instance for the current user or global config.
+
+    Raises:
+        ValueError: If configuration or credentials are invalid.
+    """
+    logger.debug(f"get_bitbucket_fetcher: ENTERED. Context ID: {id(ctx)}")
+    try:
+        request: Request = get_http_request()
+        logger.debug(
+            f"get_bitbucket_fetcher: In HTTP request context. Request URL: {request.url}. "
+            f"State.bitbucket_fetcher exists: {hasattr(request.state, 'bitbucket_fetcher') and request.state.bitbucket_fetcher is not None}. "
+            f"State.user_auth_type: {getattr(request.state, 'user_atlassian_auth_type', 'N/A')}. "
+            f"State.user_token_present: {hasattr(request.state, 'user_atlassian_token') and request.state.user_atlassian_token is not None}."
+        )
+        if (
+            hasattr(request.state, "bitbucket_fetcher")
+            and request.state.bitbucket_fetcher
+        ):
+            logger.debug(
+                "get_bitbucket_fetcher: Returning BitbucketFetcher from request.state."
+            )
+            return request.state.bitbucket_fetcher
+        user_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
+        logger.debug(f"get_bitbucket_fetcher: User auth type: {user_auth_type}")
+
+        service_headers = getattr(request.state, "atlassian_service_headers", {})
+        bitbucket_url_header = service_headers.get("X-Atlassian-Bitbucket-Url")
+        bitbucket_token_header = service_headers.get(
+            "X-Atlassian-Bitbucket-Personal-Token"
+        )
+
+        if (
+            user_auth_type == "pat"
+            and bitbucket_url_header
+            and bitbucket_token_header
+            and not hasattr(request.state, "user_atlassian_token")
+        ):
+            logger.info(
+                f"Creating header-based BitbucketFetcher with URL: {bitbucket_url_header} and PAT token"
+            )
+            header_config = BitbucketConfig(
+                url=bitbucket_url_header,
+                auth_type="pat",
+                personal_token=bitbucket_token_header,
+                ssl_verify=True,
+                custom_headers=None,
+            )
+            try:
+                header_bitbucket_fetcher = BitbucketFetcher(config=header_config)
+                logger.debug(
+                    f"get_bitbucket_fetcher: Validated header-based Bitbucket token"
+                )
+                request.state.bitbucket_fetcher = header_bitbucket_fetcher
+                return header_bitbucket_fetcher
+            except Exception as e:
+                logger.error(
+                    f"get_bitbucket_fetcher: Failed to create/validate header-based BitbucketFetcher: {e}",
+                    exc_info=True,
+                )
+                raise ValueError(
+                    f"Invalid header-based Bitbucket token or configuration: {e}"
+                )
+
+        elif user_auth_type in ["oauth", "pat"] and hasattr(
+            request.state, "user_atlassian_token"
+        ):
+            user_token = getattr(request.state, "user_atlassian_token", None)
+            user_email = getattr(request.state, "user_atlassian_email", None)
+            user_cloud_id = getattr(request.state, "user_atlassian_cloud_id", None)
+
+            if not user_token:
+                raise ValueError("User Atlassian token found in state but is empty.")
+            credentials = {"user_email_context": user_email}
+            if user_auth_type == "oauth":
+                credentials["oauth_access_token"] = user_token
+            elif user_auth_type == "pat":
+                credentials["personal_access_token"] = user_token
+            lifespan_ctx_dict = ctx.request_context.lifespan_context  # type: ignore
+            app_lifespan_ctx: MainAppContext | None = (
+                lifespan_ctx_dict.get("app_lifespan_context")
+                if isinstance(lifespan_ctx_dict, dict)
+                else None
+            )
+            if not app_lifespan_ctx or not app_lifespan_ctx.full_bitbucket_config:
+                raise ValueError(
+                    "Bitbucket global configuration (URL, SSL) is not available from lifespan context."
+                )
+
+            cloud_id_info = f" with cloudId {user_cloud_id}" if user_cloud_id else ""
+            logger.info(
+                f"Creating user-specific BitbucketFetcher (type: {user_auth_type}) for user {user_email or 'unknown'} (token ...{str(user_token)[-8:]}){cloud_id_info}"
+            )
+            user_specific_config = _create_user_config_for_fetcher(
+                base_config=app_lifespan_ctx.full_bitbucket_config,
+                auth_type=user_auth_type,
+                credentials=credentials,
+                cloud_id=user_cloud_id,
+            )
+            try:
+                user_bitbucket_fetcher = BitbucketFetcher(config=user_specific_config)
+                logger.debug(
+                    f"get_bitbucket_fetcher: Validated Bitbucket token"
+                )
+                request.state.bitbucket_fetcher = user_bitbucket_fetcher
+                return user_bitbucket_fetcher
+            except Exception as e:
+                logger.error(
+                    f"get_bitbucket_fetcher: Failed to create/validate user-specific BitbucketFetcher: {e}"
+                )
+                raise ValueError(
+                    f"Invalid user Bitbucket token or configuration: {e}"
+                )
+        else:
+            logger.debug(
+                f"get_bitbucket_fetcher: No user-specific BitbucketFetcher. Auth type: {user_auth_type}. Token present: {hasattr(request.state, 'user_atlassian_token')}. Will use global fallback."
+            )
+    except RuntimeError:
+        logger.debug(
+            "Not in an HTTP request context. Attempting global BitbucketFetcher for non-HTTP."
+        )
+    lifespan_ctx_dict_global = ctx.request_context.lifespan_context  # type: ignore
+    app_lifespan_ctx_global: MainAppContext | None = (
+        lifespan_ctx_dict_global.get("app_lifespan_context")
+        if isinstance(lifespan_ctx_dict_global, dict)
+        else None
+    )
+    if app_lifespan_ctx_global and app_lifespan_ctx_global.full_bitbucket_config:
+        logger.debug(
+            "get_bitbucket_fetcher: Using global BitbucketFetcher from lifespan_context. "
+            f"Global config auth_type: {app_lifespan_ctx_global.full_bitbucket_config.auth_type}"
+        )
+        return BitbucketFetcher(config=app_lifespan_ctx_global.full_bitbucket_config)
+    logger.error("Bitbucket configuration could not be resolved.")
+    raise ValueError(
+        "Bitbucket client (fetcher) not available. Ensure server is configured correctly."
     )

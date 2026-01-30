@@ -135,6 +135,57 @@ def get_available_services(
             jira_is_setup = True
             logger.info("Using Jira authentication from header personal token")
 
+    # Check Bitbucket configuration
+    bitbucket_url = os.getenv("BITBUCKET_URL")
+    bitbucket_is_setup = False
+    if bitbucket_url:
+        is_cloud = is_atlassian_cloud_url(bitbucket_url) or "bitbucket.org" in bitbucket_url.lower()
+
+        # OAuth check
+        if all(
+            [
+                os.getenv("ATLASSIAN_OAUTH_CLIENT_ID"),
+                os.getenv("ATLASSIAN_OAUTH_CLIENT_SECRET"),
+                os.getenv("ATLASSIAN_OAUTH_REDIRECT_URI"),
+                os.getenv("ATLASSIAN_OAUTH_SCOPE"),
+            ]
+        ):
+            bitbucket_is_setup = True
+            logger.info("Using Bitbucket OAuth 2.0 authentication")
+        elif all(
+            [
+                os.getenv("ATLASSIAN_OAUTH_ACCESS_TOKEN"),
+            ]
+        ):
+            bitbucket_is_setup = True
+            logger.info("Using Bitbucket OAuth 2.0 authentication with provided access token")
+        elif is_cloud:  # Cloud non-OAuth
+            if all(
+                [
+                    os.getenv("BITBUCKET_USERNAME"),
+                    os.getenv("BITBUCKET_PASSWORD"),
+                ]
+            ):
+                bitbucket_is_setup = True
+                logger.info("Using Bitbucket Cloud Basic Authentication (App Password)")
+            elif os.getenv("BITBUCKET_PERSONAL_TOKEN"):
+                bitbucket_is_setup = True
+                logger.info("Using Bitbucket Cloud Personal Access Token")
+        else:  # Server/Data Center non-OAuth
+            if os.getenv("BITBUCKET_PERSONAL_TOKEN") or (
+                os.getenv("BITBUCKET_USERNAME") and os.getenv("BITBUCKET_PASSWORD")
+            ):
+                bitbucket_is_setup = True
+                logger.info("Using Bitbucket Server/Data Center authentication (PAT or Basic Auth)")
+
+    if not bitbucket_is_setup:
+        bitbucket_token = headers.get("X-Atlassian-Bitbucket-Personal-Token")
+        bitbucket_url_header = headers.get("X-Atlassian-Bitbucket-Url")
+
+        if bitbucket_token and bitbucket_url_header:
+            bitbucket_is_setup = True
+            logger.info("Using Bitbucket authentication from header personal token")
+
     if not confluence_is_setup:
         logger.info(
             "Confluence is not configured or required environment variables are missing."
@@ -143,5 +194,13 @@ def get_available_services(
         logger.info(
             "Jira is not configured or required environment variables are missing."
         )
+    if not bitbucket_is_setup:
+        logger.info(
+            "Bitbucket is not configured or required environment variables are missing."
+        )
 
-    return {"confluence": confluence_is_setup, "jira": jira_is_setup}
+    return {
+        "confluence": confluence_is_setup,
+        "jira": jira_is_setup,
+        "bitbucket": bitbucket_is_setup,
+    }
