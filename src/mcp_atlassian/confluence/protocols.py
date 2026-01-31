@@ -50,12 +50,12 @@ class AttachmentsOperationsProto(Protocol):
         """
 
     @abstractmethod
-    def download_attachment(self, attachment_id: str, target_path: str) -> bool:
+    def download_attachment(self, url: str, target_path: str) -> bool:
         """
         Download a Confluence attachment to the specified path.
 
         Args:
-            attachment_id: The ID of the attachment to download
+            url: The URL of the attachment to download
             target_path: The path where the attachment should be saved
 
         Returns:

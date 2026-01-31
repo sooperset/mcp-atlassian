@@ -1,14 +1,15 @@
 // For format details, see https://aka.ms/devcontainer.json. For config options, see the
 // README at: https://github.com/devcontainers/templates/tree/main/src/python
 {
-	"name": "Python 3 Project",
+	"name": "kdtix-open-mcp-atlassian",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
 	//"image": "mcr.microsoft.com/devcontainers/python:3",
 	"build": {
 		"dockerfile": "Dockerfile"
 	},
 	"containerEnv": {
-		"PYTHONPATH": "./src"
+		"PYTHONPATH": "./src",
+		"UV_SYSTEM_PYTHON": "1"
 	},
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	"features": {
@@ -27,9 +28,17 @@
 			"extensions": [
 				"ms-python.mypy-type-checker",
 				"charliermarsh.ruff"
-			]
+			],
+			"settings": {
+				"python.defaultInterpreterPath": "/usr/local/bin/python3"
+			}
 		}
 	}
+	// ,
+	// "mounts": [
+    // 	"source=${localEnv:HOME}/.config/github-copilot,target=/home/vscode/.config/github-copilot,type=bind"
+  	// ]
+
 	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
 	// "remoteUser": "root"
 }
