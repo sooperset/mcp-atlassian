@@ -860,3 +860,219 @@ class TestAttachmentsMixin:
         # Assertions
         assert result["success"] is False
         assert "API Error" in result["error"]
+
+    def test_get_content_attachments_v2_oauth(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test getting attachments using v2 API (OAuth)."""
+        # Mock config URL to be cloud (contains .atlassian.net) and OAuth
+        with patch.object(
+            attachments_mixin.config, "url", "https://test.atlassian.net/wiki"
+        ):
+            attachments_mixin.config.auth_type = "oauth"
+
+            # Mock the v2 API method
+            mock_v2_get = Mock(
+                return_value={
+                    "results": [
+                        {"id": "att1", "title": "file1.txt", "type": "attachment"},
+                        {"id": "att2", "title": "file2.pdf", "type": "attachment"},
+                    ],
+                    "size": 2,
+                    "start": 0,
+                    "limit": 50,
+                }
+            )
+
+            with patch(
+                "mcp_atlassian.confluence.attachments.ConfluenceV2Adapter"
+            ) as mock_adapter_class:
+                mock_adapter = Mock()
+                mock_adapter.get_page_attachments = mock_v2_get
+                mock_adapter_class.return_value = mock_adapter
+
+                # Call the method
+                result = attachments_mixin.get_content_attachments("123456")
+
+                # Assertions
+                assert result["success"] is True
+                assert result["content_id"] == "123456"
+                assert len(result["attachments"]) == 2
+                assert result["total"] == 2
+                mock_v2_get.assert_called_once_with(page_id="123456", start=0, limit=50)
+
+    def test_get_content_attachments_v2_with_pagination(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test v2 API pagination parameters are passed correctly."""
+        # Mock config URL to be cloud and OAuth
+        with patch.object(
+            attachments_mixin.config, "url", "https://test.atlassian.net/wiki"
+        ):
+            attachments_mixin.config.auth_type = "oauth"
+
+            mock_v2_get = Mock(
+                return_value={
+                    "results": [],
+                    "size": 0,
+                    "start": 25,
+                    "limit": 10,
+                }
+            )
+
+            with patch(
+                "mcp_atlassian.confluence.attachments.ConfluenceV2Adapter"
+            ) as mock_adapter_class:
+                mock_adapter = Mock()
+                mock_adapter.get_page_attachments = mock_v2_get
+                mock_adapter_class.return_value = mock_adapter
+
+                # Call with custom pagination
+                result = attachments_mixin.get_content_attachments(
+                    "123456", start=25, limit=10
+                )
+
+                # Assertions
+                assert result["success"] is True
+                assert result["start"] == 25
+                assert result["limit"] == 10
+                mock_v2_get.assert_called_once_with(
+                    page_id="123456", start=25, limit=10
+                )
+
+    def test_get_content_attachments_v2_error(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test error handling when v2 API fails."""
+        # Mock config URL to be cloud and OAuth
+        with patch.object(
+            attachments_mixin.config, "url", "https://test.atlassian.net/wiki"
+        ):
+            attachments_mixin.config.auth_type = "oauth"
+
+            with patch(
+                "mcp_atlassian.confluence.attachments.ConfluenceV2Adapter"
+            ) as mock_adapter_class:
+                mock_adapter = Mock()
+                mock_adapter.get_page_attachments.side_effect = ValueError(
+                    "Page not found"
+                )
+                mock_adapter_class.return_value = mock_adapter
+
+                # Call the method
+                result = attachments_mixin.get_content_attachments("999999")
+
+                # Assertions
+                assert result["success"] is False
+                assert "Page not found" in result["error"]
+
+    # Delete attachment tests
+    def test_delete_attachment_success_v1(self, attachments_mixin: AttachmentsMixin):
+        """Test successful deletion using v1 API (non-OAuth)."""
+        # Ensure non-OAuth (v1 path)
+        attachments_mixin.config.auth_type = "basic"
+
+        # Mock the session delete call
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        attachments_mixin.confluence._session.delete.return_value = mock_response
+
+        # Call the method
+        result = attachments_mixin.delete_attachment("att123")
+
+        # Assertions
+        assert result["success"] is True
+        assert result["attachment_id"] == "att123"
+        assert "deleted successfully" in result["message"]
+        attachments_mixin.confluence._session.delete.assert_called_once()
+
+    def test_delete_attachment_success_v2(self, attachments_mixin: AttachmentsMixin):
+        """Test successful deletion using v2 API (OAuth)."""
+        # Mock config URL to be cloud and OAuth
+        with patch.object(
+            attachments_mixin.config, "url", "https://test.atlassian.net/wiki"
+        ):
+            attachments_mixin.config.auth_type = "oauth"
+
+            with patch(
+                "mcp_atlassian.confluence.attachments.ConfluenceV2Adapter"
+            ) as mock_adapter_class:
+                mock_adapter = Mock()
+                mock_adapter.delete_attachment.return_value = None
+                mock_adapter_class.return_value = mock_adapter
+
+                # Call the method
+                result = attachments_mixin.delete_attachment("att456")
+
+                # Assertions
+                assert result["success"] is True
+                assert result["attachment_id"] == "att456"
+                assert "deleted successfully" in result["message"]
+                mock_adapter.delete_attachment.assert_called_once_with("att456")
+
+    def test_delete_attachment_no_id(self, attachments_mixin: AttachmentsMixin):
+        """Test deletion fails when no attachment ID is provided."""
+        result = attachments_mixin.delete_attachment("")
+
+        assert result["success"] is False
+        assert "No attachment ID provided" in result["error"]
+
+    def test_delete_attachment_v1_http_error(self, attachments_mixin: AttachmentsMixin):
+        """Test deletion fails with HTTP error using v1 API."""
+        # Ensure non-OAuth (v1 path)
+        attachments_mixin.config.auth_type = "basic"
+
+        # Mock session delete to raise HTTPError
+        mock_response = Mock()
+        mock_response.raise_for_status.side_effect = Exception("404 Not Found")
+        attachments_mixin.confluence._session.delete.return_value = mock_response
+
+        # Call the method
+        result = attachments_mixin.delete_attachment("att999")
+
+        # Assertions
+        assert result["success"] is False
+        assert "404 Not Found" in result["error"]
+
+    def test_delete_attachment_v2_error(self, attachments_mixin: AttachmentsMixin):
+        """Test deletion fails when v2 adapter raises error."""
+        # Mock config URL to be cloud and OAuth
+        with patch.object(
+            attachments_mixin.config, "url", "https://test.atlassian.net/wiki"
+        ):
+            attachments_mixin.config.auth_type = "oauth"
+
+            with patch(
+                "mcp_atlassian.confluence.attachments.ConfluenceV2Adapter"
+            ) as mock_adapter_class:
+                mock_adapter = Mock()
+                mock_adapter.delete_attachment.side_effect = ValueError(
+                    "Attachment not found"
+                )
+                mock_adapter_class.return_value = mock_adapter
+
+                # Call the method
+                result = attachments_mixin.delete_attachment("att999")
+
+                # Assertions
+                assert result["success"] is False
+                assert "Attachment not found" in result["error"]
+
+    def test_delete_attachment_v1_network_error(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test deletion handles network errors gracefully."""
+        # Ensure non-OAuth (v1 path)
+        attachments_mixin.config.auth_type = "basic"
+
+        # Mock session delete to raise connection error
+        attachments_mixin.confluence._session.delete.side_effect = Exception(
+            "Connection timeout"
+        )
+
+        # Call the method
+        result = attachments_mixin.delete_attachment("att789")
+
+        # Assertions
+        assert result["success"] is False
+        assert "Connection timeout" in result["error"]

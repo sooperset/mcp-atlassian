@@ -92,3 +92,15 @@ class AttachmentsOperationsProto(Protocol):
         Returns:
             A dictionary with attachment list and metadata
         """
+
+    @abstractmethod
+    def delete_attachment(self, attachment_id: str) -> dict[str, Any]:
+        """
+        Delete an attachment by ID.
+
+        Args:
+            attachment_id: The ID of the attachment to delete
+
+        Returns:
+            A dictionary with deletion result
+        """

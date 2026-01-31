@@ -298,6 +298,7 @@ def test_confluence_fetcher_has_attachment_methods():
         assert hasattr(fetcher, "download_attachment")
         assert hasattr(fetcher, "download_content_attachments")
         assert hasattr(fetcher, "get_content_attachments")
+        assert hasattr(fetcher, "delete_attachment")
 
         # Check methods are callable
         assert callable(fetcher.upload_attachment)
@@ -305,6 +306,7 @@ def test_confluence_fetcher_has_attachment_methods():
         assert callable(fetcher.download_attachment)
         assert callable(fetcher.download_content_attachments)
         assert callable(fetcher.get_content_attachments)
+        assert callable(fetcher.delete_attachment)
 
 
 def test_confluence_fetcher_attachment_method_calls():

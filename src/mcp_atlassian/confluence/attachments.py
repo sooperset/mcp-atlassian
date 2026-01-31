@@ -8,6 +8,7 @@ from typing import Any
 from ..models.confluence import ConfluenceAttachment
 from .client import ConfluenceClient
 from .protocols import AttachmentsOperationsProto
+from .v2_adapter import ConfluenceV2Adapter
 
 # Configure logging
 logger = logging.getLogger("mcp-confluence")
@@ -15,6 +16,19 @@ logger = logging.getLogger("mcp-confluence")
 
 class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
     """Mixin for Confluence attachment operations."""
+
+    @property
+    def _v2_adapter(self) -> ConfluenceV2Adapter | None:
+        """Get v2 API adapter for OAuth authentication.
+
+        Returns:
+            ConfluenceV2Adapter instance if OAuth is configured, None otherwise
+        """
+        if self.config.auth_type == "oauth" and self.config.is_cloud:
+            return ConfluenceV2Adapter(
+                session=self.confluence._session, base_url=self.confluence.url
+            )
+        return None
 
     def upload_attachment(
         self,
@@ -312,10 +326,23 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
         try:
             logger.info(f"Fetching attachments for content {content_id}")
 
-            # Get attachments from Confluence API
-            response = self.confluence.get_attachments_from_content(
-                content_id, start=start, limit=limit
-            )
+            # Use v2 API for OAuth authentication, v1 API for token/basic auth
+            v2_adapter = self._v2_adapter
+            if v2_adapter:
+                logger.debug(
+                    f"Using v2 API for OAuth authentication to get attachments for '{content_id}'"
+                )
+                response = v2_adapter.get_page_attachments(
+                    page_id=content_id, start=start, limit=limit
+                )
+            else:
+                logger.debug(
+                    f"Using v1 API for token/basic authentication to get attachments for '{content_id}'"
+                )
+                # Get attachments from Confluence API v1
+                response = self.confluence.get_attachments_from_content(
+                    content_id, start=start, limit=limit
+                )
 
             attachments = response.get("results", [])
             total = response.get("size", 0)
@@ -402,3 +429,50 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             if "files" in locals():
                 for _, (_, file_obj) in files.items():
                     file_obj.close()
+
+    def delete_attachment(self, attachment_id: str) -> dict[str, Any]:
+        """
+        Delete an attachment by ID.
+
+        Args:
+            attachment_id: The Confluence attachment ID
+
+        Returns:
+            A dictionary with deletion result
+        """
+        if not attachment_id:
+            logger.error("No attachment ID provided for deletion")
+            return {"success": False, "error": "No attachment ID provided"}
+
+        try:
+            logger.info(f"Deleting attachment {attachment_id}")
+
+            # Use v2 API for OAuth authentication, v1 API for token/basic auth
+            v2_adapter = self._v2_adapter
+            if v2_adapter:
+                logger.debug(
+                    f"Using v2 API for OAuth authentication to delete attachment '{attachment_id}'"
+                )
+                v2_adapter.delete_attachment(attachment_id)
+            else:
+                logger.debug(
+                    f"Using v1 API for token/basic authentication to delete attachment '{attachment_id}'"
+                )
+                # Use v1 API endpoint for deletion
+                base_url = self.config.url.rstrip("/")
+                url = f"{base_url}/rest/api/content/{attachment_id}"
+                response = self.confluence._session.delete(url)
+                response.raise_for_status()
+
+            logger.info(f"Successfully deleted attachment {attachment_id}")
+
+            return {
+                "success": True,
+                "attachment_id": attachment_id,
+                "message": "Attachment deleted successfully",
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Error deleting attachment: {error_msg}")
+            return {"success": False, "error": error_msg}
