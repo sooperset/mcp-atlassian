@@ -1,6 +1,6 @@
 """Tests for the Confluence attachments module."""
 
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock, Mock, mock_open, patch
 
 import pytest
 
@@ -69,20 +69,45 @@ class TestAttachmentsMixin:
             mixin.preprocessor = confluence_client.preprocessor
             return mixin
 
+    def _mock_rest_api_upload(
+        self, attachments_mixin, response_data=None, raise_error=None
+    ):
+        """Helper to mock the direct REST API upload call.
+
+        Args:
+            attachments_mixin: The mixin fixture
+            response_data: Dict to return from API (default: successful attachment)
+            raise_error: Exception to raise from API call (default: None)
+
+        Returns:
+            The mock response object
+        """
+        if response_data is None:
+            response_data = {
+                "id": "att12345",
+                "type": "attachment",
+                "title": "test_file.txt",
+                "extensions": {"mediaType": "text/plain", "fileSize": 100},
+                "_links": {"download": "/download/attachments/123/test_file.txt"},
+                "version": {"number": 1},
+            }
+
+        mock_response = Mock()
+        if raise_error:
+            attachments_mixin.confluence._session.post.side_effect = raise_error
+        else:
+            mock_response.json.return_value = response_data
+            mock_response.raise_for_status.return_value = None
+            attachments_mixin.confluence._session.post.return_value = mock_response
+
+        return mock_response
+
     # Tests for upload_attachment method
 
     def test_upload_attachment_success(self, attachments_mixin: AttachmentsMixin):
         """Test successful attachment upload."""
-        # Mock the Confluence API response
-        mock_attachment_response = {
-            "id": "att12345",
-            "type": "attachment",
-            "title": "test_file.txt",
-            "extensions": {"mediaType": "text/plain", "fileSize": 100},
-            "_links": {"download": "/download/attachments/123/test_file.txt"},
-            "version": {"number": 1},
-        }
-        attachments_mixin.confluence.attach_file.return_value = mock_attachment_response
+        # Mock the REST API call
+        self._mock_rest_api_upload(attachments_mixin)
 
         # Mock file operations
         with (
@@ -101,7 +126,10 @@ class TestAttachmentsMixin:
 
             # Call the method
             result = attachments_mixin.upload_attachment(
-                "123456", "/absolute/path/test_file.txt"
+                "123456",
+                "/absolute/path/test_file.txt",
+                comment="Test comment",
+                minor_edit=False,
             )
 
             # Assertions
@@ -110,17 +138,25 @@ class TestAttachmentsMixin:
             assert result["filename"] == "test_file.txt"
             assert result["size"] == 100
             assert result["id"] == "att12345"
-            attachments_mixin.confluence.attach_file.assert_called_once()
+
+            # Verify the REST API was called with correct parameters
+            attachments_mixin.confluence._session.post.assert_called_once()
+            call_args = attachments_mixin.confluence._session.post.call_args
+
+            # Check URL
+            assert "/rest/api/content/123456/child/attachment" in call_args[0][0]
+
+            # Check headers include X-Atlassian-Token
+            assert call_args[1]["headers"]["X-Atlassian-Token"] == "nocheck"
+
+            # Check minorEdit was passed
+            assert call_args[1]["data"]["minorEdit"] == "false"
+            assert call_args[1]["data"]["comment"] == "Test comment"
 
     def test_upload_attachment_relative_path(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with a relative path."""
-        # Mock the Confluence API response
-        mock_attachment_response = {
-            "id": "att12345",
-            "type": "attachment",
-            "title": "test_file.txt",
-        }
-        attachments_mixin.confluence.attach_file.return_value = mock_attachment_response
+        # Mock the REST API call
+        self._mock_rest_api_upload(attachments_mixin)
 
         # Mock file operations
         with (
@@ -152,7 +188,8 @@ class TestAttachmentsMixin:
         # Assertions
         assert result["success"] is False
         assert "No content ID provided" in result["error"]
-        attachments_mixin.confluence.attach_file.assert_not_called()
+        # Should not call API at all
+        attachments_mixin.confluence._session.post.assert_not_called()
 
     def test_upload_attachment_no_file_path(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with no file path."""
@@ -161,7 +198,8 @@ class TestAttachmentsMixin:
         # Assertions
         assert result["success"] is False
         assert "No file path provided" in result["error"]
-        attachments_mixin.confluence.attach_file.assert_not_called()
+        # Should not call API at all
+        attachments_mixin.confluence._session.post.assert_not_called()
 
     def test_upload_attachment_file_not_found(
         self, attachments_mixin: AttachmentsMixin
@@ -184,12 +222,17 @@ class TestAttachmentsMixin:
             # Assertions
             assert result["success"] is False
             assert "File not found" in result["error"]
-            attachments_mixin.confluence.attach_file.assert_not_called()
+            # Should not call API if file doesn't exist
+            attachments_mixin.confluence._session.post.assert_not_called()
 
     def test_upload_attachment_api_error(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with an API error."""
-        # Mock the Confluence API to raise an exception
-        attachments_mixin.confluence.attach_file.side_effect = Exception("API Error")
+        # Mock the REST API to raise an exception
+        from requests.exceptions import HTTPError
+
+        self._mock_rest_api_upload(
+            attachments_mixin, raise_error=HTTPError("API Error")
+        )
 
         # Mock file operations
         with (
@@ -197,12 +240,14 @@ class TestAttachmentsMixin:
             patch("os.path.isabs") as mock_isabs,
             patch("os.path.abspath") as mock_abspath,
             patch("os.path.basename") as mock_basename,
+            patch("os.path.getsize") as mock_getsize,
             patch("builtins.open", mock_open(read_data=b"test content")),
         ):
             mock_exists.return_value = True
             mock_isabs.return_value = True
             mock_abspath.return_value = "/absolute/path/test_file.txt"
             mock_basename.return_value = "test_file.txt"
+            mock_getsize.return_value = 100
 
             result = attachments_mixin.upload_attachment(
                 "123456", "/absolute/path/test_file.txt"
@@ -210,7 +255,8 @@ class TestAttachmentsMixin:
 
             # Assertions
             assert result["success"] is False
-            assert "API Error" in result["error"]
+            # When direct API fails, we get generic failure message
+            assert "Failed to upload attachment" in result["error"]
 
     # Tests for upload_attachments method
 

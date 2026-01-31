@@ -54,13 +54,13 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                 return {"success": False, "error": f"File not found: {file_path}"}
 
             logger.info(
-                f"Uploading attachment from {file_path} to content {content_id}"
+                f"Uploading attachment from {file_path} to content {content_id} (minor_edit={minor_edit})"
             )
 
-            # Use the Confluence API to upload the file
+            # Use direct REST API call to support minorEdit parameter
             filename = os.path.basename(file_path)
-            attachment = self.confluence.attach_file(
-                filename=file_path, page_id=content_id, comment=comment
+            attachment = self._upload_attachment_direct(
+                content_id, file_path, filename, comment, minor_edit
             )
 
             if attachment:
@@ -337,3 +337,68 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             error_msg = str(e)
             logger.error(f"Error getting attachments: {error_msg}")
             return {"success": False, "error": error_msg}
+
+    def _upload_attachment_direct(
+        self,
+        content_id: str,
+        file_path: str,
+        filename: str,
+        comment: str | None,
+        minor_edit: bool,
+    ) -> dict[str, Any] | None:
+        """
+        Upload attachment using direct REST API call.
+
+        This method uses the Confluence REST API directly to support
+        the minorEdit parameter, which is not available in the
+        atlassian-python-api library's attach_file() method.
+
+        Args:
+            content_id: The Confluence content ID
+            file_path: Full path to the file
+            filename: Name of the file
+            comment: Optional comment for the attachment
+            minor_edit: Whether this is a minor edit
+
+        Returns:
+            Attachment metadata dict if successful, None otherwise
+        """
+        try:
+            # Build the API endpoint URL
+            base_url = self.config.url.rstrip("/")
+            url = f"{base_url}/rest/api/content/{content_id}/child/attachment"
+
+            # Prepare headers (X-Atlassian-Token required for file uploads)
+            headers = {"X-Atlassian-Token": "nocheck"}
+
+            # Prepare multipart form data
+            files = {"file": (filename, open(file_path, "rb"))}
+            data = {}
+            if comment:
+                data["comment"] = comment
+            if minor_edit is not None:
+                data["minorEdit"] = str(minor_edit).lower()
+
+            # Use the session from the Confluence client (includes auth)
+            response = self.confluence._session.post(
+                url, headers=headers, files=files, data=data
+            )
+            response.raise_for_status()
+
+            # Parse response
+            result = response.json()
+
+            # Return first result if it's a list
+            if isinstance(result, dict) and "results" in result:
+                results = result.get("results", [])
+                return results[0] if results else result
+            return result
+
+        except Exception as e:
+            logger.error(f"Direct API upload failed: {e}")
+            return None
+        finally:
+            # Close the file handle
+            if "files" in locals():
+                for _, (_, file_obj) in files.items():
+                    file_obj.close()
