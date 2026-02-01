@@ -60,11 +60,16 @@ class TestAttachmentsMixin:
 
     def test_download_attachment_success(self, attachments_mixin: AttachmentsMixin):
         """Test successful attachment download."""
+        import os
+
         # Mock the response
         mock_response = MagicMock()
         mock_response.iter_content.return_value = [b"test content"]
         mock_response.raise_for_status = MagicMock()
         attachments_mixin.jira._session.get.return_value = mock_response
+
+        download_path = "/tmp/test_file.txt"
+        expected_path = os.path.abspath(download_path)
 
         # Mock file operations
         with (
@@ -78,7 +83,7 @@ class TestAttachmentsMixin:
 
             # Call the method
             result = attachments_mixin.download_attachment(
-                "https://test.url/attachment", "/tmp/test_file.txt"
+                "https://test.url/attachment", download_path
             )
 
             # Assertions
@@ -86,7 +91,7 @@ class TestAttachmentsMixin:
             attachments_mixin.jira._session.get.assert_called_once_with(
                 "https://test.url/attachment", stream=True
             )
-            mock_file.assert_called_once_with("/tmp/test_file.txt", "wb")
+            mock_file.assert_called_once_with(expected_path, "wb")
             mock_file().write.assert_called_once_with(b"test content")
             mock_makedirs.assert_called_once()
 
