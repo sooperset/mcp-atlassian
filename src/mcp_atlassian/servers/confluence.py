@@ -872,3 +872,377 @@ async def confluence_get_page_views(
             indent=2,
             ensure_ascii=False,
         )
+
+
+# ===== Attachment Operations =====
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "attachments"},
+    annotations={"title": "Upload Attachment", "destructiveHint": True},
+)
+@check_write_access
+async def upload_attachment(
+    ctx: Context,
+    content_id: Annotated[
+        str,
+        Field(
+            description=(
+                "The ID of the Confluence content (page or blog post) to attach the file to. "
+                "Page IDs can be found in the page URL or by using the search/get_page tools. "
+                "Example: '123456789'"
+            )
+        ),
+    ],
+    file_path: Annotated[
+        str,
+        Field(
+            description=(
+                "Full path to the file to upload. Can be absolute (e.g., '/home/user/document.pdf' or 'C:\\Users\\name\\file.docx') "
+                "or relative to the current working directory (e.g., './uploads/document.pdf'). "
+                "If a file with the same name already exists, a new version will be created."
+            )
+        ),
+    ],
+    comment: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) A comment describing this attachment or version. "
+                "Visible in the attachment history. Example: 'Updated Q4 2024 figures'"
+            ),
+            default=None,
+        ),
+    ] = None,
+    minor_edit: Annotated[
+        bool,
+        Field(
+            description=(
+                "(Optional) Whether this is a minor edit. If true, watchers are not notified. "
+                "Default is false."
+            ),
+            default=False,
+        ),
+    ] = False,
+) -> str:
+    """Upload an attachment to Confluence content (page or blog post).
+
+    If the attachment already exists (same filename), a new version is created.
+    This is useful for:
+    - Attaching documents, images, or files to a page
+    - Updating existing attachments with new versions
+    - Adding supporting materials to documentation
+
+    Args:
+        ctx: The FastMCP context.
+        content_id: The ID of the content to attach to.
+        file_path: Path to the file to upload.
+        comment: Optional comment for the attachment.
+        minor_edit: Whether this is a minor edit (no notifications).
+
+    Returns:
+        JSON string with upload confirmation and attachment metadata.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    result = confluence_fetcher.upload_attachment(
+        content_id=content_id,
+        file_path=file_path,
+        comment=comment,
+        minor_edit=minor_edit,
+    )
+
+    return json.dumps(
+        {"message": "Attachment uploaded successfully", "attachment": result},
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "attachments"},
+    annotations={"title": "Upload Multiple Attachments", "destructiveHint": True},
+)
+@check_write_access
+async def upload_attachments(
+    ctx: Context,
+    content_id: Annotated[
+        str,
+        Field(description="The ID of the Confluence content (page or blog post)"),
+    ],
+    file_paths: Annotated[
+        list[str],
+        Field(description="List of file paths to upload"),
+    ],
+    comment: Annotated[
+        str | None,
+        Field(description="Optional comment for the attachments", default=None),
+    ] = None,
+    minor_edit: Annotated[
+        bool,
+        Field(description="Whether this is a minor edit", default=False),
+    ] = False,
+) -> str:
+    """Upload multiple attachments to Confluence content.
+
+    Args:
+        ctx: The FastMCP context.
+        content_id: The ID of the content to attach to.
+        file_paths: List of file paths to upload.
+        comment: Optional comment for the attachments.
+        minor_edit: Whether this is a minor edit.
+
+    Returns:
+        JSON string with upload results for each file.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    results = confluence_fetcher.upload_attachments(
+        content_id=content_id,
+        file_paths=file_paths,
+        comment=comment,
+        minor_edit=minor_edit,
+    )
+
+    return json.dumps(
+        {
+            "message": f"Uploaded {len(results)} attachment(s) successfully",
+            "attachments": results,
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "attachments"},
+    annotations={"title": "Get Content Attachments", "readOnlyHint": True},
+)
+async def get_attachments(
+    ctx: Context,
+    content_id: Annotated[
+        str,
+        Field(
+            description=(
+                "The ID of the Confluence content (page or blog post) to list attachments for. "
+                "Example: '123456789'"
+            )
+        ),
+    ],
+    start: Annotated[
+        int,
+        Field(
+            description=(
+                "(Optional) Starting index for pagination. Use 0 for the first page. "
+                "To get the next page, add the 'limit' value to 'start'. Default: 0"
+            ),
+            default=0,
+        ),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(
+            description=(
+                "(Optional) Maximum number of attachments to return per request (1-100). "
+                "Use pagination (start/limit) for large attachment lists. Default: 50"
+            ),
+            default=50,
+            ge=1,
+            le=100,
+        ),
+    ] = 50,
+    filename: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Filter results to only attachments matching this filename. "
+                "Exact match only. Example: 'report.pdf'"
+            ),
+            default=None,
+        ),
+    ] = None,
+    media_type: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Filter by MIME type. Examples: 'image/png', 'application/pdf', "
+                "'application/vnd.openxmlformats-officedocument.wordprocessingml.document' (for .docx)"
+            ),
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """List all attachments for a Confluence content item (page or blog post).
+
+    Returns metadata about attachments including:
+    - Attachment ID, title, and file type
+    - File size and download URL
+    - Creation/modification dates
+    - Version information
+
+    Useful for:
+    - Discovering what files are attached to a page
+    - Getting attachment IDs for download operations
+    - Checking if a specific file exists
+    - Listing images/documents for processing
+
+    Args:
+        ctx: The FastMCP context.
+        content_id: The ID of the content.
+        start: Starting index for pagination.
+        limit: Maximum number of results (1-100).
+        filename: Optional exact filename filter.
+        media_type: Optional MIME type filter.
+
+    Returns:
+        JSON string with list of attachments and metadata.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    result = confluence_fetcher.get_content_attachments(
+        content_id=content_id,
+        start=start,
+        limit=limit,
+        filename=filename,
+        media_type=media_type,
+    )
+
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "attachments"},
+    annotations={"title": "Download Attachment", "readOnlyHint": True},
+)
+async def download_attachment(
+    ctx: Context,
+    attachment_id: Annotated[
+        str,
+        Field(description="The ID of the attachment to download"),
+    ],
+    download_path: Annotated[
+        str,
+        Field(description="Path where the attachment should be saved"),
+    ],
+) -> str:
+    """Download an attachment from Confluence.
+
+    Args:
+        ctx: The FastMCP context.
+        attachment_id: The ID of the attachment.
+        download_path: Path to save the downloaded file.
+
+    Returns:
+        JSON string with download status and file path.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    file_path = confluence_fetcher.download_attachment(
+        attachment_id=attachment_id,
+        download_path=download_path,
+    )
+
+    return json.dumps(
+        {
+            "message": "Attachment downloaded successfully",
+            "file_path": file_path,
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "attachments"},
+    annotations={"title": "Download All Content Attachments", "readOnlyHint": True},
+)
+async def download_content_attachments(
+    ctx: Context,
+    content_id: Annotated[
+        str,
+        Field(description="The ID of the Confluence content (page or blog post)"),
+    ],
+    download_folder: Annotated[
+        str,
+        Field(description="Folder where attachments should be saved"),
+    ],
+) -> str:
+    """Download all attachments for a Confluence content item.
+
+    Args:
+        ctx: The FastMCP context.
+        content_id: The ID of the content.
+        download_folder: Folder to save the attachments.
+
+    Returns:
+        JSON string with list of downloaded file paths.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    file_paths = confluence_fetcher.download_content_attachments(
+        content_id=content_id,
+        download_folder=download_folder,
+    )
+
+    return json.dumps(
+        {
+            "message": f"Downloaded {len(file_paths)} attachment(s) successfully",
+            "file_paths": file_paths,
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "attachments"},
+    annotations={"title": "Delete Attachment", "destructiveHint": True},
+)
+@check_write_access
+async def delete_attachment(
+    ctx: Context,
+    attachment_id: Annotated[
+        str,
+        Field(
+            description=(
+                "The ID of the attachment to delete. Attachment IDs can be found using the "
+                "get_attachments tool. Example: 'att123456789'. "
+                "**Warning**: This permanently deletes the attachment and all its versions."
+            )
+        ),
+    ],
+) -> str:
+    """Permanently delete an attachment from Confluence.
+
+    **Warning**: This action cannot be undone! The attachment and ALL its versions will be
+    permanently deleted.
+
+    Use this tool to:
+    - Remove outdated or incorrect attachments
+    - Clean up duplicate files
+    - Delete sensitive information that was accidentally uploaded
+
+    Best practices:
+    - Verify the attachment ID before deletion using get_attachments
+    - Consider downloading the attachment first as a backup
+    - Check with content owners before deleting shared attachments
+
+    Args:
+        ctx: The FastMCP context.
+        attachment_id: The ID of the attachment to delete.
+
+    Returns:
+        JSON string confirming deletion with attachment ID.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    confluence_fetcher.delete_attachment(attachment_id=attachment_id)
+
+    return json.dumps(
+        {
+            "message": "Attachment deleted successfully",
+            "attachment_id": attachment_id,
+        },
+        indent=2,
+        ensure_ascii=False,
+    )

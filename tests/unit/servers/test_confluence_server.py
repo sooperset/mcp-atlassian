@@ -92,6 +92,55 @@ def mock_confluence_fetcher():
     }
     mock_fetcher.search_user.return_value = [mock_user_search_result]
 
+    # Mock attachment methods (Phase 5: MCP Tools)
+    mock_fetcher.upload_attachment.return_value = {
+        "success": True,
+        "content_id": "123456",
+        "attachment": {
+            "id": "att123",
+            "title": "test-file.txt",
+            "metadata": {"mediaType": "text/plain"},
+            "extensions": {"fileSize": 1024},
+        },
+    }
+    mock_fetcher.upload_attachments.return_value = {
+        "success": True,
+        "content_id": "123456",
+        "total": 2,
+        "uploaded": [
+            {"filename": "file1.txt", "id": "att1"},
+            {"filename": "file2.txt", "id": "att2"},
+        ],
+        "failed": [],
+    }
+    mock_fetcher.get_content_attachments.return_value = {
+        "success": True,
+        "content_id": "123456",
+        "attachments": [
+            {"id": "att123", "title": "test-file.txt", "type": "attachment"},
+            {"id": "att456", "title": "image.png", "type": "attachment"},
+        ],
+        "total": 2,
+        "start": 0,
+        "limit": 50,
+    }
+    mock_fetcher.download_attachment.return_value = True
+    mock_fetcher.download_content_attachments.return_value = {
+        "success": True,
+        "content_id": "123456",
+        "total": 2,
+        "downloaded": [
+            {"filename": "test-file.txt", "path": "/tmp/test-file.txt"},
+            {"filename": "image.png", "path": "/tmp/image.png"},
+        ],
+        "failed": [],
+    }
+    mock_fetcher.delete_attachment.return_value = {
+        "success": True,
+        "attachment_id": "att123",
+        "message": "Attachment deleted successfully",
+    }
+
     return mock_fetcher
 
 
@@ -121,7 +170,11 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         add_comment,
         add_label,
         create_page,
+        delete_attachment,
         delete_page,
+        download_attachment,
+        download_content_attachments,
+        get_attachments,
         get_comments,
         get_labels,
         get_page,
@@ -129,6 +182,8 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         search,
         search_user,
         update_page,
+        upload_attachment,
+        upload_attachments,
     )
 
     @asynccontextmanager
@@ -159,6 +214,12 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(update_page)
     confluence_sub_mcp.add_tool(delete_page)
     confluence_sub_mcp.add_tool(search_user)
+    confluence_sub_mcp.add_tool(upload_attachment)
+    confluence_sub_mcp.add_tool(upload_attachments)
+    confluence_sub_mcp.add_tool(get_attachments)
+    confluence_sub_mcp.add_tool(download_attachment)
+    confluence_sub_mcp.add_tool(download_content_attachments)
+    confluence_sub_mcp.add_tool(delete_attachment)
 
     test_mcp.mount(confluence_sub_mcp, prefix="confluence")
 
@@ -174,7 +235,11 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         add_comment,
         add_label,
         create_page,
+        delete_attachment,
         delete_page,
+        download_attachment,
+        download_content_attachments,
+        get_attachments,
         get_comments,
         get_labels,
         get_page,
@@ -182,6 +247,8 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         search,
         search_user,
         update_page,
+        upload_attachment,
+        upload_attachments,
     )
 
     @asynccontextmanager
@@ -214,6 +281,12 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.add_tool(update_page)
     confluence_sub_mcp.add_tool(delete_page)
     confluence_sub_mcp.add_tool(search_user)
+    confluence_sub_mcp.add_tool(upload_attachment)
+    confluence_sub_mcp.add_tool(upload_attachments)
+    confluence_sub_mcp.add_tool(get_attachments)
+    confluence_sub_mcp.add_tool(download_attachment)
+    confluence_sub_mcp.add_tool(download_content_attachments)
+    confluence_sub_mcp.add_tool(delete_attachment)
 
     test_mcp.mount(confluence_sub_mcp, prefix="confluence")
 
@@ -533,3 +606,47 @@ async def test_update_page_with_string_parent_id(client, mock_confluence_fetcher
     result_data = json.loads(response.content[0].text)
     assert result_data["message"] == "Page updated successfully"
     assert result_data["page"]["title"] == "Test Page Mock Title"
+
+
+# Phase 5: MCP Attachment Tools Tests (TDD RED Phase)
+@pytest.mark.anyio
+async def test_upload_attachment(client, mock_confluence_fetcher):
+    """Test uploading a single attachment to Confluence content."""
+    response = await client.call_tool(
+        "confluence_upload_attachment",
+        {
+            "content_id": "123456",
+            "file_path": "/path/to/test-file.txt",
+            "comment": "Test attachment",
+            "minor_edit": True,
+        },
+    )
+
+    mock_confluence_fetcher.upload_attachment.assert_called_once_with(
+        content_id="123456",
+        file_path="/path/to/test-file.txt",
+        comment="Test attachment",
+        minor_edit=True,
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["message"] == "Attachment uploaded successfully"
+    assert "attachment" in result_data
+    assert result_data["attachment"]["attachment"]["id"] == "att123"
+    assert result_data["attachment"]["attachment"]["title"] == "test-file.txt"
+
+
+@pytest.mark.anyio
+async def test_delete_attachment(client, mock_confluence_fetcher):
+    """Test deleting an attachment."""
+    response = await client.call_tool(
+        "confluence_delete_attachment", {"attachment_id": "att123"}
+    )
+
+    mock_confluence_fetcher.delete_attachment.assert_called_once_with(
+        attachment_id="att123"
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["message"] == "Attachment deleted successfully"
+    assert result_data["attachment_id"] == "att123"
