@@ -375,18 +375,19 @@ async def get_labels(
         str,
         Field(
             description=(
-                "Confluence page ID (numeric ID, can be parsed from URL, "
-                "e.g. from 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title' "
-                "-> '123456789')"
+                "Confluence content ID (page, blog post, or attachment). "
+                "For pages: numeric ID from URL (e.g., '123456789'). "
+                "For attachments: ID with 'att' prefix (e.g., 'att123456789'). "
+                "Works with any Confluence content type that supports labels."
             )
         ),
     ],
 ) -> str:
-    """Get labels for a specific Confluence page.
+    """Get labels for Confluence content (pages, blog posts, or attachments).
 
     Args:
         ctx: The FastMCP context.
-        page_id: Confluence page ID.
+        page_id: Confluence content ID (page or attachment).
 
     Returns:
         JSON string representing a list of label objects.
@@ -404,18 +405,42 @@ async def get_labels(
 @check_write_access
 async def add_label(
     ctx: Context,
-    page_id: Annotated[str, Field(description="The ID of the page to update")],
-    name: Annotated[str, Field(description="The name of the label")],
+    page_id: Annotated[
+        str,
+        Field(
+            description=(
+                "Confluence content ID to label. "
+                "For pages/blogs: numeric ID (e.g., '123456789'). "
+                "For attachments: ID with 'att' prefix (e.g., 'att123456789'). "
+                "Use get_attachments to find attachment IDs."
+            )
+        ),
+    ],
+    name: Annotated[
+        str,
+        Field(
+            description=(
+                "Label name to add (lowercase, no spaces). "
+                "Examples: 'draft', 'reviewed', 'confidential', 'v1.0'. "
+                "Labels help organize and categorize content."
+            )
+        ),
+    ],
 ) -> str:
-    """Add label to an existing Confluence page.
+    """Add label to Confluence content (pages, blog posts, or attachments).
+
+    Useful for:
+    - Categorizing attachments (e.g., 'screenshot', 'diagram', 'legal-doc')
+    - Tracking status (e.g., 'approved', 'needs-review', 'archived')
+    - Filtering content by topic or version
 
     Args:
         ctx: The FastMCP context.
-        page_id: The ID of the page to update.
-        name: The name of the label.
+        page_id: Content ID (page or attachment).
+        name: Label name to add.
 
     Returns:
-        JSON string representing the updated list of label objects for the page.
+        JSON string representing the updated list of label objects.
 
     Raises:
         ValueError: If in read-only mode or Confluence client is unavailable.
@@ -968,22 +993,54 @@ async def upload_attachments(
     ctx: Context,
     content_id: Annotated[
         str,
-        Field(description="The ID of the Confluence content (page or blog post)"),
+        Field(
+            description=(
+                "The ID of the Confluence content (page or blog post) to attach files to. "
+                "Example: '123456789'. If uploading multiple files with the same names, "
+                "new versions will be created automatically."
+            )
+        ),
     ],
     file_paths: Annotated[
         list[str],
-        Field(description="List of file paths to upload"),
+        Field(
+            description=(
+                "List of file paths to upload. Can be absolute or relative paths. "
+                "Examples: ['./file1.pdf', './file2.png'], ['C:\\\\docs\\\\report.docx', 'D:\\\\image.jpg']. "
+                "All files uploaded with same comment/minor_edit settings."
+            )
+        ),
     ],
     comment: Annotated[
         str | None,
-        Field(description="Optional comment for the attachments", default=None),
+        Field(
+            description=(
+                "(Optional) Comment for all uploaded attachments. Visible in version history. "
+                "Example: 'Q4 2024 batch upload'"
+            ),
+            default=None,
+        ),
     ] = None,
     minor_edit: Annotated[
         bool,
-        Field(description="Whether this is a minor edit", default=False),
+        Field(
+            description=(
+                "(Optional) Whether this is a minor edit. If true, watchers are not notified. "
+                "Default is false."
+            ),
+            default=False,
+        ),
     ] = False,
 ) -> str:
-    """Upload multiple attachments to Confluence content.
+    """Upload multiple attachments to Confluence content in a single operation.
+
+    More efficient than calling upload_attachment multiple times. If files with the
+    same names exist, new versions are created automatically.
+
+    Useful for:
+    - Bulk uploading documentation assets (diagrams, screenshots, etc.)
+    - Adding multiple related files to a page at once
+    - Batch updating existing attachments with new versions
 
     Args:
         ctx: The FastMCP context.
@@ -1118,14 +1175,31 @@ async def download_attachment(
     ctx: Context,
     attachment_id: Annotated[
         str,
-        Field(description="The ID of the attachment to download"),
+        Field(
+            description=(
+                "The ID of the attachment to download (e.g., 'att123456789'). "
+                "Find attachment IDs using get_attachments tool. "
+                "Example workflow: get_attachments(content_id) → use returned ID here."
+            )
+        ),
     ],
     download_path: Annotated[
         str,
-        Field(description="Path where the attachment should be saved"),
+        Field(
+            description=(
+                "Full path where the file should be saved. Can be absolute or relative. "
+                "Examples: './downloads/report.pdf', '/tmp/image.png', 'C:\\\\temp\\\\file.docx'. "
+                "Parent directory must exist."
+            )
+        ),
     ],
 ) -> str:
     """Download an attachment from Confluence.
+
+    Use this to:
+    - Retrieve files attached to pages for local processing
+    - Create backups of important attachments
+    - Download diagrams, documents, or data files
 
     Args:
         ctx: The FastMCP context.
@@ -1160,14 +1234,30 @@ async def download_content_attachments(
     ctx: Context,
     content_id: Annotated[
         str,
-        Field(description="The ID of the Confluence content (page or blog post)"),
+        Field(
+            description=(
+                "The ID of the Confluence content (page or blog post) to download attachments from. "
+                "Example: '123456789'"
+            )
+        ),
     ],
     download_folder: Annotated[
         str,
-        Field(description="Folder where attachments should be saved"),
+        Field(
+            description=(
+                "Folder path where all attachments should be saved. "
+                "Examples: './downloads/', '/tmp/confluence-files/', 'C:\\\\backup\\\\attachments\\\\'. "
+                "Folder will be created if it doesn't exist."
+            )
+        ),
     ],
 ) -> str:
     """Download all attachments for a Confluence content item.
+
+    Useful for:
+    - Backing up all files from a page
+    - Bulk downloading documentation assets
+    - Archiving page attachments for offline access
 
     Args:
         ctx: The FastMCP context.
@@ -1175,7 +1265,7 @@ async def download_content_attachments(
         download_folder: Folder to save the attachments.
 
     Returns:
-        JSON string with list of downloaded file paths.
+        JSON string with list of downloaded file paths and success count.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
 

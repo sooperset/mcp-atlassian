@@ -306,7 +306,12 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
         }
 
     def get_content_attachments(
-        self, content_id: str, start: int = 0, limit: int = 50
+        self,
+        content_id: str,
+        start: int = 0,
+        limit: int = 50,
+        filename: str | None = None,
+        media_type: str | None = None,
     ) -> dict[str, Any]:
         """
         Get all attachments for Confluence content.
@@ -315,6 +320,8 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             content_id: The Confluence content ID
             start: Starting index for pagination
             limit: Maximum number of results to return
+            filename: Optional filename filter (exact match)
+            media_type: Optional MIME type filter (exact match)
 
         Returns:
             A dictionary with attachment information
@@ -332,20 +339,43 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                 logger.debug(
                     f"Using v2 API for OAuth authentication to get attachments for '{content_id}'"
                 )
+                # V2 API supports server-side filtering
                 response = v2_adapter.get_page_attachments(
-                    page_id=content_id, start=start, limit=limit
+                    page_id=content_id,
+                    start=start,
+                    limit=limit,
+                    filename=filename,
+                    media_type=media_type,
                 )
             else:
                 logger.debug(
                     f"Using v1 API for token/basic authentication to get attachments for '{content_id}'"
                 )
-                # Get attachments from Confluence API v1
+                # V1 API doesn't support filtering - fetch all, then filter client-side
                 response = self.confluence.get_attachments_from_content(
                     content_id, start=start, limit=limit
                 )
 
             attachments = response.get("results", [])
             total = response.get("size", 0)
+
+            # Apply client-side filtering for V1 API when filters are specified
+            if not v2_adapter and (filename or media_type):
+                filtered = []
+                for att in attachments:
+                    # Filter by filename (exact match)
+                    if filename and att.get("title") != filename:
+                        continue
+                    # Filter by media_type (exact match)
+                    if media_type and att.get("mediaType") != media_type:
+                        continue
+                    filtered.append(att)
+
+                attachments = filtered
+                total = len(filtered)
+                logger.debug(
+                    f"Client-side filtering: {len(filtered)} of {response.get('size', 0)} attachments matched"
+                )
 
             logger.info(
                 f"Retrieved {len(attachments)} attachments for content {content_id}"
@@ -400,14 +430,19 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
 
             # Prepare multipart form data
             files = {"file": (filename, open(file_path, "rb"))}
-            data = {}
+
+            # Comment must be sent with text/plain content-type for proper encoding
             if comment:
-                data["comment"] = comment
+                files["comment"] = (None, comment, "text/plain; charset=utf-8")
+
+            data = {}
             if minor_edit is not None:
                 data["minorEdit"] = str(minor_edit).lower()
 
-            # Use the session from the Confluence client (includes auth)
-            response = self.confluence._session.post(
+            # Use PUT to support creating new versions of existing attachments
+            # PUT will create a new attachment if it doesn't exist, OR create a new
+            # version if an attachment with the same filename already exists
+            response = self.confluence._session.put(
                 url, headers=headers, files=files, data=data
             )
             response.raise_for_status()
@@ -425,10 +460,11 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             logger.error(f"Direct API upload failed: {e}")
             return None
         finally:
-            # Close the file handle
-            if "files" in locals():
-                for _, (_, file_obj) in files.items():
-                    file_obj.close()
+            # Close file handles (only for actual file objects, not text fields like comment)
+            if "files" in locals() and "file" in files:
+                file_tuple = files["file"]
+                if len(file_tuple) >= 2 and hasattr(file_tuple[1], "close"):
+                    file_tuple[1].close()
 
     def delete_attachment(self, attachment_id: str) -> dict[str, Any]:
         """
