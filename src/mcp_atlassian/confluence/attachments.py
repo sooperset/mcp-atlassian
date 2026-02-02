@@ -281,8 +281,14 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             safe_filename = Path(attachment.title).name
             file_path = target_path / safe_filename
 
+            # Prepend base URL if download URL is relative
+            download_url = attachment.download_url
+            if download_url.startswith("/"):
+                base_url = self.config.url.rstrip("/")
+                download_url = f"{base_url}{download_url}"
+
             # Download the attachment
-            success = self.download_attachment(attachment.download_url, str(file_path))
+            success = self.download_attachment(download_url, str(file_path))
 
             if success:
                 downloaded.append(

@@ -1189,7 +1189,7 @@ async def download_attachment(
             description=(
                 "Full path where the file should be saved. Can be absolute or relative. "
                 "Examples: './downloads/report.pdf', '/tmp/image.png', 'C:\\\\temp\\\\file.docx'. "
-                "Parent directory must exist."
+                "Parent directory will be created if it doesn't exist."
             )
         ),
     ],
@@ -1211,19 +1211,75 @@ async def download_attachment(
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
-    file_path = confluence_fetcher.download_attachment(
-        attachment_id=attachment_id,
-        download_path=download_path,
-    )
+    # First, get the attachment metadata to retrieve the download URL
+    try:
+        # Use V2 API adapter if available (OAuth), otherwise use REST API directly
+        v2_adapter = confluence_fetcher._v2_adapter
 
-    return json.dumps(
-        {
-            "message": "Attachment downloaded successfully",
-            "file_path": file_path,
-        },
-        indent=2,
-        ensure_ascii=False,
-    )
+        if v2_adapter:
+            # V2 API: Get attachment metadata
+            attachment_data = v2_adapter.get_attachment_by_id(attachment_id)
+        else:
+            # V1 API: Use direct REST call to get attachment metadata
+            base_url = confluence_fetcher.config.url.rstrip("/")
+            url = f"{base_url}/rest/api/content/{attachment_id}"
+            response = confluence_fetcher.confluence._session.get(url)
+            response.raise_for_status()
+            attachment_data = response.json()
+
+        # Extract download URL from _links
+        download_url = attachment_data.get("_links", {}).get("download")
+        if not download_url:
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": f"Could not find download URL for attachment {attachment_id}",
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+
+        # Prepend base URL if relative
+        if download_url.startswith("/"):
+            base_url = confluence_fetcher.config.url.rstrip("/")
+            download_url = f"{base_url}{download_url}"
+
+        # Download the attachment
+        success = confluence_fetcher.download_attachment(
+            url=download_url,
+            target_path=download_path,
+        )
+
+        if success:
+            return json.dumps(
+                {
+                    "success": True,
+                    "message": "Attachment downloaded successfully",
+                    "file_path": download_path,
+                    "attachment_id": attachment_id,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        else:
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": f"Failed to download attachment {attachment_id}",
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+
+    except Exception as e:
+        return json.dumps(
+            {
+                "success": False,
+                "error": f"Error downloading attachment: {str(e)}",
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
 
 
 @confluence_mcp.tool(
@@ -1269,19 +1325,12 @@ async def download_content_attachments(
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
-    file_paths = confluence_fetcher.download_content_attachments(
+    result = confluence_fetcher.download_content_attachments(
         content_id=content_id,
-        download_folder=download_folder,
+        target_dir=download_folder,
     )
 
-    return json.dumps(
-        {
-            "message": f"Downloaded {len(file_paths)} attachment(s) successfully",
-            "file_paths": file_paths,
-        },
-        indent=2,
-        ensure_ascii=False,
-    )
+    return json.dumps(result, indent=2, ensure_ascii=False)
 
 
 @confluence_mcp.tool(
