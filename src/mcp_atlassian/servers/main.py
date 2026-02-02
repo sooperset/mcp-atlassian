@@ -107,6 +107,83 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
 class AtlassianMCP(FastMCP[MainAppContext]):
     """Custom FastMCP server class for Atlassian integration with tool filtering."""
 
+    def _validate_bearer_token(
+        self,
+        token: str,
+        jira_config: JiraConfig | None,
+        confluence_config: ConfluenceConfig | None,
+    ) -> tuple[bool, str | None]:
+        """Validate a Bearer/PAT token against Jira or Confluence.
+
+        Args:
+            token: The PAT token to validate.
+            jira_config: Base Jira configuration (URL, SSL settings).
+            confluence_config: Base Confluence configuration.
+
+        Returns:
+            Tuple of (is_valid, error_message). If valid, error_message is None.
+        """
+        # Check cache first
+        cache_key = hash(token)
+        if cache_key in token_validation_cache:
+            cached_result = token_validation_cache[cache_key]
+            logger.debug("Using cached token validation result")
+            return cached_result[0], cached_result[1]
+
+        # Try to validate against Jira first
+        if jira_config and jira_config.url:
+            try:
+                from dataclasses import replace
+
+                test_config = replace(
+                    jira_config,
+                    auth_type="pat",
+                    personal_token=token,
+                    username=None,
+                    api_token=None,
+                    oauth_config=None,
+                )
+                fetcher = JiraFetcher(config=test_config)
+                user_id = fetcher.get_current_user_account_id()
+                logger.info(f"Bearer token validated successfully for Jira user: {user_id}")
+                # Cache the successful result
+                token_validation_cache[cache_key] = (True, None, fetcher, None)
+                return True, None
+            except Exception as e:
+                error_msg = f"Invalid Jira PAT token: {e}"
+                logger.warning(error_msg)
+                # Cache the failed result
+                token_validation_cache[cache_key] = (False, error_msg, None, None)
+                return False, error_msg
+
+        # Try Confluence if no Jira config
+        if confluence_config and confluence_config.url:
+            try:
+                from dataclasses import replace
+
+                test_config = replace(
+                    confluence_config,
+                    auth_type="pat",
+                    personal_token=token,
+                    username=None,
+                    api_token=None,
+                    oauth_config=None,
+                )
+                fetcher = ConfluenceFetcher(config=test_config)
+                user_info = fetcher.get_current_user_info()
+                logger.info(f"Bearer token validated successfully for Confluence user: {user_info.get('displayName', 'unknown')}")
+                # Cache the successful result
+                token_validation_cache[cache_key] = (True, None, None, fetcher)
+                return True, None
+            except Exception as e:
+                error_msg = f"Invalid Confluence PAT token: {e}"
+                logger.warning(error_msg)
+                token_validation_cache[cache_key] = (False, error_msg, None, None)
+                return False, error_msg
+
+        # No config to validate against
+        return True, None
+
     async def _list_tools_mcp(self) -> list[MCPTool]:
         # Filter tools based on enabled_tools, read_only mode, and service configuration from the lifespan context.
         req_context = self._mcp_server.request_context
@@ -122,6 +199,25 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             if isinstance(lifespan_ctx_dict, dict)
             else None
         )
+
+        # Validate Bearer token - REQUIRED for HTTP requests
+        if hasattr(req_context, "request") and hasattr(req_context.request, "state"):
+            user_token = getattr(req_context.request.state, "user_atlassian_token", None)
+            
+            # Require Bearer token for HTTP requests
+            if not user_token:
+                logger.error("No Bearer token provided in request - returning empty tools list")
+                return []  # Return empty list - no tools available without auth
+            
+            jira_config = app_lifespan_state.full_jira_config if app_lifespan_state else None
+            confluence_config = app_lifespan_state.full_confluence_config if app_lifespan_state else None
+
+            is_valid, error_msg = self._validate_bearer_token(
+                user_token, jira_config, confluence_config
+            )
+            if not is_valid:
+                logger.error(f"Token validation failed in list_tools: {error_msg}")
+                return []  # Return empty list - invalid token
         read_only = (
             getattr(app_lifespan_state, "read_only", False)
             if app_lifespan_state
@@ -431,11 +527,11 @@ class UserTokenMiddleware:
                     f"UserTokenMiddleware: Extracted cloudId: {cloud_id_str.strip()}"
                 )
 
-            # Process Authorization header
+            # Process Authorization header - REQUIRED
             if auth_header_str:
                 self._parse_auth_header(auth_header_str, scope)
             else:
-                logger.debug("UserTokenMiddleware: No Authorization header provided")
+                logger.warning("UserTokenMiddleware: No Authorization header provided - rejecting request")
                 # If service headers are present without Authorization header, set PAT auth type
                 if service_headers and (
                     (jira_token_str and jira_url_str)
@@ -446,10 +542,90 @@ class UserTokenMiddleware:
                     logger.debug(
                         "UserTokenMiddleware: Header-based authentication detected. Setting PAT auth type."
                     )
+                else:
+                    # No Authorization header and no service headers - require Bearer token
+                    scope["state"]["auth_validation_error"] = (
+                        "Unauthorized: Bearer token required. Please provide Authorization: Bearer <your_PAT_token>"
+                    )
+
+            # Validate the token if we have one and no error yet
+            if (
+                scope["state"].get("user_atlassian_token")
+                and not scope["state"].get("auth_validation_error")
+            ):
+                self._validate_token_in_middleware(scope)
 
         except Exception as e:
             logger.error(f"Error processing authentication headers: {e}", exc_info=True)
             scope["state"]["auth_validation_error"] = "Authentication processing error"
+
+    def _validate_token_in_middleware(self, scope: Scope) -> None:
+        """Validate the PAT token against Jira/Confluence API.
+        
+        Sets auth_validation_error in scope if validation fails.
+        """
+        import os
+        
+        token = scope["state"].get("user_atlassian_token")
+        if not token:
+            return
+        
+        # Check cache first
+        cache_key = hash(token)
+        if cache_key in token_validation_cache:
+            cached_result = token_validation_cache[cache_key]
+            is_valid, error_msg = cached_result[0], cached_result[1]
+            if not is_valid:
+                scope["state"]["auth_validation_error"] = error_msg
+            return
+        
+        # Try to validate against Jira
+        jira_url = os.getenv("JIRA_URL")
+        if jira_url:
+            try:
+                test_config = JiraConfig(
+                    url=jira_url,
+                    auth_type="pat",
+                    personal_token=token,
+                    ssl_verify=True,
+                )
+                fetcher = JiraFetcher(config=test_config)
+                user_id = fetcher.get_current_user_account_id()
+                logger.info(f"Bearer token validated in middleware for Jira user: {user_id}")
+                # Cache successful result
+                token_validation_cache[cache_key] = (True, None, fetcher, None)
+                return
+            except Exception as e:
+                error_msg = f"Unauthorized: Invalid PAT token - {e}"
+                logger.warning(f"Token validation failed in middleware: {error_msg}")
+                # Cache failed result
+                token_validation_cache[cache_key] = (False, error_msg, None, None)
+                scope["state"]["auth_validation_error"] = error_msg
+                return
+        
+        # Try Confluence if no Jira URL
+        confluence_url = os.getenv("CONFLUENCE_URL")
+        if confluence_url:
+            try:
+                test_config = ConfluenceConfig(
+                    url=confluence_url,
+                    auth_type="pat",
+                    personal_token=token,
+                    ssl_verify=True,
+                )
+                fetcher = ConfluenceFetcher(config=test_config)
+                user_info = fetcher.get_current_user_info()
+                logger.info(f"Bearer token validated in middleware for Confluence user: {user_info.get('displayName', 'unknown')}")
+                # Cache successful result
+                token_validation_cache[cache_key] = (True, None, None, fetcher)
+                return
+            except Exception as e:
+                error_msg = f"Unauthorized: Invalid PAT token - {e}"
+                logger.warning(f"Token validation failed in middleware: {error_msg}")
+                # Cache failed result
+                token_validation_cache[cache_key] = (False, error_msg, None, None)
+                scope["state"]["auth_validation_error"] = error_msg
+                return
 
     def _parse_auth_header(self, auth_header: str, scope: Scope) -> None:
         """Parse the Authorization header and store credentials in scope state."""
@@ -462,9 +638,9 @@ class UserTokenMiddleware:
                 )
             else:
                 scope["state"]["user_atlassian_token"] = token
-                scope["state"]["user_atlassian_auth_type"] = "oauth"
+                scope["state"]["user_atlassian_auth_type"] = "pat"  # Treat Bearer as PAT for Server/DC
                 logger.debug(
-                    "UserTokenMiddleware: Bearer token extracted (masked): "
+                    "UserTokenMiddleware: Bearer token extracted as PAT (masked): "
                     f"...{mask_sensitive(token, 8)}"
                 )
 
