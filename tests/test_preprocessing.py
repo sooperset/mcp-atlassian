@@ -639,7 +639,9 @@ echo "hello"
     assert "h1." not in result  # Should NOT have heading conversion
 
 
-def test_markdown_to_jira_code_block_with_language_preserves_hash(preprocessor_with_jira):
+def test_markdown_to_jira_code_block_with_language_preserves_hash(
+    preprocessor_with_jira,
+):
     """Test that # in code blocks with language specifier is preserved (issue #893)."""
     markdown = """```python
 # Python comment
