@@ -616,3 +616,83 @@ def test_md2conf_elements_from_string_available():
     from mcp_atlassian.preprocessing.confluence import elements_from_string
 
     assert callable(elements_from_string)
+
+
+# Issue #893 regression tests - Code Block Content Corruption
+
+
+def test_markdown_to_jira_code_block_preserves_hash(preprocessor_with_jira):
+    """Test that # characters inside code blocks are preserved (issue #893)."""
+    markdown = """Here's a script:
+
+```
+#!/bin/bash
+
+# This is a comment
+echo "hello"
+```"""
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+
+    # The shebang and comment should be preserved, not converted to headings
+    assert "#!/bin/bash" in result
+    assert "# This is a comment" in result
+    assert "h1." not in result  # Should NOT have heading conversion
+
+
+def test_markdown_to_jira_code_block_with_language_preserves_hash(preprocessor_with_jira):
+    """Test that # in code blocks with language specifier is preserved (issue #893)."""
+    markdown = """```python
+# Python comment
+def hello():
+    print("world")
+```"""
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+
+    assert "# Python comment" in result
+    assert "h1." not in result
+
+
+def test_markdown_to_jira_code_block_multiple_hash_lines(preprocessor_with_jira):
+    """Test multiple # lines in code block are all preserved (issue #893)."""
+    markdown = """```bash
+# First comment
+# Second comment
+# Third comment
+echo "test"
+```"""
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+
+    assert "# First comment" in result
+    assert "# Second comment" in result
+    assert "# Third comment" in result
+    assert result.count("h1.") == 0
+
+
+def test_markdown_to_jira_inline_code_preserves_hash(preprocessor_with_jira):
+    """Test that # in inline code is preserved (issue #893)."""
+    markdown = "The shebang line is `#!/bin/bash` in shell scripts."
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+
+    assert "#!/bin/bash" in result
+    assert "h1." not in result
+
+
+def test_markdown_to_jira_mixed_code_and_headers(preprocessor_with_jira):
+    """Test that headers outside code blocks still convert while code is preserved."""
+    markdown = """# Real Heading
+
+Here's some code:
+
+```
+# This is a comment, not a heading
+```
+
+## Another Heading"""
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+
+    # Headers should convert
+    assert "h1. Real Heading" in result
+    assert "h2. Another Heading" in result
+
+    # Code block content should be preserved
+    assert "# This is a comment" in result

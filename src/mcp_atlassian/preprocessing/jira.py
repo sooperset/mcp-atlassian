@@ -255,20 +255,20 @@ class JiraPreprocessor(BasePreprocessor):
         if self.disable_translation:
             return input_text
 
-        # Save code blocks to prevent recursive processing
-        code_blocks = []
-        inline_codes = []
+        # Save code blocks to prevent them from being processed by other transformations
+        code_blocks: list[str] = []
+        inline_codes: list[str] = []
 
-        # Extract code blocks
+        # Extract code blocks and replace with placeholders
         def save_code_block(match: re.Match) -> str:
             """
-            Process and save a code block.
+            Process and save a code block, returning a placeholder.
 
             Args:
                 match: Regex match object containing the code block
 
             Returns:
-                Jira-formatted code block
+                Placeholder string to be replaced later
             """
             syntax = match.group(1) or ""
             content = match.group(2)
@@ -276,26 +276,28 @@ class JiraPreprocessor(BasePreprocessor):
             if syntax:
                 code += ":" + syntax
             code += "}" + content + "{code}"
+            placeholder = f"\x00CODE_BLOCK_{len(code_blocks)}\x00"
             code_blocks.append(code)
-            return str(code)  # Ensure we return a string
+            return placeholder
 
-        # Extract inline code
+        # Extract inline code and replace with placeholders
         def save_inline_code(match: re.Match) -> str:
             """
-            Process and save inline code.
+            Process and save inline code, returning a placeholder.
 
             Args:
                 match: Regex match object containing the inline code
 
             Returns:
-                Jira-formatted inline code
+                Placeholder string to be replaced later
             """
             content = match.group(1)
             code = "{{" + content + "}}"
+            placeholder = f"\x00INLINE_CODE_{len(inline_codes)}\x00"
             inline_codes.append(code)
-            return str(code)  # Ensure we return a string
+            return placeholder
 
-        # Save code sections temporarily
+        # Replace code sections with placeholders
         output = re.sub(r"```(\w*)\n([\s\S]+?)```", save_code_block, input_text)
         output = re.sub(r"`([^`]+)`", save_inline_code, output)
 
@@ -402,6 +404,14 @@ class JiraPreprocessor(BasePreprocessor):
 
         # Rejoin the lines
         output = "\n".join(lines)
+
+        # Restore code blocks from placeholders
+        for i, code in enumerate(code_blocks):
+            output = output.replace(f"\x00CODE_BLOCK_{i}\x00", code)
+
+        # Restore inline code from placeholders
+        for i, code in enumerate(inline_codes):
+            output = output.replace(f"\x00INLINE_CODE_{i}\x00", code)
 
         return output
 
