@@ -1122,7 +1122,11 @@ async def get_attachments(
         str | None,
         Field(
             description=(
-                "(Optional) Filter by MIME type. Examples: 'image/png', 'application/pdf', "
+                "(Optional) Filter by MIME type. "
+                "**Note**: Confluence API returns 'application/octet-stream' for most binary files "
+                "(PNG, JPG, PDF) instead of specific MIME types like 'image/png'. "
+                "For more reliable filtering, use the 'filename' parameter. "
+                "Examples: 'application/octet-stream' (binary files), 'application/pdf', "
                 "'application/vnd.openxmlformats-officedocument.wordprocessingml.document' (for .docx)"
             ),
             default=None,
@@ -1137,6 +1141,11 @@ async def get_attachments(
     - Creation/modification dates
     - Version information
 
+    **Important**: Confluence API returns 'application/octet-stream' as the media type
+    for most binary files (PNG, JPG, PDF) instead of specific types like 'image/png'.
+    For filtering by file type, using the 'filename' parameter is more reliable
+    (e.g., filename='*.png' pattern matching if supported, or exact filename).
+
     Useful for:
     - Discovering what files are attached to a page
     - Getting attachment IDs for download operations
@@ -1149,7 +1158,7 @@ async def get_attachments(
         start: Starting index for pagination.
         limit: Maximum number of results (1-100).
         filename: Optional exact filename filter.
-        media_type: Optional MIME type filter.
+        media_type: Optional MIME type filter (note: most binaries return 'application/octet-stream').
 
     Returns:
         JSON string with list of attachments and metadata.
