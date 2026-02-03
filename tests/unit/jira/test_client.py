@@ -44,6 +44,7 @@ def test_init_with_basic_auth():
             password="test_token",
             cloud=True,
             verify_ssl=True,
+            timeout=75,
         )
 
         # Verify SSL verification was configured
@@ -85,6 +86,7 @@ def test_init_with_token_auth():
             token="test_personal_token",
             cloud=False,
             verify_ssl=False,
+            timeout=75,
         )
 
         # Verify SSL verification was configured with ssl_verify=False
