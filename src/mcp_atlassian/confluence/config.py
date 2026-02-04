@@ -161,6 +161,145 @@ class ConfluenceConfig:
             client_key_password=client_key_password,
         )
 
+    @classmethod
+    def from_env_multi(cls) -> dict[str, "ConfluenceConfig"]:
+        """Load multiple Confluence instances from environment variables.
+
+        Supports primary instance (CONFLUENCE_*) and numbered secondary instances
+        (CONFLUENCE_2_*, CONFLUENCE_3_*, etc.).
+
+        Returns:
+            dict[str, ConfluenceConfig]: Dictionary mapping instance names to configurations.
+                - Primary instance uses empty string "" as key
+                - Secondary instances use CONFLUENCE_{N}_INSTANCE_NAME or default "confluence_{N}"
+
+        Raises:
+            ValueError: If instance name is invalid or reserved.
+
+        Example:
+            ```bash
+            CONFLUENCE_URL=https://prod.atlassian.net/wiki
+            CONFLUENCE_USERNAME=user@example.com
+            CONFLUENCE_API_TOKEN=token1
+
+            CONFLUENCE_2_URL=https://staging.atlassian.net/wiki
+            CONFLUENCE_2_USERNAME=user@example.com
+            CONFLUENCE_2_API_TOKEN=token2
+            CONFLUENCE_2_INSTANCE_NAME=staging
+            ```
+        """
+        configs: dict[str, ConfluenceConfig] = {}
+        logger_instance = logging.getLogger("mcp-atlassian.confluence.config")
+
+        # Reserved names that cannot be used for instances
+        reserved_names = {"jira", "confluence"}
+
+        def validate_instance_name(name: str) -> None:
+            """Validate instance name format."""
+            if not name:
+                return  # Empty string is valid for primary
+            if name.lower() in reserved_names:
+                raise ValueError(
+                    f"Reserved instance name '{name}'. Cannot use reserved names: {reserved_names}"
+                )
+            # Allow alphanumeric and underscore only
+            if not all(c.isalnum() or c == "_" for c in name):
+                raise ValueError(
+                    f"Invalid instance name '{name}'. Only alphanumeric characters and underscore allowed."
+                )
+            if len(name) > 30:
+                raise ValueError(
+                    f"Instance name '{name}' too long. Maximum 30 characters."
+                )
+
+        # Try to load primary instance
+        try:
+            primary_config = cls.from_env()
+            validate_instance_name("")  # Validate empty string (always valid)
+            configs[""] = primary_config
+            logger_instance.info(
+                f"Loaded primary Confluence instance: {primary_config.url}"
+            )
+        except ValueError as e:
+            logger_instance.debug(
+                f"Primary Confluence instance not configured or incomplete: {e}"
+            )
+
+        # Load secondary instances (CONFLUENCE_2_*, CONFLUENCE_3_*, etc.)
+        instance_num = 2
+        while instance_num <= 99:  # Reasonable limit
+            prefix = f"CONFLUENCE_{instance_num}_"
+            url_var = f"{prefix}URL"
+
+            # Check if this instance number exists
+            if url_var not in os.environ:
+                # No more instances found
+                if instance_num == 2:
+                    # No secondary instances at all
+                    break
+                # Skip this number, keep checking (in case user skipped a number)
+                instance_num += 1
+                if instance_num > 10:  # Don't check beyond 10 if gaps found
+                    break
+                continue
+
+            # Instance exists, try to load it
+            try:
+                # Build environment dict for this instance
+                instance_env = {}
+                for key, value in os.environ.items():
+                    if key.startswith(prefix):
+                        # Map CONFLUENCE_2_URL -> CONFLUENCE_URL, etc.
+                        new_key = key.replace(prefix, "CONFLUENCE_")
+                        instance_env[new_key] = value
+
+                # Get instance name (custom or default)
+                instance_name_var = f"{prefix}INSTANCE_NAME"
+                instance_name = os.environ.get(
+                    instance_name_var, f"confluence_{instance_num}"
+                )
+
+                # Validate instance name
+                validate_instance_name(instance_name)
+
+                # Check for name collision
+                if instance_name in configs:
+                    logger_instance.warning(
+                        f"Instance name collision: '{instance_name}' already exists. Skipping CONFLUENCE_{instance_num}."
+                    )
+                    instance_num += 1
+                    continue
+
+                # Temporarily swap environment to load this instance
+                original_env = os.environ.copy()
+                try:
+                    # Clear Confluence env vars and set instance-specific ones
+                    for key in list(os.environ.keys()):
+                        if key.startswith("CONFLUENCE_") and not key.startswith(prefix):
+                            del os.environ[key]
+                    os.environ.update(instance_env)
+
+                    # Load config using from_env()
+                    instance_config = cls.from_env()
+                    configs[instance_name] = instance_config
+                    logger_instance.info(
+                        f"Loaded Confluence instance '{instance_name}': {instance_config.url}"
+                    )
+                finally:
+                    # Restore original environment
+                    os.environ.clear()
+                    os.environ.update(original_env)
+
+            except ValueError as e:
+                logger_instance.warning(
+                    f"Skipping CONFLUENCE_{instance_num} (incomplete or invalid config): {e}"
+                )
+
+            instance_num += 1
+
+        logger_instance.info(f"Loaded {len(configs)} Confluence instance(s)")
+        return configs
+
     def is_auth_configured(self) -> bool:
         """Check if the current authentication configuration is complete and valid for making API calls.
 

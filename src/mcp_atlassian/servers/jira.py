@@ -1,4 +1,21 @@
-"""Jira FastMCP server instance and tool definitions."""
+"""Jira FastMCP server instance and tool definitions.
+
+Multi-instance Support:
+-----------------------
+This module defines tools for the PRIMARY Jira instance using static @jira_mcp.tool() decorators.
+
+For SECONDARY instances (JIRA_2_*, JIRA_3_*, etc.):
+- Tools are registered dynamically in tool_factory.py
+- Secondary instance tools are prefixed: jira_{instance_name}_{tool}
+  e.g., "jira_tech_get_issue", "jira_staging_create_issue"
+- Primary instance keeps unprefixed names for backward compatibility
+
+Currently implemented in tool_factory.py:
+- Core tools: get_user_profile, get_issue, search, create_issue
+- Additional tools can be added as needed
+
+See: src/mcp_atlassian/servers/tool_factory.py
+"""
 
 import json
 import logging

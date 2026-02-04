@@ -154,17 +154,18 @@ def _create_user_config_for_fetcher(
         raise TypeError(f"Unsupported base_config type: {type(base_config)}")
 
 
-async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
+async def get_jira_fetcher(ctx: Context, instance_name: str = "") -> JiraFetcher:
     """Returns a JiraFetcher instance appropriate for the current request context.
 
     Args:
         ctx: The FastMCP context.
+        instance_name: Name of the Jira instance to connect to. Defaults to "" (primary instance).
 
     Returns:
         JiraFetcher instance for the current user or global config.
 
     Raises:
-        ValueError: If configuration or credentials are invalid.
+        ValueError: If configuration or credentials are invalid or instance not found.
     """
     logger.debug(f"get_jira_fetcher: ENTERED. Context ID: {id(ctx)}")
     try:
@@ -244,17 +245,28 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
                 if isinstance(lifespan_ctx_dict, dict)
                 else None
             )
-            if not app_lifespan_ctx or not app_lifespan_ctx.full_jira_config:
+            if not app_lifespan_ctx or not app_lifespan_ctx.jira_configs:
                 raise ValueError(
                     "Jira global configuration (URL, SSL) is not available from lifespan context."
                 )
 
+            base_jira_config = app_lifespan_ctx.jira_configs.get(instance_name)
+            if not base_jira_config:
+                available_instances = list(app_lifespan_ctx.jira_configs.keys())
+                instance_label = (
+                    "primary" if instance_name == "" else f"'{instance_name}'"
+                )
+                raise ValueError(
+                    f"Jira instance {instance_label} not found. Available instances: {available_instances}"
+                )
+
             cloud_id_info = f" with cloudId {user_cloud_id}" if user_cloud_id else ""
+            instance_label = "primary" if instance_name == "" else f"'{instance_name}'"
             logger.info(
-                f"Creating user-specific JiraFetcher (type: {user_auth_type}) for user {user_email or 'unknown'} (token ...{str(user_token)[-8:]}){cloud_id_info}"
+                f"Creating user-specific JiraFetcher for instance {instance_label} (type: {user_auth_type}) for user {user_email or 'unknown'} (token ...{str(user_token)[-8:]}){cloud_id_info}"
             )
             user_specific_config = _create_user_config_for_fetcher(
-                base_config=app_lifespan_ctx.full_jira_config,
+                base_config=base_jira_config,
                 auth_type=user_auth_type,
                 credentials=credentials,
                 cloud_id=user_cloud_id,
@@ -288,29 +300,43 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
         if isinstance(lifespan_ctx_dict_global, dict)
         else None
     )
-    if app_lifespan_ctx_global and app_lifespan_ctx_global.full_jira_config:
+    if app_lifespan_ctx_global and app_lifespan_ctx_global.jira_configs:
+        global_jira_config = app_lifespan_ctx_global.jira_configs.get(instance_name)
+        if not global_jira_config:
+            available_instances = list(app_lifespan_ctx_global.jira_configs.keys())
+            instance_label = "primary" if instance_name == "" else f"'{instance_name}'"
+            logger.error(
+                f"Jira instance {instance_label} not found. Available: {available_instances}"
+            )
+            raise ValueError(
+                f"Jira instance {instance_label} not available. Available instances: {available_instances}"
+            )
+        instance_label = "primary" if instance_name == "" else f"'{instance_name}'"
         logger.debug(
-            "get_jira_fetcher: Using global JiraFetcher from lifespan_context. "
-            f"Global config auth_type: {app_lifespan_ctx_global.full_jira_config.auth_type}"
+            f"get_jira_fetcher: Using global JiraFetcher for instance {instance_label} from lifespan_context. "
+            f"Global config auth_type: {global_jira_config.auth_type}"
         )
-        return JiraFetcher(config=app_lifespan_ctx_global.full_jira_config)
+        return JiraFetcher(config=global_jira_config)
     logger.error("Jira configuration could not be resolved.")
     raise ValueError(
         "Jira client (fetcher) not available. Ensure server is configured correctly."
     )
 
 
-async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
+async def get_confluence_fetcher(
+    ctx: Context, instance_name: str = ""
+) -> ConfluenceFetcher:
     """Returns a ConfluenceFetcher instance appropriate for the current request context.
 
     Args:
         ctx: The FastMCP context.
+        instance_name: Name of the Confluence instance to connect to. Defaults to "" (primary instance).
 
     Returns:
         ConfluenceFetcher instance for the current user or global config.
 
     Raises:
-        ValueError: If configuration or credentials are invalid.
+        ValueError: If configuration or credentials are invalid or instance not found.
     """
     logger.debug(f"get_confluence_fetcher: ENTERED. Context ID: {id(ctx)}")
     try:
@@ -412,17 +438,30 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
                 if isinstance(lifespan_ctx_dict, dict)
                 else None
             )
-            if not app_lifespan_ctx or not app_lifespan_ctx.full_confluence_config:
+            if not app_lifespan_ctx or not app_lifespan_ctx.confluence_configs:
                 raise ValueError(
                     "Confluence global configuration (URL, SSL) is not available from lifespan context."
                 )
 
+            base_confluence_config = app_lifespan_ctx.confluence_configs.get(
+                instance_name
+            )
+            if not base_confluence_config:
+                available_instances = list(app_lifespan_ctx.confluence_configs.keys())
+                instance_label = (
+                    "primary" if instance_name == "" else f"'{instance_name}'"
+                )
+                raise ValueError(
+                    f"Confluence instance {instance_label} not found. Available instances: {available_instances}"
+                )
+
             cloud_id_info = f" with cloudId {user_cloud_id}" if user_cloud_id else ""
+            instance_label = "primary" if instance_name == "" else f"'{instance_name}'"
             logger.info(
-                f"Creating user-specific ConfluenceFetcher (type: {user_auth_type}) for user {user_email or 'unknown'} (token ...{str(user_token)[-8:]}){cloud_id_info}"
+                f"Creating user-specific ConfluenceFetcher for instance {instance_label} (type: {user_auth_type}) for user {user_email or 'unknown'} (token ...{str(user_token)[-8:]}){cloud_id_info}"
             )
             user_specific_config = _create_user_config_for_fetcher(
-                base_config=app_lifespan_ctx.full_confluence_config,
+                base_config=base_confluence_config,
                 auth_type=user_auth_type,
                 credentials=credentials,
                 cloud_id=user_cloud_id,
@@ -473,12 +512,27 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
         if isinstance(lifespan_ctx_dict_global, dict)
         else None
     )
-    if app_lifespan_ctx_global and app_lifespan_ctx_global.full_confluence_config:
-        logger.debug(
-            "get_confluence_fetcher: Using global ConfluenceFetcher from lifespan_context. "
-            f"Global config auth_type: {app_lifespan_ctx_global.full_confluence_config.auth_type}"
+    if app_lifespan_ctx_global and app_lifespan_ctx_global.confluence_configs:
+        global_confluence_config = app_lifespan_ctx_global.confluence_configs.get(
+            instance_name
         )
-        return ConfluenceFetcher(config=app_lifespan_ctx_global.full_confluence_config)
+        if not global_confluence_config:
+            available_instances = list(
+                app_lifespan_ctx_global.confluence_configs.keys()
+            )
+            instance_label = "primary" if instance_name == "" else f"'{instance_name}'"
+            logger.error(
+                f"Confluence instance {instance_label} not found. Available: {available_instances}"
+            )
+            raise ValueError(
+                f"Confluence instance {instance_label} not available. Available instances: {available_instances}"
+            )
+        instance_label = "primary" if instance_name == "" else f"'{instance_name}'"
+        logger.debug(
+            f"get_confluence_fetcher: Using global ConfluenceFetcher for instance {instance_label} from lifespan_context. "
+            f"Global config auth_type: {global_confluence_config.auth_type}"
+        )
+        return ConfluenceFetcher(config=global_confluence_config)
     logger.error("Confluence configuration could not be resolved.")
     raise ValueError(
         "Confluence client (fetcher) not available. Ensure server is configured correctly."
