@@ -43,47 +43,57 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
     read_only = is_read_only_mode()
     enabled_tools = get_enabled_tools()
 
-    loaded_jira_config: JiraConfig | None = None
-    loaded_confluence_config: ConfluenceConfig | None = None
+    loaded_jira_configs: dict[str, JiraConfig] = {}
+    loaded_confluence_configs: dict[str, ConfluenceConfig] = {}
 
     if services.get("jira"):
         try:
-            jira_config = JiraConfig.from_env()
-            if jira_config.is_auth_configured():
-                loaded_jira_config = jira_config
-                logger.info(
-                    "Jira configuration loaded and authentication is configured."
-                )
-            else:
-                logger.warning(
-                    "Jira URL found, but authentication is not fully configured. Jira tools will be unavailable."
-                )
+            jira_configs = JiraConfig.from_env_multi()
+            # Filter to only include configs with valid authentication
+            for instance_name, config in jira_configs.items():
+                if config.is_auth_configured():
+                    loaded_jira_configs[instance_name] = config
+                    instance_label = "primary" if instance_name == "" else instance_name
+                    logger.info(
+                        f"Jira instance '{instance_label}' loaded: {config.url}"
+                    )
+                else:
+                    instance_label = "primary" if instance_name == "" else instance_name
+                    logger.warning(
+                        f"Jira instance '{instance_label}' has incomplete authentication. Will be unavailable."
+                    )
         except Exception as e:
-            logger.error(f"Failed to load Jira configuration: {e}", exc_info=True)
+            logger.error(f"Failed to load Jira configurations: {e}", exc_info=True)
 
     if services.get("confluence"):
         try:
-            confluence_config = ConfluenceConfig.from_env()
-            if confluence_config.is_auth_configured():
-                loaded_confluence_config = confluence_config
-                logger.info(
-                    "Confluence configuration loaded and authentication is configured."
-                )
-            else:
-                logger.warning(
-                    "Confluence URL found, but authentication is not fully configured. Confluence tools will be unavailable."
-                )
+            confluence_configs = ConfluenceConfig.from_env_multi()
+            # Filter to only include configs with valid authentication
+            for instance_name, config in confluence_configs.items():
+                if config.is_auth_configured():
+                    loaded_confluence_configs[instance_name] = config
+                    instance_label = "primary" if instance_name == "" else instance_name
+                    logger.info(
+                        f"Confluence instance '{instance_label}' loaded: {config.url}"
+                    )
+                else:
+                    instance_label = "primary" if instance_name == "" else instance_name
+                    logger.warning(
+                        f"Confluence instance '{instance_label}' has incomplete authentication. Will be unavailable."
+                    )
         except Exception as e:
-            logger.error(f"Failed to load Confluence configuration: {e}", exc_info=True)
+            logger.error(f"Failed to load Confluence configurations: {e}", exc_info=True)
 
     app_context = MainAppContext(
-        full_jira_config=loaded_jira_config,
-        full_confluence_config=loaded_confluence_config,
+        jira_configs=loaded_jira_configs,
+        confluence_configs=loaded_confluence_configs,
         read_only=read_only,
         enabled_tools=enabled_tools,
     )
     logger.info(f"Read-only mode: {'ENABLED' if read_only else 'DISABLED'}")
     logger.info(f"Enabled tools filter: {enabled_tools or 'All tools enabled'}")
+    logger.info(f"Loaded {len(loaded_jira_configs)} Jira instance(s)")
+    logger.info(f"Loaded {len(loaded_confluence_configs)} Confluence instance(s)")
 
     try:
         yield {"app_lifespan_context": app_context}
@@ -95,10 +105,10 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
         # Perform any necessary cleanup here
         try:
             # Close any open connections if needed
-            if loaded_jira_config:
-                logger.debug("Cleaning up Jira resources...")
-            if loaded_confluence_config:
-                logger.debug("Cleaning up Confluence resources...")
+            if loaded_jira_configs:
+                logger.debug(f"Cleaning up {len(loaded_jira_configs)} Jira instance(s)...")
+            if loaded_confluence_configs:
+                logger.debug(f"Cleaning up {len(loaded_confluence_configs)} Confluence instance(s)...")
         except Exception as e:
             logger.error(f"Error during cleanup: {e}", exc_info=True)
         logger.info("Main Atlassian MCP server lifespan shutdown complete.")
