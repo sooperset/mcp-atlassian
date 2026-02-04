@@ -1035,6 +1035,7 @@ dependencies = [
     { name = "trio" },
     { name = "types-cachetools" },
     { name = "types-python-dateutil" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
     { name = "urllib3" },
     { name = "uvicorn" },
 ]
@@ -1075,6 +1076,7 @@ requires-dist = [
     { name = "trio", specifier = ">=0.29.0" },
     { name = "types-cachetools", specifier = ">=5.5.0.20240820" },
     { name = "types-python-dateutil", specifier = ">=2.9.0.20241206" },
+    { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2024.1" },
     { name = "urllib3", specifier = ">=2.6.3" },
     { name = "uvicorn", specifier = ">=0.27.1" },
 ]
@@ -2308,6 +2310,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f8/b1/0c11f5058406b3af7609f121aaa6b609744687f1d158b3c3a5bf4cc94238/typing_inspection-0.4.1.tar.gz", hash = "sha256:6ae134cc0203c33377d43188d4064e9b357dba58cff3185f22924610e70a9d28", size = 75726, upload-time = "2025-05-21T18:55:23.885Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/17/69/cd203477f944c353c31bade965f880aa1061fd6bf05ded0726ca845b6ff7/typing_inspection-0.4.1-py3-none-any.whl", hash = "sha256:389055682238f53b04f7badcb49b989835495a96700ced5dab2d8feae4b26f51", size = 14552, upload-time = "2025-05-21T18:55:22.152Z" },
+]
+
+[[package]]
+name = "tzdata"
+version = "2025.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5e/a7/c202b344c5ca7daf398f3b8a477eeb205cf3b6f32e7ec3a6bac0629ca975/tzdata-2025.3.tar.gz", hash = "sha256:de39c2ca5dc7b0344f2eba86f49d614019d29f060fc4ebc8a417896a620b56a7", size = 196772, upload-time = "2025-12-13T17:45:35.667Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c7/b0/003792df09decd6849a5e39c28b513c06e84436a54440380862b5aeff25d/tzdata-2025.3-py2.py3-none-any.whl", hash = "sha256:06a47e5700f3081aab02b2e513160914ff0694bce9947d6b76ebd6bf57cfc5d1", size = 348521, upload-time = "2025-12-13T17:45:33.889Z" },
 ]
 
 [[package]]
