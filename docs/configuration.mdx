@@ -113,6 +113,135 @@ This guide covers IDE integration, environment variables, and advanced configura
   </Tab>
 </Tabs>
 
+## Multi-Instance Configuration
+
+Connect to multiple Jira and/or Confluence instances simultaneously. This is useful when working with production, staging, and development environments, or when integrating with multiple organizations.
+
+### Configuration Pattern
+
+- **Primary instance:** Use standard variables (`JIRA_URL`, `JIRA_USERNAME`, etc.)
+- **Secondary instances:** Use numbered prefixes (`JIRA_2_*`, `JIRA_3_*`, `CONFLUENCE_2_*`, `CONFLUENCE_3_*`, etc.)
+- **Instance naming:** Use `{SERVICE}_{N}_INSTANCE_NAME` to set a custom name (default: `jira_{N}`, `confluence_{N}`)
+
+### Tool Naming
+
+- **Primary instance:** Tools use standard names (e.g., `jira_get_issue`, `confluence_search`)
+- **Secondary instances:** Tools are prefixed with the instance name (e.g., `jira_staging_get_issue`, `jira_prod_create_issue`)
+
+### Instance Name Rules
+
+- Must be alphanumeric + underscore only
+- Maximum 30 characters
+- Cannot use reserved names: `jira`, `confluence`
+
+### Example: Multiple Jira Instances
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "uvx",
+      "args": ["mcp-atlassian"],
+      "env": {
+        // Primary instance (production)
+        "JIRA_URL": "https://prod.atlassian.net",
+        "JIRA_USERNAME": "prod@example.com",
+        "JIRA_API_TOKEN": "prod_token",
+
+        // Secondary instance #2 (staging)
+        "JIRA_2_URL": "https://staging.atlassian.net",
+        "JIRA_2_USERNAME": "staging@example.com",
+        "JIRA_2_API_TOKEN": "staging_token",
+        "JIRA_2_INSTANCE_NAME": "staging",
+
+        // Secondary instance #3 (development)
+        "JIRA_3_URL": "https://dev.internal.example.com",
+        "JIRA_3_PERSONAL_TOKEN": "dev_pat_token",
+        "JIRA_3_INSTANCE_NAME": "dev",
+        "JIRA_3_SSL_VERIFY": "false"
+      }
+    }
+  }
+}
+```
+
+**Available tools:**
+- Primary: `jira_get_issue`, `jira_search`, `jira_create_issue`, etc.
+- Staging: `jira_staging_get_issue`, `jira_staging_search`, `jira_staging_create_issue`, etc.
+- Dev: `jira_dev_get_issue`, `jira_dev_search`, `jira_dev_create_issue`, etc.
+
+### Example: Multiple Confluence Instances
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "uvx",
+      "args": ["mcp-atlassian"],
+      "env": {
+        // Primary instance (corporate)
+        "CONFLUENCE_URL": "https://corporate.atlassian.net/wiki",
+        "CONFLUENCE_USERNAME": "corp@example.com",
+        "CONFLUENCE_API_TOKEN": "corp_token",
+
+        // Secondary instance #2 (community)
+        "CONFLUENCE_2_URL": "https://community.atlassian.net/wiki",
+        "CONFLUENCE_2_USERNAME": "community@example.com",
+        "CONFLUENCE_2_API_TOKEN": "community_token",
+        "CONFLUENCE_2_INSTANCE_NAME": "community",
+        "CONFLUENCE_2_SPACES_FILTER": "PUBLIC,DOCS"
+      }
+    }
+  }
+}
+```
+
+### Mixed Instances
+
+You can combine multiple Jira and Confluence instances:
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "uvx",
+      "args": ["mcp-atlassian"],
+      "env": {
+        // Production Jira
+        "JIRA_URL": "https://prod.atlassian.net",
+        "JIRA_USERNAME": "prod@example.com",
+        "JIRA_API_TOKEN": "prod_token",
+
+        // Staging Jira
+        "JIRA_2_URL": "https://staging.atlassian.net",
+        "JIRA_2_USERNAME": "staging@example.com",
+        "JIRA_2_API_TOKEN": "staging_token",
+        "JIRA_2_INSTANCE_NAME": "staging",
+
+        // Production Confluence
+        "CONFLUENCE_URL": "https://prod.atlassian.net/wiki",
+        "CONFLUENCE_USERNAME": "prod@example.com",
+        "CONFLUENCE_API_TOKEN": "prod_token",
+
+        // Staging Confluence
+        "CONFLUENCE_2_URL": "https://staging.atlassian.net/wiki",
+        "CONFLUENCE_2_USERNAME": "staging@example.com",
+        "CONFLUENCE_2_API_TOKEN": "staging_token",
+        "CONFLUENCE_2_INSTANCE_NAME": "staging"
+      }
+    }
+  }
+}
+```
+
+### Multi-Instance Notes
+
+- Each instance can use different authentication methods
+- All optional settings (SSL, proxy, custom headers, filters, etc.) can be configured per instance
+- Instance numbers can be non-sequential (e.g., `JIRA_2_*`, `JIRA_5_*` without `JIRA_3_*`, `JIRA_4_*`)
+- If you skip the primary instance, secondary instances are still loaded
+- Tools for unavailable instances will not be registered
+
 ## Environment Variables
 
 ### Connection Settings

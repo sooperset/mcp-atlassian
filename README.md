@@ -53,6 +53,8 @@ Add to your Claude Desktop or Cursor MCP configuration:
 
 > **Server/Data Center users**: Use `JIRA_PERSONAL_TOKEN` instead of `JIRA_USERNAME` + `JIRA_API_TOKEN`. See [Authentication](https://personal-1d37018d.mintlify.app/docs/authentication) for details.
 
+> **Multiple instances**: Connect to production, staging, and development environments simultaneously using `JIRA_2_*`, `JIRA_3_*`, `CONFLUENCE_2_*`, etc. See [Configuration](https://personal-1d37018d.mintlify.app/docs/configuration#multi-instance-configuration) for details.
+
 ### 3. Start Using
 
 Ask your AI assistant to:
