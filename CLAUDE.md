@@ -71,6 +71,7 @@ Use the smart router tools that auto-detect the instance:
 - `get_jira_issue_auto` - Works with any Jira URL or issue key
 - `search_jira_auto` - Searches across all instances or specific instance by URL
 - `create_jira_issue_auto` - Creates issues with automatic instance detection
+- `jira_update_issue_auto` - Updates issues with automatic instance detection (use for tech issues like CEXP-845; pass full URL or `instance_hint="tech"`)
 
 ### Manual Tool Selection
 If you need explicit control:
@@ -86,6 +87,8 @@ If you need explicit control:
 3. **By explicit user request**:
    - "From the tech instance..." → use `jira_tech_*` tools
    - "In the main Jira..." → use `jira_*` tools
+
+4. **Updating an issue**: If you loaded an issue with `jira_tech_get_issue` or `get_jira_issue_auto` (e.g. CEXP-845 on justworks-tech), use `jira_update_issue_auto` with the same URL or `instance_hint="tech"`. Do not use `jira_update_issue` — that targets the primary instance only and will fail with "Issue does not exist or you do not have permission."
 
 ## Confluence Instances
 

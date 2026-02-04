@@ -134,7 +134,8 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
         )
         create_router_tools(app, loaded_jira_configs)
         logger.info(
-            "✅ Smart router tools registered (get_jira_issue_auto, search_jira_auto, create_jira_issue_auto)"
+            "✅ Smart router tools registered (get_jira_issue_auto, search_jira_auto, "
+            "create_jira_issue_auto, jira_update_issue_auto)"
         )
 
     # Debug: Log summary of all registered tools
