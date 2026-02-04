@@ -260,3 +260,195 @@ def test_from_env_without_client_cert():
         assert config.client_cert is None
         assert config.client_key is None
         assert config.client_key_password is None
+
+
+def test_from_env_multi_single_instance():
+    """Test that from_env_multi returns primary instance with empty string key."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://test.atlassian.net",
+            "JIRA_USERNAME": "test_username",
+            "JIRA_API_TOKEN": "test_token",
+        },
+        clear=True,
+    ):
+        configs = JiraConfig.from_env_multi()
+        assert isinstance(configs, dict)
+        assert len(configs) == 1
+        assert "" in configs  # Primary instance has empty string key
+        primary = configs[""]
+        assert primary.url == "https://test.atlassian.net"
+        assert primary.auth_type == "basic"
+        assert primary.username == "test_username"
+
+
+def test_from_env_multi_two_instances():
+    """Test loading primary and one secondary instance."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://prod.atlassian.net",
+            "JIRA_USERNAME": "user@example.com",
+            "JIRA_API_TOKEN": "prod_token",
+            "JIRA_2_URL": "https://staging.atlassian.net",
+            "JIRA_2_USERNAME": "user@example.com",
+            "JIRA_2_API_TOKEN": "staging_token",
+            "JIRA_2_INSTANCE_NAME": "staging",
+        },
+        clear=True,
+    ):
+        configs = JiraConfig.from_env_multi()
+        assert len(configs) == 2
+        assert "" in configs  # Primary
+        assert "staging" in configs  # Secondary with custom name
+
+        primary = configs[""]
+        assert primary.url == "https://prod.atlassian.net"
+        assert primary.username == "user@example.com"
+
+        staging = configs["staging"]
+        assert staging.url == "https://staging.atlassian.net"
+        assert staging.username == "user@example.com"
+
+
+def test_from_env_multi_default_instance_name():
+    """Test that secondary instance uses default name when INSTANCE_NAME not provided."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://prod.atlassian.net",
+            "JIRA_USERNAME": "user@example.com",
+            "JIRA_API_TOKEN": "prod_token",
+            "JIRA_2_URL": "https://staging.atlassian.net",
+            "JIRA_2_USERNAME": "user@example.com",
+            "JIRA_2_API_TOKEN": "staging_token",
+        },
+        clear=True,
+    ):
+        configs = JiraConfig.from_env_multi()
+        assert len(configs) == 2
+        assert "" in configs
+        assert "jira_2" in configs  # Default name
+
+
+def test_from_env_multi_three_instances():
+    """Test loading multiple secondary instances."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://jira-prod.example.com",
+            "JIRA_PERSONAL_TOKEN": "prod_token",
+            "JIRA_2_URL": "https://jira-staging.example.com",
+            "JIRA_2_PERSONAL_TOKEN": "staging_token",
+            "JIRA_2_INSTANCE_NAME": "staging",
+            "JIRA_3_URL": "https://jira-dev.example.com",
+            "JIRA_3_PERSONAL_TOKEN": "dev_token",
+            "JIRA_3_INSTANCE_NAME": "dev",
+        },
+        clear=True,
+    ):
+        configs = JiraConfig.from_env_multi()
+        assert len(configs) == 3
+        assert "" in configs
+        assert "staging" in configs
+        assert "dev" in configs
+
+
+def test_from_env_multi_skip_incomplete_instance():
+    """Test that instances with incomplete config are skipped."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://prod.atlassian.net",
+            "JIRA_USERNAME": "user@example.com",
+            "JIRA_API_TOKEN": "prod_token",
+            "JIRA_2_URL": "https://staging.atlassian.net",
+            # Missing JIRA_2 credentials
+        },
+        clear=True,
+    ):
+        configs = JiraConfig.from_env_multi()
+        assert len(configs) == 1  # Only primary loaded
+        assert "" in configs
+        assert "jira_2" not in configs
+
+
+def test_from_env_multi_invalid_instance_name(caplog):
+    """Test that invalid instance names are skipped with warning."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://prod.atlassian.net",
+            "JIRA_USERNAME": "user@example.com",
+            "JIRA_API_TOKEN": "prod_token",
+            "JIRA_2_URL": "https://staging.atlassian.net",
+            "JIRA_2_USERNAME": "user@example.com",
+            "JIRA_2_API_TOKEN": "staging_token",
+            "JIRA_2_INSTANCE_NAME": "invalid-name!",  # Contains special chars
+        },
+        clear=True,
+    ):
+        configs = JiraConfig.from_env_multi()
+        # Should only load primary, skip invalid instance
+        assert len(configs) == 1
+        assert "" in configs
+        assert "invalid-name!" not in configs
+        # Verify warning was logged
+        assert "Invalid instance name" in caplog.text
+
+
+def test_from_env_multi_reserved_instance_name(caplog):
+    """Test that reserved instance names are skipped with warning."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://prod.atlassian.net",
+            "JIRA_USERNAME": "user@example.com",
+            "JIRA_API_TOKEN": "prod_token",
+            "JIRA_2_URL": "https://staging.atlassian.net",
+            "JIRA_2_USERNAME": "user@example.com",
+            "JIRA_2_API_TOKEN": "staging_token",
+            "JIRA_2_INSTANCE_NAME": "jira",  # Reserved name
+        },
+        clear=True,
+    ):
+        configs = JiraConfig.from_env_multi()
+        # Should only load primary, skip reserved name
+        assert len(configs) == 1
+        assert "" in configs
+        assert "jira" not in configs
+        # Verify warning was logged
+        assert "Reserved instance name" in caplog.text
+
+
+def test_from_env_multi_empty_dict_when_no_config():
+    """Test that from_env_multi returns empty dict when no config is present."""
+    with patch.dict(os.environ, {}, clear=True):
+        configs = JiraConfig.from_env_multi()
+        assert isinstance(configs, dict)
+        assert len(configs) == 0
+
+
+def test_from_env_multi_mixed_auth_types():
+    """Test loading instances with different authentication types."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://prod.atlassian.net",
+            "JIRA_USERNAME": "user@example.com",
+            "JIRA_API_TOKEN": "prod_token",
+            "JIRA_2_URL": "https://staging.example.com",
+            "JIRA_2_PERSONAL_TOKEN": "staging_pat",
+            "JIRA_2_INSTANCE_NAME": "staging",
+        },
+        clear=True,
+    ):
+        configs = JiraConfig.from_env_multi()
+        assert len(configs) == 2
+
+        primary = configs[""]
+        assert primary.auth_type == "basic"
+
+        staging = configs["staging"]
+        assert staging.auth_type == "pat"
