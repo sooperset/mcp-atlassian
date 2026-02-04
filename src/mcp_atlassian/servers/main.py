@@ -29,6 +29,7 @@ from .confluence import confluence_mcp
 from .context import MainAppContext
 from .jira import jira_mcp
 from .tool_factory import create_confluence_instance_tools, create_jira_instance_tools
+from .tool_router import create_router_tools
 
 logger = logging.getLogger("mcp-atlassian.server.main")
 
@@ -121,6 +122,12 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
             logger.info(
                 f"✅ Completed tool registration for Confluence instance '{instance_label}'"
             )
+
+    # Register smart router tools if we have multiple Jira instances
+    if len(loaded_jira_configs) > 1:
+        logger.info("🔧 Registering smart router tools for automatic instance detection...")
+        create_router_tools(app, loaded_jira_configs)
+        logger.info("✅ Smart router tools registered (get_jira_issue_auto, search_jira_auto, create_jira_issue_auto)")
 
     # Debug: Log summary of all registered tools
     logger.info("=" * 70)
