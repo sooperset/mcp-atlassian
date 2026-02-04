@@ -84,7 +84,9 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
                         f"Confluence instance '{instance_label}' has incomplete authentication. Will be unavailable."
                     )
         except Exception as e:
-            logger.error(f"Failed to load Confluence configurations: {e}", exc_info=True)
+            logger.error(
+                f"Failed to load Confluence configurations: {e}", exc_info=True
+            )
 
     app_context = MainAppContext(
         jira_configs=loaded_jira_configs,
@@ -112,7 +114,9 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
 
     # Register tools for secondary Confluence instances (primary instance uses confluence_mcp)
     for instance_name in loaded_confluence_configs.keys():
-        if instance_name != "":  # Skip primary instance (already registered in confluence.py)
+        if (
+            instance_name != ""
+        ):  # Skip primary instance (already registered in confluence.py)
             instance_label = instance_name
             logger.info(
                 f"🔧 Registering tools for Confluence instance '{instance_label}' "
@@ -125,9 +129,13 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
 
     # Register smart router tools if we have multiple Jira instances
     if len(loaded_jira_configs) > 1:
-        logger.info("🔧 Registering smart router tools for automatic instance detection...")
+        logger.info(
+            "🔧 Registering smart router tools for automatic instance detection..."
+        )
         create_router_tools(app, loaded_jira_configs)
-        logger.info("✅ Smart router tools registered (get_jira_issue_auto, search_jira_auto, create_jira_issue_auto)")
+        logger.info(
+            "✅ Smart router tools registered (get_jira_issue_auto, search_jira_auto, create_jira_issue_auto)"
+        )
 
     # Debug: Log summary of all registered tools
     logger.info("=" * 70)
@@ -158,9 +166,13 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
         try:
             # Close any open connections if needed
             if loaded_jira_configs:
-                logger.debug(f"Cleaning up {len(loaded_jira_configs)} Jira instance(s)...")
+                logger.debug(
+                    f"Cleaning up {len(loaded_jira_configs)} Jira instance(s)..."
+                )
             if loaded_confluence_configs:
-                logger.debug(f"Cleaning up {len(loaded_confluence_configs)} Confluence instance(s)...")
+                logger.debug(
+                    f"Cleaning up {len(loaded_confluence_configs)} Confluence instance(s)..."
+                )
         except Exception as e:
             logger.error(f"Error during cleanup: {e}", exc_info=True)
         logger.info("Main Atlassian MCP server lifespan shutdown complete.")

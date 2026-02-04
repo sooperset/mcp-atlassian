@@ -273,15 +273,15 @@ class JiraConfig:
         logger_instance = logging.getLogger("mcp-atlassian.jira.config")
 
         # Reserved names that cannot be used for instances
-        RESERVED_NAMES = {"jira", "confluence"}
+        reserved_names = {"jira", "confluence"}
 
         def validate_instance_name(name: str) -> None:
             """Validate instance name format."""
             if not name:
                 return  # Empty string is valid for primary
-            if name.lower() in RESERVED_NAMES:
+            if name.lower() in reserved_names:
                 raise ValueError(
-                    f"Reserved instance name '{name}'. Cannot use reserved names: {RESERVED_NAMES}"
+                    f"Reserved instance name '{name}'. Cannot use reserved names: {reserved_names}"
                 )
             # Allow alphanumeric and underscore only
             if not all(c.isalnum() or c == "_" for c in name):
@@ -298,9 +298,7 @@ class JiraConfig:
             primary_config = cls.from_env()
             validate_instance_name("")  # Validate empty string (always valid)
             configs[""] = primary_config
-            logger_instance.info(
-                f"Loaded primary Jira instance: {primary_config.url}"
-            )
+            logger_instance.info(f"Loaded primary Jira instance: {primary_config.url}")
         except ValueError as e:
             logger_instance.debug(
                 f"Primary Jira instance not configured or incomplete: {e}"
@@ -336,7 +334,9 @@ class JiraConfig:
 
                 # Get instance name (custom or default)
                 instance_name_var = f"{prefix}INSTANCE_NAME"
-                instance_name = os.environ.get(instance_name_var, f"jira_{instance_num}")
+                instance_name = os.environ.get(
+                    instance_name_var, f"jira_{instance_num}"
+                )
 
                 # Validate instance name
                 validate_instance_name(instance_name)

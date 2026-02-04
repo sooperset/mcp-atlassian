@@ -3,19 +3,19 @@
 
 Run this script to verify multi-instance tool registration before starting your MCP client.
 """
+
 import asyncio
-import json
 import os
 import sys
 
 
-async def verify_tools():
+async def verify_tools() -> None:
     """Verify tools that will be registered."""
     # Import here to get environment from shell
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
-    from mcp_atlassian.jira.config import JiraConfig
     from mcp_atlassian.confluence.config import ConfluenceConfig
+    from mcp_atlassian.jira.config import JiraConfig
 
     print("=" * 70)
     print("MCP-Atlassian Multi-Instance Tool Verification")
@@ -43,9 +43,7 @@ async def verify_tools():
         for instance_name, config in confluence_configs.items():
             instance_label = "primary" if instance_name == "" else instance_name
             prefix = (
-                "confluence_"
-                if instance_name == ""
-                else f"confluence_{instance_name}_"
+                "confluence_" if instance_name == "" else f"confluence_{instance_name}_"
             )
             print(f"  • {instance_label:15} {config.url}")
             print(f"    Tool prefix: {prefix}")

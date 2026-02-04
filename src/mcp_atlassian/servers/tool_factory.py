@@ -4,13 +4,11 @@ This module provides factory functions to dynamically register tools for
 multiple Jira and Confluence instances.
 """
 
-import functools
 import logging
-from typing import Any, Callable
+from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
 from pydantic import Field
-from typing_extensions import Annotated
 
 from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 from mcp_atlassian.servers.dependencies import get_confluence_fetcher, get_jira_fetcher
@@ -56,9 +54,10 @@ def create_jira_instance_tools(
         ],
     ) -> str:
         """Retrieve profile information for a specific Jira user."""
+        from requests.exceptions import HTTPError
+
         from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
         from mcp_atlassian.models.jira.common import JiraUser
-        from requests.exceptions import HTTPError
 
         jira = await get_jira_fetcher(ctx, instance_name=instance_name)
         try:

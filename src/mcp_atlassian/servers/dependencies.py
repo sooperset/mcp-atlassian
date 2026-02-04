@@ -253,7 +253,9 @@ async def get_jira_fetcher(ctx: Context, instance_name: str = "") -> JiraFetcher
             base_jira_config = app_lifespan_ctx.jira_configs.get(instance_name)
             if not base_jira_config:
                 available_instances = list(app_lifespan_ctx.jira_configs.keys())
-                instance_label = "primary" if instance_name == "" else f"'{instance_name}'"
+                instance_label = (
+                    "primary" if instance_name == "" else f"'{instance_name}'"
+                )
                 raise ValueError(
                     f"Jira instance {instance_label} not found. Available instances: {available_instances}"
                 )
@@ -303,7 +305,9 @@ async def get_jira_fetcher(ctx: Context, instance_name: str = "") -> JiraFetcher
         if not global_jira_config:
             available_instances = list(app_lifespan_ctx_global.jira_configs.keys())
             instance_label = "primary" if instance_name == "" else f"'{instance_name}'"
-            logger.error(f"Jira instance {instance_label} not found. Available: {available_instances}")
+            logger.error(
+                f"Jira instance {instance_label} not found. Available: {available_instances}"
+            )
             raise ValueError(
                 f"Jira instance {instance_label} not available. Available instances: {available_instances}"
             )
@@ -319,7 +323,9 @@ async def get_jira_fetcher(ctx: Context, instance_name: str = "") -> JiraFetcher
     )
 
 
-async def get_confluence_fetcher(ctx: Context, instance_name: str = "") -> ConfluenceFetcher:
+async def get_confluence_fetcher(
+    ctx: Context, instance_name: str = ""
+) -> ConfluenceFetcher:
     """Returns a ConfluenceFetcher instance appropriate for the current request context.
 
     Args:
@@ -437,10 +443,14 @@ async def get_confluence_fetcher(ctx: Context, instance_name: str = "") -> Confl
                     "Confluence global configuration (URL, SSL) is not available from lifespan context."
                 )
 
-            base_confluence_config = app_lifespan_ctx.confluence_configs.get(instance_name)
+            base_confluence_config = app_lifespan_ctx.confluence_configs.get(
+                instance_name
+            )
             if not base_confluence_config:
                 available_instances = list(app_lifespan_ctx.confluence_configs.keys())
-                instance_label = "primary" if instance_name == "" else f"'{instance_name}'"
+                instance_label = (
+                    "primary" if instance_name == "" else f"'{instance_name}'"
+                )
                 raise ValueError(
                     f"Confluence instance {instance_label} not found. Available instances: {available_instances}"
                 )
@@ -499,15 +509,21 @@ async def get_confluence_fetcher(ctx: Context, instance_name: str = "") -> Confl
     lifespan_ctx_dict_global = ctx.request_context.lifespan_context  # type: ignore
     app_lifespan_ctx_global: MainAppContext | None = (
         lifespan_ctx_dict_global.get("app_lifespan_context")
-        if isinstance(lifespan_ctx_global, dict)
+        if isinstance(lifespan_ctx_dict_global, dict)
         else None
     )
     if app_lifespan_ctx_global and app_lifespan_ctx_global.confluence_configs:
-        global_confluence_config = app_lifespan_ctx_global.confluence_configs.get(instance_name)
+        global_confluence_config = app_lifespan_ctx_global.confluence_configs.get(
+            instance_name
+        )
         if not global_confluence_config:
-            available_instances = list(app_lifespan_ctx_global.confluence_configs.keys())
+            available_instances = list(
+                app_lifespan_ctx_global.confluence_configs.keys()
+            )
             instance_label = "primary" if instance_name == "" else f"'{instance_name}'"
-            logger.error(f"Confluence instance {instance_label} not found. Available: {available_instances}")
+            logger.error(
+                f"Confluence instance {instance_label} not found. Available: {available_instances}"
+            )
             raise ValueError(
                 f"Confluence instance {instance_label} not available. Available instances: {available_instances}"
             )

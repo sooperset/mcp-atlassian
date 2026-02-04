@@ -156,8 +156,8 @@ class TestMainAppContext:
         str_repr = str(context)
 
         assert "MainAppContext" in str_repr
-        assert "full_jira_config=None" in str_repr
-        assert "full_confluence_config=None" in str_repr
+        assert "jira_configs=None" in str_repr
+        assert "confluence_configs=None" in str_repr
         assert "read_only=False" in str_repr
         assert "enabled_tools=None" in str_repr
 

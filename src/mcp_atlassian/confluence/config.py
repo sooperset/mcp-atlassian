@@ -192,15 +192,15 @@ class ConfluenceConfig:
         logger_instance = logging.getLogger("mcp-atlassian.confluence.config")
 
         # Reserved names that cannot be used for instances
-        RESERVED_NAMES = {"jira", "confluence"}
+        reserved_names = {"jira", "confluence"}
 
         def validate_instance_name(name: str) -> None:
             """Validate instance name format."""
             if not name:
                 return  # Empty string is valid for primary
-            if name.lower() in RESERVED_NAMES:
+            if name.lower() in reserved_names:
                 raise ValueError(
-                    f"Reserved instance name '{name}'. Cannot use reserved names: {RESERVED_NAMES}"
+                    f"Reserved instance name '{name}'. Cannot use reserved names: {reserved_names}"
                 )
             # Allow alphanumeric and underscore only
             if not all(c.isalnum() or c == "_" for c in name):

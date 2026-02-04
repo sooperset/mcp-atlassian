@@ -7,7 +7,6 @@ These tools automatically detect which Jira/Confluence instance to use based on:
 """
 
 import re
-from typing import Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 
@@ -31,12 +30,12 @@ def extract_issue_key(text: str) -> str:
         'PROJ-123'
     """
     # Try to extract from URL first
-    url_match = re.search(r'/browse/([A-Z]+-\d+)', text)
+    url_match = re.search(r"/browse/([A-Z]+-\d+)", text)
     if url_match:
         return url_match.group(1)
 
     # Try to match standalone issue key
-    key_match = re.search(r'\b([A-Z]+-\d+)\b', text)
+    key_match = re.search(r"\b([A-Z]+-\d+)\b", text)
     if key_match:
         return key_match.group(1)
 
@@ -63,7 +62,7 @@ def detect_jira_instance(text: str, configs: dict[str, JiraConfig]) -> str:
     # Check URL patterns
     for instance_name, config in configs.items():
         # Extract domain from config URL
-        domain_match = re.search(r'https?://([^/]+)', config.url)
+        domain_match = re.search(r"https?://([^/]+)", config.url)
         if domain_match:
             domain = domain_match.group(1)
             if domain in text:
@@ -107,7 +106,7 @@ def create_router_tools(
         ctx: Context,
         issue_url_or_key: str,
         fields: str = "status,updated,priority,assignee,issuetype,created,summary,description,labels,reporter",
-        expand: Optional[str] = None,
+        expand: str | None = None,
     ) -> str:
         """Get Jira issue from ANY configured instance with automatic routing.
 
@@ -174,7 +173,7 @@ def create_router_tools(
     async def search_jira_auto(
         ctx: Context,
         jql: str,
-        instance_hint: Optional[str] = None,
+        instance_hint: str | None = None,
         fields: str = "status,updated,priority,assignee,issuetype,created,summary,description,labels,reporter",
         limit: int = 10,
     ) -> str:
@@ -225,7 +224,7 @@ def create_router_tools(
   "_routing_info": {{
     "instance": "{instance_label}",
     "instance_url": "{instance_url}",
-    "instance_hint": {f'"{instance_hint}"' if instance_hint else 'null'}
+    "instance_hint": {f'"{instance_hint}"' if instance_hint else "null"}
   }},
   "results": {results}
 }}"""
@@ -242,9 +241,9 @@ def create_router_tools(
         project_key: str,
         summary: str,
         issue_type: str,
-        instance_hint: Optional[str] = None,
-        description: Optional[str] = None,
-        assignee: Optional[str] = None,
+        instance_hint: str | None = None,
+        description: str | None = None,
+        assignee: str | None = None,
     ) -> str:
         """Create a Jira issue with automatic instance detection.
 
@@ -298,7 +297,7 @@ def create_router_tools(
   "_routing_info": {{
     "instance": "{instance_label}",
     "instance_url": "{instance_url}",
-    "instance_hint": {f'"{instance_hint}"' if instance_hint else 'null'}
+    "instance_hint": {f'"{instance_hint}"' if instance_hint else "null"}
   }},
   "created_issue": {result}
 }}"""
