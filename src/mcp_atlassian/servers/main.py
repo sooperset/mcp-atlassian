@@ -28,6 +28,7 @@ from mcp_atlassian.utils.tools import get_enabled_tools, should_include_tool
 from .confluence import confluence_mcp
 from .context import MainAppContext
 from .jira import jira_mcp
+from .tool_factory import create_confluence_instance_tools, create_jira_instance_tools
 
 logger = logging.getLogger("mcp-atlassian.server.main")
 
@@ -94,6 +95,22 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
     logger.info(f"Enabled tools filter: {enabled_tools or 'All tools enabled'}")
     logger.info(f"Loaded {len(loaded_jira_configs)} Jira instance(s)")
     logger.info(f"Loaded {len(loaded_confluence_configs)} Confluence instance(s)")
+
+    # Register tools for secondary Jira instances (primary instance uses jira_mcp)
+    for instance_name in loaded_jira_configs.keys():
+        if instance_name != "":  # Skip primary instance (already registered in jira.py)
+            instance_label = instance_name
+            logger.info(f"Registering tools for Jira instance '{instance_label}'...")
+            create_jira_instance_tools(app, instance_name, instance_label)
+
+    # Register tools for secondary Confluence instances (primary instance uses confluence_mcp)
+    for instance_name in loaded_confluence_configs.keys():
+        if instance_name != "":  # Skip primary instance (already registered in confluence.py)
+            instance_label = instance_name
+            logger.info(
+                f"Registering tools for Confluence instance '{instance_label}'..."
+            )
+            create_confluence_instance_tools(app, instance_name, instance_label)
 
     try:
         yield {"app_lifespan_context": app_context}

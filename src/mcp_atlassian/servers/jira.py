@@ -1,28 +1,20 @@
 """Jira FastMCP server instance and tool definitions.
 
-TODO: Multi-instance tool registration (Phase 3)
--------------------------------------------------
-For full multi-instance support, tools need to be registered dynamically for each
-loaded instance. Current state:
-- Infrastructure ready: get_jira_fetcher() supports instance_name parameter
-- All tools currently use primary instance (instance_name="") by default
-- Full support requires:
-  1. Convert tool definitions into a factory function that takes instance_name
-  2. Dynamically register tools for each instance in MainAppContext.jira_configs
-  3. Apply naming convention: {service}_{instance}_{tool} for secondary instances
-     e.g., "jira_staging_get_issue", "jira_prod_create_issue"
-  4. Primary instance keeps unprefixed names for backward compatibility
+Multi-instance Support:
+-----------------------
+This module defines tools for the PRIMARY Jira instance using static @jira_mcp.tool() decorators.
 
-Example pattern for dynamic registration:
-```python
-def register_jira_tools(mcp: FastMCP, instance_name: str = ""):
-    prefix = f"jira_{instance_name}_" if instance_name else "jira_"
+For SECONDARY instances (JIRA_2_*, JIRA_3_*, etc.):
+- Tools are registered dynamically in tool_factory.py
+- Secondary instance tools are prefixed: jira_{instance_name}_{tool}
+  e.g., "jira_tech_get_issue", "jira_staging_create_issue"
+- Primary instance keeps unprefixed names for backward compatibility
 
-    @mcp.tool(name=f"{prefix}get_issue", tags={"jira", "read"})
-    async def get_issue(ctx: Context, issue_key: str) -> str:
-        jira = await get_jira_fetcher(ctx, instance_name=instance_name)
-        # ... rest of tool implementation
-```
+Currently implemented in tool_factory.py:
+- Core tools: get_user_profile, get_issue, search, create_issue
+- Additional tools can be added as needed
+
+See: src/mcp_atlassian/servers/tool_factory.py
 """
 
 import json
