@@ -12,9 +12,40 @@ from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
 
+from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.servers.dependencies import get_jira_fetcher
 from mcp_atlassian.utils.decorators import check_write_access
+
+
+async def _get_jira_fetcher_for_router(
+    ctx: Context,
+    jira_configs: dict[str, JiraConfig],
+    instance_name: str,
+) -> JiraFetcher:
+    """Get JiraFetcher for router tools, using config from closure when context is unavailable.
+
+    Router tools are registered on the main app; in some MCP clients the request
+    context is not set, so get_jira_fetcher(ctx, ...) can raise "Context is not
+    available outside of a request". We fall back to creating the fetcher directly
+    from jira_configs (from lifespan) so router tools work without request context.
+    """
+    try:
+        return await get_jira_fetcher(ctx, instance_name=instance_name)
+    except LookupError:
+        # request_context not set (e.g. outside of a request in some MCP clients)
+        pass
+    except ValueError as e:
+        if "Context is not available" not in str(
+            e
+        ) and "outside of a request" not in str(e):
+            raise
+    config = jira_configs.get(instance_name)
+    if not config:
+        available = list(jira_configs.keys())
+        label = "primary" if instance_name == "" else f"'{instance_name}'"
+        raise ValueError(f"Jira instance {label} not found. Available: {available}")
+    return JiraFetcher(config=config)
 
 
 def extract_issue_key(text: str) -> str:
@@ -142,8 +173,8 @@ def create_router_tools(
         # Extract issue key
         issue_key = extract_issue_key(issue_url_or_key)
 
-        # Get the appropriate fetcher
-        jira = await get_jira_fetcher(ctx, instance_name=instance_name)
+        # Get the appropriate fetcher (works when request context is unavailable)
+        jira = await _get_jira_fetcher_for_router(ctx, jira_configs, instance_name)
 
         # Get issue details
         issue = await jira.get_issue(
@@ -209,8 +240,8 @@ def create_router_tools(
         if instance_hint:
             instance_name = detect_jira_instance(instance_hint, jira_configs)
 
-        # Get the appropriate fetcher
-        jira = await get_jira_fetcher(ctx, instance_name=instance_name)
+        # Get the appropriate fetcher (works when request context is unavailable)
+        jira = await _get_jira_fetcher_for_router(ctx, jira_configs, instance_name)
 
         # Search issues
         results = await jira.search(
@@ -280,8 +311,8 @@ def create_router_tools(
             # Known project mapping
             instance_name = detect_jira_instance("INFRAOPS-", jira_configs)
 
-        # Get the appropriate fetcher
-        jira = await get_jira_fetcher(ctx, instance_name=instance_name)
+        # Get the appropriate fetcher (works when request context is unavailable)
+        jira = await _get_jira_fetcher_for_router(ctx, jira_configs, instance_name)
 
         # Create issue
         result = await jira.create_issue(
@@ -364,14 +395,10 @@ def create_router_tools(
                     if isinstance(parsed, list):
                         attachment_paths = [str(p) for p in parsed]
                     else:
-                        raise ValueError(
-                            "attachments JSON string must be an array."
-                        )
+                        raise ValueError("attachments JSON string must be an array.")
                 except json.JSONDecodeError:
                     attachment_paths = [
-                        p.strip()
-                        for p in attachments.split(",")
-                        if p.strip()
+                        p.strip() for p in attachments.split(",") if p.strip()
                     ]
             else:
                 raise ValueError(
@@ -382,16 +409,14 @@ def create_router_tools(
         if attachment_paths:
             all_updates["attachments"] = attachment_paths
 
-        jira = await get_jira_fetcher(ctx, instance_name=instance_name)
+        jira = await _get_jira_fetcher_for_router(ctx, jira_configs, instance_name)
         issue = jira.update_issue(issue_key=issue_key, **all_updates)
         result = issue.to_simplified_dict()
         if (
             hasattr(issue, "custom_fields")
             and "attachment_results" in issue.custom_fields
         ):
-            result["attachment_results"] = issue.custom_fields[
-                "attachment_results"
-            ]
+            result["attachment_results"] = issue.custom_fields["attachment_results"]
 
         instance_label = "primary" if instance_name == "" else instance_name
         instance_url = jira_configs[instance_name].url

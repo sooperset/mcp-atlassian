@@ -264,8 +264,95 @@ def create_jira_instance_tools(
         )
         return json.dumps(result, indent=2)
 
+    @mcp.tool(
+        name=f"{prefix}update_issue",
+        tags={"jira", "write"},
+        annotations={
+            "title": f"Update Jira Issue ({instance_label})",
+            "destructiveHint": True,
+        },
+    )
+    @check_write_access
+    async def update_issue(
+        ctx: Context,
+        issue_key: Annotated[
+            str, Field(description="Jira issue key (e.g., 'PROJ-123')")
+        ],
+        fields: Annotated[
+            dict[str, Any],
+            Field(
+                description=(
+                    "Dictionary of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
+                    "Example: `{'assignee': 'user@example.com', 'summary': 'New Summary', 'description': 'New description'}`"
+                )
+            ),
+        ],
+        additional_fields: Annotated[
+            dict[str, Any] | None,
+            Field(
+                description="(Optional) Dictionary of additional fields to update. Use this for custom fields or more complex updates.",
+                default=None,
+            ),
+        ] = None,
+        attachments: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "(Optional) JSON string array or comma-separated list of file paths to attach to the issue. "
+                    "Example: '/path/to/file1.txt,/path/to/file2.txt'"
+                ),
+                default=None,
+            ),
+        ] = None,
+    ) -> str:
+        """Update an existing Jira issue (e.g. description, summary, assignee)."""
+        import json
+
+        jira = await get_jira_fetcher(ctx, instance_name=instance_name)
+        if not isinstance(fields, dict):
+            raise ValueError("fields must be a dictionary.")
+        extra_fields = additional_fields or {}
+        if not isinstance(extra_fields, dict):
+            raise ValueError("additional_fields must be a dictionary.")
+        attachment_paths = []
+        if attachments:
+            if isinstance(attachments, str):
+                try:
+                    parsed = json.loads(attachments)
+                    if isinstance(parsed, list):
+                        attachment_paths = [str(p) for p in parsed]
+                    else:
+                        raise ValueError("attachments JSON string must be an array.")
+                except json.JSONDecodeError:
+                    attachment_paths = [
+                        p.strip() for p in attachments.split(",") if p.strip()
+                    ]
+            else:
+                raise ValueError(
+                    "attachments must be a JSON array string or comma-separated."
+                )
+        all_updates = {**fields, **extra_fields}
+        if attachment_paths:
+            all_updates["attachments"] = attachment_paths
+        try:
+            issue = jira.update_issue(issue_key=issue_key, **all_updates)
+            result = issue.to_simplified_dict()
+            if (
+                hasattr(issue, "custom_fields")
+                and "attachment_results" in issue.custom_fields
+            ):
+                result["attachment_results"] = issue.custom_fields["attachment_results"]
+            return json.dumps(
+                {"message": "Issue updated successfully", "issue": result},
+                indent=2,
+                ensure_ascii=False,
+            )
+        except Exception as e:
+            logger.error(f"Error updating issue {issue_key}: {str(e)}", exc_info=True)
+            raise ValueError(f"Failed to update issue {issue_key}: {str(e)}")
+
     logger.info(
-        f"Successfully registered {5} tools for Jira instance '{instance_label}'"
+        f"Successfully registered {6} tools for Jira instance '{instance_label}'"
     )
 
 
