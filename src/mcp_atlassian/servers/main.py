@@ -100,17 +100,45 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
     for instance_name in loaded_jira_configs.keys():
         if instance_name != "":  # Skip primary instance (already registered in jira.py)
             instance_label = instance_name
-            logger.info(f"Registering tools for Jira instance '{instance_label}'...")
+            logger.info(
+                f"🔧 Registering tools for Jira instance '{instance_label}' "
+                f"(URL: {loaded_jira_configs[instance_name].url})..."
+            )
             create_jira_instance_tools(app, instance_name, instance_label)
+            logger.info(
+                f"✅ Completed tool registration for Jira instance '{instance_label}'"
+            )
 
     # Register tools for secondary Confluence instances (primary instance uses confluence_mcp)
     for instance_name in loaded_confluence_configs.keys():
         if instance_name != "":  # Skip primary instance (already registered in confluence.py)
             instance_label = instance_name
             logger.info(
-                f"Registering tools for Confluence instance '{instance_label}'..."
+                f"🔧 Registering tools for Confluence instance '{instance_label}' "
+                f"(URL: {loaded_confluence_configs[instance_name].url})..."
             )
             create_confluence_instance_tools(app, instance_name, instance_label)
+            logger.info(
+                f"✅ Completed tool registration for Confluence instance '{instance_label}'"
+            )
+
+    # Debug: Log summary of all registered tools
+    logger.info("=" * 70)
+    logger.info("Multi-Instance Tool Registration Summary:")
+    logger.info("=" * 70)
+    for instance_name in loaded_jira_configs.keys():
+        instance_label = "primary" if instance_name == "" else instance_name
+        prefix = "jira_" if instance_name == "" else f"jira_{instance_name}_"
+        logger.info(f"Jira instance '{instance_label}': Tools prefixed with '{prefix}'")
+    for instance_name in loaded_confluence_configs.keys():
+        instance_label = "primary" if instance_name == "" else instance_name
+        prefix = (
+            "confluence_" if instance_name == "" else f"confluence_{instance_name}_"
+        )
+        logger.info(
+            f"Confluence instance '{instance_label}': Tools prefixed with '{prefix}'"
+        )
+    logger.info("=" * 70)
 
     try:
         yield {"app_lifespan_context": app_context}
