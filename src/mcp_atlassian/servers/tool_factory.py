@@ -41,7 +41,10 @@ def create_jira_instance_tools(
     @mcp.tool(
         name=f"{prefix}get_user_profile",
         tags={"jira", "read"},
-        annotations={"title": f"Get Jira User Profile ({instance_label})", "readOnlyHint": True},
+        annotations={
+            "title": f"Get Jira User Profile ({instance_label})",
+            "readOnlyHint": True,
+        },
     )
     async def get_user_profile(
         ctx: Context,
@@ -91,7 +94,10 @@ def create_jira_instance_tools(
     @mcp.tool(
         name=f"{prefix}get_issue",
         tags={"jira", "read"},
-        annotations={"title": f"Get Jira Issue ({instance_label})", "readOnlyHint": True},
+        annotations={
+            "title": f"Get Jira Issue ({instance_label})",
+            "readOnlyHint": True,
+        },
     )
     async def get_issue(
         ctx: Context,
@@ -135,7 +141,7 @@ def create_jira_instance_tools(
         import json
 
         jira = await get_jira_fetcher(ctx, instance_name=instance_name)
-        issue_dict = jira.get_issue(
+        issue = jira.get_issue(
             issue_key,
             fields=fields,
             expand=expand,
@@ -143,12 +149,15 @@ def create_jira_instance_tools(
             properties=properties,
             update_history=update_history,
         )
-        return json.dumps(issue_dict, indent=2)
+        return json.dumps(issue.to_simplified_dict(), indent=2)
 
     @mcp.tool(
         name=f"{prefix}search",
         tags={"jira", "read"},
-        annotations={"title": f"Search Jira Issues ({instance_label})", "readOnlyHint": True},
+        annotations={
+            "title": f"Search Jira Issues ({instance_label})",
+            "readOnlyHint": True,
+        },
     )
     async def search(
         ctx: Context,
@@ -272,9 +281,7 @@ def create_confluence_instance_tools(
         instance_label: Display label (e.g., "primary", "community")
     """
     # Tool name prefix: "confluence_" for primary, "confluence_{instance}_" for secondary
-    prefix = (
-        "confluence_" if instance_name == "" else f"confluence_{instance_name}_"
-    )
+    prefix = "confluence_" if instance_name == "" else f"confluence_{instance_name}_"
 
     logger.info(
         f"Registering Confluence tools for instance '{instance_label}' with prefix '{prefix}'"
@@ -283,14 +290,17 @@ def create_confluence_instance_tools(
     @mcp.tool(
         name=f"{prefix}search",
         tags={"confluence", "read"},
-        annotations={"title": f"Search Confluence ({instance_label})", "readOnlyHint": True},
+        annotations={
+            "title": f"Search Confluence ({instance_label})",
+            "readOnlyHint": True,
+        },
     )
     async def search(
         ctx: Context,
         query: Annotated[
             str,
             Field(
-                description='Search query - can be either a simple text (e.g. \'project documentation\') or a CQL query string. Simple queries use \'siteSearch\' by default, to mimic the WebUI search, with an automatic fallback to \'text\' search if not supported. Examples of CQL:\n- Basic search: \'type=page AND space=DEV\'\n- Personal space search: \'space="~username"\' (note: personal space keys starting with ~ must be quoted)\n- Search by title: \'title~"Meeting Notes"\'\n- Use siteSearch: \'siteSearch ~ "important concept"\'\n- Use text search: \'text ~ "important concept"\'\n- Recent content: \'created >= "2023-01-01"\'\n- Content with specific label: \'label=documentation\'\n- Recently modified content: \'lastModified > startOfMonth("-1M")\'\n- Content modified this year: \'creator = currentUser() AND lastModified > startOfYear()\'\n- Content you contributed to recently: \'contributor = currentUser() AND lastModified > startOfWeek()\'\n- Content watched by user: \'watcher = "user@domain.com" AND type = page\'\n- Exact phrase in content: \'text ~ "\\"Urgent Review Required\\"" AND label = "pending-approval"\'\n- Title wildcards: \'title ~ "Minutes*" AND (space = "HR" OR space = "Marketing")\'\nNote: Special identifiers need proper quoting in CQL: personal space keys (e.g., "~username"), reserved words, numeric IDs, and identifiers with special characters.'
+                description="Search query - can be either a simple text (e.g. 'project documentation') or a CQL query string. Simple queries use 'siteSearch' by default, to mimic the WebUI search, with an automatic fallback to 'text' search if not supported. Examples of CQL:\n- Basic search: 'type=page AND space=DEV'\n- Personal space search: 'space=\"~username\"' (note: personal space keys starting with ~ must be quoted)\n- Search by title: 'title~\"Meeting Notes\"'\n- Use siteSearch: 'siteSearch ~ \"important concept\"'\n- Use text search: 'text ~ \"important concept\"'\n- Recent content: 'created >= \"2023-01-01\"'\n- Content with specific label: 'label=documentation'\n- Recently modified content: 'lastModified > startOfMonth(\"-1M\")'\n- Content modified this year: 'creator = currentUser() AND lastModified > startOfYear()'\n- Content you contributed to recently: 'contributor = currentUser() AND lastModified > startOfWeek()'\n- Content watched by user: 'watcher = \"user@domain.com\" AND type = page'\n- Exact phrase in content: 'text ~ \"\\\"Urgent Review Required\\\"\" AND label = \"pending-approval\"'\n- Title wildcards: 'title ~ \"Minutes*\" AND (space = \"HR\" OR space = \"Marketing\")'\nNote: Special identifiers need proper quoting in CQL: personal space keys (e.g., \"~username\"), reserved words, numeric IDs, and identifiers with special characters."
             ),
         ],
         limit: Annotated[
@@ -316,7 +326,10 @@ def create_confluence_instance_tools(
     @mcp.tool(
         name=f"{prefix}get_page",
         tags={"confluence", "read"},
-        annotations={"title": f"Get Confluence Page ({instance_label})", "readOnlyHint": True},
+        annotations={
+            "title": f"Get Confluence Page ({instance_label})",
+            "readOnlyHint": True,
+        },
     )
     async def get_page(
         ctx: Context,
