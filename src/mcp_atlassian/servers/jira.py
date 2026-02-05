@@ -16,6 +16,12 @@ from mcp_atlassian.utils.decorators import check_write_access
 
 logger = logging.getLogger(__name__)
 
+# Regex patterns for Jira key validation.
+# Per Atlassian docs, project keys are 2-10 chars starting with an uppercase
+# letter, followed by uppercase letters and/or digits (e.g. ACV2, CMSV2).
+ISSUE_KEY_PATTERN = r"^[A-Z][A-Z0-9]{1,9}-\d+$"
+PROJECT_KEY_PATTERN = r"^[A-Z][A-Z0-9]{1,9}$"
+
 jira_mcp = FastMCP(
     name="Jira MCP Service",
     instructions="Provides tools for interacting with Atlassian Jira.",
@@ -89,7 +95,13 @@ async def get_user_profile(
 )
 async def get_issue(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
     fields: Annotated[
         str,
         Field(
@@ -302,7 +314,13 @@ async def search_fields(
 )
 async def get_project_issues(
     ctx: Context,
-    project_key: Annotated[str, Field(description="The project key")],
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'PROJ', 'ACV2')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
     limit: Annotated[
         int,
         Field(description="Maximum number of results (1-50)", default=10, ge=1, le=50),
@@ -337,7 +355,13 @@ async def get_project_issues(
 )
 async def get_transitions(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
 ) -> str:
     """Get available status transitions for a Jira issue.
 
@@ -360,7 +384,13 @@ async def get_transitions(
 )
 async def get_worklog(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
 ) -> str:
     """Get worklog entries for a Jira issue.
 
@@ -383,7 +413,13 @@ async def get_worklog(
 )
 async def download_attachments(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
     target_dir: Annotated[
         str, Field(description="Directory where attachments should be saved")
     ],
@@ -414,7 +450,11 @@ async def get_agile_boards(
         Field(description="(Optional) The name of board, support fuzzy search"),
     ] = None,
     project_key: Annotated[
-        str | None, Field(description="(Optional) Jira project key (e.g., 'PROJ-123')")
+        str | None,
+        Field(
+            description="(Optional) Jira project key (e.g., 'PROJ', 'ACV2')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
     ] = None,
     board_type: Annotated[
         str | None,
@@ -657,10 +697,11 @@ async def create_issue(
         str,
         Field(
             description=(
-                "The JIRA project key (e.g. 'PROJ', 'DEV', 'SUPPORT'). "
+                "The JIRA project key (e.g. 'PROJ', 'DEV', 'ACV2'). "
                 "This is the prefix of issue keys in your project. "
                 "Never assume what it might be, always ask the user."
-            )
+            ),
+            pattern=PROJECT_KEY_PATTERN,
         ),
     ],
     summary: Annotated[str, Field(description="Summary/title of the issue")],
@@ -921,7 +962,13 @@ async def batch_get_changelogs(
 @check_write_access
 async def update_issue(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
     fields: Annotated[
         dict[str, Any],
         Field(
@@ -1025,7 +1072,13 @@ async def update_issue(
 @check_write_access
 async def delete_issue(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g. PROJ-123)")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
 ) -> str:
     """Delete an existing Jira issue.
 
@@ -1053,7 +1106,13 @@ async def delete_issue(
 @check_write_access
 async def add_comment(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
     comment: Annotated[str, Field(description="Comment text in Markdown format")],
     visibility: Annotated[
         dict[str, str] | None,
@@ -1089,7 +1148,13 @@ async def add_comment(
 @check_write_access
 async def edit_comment(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
     comment_id: Annotated[str, Field(description="The ID of the comment to edit")],
     comment: Annotated[
         str, Field(description="Updated comment text in Markdown format")
@@ -1129,7 +1194,13 @@ async def edit_comment(
 @check_write_access
 async def add_worklog(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
     time_spent: Annotated[
         str,
         Field(
@@ -1200,10 +1271,18 @@ async def add_worklog(
 async def link_to_epic(
     ctx: Context,
     issue_key: Annotated[
-        str, Field(description="The key of the issue to link (e.g., 'PROJ-123')")
+        str,
+        Field(
+            description="The key of the issue to link (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
     ],
     epic_key: Annotated[
-        str, Field(description="The key of the epic to link to (e.g., 'PROJ-456')")
+        str,
+        Field(
+            description="The key of the epic to link to (e.g., 'PROJ-456')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
     ],
 ) -> str:
     """Link an existing issue to an epic.
@@ -1242,10 +1321,18 @@ async def create_issue_link(
         ),
     ],
     inward_issue_key: Annotated[
-        str, Field(description="The key of the inward issue (e.g., 'PROJ-123')")
+        str,
+        Field(
+            description="The key of the inward issue (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
     ],
     outward_issue_key: Annotated[
-        str, Field(description="The key of the outward issue (e.g., 'PROJ-456')")
+        str,
+        Field(
+            description="The key of the outward issue (e.g., 'PROJ-456')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
     ],
     comment: Annotated[
         str | None, Field(description="(Optional) Comment to add to the link")
@@ -1308,7 +1395,10 @@ async def create_remote_issue_link(
     ctx: Context,
     issue_key: Annotated[
         str,
-        Field(description="The key of the issue to add the link to (e.g., 'PROJ-123')"),
+        Field(
+            description="The key of the issue to add the link to (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
     ],
     url: Annotated[
         str,
@@ -1420,7 +1510,13 @@ async def remove_issue_link(
 @check_write_access
 async def transition_issue(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
     transition_id: Annotated[
         str,
         Field(
@@ -1604,7 +1700,13 @@ async def update_sprint(
 )
 async def get_project_versions(
     ctx: Context,
-    project_key: Annotated[str, Field(description="Jira project key (e.g., 'PROJ')")],
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'PROJ', 'ACV2')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
 ) -> str:
     """Get all fix versions for a specific Jira project."""
     jira = await get_jira_fetcher(ctx)
@@ -1687,7 +1789,13 @@ async def get_all_projects(
 @check_write_access
 async def create_version(
     ctx: Context,
-    project_key: Annotated[str, Field(description="Jira project key (e.g., 'PROJ')")],
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'PROJ', 'ACV2')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
     name: Annotated[str, Field(description="Name of the version")],
     start_date: Annotated[
         str | None, Field(description="Start date (YYYY-MM-DD)", default=None)
@@ -1739,7 +1847,13 @@ async def create_version(
 @check_write_access
 async def batch_create_versions(
     ctx: Context,
-    project_key: Annotated[str, Field(description="Jira project key (e.g., 'PROJ')")],
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'PROJ', 'ACV2')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
     versions: Annotated[
         str,
         Field(
@@ -1815,7 +1929,13 @@ async def batch_create_versions(
 )
 async def jira_get_issue_dates(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
     include_status_changes: Annotated[
         bool,
         Field(
@@ -1866,7 +1986,13 @@ async def jira_get_issue_dates(
 )
 async def jira_get_issue_sla(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
     metrics: Annotated[
         str | None,
         Field(
