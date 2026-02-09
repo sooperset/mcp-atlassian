@@ -2,7 +2,10 @@
 
 import logging
 import re
+import unicodedata
 from typing import TYPE_CHECKING, TypeVar
+
+from unidecode import unidecode
 
 import requests
 from requests.exceptions import HTTPError
@@ -18,6 +21,24 @@ if TYPE_CHECKING:
 JiraUserType = TypeVar("JiraUserType", bound="JiraUser")
 
 logger = logging.getLogger("mcp-jira")
+
+
+def normalize_text(text: str | None) -> str:
+    """Normalize text for case-insensitive Unicode comparison.
+
+    Uses unidecode for ASCII transliteration to handle characters like
+    Polish "ł" matching ASCII "l", then casefold for case-insensitivity.
+
+    Args:
+        text: The text to normalize.
+
+    Returns:
+        Normalized ASCII text suitable for comparison.
+    """
+    if not text:
+        return ""
+    # Transliterate to ASCII (ł→l, ó→o, etc.) then casefold for case-insensitivity
+    return unidecode(text).casefold()
 
 
 class UsersMixin(JiraClient):
@@ -139,11 +160,12 @@ class UsersMixin(JiraClient):
                 logger.error(msg)
                 return None
 
+            search_norm = normalize_text(username)
             for user in response:
                 if (
-                    user.get("displayName", "").lower() == username.lower()
-                    or user.get("name", "").lower() == username.lower()
-                    or user.get("emailAddress", "").lower() == username.lower()
+                    normalize_text(user.get("displayName", "")) == search_norm
+                    or normalize_text(user.get("name", "")) == search_norm
+                    or normalize_text(user.get("emailAddress", "")) == search_norm
                 ):
                     if self.config.is_cloud:
                         if "accountId" in user:
