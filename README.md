@@ -97,7 +97,7 @@ Documentation is also available in [llms.txt format](https://llmstxt.org/), whic
 | `jira_update_issue` - Update issues | `confluence_update_page` - Update pages |
 | `jira_transition_issue` - Change status | `confluence_add_comment` - Add comments |
 | `jira_get_issue_sla` - Calculate SLA metrics | `confluence_get_page_history` - Get historical page versions |
-| | `confluence_get_page_views` - Get page view stats (Cloud only) |
+| `jira_get_issue_development_info` - Get linked PRs, branches, commits | `confluence_get_page_views` - Get page view stats (Cloud only) |
 
 See [Tools Reference](https://personal-1d37018d.mintlify.app/docs/tools-reference) for the complete list.
 
