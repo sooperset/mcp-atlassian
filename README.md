@@ -3,6 +3,7 @@
 ![PyPI Version](https://img.shields.io/pypi/v/mcp-atlassian)
 ![PyPI - Downloads](https://img.shields.io/pypi/dm/mcp-atlassian)
 ![PePy - Total Downloads](https://static.pepy.tech/personalized-badge/mcp-atlassian?period=total&units=international_system&left_color=grey&right_color=blue&left_text=Total%20Downloads)
+[![AgentAudit - Safe](https://img.shields.io/badge/AgentAudit-Safe-green?logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMiAxTDMgNXY2YzAgNS41NSAzLjg0IDEwLjc0IDkgMTIgNS4xNi0xLjI2IDktNi40NSA5LTEyVjVMMTIgMXptLTIgMTZsLTQtNCAyLjgzLTIuODNMMTAgMTEuMTdsNC41OS00LjU4TDE3LjQyIDlMMTAgMTd6Ii8+PC9zdmc+)](https://www.agentaudit.dev/mcp-atlassian)
 [![Run Tests](https://github.com/sooperset/mcp-atlassian/actions/workflows/tests.yml/badge.svg)](https://github.com/sooperset/mcp-atlassian/actions/workflows/tests.yml)
 ![License](https://img.shields.io/github/license/sooperset/mcp-atlassian)
 [![Docs](https://img.shields.io/badge/docs-mintlify-blue)](https://personal-1d37018d.mintlify.app)
