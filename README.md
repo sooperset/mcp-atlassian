@@ -7,7 +7,7 @@
 ![License](https://img.shields.io/github/license/sooperset/mcp-atlassian)
 [![Docs](https://img.shields.io/badge/docs-mintlify-blue)](https://personal-1d37018d.mintlify.app)
 
-Model Context Protocol (MCP) server for Atlassian products (Confluence and Jira). Supports both Cloud and Server/Data Center deployments.
+Model Context Protocol (MCP) server for Atlassian products (Jira, Confluence, and Zephyr Scale). Supports both Cloud and Server/Data Center deployments.
 
 https://github.com/user-attachments/assets/35303504-14c6-4ae4-913b-7c25ea511c3e
 
@@ -42,7 +42,9 @@ Add to your Claude Desktop or Cursor MCP configuration:
         "JIRA_API_TOKEN": "your_api_token",
         "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
         "CONFLUENCE_USERNAME": "your.email@company.com",
-        "CONFLUENCE_API_TOKEN": "your_api_token"
+        "CONFLUENCE_API_TOKEN": "your_api_token",
+        "ZEPHYR_URL": "https://api.zephyrscale.smartbear.com/v2",
+        "ZEPHYR_API_TOKEN": "your_zephyr_api_token"
       }
     }
   }
@@ -51,7 +53,7 @@ Add to your Claude Desktop or Cursor MCP configuration:
 
 > **Python 3.14 not yet supported.** Use `["--python=3.12", "mcp-atlassian"]` as args if needed.
 
-> **Server/Data Center users**: Use `JIRA_PERSONAL_TOKEN` instead of `JIRA_USERNAME` + `JIRA_API_TOKEN`. See [Authentication](https://personal-1d37018d.mintlify.app/docs/authentication) for details.
+> **Server/Data Center users**: Use `JIRA_PERSONAL_TOKEN` / `CONFLUENCE_PERSONAL_TOKEN` / `ZEPHYR_PERSONAL_TOKEN` instead of username + token combinations. See [Authentication](https://personal-1d37018d.mintlify.app/docs/authentication) for details.
 
 ### 3. Start Using
 
@@ -60,6 +62,8 @@ Ask your AI assistant to:
 - **"Search Confluence for onboarding docs"**
 - **"Create a bug ticket for the login issue"**
 - **"Update the status of PROJ-123 to Done"**
+- **"Search for test cases in Zephyr for the login feature"**
+- **"Create a test execution for PROJ-T1"**
 
 ## Documentation
 
@@ -82,21 +86,23 @@ Documentation is also available in [llms.txt format](https://llmstxt.org/), whic
 
 | Product | Deployment | Support |
 |---------|------------|---------|
-| Confluence | Cloud | Fully supported |
-| Confluence | Server/Data Center | Supported (v6.0+) |
 | Jira | Cloud | Fully supported |
 | Jira | Server/Data Center | Supported (v8.14+) |
+| Confluence | Cloud | Fully supported |
+| Confluence | Server/Data Center | Supported (v6.0+) |
+| Zephyr Scale | Cloud | Fully supported |
+| Zephyr Scale | Server/Data Center | Supported (v6.0+) |
 
 ## Key Tools
 
-| Jira | Confluence |
-|------|------------|
-| `jira_search` - Search with JQL | `confluence_search` - Search with CQL |
-| `jira_get_issue` - Get issue details | `confluence_get_page` - Get page content |
-| `jira_create_issue` - Create issues | `confluence_create_page` - Create pages |
-| `jira_update_issue` - Update issues | `confluence_update_page` - Update pages |
-| `jira_transition_issue` - Change status | `confluence_add_comment` - Add comments |
-| `jira_get_issue_sla` - Calculate SLA metrics | `confluence_get_page_views` - Get page view stats (Cloud only) |
+| Jira | Confluence | Zephyr Scale |
+|------|------------|--------------|
+| `jira_search` - Search with JQL | `confluence_search` - Search with CQL | `zephyr_search_test_cases` - Search test cases |
+| `jira_get_issue` - Get issue details | `confluence_get_page` - Get page content | `zephyr_get_test_case` - Get test case details |
+| `jira_create_issue` - Create issues | `confluence_create_page` - Create pages | `zephyr_create_test_case` - Create test cases |
+| `jira_update_issue` - Update issues | `confluence_update_page` - Update pages | `zephyr_create_test_cycle` - Create test cycles |
+| `jira_transition_issue` - Change status | `confluence_add_comment` - Add comments | `zephyr_create_test_execution` - Create test executions |
+| `jira_get_issue_sla` - Calculate SLA metrics | `confluence_get_page_views` - Get page view stats (Cloud only) | `zephyr_search_test_executions` - Search test executions |
 
 See [Tools Reference](https://personal-1d37018d.mintlify.app/docs/tools-reference) for the complete list.
 
