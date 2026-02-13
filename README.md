@@ -28,6 +28,41 @@ Go to https://id.atlassian.com/manage-profile/security/api-tokens and create a t
 
 ### 2. Configure Your IDE
 
+Add to your IntelliJ IDEA MCP configuration (mcp.json):
+
+```json
+{
+  "servers": {
+    "mcp-atlassian": {
+            "command": "docker",
+            "type": "stdio",
+            "args": [
+                "run",
+                "--rm",
+                "-i",
+                "-e", "CONFLUENCE_URL",
+                "-e", "CONFLUENCE_PERSONAL_TOKEN",
+                "-e", "CONFLUENCE_SSL_VERIFY",
+                "-e", "JIRA_URL",
+                "-e", "JIRA_PERSONAL_TOKEN",
+                "-e", "JIRA_SSL_VERIFY",
+                "docker.test.yourcareuniverse.net/medhost/mcp-atlassian:latest"
+            ],
+            "env": {
+                "CONFLUENCE_URL": "https://confluence.medhost.com:8443",
+                "CONFLUENCE_PERSONAL_TOKEN": "YOUR CONFLUENCE PAT TOKEN",
+                "JIRA_URL": "https://jira.medhost.com:8443",
+                "JIRA_PERSONAL_TOKEN": "YOUR JIRA PAT TOKEN",
+                "JIRA_SSL_VERIFY": "true",
+                "CONFLUENCE_SSL_VERIFY": "true",
+                "TRANSPORT": "stdio",
+                "MCP_VERY_VERBOSE": "true"
+            }
+        }
+  }
+}
+```
+
 Add to your Claude Desktop or Cursor MCP configuration:
 
 ```json
