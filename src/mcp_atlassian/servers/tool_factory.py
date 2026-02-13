@@ -199,8 +199,8 @@ def create_jira_instance_tools(
         results = jira.search_issues(
             jql=jql,
             fields=fields,
-            max_results=limit,
-            start_at=start_at,
+            limit=limit,
+            start=start_at,
             projects_filter=projects_filter,
             expand=expand,
         )
