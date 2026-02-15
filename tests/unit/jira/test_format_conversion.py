@@ -20,7 +20,9 @@ class TestFormatConversionIntegration:
         # JiraFetcher already has a real preprocessor, so we just return it
         return jira_fetcher
 
-    def test_get_issue_converts_wiki_markup_description_to_markdown(self, jira_fetcher_with_real_preprocessor):
+    def test_get_issue_converts_wiki_markup_description_to_markdown(
+        self, jira_fetcher_with_real_preprocessor
+    ):
         """Test that reading an issue converts Jira wiki markup description to Markdown.
 
         This test would have caught the regression bug in PR #72 where _clean_text()
@@ -53,7 +55,9 @@ class TestFormatConversionIntegration:
         assert "h2." not in result.description
         assert "||" not in result.description
 
-    def test_get_issue_converts_wiki_markup_comments_to_markdown(self, jira_fetcher_with_real_preprocessor):
+    def test_get_issue_converts_wiki_markup_comments_to_markdown(
+        self, jira_fetcher_with_real_preprocessor
+    ):
         """Test that reading issue comments converts Jira wiki markup to Markdown.
 
         This test would have caught the regression bug where comment bodies
@@ -98,7 +102,9 @@ class TestFormatConversionIntegration:
         }
 
         # Call get_issue with comments
-        result = jira_fetcher_with_real_preprocessor.get_issue("TEST-123", comment_limit=10)
+        result = jira_fetcher_with_real_preprocessor.get_issue(
+            "TEST-123", comment_limit=10
+        )
 
         # Verify comment body was converted to Markdown
         assert len(result.comments) == 1
@@ -128,7 +134,9 @@ class TestFormatConversionIntegration:
                     "content": [
                         {
                             "type": "paragraph",
-                            "content": [{"type": "text", "text": "This is ADF content"}],
+                            "content": [
+                                {"type": "text", "text": "This is ADF content"}
+                            ],
                         }
                     ],
                 },

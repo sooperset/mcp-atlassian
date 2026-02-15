@@ -682,7 +682,8 @@ async def create_issue(
         ),
     ] = None,
     description: Annotated[
-        str | None, Field(description="Issue description in Markdown format", default=None)
+        str | None,
+        Field(description="Issue description in Markdown format", default=None),
     ] = None,
     components: Annotated[
         str | None,
