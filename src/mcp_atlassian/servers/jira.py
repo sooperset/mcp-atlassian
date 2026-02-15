@@ -682,7 +682,7 @@ async def create_issue(
         ),
     ] = None,
     description: Annotated[
-        str | None, Field(description="Issue description", default=None)
+        str | None, Field(description="Issue description in Markdown format", default=None)
     ] = None,
     components: Annotated[
         str | None,
@@ -714,7 +714,7 @@ async def create_issue(
         summary: Summary/title of the issue.
         issue_type: Issue type (e.g., 'Task', 'Bug', 'Story', 'Epic', 'Subtask').
         assignee: Assignee's user identifier (string): Email, display name, or account ID (e.g., 'user@example.com', 'John Doe', 'accountid:...').
-        description: Issue description.
+        description: Issue description in Markdown format.
         components: Comma-separated list of component names.
         additional_fields: Dictionary or JSON string of additional fields.
 
@@ -782,7 +782,7 @@ async def batch_create_issues(
                 "- project_key (required): The project key (e.g., 'PROJ')\n"
                 "- summary (required): Issue summary/title\n"
                 "- issue_type (required): Type of issue (e.g., 'Task', 'Bug')\n"
-                "- description (optional): Issue description\n"
+                "- description (optional): Issue description in Markdown format\n"
                 "- assignee (optional): Assignee username or email\n"
                 "- components (optional): Array of component names\n"
                 "Example: [\n"
@@ -927,7 +927,8 @@ async def update_issue(
         Field(
             description=(
                 "Dictionary of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
-                "Example: `{'assignee': 'user@example.com', 'summary': 'New Summary'}`"
+                "For 'description', provide text in Markdown format. "
+                "Example: `{'assignee': 'user@example.com', 'summary': 'New Summary', 'description': '## Updated\\nMarkdown text'}`"
             )
         ),
     ],
@@ -954,7 +955,7 @@ async def update_issue(
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        fields: Dictionary of fields to update.
+        fields: Dictionary of fields to update. Text fields like 'description' should use Markdown format.
         additional_fields: Optional dictionary of additional fields.
         attachments: Optional JSON array string or comma-separated list of file paths.
 
@@ -1445,7 +1446,7 @@ async def transition_issue(
         str | None,
         Field(
             description=(
-                "(Optional) Comment to add during the transition. "
+                "(Optional) Comment to add during the transition in Markdown format. "
                 "This will be visible in the issue history."
             ),
         ),
@@ -1458,7 +1459,7 @@ async def transition_issue(
         issue_key: Jira issue key.
         transition_id: ID of the transition.
         fields: Optional dictionary of fields to update during transition.
-        comment: Optional comment for the transition.
+        comment: Optional comment for the transition in Markdown format.
 
     Returns:
         JSON string representing the updated issue object.
