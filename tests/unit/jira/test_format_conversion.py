@@ -145,7 +145,9 @@ class TestFormatConversionIntegration:
         # Verify ADF was converted to plain text
         assert result.description == "This is ADF content"
 
-    def test_create_issue_converts_markdown_description_to_jira(self, jira_fetcher_with_real_preprocessor):
+    def test_create_issue_converts_markdown_description_to_jira(
+        self, jira_fetcher_with_real_preprocessor
+    ):
         """Test that creating an issue converts Markdown description to Jira wiki markup.
 
         This verifies the write path: Markdown → Jira wiki markup.
@@ -194,7 +196,9 @@ This is **bold** and *italic* text.
         assert "**bold**" not in sent_description
         assert "1. First" not in sent_description
 
-    def test_numbered_list_not_converted_to_heading(self, jira_fetcher_with_real_preprocessor):
+    def test_numbered_list_not_converted_to_heading(
+        self, jira_fetcher_with_real_preprocessor
+    ):
         """Test that Jira numbered lists (# Item) don't get converted to headings (h1.).
 
         This is the specific bug reported in TODO-BULLETLIST.md:
@@ -228,13 +232,19 @@ This is **bold** and *italic* text.
         assert result.description is not None
         assert "### Next Steps" in result.description  # h3. → ###
         assert "1. Wait for mirrors" in result.description  # # → 1.
-        assert "1. Apply patch" in result.description  # # → 1. (Markdown uses 1. for all items)
-        assert "1. Retry build" in result.description  # # → 1. (auto-numbered by renderer)
+        assert (
+            "1. Apply patch" in result.description
+        )  # # → 1. (Markdown uses 1. for all items)
+        assert (
+            "1. Retry build" in result.description
+        )  # # → 1. (auto-numbered by renderer)
 
         # Should NOT contain headings for list items or Jira h1. markup
         assert "h1." not in result.description
 
-    def test_mixed_jira_and_markdown_handled_correctly(self, jira_fetcher_with_real_preprocessor):
+    def test_mixed_jira_and_markdown_handled_correctly(
+        self, jira_fetcher_with_real_preprocessor
+    ):
         """Test that mixed Jira/Markdown content is handled gracefully.
 
         When reading from Jira, we should get clean Markdown.
