@@ -12,6 +12,88 @@ logger = logging.getLogger("mcp-atlassian")
 class JiraPreprocessor(BasePreprocessor):
     """Handles text preprocessing for Jira content."""
 
+    # Step 1: Valid JIRA languages (official list)
+    # Source: https://jira.atlassian.com/browse/JRASERVER-21067 (JIRA 7.5.0+)
+    # and JIRA v9.12.12 release notes
+    # Official documentation: https://jira.atlassian.com/secure/WikiRendererHelpAction.jspa
+    VALID_JIRA_LANGUAGES = {
+        # Core languages from JIRA 7.5.0+
+        "actionscript",
+        "actionscript3",
+        "ada",
+        "applescript",
+        "bash",
+        "sh",  # alias for bash
+        "c",
+        "c#",
+        "csharp",  # alias for c#
+        "cs",  # alias for c#
+        "c++",
+        "cpp",  # alias for c++
+        "css",
+        "sass",  # CSS preprocessor
+        "less",  # CSS preprocessor
+        "coldfusion",
+        "delphi",
+        "diff",
+        "patch",  # alias for diff
+        "erlang",
+        "erl",  # alias for erlang
+        "go",
+        "groovy",
+        "haskell",
+        "html",
+        "xml",
+        "java",
+        "javafx",
+        "javascript",
+        "js",  # alias for javascript
+        "json",
+        "lua",
+        "nyan",
+        "objc",
+        "objective-c",  # alias for objc
+        "perl",
+        "php",
+        "powershell",
+        "ps1",  # alias for powershell
+        "python",
+        "py",  # alias for python
+        "r",
+        "rainbow",
+        "ruby",
+        "rb",  # alias for ruby
+        "scala",
+        "sql",
+        "swift",
+        "visualbasic",
+        "vb",  # alias for visualbasic
+        "yaml",
+        "yml",  # alias for yaml
+        "none",  # plain text, no highlighting
+    }
+
+    # Step 2: Mapping for unsupported languages to closest valid JIRA alternative
+    # Only map to actual JIRA languages; unmapped languages will return None → {code}
+    LANGUAGE_MAPPING = {
+        # Dockerfile → bash (similar shell syntax)
+        "dockerfile": "bash",
+        "docker": "bash",
+        # TypeScript → javascript
+        "typescript": "javascript",
+        "ts": "javascript",
+        "tsx": "javascript",
+        # JSX/React → javascript
+        "jsx": "javascript",
+        # Kotlin → java (JVM-based language)
+        "kotlin": "java",
+        "kt": "java",
+        # Build files → bash
+        "makefile": "bash",
+        "make": "bash",
+        "cmake": "bash",
+    }
+
     def __init__(
         self, base_url: str = "", disable_translation: bool = False, **kwargs: Any
     ) -> None:
@@ -239,6 +321,34 @@ class JiraPreprocessor(BasePreprocessor):
 
         return output
 
+    def _normalize_code_language(self, lang: str | None) -> str | None:
+        """
+        Normalize and map markdown code language to JIRA-supported language.
+
+        Step 3: Default handling - unmapped languages return None for plain {code}
+
+        Args:
+            lang: Language identifier from markdown code block
+
+        Returns:
+            Valid JIRA language string, or None for plain {code} block
+        """
+        if not lang:
+            return None
+
+        lang_lower = lang.lower()
+
+        # Step 1: Check if already valid JIRA language
+        if lang_lower in self.VALID_JIRA_LANGUAGES:
+            return lang_lower
+
+        # Step 2: Check language mapping
+        if lang_lower in self.LANGUAGE_MAPPING:
+            return self.LANGUAGE_MAPPING[lang_lower]
+
+        # Step 3: Default - unmapped language returns None for plain {code}
+        return None
+
     def markdown_to_jira(self, input_text: str) -> str:
         """
         Convert Markdown syntax to Jira markup syntax.
@@ -272,9 +382,14 @@ class JiraPreprocessor(BasePreprocessor):
             """
             syntax = match.group(1) or ""
             content = match.group(2)
+
+            # Normalize the language to a JIRA-supported one
+            jira_lang = self._normalize_code_language(syntax)
+
+            # Build JIRA code block: {code:lang}...{code} or {code}...{code}
             code = "{code"
-            if syntax:
-                code += ":" + syntax
+            if jira_lang:
+                code += ":" + jira_lang
             code += "}" + content + "{code}"
             placeholder = f"\x00CODE_BLOCK_{len(code_blocks)}\x00"
             code_blocks.append(code)
