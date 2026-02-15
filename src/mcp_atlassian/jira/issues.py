@@ -161,6 +161,15 @@ class IssuesMixin(
             # Extract fields data, safely handling None
             fields_data = issue.get("fields", {}) or {}
 
+            # Clean description field (convert Jira wiki markup to Markdown)
+            # Note: ADF format (dict) is handled in the model layer
+            if "description" in fields_data:
+                raw_description = fields_data["description"]
+                # Only clean string descriptions (wiki markup)
+                # Dict descriptions (ADF) are handled by the model
+                if isinstance(raw_description, str) and raw_description:
+                    fields_data["description"] = self._clean_text(raw_description)
+
             # Get comments if needed
             if "comment" in fields_data:
                 comment_limit_int = self._normalize_comment_limit(comment_limit)
@@ -169,6 +178,19 @@ class IssuesMixin(
                 )
                 # Add comments to the issue data for processing by the model
                 fields_data["comment"]["comments"] = comments
+
+            # Clean comment bodies (convert Jira wiki markup/HTML to Markdown)
+            # Must happen AFTER _get_issue_comments_if_needed which may replace comments
+            if "comment" in fields_data and isinstance(fields_data["comment"], dict):
+                comments_list = fields_data["comment"].get("comments", [])
+                if isinstance(comments_list, list):
+                    for comment in comments_list:
+                        if isinstance(comment, dict) and "body" in comment:
+                            raw_body = comment["body"]
+                            # Only clean string bodies (wiki markup/HTML)
+                            # Dict bodies (ADF) are handled by the model
+                            if isinstance(raw_body, str) and raw_body:
+                                comment["body"] = self._clean_text(raw_body)
 
             # Extract epic information
             try:
