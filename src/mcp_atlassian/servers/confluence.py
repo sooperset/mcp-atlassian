@@ -808,6 +808,86 @@ async def search_user(
 
 
 @confluence_mcp.tool(
+    tags={"confluence", "read"},
+    annotations={"title": "Get Page History", "readOnlyHint": True},
+)
+async def get_page_history(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(
+            description=(
+                "Confluence page ID (numeric ID, can be found in the page URL). "
+                "For example, in 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', "
+                "the page ID is '123456789'."
+            )
+        ),
+    ],
+    version: Annotated[
+        int,
+        Field(
+            description="The version number of the page to retrieve",
+            ge=1,
+        ),
+    ],
+    convert_to_markdown: Annotated[
+        bool,
+        Field(
+            description=(
+                "Whether to convert page to markdown (true) or keep it in raw HTML format (false). "
+                "Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: "
+                "using HTML significantly increases token usage in AI responses."
+            ),
+            default=True,
+        ),
+    ] = True,
+) -> str:
+    """Get a historical version of a specific Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: Confluence page ID.
+        version: The version number to retrieve.
+        convert_to_markdown: Convert content to markdown (true) or keep raw HTML (false).
+
+    Returns:
+        JSON string representing the page content at the specified version.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        page = confluence_fetcher.get_page_history(
+            page_id=page_id,
+            version=version,
+            convert_to_markdown=convert_to_markdown,
+        )
+        result = page.to_simplified_dict()
+        return json.dumps(result, indent=2, ensure_ascii=False)
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error getting page history: {e}")
+        return json.dumps(
+            {
+                "error": "Authentication failed. Please check your credentials.",
+                "details": str(e),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(
+            f"Error getting page history for page {page_id} version {version}: {e}"
+        )
+        return json.dumps(
+            {
+                "error": f"Failed to get page history: {e}",
+                "page_id": page_id,
+                "version": version,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+
+
+@confluence_mcp.tool(
     tags={"confluence", "read", "analytics"},
     annotations={"title": "Get Page Views", "readOnlyHint": True},
 )

@@ -761,3 +761,92 @@ class PagesMixin(ConfluenceClient):
         except Exception as e:
             logger.error(f"Error deleting page {page_id}: {str(e)}")
             raise Exception(f"Failed to delete page {page_id}: {str(e)}") from e
+
+    def get_page_history(
+        self, page_id: str, version: int, convert_to_markdown: bool = True
+    ) -> ConfluencePage:
+        """
+        Get the history of a specific page.
+
+        Args:
+            page_id: The ID of the page to get history for
+            version: The version to get history for
+
+        Returns:
+            ConfluencePage model containing the page history
+        """
+
+        try:
+            # Use v2 API for OAuth authentication, v1 API for token/basic auth
+            v2_adapter = self._v2_adapter
+            if v2_adapter:
+                logger.debug(
+                    f"Using v2 API for OAuth authentication to get page history for '{page_id}' version {version}"
+                )
+                page = v2_adapter.get_page_by_version(
+                    page_id=page_id,
+                    version=version,
+                    expand="body.storage,version,space,children.attachment",
+                )
+
+            else:
+                logger.debug(
+                    f"Using v1 API for token/basic authentication to get page history for '{page_id}'"
+                )
+
+                page = self.confluence.get_page_by_id(
+                    page_id=page_id,
+                    status="historical",
+                    version=version,
+                    expand="body.storage,version,space,children.attachment",
+                )
+
+            if isinstance(page, str):
+                error_msg = f"API returned error response: {page[:500]}"
+                raise Exception(error_msg)
+
+            try:
+                content = page["body"]["storage"]["value"]
+
+            except (KeyError, TypeError) as e:
+                logger.warning(
+                    f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
+                )
+                content = ""
+
+            space_key = page.get("space", {}).get("key", "")
+            processed_html, processed_markdown = self.preprocessor.process_html_content(
+                content,
+                space_key=space_key,
+                confluence_client=self.confluence,
+            )
+
+            page_content = processed_markdown if convert_to_markdown else processed_html
+
+            emoji = self._get_page_emoji(page_id)
+            return ConfluencePage.from_api_response(
+                page,
+                base_url=self.config.url,
+                include_body=True,
+                content_override=page_content,
+                content_format="markdown" if convert_to_markdown else "storage",
+                is_cloud=self.config.is_cloud,
+                emoji=emoji,
+            )
+        except HTTPError as http_err:
+            if http_err.response is not None and http_err.response.status_code in [
+                401,
+                403,
+            ]:
+                error_msg = (
+                    f"Authentication failed for Confluence API ({http_err.response.status_code}). "
+                    "Token may be expired or invalid. Please verify credentials."
+                )
+                logger.error(error_msg)
+                raise MCPAtlassianAuthenticationError(error_msg) from http_err
+            else:
+                logger.error(f"HTTP error during API call: {http_err}", exc_info=False)
+                raise http_err
+        except Exception as e:
+            logger.error(f"Error getting page history for page {page_id}: {str(e)}")
+            raise Exception(f"Error getting page history: {str(e)}") from e

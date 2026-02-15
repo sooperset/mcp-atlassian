@@ -151,10 +151,10 @@ class ConfluencePage(ApiModel, TimestampMixin):
         include_body = kwargs.get("include_body", True)
 
         # Allow content override to be provided directly
-        if content_override := kwargs.get("content_override"):
-            content = content_override
+        if "content_override" in kwargs and kwargs["content_override"] is not None:
+            content = kwargs["content_override"]
         elif include_body and "body" in data:
-            body = data.get("body", {})
+            body = data.get("body") or {}
             if content_format in body:
                 content = body.get(content_format, {}).get("value", EMPTY_STRING)
 

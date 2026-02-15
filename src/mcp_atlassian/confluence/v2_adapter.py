@@ -580,6 +580,146 @@ class ConfluenceV2Adapter:
         except Exception:
             return None
 
+    def get_page_versions_list(self, page_id: str) -> list[dict[str, Any]]:
+        """Get list of all versions for a page using v2 API.
+
+        Args:
+            page_id: The ID of page
+
+        Returns:
+            List of version objects with their IDs and numbers
+
+        Raises:
+            ValueError: If page retrieval fails
+        """
+        try:
+            # Use to versions API endpoint to list all versions
+            url = f"{self.base_url}/api/v2/pages/{page_id}/versions"
+
+            response = self.session.get(url)
+            response.raise_for_status()
+
+            data = response.json()
+            versions = data.get("results", [])
+            logger.debug(f"Retrieved {len(versions)} versions for page '{page_id}'")
+
+            return versions
+
+        except HTTPError as e:
+            logger.error(f"HTTP error getting versions list for page '{page_id}': {e}")
+            if e.response is not None:
+                logger.error(f"Response content: {e.response.text}")
+            raise ValueError(
+                f"Failed to get versions list for page '{page_id}': {e}"
+            ) from e
+        except Exception as e:
+            logger.error(f"Error getting versions list for page '{page_id}': {e}")
+            raise ValueError(
+                f"Failed to get versions list for page '{page_id}': {e}"
+            ) from e
+
+    def get_page_by_version(
+        self,
+        page_id: str,
+        version: int,
+        expand: str | None = None,
+    ) -> dict[str, Any]:
+        """Get a specific version of a page using the versions API.
+
+        Note: The v2 API uses version IDs, not version numbers. We need to:
+        1. List all versions to find the version ID for the given version number
+        2. Fetch the specific version using its version ID
+
+        Args:
+            page_id: The ID of page
+            version: The version number to retrieve
+            expand: Fields to expand in the response
+
+        Returns:
+            The page data for the specified version in v1-compatible format
+
+        Raises:
+            ValueError: If page retrieval fails or version not found
+        """
+        try:
+            # Step 1: Get all versions to find the version ID
+            versions_list = self.get_page_versions_list(page_id)
+
+            # Find the version with the matching version number
+            version_id = None
+            for ver in versions_list:
+                if ver.get("number") == version:
+                    version_id = ver.get("id")
+                    break
+
+            if not version_id:
+                raise ValueError(f"Version {version} not found for page '{page_id}'")
+
+            # Step 2: Fetch the specific version using its version ID
+            url = f"{self.base_url}/api/v2/versions/{version_id}"
+
+            # Convert v1 expand parameters to v2 format
+            params = {"body-format": "storage"}
+
+            response = self.session.get(url, params=params)
+            response.raise_for_status()
+
+            v2_response = response.json()
+            logger.debug(f"Successfully retrieved page '{page_id}' version {version}")
+
+            # Get space key from space ID if present
+            space_id = v2_response.get("spaceId")
+            space_key = self._get_space_key_from_id(space_id) if space_id else "unknown"
+
+            # Convert v2 response to v1-compatible format
+            v1_compatible = self._convert_v2_to_v1_format(v2_response, space_key)
+
+            # Add body.storage structure if body content exists
+            if "body" in v2_response and v2_response["body"].get("storage"):
+                storage_value = v2_response["body"]["storage"].get("value", "")
+                v1_compatible["body"] = {
+                    "storage": {"value": storage_value, "representation": "storage"}
+                }
+
+            # Add version information from version response
+            # In versions API, version info is at the top level
+            if "number" in v2_response:
+                v1_compatible["version"] = {
+                    "number": v2_response.get("number"),
+                }
+            elif "version" in v2_response and "number" in v2_response["version"]:
+                v1_compatible["version"] = {
+                    "number": v2_response["version"].get("number"),
+                }
+
+            # Add space information
+            if space_id:
+                v1_compatible["space"] = {
+                    "key": space_key,
+                    "id": space_id,
+                }
+
+            # Add children.attachment for compatibility with v1 expand
+            if "children" in v2_response and "attachment" in v2_response["children"]:
+                v1_compatible.setdefault("children", {})["attachment"] = v2_response[
+                    "children"
+                ]["attachment"]
+
+            return v1_compatible
+
+        except HTTPError as e:
+            logger.error(f"HTTP error getting page '{page_id}' version {version}: {e}")
+            if e.response is not None:
+                logger.error(f"Response content: {e.response.text}")
+            raise ValueError(
+                f"Failed to get page '{page_id}' version {version}: {e}"
+            ) from e
+        except Exception as e:
+            logger.error(f"Error getting page '{page_id}' version {version}: {e}")
+            raise ValueError(
+                f"Failed to get page '{page_id}' version {version}: {e}"
+            ) from e
+
     def get_page_views(self, page_id: str) -> dict[str, Any]:
         """Get view statistics for a page using the Analytics API.
 
