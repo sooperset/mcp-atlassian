@@ -57,9 +57,13 @@ def env_scenarios():
     }
 
 
-def _assert_service_availability(result, confluence_expected, jira_expected):
+def _assert_service_availability(result, confluence_expected, jira_expected, zephyr_expected=False):
     """Helper to assert service availability."""
-    assert result == {"confluence": confluence_expected, "jira": jira_expected}
+    assert result == {
+        "confluence": confluence_expected,
+        "jira": jira_expected,
+        "zephyr": zephyr_expected,
+    }
 
 
 def _assert_authentication_logs(caplog, auth_type, services):
@@ -94,7 +98,7 @@ class TestGetAvailableServices:
                 result, confluence_expected=False, jira_expected=False
             )
             _assert_authentication_logs(
-                caplog, "not_configured", ["confluence", "jira"]
+                caplog, "not_configured", ["confluence", "jira", "zephyr"]
             )
 
     @pytest.mark.parametrize(
@@ -228,7 +232,7 @@ class TestGetAvailableServices:
             )
 
             _assert_authentication_logs(caplog, "cloud_basic", ["confluence"])
-            _assert_authentication_logs(caplog, "not_configured", ["jira"])
+            _assert_authentication_logs(caplog, "not_configured", ["jira", "zephyr"])
 
     def test_return_value_structure(self):
         """Test that the return value has the correct structure."""
@@ -236,7 +240,7 @@ class TestGetAvailableServices:
             result = get_available_services()
 
             assert isinstance(result, dict)
-            assert set(result.keys()) == {"confluence", "jira"}
+            assert set(result.keys()) == {"confluence", "jira", "zephyr"}
             assert all(isinstance(v, bool) for v in result.values())
 
     @pytest.mark.parametrize(
@@ -259,7 +263,7 @@ class TestGetAvailableServices:
                 result, confluence_expected=False, jira_expected=False
             )
             _assert_authentication_logs(
-                caplog, "not_configured", ["confluence", "jira"]
+                caplog, "not_configured", ["confluence", "jira", "zephyr"]
             )
 
 

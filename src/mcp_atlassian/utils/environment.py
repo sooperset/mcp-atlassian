@@ -193,12 +193,6 @@ def get_available_services(
                 logger.info(
                     "Using Zephyr Server/Data Center authentication (PAT or Basic Auth)"
                 )
-    elif os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in ("true", "1", "yes"):
-        zephyr_is_setup = True
-        logger.info(
-            "Using Zephyr minimal OAuth configuration - expecting "
-            "user-provided tokens via headers"
-        )
 
     if not zephyr_is_setup:
         zephyr_token = headers.get("X-Atlassian-Zephyr-Personal-Token")
