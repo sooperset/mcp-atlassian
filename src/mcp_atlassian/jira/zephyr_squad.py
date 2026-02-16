@@ -69,7 +69,7 @@ class ZephyrSquadMixin(JiraClient):
         if end_date:
             payload["endDate"] = end_date
 
-        return self.jira.post("rest/zapi/latest/cycle", json=payload)
+        return self.jira.post("rest/zapi/latest/cycle", data=payload)
 
     def get_zephyr_executions(
         self,
@@ -129,7 +129,7 @@ class ZephyrSquadMixin(JiraClient):
         if assignee:
             payload["assignee"] = assignee
 
-        return self.jira.post("rest/zapi/latest/execution", json=payload)
+        return self.jira.post("rest/zapi/latest/execution", data=payload)
 
     def execute_zephyr_test(
         self,
@@ -152,7 +152,7 @@ class ZephyrSquadMixin(JiraClient):
             payload["comment"] = comment
 
         endpoint = f"rest/zapi/latest/execution/{execution_id}/execute"
-        return self.jira.put(endpoint, json=payload)
+        return self.jira.put(endpoint, data=payload)
 
     def get_zephyr_test_steps(self, issue_id: str) -> dict[str, Any]:
         """Get test steps for a test case.

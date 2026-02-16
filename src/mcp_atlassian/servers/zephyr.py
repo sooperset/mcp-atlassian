@@ -2,7 +2,7 @@
 
 import json
 import logging
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastmcp import Context, FastMCP
 from pydantic import Field
@@ -26,9 +26,7 @@ zephyr_mcp = FastMCP(
 )
 async def zephyr_get_test_case(
     ctx: Context,
-    test_case_key: Annotated[
-        str, Field(description="Test case key (e.g., 'PROJ-T1')")
-    ],
+    test_case_key: Annotated[str, Field(description="Test case key (e.g., 'PROJ-T1')")],
 ) -> str:
     """
     Get details of a specific Zephyr Scale test case.
@@ -58,9 +56,7 @@ async def zephyr_get_test_case(
         elif isinstance(e, OSError | HTTPError):
             error_message = f"Network or API Error: {str(e)}"
         else:
-            error_message = (
-                "An unexpected error occurred while fetching the test case."
-            )
+            error_message = "An unexpected error occurred while fetching the test case."
             logger.exception(
                 f"Unexpected error in zephyr_get_test_case for '{test_case_key}':"
             )
@@ -185,9 +181,7 @@ async def zephyr_create_test_case(
 @check_write_access
 async def zephyr_update_test_case(
     ctx: Context,
-    test_case_key: Annotated[
-        str, Field(description="Test case key (e.g., 'PROJ-T1')")
-    ],
+    test_case_key: Annotated[str, Field(description="Test case key (e.g., 'PROJ-T1')")],
     name: Annotated[str | None, Field(description="Test case name")] = None,
     objective: Annotated[
         str | None, Field(description="Test objective/description")
@@ -366,9 +360,7 @@ async def zephyr_get_test_execution(
 async def zephyr_create_test_execution(
     ctx: Context,
     project_key: Annotated[str, Field(description="Project key (e.g., 'PROJ')")],
-    test_case_key: Annotated[
-        str, Field(description="Test case key (e.g., 'PROJ-T1')")
-    ],
+    test_case_key: Annotated[str, Field(description="Test case key (e.g., 'PROJ-T1')")],
     test_cycle_key: Annotated[
         str | None, Field(description="Optional test cycle key")
     ] = None,
@@ -379,9 +371,7 @@ async def zephyr_create_test_execution(
             "'Not Executed')"
         ),
     ] = None,
-    comment: Annotated[
-        str | None, Field(description="Execution comment/notes")
-    ] = None,
+    comment: Annotated[str | None, Field(description="Execution comment/notes")] = None,
 ) -> str:
     """
     Create a new test execution in Zephyr Scale.
@@ -432,9 +422,7 @@ async def zephyr_update_test_execution(
         str, Field(description="Test execution key (e.g., 'PROJ-E1')")
     ],
     status: Annotated[str | None, Field(description="Execution status")] = None,
-    comment: Annotated[
-        str | None, Field(description="Execution comment/notes")
-    ] = None,
+    comment: Annotated[str | None, Field(description="Execution comment/notes")] = None,
 ) -> str:
     """
     Update an existing test execution in Zephyr Scale.
@@ -473,9 +461,7 @@ async def zephyr_update_test_execution(
 @check_write_access
 async def zephyr_link_test_case_to_issue(
     ctx: Context,
-    test_case_key: Annotated[
-        str, Field(description="Test case key (e.g., 'PROJ-T1')")
-    ],
+    test_case_key: Annotated[str, Field(description="Test case key (e.g., 'PROJ-T1')")],
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
 ) -> str:
     """

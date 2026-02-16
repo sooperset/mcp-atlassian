@@ -514,10 +514,7 @@ async def get_zephyr_fetcher(ctx: Context) -> ZephyrFetcher:
             f"State.user_auth_type: {getattr(request.state, 'user_atlassian_auth_type', 'N/A')}. "
             f"State.user_token_present: {hasattr(request.state, 'user_atlassian_token') and request.state.user_atlassian_token is not None}."
         )
-        if (
-            hasattr(request.state, "zephyr_fetcher")
-            and request.state.zephyr_fetcher
-        ):
+        if hasattr(request.state, "zephyr_fetcher") and request.state.zephyr_fetcher:
             logger.debug(
                 "get_zephyr_fetcher: Returning ZephyrFetcher from request.state."
             )
@@ -527,9 +524,7 @@ async def get_zephyr_fetcher(ctx: Context) -> ZephyrFetcher:
 
         service_headers = getattr(request.state, "atlassian_service_headers", {})
         zephyr_url_header = service_headers.get("X-Atlassian-Zephyr-Url")
-        zephyr_token_header = service_headers.get(
-            "X-Atlassian-Zephyr-Personal-Token"
-        )
+        zephyr_token_header = service_headers.get("X-Atlassian-Zephyr-Personal-Token")
 
         if (
             user_auth_type == "pat"
@@ -554,9 +549,7 @@ async def get_zephyr_fetcher(ctx: Context) -> ZephyrFetcher:
             )
             try:
                 header_zephyr_fetcher = ZephyrFetcher(config=header_config)
-                logger.debug(
-                    "get_zephyr_fetcher: Validated header-based Zephyr token"
-                )
+                logger.debug("get_zephyr_fetcher: Validated header-based Zephyr token")
                 request.state.zephyr_fetcher = header_zephyr_fetcher
                 return header_zephyr_fetcher
             except Exception as e:
@@ -605,9 +598,7 @@ async def get_zephyr_fetcher(ctx: Context) -> ZephyrFetcher:
             )
             try:
                 user_zephyr_fetcher = ZephyrFetcher(config=user_specific_config)
-                logger.debug(
-                    "get_zephyr_fetcher: Validated Zephyr token"
-                )
+                logger.debug("get_zephyr_fetcher: Validated Zephyr token")
                 request.state.zephyr_fetcher = user_zephyr_fetcher
                 return user_zephyr_fetcher
             except Exception as e:

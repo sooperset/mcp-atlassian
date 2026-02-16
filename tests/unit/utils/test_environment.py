@@ -57,7 +57,9 @@ def env_scenarios():
     }
 
 
-def _assert_service_availability(result, confluence_expected, jira_expected, zephyr_expected=False):
+def _assert_service_availability(
+    result, confluence_expected, jira_expected, zephyr_expected=False
+):
     """Helper to assert service availability."""
     assert result == {
         "confluence": confluence_expected,
