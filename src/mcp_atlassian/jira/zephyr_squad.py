@@ -33,7 +33,7 @@ class ZephyrSquadMixin(JiraClient):
         if version_id:
             params["versionId"] = version_id
 
-        return self._session.get("rest/zapi/latest/cycle", params=params).json()
+        return self.jira.get("rest/zapi/latest/cycle", params=params)
 
     def create_zephyr_cycle(
         self,
@@ -69,7 +69,7 @@ class ZephyrSquadMixin(JiraClient):
         if end_date:
             payload["endDate"] = end_date
 
-        return self._session.post("rest/zapi/latest/cycle", json=payload).json()
+        return self.jira.post("rest/zapi/latest/cycle", json=payload)
 
     def get_zephyr_executions(
         self,
@@ -95,7 +95,7 @@ class ZephyrSquadMixin(JiraClient):
         if issue_id:
             params["issueId"] = issue_id
 
-        return self._session.get("rest/zapi/latest/execution", params=params).json()
+        return self.jira.get("rest/zapi/latest/execution", params=params)
 
     def create_zephyr_execution(
         self,
@@ -129,7 +129,7 @@ class ZephyrSquadMixin(JiraClient):
         if assignee:
             payload["assignee"] = assignee
 
-        return self._session.post("rest/zapi/latest/execution", json=payload).json()
+        return self.jira.post("rest/zapi/latest/execution", json=payload)
 
     def execute_zephyr_test(
         self,
@@ -151,9 +151,8 @@ class ZephyrSquadMixin(JiraClient):
         if comment:
             payload["comment"] = comment
 
-        return self._session.put(
-            f"rest/zapi/latest/execution/{execution_id}/execute", json=payload
-        ).json()
+        endpoint = f"rest/zapi/latest/execution/{execution_id}/execute"
+        return self.jira.put(endpoint, json=payload)
 
     def get_zephyr_test_steps(self, issue_id: str) -> dict[str, Any]:
         """Get test steps for a test case.
@@ -164,7 +163,7 @@ class ZephyrSquadMixin(JiraClient):
         Returns:
             List of test steps
         """
-        return self._session.get(f"rest/zapi/latest/teststep/{issue_id}").json()
+        return self.jira.get(f"rest/zapi/latest/teststep/{issue_id}")
 
     def get_zephyr_execution_summary(
         self,
@@ -187,6 +186,5 @@ class ZephyrSquadMixin(JiraClient):
             "versionId": version_id,
             "projectId": project_id,
         }
-        return self._session.get(
-            "rest/zapi/latest/execution/executionSummary", params=params
-        ).json()
+        endpoint = "rest/zapi/latest/execution/executionSummary"
+        return self.jira.get(endpoint, params=params)
