@@ -7,7 +7,7 @@
 ![License](https://img.shields.io/github/license/sooperset/mcp-atlassian)
 [![Docs](https://img.shields.io/badge/docs-mintlify-blue)](https://personal-1d37018d.mintlify.app)
 
-Model Context Protocol (MCP) server for Atlassian products (Jira, Confluence, and Zephyr Scale). Supports both Cloud and Server/Data Center deployments.
+Model Context Protocol (MCP) server for Atlassian products (Jira, Confluence, Zephyr Scale, and Zephyr Squad). Supports both Cloud and Server/Data Center deployments.
 
 https://github.com/user-attachments/assets/35303504-14c6-4ae4-913b-7c25ea511c3e
 
@@ -62,8 +62,13 @@ Ask your AI assistant to:
 - **"Search Confluence for onboarding docs"**
 - **"Create a bug ticket for the login issue"**
 - **"Update the status of PROJ-123 to Done"**
-- **"Search for test cases in Zephyr for the login feature"**
-- **"Create a test execution for PROJ-T1"**
+- **"Search for test cases in Zephyr for the login feature"** (Zephyr Scale)
+- **"Get Zephyr Squad test cycles for project 10000"** (Zephyr Squad plugin)
+
+> **Note on Zephyr versions:**
+> - **Zephyr Scale** is a standalone test management service with its own API (Cloud: `api.zephyrscale.smartbear.com`)
+> - **Zephyr Squad** is a Jira plugin accessed through Jira's REST API (`/rest/zapi/latest/`)
+> - Tools are prefixed accordingly: `zephyr_*` for Scale, `zephyr_squad_*` for Squad
 
 ## Documentation
 
@@ -92,17 +97,18 @@ Documentation is also available in [llms.txt format](https://llmstxt.org/), whic
 | Confluence | Server/Data Center | Supported (v6.0+) |
 | Zephyr Scale | Cloud | Fully supported |
 | Zephyr Scale | Server/Data Center | Supported (v6.0+) |
+| Zephyr Squad | Jira Plugin | Fully supported |
 
 ## Key Tools
 
-| Jira | Confluence | Zephyr Scale |
-|------|------------|--------------|
-| `jira_search` - Search with JQL | `confluence_search` - Search with CQL | `zephyr_search_test_cases` - Search test cases |
-| `jira_get_issue` - Get issue details | `confluence_get_page` - Get page content | `zephyr_get_test_case` - Get test case details |
-| `jira_create_issue` - Create issues | `confluence_create_page` - Create pages | `zephyr_create_test_case` - Create test cases |
-| `jira_update_issue` - Update issues | `confluence_update_page` - Update pages | `zephyr_create_test_cycle` - Create test cycles |
-| `jira_transition_issue` - Change status | `confluence_add_comment` - Add comments | `zephyr_create_test_execution` - Create test executions |
-| `jira_get_issue_sla` - Calculate SLA metrics | `confluence_get_page_views` - Get page view stats (Cloud only) | `zephyr_search_test_executions` - Search test executions |
+| Jira | Confluence | Zephyr |
+|------|------------|--------|
+| `jira_search` - Search with JQL | `confluence_search` - Search with CQL | **Scale**: `zephyr_search_test_cases` - Search test cases |
+| `jira_get_issue` - Get issue details | `confluence_get_page` - Get page content | **Scale**: `zephyr_create_test_case` - Create test cases |
+| `jira_create_issue` - Create issues | `confluence_create_page` - Create pages | **Scale**: `zephyr_create_test_execution` - Create test executions |
+| `jira_update_issue` - Update issues | `confluence_update_page` - Update pages | **Squad**: `zephyr_squad_get_cycles` - Get test cycles |
+| `jira_transition_issue` - Change status | `confluence_add_comment` - Add comments | **Squad**: `zephyr_squad_create_execution` - Create test execution |
+| `jira_get_issue_sla` - Calculate SLA metrics | `confluence_get_page_views` - Get page view stats (Cloud only) | **Squad**: `zephyr_squad_execute_test` - Execute test |
 
 See [Tools Reference](https://personal-1d37018d.mintlify.app/docs/tools-reference) for the complete list.
 
