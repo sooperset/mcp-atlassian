@@ -659,7 +659,7 @@ class TestIssuesMixin:
 
         # Verify the API calls
         issues_mixin.jira.update_issue.assert_called_once_with(
-            issue_key="TEST-123", update={"fields": {"summary": "Updated Summary"}}
+            issue_key="TEST-123", fields={"summary": "Updated Summary"}
         )
         assert issues_mixin.jira.get_issue.called
         assert issues_mixin.jira.get_issue.call_args[0][0] == "TEST-123"
@@ -709,7 +709,7 @@ class TestIssuesMixin:
         document = issues_mixin.update_issue(issue_key="TEST-123", assignee=None)
 
         issues_mixin.jira.update_issue.assert_called_once_with(
-            issue_key="TEST-123", update={"fields": {"assignee": None}}
+            issue_key="TEST-123", fields={"assignee": None}
         )
         assert not issues_mixin._get_account_id.called
         assert document.key == "TEST-123"
