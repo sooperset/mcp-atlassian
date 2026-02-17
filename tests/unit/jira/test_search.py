@@ -797,7 +797,7 @@ class TestSearchMixin:
 
         # Test 3: Query with case-insensitive trailing order by
         search_mixin.search_issues(
-            'priority = High order by updated desc', projects_filter="PROJ1"
+            "priority = High order by updated desc", projects_filter="PROJ1"
         )
         assert (
             get_jql_from_call()

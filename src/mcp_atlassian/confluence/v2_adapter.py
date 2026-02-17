@@ -765,3 +765,197 @@ class ConfluenceV2Adapter:
             raise ValueError(
                 f"Failed to get view statistics for page '{page_id}': {e}"
             ) from e
+
+    def get_page_attachments(
+        self,
+        page_id: str,
+        start: int = 0,
+        limit: int = 50,
+        filename: str | None = None,
+        media_type: str | None = None,
+        sort: str | None = None,
+    ) -> dict[str, Any]:
+        """Get attachments for a page using v2 API.
+
+        Args:
+            page_id: The page ID
+            start: Starting index for pagination (default: 0)
+            limit: Maximum number of results (default: 50, max: 250)
+            filename: Filter by filename
+            media_type: Filter by media type (e.g., "image/png")
+            sort: Sort field (e.g., "created-date", "-created-date")
+
+        Returns:
+            Dictionary containing:
+            - results: List of attachment objects
+            - _links: Pagination links
+
+        Raises:
+            HTTPError: If the API request fails (propagates 401/403)
+            ValueError: If page not found or other errors
+        """
+        try:
+            url = f"{self.base_url}/wiki/api/v2/pages/{page_id}/attachments"
+            params: dict[str, Any] = {"start": start, "limit": limit}
+
+            if filename:
+                params["filename"] = filename
+            if media_type:
+                params["media-type"] = media_type
+            if sort:
+                params["sort"] = sort
+
+            response = self.session.get(url, params=params)
+            response.raise_for_status()
+
+            data = response.json()
+            logger.debug(
+                f"Successfully retrieved attachments for page '{page_id}' "
+                f"(found {len(data.get('results', []))})"
+            )
+
+            # Convert v2 format to v1-compatible format for consistency
+            return self._convert_attachments_v2_to_v1(data)
+
+        except HTTPError as e:
+            if e.response is not None and e.response.status_code in [401, 403]:
+                logger.error(
+                    f"Authentication error getting attachments for page '{page_id}': {e}"
+                )
+                raise
+            logger.warning(f"HTTP error getting attachments for page '{page_id}': {e}")
+            raise ValueError(
+                f"Failed to get attachments for page '{page_id}': {e}"
+            ) from e
+        except Exception as e:
+            logger.error(f"Error getting attachments for page '{page_id}': {e}")
+            raise ValueError(
+                f"Failed to get attachments for page '{page_id}': {e}"
+            ) from e
+
+    def get_attachment_by_id(self, attachment_id: str) -> dict[str, Any]:
+        """Get a single attachment by ID using v2 API.
+
+        Args:
+            attachment_id: The attachment ID
+
+        Returns:
+            Attachment object in v1-compatible format
+
+        Raises:
+            HTTPError: If the API request fails (propagates 401/403)
+            ValueError: If attachment not found or other errors
+        """
+        try:
+            url = f"{self.base_url}/wiki/api/v2/attachments/{attachment_id}"
+
+            response = self.session.get(url)
+            response.raise_for_status()
+
+            data = response.json()
+            logger.debug(f"Successfully retrieved attachment '{attachment_id}'")
+
+            # Convert v2 format to v1-compatible format
+            return self._convert_single_attachment_v2_to_v1(data)
+
+        except HTTPError as e:
+            if e.response is not None and e.response.status_code in [401, 403]:
+                logger.error(
+                    f"Authentication error getting attachment '{attachment_id}': {e}"
+                )
+                raise
+            if e.response is not None and e.response.status_code == 404:
+                raise ValueError(f"Attachment '{attachment_id}' not found") from e
+            logger.warning(f"HTTP error getting attachment '{attachment_id}': {e}")
+            raise ValueError(f"Failed to get attachment '{attachment_id}': {e}") from e
+        except Exception as e:
+            logger.error(f"Error getting attachment '{attachment_id}': {e}")
+            raise ValueError(f"Failed to get attachment '{attachment_id}': {e}") from e
+
+    def delete_attachment(self, attachment_id: str) -> None:
+        """Delete an attachment by ID using v2 API.
+
+        Args:
+            attachment_id: The attachment ID to delete
+
+        Raises:
+            HTTPError: If the API request fails (propagates 401/403)
+            ValueError: If attachment not found or deletion fails
+        """
+        try:
+            url = f"{self.base_url}/wiki/api/v2/attachments/{attachment_id}"
+
+            response = self.session.delete(url)
+            response.raise_for_status()
+
+            logger.info(f"Successfully deleted attachment '{attachment_id}'")
+
+        except HTTPError as e:
+            if e.response is not None and e.response.status_code in [401, 403]:
+                logger.error(
+                    f"Authentication error deleting attachment '{attachment_id}': {e}"
+                )
+                raise
+            if e.response is not None and e.response.status_code == 404:
+                raise ValueError(f"Attachment '{attachment_id}' not found") from e
+            logger.warning(f"HTTP error deleting attachment '{attachment_id}': {e}")
+            raise ValueError(
+                f"Failed to delete attachment '{attachment_id}': {e}"
+            ) from e
+        except Exception as e:
+            logger.error(f"Error deleting attachment '{attachment_id}': {e}")
+            raise ValueError(
+                f"Failed to delete attachment '{attachment_id}': {e}"
+            ) from e
+
+    def _convert_attachments_v2_to_v1(
+        self, v2_response: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Convert v2 attachments list response to v1-compatible format.
+
+        Args:
+            v2_response: The v2 API response with results array
+
+        Returns:
+            Response formatted like v1 API for compatibility
+        """
+        results = v2_response.get("results", [])
+        converted_results = [
+            self._convert_single_attachment_v2_to_v1(att) for att in results
+        ]
+
+        return {
+            "results": converted_results,
+            "start": v2_response.get("start", 0),
+            "limit": v2_response.get("limit", 50),
+            "size": len(converted_results),
+            "_links": v2_response.get("_links", {}),
+        }
+
+    def _convert_single_attachment_v2_to_v1(
+        self, v2_attachment: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Convert a single v2 attachment to v1-compatible format.
+
+        Args:
+            v2_attachment: Single attachment object from v2 API
+
+        Returns:
+            Attachment formatted like v1 API for compatibility
+        """
+        return {
+            "id": v2_attachment.get("id"),
+            "type": "attachment",
+            "status": v2_attachment.get("status", "current"),
+            "title": v2_attachment.get("title"),
+            "metadata": {
+                "mediaType": v2_attachment.get("mediaType"),
+                "comment": v2_attachment.get("comment"),
+            },
+            "extensions": {
+                "fileSize": v2_attachment.get("fileSize"),
+                "mediaType": v2_attachment.get("mediaType"),
+            },
+            "version": v2_attachment.get("version", {}),
+            "_links": v2_attachment.get("_links", {}),
+        }

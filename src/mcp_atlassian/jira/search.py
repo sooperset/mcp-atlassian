@@ -83,7 +83,9 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                     if order_match:
                         order_clause = order_match.group(1)
                         jql_without_order = jql[: order_match.start()]
-                        jql = f"({jql_without_order}) AND {project_query} {order_clause}"
+                        jql = (
+                            f"({jql_without_order}) AND {project_query} {order_clause}"
+                        )
                     else:
                         jql = f"({jql}) AND {project_query}"
 

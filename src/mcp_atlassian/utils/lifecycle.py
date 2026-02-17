@@ -15,11 +15,21 @@ _shutdown_event = threading.Event()
 def setup_signal_handlers() -> None:
     """Set up signal handlers for graceful shutdown.
 
-    Registers handlers for SIGTERM, SIGINT, and SIGPIPE (if available) to ensure
+    Registers handlers for SIGTERM, SIGINT, and SIGPIPE (Unix/Linux only) to ensure
     the application shuts down cleanly when receiving termination signals.
 
-    This is particularly important for Docker containers running with the -i flag,
-    which need to properly handle shutdown signals from parent processes.
+    Platform Behavior:
+        - Unix/Linux: SIGPIPE handled to prevent process termination on client disconnect
+        - Windows: SIGPIPE not available (socket errors returned directly instead)
+
+    This is particularly important for:
+        - MCP stdio transport (client disconnect detection)
+        - Docker containers running with the -i flag
+        - Long-running server processes with unreliable clients
+
+    Note:
+        SIGPIPE handling is CRITICAL on Unix/Linux. Without it, the server process
+        terminates when writing to a closed pipe (e.g., when an MCP client disconnects).
     """
 
     def signal_handler(signum: int, frame: Any) -> None:
@@ -36,10 +46,11 @@ def setup_signal_handlers() -> None:
     signal.signal(signal.SIGINT, signal_handler)
 
     # Handle SIGPIPE which occurs when parent process closes the pipe
-    try:
+    # SIGPIPE is not available on Windows, so we check for it first
+    if hasattr(signal, "SIGPIPE"):
         signal.signal(signal.SIGPIPE, signal_handler)
         logger.debug("SIGPIPE handler registered")
-    except AttributeError:
+    else:
         # SIGPIPE may not be available on all platforms (e.g., Windows)
         logger.debug("SIGPIPE not available on this platform")
 
