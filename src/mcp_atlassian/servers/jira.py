@@ -2238,7 +2238,7 @@ async def update_proforma_form_answers(
     tags={"jira", "read", "metrics"},
     annotations={"title": "Get Issue Dates", "readOnlyHint": True},
 )
-async def jira_get_issue_dates(
+async def get_issue_dates(
     ctx: Context,
     issue_key: Annotated[
         str,
