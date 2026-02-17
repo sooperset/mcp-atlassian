@@ -822,8 +822,11 @@ class IssuesMixin(
         # Process each kwarg
         # Iterate over a copy to allow modification of the original kwargs if needed elsewhere
         for key, value in kwargs.copy().items():
-            # Skip keys used internally for epic/parent handling or explicitly handled args like assignee/components
-            if key.startswith("__epic_") or key in ("parent", "assignee", "components"):
+            # Skip fields handled explicitly in create_issue()/update_issue()
+            # (e.g., assignee requires account ID lookup via _get_account_id).
+            # Other array fields like components, fixVersions, etc. flow through
+            # _format_field_value_for_write() which handles their formatting.
+            if key.startswith("__epic_") or key in ("parent", "assignee"):
                 continue
 
             normalized_key = key.lower()
