@@ -599,14 +599,18 @@ class IssuesMixin(
             if description:
                 fields["description"] = self._markdown_to_jira(description)
 
-            # Add assignee if provided
+            # Resolve and set assignee in the create fields, and also store
+            # the identifier for a post-creation assign_issue() call.
+            # Some Jira Server/DC configurations silently ignore the assignee
+            # field during creation, so the post-creation call acts as a safety
+            # net (similar to the epic two-step pattern).
+            assignee_identifier = None
             if assignee:
                 try:
-                    # _get_account_id now returns the correct identifier (accountId for cloud, name for server)
                     assignee_identifier = self._get_account_id(assignee)
                     self._add_assignee_to_fields(fields, assignee_identifier)
                 except ValueError as e:
-                    logger.warning(f"Could not assign issue: {str(e)}")
+                    logger.warning(f"Could not resolve assignee: {str(e)}")
 
             # Add components if provided
             if components:
@@ -653,6 +657,15 @@ class IssuesMixin(
             if not issue_key:
                 error_msg = "No issue key in response"
                 raise ValueError(error_msg)
+
+            # Assign the issue post-creation using the dedicated API endpoint
+            if assignee_identifier:
+                try:
+                    self.jira.assign_issue(issue_key, assignee_identifier)
+                except Exception as e:
+                    logger.warning(
+                        f"Could not assign issue {issue_key} to {assignee}: {e}"
+                    )
 
             # For Epics, perform the second step: update Epic-specific fields
             if self._is_epic_issue_type(issue_type):
