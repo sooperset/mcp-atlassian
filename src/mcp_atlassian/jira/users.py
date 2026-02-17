@@ -2,13 +2,11 @@
 
 import logging
 import re
-import unicodedata
 from typing import TYPE_CHECKING, TypeVar
-
-from unidecode import unidecode
 
 import requests
 from requests.exceptions import HTTPError
+from unidecode import unidecode
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.models.jira.common import JiraUser

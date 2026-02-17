@@ -700,7 +700,6 @@ Here's some code:
     assert "# This is a comment" in result
 
 
-
 # Language mapping tests for code blocks (issue #669)
 
 
