@@ -2116,3 +2116,121 @@ async def jira_get_issue_sla(
         logger.error(f"Error calculating SLA for {issue_key}: {str(e)}")
         error_result = {"success": False, "error": str(e), "issue_key": issue_key}
         return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "development"},
+    annotations={"title": "Get Issue Development Info", "readOnlyHint": True},
+)
+async def get_issue_development_info(
+    ctx: Context,
+    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    application_type: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Filter by application type. "
+                "Examples: 'stash' (Bitbucket Server), 'bitbucket', 'github', 'gitlab'"
+            )
+        ),
+    ] = None,
+    data_type: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Filter by data type. "
+                "Examples: 'pullrequest', 'branch', 'repository'"
+            )
+        ),
+    ] = None,
+) -> str:
+    """
+    Get development information (PRs, commits, branches) linked to a Jira issue.
+
+    This retrieves the development panel information that shows linked
+    pull requests, branches, and commits from connected source control systems
+    like Bitbucket, GitHub, or GitLab.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: The Jira issue key.
+        application_type: Optional filter by source control type.
+        data_type: Optional filter by data type (pullrequest, branch, etc.).
+
+    Returns:
+        JSON string with development information including:
+        - pullRequests: List of linked pull requests with status, author, reviewers
+        - branches: List of linked branches
+        - commits: List of linked commits
+        - repositories: List of repositories involved
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        result = jira.get_issue_development_info(
+            issue_key=issue_key,
+            application_type=application_type,
+            data_type=data_type,
+        )
+        return json.dumps(result, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Error getting development info for {issue_key}: {str(e)}")
+        error_result = {"success": False, "error": str(e), "issue_key": issue_key}
+        return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "development"},
+    annotations={"title": "Get Issues Development Info", "readOnlyHint": True},
+)
+async def get_issues_development_info(
+    ctx: Context,
+    issue_keys: Annotated[
+        list[str],
+        Field(description="List of Jira issue keys (e.g., ['PROJ-123', 'PROJ-456'])"),
+    ],
+    application_type: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Filter by application type. "
+                "Examples: 'stash' (Bitbucket Server), 'bitbucket', 'github', 'gitlab'"
+            )
+        ),
+    ] = None,
+    data_type: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Filter by data type. "
+                "Examples: 'pullrequest', 'branch', 'repository'"
+            )
+        ),
+    ] = None,
+) -> str:
+    """
+    Get development information for multiple Jira issues.
+
+    Batch retrieves development panel information (PRs, commits, branches)
+    for multiple issues at once.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_keys: List of Jira issue keys.
+        application_type: Optional filter by source control type.
+        data_type: Optional filter by data type.
+
+    Returns:
+        JSON string with list of development information for each issue.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        results = jira.get_issues_development_info(
+            issue_keys=issue_keys,
+            application_type=application_type,
+            data_type=data_type,
+        )
+        return json.dumps(results, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Error getting development info for issues: {str(e)}")
+        error_result = {"success": False, "error": str(e)}
+        return json.dumps(error_result, indent=2, ensure_ascii=False)
