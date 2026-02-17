@@ -1,6 +1,7 @@
 """Module for Jira search operations."""
 
 import logging
+import re
 from typing import Any
 
 import requests
@@ -75,7 +76,16 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                     "project = " not in jql.lower() and "project in" not in jql.lower()
                 ):
                     # Only add if not already filtering by project
-                    jql = f"({jql}) AND {project_query}"
+                    # Extract ORDER BY clause if present to avoid invalid JQL
+                    order_match = re.search(
+                        r"\s+(ORDER\s+BY\s+.*)$", jql, re.IGNORECASE
+                    )
+                    if order_match:
+                        order_clause = order_match.group(1)
+                        jql_without_order = jql[: order_match.start()]
+                        jql = f"({jql_without_order}) AND {project_query} {order_clause}"
+                    else:
+                        jql = f"({jql}) AND {project_query}"
 
                 logger.info(f"Applied projects filter to query: {jql}")
 

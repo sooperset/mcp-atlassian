@@ -747,3 +747,59 @@ class TestSearchMixin:
             "  ORDER BY priority DESC  ", projects_filter="PROJ1"
         )
         assert get_jql_from_call() == 'project = "PROJ1"   ORDER BY priority DESC  '
+
+    @pytest.mark.parametrize("is_cloud", [True, False])
+    def test_search_issues_with_trailing_order_by_and_projects_filter(
+        self, search_mixin: SearchMixin, mock_issues_response, is_cloud
+    ):
+        """Test that JQL with trailing ORDER BY correctly extracts and appends it after project filter."""
+        # Setup
+        search_mixin.config.is_cloud = is_cloud
+        search_mixin.config.projects_filter = None
+        search_mixin.config.url = "https://test.example.com"
+
+        # Setup mock response for both API methods
+        search_mixin.jira.post = MagicMock(return_value=mock_issues_response)
+        search_mixin.jira.jql = MagicMock(return_value=mock_issues_response)
+
+        # Helper to get the JQL from the appropriate mock
+        def get_jql_from_call():
+            if is_cloud:
+                return search_mixin.jira.post.call_args[1]["json"]["jql"]
+            else:
+                return search_mixin.jira.jql.call_args[0][0]
+
+        # Test 1: Query with trailing ORDER BY - should extract and append after project filter
+        search_mixin.search_issues(
+            'assignee = "testuser" ORDER BY updated DESC', projects_filter="PROJ1"
+        )
+        assert (
+            get_jql_from_call()
+            == '(assignee = "testuser") AND project = "PROJ1" ORDER BY updated DESC'
+        )
+
+        # Reset mocks
+        search_mixin.jira.post.reset_mock()
+        search_mixin.jira.jql.reset_mock()
+
+        # Test 2: Query with trailing ORDER BY and multiple projects
+        search_mixin.search_issues(
+            'status = "Done" ORDER BY created ASC', projects_filter="PROJ1,PROJ2"
+        )
+        assert (
+            get_jql_from_call()
+            == '(status = "Done") AND project IN ("PROJ1", "PROJ2") ORDER BY created ASC'
+        )
+
+        # Reset mocks
+        search_mixin.jira.post.reset_mock()
+        search_mixin.jira.jql.reset_mock()
+
+        # Test 3: Query with case-insensitive trailing order by
+        search_mixin.search_issues(
+            'priority = High order by updated desc', projects_filter="PROJ1"
+        )
+        assert (
+            get_jql_from_call()
+            == '(priority = High) AND project = "PROJ1" order by updated desc'
+        )
