@@ -27,6 +27,7 @@ dependencies = [
     "keyring>=25.6.0",
     "cachetools>=5.0.0",
     "types-cachetools>=5.5.0.20240820",
+    "unidecode>=1.3.0",
 ]
 [[project.authors]]
 name = "sooperset"
