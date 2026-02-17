@@ -613,7 +613,7 @@ class TestIssuesMixin:
 
         # Verify the API calls
         issues_mixin.jira.update_issue.assert_called_once_with(
-            issue_key="TEST-123", fields={"summary": "Updated Summary"}
+            issue_key="TEST-123", update={"fields": {"summary": "Updated Summary"}}
         )
         assert issues_mixin.jira.get_issue.called
         assert issues_mixin.jira.get_issue.call_args[0][0] == "TEST-123"
@@ -644,6 +644,27 @@ class TestIssuesMixin:
         # Call the method with status in kwargs instead of fields
         issues_mixin.update_issue(issue_key="TEST-123", status="In Progress")
 
+    def test_update_issue_with_status_and_fields(self, issues_mixin: IssuesMixin):
+        """Test field updates use correct update= kwarg with status."""
+        issues_mixin.get_issue = MagicMock(
+            return_value=JiraIssue(key="TEST-123", description="")
+        )
+        issues_mixin.get_available_transitions = MagicMock(
+            return_value=[
+                {"id": "21", "name": "In Progress", "to_status": "In Progress"}
+            ]
+        )
+
+        issues_mixin.update_issue(
+            issue_key="TEST-123",
+            fields={"summary": "Updated"},
+            status="In Progress",
+        )
+
+        issues_mixin.jira.update_issue.assert_called_once_with(
+            issue_key="TEST-123", update={"fields": {"summary": "Updated"}}
+        )
+
     def test_update_issue_unassign(self, issues_mixin: IssuesMixin, make_issue_data):
         """Test unassigning an issue."""
         issues_mixin.jira.get_issue.return_value = make_issue_data(
@@ -655,7 +676,7 @@ class TestIssuesMixin:
         document = issues_mixin.update_issue(issue_key="TEST-123", assignee=None)
 
         issues_mixin.jira.update_issue.assert_called_once_with(
-            issue_key="TEST-123", fields={"assignee": None}
+            issue_key="TEST-123", update={"fields": {"assignee": None}}
         )
         assert not issues_mixin._get_account_id.called
         assert document.key == "TEST-123"
@@ -685,9 +706,12 @@ class TestIssuesMixin:
             issue_key="TEST-123", components=["Backend", "Frontend"]
         )
 
+        expected = {
+            "components": [{"name": "Backend"}, {"name": "Frontend"}],
+        }
         issues_mixin.jira.update_issue.assert_called_once_with(
             issue_key="TEST-123",
-            fields={"components": [{"name": "Backend"}, {"name": "Frontend"}]},
+            update={"fields": expected},
         )
         assert document.key == "TEST-123"
 
@@ -719,7 +743,7 @@ class TestIssuesMixin:
 
         issues_mixin.jira.update_issue.assert_called_once_with(
             issue_key="TEST-123",
-            fields={"components": [{"id": "10001"}, {"name": "API"}]},
+            update={"fields": {"components": [{"id": "10001"}, {"name": "API"}]}},
         )
         assert document.key == "TEST-123"
 
@@ -748,7 +772,7 @@ class TestIssuesMixin:
 
         issues_mixin.jira.update_issue.assert_called_once_with(
             issue_key="TEST-123",
-            fields={"components": []},
+            update={"fields": {"components": []}},
         )
         assert document.key == "TEST-123"
 

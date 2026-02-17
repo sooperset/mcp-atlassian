@@ -1091,7 +1091,9 @@ class IssuesMixin(
 
             # Update the issue fields
             if update_fields:
-                self.jira.update_issue(issue_key=issue_key, fields=update_fields)  # type: ignore[call-arg]
+                self.jira.update_issue(
+                    issue_key=issue_key, update={"fields": update_fields}
+                )
 
             # Handle attachments if provided
             if "attachments" in kwargs and kwargs["attachments"]:
@@ -1148,7 +1150,7 @@ class IssuesMixin(
 
         # First update any fields if needed
         if fields:
-            self.jira.update_issue(issue_key=issue_key, fields=fields)  # type: ignore[call-arg]
+            self.jira.update_issue(issue_key=issue_key, update={"fields": fields})
 
         # If no status change is requested, return the issue
         if not status:

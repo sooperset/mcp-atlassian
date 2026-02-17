@@ -133,9 +133,11 @@ class TestIssuesMarkdownConversion:
         # Verify the converted description was passed to API
         issues_mixin.jira.update_issue.assert_called_once_with(
             issue_key="TEST-123",
-            fields={
-                "description": f"[CONVERTED] {markdown_description}",
-                "summary": "Updated Issue",
+            update={
+                "fields": {
+                    "description": f"[CONVERTED] {markdown_description}",
+                    "summary": "Updated Issue",
+                }
             },
         )
 
@@ -171,7 +173,7 @@ class TestIssuesMarkdownConversion:
         # Verify the converted description was passed to API
         issues_mixin.jira.update_issue.assert_called_once_with(
             issue_key="TEST-123",
-            fields={"description": f"[CONVERTED] {markdown_description}"},
+            update={"fields": {"description": f"[CONVERTED] {markdown_description}"}},
         )
 
         # Verify result
@@ -216,7 +218,7 @@ class TestIssuesMarkdownConversion:
             "description": f"[CONVERTED] {markdown_description}",
         }
         issues_mixin.jira.update_issue.assert_called_once_with(
-            issue_key="TEST-123", fields=expected_fields
+            issue_key="TEST-123", update={"fields": expected_fields}
         )
 
         # Verify result
