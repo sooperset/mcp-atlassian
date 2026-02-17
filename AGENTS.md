@@ -94,4 +94,3 @@ git checkout -b fix/issue-description # Bug fix
 git commit --trailer "Reported-by:<name>"      # Attribution
 git commit --trailer "Github-Issue:#<number>"  # Issue reference
 ```
-
