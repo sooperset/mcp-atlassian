@@ -1,10 +1,12 @@
 """Jira FastMCP server instance and tool definitions."""
 
+import base64
 import json
 import logging
 from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
+from mcp.types import BlobResourceContents, EmbeddedResource, TextContent
 from pydantic import Field
 from requests.exceptions import HTTPError
 
@@ -420,23 +422,76 @@ async def download_attachments(
             pattern=ISSUE_KEY_PATTERN,
         ),
     ],
-    target_dir: Annotated[
-        str, Field(description="Directory where attachments should be saved")
-    ],
-) -> str:
+) -> list[TextContent | EmbeddedResource]:
     """Download attachments from a Jira issue.
+
+    Returns attachment contents as base64-encoded embedded resources so that
+    they are available over the MCP protocol without requiring filesystem
+    access on the server.
 
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        target_dir: Directory to save attachments.
 
     Returns:
-        JSON string indicating the result of the download operation.
+        A list containing a text summary and one EmbeddedResource per
+        successfully downloaded attachment.
     """
     jira = await get_jira_fetcher(ctx)
-    result = jira.download_issue_attachments(issue_key=issue_key, target_dir=target_dir)
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    result = jira.get_issue_attachment_contents(issue_key=issue_key)
+
+    contents: list[TextContent | EmbeddedResource] = []
+
+    if not result.get("success"):
+        contents.append(
+            TextContent(
+                type="text",
+                text=json.dumps(result, indent=2, ensure_ascii=False),
+            )
+        )
+        return contents
+
+    attachments = result.get("attachments", [])
+    failed = result.get("failed", [])
+
+    summary = {
+        "success": True,
+        "issue_key": result.get("issue_key", issue_key),
+        "total": result.get("total", 0),
+        "downloaded": len(attachments),
+        "failed": failed,
+    }
+
+    if not attachments and not failed:
+        summary["message"] = result.get(
+            "message", f"No attachments found for issue {issue_key}"
+        )
+
+    contents.append(
+        TextContent(
+            type="text",
+            text=json.dumps(summary, indent=2, ensure_ascii=False),
+        )
+    )
+
+    for attachment in attachments:
+        data_bytes: bytes = attachment["data"]
+        encoded = base64.b64encode(data_bytes).decode("ascii")
+        mime_type = attachment.get("content_type", "application/octet-stream")
+        filename = attachment["filename"]
+
+        contents.append(
+            EmbeddedResource(
+                type="resource",
+                resource=BlobResourceContents(
+                    uri=f"attachment:///{issue_key}/{filename}",
+                    mimeType=mime_type,
+                    blob=encoded,
+                ),
+            )
+        )
+
+    return contents
 
 
 @jira_mcp.tool(
