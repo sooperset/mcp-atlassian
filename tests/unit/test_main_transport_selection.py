@@ -111,7 +111,7 @@ class TestMainTransportSelection:
                     assert "_run_stdio_with_stdin_guard" in coro_repr
 
     @pytest.mark.asyncio
-    async def test_stdio_guard_cancels_server_when_stdin_closes(self):
+    async def test_stdio_guard_cancels_server_when_parent_exits(self):
         server_started = asyncio.Event()
         server_cancelled = asyncio.Event()
 
@@ -124,13 +124,15 @@ class TestMainTransportSelection:
                 server_cancelled.set()
                 raise
 
-        async def fake_watch_stdin() -> None:
+        async def fake_watch_parent() -> None:
             await server_started.wait()
 
         with patch(
             "mcp_atlassian.servers.main_mcp.run_async", side_effect=fake_run_async
         ):
-            with patch("mcp_atlassian._watch_stdin_eof", side_effect=fake_watch_stdin):
+            with patch(
+                "mcp_atlassian._watch_parent_exit", side_effect=fake_watch_parent
+            ):
                 await _run_stdio_with_stdin_guard({"transport": "stdio"})
 
         assert server_cancelled.is_set()
