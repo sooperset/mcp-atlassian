@@ -508,9 +508,14 @@ class TestIssuesMixin:
         # Verify _get_account_id was called with the correct username
         issues_mixin._get_account_id.assert_called_once_with("testuser")
 
-        # Verify the assignee was properly set for Cloud (accountId)
+        # Verify assignee is in create fields (belt & suspenders)
         fields = issues_mixin.jira.create_issue.call_args[1]["fields"]
         assert fields["assignee"] == {"accountId": "cloud-account-id"}
+
+        # Verify assign_issue was also called post-creation as a safety net
+        issues_mixin.jira.assign_issue.assert_called_once_with(
+            "TEST-123", "cloud-account-id"
+        )
 
     def test_create_issue_with_assignee_server(self, issues_mixin: IssuesMixin):
         """Test creating an issue with an assignee in Jira Server/DC."""
@@ -541,9 +546,14 @@ class TestIssuesMixin:
         # Verify _get_account_id was called with the correct username
         issues_mixin._get_account_id.assert_called_once_with("testuser")
 
-        # Verify the assignee was properly set for Server/DC (name)
+        # Verify assignee is in create fields (belt & suspenders)
         fields = issues_mixin.jira.create_issue.call_args[1]["fields"]
         assert fields["assignee"] == {"name": "server-user"}
+
+        # Verify assign_issue was also called post-creation as a safety net
+        issues_mixin.jira.assign_issue.assert_called_once_with(
+            "TEST-456", "server-user"
+        )
 
     def test_create_epic(self, issues_mixin: IssuesMixin):
         """Test creating an epic."""
