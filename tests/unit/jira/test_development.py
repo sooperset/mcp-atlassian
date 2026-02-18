@@ -257,6 +257,66 @@ class TestDevelopmentMixin:
         assert "error" in results[1]
         assert results[1]["pullRequests"] == []
 
+    def test_get_issue_development_info_plugin_not_found(self, development_mixin):
+        """Test 404 response returns descriptive error message without raising."""
+        development_mixin.jira.get_issue.return_value = {
+            "id": "12345",
+            "key": "TEST-123",
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        development_mixin.jira._session.get.return_value = mock_response
+
+        result = development_mixin.get_issue_development_info(
+            "TEST-123", application_type="stash", data_type="pullrequest"
+        )
+
+        assert "error" in result
+        assert "dev-status plugin" in result["error"]
+        assert result["pullRequests"] == []
+        assert result["branches"] == []
+        assert result["commits"] == []
+
+    def test_get_issue_development_info_access_denied(self, development_mixin):
+        """Test 403 response returns descriptive error message without raising."""
+        development_mixin.jira.get_issue.return_value = {
+            "id": "12345",
+            "key": "TEST-123",
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+        development_mixin.jira._session.get.return_value = mock_response
+
+        result = development_mixin.get_issue_development_info(
+            "TEST-123", application_type="stash", data_type="pullrequest"
+        )
+
+        assert "error" in result
+        assert "Access denied" in result["error"]
+        assert result["pullRequests"] == []
+        assert result["branches"] == []
+        assert result["commits"] == []
+
+    def test_get_issue_development_info_auto_discovery_404(self, development_mixin):
+        """Test auto-discovery stops early on 404 and propagates error."""
+        development_mixin.jira.get_issue.return_value = {
+            "id": "12345",
+            "key": "TEST-123",
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        development_mixin.jira._session.get.return_value = mock_response
+
+        result = development_mixin.get_issue_development_info("TEST-123")
+
+        assert "error" in result
+        assert "dev-status plugin" in result["error"]
+        # Should stop after first 404, not exhaust all 12 combinations
+        assert development_mixin.jira._session.get.call_count == 1
+
     def test_parse_development_info_with_reviewers(self, development_mixin):
         """Test parsing of PR reviewers."""
         response = {
