@@ -1,10 +1,12 @@
 """Tests for the Confluence attachments module."""
 
+import json
 import os
 import tempfile
-from unittest.mock import MagicMock, Mock, mock_open, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, mock_open, patch
 
 import pytest
+from mcp.types import EmbeddedResource, TextContent
 
 from mcp_atlassian.confluence.attachments import AttachmentsMixin
 
@@ -1099,3 +1101,268 @@ class TestAttachmentsMixin:
         # Assertions
         assert result["success"] is False
         assert "Connection timeout" in result["error"]
+
+
+class TestDownloadAttachmentServerTool:
+    """Tests for the server-level download_attachment tool (EmbeddedResource return)."""
+
+    @pytest.mark.asyncio
+    async def test_returns_embedded_resource_on_success(self):
+        mock_fetcher = MagicMock()
+        mock_fetcher._v2_adapter = None
+        mock_fetcher.config.url = "https://test.atlassian.net/wiki"
+
+        meta_resp = MagicMock()
+        meta_resp.json.return_value = {
+            "title": "report.pdf",
+            "_links": {"download": "/download/report.pdf"},
+            "extensions": {"mediaType": "application/pdf", "fileSize": 100},
+        }
+        meta_resp.raise_for_status.return_value = None
+
+        download_resp = MagicMock()
+        download_resp.iter_content.return_value = [b"pdf content"]
+        download_resp.raise_for_status.return_value = None
+
+        mock_fetcher.confluence._session.get.side_effect = [meta_resp, download_resp]
+
+        with patch(
+            "mcp_atlassian.servers.confluence.get_confluence_fetcher",
+            AsyncMock(return_value=mock_fetcher),
+        ):
+            from mcp_atlassian.servers.confluence import (
+                download_attachment as server_download_attachment,
+            )
+
+            result = await server_download_attachment.fn(
+                ctx=MagicMock(), attachment_id="att123456"
+            )
+
+        assert isinstance(result, EmbeddedResource)
+        assert result.resource.mimeType == "application/pdf"
+        assert result.resource.blob
+
+    @pytest.mark.asyncio
+    async def test_returns_text_on_missing_download_url(self):
+        mock_fetcher = MagicMock()
+        mock_fetcher._v2_adapter = None
+        mock_fetcher.config.url = "https://test.atlassian.net/wiki"
+
+        meta_resp = MagicMock()
+        meta_resp.json.return_value = {
+            "title": "report.pdf",
+            "_links": {},
+            "extensions": {"mediaType": "application/pdf", "fileSize": 100},
+        }
+        meta_resp.raise_for_status.return_value = None
+        mock_fetcher.confluence._session.get.return_value = meta_resp
+
+        with patch(
+            "mcp_atlassian.servers.confluence.get_confluence_fetcher",
+            AsyncMock(return_value=mock_fetcher),
+        ):
+            from mcp_atlassian.servers.confluence import (
+                download_attachment as server_download_attachment,
+            )
+
+            result = await server_download_attachment.fn(
+                ctx=MagicMock(), attachment_id="att123456"
+            )
+
+        assert isinstance(result, TextContent)
+        data = json.loads(result.text)
+        assert data["success"] is False
+        assert "download URL" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_returns_text_on_size_exceeded(self):
+        mock_fetcher = MagicMock()
+        mock_fetcher._v2_adapter = None
+        mock_fetcher.config.url = "https://test.atlassian.net/wiki"
+
+        meta_resp = MagicMock()
+        meta_resp.json.return_value = {
+            "title": "huge.bin",
+            "_links": {"download": "/download/huge.bin"},
+            "extensions": {
+                "mediaType": "application/octet-stream",
+                "fileSize": 60 * 1024 * 1024,
+            },
+        }
+        meta_resp.raise_for_status.return_value = None
+        mock_fetcher.confluence._session.get.return_value = meta_resp
+
+        with patch(
+            "mcp_atlassian.servers.confluence.get_confluence_fetcher",
+            AsyncMock(return_value=mock_fetcher),
+        ):
+            from mcp_atlassian.servers.confluence import (
+                download_attachment as server_download_attachment,
+            )
+
+            result = await server_download_attachment.fn(
+                ctx=MagicMock(), attachment_id="att_huge"
+            )
+
+        assert isinstance(result, TextContent)
+        data = json.loads(result.text)
+        assert data["success"] is False
+        assert "50 MB" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_returns_text_on_exception(self):
+        mock_fetcher = MagicMock()
+        mock_fetcher._v2_adapter = None
+        mock_fetcher.config.url = "https://test.atlassian.net/wiki"
+        mock_fetcher.confluence._session.get.side_effect = Exception("Connection error")
+
+        with patch(
+            "mcp_atlassian.servers.confluence.get_confluence_fetcher",
+            AsyncMock(return_value=mock_fetcher),
+        ):
+            from mcp_atlassian.servers.confluence import (
+                download_attachment as server_download_attachment,
+            )
+
+            result = await server_download_attachment.fn(
+                ctx=MagicMock(), attachment_id="att123456"
+            )
+
+        assert isinstance(result, TextContent)
+        data = json.loads(result.text)
+        assert data["success"] is False
+        assert "Connection error" in data["error"]
+
+
+class TestDownloadContentAttachmentsServerTool:
+    """Tests for the server-level download_content_attachments tool (EmbeddedResource return)."""
+
+    @pytest.mark.asyncio
+    async def test_returns_summary_plus_embedded_resources(self):
+        mock_fetcher = MagicMock()
+        mock_fetcher.config.url = "https://test.atlassian.net/wiki"
+        mock_fetcher.get_content_attachments.return_value = {
+            "success": True,
+            "attachments": [
+                {
+                    "id": "att1",
+                    "title": "file1.txt",
+                    "extensions": {"mediaType": "text/plain", "fileSize": 12},
+                    "_links": {"download": "/download/file1.txt"},
+                }
+            ],
+        }
+
+        download_resp = MagicMock()
+        download_resp.iter_content.return_value = [b"hello world!"]
+        download_resp.raise_for_status.return_value = None
+        mock_fetcher.confluence._session.get.return_value = download_resp
+
+        with patch(
+            "mcp_atlassian.servers.confluence.get_confluence_fetcher",
+            AsyncMock(return_value=mock_fetcher),
+        ):
+            from mcp_atlassian.servers.confluence import (
+                download_content_attachments as server_download_content,
+            )
+
+            results = await server_download_content.fn(
+                ctx=MagicMock(), content_id="123456"
+            )
+
+        assert len(results) == 2
+        assert isinstance(results[0], TextContent)
+        summary = json.loads(results[0].text)
+        assert summary["success"] is True
+        assert summary["downloaded"] == 1
+        assert isinstance(results[1], EmbeddedResource)
+        assert results[1].resource.mimeType == "text/plain"
+
+    @pytest.mark.asyncio
+    async def test_returns_text_when_no_attachments(self):
+        mock_fetcher = MagicMock()
+        mock_fetcher.get_content_attachments.return_value = {
+            "success": True,
+            "attachments": [],
+        }
+
+        with patch(
+            "mcp_atlassian.servers.confluence.get_confluence_fetcher",
+            AsyncMock(return_value=mock_fetcher),
+        ):
+            from mcp_atlassian.servers.confluence import (
+                download_content_attachments as server_download_content,
+            )
+
+            results = await server_download_content.fn(
+                ctx=MagicMock(), content_id="123456"
+            )
+
+        assert len(results) == 1
+        assert isinstance(results[0], TextContent)
+        summary = json.loads(results[0].text)
+        assert summary["success"] is True
+        assert "No attachments" in summary["message"]
+
+    @pytest.mark.asyncio
+    async def test_returns_error_text_on_api_failure(self):
+        mock_fetcher = MagicMock()
+        mock_fetcher.get_content_attachments.return_value = {
+            "success": False,
+            "error": "API error occurred",
+        }
+
+        with patch(
+            "mcp_atlassian.servers.confluence.get_confluence_fetcher",
+            AsyncMock(return_value=mock_fetcher),
+        ):
+            from mcp_atlassian.servers.confluence import (
+                download_content_attachments as server_download_content,
+            )
+
+            results = await server_download_content.fn(
+                ctx=MagicMock(), content_id="123456"
+            )
+
+        assert len(results) == 1
+        assert isinstance(results[0], TextContent)
+        data = json.loads(results[0].text)
+        assert data["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_skips_attachment_over_size_limit(self):
+        mock_fetcher = MagicMock()
+        mock_fetcher.config.url = "https://test.atlassian.net/wiki"
+        mock_fetcher.get_content_attachments.return_value = {
+            "success": True,
+            "attachments": [
+                {
+                    "id": "att_big",
+                    "title": "huge.bin",
+                    "extensions": {
+                        "mediaType": "application/octet-stream",
+                        "fileSize": 60 * 1024 * 1024,
+                    },
+                    "_links": {"download": "/download/huge.bin"},
+                }
+            ],
+        }
+
+        with patch(
+            "mcp_atlassian.servers.confluence.get_confluence_fetcher",
+            AsyncMock(return_value=mock_fetcher),
+        ):
+            from mcp_atlassian.servers.confluence import (
+                download_content_attachments as server_download_content,
+            )
+
+            results = await server_download_content.fn(
+                ctx=MagicMock(), content_id="123456"
+            )
+
+        assert len(results) == 1
+        assert isinstance(results[0], TextContent)
+        summary = json.loads(results[0].text)
+        assert summary["downloaded"] == 0
+        assert len(summary["failed"]) == 1
+        assert "50 MB" in summary["failed"][0]["error"]
