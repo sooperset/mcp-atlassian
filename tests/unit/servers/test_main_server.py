@@ -74,7 +74,7 @@ async def test_run_server_invalid_transport():
     """Test that run_server raises ValueError for invalid transport."""
     # We don't need to patch run_async here as the error occurs before it's called
     with pytest.raises(ValueError) as excinfo:
-        await main_mcp.run_async(transport="invalid")  # type: ignore
+        await main_mcp.run_async(transport="invalid")  # pyright: ignore[reportArgumentType]
 
     assert "Unknown transport" in str(excinfo.value)
     assert "invalid" in str(excinfo.value)
@@ -122,6 +122,12 @@ async def test_streamable_http_app_health_check_endpoint():
         assert response.json() == {"status": "ok"}
 
 
+@pytest.mark.anyio
+async def test_streamable_http_path_is_normalized_without_trailing_slash():
+    app = main_mcp.http_app(transport="streamable-http", path="/mcp/")
+    assert app.state.path == "/mcp"
+
+
 class TestUserTokenMiddleware:
     """Tests for the UserTokenMiddleware class."""
 
@@ -132,6 +138,7 @@ class TestUserTokenMiddleware:
         # Create a mock MCP server to avoid warnings
         mock_mcp_server = MagicMock()
         mock_mcp_server.settings.streamable_http_path = "/mcp"
+        mock_mcp_server.get_streamable_http_path.return_value = "/mcp"
         return UserTokenMiddleware(mock_app, mcp_server_ref=mock_mcp_server)
 
     @pytest.fixture
@@ -393,3 +400,17 @@ class TestUserTokenMiddleware:
         passed_scope = middleware.app.call_args[0][0]
         assert passed_scope["state"]["user_atlassian_token"] == "my-pat-token"
         assert passed_scope["state"]["user_atlassian_auth_type"] == "pat"
+
+    def test_should_process_auth_uses_runtime_streamable_path(self):
+        mock_app = AsyncMock()
+        mock_mcp_server = MagicMock()
+        mock_mcp_server.get_streamable_http_path.return_value = "/custom-mcp"
+
+        middleware = UserTokenMiddleware(mock_app, mcp_server_ref=mock_mcp_server)
+
+        assert (
+            middleware._should_process_auth(
+                {"type": "http", "method": "POST", "path": "/custom-mcp/"}
+            )
+            is True
+        )

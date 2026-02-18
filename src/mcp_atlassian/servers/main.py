@@ -8,9 +8,11 @@ from typing import Any, Literal, Optional
 
 from cachetools import TTLCache
 from fastmcp import FastMCP
+from fastmcp import settings as fastmcp_settings
+from fastmcp.server.event_store import EventStore
+from fastmcp.server.http import StarletteWithLifespan
 from fastmcp.tools import Tool as FastMCPTool
 from mcp.types import Tool as MCPTool
-from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -37,7 +39,7 @@ async def health_check(request: Request) -> JSONResponse:
 
 
 @asynccontextmanager
-async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
+async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str, Any]]:
     logger.info("Main Atlassian MCP server lifespan starting...")
     services = get_available_services()
     read_only = is_read_only_mode()
@@ -107,6 +109,23 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
 class AtlassianMCP(FastMCP[MainAppContext]):
     """Custom FastMCP server class for Atlassian integration with tool filtering."""
 
+    _active_streamable_http_path: str | None = None
+
+    @staticmethod
+    def _normalize_http_path(path: str) -> str:
+        normalized_path = path.strip()
+        if not normalized_path:
+            return "/"
+        if not normalized_path.startswith("/"):
+            normalized_path = f"/{normalized_path}"
+        normalized_path = normalized_path.rstrip("/")
+        return normalized_path or "/"
+
+    def get_streamable_http_path(self) -> str:
+        if self._active_streamable_http_path:
+            return self._active_streamable_http_path
+        return self._normalize_http_path(fastmcp_settings.streamable_http_path)
+
     async def _list_tools_mcp(self) -> list[MCPTool]:
         # Filter tools based on enabled_tools, read_only mode, and service configuration from the lifespan context.
         req_context = self._mcp_server.request_context
@@ -134,10 +153,9 @@ class AtlassianMCP(FastMCP[MainAppContext]):
         )
 
         header_based_services = {"jira": False, "confluence": False}
-        if hasattr(req_context, "request") and hasattr(req_context.request, "state"):
-            service_headers = getattr(
-                req_context.request.state, "atlassian_service_headers", {}
-            )
+        request = getattr(req_context, "request", None)
+        if request is not None:
+            service_headers = getattr(request.state, "atlassian_service_headers", {})
             if service_headers:
                 header_based_services = get_available_services(service_headers)
                 logger.debug(
@@ -220,20 +238,28 @@ class AtlassianMCP(FastMCP[MainAppContext]):
         middleware: list[Middleware] | None = None,
         json_response: bool | None = None,
         stateless_http: bool | None = None,
-        transport: Literal["streamable-http", "sse"] = "streamable-http",
-        **kwargs: Any,
-    ) -> "Starlette":
+        transport: Literal["http", "streamable-http", "sse"] = "streamable-http",
+        event_store: EventStore | None = None,
+        retry_interval: int | None = None,
+    ) -> StarletteWithLifespan:
+        final_path = path
+        if transport == "streamable-http":
+            configured_path = path or fastmcp_settings.streamable_http_path
+            final_path = self._normalize_http_path(configured_path)
+            self._active_streamable_http_path = final_path
+
         user_token_mw = Middleware(UserTokenMiddleware, mcp_server_ref=self)
         final_middleware_list = [user_token_mw]
         if middleware:
             final_middleware_list.extend(middleware)
         app = super().http_app(
-            path=path,
+            path=final_path,
             middleware=final_middleware_list,
             json_response=json_response,
             stateless_http=stateless_http,
             transport=transport,
-            **kwargs,
+            event_store=event_store,
+            retry_interval=retry_interval,
         )
         return app
 
@@ -344,8 +370,8 @@ class UserTokenMiddleware:
             return False
 
         try:
-            mcp_path = self.mcp_server_ref.settings.streamable_http_path.rstrip("/")
-            request_path = scope.get("path", "").rstrip("/")
+            mcp_path = self.mcp_server_ref.get_streamable_http_path()
+            request_path = AtlassianMCP._normalize_http_path(scope.get("path", ""))
             return request_path == mcp_path
         except (AttributeError, ValueError) as e:
             logger.warning(f"Error checking auth path: {e}")
