@@ -1,17 +1,12 @@
-"""Unit tests for transport selection and execution.
+"""Unit tests for transport selection and execution."""
 
-These tests verify that:
-1. All transports use direct execution (no stdin monitoring)
-2. Transport selection logic works correctly (CLI vs environment)
-3. Error handling is preserved
-"""
-
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastmcp import settings as fastmcp_settings
 
-from mcp_atlassian import main
+from mcp_atlassian import _run_stdio_with_stdin_guard, main
 
 
 class TestMainTransportSelection:
@@ -32,11 +27,11 @@ class TestMainTransportSelection:
             mock_run.side_effect = lambda coro: setattr(mock_run, "_called_with", coro)
             yield mock_run
 
-    @pytest.mark.parametrize("transport", ["stdio", "sse", "streamable-http"])
-    def test_all_transports_use_direct_execution(
+    @pytest.mark.parametrize("transport", ["sse", "streamable-http"])
+    def test_http_transports_use_direct_execution(
         self, mock_server, mock_asyncio_run, transport
     ):
-        """Verify all transports use direct execution without stdin monitoring.
+        """Verify HTTP transports use direct execution without stdin monitoring.
 
         This is a regression test for issues #519 and #524.
         """
@@ -55,9 +50,22 @@ class TestMainTransportSelection:
                     called_coro = mock_asyncio_run._called_with
                     coro_repr = repr(called_coro)
 
-                    # All transports must use direct execution
-                    assert "run_with_stdio_monitoring" not in coro_repr
+                    assert "_run_stdio_with_stdin_guard" not in coro_repr
                     assert "run_async" in coro_repr or hasattr(called_coro, "cr_code")
+
+    def test_stdio_transport_uses_stdin_guard(self, mock_server, mock_asyncio_run):
+        with patch("mcp_atlassian.servers.main.AtlassianMCP", return_value=mock_server):
+            with patch.dict("os.environ", {"TRANSPORT": "stdio"}):
+                with patch("sys.argv", ["mcp-atlassian"]):
+                    try:
+                        main()
+                    except SystemExit:
+                        pass
+
+                    assert mock_asyncio_run.called
+                    called_coro = mock_asyncio_run._called_with
+                    coro_repr = repr(called_coro)
+                    assert "_run_stdio_with_stdin_guard" in coro_repr
 
     @pytest.mark.parametrize("stateless", ["False", "True"])
     def test_stateless_set(self, mock_asyncio_run, stateless):
@@ -98,10 +106,34 @@ class TestMainTransportSelection:
                     except SystemExit:
                         pass
 
-                    # All transports now use direct execution
                     called_coro = mock_asyncio_run._called_with
                     coro_repr = repr(called_coro)
-                    assert "run_async" in coro_repr or hasattr(called_coro, "cr_code")
+                    assert "_run_stdio_with_stdin_guard" in coro_repr
+
+    @pytest.mark.asyncio
+    async def test_stdio_guard_cancels_server_when_stdin_closes(self):
+        server_started = asyncio.Event()
+        server_cancelled = asyncio.Event()
+
+        async def fake_run_async(**kwargs):
+            del kwargs
+            server_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                server_cancelled.set()
+                raise
+
+        async def fake_watch_stdin() -> None:
+            await server_started.wait()
+
+        with patch(
+            "mcp_atlassian.servers.main_mcp.run_async", side_effect=fake_run_async
+        ):
+            with patch("mcp_atlassian._watch_stdin_eof", side_effect=fake_watch_stdin):
+                await _run_stdio_with_stdin_guard({"transport": "stdio"})
+
+        assert server_cancelled.is_set()
 
     def test_signal_handlers_always_setup(self, mock_server):
         """Test that signal handlers are set up regardless of transport."""
