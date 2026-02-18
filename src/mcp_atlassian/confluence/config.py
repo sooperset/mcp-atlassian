@@ -81,7 +81,11 @@ class ConfluenceConfig:
         """
         url = os.getenv("CONFLUENCE_URL")
         if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE"):
-            error_msg = "Missing required CONFLUENCE_URL environment variable"
+            error_msg = (
+                "Missing required CONFLUENCE_URL environment variable. "
+                "Set CONFLUENCE_URL to your Confluence base URL, for example "
+                "https://your-company.atlassian.net/wiki"
+            )
             raise ValueError(error_msg)
 
         # Determine authentication type based on available environment variables
@@ -94,7 +98,7 @@ class ConfluenceConfig:
         auth_type = None
 
         # Use the shared utility function directly
-        is_cloud = is_atlassian_cloud_url(url)
+        is_cloud = is_atlassian_cloud_url(url) if url else False
 
         if is_cloud:
             # Cloud: OAuth takes priority, then basic auth
@@ -103,7 +107,21 @@ class ConfluenceConfig:
             elif username and api_token:
                 auth_type = "basic"
             else:
-                error_msg = "Cloud authentication requires CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN, or OAuth configuration (set ATLASSIAN_OAUTH_ENABLE=true for user-provided tokens)"
+                missing_fields: list[str] = []
+                if not username:
+                    missing_fields.append("CONFLUENCE_USERNAME")
+                if not api_token:
+                    missing_fields.append("CONFLUENCE_API_TOKEN")
+                missing_fields_text = ", ".join(missing_fields)
+                error_msg = (
+                    "Cloud authentication requires CONFLUENCE_USERNAME and "
+                    "CONFLUENCE_API_TOKEN, or OAuth configuration "
+                    "(set ATLASSIAN_OAUTH_ENABLE=true for user-provided tokens). "
+                    "Confluence Cloud authentication is incomplete. Missing: "
+                    f"{missing_fields_text}. "
+                    "Set CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN, or "
+                    "enable OAuth with ATLASSIAN_OAUTH_ENABLE=true."
+                )
                 raise ValueError(error_msg)
         else:  # Server/Data Center
             # Server/DC: PAT takes priority over OAuth (fixes #824)
@@ -119,7 +137,14 @@ class ConfluenceConfig:
             elif username and api_token:
                 auth_type = "basic"
             else:
-                error_msg = "Server/Data Center authentication requires CONFLUENCE_PERSONAL_TOKEN or CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN"
+                error_msg = (
+                    "Server/Data Center authentication requires "
+                    "CONFLUENCE_PERSONAL_TOKEN or CONFLUENCE_USERNAME and "
+                    "CONFLUENCE_API_TOKEN. "
+                    "Confluence Server/Data Center authentication is incomplete. "
+                    "Set CONFLUENCE_PERSONAL_TOKEN, or set both "
+                    "CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN."
+                )
                 raise ValueError(error_msg)
 
         # SSL verification (for Server/DC)
@@ -143,7 +168,7 @@ class ConfluenceConfig:
         client_key_password = os.getenv("CONFLUENCE_CLIENT_KEY_PASSWORD")
 
         return cls(
-            url=url,
+            url=url or "",
             auth_type=auth_type,
             username=username,
             api_token=api_token,

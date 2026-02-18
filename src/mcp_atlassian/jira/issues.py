@@ -4,6 +4,7 @@ import logging
 from collections import defaultdict
 from typing import Any
 
+from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import HTTPError
 
 from ..exceptions import MCPAtlassianAuthenticationError
@@ -146,8 +147,10 @@ class IssuesMixin(
             expand_param = expand
 
             # Convert properties to proper format if it's a list
-            properties_param = properties
-            if properties and isinstance(properties, list | tuple | set):
+            properties_param: str | None = None
+            if isinstance(properties, str):
+                properties_param = properties
+            elif isinstance(properties, list | tuple | set):
                 properties_param = ",".join(properties)
 
             # Get the issue data with all parameters
@@ -159,7 +162,10 @@ class IssuesMixin(
                 update_history=update_history,
             )
             if not issue:
-                msg = f"Issue {issue_key} not found"
+                msg = (
+                    f"Issue {issue_key} not found. "
+                    "Verify the issue key and project access."
+                )
                 raise ValueError(msg)
             if not isinstance(issue, dict):
                 msg = (
@@ -243,19 +249,37 @@ class IssuesMixin(
                 requested_fields=model_fields,
             )
         except HTTPError as http_err:
-            if http_err.response is not None and http_err.response.status_code in [
-                401,
-                403,
-            ]:
+            status_code = (
+                http_err.response.status_code if http_err.response is not None else None
+            )
+            if status_code in [401, 403]:
                 error_msg = (
-                    f"Authentication failed for Jira API ({http_err.response.status_code}). "
+                    f"Authentication failed for Jira API ({status_code}). "
                     "Token may be expired or invalid. Please verify credentials."
                 )
                 logger.error(error_msg)
                 raise MCPAtlassianAuthenticationError(error_msg) from http_err
+            if status_code == 404:
+                error_msg = (
+                    f"Issue {issue_key} not found. "
+                    "Verify the issue key and project access."
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg) from http_err
+            if status_code == 429:
+                error_msg = "Jira API rate limit hit (429). Retry after a short delay."
+                logger.error(error_msg)
+                raise ValueError(error_msg) from http_err
             else:
                 logger.error(f"HTTP error during API call: {http_err}", exc_info=False)
                 raise
+        except RequestsConnectionError as e:
+            error_msg = (
+                f"Could not connect to Jira at {self.config.url}. "
+                "Check that JIRA_URL is correct and the instance is reachable."
+            )
+            logger.error(error_msg)
+            raise Exception(error_msg) from e
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Error retrieving issue {issue_key}: {error_msg}")
@@ -563,11 +587,20 @@ class IssuesMixin(
         try:
             # Validate required fields
             if not project_key:
-                raise ValueError("Project key is required")
+                raise ValueError(
+                    "Project key is required to create an issue. "
+                    "Provide project_key like 'PROJ'."
+                )
             if not summary:
-                raise ValueError("Summary is required")
+                raise ValueError(
+                    "Summary is required to create an issue. "
+                    "Provide a non-empty summary."
+                )
             if not issue_type:
-                raise ValueError("Issue type is required")
+                raise ValueError(
+                    "Issue type is required to create an issue. "
+                    "Provide issue_type like 'Task', 'Story', or 'Bug'."
+                )
 
             # Handle Epic and Subtask issue type names across different languages
             actual_issue_id = None
