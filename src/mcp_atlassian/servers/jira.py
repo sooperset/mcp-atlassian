@@ -727,11 +727,24 @@ async def get_sprint_issues(
     tags={"jira", "read"},
     annotations={"title": "Get Link Types", "readOnlyHint": True},
 )
-async def get_link_types(ctx: Context) -> str:
+async def get_link_types(
+    ctx: Context,
+    dummy: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "(Optional) Compatibility argument. Ignored by the server. "
+                "Use only when an inference gateway requires non-empty tool arguments."
+            ),
+        ),
+    ] = None,
+) -> str:
     """Get all available issue link types.
 
     Args:
         ctx: The FastMCP context.
+        dummy: Optional compatibility argument. Ignored.
 
     Returns:
         JSON string representing a list of issue link type objects.
