@@ -583,14 +583,8 @@ class IssuesMixin(
                 if subtask_type_id:
                     actual_issue_id = subtask_type_id
                     logger.info(
-                        f"Using localized Subtask issue type name: {subtask_type_id}"
+                        f"Using localized Subtask issue type id: {subtask_type_id}"
                     )
-            elif issue_type.lower() == "task":
-                # If the user provided "Task" but we need to find the localized name
-                task_type_id = self._find_task_issue_type_id(project_key)
-                if task_type_id:
-                    actual_issue_id = task_type_id
-                    logger.info(f"Using localized Task issue type id: {task_type_id}")
 
             # Prepare fields
             fields: dict[str, Any] = {
@@ -690,24 +684,6 @@ class IssuesMixin(
             self._handle_create_issue_error(e, issue_type)
             raise  # Re-raise after logging
 
-    def _is_task_issue_type(self, issue_type: str) -> bool:
-        """
-        Check if an issue type is an Task, handling localized names.
-
-        Args:
-            issue_type: The issue type name to check
-
-        Returns:
-            True if the issue type is an Task, False otherwise
-        """
-        # Common Epic names in different languages
-        tasks_names = {
-            "task",  # English
-            "tâche",  # French
-        }
-
-        return issue_type.lower() in tasks_names or "task" in issue_type.lower()
-
     def _is_epic_issue_type(self, issue_type: str) -> bool:
         """
         Check if an issue type is an Epic, handling localized names.
@@ -749,27 +725,6 @@ class IssuesMixin(
             for issue_type in issue_types:
                 type_name = issue_type.get("name", "")
                 if self._is_epic_issue_type(type_name):
-                    return issue_type.get("id")
-            return None
-        except Exception as e:
-            logger.warning(f"Could not get issue types for project {project_key}: {e}")
-            return None
-
-    def _find_task_issue_type_id(self, project_key: str) -> str:
-        """
-        Find the actual Task issue type name for a project.
-
-        Args:
-            project_key: The project key
-
-        Returns:
-            The Epic issue type name if found, None otherwise
-        """
-        try:
-            issue_types = self.get_project_issue_types(project_key)
-            for issue_type in issue_types:
-                type_name = issue_type.get("name", "")
-                if self._is_task_issue_type(type_name):
                     return issue_type.get("id")
             return None
         except Exception as e:
@@ -822,6 +777,8 @@ class IssuesMixin(
         # Since JiraFetcher inherits from both IssuesMixin and EpicsMixin,
         # this will correctly use the prepare_epic_fields method from EpicsMixin
         # which implements the two-step Epic creation approach
+        if not isinstance(project_key, str) or not project_key:
+            raise ValueError("Project key is required for epic preparation")
         self.prepare_epic_fields(fields, summary, kwargs, project_key)
 
     def _prepare_parent_fields(
