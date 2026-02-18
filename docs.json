@@ -52,6 +52,12 @@
             ]
           },
           {
+            "group": "Deployment",
+            "pages": [
+              "docs/docker"
+            ]
+          },
+          {
             "group": "Help",
             "pages": [
               "docs/troubleshooting"

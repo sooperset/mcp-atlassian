@@ -1,0 +1,312 @@
+---
+title: "Docker Deployment"
+description: "Run MCP Atlassian in Docker for isolated, reproducible deployments with stdio or HTTP transport"
+---
+
+# Docker Deployment
+
+Docker gives you a clean, isolated environment for running MCP Atlassian. It's a good fit when you want version-pinned deployments, don't want to manage a Python environment, or need to run the server as a persistent HTTP service.
+
+The image is published to GitHub Container Registry:
+
+```
+ghcr.io/sooperset/mcp-atlassian:latest
+```
+
+## Quick Start
+
+The minimal command for stdio mode (used by MCP clients like Claude Desktop):
+
+```bash
+docker run --rm -i \
+  -e JIRA_URL=https://your-domain.atlassian.net \
+  -e JIRA_EMAIL=you@example.com \
+  -e JIRA_API_TOKEN=your_token \
+  ghcr.io/sooperset/mcp-atlassian:latest
+```
+
+<Note>
+`--rm` and `-i` are both required for stdio mode. `-i` keeps stdin open so the MCP client can communicate with the server. `--rm` removes the container when it exits, preventing orphaned containers from accumulating.
+</Note>
+
+### IDE Configuration with Docker
+
+To use the Docker image from Claude Desktop or Cursor, pass credentials as environment variables in your MCP config:
+
+```json
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-e", "JIRA_URL",
+        "-e", "JIRA_EMAIL",
+        "-e", "JIRA_API_TOKEN",
+        "-e", "CONFLUENCE_URL",
+        "-e", "CONFLUENCE_USERNAME",
+        "-e", "CONFLUENCE_API_TOKEN",
+        "ghcr.io/sooperset/mcp-atlassian:latest"
+      ],
+      "env": {
+        "JIRA_URL": "https://your-domain.atlassian.net",
+        "JIRA_EMAIL": "you@example.com",
+        "JIRA_API_TOKEN": "your_jira_token",
+        "CONFLUENCE_URL": "https://your-domain.atlassian.net/wiki",
+        "CONFLUENCE_USERNAME": "you@example.com",
+        "CONFLUENCE_API_TOKEN": "your_confluence_token"
+      }
+    }
+  }
+}
+```
+
+This pattern passes the variables from the host environment into the container rather than hardcoding them in the config file.
+
+## Environment Variables
+
+Copy `.env.example` from the repository for the full list of supported variables. The most commonly used ones:
+
+| Variable | Description |
+|----------|-------------|
+| `JIRA_URL` | Your Jira instance URL (e.g., `https://company.atlassian.net`) |
+| `JIRA_USERNAME` | Your Atlassian account email (Cloud) |
+| `JIRA_API_TOKEN` | API token from [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens) |
+| `CONFLUENCE_URL` | Your Confluence URL (e.g., `https://company.atlassian.net/wiki`) |
+| `CONFLUENCE_USERNAME` | Your Atlassian account email (Cloud) |
+| `CONFLUENCE_API_TOKEN` | API token (can reuse the same token as Jira) |
+| `JIRA_PERSONAL_TOKEN` | PAT for Jira Server/Data Center (replaces username + token) |
+| `CONFLUENCE_PERSONAL_TOKEN` | PAT for Confluence Server/Data Center |
+| `READ_ONLY_MODE` | Set to `true` to disable all write operations |
+
+<Tip>
+For Server/Data Center deployments, use `JIRA_PERSONAL_TOKEN` and `CONFLUENCE_PERSONAL_TOKEN` instead of username + API token. See [Authentication](/docs/authentication) for details.
+</Tip>
+
+### Using an env file
+
+Instead of passing each variable with `-e`, use `--env-file`:
+
+```bash
+docker run --rm -i \
+  --env-file .env \
+  ghcr.io/sooperset/mcp-atlassian:latest
+```
+
+This keeps your credentials out of shell history and process listings.
+
+## Docker Compose for HTTP Transport
+
+For multi-user or team deployments, run the server as a persistent HTTP service using Docker Compose:
+
+```yaml
+services:
+  mcp-atlassian:
+    image: ghcr.io/sooperset/mcp-atlassian:latest
+    ports:
+      - "9000:9000"
+    env_file: .env
+    command: --transport streamable-http --port 9000
+    restart: unless-stopped
+```
+
+Start it with:
+
+```bash
+docker compose up -d
+```
+
+The server will be available at `http://localhost:9000/mcp`.
+
+### Choosing a transport
+
+<Tabs>
+  <Tab title="streamable-http (recommended)">
+    ```yaml
+    command: --transport streamable-http --port 9000
+    ```
+
+    Clients connect to `http://localhost:9000/mcp`. Best for most multi-user setups.
+  </Tab>
+  <Tab title="SSE">
+    ```yaml
+    command: --transport sse --port 9000
+    ```
+
+    Clients connect to `http://localhost:9000/sse`. Use when your client requires Server-Sent Events.
+  </Tab>
+  <Tab title="Stateless (Kubernetes-friendly)">
+    ```yaml
+    command: --transport streamable-http --stateless --port 9000
+    ```
+
+    No session state is kept between requests. Suitable for horizontally scaled deployments.
+  </Tab>
+</Tabs>
+
+See [HTTP Transport](/docs/http-transport) for full multi-user authentication setup.
+
+## Health Check
+
+When running in HTTP transport mode, the server exposes a health endpoint:
+
+```
+GET /healthz
+```
+
+It returns `{"status": "ok"}` when the server is ready. Use this for Docker health checks or load balancer probes:
+
+```yaml
+services:
+  mcp-atlassian:
+    image: ghcr.io/sooperset/mcp-atlassian:latest
+    ports:
+      - "9000:9000"
+    env_file: .env
+    command: --transport streamable-http --port 9000
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+```
+
+## Signal Handling and Clean Shutdown
+
+The server handles `SIGTERM` gracefully, so `docker stop` will trigger a clean shutdown rather than a hard kill. Docker sends `SIGTERM` first, then `SIGKILL` after the stop timeout (default 10 seconds).
+
+For stdio mode, always use `--rm` so the container is removed when the MCP client disconnects. Without it, stopped containers accumulate and consume disk space.
+
+```bash
+# Good: container is removed on exit
+docker run --rm -i ghcr.io/sooperset/mcp-atlassian:latest
+
+# Bad: leaves a stopped container behind every time
+docker run -i ghcr.io/sooperset/mcp-atlassian:latest
+```
+
+## Security Best Practices
+
+<Warning>
+Never hardcode API tokens or passwords in Dockerfiles, `docker-compose.yml`, or MCP config files that get committed to version control.
+</Warning>
+
+**Use env files or Docker secrets:**
+
+```bash
+# env file (keep out of version control)
+docker run --rm -i --env-file .env ghcr.io/sooperset/mcp-atlassian:latest
+
+# Docker secrets (for Swarm or production setups)
+docker secret create jira_api_token ./token.txt
+```
+
+**Don't expose port 9000 publicly without an auth proxy.** The HTTP transport has no built-in authentication layer for the server itself. If you expose it beyond localhost, put it behind a reverse proxy (nginx, Caddy, Traefik) that handles TLS and access control.
+
+**Enable read-only mode** when your use case only needs to read data:
+
+```bash
+docker run --rm -i \
+  --env-file .env \
+  -e READ_ONLY_MODE=true \
+  ghcr.io/sooperset/mcp-atlassian:latest
+```
+
+This disables all write tools at the server level, regardless of what the MCP client requests.
+
+**Pin image versions** in production instead of using `:latest`:
+
+```bash
+docker pull ghcr.io/sooperset/mcp-atlassian:0.9.4
+```
+
+Check the [GitHub releases page](https://github.com/sooperset/mcp-atlassian/releases) for available versions.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Connection refused when connecting to the server">
+    Check that the container is actually running and the port mapping is correct:
+
+    ```bash
+    docker ps
+    docker logs <container-name>
+    ```
+
+    Common causes:
+    - Container exited immediately (check logs for startup errors)
+    - Port mapping missing or wrong (e.g., `-p 9000:9000`)
+    - Connecting to the wrong endpoint (`/mcp` for streamable-http, `/sse` for SSE)
+  </Accordion>
+
+  <Accordion title="Authentication failed">
+    Double-check your credentials:
+
+    - **Cloud**: `JIRA_USERNAME` must be your email address, not a display name. `JIRA_API_TOKEN` is the token from [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens), not your account password.
+    - **Server/DC**: Use `JIRA_PERSONAL_TOKEN` instead of username + token.
+    - Verify the token hasn't expired or been revoked in your Atlassian account settings.
+
+    Test your credentials directly:
+
+    ```bash
+    curl -u "you@example.com:your_api_token" \
+      "https://your-domain.atlassian.net/rest/api/3/myself"
+    ```
+  </Accordion>
+
+  <Accordion title="Orphaned containers accumulating">
+    If you forgot `--rm` in stdio mode, clean up stopped containers:
+
+    ```bash
+    # Remove all stopped containers
+    docker container prune
+
+    # Or remove a specific one
+    docker rm <container-id>
+    ```
+
+    Add `--rm` to your run command going forward. For IDE configurations, the MCP client handles the container lifecycle, so `--rm` ensures cleanup happens automatically when the client disconnects.
+  </Accordion>
+
+  <Accordion title="Container exits immediately in stdio mode">
+    The container needs stdin to stay open. Make sure `-i` is in your run command:
+
+    ```bash
+    docker run --rm -i ghcr.io/sooperset/mcp-atlassian:latest
+    ```
+
+    Without `-i`, the process sees EOF on stdin and exits. This is expected behavior for an MCP stdio server.
+  </Accordion>
+
+  <Accordion title="SSL certificate errors with self-signed certs">
+    For Server/Data Center instances with self-signed certificates, mount your CA bundle:
+
+    ```bash
+    docker run --rm -i \
+      --env-file .env \
+      -v /path/to/ca-bundle.crt:/etc/ssl/certs/ca-certificates.crt:ro \
+      ghcr.io/sooperset/mcp-atlassian:latest
+    ```
+
+    Or set `SSL_VERIFY=false` to skip verification (not recommended for production).
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="HTTP Transport" icon="server" href="/docs/http-transport">
+    Multi-user setup with per-request authentication
+  </Card>
+  <Card title="Authentication" icon="key" href="/docs/authentication">
+    API tokens, PAT, and OAuth 2.0 options
+  </Card>
+  <Card title="Configuration" icon="gear" href="/docs/configuration">
+    Full environment variable reference
+  </Card>
+  <Card title="Troubleshooting" icon="bug" href="/docs/troubleshooting">
+    More debugging tips and common issues
+  </Card>
+</CardGroup>
