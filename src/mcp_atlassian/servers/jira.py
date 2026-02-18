@@ -2295,7 +2295,7 @@ async def get_issue_dates(
     tags={"jira", "read", "metrics", "sla"},
     annotations={"title": "Get Issue SLA", "readOnlyHint": True},
 )
-async def jira_get_issue_sla(
+async def get_issue_sla(
     ctx: Context,
     issue_key: Annotated[
         str,
