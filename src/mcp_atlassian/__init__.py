@@ -40,6 +40,41 @@ logging_stream = sys.stdout if is_env_truthy("MCP_LOGGING_STDOUT") else sys.stde
 logger = setup_logging(logging_level, logging_stream)
 
 
+async def _watch_stdin_eof() -> None:
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, sys.stdin.read)
+
+
+async def _run_stdio_with_stdin_guard(run_kwargs: dict[str, object]) -> None:
+    from mcp_atlassian.servers import main_mcp
+
+    server_task = asyncio.create_task(main_mcp.run_async(**run_kwargs))
+    stdin_task = asyncio.create_task(_watch_stdin_eof())
+
+    done, pending = await asyncio.wait(
+        {server_task, stdin_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+
+    if stdin_task in done and not server_task.done():
+        logger.info("STDIN reached EOF. Shutting down STDIO server.")
+        server_task.cancel()
+
+    for task in pending:
+        task.cancel()
+
+    await asyncio.gather(*pending, return_exceptions=True)
+
+    if server_task.done():
+        server_result = await asyncio.gather(server_task, return_exceptions=True)
+        if (
+            server_result
+            and isinstance(server_result[0], Exception)
+            and not isinstance(server_result[0], asyncio.CancelledError)
+        ):
+            raise server_result[0]
+
+
 @click.version_option(__version__, prog_name="mcp-atlassian")
 @click.command()
 @click.option(
@@ -377,10 +412,8 @@ def main(
     try:
         logger.debug("Starting asyncio event loop...")
 
-        # For stdio transport, don't monitor stdin as MCP server handles it internally
-        # This prevents race conditions where both try to read from the same stdin
         if final_transport == "stdio":
-            asyncio.run(main_mcp.run_async(**run_kwargs))
+            asyncio.run(_run_stdio_with_stdin_guard(run_kwargs))
         else:
             # For HTTP transports (SSE, streamable-http), don't use stdin monitoring
             # as it causes premature shutdown when the client closes stdin
