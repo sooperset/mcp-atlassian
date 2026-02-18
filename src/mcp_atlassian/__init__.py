@@ -6,6 +6,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 import click
 from dotenv import load_dotenv
+from fastmcp import settings as fastmcp_settings
 
 # Fix high CPU usage on Windows - use SelectorEventLoop instead of ProactorEventLoop
 # ProactorEventLoop uses IOCP which can cause busy-waiting when combined with
@@ -351,11 +352,11 @@ def main(
         log_display_path = final_path
         if log_display_path is None:
             if final_transport == "sse":
-                log_display_path = main_mcp.settings.sse_path or "/sse"
+                log_display_path = fastmcp_settings.sse_path or "/sse"
             else:
-                log_display_path = main_mcp.settings.streamable_http_path or "/mcp"
+                log_display_path = fastmcp_settings.streamable_http_path or "/mcp"
 
-        main_mcp.settings.stateless_http = final_stateless
+        fastmcp_settings.stateless_http = final_stateless
 
         logger.info(
             f"Starting server with {final_transport.upper()} transport on http://{final_host}:{final_port}{log_display_path}"

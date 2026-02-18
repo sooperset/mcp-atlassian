@@ -916,7 +916,7 @@ async def get_page_history(
     tags={"confluence", "read", "analytics"},
     annotations={"title": "Get Page Views", "readOnlyHint": True},
 )
-async def confluence_get_page_views(
+async def get_page_views(
     ctx: Context,
     page_id: Annotated[
         str,

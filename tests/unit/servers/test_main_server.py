@@ -81,6 +81,14 @@ async def test_run_server_invalid_transport():
 
 
 @pytest.mark.anyio
+async def test_tool_registration_issue_dates_name():
+    """Ensure issue dates tool is registered with a single Jira prefix."""
+    tools = await main_mcp.get_tools()
+    assert "jira_get_issue_dates" in tools
+    assert "jira_jira_get_issue_dates" not in tools
+
+
+@pytest.mark.anyio
 async def test_health_check_endpoint():
     """Test the health check endpoint returns 200 and correct JSON response."""
     app = main_mcp.http_app(transport="sse")
