@@ -276,36 +276,17 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             JiraSearchResult object containing sprint issues and metadata
 
         Raises:
-            Exception: If there is an error getting board issues
+            Exception: If there is an error getting sprint issues
         """
         try:
-            # Determine fields_param
-            fields_param = fields
-            if fields_param is None:
-                fields_param = ",".join(DEFAULT_READ_JIRA_FIELDS)
-
-            response = self.jira.get_sprint_issues(
-                sprint_id=sprint_id,
+            # Use JQL search to get sprint issues with proper fields filtering
+            jql = f"sprint = {sprint_id}"
+            return self.search_issues(
+                jql=jql,
+                fields=fields,
                 start=start,
                 limit=limit,
             )
-            if not isinstance(response, dict):
-                msg = f"Unexpected return value type from `jira.get_sprint_issues`: {type(response)}"
-                logger.error(msg)
-                raise TypeError(msg)
-
-            # Convert the response to a search result model
-            search_result = JiraSearchResult.from_api_response(
-                response, base_url=self.config.url, requested_fields=fields_param
-            )
-            return search_result
-        except requests.HTTPError as e:
-            logger.error(
-                f"Error searching issues for sprint '{sprint_id}': {str(e.response.content)}"
-            )
-            raise Exception(
-                f"Error searching issues for sprint: {str(e.response.content)}"
-            ) from e
         except Exception as e:
-            logger.error(f"Error searching issues for sprint: {sprint_id}': {str(e)}")
+            logger.error(f"Error searching issues for sprint '{sprint_id}': {str(e)}")
             raise Exception(f"Error searching issues for sprint: {str(e)}") from e
