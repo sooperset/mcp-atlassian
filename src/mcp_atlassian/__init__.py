@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import sys
+import time
 from importlib.metadata import PackageNotFoundError, version
 
 import click
@@ -40,24 +41,40 @@ logging_stream = sys.stdout if is_env_truthy("MCP_LOGGING_STDOUT") else sys.stde
 logger = setup_logging(logging_level, logging_stream)
 
 
-async def _watch_stdin_eof() -> None:
+async def _watch_parent_exit() -> None:
+    parent_pid = os.getppid()
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, sys.stdin.read)
+
+    def _poll_parent_alive() -> None:
+        while True:
+            time.sleep(5)
+            current_ppid = os.getppid()
+            # On Unix, when the parent dies the child is reparented (ppid changes)
+            if current_ppid != parent_pid:
+                logger.info(
+                    "Parent process %d exited (reparented to %d). "
+                    "Shutting down STDIO server.",
+                    parent_pid,
+                    current_ppid,
+                )
+                return
+
+    await loop.run_in_executor(None, _poll_parent_alive)
 
 
 async def _run_stdio_with_stdin_guard(run_kwargs: dict[str, object]) -> None:
     from mcp_atlassian.servers import main_mcp
 
     server_task = asyncio.create_task(main_mcp.run_async(**run_kwargs))
-    stdin_task = asyncio.create_task(_watch_stdin_eof())
+    parent_task = asyncio.create_task(_watch_parent_exit())
 
     done, pending = await asyncio.wait(
-        {server_task, stdin_task},
+        {server_task, parent_task},
         return_when=asyncio.FIRST_COMPLETED,
     )
 
-    if stdin_task in done and not server_task.done():
-        logger.info("STDIN reached EOF. Shutting down STDIO server.")
+    if parent_task in done and not server_task.done():
+        logger.info("Parent process exited. Shutting down STDIO server.")
         server_task.cancel()
 
     for task in pending:
