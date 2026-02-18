@@ -49,8 +49,6 @@ Add to your Claude Desktop or Cursor MCP configuration:
 }
 ```
 
-> **Python 3.14 not yet supported.** Use `["--python=3.12", "mcp-atlassian"]` as args if needed.
-
 > **Server/Data Center users**: Use `JIRA_PERSONAL_TOKEN` instead of `JIRA_USERNAME` + `JIRA_API_TOKEN`. See [Authentication](https://personal-1d37018d.mintlify.app/docs/authentication) for details.
 
 ### 3. Start Using
