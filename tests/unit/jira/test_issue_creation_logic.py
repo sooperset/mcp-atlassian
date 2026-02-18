@@ -43,6 +43,12 @@ class ConcreteIssuesMixin(
     def get_required_fields(self, project_key, issue_type_name):
         pass
 
+    def get_issue_forms(self, issue_key):
+        pass
+
+    def get_form_details(self, issue_key, form_id):
+        pass
+
     def prepare_epic_fields(self, fields, summary, kwargs, project_key):
         pass
 
