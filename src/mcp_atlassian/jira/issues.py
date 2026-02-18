@@ -570,29 +570,29 @@ class IssuesMixin(
                 raise ValueError("Issue type is required")
 
             # Handle Epic and Subtask issue type names across different languages
-            actual_issue_type = issue_type
+            actual_issue_id = None
             if self._is_epic_issue_type(issue_type) and issue_type.lower() == "epic":
                 # If the user provided "Epic" but we need to find the localized name
-                epic_type_name = self._find_epic_issue_type_name(project_key)
-                if epic_type_name:
-                    actual_issue_type = epic_type_name
-                    logger.info(
-                        f"Using localized Epic issue type name: {actual_issue_type}"
-                    )
+                epic_type_id = self._find_epic_issue_type_id(project_key)
+                if epic_type_id:
+                    actual_issue_id = epic_type_id
+                    logger.info(f"Using localized Epic issue type id: {epic_type_id}")
             elif issue_type.lower() in ["subtask", "sub-task"]:
                 # If the user provided "Subtask" but we need to find the localized name
-                subtask_type_name = self._find_subtask_issue_type_name(project_key)
-                if subtask_type_name:
-                    actual_issue_type = subtask_type_name
+                subtask_type_id = self._find_subtask_issue_type_id(project_key)
+                if subtask_type_id:
+                    actual_issue_id = subtask_type_id
                     logger.info(
-                        f"Using localized Subtask issue type name: {actual_issue_type}"
+                        f"Using localized Subtask issue type id: {subtask_type_id}"
                     )
 
             # Prepare fields
             fields: dict[str, Any] = {
                 "project": {"key": project_key},
                 "summary": summary,
-                "issuetype": {"name": actual_issue_type},
+                "issuetype": {"name": issue_type}
+                if actual_issue_id is None
+                else {"id": actual_issue_id, "name": issue_type},
             }
 
             # Add description if provided (convert from Markdown to Jira format)
@@ -710,7 +710,7 @@ class IssuesMixin(
 
         return issue_type.lower() in epic_names or "epic" in issue_type.lower()
 
-    def _find_epic_issue_type_name(self, project_key: str) -> str | None:
+    def _find_epic_issue_type_id(self, project_key: str) -> str | None:
         """
         Find the actual Epic issue type name for a project.
 
@@ -725,13 +725,13 @@ class IssuesMixin(
             for issue_type in issue_types:
                 type_name = issue_type.get("name", "")
                 if self._is_epic_issue_type(type_name):
-                    return type_name
+                    return issue_type.get("id")
             return None
         except Exception as e:
             logger.warning(f"Could not get issue types for project {project_key}: {e}")
             return None
 
-    def _find_subtask_issue_type_name(self, project_key: str) -> str | None:
+    def _find_subtask_issue_type_id(self, project_key: str) -> str | None:
         """
         Find the actual Subtask issue type name for a project.
 
@@ -746,7 +746,7 @@ class IssuesMixin(
             for issue_type in issue_types:
                 # Check the subtask field - this is the most reliable way
                 if issue_type.get("subtask", False):
-                    return issue_type.get("name")
+                    return issue_type.get("id")
             return None
         except Exception as e:
             logger.warning(f"Could not get issue types for project {project_key}: {e}")
@@ -777,6 +777,8 @@ class IssuesMixin(
         # Since JiraFetcher inherits from both IssuesMixin and EpicsMixin,
         # this will correctly use the prepare_epic_fields method from EpicsMixin
         # which implements the two-step Epic creation approach
+        if not isinstance(project_key, str) or not project_key:
+            raise ValueError("Project key is required for epic preparation")
         self.prepare_epic_fields(fields, summary, kwargs, project_key)
 
     def _prepare_parent_fields(
