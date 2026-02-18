@@ -84,6 +84,12 @@ class DevelopmentMixin(JiraClient):
                         result = self._fetch_dev_info_for_app_type(
                             issue_key, issue_id, app_type, dt
                         )
+                        if "error" in result:
+                            # Plugin unavailable or access denied — capture the first
+                            # error and stop; all subsequent calls will fail the same way
+                            if not merged_result.get("error"):
+                                merged_result["error"] = result["error"]
+                            break
                         # Merge results
                         merged_result["detail"].extend(result.get("detail", []))
                         merged_result["pullRequests"].extend(
@@ -100,6 +106,8 @@ class DevelopmentMixin(JiraClient):
                             f"No dev info for {issue_key} "
                             f"from {app_type}/{dt}: {str(e)}"
                         )
+                if merged_result.get("error"):
+                    break
 
             return merged_result
 
@@ -130,6 +138,7 @@ class DevelopmentMixin(JiraClient):
         Returns:
             Parsed development information
         """
+        # TODO: Consider caching results to reduce API calls (up to 12 per issue)
         params: dict[str, str] = {
             "issueId": str(issue_id),
             "applicationType": application_type,
@@ -137,12 +146,50 @@ class DevelopmentMixin(JiraClient):
         if data_type:
             params["dataType"] = data_type
 
-        # Call the dev-status API using the session directly
-        # The jira.get() method doesn't work well with this endpoint
+        # Use _session.get() directly: the dev-status endpoint is a plugin-specific
+        # path (/rest/dev-status/1.0/...) not covered by the standard Jira client
+        # wrappers. No higher-level wrapper method exists for this non-standard endpoint.
         url = f"{self.config.url}/rest/dev-status/1.0/issue/detail"
         http_response = self.jira._session.get(
             url, params=params, verify=self.config.ssl_verify
         )
+
+        if http_response.status_code == 404:
+            logger.debug(
+                f"Dev-status plugin returned 404 for {issue_key}/{application_type}"
+                f"/{data_type} — plugin may not be installed"
+            )
+            return {
+                "issue_key": issue_key,
+                "error": (
+                    "Development info is not available — the Jira dev-status plugin"
+                    " may not be installed on this instance."
+                ),
+                "detail": [],
+                "pullRequests": [],
+                "branches": [],
+                "commits": [],
+                "repositories": [],
+            }
+
+        if http_response.status_code == 403:
+            logger.debug(
+                f"Dev-status plugin returned 403 for {issue_key}/{application_type}"
+                f"/{data_type} — permissions issue"
+            )
+            return {
+                "issue_key": issue_key,
+                "error": (
+                    "Access denied to development info — check Jira permissions"
+                    " or dev-status plugin configuration."
+                ),
+                "detail": [],
+                "pullRequests": [],
+                "branches": [],
+                "commits": [],
+                "repositories": [],
+            }
+
         http_response.raise_for_status()
         response = http_response.json()
 
