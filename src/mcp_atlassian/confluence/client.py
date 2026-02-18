@@ -5,6 +5,7 @@ import os
 
 from atlassian import Confluence
 from requests import Session
+from requests.exceptions import ConnectionError as RequestsConnectionError
 
 from ..exceptions import MCPAtlassianAuthenticationError
 from ..utils.logging import get_masked_session_headers, log_config_param, mask_sensitive
@@ -154,6 +155,13 @@ class ConfluenceClient:
                     "Confluence authentication test returned None - "
                     "this may indicate an issue"
                 )
+        except RequestsConnectionError as e:
+            error_msg = (
+                f"Could not connect to Confluence at {self.config.url}. "
+                "Check that CONFLUENCE_URL is correct and the instance is reachable."
+            )
+            logger.error(error_msg)
+            raise MCPAtlassianAuthenticationError(error_msg) from e
         except Exception as e:
             error_msg = f"Confluence authentication validation failed: {e}"
             logger.error(error_msg)
