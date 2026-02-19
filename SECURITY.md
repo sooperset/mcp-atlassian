@@ -1,8 +1,26 @@
 # Security Policy
 
-## Reporting Issues
+## Supported Versions
 
-Please report security vulnerabilities to [security contact].
+| Version | Supported |
+|---------|-----------|
+| 0.14.x  | ✅ |
+| < 0.14  | ❌ |
+
+## Reporting a Vulnerability
+
+Please **do not** open a public GitHub issue for security vulnerabilities.
+
+Instead, use GitHub's private vulnerability reporting:
+**[Report a vulnerability](https://github.com/sooperset/mcp-atlassian/security/advisories/new)**
+
+We will acknowledge your report within **72 hours** and work with you on a coordinated disclosure.
+
+## Response Timeline
+
+- **72 hours**: Initial acknowledgment of your report
+- **7 days**: Assessment and initial response
+- **30 days**: Target for patch release (if applicable)
 
 ## Best Practices
 
