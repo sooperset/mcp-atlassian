@@ -124,7 +124,7 @@ class TestMainTransportSelection:
                 server_cancelled.set()
                 raise
 
-        async def fake_watch_parent() -> None:
+        async def fake_watch_parent(_stop_event) -> None:
             await server_started.wait()
 
         with patch(
