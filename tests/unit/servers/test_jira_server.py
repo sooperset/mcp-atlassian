@@ -1335,3 +1335,25 @@ def test_issue_key_pattern_validation():
     assert not re.match(PROJECT_KEY_PATTERN, "a")
     assert not re.match(PROJECT_KEY_PATTERN, "2ABC")
     assert not re.match(PROJECT_KEY_PATTERN, "A")
+
+
+def test_issue_and_project_key_patterns_accept_long_server_dc_keys():
+    import re
+
+    from src.mcp_atlassian.servers.jira import ISSUE_KEY_PATTERN, PROJECT_KEY_PATTERN
+
+    assert re.match(ISSUE_KEY_PATTERN, "VERYLONGPROJECTKEY-123")
+    assert re.match(PROJECT_KEY_PATTERN, "VERYLONGPROJECTKEY")
+
+
+def test_issue_and_project_key_patterns_reject_invalid_keys():
+    import re
+
+    from src.mcp_atlassian.servers.jira import ISSUE_KEY_PATTERN, PROJECT_KEY_PATTERN
+
+    assert not re.match(ISSUE_KEY_PATTERN, "lowercase-123")
+    assert not re.match(ISSUE_KEY_PATTERN, "123-456")
+    assert not re.match(ISSUE_KEY_PATTERN, "-123")
+
+    assert not re.match(PROJECT_KEY_PATTERN, "lowercase")
+    assert not re.match(PROJECT_KEY_PATTERN, "123")

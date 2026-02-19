@@ -20,10 +20,10 @@ from mcp_atlassian.utils.decorators import check_write_access
 logger = logging.getLogger(__name__)
 
 # Regex patterns for Jira key validation.
-# Per Atlassian docs, project keys are 2-10 chars starting with an uppercase
-# letter, followed by uppercase letters and/or digits (e.g. ACV2, CMSV2).
-ISSUE_KEY_PATTERN = r"^[A-Z][A-Z0-9]{1,9}-\d+$"
-PROJECT_KEY_PATTERN = r"^[A-Z][A-Z0-9]{1,9}$"
+# Per Atlassian docs, Cloud project keys are 2-10 chars. Server/Data Center
+# allows longer keys (configurable). We accept any length to support both.
+ISSUE_KEY_PATTERN = r"^[A-Z][A-Z0-9]+-\d+$"
+PROJECT_KEY_PATTERN = r"^[A-Z][A-Z0-9]+$"
 
 jira_mcp = FastMCP(
     name="Jira MCP Service",
