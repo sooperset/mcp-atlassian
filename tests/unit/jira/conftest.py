@@ -575,3 +575,73 @@ def parametrized_jira_status(request):
     """
     status = request.param
     return JiraIssueFactory.create(fields={"status": {"name": status}})
+
+
+@pytest.fixture
+def make_issue_data():
+    """
+    Factory fixture for creating Jira issue API response data.
+
+    This fixture provides a convenient way to create issue data with
+    sensible defaults that can be selectively overridden. It wraps
+    JiraIssueFactory.create() with a more ergonomic interface for tests.
+
+    Returns:
+        Callable: Function that creates issue response dicts
+
+    Example:
+        def test_something(make_issue_data):
+            # Basic usage - uses all defaults
+            issue = make_issue_data()
+
+            # Override specific fields
+            issue = make_issue_data(
+                key="PROJ-456",
+                summary="Custom summary",
+                status="In Progress",
+                issue_type="Bug",
+            )
+
+            # Add custom fields
+            issue = make_issue_data(
+                components=[{"name": "UI"}],
+                labels=["urgent", "frontend"],
+            )
+    """
+
+    def _make_issue_data(
+        key: str = "TEST-123",
+        issue_id: str = "12345",
+        summary: str = "Test Issue",
+        description: str = "This is a test issue",
+        status: str = "Open",
+        issue_type: str = "Bug",
+        **extra_fields,
+    ) -> dict:
+        """
+        Create a Jira issue API response dict.
+
+        Args:
+            key: Issue key (e.g., "TEST-123")
+            issue_id: Issue ID
+            summary: Issue summary
+            description: Issue description
+            status: Status name
+            issue_type: Issue type name
+            **extra_fields: Additional fields to merge into the fields dict
+
+        Returns:
+            Dict matching Jira API issue response structure
+        """
+        fields = {
+            "summary": summary,
+            "description": description,
+            "status": {"name": status},
+            "issuetype": {"name": issue_type},
+            "created": "2023-01-01T00:00:00.000+0000",
+            "updated": "2023-01-02T00:00:00.000+0000",
+            **extra_fields,
+        }
+        return JiraIssueFactory.create(key=key, id=issue_id, fields=fields)
+
+    return _make_issue_data

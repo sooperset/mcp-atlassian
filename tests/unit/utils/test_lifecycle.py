@@ -32,21 +32,41 @@ class TestSetupSignalHandlers:
     @patch("signal.signal")
     def test_setup_signal_handlers_no_sigpipe(self, mock_signal):
         """Test signal handler setup when SIGPIPE is not available (Windows)."""
+        # Mock hasattr to return False for SIGPIPE
+        with patch("builtins.hasattr") as mock_hasattr:
+            # Return False for signal.SIGPIPE, True for everything else
+            def hasattr_side_effect(obj, name):
+                if obj is signal and name == "SIGPIPE":
+                    return False
+                # Use real hasattr for other cases
+                return (
+                    hasattr.__wrapped__(obj, name)
+                    if hasattr(hasattr, "__wrapped__")
+                    else True
+                )
 
-        # Mock SIGPIPE as not available
-        def side_effect(sig, handler):
-            if sig == signal.SIGPIPE:
-                raise AttributeError("SIGPIPE not available")
-            return None
+            mock_hasattr.side_effect = hasattr_side_effect
 
-        mock_signal.side_effect = side_effect
+            # This should not raise an exception
+            setup_signal_handlers()
 
-        # This should not raise an exception
-        setup_signal_handlers()
+            # SIGTERM and SIGINT should still be registered
+            assert any(
+                call[0][0] == signal.SIGTERM for call in mock_signal.call_args_list
+            )
+            assert any(
+                call[0][0] == signal.SIGINT for call in mock_signal.call_args_list
+            )
 
-        # SIGTERM and SIGINT should still be registered
-        assert any(call[0][0] == signal.SIGTERM for call in mock_signal.call_args_list)
-        assert any(call[0][0] == signal.SIGINT for call in mock_signal.call_args_list)
+            # SIGPIPE should not be in the calls since hasattr returned False
+            sigpipe_calls = [
+                call
+                for call in mock_signal.call_args_list
+                if len(call[0]) > 0
+                and hasattr(signal, "SIGPIPE")
+                and call[0][0] == signal.SIGPIPE
+            ]
+            assert len(sigpipe_calls) == 0
 
     @patch("signal.signal")
     def test_signal_handler_function(self, mock_signal):

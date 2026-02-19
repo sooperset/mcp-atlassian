@@ -1,20 +1,29 @@
 """Jira FastMCP server instance and tool definitions."""
 
+import base64
 import json
 import logging
 from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
+from mcp.types import BlobResourceContents, EmbeddedResource, TextContent
 from pydantic import Field
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
+from mcp_atlassian.jira.forms_common import convert_datetime_to_timestamp
 from mcp_atlassian.models.jira.common import JiraUser
 from mcp_atlassian.servers.dependencies import get_jira_fetcher
 from mcp_atlassian.utils.decorators import check_write_access
 
 logger = logging.getLogger(__name__)
+
+# Regex patterns for Jira key validation.
+# Per Atlassian docs, project keys are 2-10 chars starting with an uppercase
+# letter, followed by uppercase letters and/or digits (e.g. ACV2, CMSV2).
+ISSUE_KEY_PATTERN = r"^[A-Z][A-Z0-9]{1,9}-\d+$"
+PROJECT_KEY_PATTERN = r"^[A-Z][A-Z0-9]{1,9}$"
 
 jira_mcp = FastMCP(
     name="Jira MCP Service",
@@ -89,7 +98,13 @@ async def get_user_profile(
 )
 async def get_issue(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
     fields: Annotated[
         str,
         Field(
@@ -302,7 +317,13 @@ async def search_fields(
 )
 async def get_project_issues(
     ctx: Context,
-    project_key: Annotated[str, Field(description="The project key")],
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'PROJ', 'ACV2')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
     limit: Annotated[
         int,
         Field(description="Maximum number of results (1-50)", default=10, ge=1, le=50),
@@ -337,7 +358,13 @@ async def get_project_issues(
 )
 async def get_transitions(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
 ) -> str:
     """Get available status transitions for a Jira issue.
 
@@ -360,7 +387,13 @@ async def get_transitions(
 )
 async def get_worklog(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
 ) -> str:
     """Get worklog entries for a Jira issue.
 
@@ -383,24 +416,83 @@ async def get_worklog(
 )
 async def download_attachments(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
-    target_dir: Annotated[
-        str, Field(description="Directory where attachments should be saved")
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
     ],
-) -> str:
+) -> list[TextContent | EmbeddedResource]:
     """Download attachments from a Jira issue.
+
+    Returns attachment contents as base64-encoded embedded resources so that
+    they are available over the MCP protocol without requiring filesystem
+    access on the server.
 
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        target_dir: Directory to save attachments.
 
     Returns:
-        JSON string indicating the result of the download operation.
+        A list containing a text summary and one EmbeddedResource per
+        successfully downloaded attachment.
     """
     jira = await get_jira_fetcher(ctx)
-    result = jira.download_issue_attachments(issue_key=issue_key, target_dir=target_dir)
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    result = jira.get_issue_attachment_contents(issue_key=issue_key)
+
+    contents: list[TextContent | EmbeddedResource] = []
+
+    if not result.get("success"):
+        contents.append(
+            TextContent(
+                type="text",
+                text=json.dumps(result, indent=2, ensure_ascii=False),
+            )
+        )
+        return contents
+
+    attachments = result.get("attachments", [])
+    failed = result.get("failed", [])
+
+    summary = {
+        "success": True,
+        "issue_key": result.get("issue_key", issue_key),
+        "total": result.get("total", 0),
+        "downloaded": len(attachments),
+        "failed": failed,
+    }
+
+    if not attachments and not failed:
+        summary["message"] = result.get(
+            "message", f"No attachments found for issue {issue_key}"
+        )
+
+    contents.append(
+        TextContent(
+            type="text",
+            text=json.dumps(summary, indent=2, ensure_ascii=False),
+        )
+    )
+
+    for attachment in attachments:
+        data_bytes: bytes = attachment["data"]
+        encoded = base64.b64encode(data_bytes).decode("ascii")
+        mime_type = attachment.get("content_type", "application/octet-stream")
+        filename = attachment["filename"]
+
+        contents.append(
+            EmbeddedResource(
+                type="resource",
+                resource=BlobResourceContents(
+                    uri=f"attachment:///{issue_key}/{filename}",
+                    mimeType=mime_type,
+                    blob=encoded,
+                ),
+            )
+        )
+
+    return contents
 
 
 @jira_mcp.tool(
@@ -414,7 +506,11 @@ async def get_agile_boards(
         Field(description="(Optional) The name of board, support fuzzy search"),
     ] = None,
     project_key: Annotated[
-        str | None, Field(description="(Optional) Jira project key (e.g., 'PROJ-123')")
+        str | None,
+        Field(
+            description="(Optional) Jira project key (e.g., 'PROJ', 'ACV2')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
     ] = None,
     board_type: Annotated[
         str | None,
@@ -657,10 +753,11 @@ async def create_issue(
         str,
         Field(
             description=(
-                "The JIRA project key (e.g. 'PROJ', 'DEV', 'SUPPORT'). "
+                "The JIRA project key (e.g. 'PROJ', 'DEV', 'ACV2'). "
                 "This is the prefix of issue keys in your project. "
                 "Never assume what it might be, always ask the user."
-            )
+            ),
+            pattern=PROJECT_KEY_PATTERN,
         ),
     ],
     summary: Annotated[str, Field(description="Summary/title of the issue")],
@@ -682,7 +779,8 @@ async def create_issue(
         ),
     ] = None,
     description: Annotated[
-        str | None, Field(description="Issue description", default=None)
+        str | None,
+        Field(description="Issue description in Markdown format", default=None),
     ] = None,
     components: Annotated[
         str | None,
@@ -714,7 +812,7 @@ async def create_issue(
         summary: Summary/title of the issue.
         issue_type: Issue type (e.g., 'Task', 'Bug', 'Story', 'Epic', 'Subtask').
         assignee: Assignee's user identifier (string): Email, display name, or account ID (e.g., 'user@example.com', 'John Doe', 'accountid:...').
-        description: Issue description.
+        description: Issue description in Markdown format.
         components: Comma-separated list of component names.
         additional_fields: Dictionary or JSON string of additional fields.
 
@@ -782,7 +880,7 @@ async def batch_create_issues(
                 "- project_key (required): The project key (e.g., 'PROJ')\n"
                 "- summary (required): Issue summary/title\n"
                 "- issue_type (required): Type of issue (e.g., 'Task', 'Bug')\n"
-                "- description (optional): Issue description\n"
+                "- description (optional): Issue description in Markdown format\n"
                 "- assignee (optional): Assignee username or email\n"
                 "- components (optional): Array of component names\n"
                 "Example: [\n"
@@ -921,13 +1019,20 @@ async def batch_get_changelogs(
 @check_write_access
 async def update_issue(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
     fields: Annotated[
         dict[str, Any],
         Field(
             description=(
                 "Dictionary of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
-                "Example: `{'assignee': 'user@example.com', 'summary': 'New Summary'}`"
+                "For 'description', provide text in Markdown format. "
+                "Example: `{'assignee': 'user@example.com', 'summary': 'New Summary', 'description': '## Updated\\nMarkdown text'}`"
             )
         ),
     ],
@@ -954,7 +1059,7 @@ async def update_issue(
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        fields: Dictionary of fields to update.
+        fields: Dictionary of fields to update. Text fields like 'description' should use Markdown format.
         additional_fields: Optional dictionary of additional fields.
         attachments: Optional JSON array string or comma-separated list of file paths.
 
@@ -966,8 +1071,6 @@ async def update_issue(
     """
     jira = await get_jira_fetcher(ctx)
     # Use fields directly as dict
-    if not isinstance(fields, dict):
-        raise ValueError("fields must be a dictionary.")
     update_fields = fields
 
     # Use additional_fields directly as dict
@@ -1025,7 +1128,13 @@ async def update_issue(
 @check_write_access
 async def delete_issue(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g. PROJ-123)")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
 ) -> str:
     """Delete an existing Jira issue.
 
@@ -1053,7 +1162,13 @@ async def delete_issue(
 @check_write_access
 async def add_comment(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
     comment: Annotated[str, Field(description="Comment text in Markdown format")],
     visibility: Annotated[
         dict[str, str] | None,
@@ -1089,7 +1204,13 @@ async def add_comment(
 @check_write_access
 async def edit_comment(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
     comment_id: Annotated[str, Field(description="The ID of the comment to edit")],
     comment: Annotated[
         str, Field(description="Updated comment text in Markdown format")
@@ -1129,7 +1250,13 @@ async def edit_comment(
 @check_write_access
 async def add_worklog(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
     time_spent: Annotated[
         str,
         Field(
@@ -1200,10 +1327,18 @@ async def add_worklog(
 async def link_to_epic(
     ctx: Context,
     issue_key: Annotated[
-        str, Field(description="The key of the issue to link (e.g., 'PROJ-123')")
+        str,
+        Field(
+            description="The key of the issue to link (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
     ],
     epic_key: Annotated[
-        str, Field(description="The key of the epic to link to (e.g., 'PROJ-456')")
+        str,
+        Field(
+            description="The key of the epic to link to (e.g., 'PROJ-456')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
     ],
 ) -> str:
     """Link an existing issue to an epic.
@@ -1242,10 +1377,18 @@ async def create_issue_link(
         ),
     ],
     inward_issue_key: Annotated[
-        str, Field(description="The key of the inward issue (e.g., 'PROJ-123')")
+        str,
+        Field(
+            description="The key of the inward issue (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
     ],
     outward_issue_key: Annotated[
-        str, Field(description="The key of the outward issue (e.g., 'PROJ-456')")
+        str,
+        Field(
+            description="The key of the outward issue (e.g., 'PROJ-456')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
     ],
     comment: Annotated[
         str | None, Field(description="(Optional) Comment to add to the link")
@@ -1308,7 +1451,10 @@ async def create_remote_issue_link(
     ctx: Context,
     issue_key: Annotated[
         str,
-        Field(description="The key of the issue to add the link to (e.g., 'PROJ-123')"),
+        Field(
+            description="The key of the issue to add the link to (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
     ],
     url: Annotated[
         str,
@@ -1420,7 +1566,13 @@ async def remove_issue_link(
 @check_write_access
 async def transition_issue(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
     transition_id: Annotated[
         str,
         Field(
@@ -1445,7 +1597,7 @@ async def transition_issue(
         str | None,
         Field(
             description=(
-                "(Optional) Comment to add during the transition. "
+                "(Optional) Comment to add during the transition in Markdown format. "
                 "This will be visible in the issue history."
             ),
         ),
@@ -1458,7 +1610,7 @@ async def transition_issue(
         issue_key: Jira issue key.
         transition_id: ID of the transition.
         fields: Optional dictionary of fields to update during transition.
-        comment: Optional comment for the transition.
+        comment: Optional comment for the transition in Markdown format.
 
     Returns:
         JSON string representing the updated issue object.
@@ -1604,7 +1756,13 @@ async def update_sprint(
 )
 async def get_project_versions(
     ctx: Context,
-    project_key: Annotated[str, Field(description="Jira project key (e.g., 'PROJ')")],
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'PROJ', 'ACV2')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
 ) -> str:
     """Get all fix versions for a specific Jira project."""
     jira = await get_jira_fetcher(ctx)
@@ -1687,7 +1845,13 @@ async def get_all_projects(
 @check_write_access
 async def create_version(
     ctx: Context,
-    project_key: Annotated[str, Field(description="Jira project key (e.g., 'PROJ')")],
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'PROJ', 'ACV2')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
     name: Annotated[str, Field(description="Name of the version")],
     start_date: Annotated[
         str | None, Field(description="Start date (YYYY-MM-DD)", default=None)
@@ -1739,7 +1903,13 @@ async def create_version(
 @check_write_access
 async def batch_create_versions(
     ctx: Context,
-    project_key: Annotated[str, Field(description="Jira project key (e.g., 'PROJ')")],
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'PROJ', 'ACV2')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
     versions: Annotated[
         str,
         Field(
@@ -1810,12 +1980,273 @@ async def batch_create_versions(
 
 
 @jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Issue Forms", "readOnlyHint": True},
+)
+async def get_issue_proforma_forms(
+    ctx: Context,
+    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+) -> str:
+    """
+    Get all ProForma forms associated with a Jira issue.
+
+    Uses the new Jira Forms REST API. Form IDs are returned as UUIDs.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: The issue key to get forms for.
+
+    Returns:
+        JSON string representing the list of ProForma forms, or an error object if failed.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        forms = jira.get_issue_forms(issue_key)
+        forms_data = [form.to_simplified_dict() for form in forms]
+        response_data = {"success": True, "forms": forms_data, "count": len(forms)}
+    except Exception as e:
+        error_message = ""
+        log_level = logging.ERROR
+        if isinstance(e, ValueError) and "not found" in str(e).lower():
+            log_level = logging.WARNING
+            error_message = str(e)
+        elif isinstance(e, MCPAtlassianAuthenticationError):
+            error_message = f"Authentication/Permission Error: {str(e)}"
+        elif isinstance(e, OSError | HTTPError):
+            error_message = f"Network or API Error: {str(e)}"
+        else:
+            error_message = (
+                "An unexpected error occurred while fetching ProForma forms."
+            )
+            logger.exception(
+                f"Unexpected error in get_issue_proforma_forms for '{issue_key}':"
+            )
+        error_result = {
+            "success": False,
+            "error": str(e),
+            "issue_key": issue_key,
+        }
+        logger.log(
+            log_level,
+            f"get_issue_proforma_forms failed for '{issue_key}': {error_message}",
+        )
+        response_data = error_result
+    return json.dumps(response_data, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Form Details", "readOnlyHint": True},
+)
+async def get_proforma_form_details(
+    ctx: Context,
+    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    form_id: Annotated[
+        str,
+        Field(
+            description="ProForma form UUID (e.g., '1946b8b7-8f03-4dc0-ac2d-5fac0d960c6a')"
+        ),
+    ],
+) -> str:
+    """
+    Get detailed information about a specific ProForma form.
+
+    Uses the new Jira Forms REST API. Returns form details including ADF design structure.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: The issue key containing the form.
+        form_id: The form UUID identifier.
+
+    Returns:
+        JSON string representing the ProForma form details, or an error object if failed.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        form = jira.get_form_details(issue_key, form_id)
+        if form is None:
+            response_data = {
+                "success": False,
+                "error": f"Form {form_id} not found for issue {issue_key}",
+                "issue_key": issue_key,
+                "form_id": form_id,
+            }
+        else:
+            response_data = {"success": True, "form": form.to_simplified_dict()}
+    except Exception as e:
+        error_message = ""
+        log_level = logging.ERROR
+        if isinstance(e, ValueError) and "not found" in str(e).lower():
+            log_level = logging.WARNING
+            error_message = str(e)
+        elif isinstance(e, MCPAtlassianAuthenticationError):
+            error_message = f"Authentication/Permission Error: {str(e)}"
+        elif isinstance(e, OSError | HTTPError):
+            error_message = f"Network or API Error: {str(e)}"
+        else:
+            error_message = (
+                "An unexpected error occurred while fetching ProForma form details."
+            )
+            logger.exception(
+                f"Unexpected error in get_proforma_form_details for '{issue_key}/{form_id}':"
+            )
+        error_result = {
+            "success": False,
+            "error": str(e),
+            "issue_key": issue_key,
+            "form_id": form_id,
+        }
+        logger.log(
+            log_level,
+            f"get_proforma_form_details failed for '{issue_key}/{form_id}': {error_message}",
+        )
+        response_data = error_result
+    return json.dumps(response_data, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write"},
+    annotations={"title": "Update Form Answers", "destructiveHint": True},
+)
+@check_write_access
+async def update_proforma_form_answers(
+    ctx: Context,
+    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    form_id: Annotated[
+        str,
+        Field(
+            description="ProForma form UUID (e.g., '1946b8b7-8f03-4dc0-ac2d-5fac0d960c6a')"
+        ),
+    ],
+    answers: Annotated[
+        list[dict],
+        Field(
+            description="List of answer objects. Each answer must have: questionId (string), type (TEXT/NUMBER/SELECT/etc), value (any)"
+        ),
+    ],
+) -> str:
+    """
+    Update form field answers using the Jira Forms REST API.
+
+    This is the primary method for updating form data. Each answer object
+    must specify the question ID, answer type, and value.
+
+    **⚠️ KNOWN LIMITATION - DATETIME fields:**
+    The Jira Forms API does NOT properly preserve time components in DATETIME fields.
+    Only the date portion is stored; times are reset to midnight (00:00:00).
+
+    **Workaround for DATETIME fields:**
+    Use jira_update_issue to directly update the underlying custom fields instead:
+    1. Get the custom field ID from the form details (question's "jiraField" property)
+    2. Use jira_update_issue with fields like: {"customfield_XXXXX": "2026-01-09T11:50:00-08:00"}
+
+    Example:
+    ```python
+    # Instead of updating via form (loses time):
+    # jira_update_proforma_form_answers(issue_key, form_id, [{"questionId": "91", "type": "DATETIME", "value": "..."}])
+
+    # Use direct field update (preserves time):
+    jira_update_issue(issue_key, {"customfield_10542": "2026-01-09T11:50:00-08:00"})
+    ```
+
+    **Automatic DateTime Conversion:**
+    For DATE and DATETIME fields, you can provide values as:
+    - ISO 8601 strings (e.g., "2024-12-17T19:00:00Z", "2024-12-17")
+    - Unix timestamps in milliseconds (e.g., 1734465600000)
+
+    The tool automatically converts ISO 8601 strings to Unix timestamps.
+
+    Example answers:
+    [
+        {"questionId": "q1", "type": "TEXT", "value": "Updated description"},
+        {"questionId": "q2", "type": "SELECT", "value": "Product A"},
+        {"questionId": "q3", "type": "NUMBER", "value": 42},
+        {"questionId": "q4", "type": "DATE", "value": "2024-12-17"}
+    ]
+
+    Common answer types:
+    - TEXT: String values
+    - NUMBER: Numeric values
+    - DATE: Date values (ISO 8601 string or Unix timestamp in ms)
+    - DATETIME: DateTime values - ⚠️ USE WORKAROUND ABOVE
+    - SELECT: Single selection from options
+    - MULTI_SELECT: Multiple selections (value as list)
+    - CHECKBOX: Boolean values
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: The issue key containing the form.
+        form_id: The form UUID (get from get_issue_proforma_forms).
+        answers: List of answer objects with questionId, type, and value.
+
+    Returns:
+        JSON string with operation result.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        # Convert datetime strings to Unix timestamps for DATE/DATETIME fields
+        processed_answers = []
+        for answer in answers:
+            processed_answer = answer.copy()
+            if "type" in answer and "value" in answer:
+                processed_answer["value"] = convert_datetime_to_timestamp(
+                    answer["value"], answer["type"]
+                )
+            processed_answers.append(processed_answer)
+
+        result = jira.update_form_answers(issue_key, form_id, processed_answers)
+        response_data = {
+            "success": True,
+            "message": f"Successfully updated form {form_id} for issue {issue_key}",
+            "issue_key": issue_key,
+            "form_id": form_id,
+            "updated_fields": len(answers),
+            "result": result,
+        }
+    except Exception as e:
+        error_message = ""
+        log_level = logging.ERROR
+        if isinstance(e, ValueError) and "not found" in str(e).lower():
+            log_level = logging.WARNING
+            error_message = str(e)
+        elif isinstance(e, MCPAtlassianAuthenticationError):
+            error_message = f"Authentication/Permission Error: {str(e)}"
+        elif isinstance(e, OSError | HTTPError):
+            error_message = f"Network or API Error: {str(e)}"
+        else:
+            error_message = (
+                "An unexpected error occurred while updating ProForma form answers."
+            )
+            logger.exception(
+                f"Unexpected error in update_proforma_form_answers for '{issue_key}/{form_id}':"
+            )
+        error_result = {
+            "success": False,
+            "error": str(e),
+            "issue_key": issue_key,
+            "form_id": form_id,
+        }
+        logger.log(
+            log_level,
+            f"update_proforma_form_answers failed for '{issue_key}/{form_id}': {error_message}",
+        )
+        response_data = error_result
+    return json.dumps(response_data, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
     tags={"jira", "read", "metrics"},
     annotations={"title": "Get Issue Dates", "readOnlyHint": True},
 )
-async def jira_get_issue_dates(
+async def get_issue_dates(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
     include_status_changes: Annotated[
         bool,
         Field(
@@ -1864,9 +2295,15 @@ async def jira_get_issue_dates(
     tags={"jira", "read", "metrics", "sla"},
     annotations={"title": "Get Issue SLA", "readOnlyHint": True},
 )
-async def jira_get_issue_sla(
+async def get_issue_sla(
     ctx: Context,
-    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
     metrics: Annotated[
         str | None,
         Field(
@@ -1932,6 +2369,124 @@ async def jira_get_issue_sla(
     except Exception as e:
         logger.error(f"Error calculating SLA for {issue_key}: {str(e)}")
         error_result = {"success": False, "error": str(e), "issue_key": issue_key}
+        return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "development"},
+    annotations={"title": "Get Issue Development Info", "readOnlyHint": True},
+)
+async def get_issue_development_info(
+    ctx: Context,
+    issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
+    application_type: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Filter by application type. "
+                "Examples: 'stash' (Bitbucket Server), 'bitbucket', 'github', 'gitlab'"
+            )
+        ),
+    ] = None,
+    data_type: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Filter by data type. "
+                "Examples: 'pullrequest', 'branch', 'repository'"
+            )
+        ),
+    ] = None,
+) -> str:
+    """
+    Get development information (PRs, commits, branches) linked to a Jira issue.
+
+    This retrieves the development panel information that shows linked
+    pull requests, branches, and commits from connected source control systems
+    like Bitbucket, GitHub, or GitLab.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: The Jira issue key.
+        application_type: Optional filter by source control type.
+        data_type: Optional filter by data type (pullrequest, branch, etc.).
+
+    Returns:
+        JSON string with development information including:
+        - pullRequests: List of linked pull requests with status, author, reviewers
+        - branches: List of linked branches
+        - commits: List of linked commits
+        - repositories: List of repositories involved
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        result = jira.get_issue_development_info(
+            issue_key=issue_key,
+            application_type=application_type,
+            data_type=data_type,
+        )
+        return json.dumps(result, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Error getting development info for {issue_key}: {str(e)}")
+        error_result = {"success": False, "error": str(e), "issue_key": issue_key}
+        return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "development"},
+    annotations={"title": "Get Issues Development Info", "readOnlyHint": True},
+)
+async def get_issues_development_info(
+    ctx: Context,
+    issue_keys: Annotated[
+        list[str],
+        Field(description="List of Jira issue keys (e.g., ['PROJ-123', 'PROJ-456'])"),
+    ],
+    application_type: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Filter by application type. "
+                "Examples: 'stash' (Bitbucket Server), 'bitbucket', 'github', 'gitlab'"
+            )
+        ),
+    ] = None,
+    data_type: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Filter by data type. "
+                "Examples: 'pullrequest', 'branch', 'repository'"
+            )
+        ),
+    ] = None,
+) -> str:
+    """
+    Get development information for multiple Jira issues.
+
+    Batch retrieves development panel information (PRs, commits, branches)
+    for multiple issues at once.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_keys: List of Jira issue keys.
+        application_type: Optional filter by source control type.
+        data_type: Optional filter by data type.
+
+    Returns:
+        JSON string with list of development information for each issue.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        results = jira.get_issues_development_info(
+            issue_keys=issue_keys,
+            application_type=application_type,
+            data_type=data_type,
+        )
+        return json.dumps(results, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Error getting development info for issues: {str(e)}")
+        error_result = {"success": False, "error": str(e)}
         return json.dumps(error_result, indent=2, ensure_ascii=False)
 
 

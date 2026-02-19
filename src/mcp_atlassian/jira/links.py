@@ -177,7 +177,11 @@ class LinksMixin(JiraClient):
 
         try:
             # Create the remote issue link using the Jira API
-            endpoint = f"rest/api/3/issue/{issue_key}/remotelink"
+            # Cloud uses v3 API, Server/Data Center uses v2 API
+            if self.config.is_cloud:
+                endpoint = f"rest/api/3/issue/{issue_key}/remotelink"
+            else:
+                endpoint = f"rest/api/2/issue/{issue_key}/remotelink"
             response = self.jira.post(endpoint, json=link_data)
 
             # Return a response with the link information

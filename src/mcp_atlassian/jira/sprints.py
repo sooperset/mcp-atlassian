@@ -162,6 +162,8 @@ class SprintsMixin(JiraClient):
             raise ValueError("Start date is required.")
 
         # validate start date is not in the past
+        if parsed_start_date.tzinfo is None:
+            parsed_start_date = parsed_start_date.replace(tzinfo=datetime.timezone.utc)
         if parsed_start_date < datetime.datetime.now(datetime.timezone.utc):
             raise ValueError("Start date cannot be in the past.")
 

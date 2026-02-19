@@ -13,8 +13,10 @@ from .boards import BoardsMixin
 from .client import JiraClient
 from .comments import CommentsMixin
 from .config import JiraConfig
+from .development import DevelopmentMixin
 from .epics import EpicsMixin
 from .fields import FieldsMixin
+from .forms_api import FormsApiMixin  # Forms REST API
 from .formatting import FormattingMixin
 from .issues import IssuesMixin
 from .links import LinksMixin
@@ -32,6 +34,7 @@ from .zephyr_squad import ZephyrSquadMixin
 class JiraFetcher(
     ProjectsMixin,
     FieldsMixin,
+    FormsApiMixin,  # Use new Forms REST API instead of FormsMixin
     FormattingMixin,
     TransitionsMixin,
     WorklogMixin,
@@ -46,6 +49,7 @@ class JiraFetcher(
     LinksMixin,
     MetricsMixin,
     SLAMixin,
+    DevelopmentMixin,
     ZephyrSquadMixin,
 ):
     """

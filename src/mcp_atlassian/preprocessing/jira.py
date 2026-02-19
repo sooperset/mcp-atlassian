@@ -12,6 +12,88 @@ logger = logging.getLogger("mcp-atlassian")
 class JiraPreprocessor(BasePreprocessor):
     """Handles text preprocessing for Jira content."""
 
+    # Step 1: Valid JIRA languages (official list)
+    # Source: https://jira.atlassian.com/browse/JRASERVER-21067 (JIRA 7.5.0+)
+    # and JIRA v9.12.12 release notes
+    # Official documentation: https://jira.atlassian.com/secure/WikiRendererHelpAction.jspa
+    VALID_JIRA_LANGUAGES = {
+        # Core languages from JIRA 7.5.0+
+        "actionscript",
+        "actionscript3",
+        "ada",
+        "applescript",
+        "bash",
+        "sh",  # alias for bash
+        "c",
+        "c#",
+        "csharp",  # alias for c#
+        "cs",  # alias for c#
+        "c++",
+        "cpp",  # alias for c++
+        "css",
+        "sass",  # CSS preprocessor
+        "less",  # CSS preprocessor
+        "coldfusion",
+        "delphi",
+        "diff",
+        "patch",  # alias for diff
+        "erlang",
+        "erl",  # alias for erlang
+        "go",
+        "groovy",
+        "haskell",
+        "html",
+        "xml",
+        "java",
+        "javafx",
+        "javascript",
+        "js",  # alias for javascript
+        "json",
+        "lua",
+        "nyan",
+        "objc",
+        "objective-c",  # alias for objc
+        "perl",
+        "php",
+        "powershell",
+        "ps1",  # alias for powershell
+        "python",
+        "py",  # alias for python
+        "r",
+        "rainbow",
+        "ruby",
+        "rb",  # alias for ruby
+        "scala",
+        "sql",
+        "swift",
+        "visualbasic",
+        "vb",  # alias for visualbasic
+        "yaml",
+        "yml",  # alias for yaml
+        "none",  # plain text, no highlighting
+    }
+
+    # Step 2: Mapping for unsupported languages to closest valid JIRA alternative
+    # Only map to actual JIRA languages; unmapped languages will return None → {code}
+    LANGUAGE_MAPPING = {
+        # Dockerfile → bash (similar shell syntax)
+        "dockerfile": "bash",
+        "docker": "bash",
+        # TypeScript → javascript
+        "typescript": "javascript",
+        "ts": "javascript",
+        "tsx": "javascript",
+        # JSX/React → javascript
+        "jsx": "javascript",
+        # Kotlin → java (JVM-based language)
+        "kotlin": "java",
+        "kt": "java",
+        # Build files → bash
+        "makefile": "bash",
+        "make": "bash",
+        "cmake": "bash",
+    }
+
     def __init__(
         self, base_url: str = "", disable_translation: bool = False, **kwargs: Any
     ) -> None:
@@ -239,6 +321,34 @@ class JiraPreprocessor(BasePreprocessor):
 
         return output
 
+    def _normalize_code_language(self, lang: str | None) -> str | None:
+        """
+        Normalize and map markdown code language to JIRA-supported language.
+
+        Step 3: Default handling - unmapped languages return None for plain {code}
+
+        Args:
+            lang: Language identifier from markdown code block
+
+        Returns:
+            Valid JIRA language string, or None for plain {code} block
+        """
+        if not lang:
+            return None
+
+        lang_lower = lang.lower()
+
+        # Step 1: Check if already valid JIRA language
+        if lang_lower in self.VALID_JIRA_LANGUAGES:
+            return lang_lower
+
+        # Step 2: Check language mapping
+        if lang_lower in self.LANGUAGE_MAPPING:
+            return self.LANGUAGE_MAPPING[lang_lower]
+
+        # Step 3: Default - unmapped language returns None for plain {code}
+        return None
+
     def markdown_to_jira(self, input_text: str) -> str:
         """
         Convert Markdown syntax to Jira markup syntax.
@@ -255,47 +365,54 @@ class JiraPreprocessor(BasePreprocessor):
         if self.disable_translation:
             return input_text
 
-        # Save code blocks to prevent recursive processing
-        code_blocks = []
-        inline_codes = []
+        # Save code blocks to prevent them from being processed by other transformations
+        code_blocks: list[str] = []
+        inline_codes: list[str] = []
 
-        # Extract code blocks
+        # Extract code blocks and replace with placeholders
         def save_code_block(match: re.Match) -> str:
             """
-            Process and save a code block.
+            Process and save a code block, returning a placeholder.
 
             Args:
                 match: Regex match object containing the code block
 
             Returns:
-                Jira-formatted code block
+                Placeholder string to be replaced later
             """
             syntax = match.group(1) or ""
             content = match.group(2)
-            code = "{code"
-            if syntax:
-                code += ":" + syntax
-            code += "}" + content + "{code}"
-            code_blocks.append(code)
-            return str(code)  # Ensure we return a string
 
-        # Extract inline code
+            # Normalize the language to a JIRA-supported one
+            jira_lang = self._normalize_code_language(syntax)
+
+            # Build JIRA code block: {code:lang}...{code} or {code}...{code}
+            code = "{code"
+            if jira_lang:
+                code += ":" + jira_lang
+            code += "}" + content + "{code}"
+            placeholder = f"\x00CODE_BLOCK_{len(code_blocks)}\x00"
+            code_blocks.append(code)
+            return placeholder
+
+        # Extract inline code and replace with placeholders
         def save_inline_code(match: re.Match) -> str:
             """
-            Process and save inline code.
+            Process and save inline code, returning a placeholder.
 
             Args:
                 match: Regex match object containing the inline code
 
             Returns:
-                Jira-formatted inline code
+                Placeholder string to be replaced later
             """
             content = match.group(1)
             code = "{{" + content + "}}"
+            placeholder = f"\x00INLINE_CODE_{len(inline_codes)}\x00"
             inline_codes.append(code)
-            return str(code)  # Ensure we return a string
+            return placeholder
 
-        # Save code sections temporarily
+        # Replace code sections with placeholders
         output = re.sub(r"```(\w*)\n([\s\S]+?)```", save_code_block, input_text)
         output = re.sub(r"`([^`]+)`", save_inline_code, output)
 
@@ -402,6 +519,14 @@ class JiraPreprocessor(BasePreprocessor):
 
         # Rejoin the lines
         output = "\n".join(lines)
+
+        # Restore code blocks from placeholders
+        for i, code in enumerate(code_blocks):
+            output = output.replace(f"\x00CODE_BLOCK_{i}\x00", code)
+
+        # Restore inline code from placeholders
+        for i, code in enumerate(inline_codes):
+            output = output.replace(f"\x00INLINE_CODE_{i}\x00", code)
 
         return output
 

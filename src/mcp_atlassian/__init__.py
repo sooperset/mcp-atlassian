@@ -2,10 +2,12 @@ import asyncio
 import logging
 import os
 import sys
+import time
 from importlib.metadata import PackageNotFoundError, version
 
 import click
 from dotenv import load_dotenv
+from fastmcp import settings as fastmcp_settings
 
 # Fix high CPU usage on Windows - use SelectorEventLoop instead of ProactorEventLoop
 # ProactorEventLoop uses IOCP which can cause busy-waiting when combined with
@@ -37,6 +39,57 @@ logging_stream = sys.stdout if is_env_truthy("MCP_LOGGING_STDOUT") else sys.stde
 
 # Set up logging using the utility function
 logger = setup_logging(logging_level, logging_stream)
+
+
+async def _watch_parent_exit() -> None:
+    parent_pid = os.getppid()
+    loop = asyncio.get_running_loop()
+
+    def _poll_parent_alive() -> None:
+        while True:
+            time.sleep(5)
+            current_ppid = os.getppid()
+            # On Unix, when the parent dies the child is reparented (ppid changes)
+            if current_ppid != parent_pid:
+                logger.info(
+                    "Parent process %d exited (reparented to %d). "
+                    "Shutting down STDIO server.",
+                    parent_pid,
+                    current_ppid,
+                )
+                return
+
+    await loop.run_in_executor(None, _poll_parent_alive)
+
+
+async def _run_stdio_with_stdin_guard(run_kwargs: dict[str, object]) -> None:
+    from mcp_atlassian.servers import main_mcp
+
+    server_task = asyncio.create_task(main_mcp.run_async(**run_kwargs))
+    parent_task = asyncio.create_task(_watch_parent_exit())
+
+    done, pending = await asyncio.wait(
+        {server_task, parent_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+
+    if parent_task in done and not server_task.done():
+        logger.info("Parent process exited. Shutting down STDIO server.")
+        server_task.cancel()
+
+    for task in pending:
+        task.cancel()
+
+    await asyncio.gather(*pending, return_exceptions=True)
+
+    if server_task.done():
+        server_result = await asyncio.gather(server_task, return_exceptions=True)
+        if (
+            server_result
+            and isinstance(server_result[0], Exception)
+            and not isinstance(server_result[0], asyncio.CancelledError)
+        ):
+            raise server_result[0]
 
 
 @click.version_option(__version__, prog_name="mcp-atlassian")
@@ -351,11 +404,11 @@ def main(
         log_display_path = final_path
         if log_display_path is None:
             if final_transport == "sse":
-                log_display_path = main_mcp.settings.sse_path or "/sse"
+                log_display_path = fastmcp_settings.sse_path or "/sse"
             else:
-                log_display_path = main_mcp.settings.streamable_http_path or "/mcp"
+                log_display_path = fastmcp_settings.streamable_http_path or "/mcp"
 
-        main_mcp.settings.stateless_http = final_stateless
+        fastmcp_settings.stateless_http = final_stateless
 
         logger.info(
             f"Starting server with {final_transport.upper()} transport on http://{final_host}:{final_port}{log_display_path}"
@@ -376,10 +429,8 @@ def main(
     try:
         logger.debug("Starting asyncio event loop...")
 
-        # For stdio transport, don't monitor stdin as MCP server handles it internally
-        # This prevents race conditions where both try to read from the same stdin
         if final_transport == "stdio":
-            asyncio.run(main_mcp.run_async(**run_kwargs))
+            asyncio.run(_run_stdio_with_stdin_guard(run_kwargs))
         else:
             # For HTTP transports (SSE, streamable-http), don't use stdin monitoring
             # as it causes premature shutdown when the client closes stdin

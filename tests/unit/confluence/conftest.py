@@ -510,6 +510,34 @@ def confluence_client(mock_config, mock_atlassian_confluence, mock_preprocessor)
         yield client
 
 
+@pytest.fixture
+def confluence_fetcher(mock_config, mock_atlassian_confluence, mock_preprocessor):
+    """
+    Create a ConfluenceFetcher instance with mocked dependencies.
+
+    Args:
+        mock_config: Mock configuration
+        mock_atlassian_confluence: Mock Atlassian client
+        mock_preprocessor: Mock text preprocessor
+
+    Returns:
+        ConfluenceFetcher: Configured fetcher instance
+    """
+    from mcp_atlassian.confluence import ConfluenceFetcher
+
+    with patch(
+        "mcp_atlassian.preprocessing.TextPreprocessor"
+    ) as mock_text_preprocessor:
+        mock_text_preprocessor.return_value = mock_preprocessor
+
+        fetcher = ConfluenceFetcher(config=mock_config)
+        # Replace the actual Confluence instance with our mock
+        fetcher.confluence = mock_atlassian_confluence
+        # Replace the actual preprocessor with our mock
+        fetcher.preprocessor = mock_preprocessor
+        yield fetcher
+
+
 # ============================================================================
 # Specialized Test Data Fixtures
 # ============================================================================

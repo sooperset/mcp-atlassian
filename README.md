@@ -51,8 +51,6 @@ Add to your Claude Desktop or Cursor MCP configuration:
 }
 ```
 
-> **Python 3.14 not yet supported.** Use `["--python=3.12", "mcp-atlassian"]` as args if needed.
-
 > **Server/Data Center users**: Use `JIRA_PERSONAL_TOKEN` / `CONFLUENCE_PERSONAL_TOKEN` / `ZEPHYR_PERSONAL_TOKEN` instead of username + token combinations. See [Authentication](https://personal-1d37018d.mintlify.app/docs/authentication) for details.
 
 ### 3. Start Using
@@ -101,14 +99,18 @@ Documentation is also available in [llms.txt format](https://llmstxt.org/), whic
 
 ## Key Tools
 
-| Jira | Confluence | Zephyr |
-|------|------------|--------|
-| `jira_search` - Search with JQL | `confluence_search` - Search with CQL | **Scale**: `zephyr_search_test_cases` - Search test cases |
-| `jira_get_issue` - Get issue details | `confluence_get_page` - Get page content | **Scale**: `zephyr_create_test_case` - Create test cases |
+| Jira | Confluence | Zephyr                                                          |
+|------|------------|-----------------------------------------------------------------|
+| `jira_search` - Search with JQL | `confluence_search` - Search with CQL | **Scale**: `zephyr_search_test_cases` - Search test cases       |
+| `jira_get_issue` - Get issue details | `confluence_get_page` - Get page content | **Scale**: `zephyr_create_test_case` - Create test cases        |
 | `jira_create_issue` - Create issues | `confluence_create_page` - Create pages | **Scale**: `zephyr_create_test_execution` - Create test executions |
-| `jira_update_issue` - Update issues | `confluence_update_page` - Update pages | **Squad**: `zephyr_squad_get_cycles` - Get test cycles |
+| `jira_update_issue` - Update issues | `confluence_update_page` - Update pages | **Squad**: `zephyr_squad_get_cycles` - Get test cycles          |
 | `jira_transition_issue` - Change status | `confluence_add_comment` - Add comments | **Squad**: `zephyr_squad_create_execution` - Create test execution |
-| `jira_get_issue_sla` - Calculate SLA metrics | `confluence_get_page_views` - Get page view stats (Cloud only) | **Squad**: `zephyr_squad_execute_test` - Execute test |
+| `jira_get_issue_sla` - Calculate SLA metrics | `confluence_get_page_history` - Get historical page versions | **Squad**: `zephyr_squad_execute_test` - Execute test           |
+| `jira_get_issue_development_info` - Get linked PRs, branches, commits | `confluence_get_page_views` - Get page view stats (Cloud only) | |
+| `jira_get_issue_proforma_forms` - Get ProForma forms | | |
+| `jira_get_proforma_form_details` - Get form details | | |
+| `jira_update_proforma_form_answers` - Update form answers | | |
 
 See [Tools Reference](https://personal-1d37018d.mintlify.app/docs/tools-reference) for the complete list.
 
