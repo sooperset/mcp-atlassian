@@ -341,3 +341,63 @@ def test_jira_config_is_auth_configured_dc_oauth():
         oauth_config=dc_oauth,
     )
     assert config.is_auth_configured() is True
+
+
+def test_from_env_oauth_enable_no_url():
+    """Test BYOT OAuth mode — ATLASSIAN_OAUTH_ENABLE=true without URL."""
+    with patch.dict(
+        os.environ,
+        {"ATLASSIAN_OAUTH_ENABLE": "true"},
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.auth_type == "oauth"
+        assert config.url == ""
+        assert config.is_cloud is False
+
+
+def test_from_env_oauth_enable_no_url_with_cloud_id():
+    """Test BYOT OAuth mode — ATLASSIAN_OAUTH_ENABLE=true with cloud_id but no URL."""
+    with patch.dict(
+        os.environ,
+        {
+            "ATLASSIAN_OAUTH_ENABLE": "true",
+            "ATLASSIAN_OAUTH_CLOUD_ID": "test-cloud-id",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.auth_type == "oauth"
+        assert config.is_cloud is True
+
+
+def test_from_env_oauth_enable_with_cloud_url():
+    """Test BYOT OAuth mode — ATLASSIAN_OAUTH_ENABLE=true with Cloud URL."""
+    with patch.dict(
+        os.environ,
+        {
+            "ATLASSIAN_OAUTH_ENABLE": "true",
+            "JIRA_URL": "https://test.atlassian.net",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.url == "https://test.atlassian.net"
+        assert config.auth_type == "oauth"
+        assert config.is_cloud is True
+
+
+def test_from_env_oauth_enable_with_server_url():
+    """Test BYOT OAuth mode — ATLASSIAN_OAUTH_ENABLE=true with Server URL."""
+    with patch.dict(
+        os.environ,
+        {
+            "ATLASSIAN_OAUTH_ENABLE": "true",
+            "JIRA_URL": "https://jira.example.com",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.url == "https://jira.example.com"
+        assert config.auth_type == "oauth"
+        assert config.is_cloud is False
