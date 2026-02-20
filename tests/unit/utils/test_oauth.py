@@ -5,9 +5,14 @@ import time
 import urllib.parse
 from unittest.mock import MagicMock, patch
 
+import pytest
 import requests
 
 from mcp_atlassian.utils.oauth import (
+    CLOUD_AUTHORIZE_URL,
+    CLOUD_TOKEN_URL,
+    DC_AUTHORIZE_PATH,
+    DC_TOKEN_PATH,
     KEYRING_SERVICE_NAME,
     TOKEN_EXPIRY_MARGIN,
     BYOAccessTokenOAuthConfig,
@@ -357,7 +362,7 @@ class TestOAuthConfig:
         token_json = mock_set_password.call_args[0][2]
 
         assert service_name == KEYRING_SERVICE_NAME
-        assert username == "oauth-test-client-id"
+        assert username == "oauth-test-client-id-cloud-test-cloud-id"
         assert "test-refresh-token" in token_json
         assert "test-access-token" in token_json
 
@@ -801,8 +806,8 @@ def test_configure_oauth_session_success_with_byo_config():
 
 
 @patch("mcp_atlassian.utils.oauth.logger")
-def test_configure_oauth_session_byo_config_empty_token_logs_error(mock_logger):
-    """Test configure_oauth_session with BYO config and empty token logs error."""
+def test_configure_oauth_session_byo_config_empty_token_logs_warning(mock_logger):
+    """Test configure_oauth_session with BYO config and empty token returns False."""
     session = requests.Session()
     # BYO config with an effectively invalid (empty) access token
     byo_config = BYOAccessTokenOAuthConfig(cloud_id="byo-cloud-id", access_token="")
@@ -811,9 +816,8 @@ def test_configure_oauth_session_byo_config_empty_token_logs_error(mock_logger):
 
     assert result is False
     assert "Authorization" not in session.headers
-    mock_logger.error.assert_called_once_with(
-        "configure_oauth_session: oauth access token configuration provided as empty string."
-    )
+    # Empty access_token hits the early return (#858) with a warning
+    mock_logger.warning.assert_called_once()
 
 
 @patch("mcp_atlassian.utils.oauth.logger")
@@ -835,3 +839,317 @@ def test_configure_oauth_session_byo_config_no_refresh_token_direct_use(mock_log
     mock_logger.info.assert_any_call(
         "configure_oauth_session: Using provided OAuth access token directly (no refresh_token)."
     )
+
+
+class TestDataCenterOAuth:
+    """Tests for Data Center OAuth support."""
+
+    DC_BASE_URL = "https://jira.corp.example.com"
+
+    def _make_dc_config(self, **kwargs: object) -> OAuthConfig:
+        """Create a DC OAuthConfig with sensible defaults."""
+        defaults = {
+            "client_id": "dc-client",
+            "client_secret": "dc-secret",
+            "redirect_uri": "http://localhost:8080/callback",
+            "scope": "WRITE",
+            "base_url": self.DC_BASE_URL,
+        }
+        defaults.update(kwargs)
+        return OAuthConfig(**defaults)
+
+    def _make_cloud_config(self, **kwargs: object) -> OAuthConfig:
+        """Create a Cloud OAuthConfig with sensible defaults."""
+        defaults = {
+            "client_id": "cloud-client",
+            "client_secret": "cloud-secret",
+            "redirect_uri": "https://example.com/callback",
+            "scope": "read:jira-work",
+            "cloud_id": "cloud-123",
+        }
+        defaults.update(kwargs)
+        return OAuthConfig(**defaults)
+
+    # --- is_data_center property ---
+
+    def test_is_data_center_with_base_url(self):
+        """DC config with base_url returns is_data_center=True."""
+        config = self._make_dc_config()
+        assert config.is_data_center is True
+
+    def test_is_data_center_false_with_cloud_id(self):
+        """Cloud config with cloud_id returns is_data_center=False."""
+        config = self._make_cloud_config()
+        assert config.is_data_center is False
+
+    def test_is_data_center_false_without_base_url(self):
+        """Config with neither base_url nor cloud_id returns is_data_center=False."""
+        config = OAuthConfig(
+            client_id="c",
+            client_secret="s",
+            redirect_uri="r",
+            scope="sc",
+        )
+        assert config.is_data_center is False
+
+    # --- Mutual exclusivity: cloud_id + base_url ---
+
+    def test_mutual_exclusivity_cloud_id_and_dc_base_url(self):
+        """Cannot set both cloud_id and non-Cloud base_url."""
+        with pytest.raises(ValueError, match="cannot have both cloud_id and base_url"):
+            OAuthConfig(
+                client_id="c",
+                client_secret="s",
+                redirect_uri="r",
+                scope="sc",
+                cloud_id="cloud-123",
+                base_url="https://jira.corp.com",
+            )
+
+    def test_cloud_base_url_cleared_when_cloud_id_set(self):
+        """Cloud base_url is cleared when cloud_id is also set (cloud_id wins)."""
+        config = OAuthConfig(
+            client_id="c",
+            client_secret="s",
+            redirect_uri="r",
+            scope="sc",
+            cloud_id="cloud-123",
+            base_url="https://test.atlassian.net",
+        )
+        assert config.cloud_id == "cloud-123"
+        assert config.base_url is None
+
+    # --- Dynamic token_url and authorize_url ---
+
+    def test_dc_token_url(self):
+        """DC config token_url uses base_url + DC_TOKEN_PATH."""
+        config = self._make_dc_config()
+        expected = f"{self.DC_BASE_URL}{DC_TOKEN_PATH}"
+        assert config.token_url == expected
+
+    def test_dc_authorize_url(self):
+        """DC config authorize_url uses base_url + DC_AUTHORIZE_PATH."""
+        config = self._make_dc_config()
+        expected = f"{self.DC_BASE_URL}{DC_AUTHORIZE_PATH}"
+        assert config.authorize_url == expected
+
+    def test_cloud_token_url(self):
+        """Cloud config token_url uses the Cloud endpoint."""
+        config = self._make_cloud_config()
+        assert config.token_url == CLOUD_TOKEN_URL
+
+    def test_cloud_authorize_url(self):
+        """Cloud config authorize_url uses the Cloud endpoint."""
+        config = self._make_cloud_config()
+        assert config.authorize_url == CLOUD_AUTHORIZE_URL
+
+    def test_dc_token_url_strips_trailing_slash(self):
+        """DC base_url with trailing slash produces clean URL."""
+        config = self._make_dc_config(base_url="https://jira.corp.com/")
+        assert "//" not in config.token_url.replace("https://", "")
+
+    # --- Keyring username namespacing ---
+
+    def test_keyring_username_dc(self):
+        """DC config keyring username includes dc-{url_hash}."""
+        config = self._make_dc_config()
+        username = config._get_keyring_username()
+        assert username.startswith("oauth-dc-client-dc-")
+        assert len(username) > len("oauth-dc-client-dc-")
+
+    def test_keyring_username_cloud(self):
+        """Cloud config keyring username includes cloud-{cloud_id}."""
+        config = self._make_cloud_config()
+        username = config._get_keyring_username()
+        assert username == "oauth-cloud-client-cloud-cloud-123"
+
+    def test_keyring_username_no_context(self):
+        """Config without cloud_id or base_url uses simple format."""
+        config = OAuthConfig(
+            client_id="orphan",
+            client_secret="s",
+            redirect_uri="r",
+            scope="sc",
+        )
+        assert config._get_keyring_username() == "oauth-orphan"
+
+    # --- authorization URL ---
+
+    def test_dc_authorization_url_no_audience(self):
+        """DC authorization URL should not include audience or prompt params."""
+        config = self._make_dc_config()
+        url = config.get_authorization_url(state="test-state")
+        parsed = urllib.parse.urlparse(url)
+        params = urllib.parse.parse_qs(parsed.query)
+        assert "audience" not in params
+        assert "prompt" not in params
+        assert params["client_id"] == ["dc-client"]
+        assert params["state"] == ["test-state"]
+
+    def test_cloud_authorization_url_has_audience(self):
+        """Cloud authorization URL includes audience and prompt."""
+        config = self._make_cloud_config()
+        url = config.get_authorization_url(state="test-state")
+        parsed = urllib.parse.urlparse(url)
+        params = urllib.parse.parse_qs(parsed.query)
+        assert params["audience"] == ["api.atlassian.com"]
+        assert params["prompt"] == ["consent"]
+
+    # --- Token exchange (DC vs Cloud) ---
+
+    @patch("mcp_atlassian.utils.oauth.requests.post")
+    def test_dc_token_exchange_no_refresh_required(self, mock_post):
+        """DC token exchange succeeds without refresh_token in response."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "access_token": "dc-access-token",
+            "expires_in": 3600,
+            # No refresh_token — DC doesn't require offline_access
+        }
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.text = '{"access_token":"dc-access-token","expires_in":3600}'
+        mock_post.return_value = mock_response
+
+        config = self._make_dc_config()
+        with patch.object(config, "_save_tokens"):
+            result = config.exchange_code_for_tokens("auth-code")
+
+        assert result is True
+        assert config.access_token == "dc-access-token"
+        assert config.refresh_token is None
+
+    @patch("mcp_atlassian.utils.oauth.requests.post")
+    def test_cloud_token_exchange_requires_refresh(self, mock_post):
+        """Cloud token exchange fails without refresh_token in response."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "access_token": "cloud-access-token",
+            "expires_in": 3600,
+            # No refresh_token
+        }
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.text = '{"access_token":"cloud-access-token","expires_in":3600}'
+        mock_post.return_value = mock_response
+
+        config = self._make_cloud_config()
+        result = config.exchange_code_for_tokens("auth-code")
+
+        assert result is False  # Should fail without refresh_token
+
+    # --- from_env with service-specific env vars ---
+
+    def test_from_env_service_specific_vars_override_global(self):
+        """JIRA_OAUTH_CLIENT_ID overrides ATLASSIAN_OAUTH_CLIENT_ID."""
+        env = {
+            "ATLASSIAN_OAUTH_CLIENT_ID": "global-id",
+            "ATLASSIAN_OAUTH_CLIENT_SECRET": "global-secret",
+            "ATLASSIAN_OAUTH_REDIRECT_URI": "https://example.com/callback",
+            "ATLASSIAN_OAUTH_SCOPE": "read:jira-work",
+            "ATLASSIAN_OAUTH_CLOUD_ID": "cloud-123",
+            "JIRA_OAUTH_CLIENT_ID": "jira-specific-id",
+        }
+        with patch.dict("os.environ", env, clear=False):
+            config = OAuthConfig.from_env(
+                service_url="https://test.atlassian.net",
+                service_type="jira",
+            )
+        assert config is not None
+        assert config.client_id == "jira-specific-id"
+
+    def test_from_env_dc_detection(self):
+        """DC service URL sets base_url instead of cloud_id."""
+        env = {
+            "ATLASSIAN_OAUTH_CLIENT_ID": "dc-client",
+            "ATLASSIAN_OAUTH_CLIENT_SECRET": "dc-secret",
+        }
+        with patch.dict("os.environ", env, clear=False):
+            config = OAuthConfig.from_env(
+                service_url="https://jira.corp.com",
+                service_type="jira",
+            )
+        assert config is not None
+        assert config.is_data_center is True
+        assert config.base_url == "https://jira.corp.com"
+        assert config.cloud_id is None
+
+    def test_from_env_dc_defaults_redirect_and_scope(self):
+        """DC from_env provides default redirect_uri and scope."""
+        env = {
+            "ATLASSIAN_OAUTH_CLIENT_ID": "dc-client",
+            "ATLASSIAN_OAUTH_CLIENT_SECRET": "dc-secret",
+        }
+        with patch.dict("os.environ", env, clear=False):
+            config = OAuthConfig.from_env(
+                service_url="https://jira.corp.com",
+                service_type="jira",
+            )
+        assert config is not None
+        assert config.redirect_uri == "http://localhost:8080/callback"
+        assert config.scope == "WRITE"
+
+    # --- BYOAccessTokenOAuthConfig DC support ---
+
+    def test_byo_dc_config(self):
+        """BYO config with non-cloud URL is DC."""
+        config = BYOAccessTokenOAuthConfig(
+            access_token="dc-token",
+            base_url="https://jira.corp.com",
+        )
+        assert config.is_data_center is True
+        assert config.cloud_id is None
+
+    def test_byo_dc_from_env(self):
+        """BYO from_env detects DC."""
+        env = {
+            "ATLASSIAN_OAUTH_ACCESS_TOKEN": "my-token",
+        }
+        with patch.dict("os.environ", env, clear=False):
+            config = BYOAccessTokenOAuthConfig.from_env(
+                service_url="https://jira.corp.com",
+                service_type="jira",
+            )
+        assert config is not None
+        assert config.is_data_center is True
+        assert config.base_url == "https://jira.corp.com"
+
+    # --- configure_oauth_session: no tokens early return (#858) ---
+
+    @patch("mcp_atlassian.utils.oauth.logger")
+    def test_configure_oauth_session_no_tokens_returns_false(self, mock_logger):
+        """configure_oauth_session returns False when no tokens are available."""
+        session = requests.Session()
+        config = OAuthConfig(
+            client_id="c",
+            client_secret="s",
+            redirect_uri="r",
+            scope="sc",
+            cloud_id="cloud-123",
+        )
+        # No access_token and no refresh_token
+
+        result = configure_oauth_session(session, config)
+
+        assert result is False
+        mock_logger.warning.assert_called_once()
+        assert "No access_token or refresh_token" in str(mock_logger.warning.call_args)
+
+    # --- _save_tokens includes base_url ---
+
+    @patch("keyring.set_password")
+    @patch.object(OAuthConfig, "_save_tokens_to_file")
+    def test_save_tokens_includes_base_url(self, mock_save_file, mock_set_pw):
+        """DC config _save_tokens includes base_url in stored data."""
+        config = self._make_dc_config(
+            access_token="tok",
+            refresh_token="ref",
+            expires_at=999.0,
+        )
+        config._save_tokens()
+
+        token_json = mock_set_pw.call_args[0][2]
+        data = json.loads(token_json)
+        assert data["base_url"] == self.DC_BASE_URL

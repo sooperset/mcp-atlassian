@@ -1,32 +1,44 @@
-"""OAuth 2.0 utilities for Atlassian Cloud authentication.
+"""OAuth 2.0 utilities for Atlassian Cloud and Data Center authentication.
 
-This module provides utilities for OAuth 2.0 (3LO) authentication with Atlassian Cloud.
+This module provides utilities for OAuth 2.0 (3LO) authentication with Atlassian.
 It handles:
-- OAuth configuration
+- OAuth configuration for both Cloud and Data Center
 - Token acquisition, storage, and refresh
 - Session configuration for API clients
 """
 
+import hashlib
 import json
 import logging
 import os
 import pprint
 import time
 import urllib.parse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
 import keyring
 import requests
 
+from .urls import is_atlassian_cloud_url
+
 # Configure logging
 logger = logging.getLogger("mcp-atlassian.oauth")
 
-# Constants
-TOKEN_URL = "https://auth.atlassian.com/oauth/token"  # noqa: S105 - This is a public API endpoint URL, not a password
-AUTHORIZE_URL = "https://auth.atlassian.com/authorize"
+# Cloud OAuth endpoints
+CLOUD_TOKEN_URL = "https://auth.atlassian.com/oauth/token"  # noqa: S105 - This is a public API endpoint URL, not a password
+CLOUD_AUTHORIZE_URL = "https://auth.atlassian.com/authorize"
 CLOUD_ID_URL = "https://api.atlassian.com/oauth/token/accessible-resources"
+
+# Legacy aliases for backward compatibility
+TOKEN_URL = CLOUD_TOKEN_URL  # noqa: S105
+AUTHORIZE_URL = CLOUD_AUTHORIZE_URL
+
+# Data Center OAuth endpoint paths (appended to base_url)
+DC_TOKEN_PATH = "/rest/oauth2/latest/token"  # noqa: S105
+DC_AUTHORIZE_PATH = "/rest/oauth2/latest/authorize"
+
 TOKEN_EXPIRY_MARGIN = 300  # 5 minutes in seconds
 
 # HTTP request timeouts (in seconds)
@@ -40,13 +52,13 @@ KEYRING_SERVICE_NAME = "mcp-atlassian-oauth"
 
 @dataclass
 class OAuthConfig:
-    """OAuth 2.0 configuration for Atlassian Cloud.
+    """OAuth 2.0 configuration for Atlassian Cloud and Data Center.
 
     This class manages the OAuth configuration and tokens. It handles:
     - Authentication configuration (client credentials)
     - Token acquisition and refreshing
     - Token storage and retrieval
-    - Cloud ID identification
+    - Cloud ID identification (Cloud) or base URL routing (Data Center)
     """
 
     client_id: str
@@ -54,9 +66,55 @@ class OAuthConfig:
     redirect_uri: str
     scope: str
     cloud_id: str | None = None
+    base_url: str | None = None
     refresh_token: str | None = None
     access_token: str | None = None
     expires_at: float | None = None
+
+    def __post_init__(self) -> None:
+        """Validate mutual exclusivity of cloud_id and base_url."""
+        if self.cloud_id and self.base_url:
+            # Check if base_url is a Cloud URL — if so, cloud_id takes precedence
+            if is_atlassian_cloud_url(self.base_url):
+                self.base_url = None
+            else:
+                raise ValueError(
+                    "OAuthConfig cannot have both cloud_id and base_url set. "
+                    "Use cloud_id for Cloud or base_url for Data Center."
+                )
+
+    @property
+    def is_data_center(self) -> bool:
+        """Check if this is a Data Center OAuth configuration.
+
+        Returns:
+            True if base_url is set and is not a Cloud URL.
+        """
+        if not self.base_url:
+            return False
+        return not is_atlassian_cloud_url(self.base_url)
+
+    @property
+    def token_url(self) -> str:
+        """Get the token endpoint URL for the configured environment.
+
+        Returns:
+            Cloud token URL or Data Center instance-specific token URL.
+        """
+        if self.is_data_center and self.base_url:
+            return f"{self.base_url.rstrip('/')}{DC_TOKEN_PATH}"
+        return CLOUD_TOKEN_URL
+
+    @property
+    def authorize_url(self) -> str:
+        """Get the authorization endpoint URL for the configured environment.
+
+        Returns:
+            Cloud authorize URL or Data Center instance-specific authorize URL.
+        """
+        if self.is_data_center and self.base_url:
+            return f"{self.base_url.rstrip('/')}{DC_AUTHORIZE_PATH}"
+        return CLOUD_AUTHORIZE_URL
 
     @property
     def is_token_expired(self) -> bool:
@@ -81,16 +139,19 @@ class OAuthConfig:
         Returns:
             The authorization URL to redirect the user to.
         """
-        params = {
-            "audience": "api.atlassian.com",
+        params: dict[str, str] = {
             "client_id": self.client_id,
             "scope": self.scope,
             "redirect_uri": self.redirect_uri,
             "response_type": "code",
-            "prompt": "consent",
             "state": state,
         }
-        return f"{AUTHORIZE_URL}?{urllib.parse.urlencode(params)}"
+        # Cloud-specific params (DC doesn't use audience or prompt)
+        if not self.is_data_center:
+            params["audience"] = "api.atlassian.com"
+            params["prompt"] = "consent"
+
+        return f"{self.authorize_url}?{urllib.parse.urlencode(params)}"
 
     def exchange_code_for_tokens(self, code: str) -> bool:
         """Exchange the authorization code for access and refresh tokens.
@@ -110,10 +171,11 @@ class OAuthConfig:
                 "redirect_uri": self.redirect_uri,
             }
 
-            logger.info(f"Exchanging authorization code for tokens at {TOKEN_URL}")
+            token_endpoint = self.token_url
+            logger.info(f"Exchanging authorization code for tokens at {token_endpoint}")
             logger.debug(f"Token exchange payload: {pprint.pformat(payload)}")
 
-            response = requests.post(TOKEN_URL, data=payload, timeout=HTTP_TIMEOUT)
+            response = requests.post(token_endpoint, data=payload, timeout=HTTP_TIMEOUT)
 
             # Log more details about the response
             logger.debug(f"Token exchange response status: {response.status_code}")
@@ -124,7 +186,8 @@ class OAuthConfig:
 
             if not response.ok:
                 logger.error(
-                    f"Token exchange failed with status {response.status_code}. Response: {response.text}"
+                    f"Token exchange failed with status {response.status_code}. "
+                    f"Response: {response.text}"
                 )
                 return False
 
@@ -134,42 +197,58 @@ class OAuthConfig:
             # Check if required tokens are present
             if "access_token" not in token_data:
                 logger.error(
-                    f"Access token not found in response. Keys found: {list(token_data.keys())}"
-                )
-                return False
-
-            if "refresh_token" not in token_data:
-                logger.error(
-                    "Refresh token not found in response. Ensure 'offline_access' scope is included. "
+                    f"Access token not found in response. "
                     f"Keys found: {list(token_data.keys())}"
                 )
                 return False
 
-            self.access_token = token_data["access_token"]
-            self.refresh_token = token_data["refresh_token"]
-            self.expires_at = time.time() + token_data["expires_in"]
+            # DC does NOT require refresh_token (no offline_access scope needed)
+            if "refresh_token" not in token_data:
+                if self.is_data_center:
+                    logger.warning(
+                        "No refresh_token in DC response — token cannot be refreshed. "
+                        "Re-authenticate when the token expires."
+                    )
+                else:
+                    logger.error(
+                        "Refresh token not found in response. "
+                        "Ensure 'offline_access' scope is included. "
+                        f"Keys found: {list(token_data.keys())}"
+                    )
+                    return False
 
-            # Get the cloud ID using the access token
-            self._get_cloud_id()
+            self.access_token = token_data["access_token"]
+            self.refresh_token = token_data.get("refresh_token")
+            self.expires_at = time.time() + token_data.get("expires_in", 3600)
+
+            # Only get cloud ID for Cloud OAuth
+            if not self.is_data_center:
+                self._get_cloud_id()
 
             # Save the tokens
             self._save_tokens()
 
             # Log success message with token details
             logger.info(
-                f"✅ OAuth token exchange successful! Access token expires in {token_data['expires_in']}s."
+                f"OAuth token exchange successful! "
+                f"Access token expires in {token_data.get('expires_in', 3600)}s."
             )
-            logger.info(
-                f"Access Token (partial): {self.access_token[:10]}...{self.access_token[-5:] if self.access_token else ''}"
-            )
-            logger.info(
-                f"Refresh Token (partial): {self.refresh_token[:5]}...{self.refresh_token[-3:] if self.refresh_token else ''}"
-            )
+            if self.access_token:
+                logger.info(
+                    f"Access Token (partial): {self.access_token[:10]}..."
+                    f"{self.access_token[-5:]}"
+                )
+            if self.refresh_token:
+                logger.info(
+                    f"Refresh Token (partial): {self.refresh_token[:5]}..."
+                    f"{self.refresh_token[-3:]}"
+                )
             if self.cloud_id:
                 logger.info(f"Cloud ID successfully retrieved: {self.cloud_id}")
-            else:
+            elif not self.is_data_center:
                 logger.warning(
-                    "Cloud ID was not retrieved after token exchange. Check accessible resources."
+                    "Cloud ID was not retrieved after token exchange. "
+                    "Check accessible resources."
                 )
             return True
         except requests.exceptions.RequestException as e:
@@ -181,7 +260,8 @@ class OAuthConfig:
                 exc_info=True,
             )
             logger.error(
-                f"Response text that failed to parse: {response.text if 'response' in locals() else 'Response object not available'}"
+                f"Response text that failed to parse: "
+                f"{response.text if 'response' in locals() else 'Response object not available'}"
             )
             return False
         except Exception as e:
@@ -206,8 +286,8 @@ class OAuthConfig:
                 "refresh_token": self.refresh_token,
             }
 
-            logger.debug("Refreshing access token...")
-            response = requests.post(TOKEN_URL, data=payload, timeout=HTTP_TIMEOUT)
+            logger.debug(f"Refreshing access token at {self.token_url}...")
+            response = requests.post(self.token_url, data=payload, timeout=HTTP_TIMEOUT)
             response.raise_for_status()
 
             # Parse the response
@@ -216,7 +296,7 @@ class OAuthConfig:
             # Refresh token might also be rotated
             if "refresh_token" in token_data:
                 self.refresh_token = token_data["refresh_token"]
-            self.expires_at = time.time() + token_data["expires_in"]
+            self.expires_at = time.time() + token_data.get("expires_in", 3600)
 
             # Save the tokens
             self._save_tokens()
@@ -240,8 +320,12 @@ class OAuthConfig:
         """Get the cloud ID for the Atlassian instance.
 
         This method queries the accessible resources endpoint to get the cloud ID.
-        The cloud ID is needed for API calls with OAuth.
+        The cloud ID is needed for API calls with Cloud OAuth.
+        Data Center does not use cloud IDs.
         """
+        if self.is_data_center:
+            return
+
         if not self.access_token:
             logger.debug("No access token available to get cloud ID")
             return
@@ -254,7 +338,6 @@ class OAuthConfig:
             resources = response.json()
             if resources and len(resources) > 0:
                 # Use the first cloud site (most users have only one)
-                # For users with multiple sites, they might need to specify which one to use
                 self.cloud_id = resources[0]["id"]
                 logger.debug(f"Found cloud ID: {self.cloud_id}")
             else:
@@ -265,11 +348,17 @@ class OAuthConfig:
     def _get_keyring_username(self) -> str:
         """Get the keyring username for storing tokens.
 
-        The username is based on the client ID to allow multiple OAuth apps.
+        Includes context (cloud_id or base_url hash) to prevent collisions
+        when the same client_id is used across Cloud and Data Center.
 
         Returns:
             A username string for keyring
         """
+        if self.is_data_center and self.base_url:
+            url_hash = hashlib.sha256(self.base_url.encode()).hexdigest()[:8]
+            return f"oauth-{self.client_id}-dc-{url_hash}"
+        if self.cloud_id:
+            return f"oauth-{self.client_id}-cloud-{self.cloud_id}"
         return f"oauth-{self.client_id}"
 
     def _save_tokens(self) -> None:
@@ -287,6 +376,7 @@ class OAuthConfig:
                 "access_token": self.access_token,
                 "expires_at": self.expires_at,
                 "cloud_id": self.cloud_id,
+                "base_url": self.base_url,
             }
 
             # Store the token data in the system keyring
@@ -303,7 +393,7 @@ class OAuthConfig:
             # Fall back to file storage if keyring fails
             self._save_tokens_to_file()
 
-    def _save_tokens_to_file(self, token_data: dict = None) -> None:
+    def _save_tokens_to_file(self, token_data: dict | None = None) -> None:
         """Save the tokens to a file as fallback storage.
 
         Args:
@@ -324,6 +414,7 @@ class OAuthConfig:
                     "access_token": self.access_token,
                     "expires_at": self.expires_at,
                     "cloud_id": self.cloud_id,
+                    "base_url": self.base_url,
                 }
 
             with open(token_path, "w") as f:
@@ -386,8 +477,17 @@ class OAuthConfig:
             return {}
 
     @classmethod
-    def from_env(cls) -> Optional["OAuthConfig"]:
+    def from_env(
+        cls,
+        service_url: str | None = None,
+        service_type: str | None = None,
+    ) -> Optional["OAuthConfig"]:
         """Create an OAuth configuration from environment variables.
+
+        Args:
+            service_url: The service URL (e.g., JIRA_URL value) for DC detection.
+            service_type: Service type ('jira' or 'confluence') for service-specific
+                env vars.
 
         Returns:
             OAuthConfig instance or None if OAuth is not enabled
@@ -399,31 +499,59 @@ class OAuthConfig:
             "yes",
         )
 
-        # Check for required environment variables
-        client_id = os.getenv("ATLASSIAN_OAUTH_CLIENT_ID")
-        client_secret = os.getenv("ATLASSIAN_OAUTH_CLIENT_SECRET")
-        redirect_uri = os.getenv("ATLASSIAN_OAUTH_REDIRECT_URI")
-        scope = os.getenv("ATLASSIAN_OAUTH_SCOPE")
+        # Service-specific env vars take precedence over shared ones
+        prefix = service_type.upper() if service_type else None
+        client_id = (
+            os.getenv(f"{prefix}_OAUTH_CLIENT_ID") if prefix else None
+        ) or os.getenv("ATLASSIAN_OAUTH_CLIENT_ID")
+        client_secret = (
+            os.getenv(f"{prefix}_OAUTH_CLIENT_SECRET") if prefix else None
+        ) or os.getenv("ATLASSIAN_OAUTH_CLIENT_SECRET")
+        redirect_uri = (
+            os.getenv(f"{prefix}_OAUTH_REDIRECT_URI") if prefix else None
+        ) or os.getenv("ATLASSIAN_OAUTH_REDIRECT_URI")
+        scope = (os.getenv(f"{prefix}_OAUTH_SCOPE") if prefix else None) or os.getenv(
+            "ATLASSIAN_OAUTH_SCOPE"
+        )
+
+        # Determine if this is a DC instance
+        is_dc = bool(service_url) and not is_atlassian_cloud_url(service_url)
+
+        # For DC, redirect_uri and scope can have defaults
+        if is_dc:
+            if not redirect_uri:
+                redirect_uri = "http://localhost:8080/callback"
+            if not scope:
+                scope = "WRITE"
 
         # Full OAuth configuration (traditional mode)
-        if all([client_id, client_secret, redirect_uri, scope]):
-            # Create the OAuth configuration with full credentials
+        if all([client_id, client_secret]):
+            # Need redirect_uri + scope for Cloud, but DC has defaults above
+            if not all([redirect_uri, scope]) and not is_dc:
+                return None
+
+            cloud_id = os.getenv("ATLASSIAN_OAUTH_CLOUD_ID") if not is_dc else None
+            base_url = service_url if is_dc else None
+
             config = cls(
-                client_id=client_id,
-                client_secret=client_secret,
-                redirect_uri=redirect_uri,
-                scope=scope,
-                cloud_id=os.getenv("ATLASSIAN_OAUTH_CLOUD_ID"),
+                client_id=client_id or "",
+                client_secret=client_secret or "",
+                redirect_uri=redirect_uri or "",
+                scope=scope or "",
+                cloud_id=cloud_id,
+                base_url=base_url,
             )
 
             # Try to load existing tokens
-            token_data = cls.load_tokens(client_id)
+            token_data = cls.load_tokens(client_id or "")
             if token_data:
                 config.refresh_token = token_data.get("refresh_token")
                 config.access_token = token_data.get("access_token")
                 config.expires_at = token_data.get("expires_at")
                 if not config.cloud_id and "cloud_id" in token_data:
                     config.cloud_id = token_data["cloud_id"]
+                if not config.base_url and "base_url" in token_data:
+                    config.base_url = token_data["base_url"]
 
             return config
 
@@ -431,14 +559,19 @@ class OAuthConfig:
         elif oauth_enabled:
             # Create minimal config that works with user-provided tokens
             logger.info(
-                "Creating minimal OAuth config for user-provided tokens (ATLASSIAN_OAUTH_ENABLE=true)"
+                "Creating minimal OAuth config for user-provided tokens "
+                "(ATLASSIAN_OAUTH_ENABLE=true)"
             )
+            cloud_id = os.getenv("ATLASSIAN_OAUTH_CLOUD_ID") if not is_dc else None
+            base_url = service_url if is_dc else None
+
             return cls(
                 client_id="",  # Will be provided by user tokens
                 client_secret="",  # Not needed for user tokens
                 redirect_uri="",  # Not needed for user tokens
                 scope="",  # Will be determined by user token permissions
-                cloud_id=os.getenv("ATLASSIAN_OAUTH_CLOUD_ID"),  # Optional fallback
+                cloud_id=cloud_id,
+                base_url=base_url,
             )
 
         # No OAuth configuration
@@ -449,50 +582,91 @@ class OAuthConfig:
 class BYOAccessTokenOAuthConfig:
     """OAuth configuration when providing a pre-existing access token.
 
-    This class is used when the user provides their own Atlassian Cloud ID
-    and access token directly, bypassing the full OAuth 2.0 (3LO) flow.
-    It's suitable for scenarios like service accounts or CI/CD pipelines
-    where an access token is already available.
+    This class is used when the user provides their own access token directly,
+    bypassing the full OAuth 2.0 (3LO) flow. Works for both Cloud (with cloud_id)
+    and Data Center (with base_url).
 
     This configuration does not support token refreshing.
     """
 
-    cloud_id: str
     access_token: str
-    refresh_token: None = None
-    expires_at: None = None
+    cloud_id: str | None = None
+    base_url: str | None = None
+    refresh_token: None = field(default=None, repr=False)
+    expires_at: None = field(default=None, repr=False)
+
+    @property
+    def is_data_center(self) -> bool:
+        """Check if this is a Data Center configuration."""
+        if not self.base_url:
+            return False
+        return not is_atlassian_cloud_url(self.base_url)
 
     @classmethod
-    def from_env(cls) -> Optional["BYOAccessTokenOAuthConfig"]:
+    def from_env(
+        cls,
+        service_url: str | None = None,
+        service_type: str | None = None,
+    ) -> Optional["BYOAccessTokenOAuthConfig"]:
         """Create a BYOAccessTokenOAuthConfig from environment variables.
 
-        Reads `ATLASSIAN_OAUTH_CLOUD_ID` and `ATLASSIAN_OAUTH_ACCESS_TOKEN`.
+        Args:
+            service_url: The service URL for DC detection.
+            service_type: Service type ('jira' or 'confluence') for service-specific
+                env vars.
 
         Returns:
             BYOAccessTokenOAuthConfig instance or None if required
             environment variables are missing.
         """
         cloud_id = os.getenv("ATLASSIAN_OAUTH_CLOUD_ID")
-        access_token = os.getenv("ATLASSIAN_OAUTH_ACCESS_TOKEN")
 
-        if not all([cloud_id, access_token]):
+        # Service-specific access token takes precedence
+        prefix = service_type.upper() if service_type else None
+        access_token = (
+            os.getenv(f"{prefix}_OAUTH_ACCESS_TOKEN") if prefix else None
+        ) or os.getenv("ATLASSIAN_OAUTH_ACCESS_TOKEN")
+
+        if not access_token:
             return None
 
-        return cls(cloud_id=cloud_id, access_token=access_token)
+        # Determine if DC
+        is_dc = bool(service_url) and not is_atlassian_cloud_url(service_url)
+        base_url = service_url if is_dc else None
+
+        # Need either cloud_id (Cloud) or base_url (DC) to be useful
+        if not cloud_id and not base_url:
+            return None
+
+        return cls(
+            access_token=access_token,
+            cloud_id=cloud_id if not is_dc else None,
+            base_url=base_url,
+        )
 
 
-def get_oauth_config_from_env() -> OAuthConfig | BYOAccessTokenOAuthConfig | None:
+def get_oauth_config_from_env(
+    service_url: str | None = None,
+    service_type: str | None = None,
+) -> OAuthConfig | BYOAccessTokenOAuthConfig | None:
     """Get the appropriate OAuth configuration from environment variables.
 
     This function attempts to load standard OAuth configuration first (OAuthConfig).
     If that's not available, it tries to load a "Bring Your Own Access Token"
     configuration (BYOAccessTokenOAuthConfig).
 
+    Args:
+        service_url: The service URL for DC detection.
+        service_type: Service type ('jira' or 'confluence') for service-specific
+            env vars.
+
     Returns:
         An instance of OAuthConfig or BYOAccessTokenOAuthConfig if environment
         variables are set for either, otherwise None.
     """
-    return BYOAccessTokenOAuthConfig.from_env() or OAuthConfig.from_env()
+    return BYOAccessTokenOAuthConfig.from_env(
+        service_url=service_url, service_type=service_type
+    ) or OAuthConfig.from_env(service_url=service_url, service_type=service_type)
 
 
 def configure_oauth_session(
@@ -515,10 +689,21 @@ def configure_oauth_session(
         f"refresh_token_present={bool(oauth_config.refresh_token)}, "
         f"cloud_id='{oauth_config.cloud_id}'"
     )
+
+    # Early return when no tokens are available at all (#858)
+    if not oauth_config.access_token and not oauth_config.refresh_token:
+        logger.warning(
+            "configure_oauth_session: No access_token or refresh_token available. "
+            "Cannot configure OAuth session. If using per-request auth, "
+            "the token should come from the request header."
+        )
+        return False
+
     # If user provided only an access token (no refresh_token), use it directly
     if oauth_config.access_token and not oauth_config.refresh_token:
         logger.info(
-            "configure_oauth_session: Using provided OAuth access token directly (no refresh_token)."
+            "configure_oauth_session: Using provided OAuth access token directly "
+            "(no refresh_token)."
         )
         session.headers["Authorization"] = f"Bearer {oauth_config.access_token}"
         return True
@@ -526,7 +711,8 @@ def configure_oauth_session(
     # Otherwise, ensure we have a valid token (refresh if needed)
     if isinstance(oauth_config, BYOAccessTokenOAuthConfig):
         logger.error(
-            "configure_oauth_session: oauth access token configuration provided as empty string."
+            "configure_oauth_session: oauth access token configuration "
+            "provided as empty string."
         )
         return False
     if not oauth_config.ensure_valid_token():
@@ -537,5 +723,5 @@ def configure_oauth_session(
         )
         return False
     session.headers["Authorization"] = f"Bearer {oauth_config.access_token}"
-    logger.info("Successfully configured OAuth session for Atlassian Cloud API")
+    logger.info("Successfully configured OAuth session for Atlassian API")
     return True

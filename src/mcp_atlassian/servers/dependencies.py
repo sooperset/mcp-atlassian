@@ -86,12 +86,20 @@ def _create_user_config_for_fetcher(
             )
         global_oauth_cfg = base_config.oauth_config
 
+        # Determine if this is DC OAuth (base_url set, no cloud_id)
+        is_dc_oauth = getattr(global_oauth_cfg, "is_data_center", False) is True
+
         # Use provided cloud_id or fall back to global config cloud_id
         effective_cloud_id = cloud_id if cloud_id else global_oauth_cfg.cloud_id
-        if not effective_cloud_id:
+        effective_base_url = (
+            getattr(global_oauth_cfg, "base_url", None) if is_dc_oauth else None
+        )
+
+        if not effective_cloud_id and not effective_base_url:
             raise ValueError(
-                "Cloud ID is required for OAuth authentication. "
-                "Provide it via X-Atlassian-Cloud-Id header or configure it globally."
+                "Cloud ID or Data Center base URL is required for OAuth authentication. "
+                "Provide cloud_id via X-Atlassian-Cloud-Id header or configure it globally, "
+                "or set base_url for Data Center OAuth."
             )
 
         # For minimal OAuth config (user-provided tokens), use empty strings for client credentials
@@ -107,7 +115,8 @@ def _create_user_config_for_fetcher(
             access_token=user_access_token,
             refresh_token=None,
             expires_at=None,
-            cloud_id=effective_cloud_id,
+            cloud_id=effective_cloud_id if not is_dc_oauth else None,
+            base_url=effective_base_url,
         )
         common_args.update(
             {

@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from mcp_atlassian.jira.config import JiraConfig
+from mcp_atlassian.utils.oauth import OAuthConfig
 
 
 def test_from_env_basic_auth():
@@ -289,3 +290,54 @@ def test_jira_config_timeout_default():
     ):
         config = JiraConfig.from_env()
         assert config.timeout == 75
+
+
+def test_jira_config_is_cloud_false_for_dc_oauth():
+    """Test is_cloud returns False when DC OAuth is configured."""
+    dc_oauth = OAuthConfig(
+        client_id="c",
+        client_secret="s",
+        redirect_uri="r",
+        scope="sc",
+        base_url="https://jira.corp.com",
+    )
+    config = JiraConfig(
+        url="https://jira.corp.com",
+        auth_type="oauth",
+        oauth_config=dc_oauth,
+    )
+    assert config.is_cloud is False
+
+
+def test_jira_config_is_cloud_true_for_cloud_oauth():
+    """Test is_cloud returns True when Cloud OAuth is configured."""
+    cloud_oauth = OAuthConfig(
+        client_id="c",
+        client_secret="s",
+        redirect_uri="r",
+        scope="sc",
+        cloud_id="cloud-123",
+    )
+    config = JiraConfig(
+        url="https://test.atlassian.net",
+        auth_type="oauth",
+        oauth_config=cloud_oauth,
+    )
+    assert config.is_cloud is True
+
+
+def test_jira_config_is_auth_configured_dc_oauth():
+    """Test is_auth_configured returns True for DC OAuth with client_id + secret."""
+    dc_oauth = OAuthConfig(
+        client_id="c",
+        client_secret="s",
+        redirect_uri="r",
+        scope="sc",
+        base_url="https://jira.corp.com",
+    )
+    config = JiraConfig(
+        url="https://jira.corp.com",
+        auth_type="oauth",
+        oauth_config=dc_oauth,
+    )
+    assert config.is_auth_configured() is True
