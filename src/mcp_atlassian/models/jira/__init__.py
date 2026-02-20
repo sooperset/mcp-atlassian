@@ -17,6 +17,7 @@ from .common import (
     JiraTimetracking,
     JiraUser,
 )
+from .field_option import FieldContext, FieldOption
 from .forms import ProFormaForm, ProFormaFormField, ProFormaFormState
 from .issue import JiraIssue
 from .link import (
@@ -50,6 +51,9 @@ from .workflow import JiraTransition
 from .worklog import JiraWorklog
 
 __all__ = [
+    # Field option models
+    "FieldContext",
+    "FieldOption",
     # Common models
     "JiraUser",
     "JiraStatusCategory",

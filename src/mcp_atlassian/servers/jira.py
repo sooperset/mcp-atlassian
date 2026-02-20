@@ -344,6 +344,74 @@ async def search_fields(
 
 @jira_mcp.tool(
     tags={"jira", "read"},
+    annotations={"title": "Get Field Options", "readOnlyHint": True},
+)
+async def get_field_options(
+    ctx: Context,
+    field_id: Annotated[
+        str,
+        Field(
+            description="Custom field ID (e.g., 'customfield_10001'). "
+            "Use jira_search_fields to find field IDs."
+        ),
+    ],
+    context_id: Annotated[
+        str | None,
+        Field(
+            description="Field context ID (Cloud only). "
+            "If omitted, auto-resolves to the global context.",
+            default=None,
+        ),
+    ] = None,
+    project_key: Annotated[
+        str | None,
+        Field(
+            description="Project key (required for Server/DC). Example: 'PROJ'",
+            default=None,
+        ),
+    ] = None,
+    issue_type: Annotated[
+        str | None,
+        Field(
+            description="Issue type name (required for Server/DC). Example: 'Bug'",
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """Get allowed option values for a custom field.
+
+    Returns the list of valid options for select, multi-select, radio,
+    checkbox, and cascading select custom fields.
+
+    Cloud: Uses the Field Context Option API. If context_id is not provided,
+    automatically resolves to the global context.
+
+    Server/DC: Uses createmeta to get allowedValues. Requires project_key
+    and issue_type parameters.
+
+    Args:
+        ctx: The FastMCP context.
+        field_id: The custom field ID.
+        context_id: Field context ID (Cloud only, auto-resolved if omitted).
+        project_key: Project key (required for Server/DC).
+        issue_type: Issue type name (required for Server/DC).
+
+    Returns:
+        JSON string with the list of available options.
+    """
+    jira = await get_jira_fetcher(ctx)
+    options = jira.get_field_options(
+        field_id=field_id,
+        context_id=context_id,
+        project_key=project_key,
+        issue_type=issue_type,
+    )
+    result = [opt.to_simplified_dict() for opt in options]
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read"},
     annotations={"title": "Get Project Issues", "readOnlyHint": True},
 )
 async def get_project_issues(

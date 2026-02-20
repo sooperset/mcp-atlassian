@@ -15,6 +15,7 @@ from .comments import CommentsMixin
 from .config import JiraConfig
 from .development import DevelopmentMixin
 from .epics import EpicsMixin
+from .field_options import FieldOptionsMixin
 from .fields import FieldsMixin
 from .forms_api import FormsApiMixin  # Forms REST API
 from .formatting import FormattingMixin
@@ -33,6 +34,7 @@ from .worklog import WorklogMixin
 class JiraFetcher(
     ProjectsMixin,
     FieldsMixin,
+    FieldOptionsMixin,
     FormsApiMixin,  # Use new Forms REST API instead of FormsMixin
     FormattingMixin,
     TransitionsMixin,
