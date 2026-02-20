@@ -2691,8 +2691,7 @@ async def get_customfield_options(
         int | None,
         Field(
             description=(
-                "Optional cap on number of returned options after filtering "
-                "(1-10000)."
+                "Optional cap on number of returned options after filtering (1-10000)."
             ),
             default=None,
             ge=1,
@@ -2861,8 +2860,7 @@ async def get_customfield_context_options(
         int | None,
         Field(
             description=(
-                "Optional cap on number of returned options after filtering "
-                "(1-10000)."
+                "Optional cap on number of returned options after filtering (1-10000)."
             ),
             default=None,
             ge=1,

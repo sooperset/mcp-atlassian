@@ -5,13 +5,13 @@ from typing import Any
 
 from thefuzz import fuzz
 
-from ..utils import parse_date
 from mcp_atlassian.models.jira.field_option import (
     JiraFieldContextOptionsResponse,
     JiraFieldContextsResponse,
     JiraFieldOptionsResponse,
 )
 
+from ..utils import parse_date
 from .client import JiraClient
 from .protocols import EpicOperationsProto, UsersOperationsProto
 

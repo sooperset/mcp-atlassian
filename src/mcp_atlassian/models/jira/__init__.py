@@ -17,8 +17,9 @@ from .common import (
     JiraTimetracking,
     JiraUser,
 )
-from .field_option import FieldContext, FieldOption
 from .field_option import (
+    FieldContext,
+    FieldOption,
     JiraFieldContext,
     JiraFieldContextOptionsResponse,
     JiraFieldContextsResponse,
