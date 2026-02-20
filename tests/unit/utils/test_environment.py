@@ -434,3 +434,71 @@ class TestGetAvailableServicesWithHeaders:
             result = get_available_services()
             assert result["jira"] is True
             assert "Data Center" in caplog.text
+
+    def test_oauth_enable_without_urls(self, caplog):
+        """Test BYOT OAuth mode — ATLASSIAN_OAUTH_ENABLE=true without service URLs."""
+        with MockEnvironment.clean_env():
+            import os
+
+            os.environ["ATLASSIAN_OAUTH_ENABLE"] = "true"
+
+            result = get_available_services()
+            _assert_service_availability(
+                result, confluence_expected=True, jira_expected=True
+            )
+            assert_log_contains(
+                caplog,
+                "INFO",
+                "Using Confluence minimal OAuth configuration",
+            )
+            assert_log_contains(
+                caplog,
+                "INFO",
+                "Using Jira minimal OAuth configuration",
+            )
+
+    def test_oauth_enable_with_cloud_url_no_creds(self, caplog):
+        """Test BYOT OAuth mode — URL present but no credentials, ATLASSIAN_OAUTH_ENABLE=true."""
+        with MockEnvironment.clean_env():
+            import os
+
+            os.environ["ATLASSIAN_OAUTH_ENABLE"] = "true"
+            os.environ["JIRA_URL"] = "https://test.atlassian.net"
+            os.environ["CONFLUENCE_URL"] = "https://test.atlassian.net/wiki"
+
+            result = get_available_services()
+            _assert_service_availability(
+                result, confluence_expected=True, jira_expected=True
+            )
+
+    @pytest.mark.parametrize(
+        "enable_value",
+        ["true", "True", "TRUE", "1", "yes", "YES"],
+    )
+    def test_oauth_enable_value_variations(self, enable_value, caplog):
+        """Test various ATLASSIAN_OAUTH_ENABLE value formats."""
+        with MockEnvironment.clean_env():
+            import os
+
+            os.environ["ATLASSIAN_OAUTH_ENABLE"] = enable_value
+
+            result = get_available_services()
+            _assert_service_availability(
+                result, confluence_expected=True, jira_expected=True
+            )
+
+    @pytest.mark.parametrize(
+        "disable_value",
+        ["false", "False", "0", "no", ""],
+    )
+    def test_oauth_enable_disabled_values(self, disable_value, caplog):
+        """Test values that should NOT enable BYOT OAuth mode."""
+        with MockEnvironment.clean_env():
+            import os
+
+            os.environ["ATLASSIAN_OAUTH_ENABLE"] = disable_value
+
+            result = get_available_services()
+            _assert_service_availability(
+                result, confluence_expected=False, jira_expected=False
+            )
