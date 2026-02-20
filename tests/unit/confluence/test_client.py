@@ -296,6 +296,27 @@ def test_confluence_client_passes_timeout_to_constructor():
         )
 
 
+def test_confluence_client_pat_disables_trust_env():
+    """Test that PAT auth disables trust_env to prevent .netrc override (#860)."""
+    with (
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+        patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+    ):
+        mock_session = MagicMock()
+        mock_session.trust_env = True
+        mock_confluence.return_value._session = mock_session
+
+        config = ConfluenceConfig(
+            url="https://confluence.example.com",
+            auth_type="pat",
+            personal_token="test_pat",
+        )
+        ConfluenceClient(config=config)
+
+        assert mock_session.trust_env is False
+
+
 # Phase 4: AttachmentsMixin Integration Tests
 def test_confluence_fetcher_has_attachments_mixin():
     """Test that ConfluenceFetcher includes AttachmentsMixin in inheritance."""

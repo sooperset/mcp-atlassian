@@ -322,3 +322,77 @@ def test_jira_client_passes_timeout_to_constructor():
             verify_ssl=True,
             timeout=120,
         )
+
+
+def test_jira_client_pat_disables_trust_env():
+    """Test that PAT auth disables trust_env to prevent .netrc override (#860)."""
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        mock_session = MagicMock()
+        mock_session.trust_env = True  # Default
+        mock_jira.return_value._session = mock_session
+
+        config = JiraConfig(
+            url="https://jira.example.com",
+            auth_type="pat",
+            personal_token="test_pat",
+        )
+        JiraClient(config=config)
+
+        assert mock_session.trust_env is False
+
+
+def test_jira_client_oauth_disables_trust_env():
+    """Test that OAuth auth disables trust_env to prevent .netrc override (#860)."""
+    from mcp_atlassian.utils.oauth import OAuthConfig
+
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+        patch("mcp_atlassian.jira.client.configure_oauth_session", return_value=True),
+    ):
+        mock_session = MagicMock()
+        mock_session.trust_env = True
+        mock_jira.return_value._session = mock_session
+
+        oauth_cfg = OAuthConfig(
+            client_id="cid",
+            client_secret="cs",
+            redirect_uri="http://localhost",
+            scope="read",
+            cloud_id="cloud-123",
+            access_token="token",
+        )
+        config = JiraConfig(
+            url="https://test.atlassian.net",
+            auth_type="oauth",
+            oauth_config=oauth_cfg,
+        )
+        JiraClient(config=config)
+
+        # The OAuth session is created manually, but after Jira client init
+        # trust_env should be disabled on the Jira client's session
+        assert mock_jira.return_value._session.trust_env is False
+
+
+def test_jira_client_basic_auth_preserves_trust_env():
+    """Test that basic auth preserves trust_env (netrc valid for basic auth)."""
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        mock_session = MagicMock()
+        mock_session.trust_env = True
+        mock_jira.return_value._session = mock_session
+
+        config = JiraConfig(
+            url="https://test.atlassian.net",
+            auth_type="basic",
+            username="user",
+            api_token="token",
+        )
+        JiraClient(config=config)
+
+        assert mock_session.trust_env is True
