@@ -898,3 +898,81 @@ class TestDatetimeTimezoneFormat:
 
         result = fields_mixin.format_field_value("customfield_10050", input_value)
         assert result == expected
+
+
+class TestChecklistFieldFormatting:
+    """Tests for checklist field formatting in _format_field_value_for_write."""
+
+    CHECKLIST_FIELD_DEF = {
+        "id": "customfield_11003",
+        "name": "Definition of Done",
+        "schema": {
+            "type": "string",
+            "custom": "com.okapya.jira.checklist:checklist",
+            "customId": 11003,
+        },
+    }
+
+    @pytest.fixture
+    def mixin(self, jira_fetcher: "JiraFetcher") -> FieldsMixin:
+        """Create a FieldsMixin instance with mocked dependencies."""
+        fetcher = jira_fetcher
+        fetcher.config = MagicMock()
+        fetcher.config.is_cloud = True
+        return fetcher
+
+    @pytest.mark.parametrize(
+        "test_id, value, expected",
+        [
+            pytest.param(
+                "list_to_markdown",
+                ["Task A", "Task B"],
+                "* Task A\n* Task B",
+                id="list_to_markdown",
+            ),
+            pytest.param(
+                "list_with_checked_tuples",
+                [("Task A", True), ("Task B", False)],
+                "* [x] Task A\n* Task B",
+                id="list_with_checked_tuples",
+            ),
+            pytest.param(
+                "dict_list",
+                [{"name": "Task A", "checked": True}],
+                "* [x] Task A",
+                id="dict_list",
+            ),
+            pytest.param(
+                "string_passthrough",
+                "* [x] done\n* todo",
+                "* [x] done\n* todo",
+                id="string_passthrough",
+            ),
+            pytest.param(
+                "empty_list",
+                [],
+                "",
+                id="empty_list",
+            ),
+        ],
+    )
+    def test_checklist_formatting(self, mixin, test_id, value, expected):
+        """Checklist fields should be converted to markdown string format."""
+        result = mixin._format_field_value_for_write(
+            "customfield_11003", value, self.CHECKLIST_FIELD_DEF
+        )
+        assert result == expected
+
+    def test_non_checklist_string_field_unaffected(self, mixin):
+        """Non-checklist string fields should not be affected by checklist logic."""
+        non_checklist_def = {
+            "id": "customfield_99999",
+            "name": "Some Text Field",
+            "schema": {"type": "string"},
+        }
+        value = ["a", "b"]
+        result = mixin._format_field_value_for_write(
+            "customfield_99999", value, non_checklist_def
+        )
+        # Should pass through unchanged (no checklist conversion)
+        assert result == ["a", "b"]

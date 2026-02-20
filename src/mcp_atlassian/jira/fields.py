@@ -457,6 +457,15 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
         schema_type = (
             field_definition.get("schema", {}).get("type") if field_definition else None
         )
+        schema_custom = (
+            field_definition.get("schema", {}).get("custom")
+            if field_definition
+            else None
+        )
+
+        # --- 0. Check custom field plugins (before system/schema dispatch) ---
+        if schema_custom and "checklist" in schema_custom.lower():
+            return self._format_checklist_value(value)
 
         # --- 1. Dispatch on system field ID (reliable, not display name) ---
         normalized_id = field_id.lower()
@@ -605,6 +614,39 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
                 return value
 
         # Default: return value as-is
+        return value
+
+    @staticmethod
+    def _format_checklist_value(value: Any) -> Any:
+        """Format a checklist field value to markdown string.
+
+        Checklist plugins (e.g., Okapya "Checklist for Jira") store data
+        as markdown-formatted text. This converts various input formats
+        to the expected string format.
+
+        Args:
+            value: The raw checklist value (list, string, etc.)
+
+        Returns:
+            Markdown-formatted checklist string
+        """
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            lines = []
+            for item in value:
+                if isinstance(item, str):
+                    lines.append(f"* {item}")
+                elif isinstance(item, tuple) and len(item) == 2:
+                    name, checked = item
+                    prefix = "* [x] " if checked else "* "
+                    lines.append(f"{prefix}{name}")
+                elif isinstance(item, dict):
+                    name = item.get("name", "")
+                    checked = item.get("checked", False)
+                    prefix = "* [x] " if checked else "* "
+                    lines.append(f"{prefix}{name}")
+            return "\n".join(lines)
         return value
 
     def search_fields(

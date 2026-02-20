@@ -362,6 +362,7 @@ class TestJiraComment:
         )
         simplified = comment.to_simplified_dict()
         assert isinstance(simplified, dict)
+        assert simplified["id"] == "10000"
         assert "body" in simplified
         assert simplified["body"] == "This is a test comment"
         assert "created" in simplified
@@ -369,6 +370,19 @@ class TestJiraComment:
         assert "author" in simplified
         assert isinstance(simplified["author"], dict)
         assert simplified["author"]["display_name"] == "Comment User"
+
+    def test_to_simplified_dict_default_id(self):
+        """Test that default comment ID is included in simplified dict."""
+        comment = JiraComment()
+        simplified = comment.to_simplified_dict()
+        assert simplified["id"] == JIRA_DEFAULT_ID
+
+    def test_to_simplified_dict_no_author(self):
+        """Test comment ID present even without optional fields."""
+        comment = JiraComment(id="99999", body="text only")
+        simplified = comment.to_simplified_dict()
+        assert simplified["id"] == "99999"
+        assert "author" not in simplified
 
 
 class TestJiraTimetracking:
