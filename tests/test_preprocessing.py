@@ -240,6 +240,42 @@ For more information, see [our website|https://example.com].
     assert "[our website](https://example.com)" in converted
 
 
+def test_jira_to_markdown_citation(preprocessor_with_jira):
+    """Test citation markup conversion and that unmatched ?? does not cause ReDoS."""
+    # Matched citation
+    assert "<cite>cited text</cite>" in preprocessor_with_jira.jira_to_markdown(
+        "??cited text??"
+    )
+
+    # Citation with a single ? inside
+    result = preprocessor_with_jira.jira_to_markdown("??is this cited? yes??")
+    assert "<cite>" in result
+
+    # Unmatched ?? followed by inline code must complete quickly (was ReDoS before fix)
+    text = "* (??) Some weird formatting"
+    result = preprocessor_with_jira.jira_to_markdown(text)
+    assert "<cite>" not in result
+
+
+def test_jira_to_markdown_citation_no_redos(preprocessor_with_jira):
+    """Regression test: complex Jira wiki markup with unmatched ?? must not hang."""
+    description = (
+        "h2. Known limitations\n"
+        "* (??) The {{retry-handler}} -> {{fallback}} path is *broken* "
+        "if the upstream timeout during {{retry-handler}} has not "
+        "elapsed yet. Each component would need to track pending "
+        "requests and report a metric. _This means a request could "
+        "be stuck in {{retry-handler}} indefinitely._\n"
+        "* Each component must validate the configuration and *stop* "
+        "after detecting an invalid setting.\n"
+        "h2. Monitoring\n"
+        "* Report the current status through a *metric*."
+    )
+    result = preprocessor_with_jira.jira_to_markdown(description)
+    assert "Known limitations" in result
+    assert "retry-handler" in result
+
+
 def test_markdown_to_jira(preprocessor_with_jira):
     """Test conversion of Markdown to Jira markup."""
     # Test headers
