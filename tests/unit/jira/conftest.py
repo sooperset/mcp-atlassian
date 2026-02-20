@@ -148,6 +148,16 @@ def session_jira_field_definitions():
             "name": "Original Estimate",
             "schema": {"type": "timetracking"},
         },
+        # Checklist plugin (Okapya)
+        {
+            "id": "customfield_11003",
+            "name": "Definition of Done",
+            "schema": {
+                "type": "string",
+                "custom": "com.okapya.jira.checklist:checklist",
+                "customId": 11003,
+            },
+        },
     ]
 
 
