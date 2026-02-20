@@ -522,22 +522,48 @@ async def download_attachments(
             pattern=ISSUE_KEY_PATTERN,
         ),
     ],
+    target_dir: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional local directory path to save attachment files to disk. "
+                "When provided, files are written to this directory and a summary "
+                "is returned. When omitted, attachment contents are returned as "
+                "base64-encoded embedded resources."
+            ),
+        ),
+    ] = None,
 ) -> list[TextContent | EmbeddedResource]:
     """Download attachments from a Jira issue.
 
-    Returns attachment contents as base64-encoded embedded resources so that
-    they are available over the MCP protocol without requiring filesystem
-    access on the server.
+    When target_dir is provided, attachments are saved to that directory on
+    disk and a JSON summary of the operation is returned.  When target_dir is
+    omitted, attachment contents are returned as base64-encoded embedded
+    resources so that they are available over the MCP protocol without
+    requiring filesystem access on the server.
 
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
+        target_dir: Optional local directory to save attachments to disk.
 
     Returns:
-        A list containing a text summary and one EmbeddedResource per
-        successfully downloaded attachment.
+        A list containing a text summary and, when target_dir is not provided,
+        one EmbeddedResource per successfully downloaded attachment.
     """
     jira = await get_jira_fetcher(ctx)
+
+    if target_dir is not None:
+        result = jira.download_issue_attachments(
+            issue_key=issue_key, target_dir=target_dir
+        )
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps(result, indent=2, ensure_ascii=False),
+            )
+        ]
+
     result = jira.get_issue_attachment_contents(issue_key=issue_key)
 
     contents: list[TextContent | EmbeddedResource] = []

@@ -1320,6 +1320,77 @@ async def test_get_project_issues_long_key(jira_client, mock_jira_fetcher):
     )
 
 
+@pytest.mark.anyio
+async def test_download_attachments_no_target_dir_returns_embedded_resources(
+    jira_client, mock_jira_fetcher
+):
+    """Without target_dir the tool returns base64-encoded embedded resources."""
+    mock_jira_fetcher.get_issue_attachment_contents.return_value = {
+        "success": True,
+        "issue_key": "TEST-1",
+        "total": 1,
+        "attachments": [
+            {
+                "filename": "file.txt",
+                "content_type": "text/plain",
+                "size": 5,
+                "data": b"hello",
+            }
+        ],
+        "failed": [],
+    }
+
+    response = await jira_client.call_tool(
+        "jira_download_attachments",
+        {"issue_key": "TEST-1"},
+    )
+
+    assert hasattr(response, "content")
+    # First item is the text summary, second is the embedded resource
+    assert len(response.content) == 2
+    assert response.content[0].type == "text"
+    summary = json.loads(response.content[0].text)
+    assert summary["success"] is True
+    assert summary["downloaded"] == 1
+    assert response.content[1].type == "resource"
+    mock_jira_fetcher.get_issue_attachment_contents.assert_called_once_with(
+        issue_key="TEST-1"
+    )
+
+
+@pytest.mark.anyio
+async def test_download_attachments_with_target_dir_saves_to_disk(
+    jira_client, mock_jira_fetcher
+):
+    """With target_dir the tool delegates to download_issue_attachments."""
+    mock_jira_fetcher.download_issue_attachments.return_value = {
+        "success": True,
+        "issue_key": "TEST-1",
+        "total": 1,
+        "downloaded": [
+            {"filename": "file.txt", "path": "/tmp/attachments/file.txt", "size": 5}
+        ],
+        "failed": [],
+    }
+
+    response = await jira_client.call_tool(
+        "jira_download_attachments",
+        {"issue_key": "TEST-1", "target_dir": "/tmp/attachments"},
+    )
+
+    assert hasattr(response, "content")
+    assert len(response.content) == 1
+    assert response.content[0].type == "text"
+    data = json.loads(response.content[0].text)
+    assert data["success"] is True
+    assert len(data["downloaded"]) == 1
+    assert data["downloaded"][0]["path"] == "/tmp/attachments/file.txt"
+    mock_jira_fetcher.download_issue_attachments.assert_called_once_with(
+        issue_key="TEST-1", target_dir="/tmp/attachments"
+    )
+    mock_jira_fetcher.get_issue_attachment_contents.assert_not_called()
+
+
 def test_issue_key_pattern_validation():
     """Verify the issue key and project key regex patterns accept valid keys."""
     import re
