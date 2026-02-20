@@ -1,8 +1,4 @@
-"""Simple integration test to verify stdin monitoring fix for streamable-http transport.
-
-This test verifies that the fix in PR #522 correctly disables stdin monitoring
-for HTTP transports (SSE and streamable-http) to prevent hanging issues.
-"""
+"""Integration tests for transport stdin monitoring behavior."""
 
 import os
 import subprocess
@@ -68,11 +64,7 @@ if __name__ == "__main__":
             os.unlink(test_script)
 
     def test_code_structure_validates_fix(self):
-        """Validate that the code structure implements the fix correctly.
-
-        This checks that the main entry point has the correct logic to disable
-        stdin monitoring for HTTP transports.
-        """
+        """Validate that stdio uses EOF monitoring while HTTP does not."""
         # Read the main module source directly
         main_file = (
             Path(__file__).parent.parent.parent
@@ -84,19 +76,13 @@ if __name__ == "__main__":
             source = f.read()
 
         # Check for the key parts of the fix
-
-        # 1. Different handling for stdio vs HTTP transports
         assert 'if final_transport == "stdio":' in source
 
-        # 2. Comments explaining the fix
-        assert (
-            "# For stdio transport, don't monitor stdin as MCP server handles it internally"
-            in source
-        )
-        assert (
-            "# This prevents race conditions where both try to read from the same stdin"
-            in source
-        )
+        # 2. STDIO path must use stdin guard wrapper
+        assert "_run_stdio_with_stdin_guard" in source
+        assert "asyncio.run(_run_stdio_with_stdin_guard(run_kwargs))" in source
+
+        # 3. HTTP path should still use direct execution with no stdin watcher
         assert (
             "# For HTTP transports (SSE, streamable-http), don't use stdin monitoring"
             in source
@@ -106,26 +92,16 @@ if __name__ == "__main__":
         )
         assert "# The server should only rely on OS signals for shutdown" in source
 
-        # 3. Proper conditional logic - look for the actual asyncio.run calls
-        # There should be two separate sections handling stdio vs HTTP
+        # 4. Proper conditional logic - stdio and HTTP sections should both exist
         stdio_section = False
         http_section = False
 
         lines = source.split("\n")
         for i, line in enumerate(lines):
-            # Look for the stdio handling
-            if "# For stdio transport," in line and "monitor stdin" in line:
-                # Next few lines should have the stdio-specific handling
-                next_lines = "\n".join(lines[i : i + 5])
-                if (
-                    'if final_transport == "stdio":' in next_lines
-                    and "asyncio.run" in next_lines
-                ):
-                    stdio_section = True
+            if "asyncio.run(_run_stdio_with_stdin_guard(run_kwargs))" in line:
+                stdio_section = True
 
-            # Look for the HTTP handling
             if "# For HTTP transports" in line and "stdin monitoring" in line:
-                # Next few lines should have the HTTP-specific handling
                 next_lines = "\n".join(lines[i : i + 10])
                 if (
                     "without stdin monitoring" in next_lines

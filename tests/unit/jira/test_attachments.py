@@ -60,11 +60,16 @@ class TestAttachmentsMixin:
 
     def test_download_attachment_success(self, attachments_mixin: AttachmentsMixin):
         """Test successful attachment download."""
+        import os
+
         # Mock the response
         mock_response = MagicMock()
         mock_response.iter_content.return_value = [b"test content"]
         mock_response.raise_for_status = MagicMock()
         attachments_mixin.jira._session.get.return_value = mock_response
+
+        download_path = "/tmp/test_file.txt"
+        expected_path = os.path.abspath(download_path)
 
         # Mock file operations
         with (
@@ -78,7 +83,7 @@ class TestAttachmentsMixin:
 
             # Call the method
             result = attachments_mixin.download_attachment(
-                "https://test.url/attachment", "/tmp/test_file.txt"
+                "https://test.url/attachment", download_path
             )
 
             # Assertions
@@ -86,7 +91,7 @@ class TestAttachmentsMixin:
             attachments_mixin.jira._session.get.assert_called_once_with(
                 "https://test.url/attachment", stream=True
             )
-            mock_file.assert_called_once_with("/tmp/test_file.txt", "wb")
+            mock_file.assert_called_once_with(expected_path, "wb")
             mock_file().write.assert_called_once_with(b"test content")
             mock_makedirs.assert_called_once()
 
@@ -744,3 +749,223 @@ class TestAttachmentsMixin:
         # Assertions
         assert result["success"] is False
         assert "No issue key provided" in result["error"]
+
+    # Tests for fetch_attachment_content method
+
+    def test_fetch_attachment_content_success(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test successful in-memory attachment fetch."""
+        mock_response = MagicMock()
+        mock_response.iter_content.return_value = [b"chunk1", b"chunk2"]
+        mock_response.raise_for_status = MagicMock()
+        attachments_mixin.jira._session.get.return_value = mock_response
+
+        result = attachments_mixin.fetch_attachment_content(
+            "https://test.url/attachment"
+        )
+
+        assert result == b"chunk1chunk2"
+        attachments_mixin.jira._session.get.assert_called_once_with(
+            "https://test.url/attachment", stream=True
+        )
+
+    def test_fetch_attachment_content_no_url(self, attachments_mixin: AttachmentsMixin):
+        """Test fetch with no URL returns None."""
+        result = attachments_mixin.fetch_attachment_content("")
+        assert result is None
+
+    def test_fetch_attachment_content_http_error(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test fetch with an HTTP error returns None."""
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = Exception("HTTP Error")
+        attachments_mixin.jira._session.get.return_value = mock_response
+
+        result = attachments_mixin.fetch_attachment_content(
+            "https://test.url/attachment"
+        )
+        assert result is None
+
+    # Tests for get_issue_attachment_contents method
+
+    def test_get_issue_attachment_contents_success(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test successful in-memory fetch of all issue attachments."""
+        mock_issue = {
+            "fields": {
+                "attachment": [
+                    {
+                        "filename": "test1.txt",
+                        "content": "https://test.url/attachment1",
+                        "size": 100,
+                        "mimeType": "text/plain",
+                    },
+                    {
+                        "filename": "test2.png",
+                        "content": "https://test.url/attachment2",
+                        "size": 200,
+                        "mimeType": "image/png",
+                    },
+                ]
+            }
+        }
+        attachments_mixin.jira.issue.return_value = mock_issue
+
+        mock_attachment1 = MagicMock()
+        mock_attachment1.filename = "test1.txt"
+        mock_attachment1.url = "https://test.url/attachment1"
+        mock_attachment1.content_type = "text/plain"
+
+        mock_attachment2 = MagicMock()
+        mock_attachment2.filename = "test2.png"
+        mock_attachment2.url = "https://test.url/attachment2"
+        mock_attachment2.content_type = "image/png"
+
+        with (
+            patch.object(
+                attachments_mixin,
+                "fetch_attachment_content",
+                side_effect=[b"content1", b"image_data"],
+            ) as mock_fetch,
+            patch(
+                "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
+                side_effect=[mock_attachment1, mock_attachment2],
+            ),
+        ):
+            result = attachments_mixin.get_issue_attachment_contents("TEST-123")
+
+            assert result["success"] is True
+            assert result["issue_key"] == "TEST-123"
+            assert result["total"] == 2
+            assert len(result["attachments"]) == 2
+            assert len(result["failed"]) == 0
+            assert result["attachments"][0]["filename"] == "test1.txt"
+            assert result["attachments"][0]["data"] == b"content1"
+            assert result["attachments"][0]["content_type"] == "text/plain"
+            assert result["attachments"][1]["filename"] == "test2.png"
+            assert result["attachments"][1]["data"] == b"image_data"
+            assert mock_fetch.call_count == 2
+
+    def test_get_issue_attachment_contents_no_attachments(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test fetch when issue has no attachments."""
+        mock_issue = {"fields": {"attachment": []}}
+        attachments_mixin.jira.issue.return_value = mock_issue
+
+        result = attachments_mixin.get_issue_attachment_contents("TEST-123")
+
+        assert result["success"] is True
+        assert "No attachments found" in result["message"]
+        assert len(result["attachments"]) == 0
+        assert len(result["failed"]) == 0
+
+    def test_get_issue_attachment_contents_issue_not_found(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test fetch when issue returns unexpected type."""
+        attachments_mixin.jira.issue.return_value = None
+
+        with pytest.raises(
+            TypeError,
+            match="Unexpected return value type from `jira.issue`: <class 'NoneType'>",
+        ):
+            attachments_mixin.get_issue_attachment_contents("TEST-123")
+
+    def test_get_issue_attachment_contents_no_fields(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test fetch when issue has no fields."""
+        mock_issue = {}
+        attachments_mixin.jira.issue.return_value = mock_issue
+
+        result = attachments_mixin.get_issue_attachment_contents("TEST-123")
+
+        assert result["success"] is False
+        assert "Could not retrieve issue" in result["error"]
+
+    def test_get_issue_attachment_contents_some_failures(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test fetch when some attachments fail."""
+        mock_issue = {
+            "fields": {
+                "attachment": [
+                    {
+                        "filename": "good.txt",
+                        "content": "https://test.url/good",
+                        "size": 100,
+                    },
+                    {
+                        "filename": "bad.txt",
+                        "content": "https://test.url/bad",
+                        "size": 200,
+                    },
+                ]
+            }
+        }
+        attachments_mixin.jira.issue.return_value = mock_issue
+
+        mock_attachment1 = MagicMock()
+        mock_attachment1.filename = "good.txt"
+        mock_attachment1.url = "https://test.url/good"
+        mock_attachment1.content_type = "text/plain"
+
+        mock_attachment2 = MagicMock()
+        mock_attachment2.filename = "bad.txt"
+        mock_attachment2.url = "https://test.url/bad"
+        mock_attachment2.content_type = "text/plain"
+
+        with (
+            patch.object(
+                attachments_mixin,
+                "fetch_attachment_content",
+                side_effect=[b"good_data", None],
+            ),
+            patch(
+                "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
+                side_effect=[mock_attachment1, mock_attachment2],
+            ),
+        ):
+            result = attachments_mixin.get_issue_attachment_contents("TEST-123")
+
+            assert result["success"] is True
+            assert len(result["attachments"]) == 1
+            assert len(result["failed"]) == 1
+            assert result["attachments"][0]["filename"] == "good.txt"
+            assert result["failed"][0]["filename"] == "bad.txt"
+
+    def test_get_issue_attachment_contents_missing_url(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test fetch when an attachment has no URL."""
+        mock_issue = {
+            "fields": {
+                "attachment": [
+                    {
+                        "filename": "no_url.txt",
+                        "size": 100,
+                    }
+                ]
+            }
+        }
+        attachments_mixin.jira.issue.return_value = mock_issue
+
+        mock_attachment = MagicMock()
+        mock_attachment.filename = "no_url.txt"
+        mock_attachment.url = None
+        mock_attachment.content_type = None
+
+        with patch(
+            "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
+            return_value=mock_attachment,
+        ):
+            result = attachments_mixin.get_issue_attachment_contents("TEST-123")
+
+            assert result["success"] is True
+            assert len(result["attachments"]) == 0
+            assert len(result["failed"]) == 1
+            assert "No URL available" in result["failed"][0]["error"]

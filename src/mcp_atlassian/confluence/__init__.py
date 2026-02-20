@@ -4,6 +4,7 @@ This module provides access to Confluence content through the Model Context Prot
 """
 
 from .analytics import AnalyticsMixin
+from .attachments import AttachmentsMixin
 from .client import ConfluenceClient
 from .comments import CommentsMixin
 from .config import ConfluenceConfig
@@ -22,6 +23,7 @@ class ConfluenceFetcher(
     LabelsMixin,
     UsersMixin,
     AnalyticsMixin,
+    AttachmentsMixin,
 ):
     """Main entry point for Confluence operations, providing backward compatibility.
 
@@ -36,6 +38,7 @@ class ConfluenceFetcher(
     - LabelsMixin: Label operations
     - UsersMixin: User operations
     - AnalyticsMixin: Page view analytics (Cloud only)
+    - AttachmentsMixin: Attachment operations
     """
 
     pass

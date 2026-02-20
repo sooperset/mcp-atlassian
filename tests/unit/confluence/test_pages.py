@@ -987,6 +987,250 @@ class TestPagesMixin:
         results = pages_mixin.get_space_pages("T")
         assert len(results) == 2
 
+    def test_get_page_history_success_v1(self, pages_mixin):
+        """Test successfully retrieving a historical page version using v1 API with markdown."""
+        # Arrange
+        page_id = "987654321"
+        version = 2
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        # Mock the v1 API response for historical page
+        historical_page_data = {
+            "id": page_id,
+            "title": "Historical Meeting Notes",
+            "space": {"key": "PROJ", "name": "Project Space"},
+            "version": {"number": version},
+            "body": {
+                "storage": {
+                    "value": "<h2>Historical Content</h2><p>This is historical content</p>"
+                }
+            },
+            "children": {"attachment": {"results": []}},
+        }
+        pages_mixin.confluence.get_page_by_id.return_value = historical_page_data
+
+        # Mock the preprocessor
+        pages_mixin.preprocessor.process_html_content.return_value = (
+            "<h2>Historical Content</h2><p>This is historical content</p>",
+            "## Historical Content\n\nThis is historical content",
+        )
+
+        # Mock emoji to return None
+        pages_mixin.confluence.get_page_properties.return_value = {"results": []}
+
+        # Act
+        result = pages_mixin.get_page_history(
+            page_id, version, convert_to_markdown=True
+        )
+
+        # Assert - verify v1 API was called with correct parameters
+        pages_mixin.confluence.get_page_by_id.assert_called_once_with(
+            page_id=page_id,
+            status="historical",
+            version=version,
+            expand="body.storage,version,space,children.attachment",
+        )
+
+        # Verify result is a ConfluencePage
+        assert isinstance(result, ConfluencePage)
+        assert result.id == page_id
+        assert result.title == "Historical Meeting Notes"
+        assert result.version.number == version
+        assert result.content == "## Historical Content\n\nThis is historical content"
+        assert result.space.key == "PROJ"
+
+    def test_get_page_history_html_v1(self, pages_mixin):
+        """Test retrieving historical version with HTML format (convert_to_markdown=False)."""
+        # Arrange
+        page_id = "987654321"
+        version = 3
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        historical_page_data = {
+            "id": page_id,
+            "title": "HTML Historical Page",
+            "space": {"key": "PROJ"},
+            "version": {"number": version},
+            "body": {"storage": {"value": "<p>HTML content</p>"}},
+            "children": {"attachment": {"results": []}},
+        }
+        pages_mixin.confluence.get_page_by_id.return_value = historical_page_data
+
+        pages_mixin.preprocessor.process_html_content.return_value = (
+            "<p>Processed HTML content</p>",
+            "Processed markdown",
+        )
+        pages_mixin.confluence.get_page_properties.return_value = {"results": []}
+
+        # Act
+        result = pages_mixin.get_page_history(
+            page_id, version, convert_to_markdown=False
+        )
+
+        # Assert - HTML should be used instead of markdown
+        assert isinstance(result, ConfluencePage)
+        assert result.content == "<p>Processed HTML content</p>"
+        assert result.version.number == version
+
+    def test_get_page_history_with_attachments_v1(self, pages_mixin):
+        """Test that attachments are included in historical version."""
+        # Arrange
+        page_id = "987654321"
+        version = 2
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        historical_page_data = {
+            "id": page_id,
+            "title": "Page with Attachments",
+            "space": {"key": "PROJ"},
+            "version": {"number": version},
+            "body": {"storage": {"value": "<p>Content</p>"}},
+            "children": {
+                "attachment": {
+                    "results": [
+                        {
+                            "id": "att123",
+                            "title": "document.pdf",
+                            "extensions": {"mediaType": "application/pdf"},
+                        }
+                    ]
+                }
+            },
+        }
+        pages_mixin.confluence.get_page_by_id.return_value = historical_page_data
+
+        pages_mixin.preprocessor.process_html_content.return_value = (
+            "<p>Content</p>",
+            "Content",
+        )
+        pages_mixin.confluence.get_page_properties.return_value = {"results": []}
+
+        # Act
+        result = pages_mixin.get_page_history(page_id, version)
+
+        # Assert
+        assert isinstance(result, ConfluencePage)
+        assert result.attachments is not None
+        assert len(result.attachments) == 1
+        assert result.attachments[0].id == "att123"
+        assert result.attachments[0].title == "document.pdf"
+
+    def test_get_page_history_missing_body_v1(self, pages_mixin):
+        """Regression test for #760: handle missing body.storage.value gracefully."""
+        # Arrange
+        page_id = "987654321"
+        version = 1
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        # Mock historical page with missing body
+        historical_page_data = {
+            "id": page_id,
+            "title": "Page Without Body",
+            "space": {"key": "PROJ"},
+            "version": {"number": version},
+            "body": None,  # Missing body
+            "children": {"attachment": {"results": []}},
+        }
+        pages_mixin.confluence.get_page_by_id.return_value = historical_page_data
+
+        # Mock preprocessor to return empty strings for missing body
+        pages_mixin.preprocessor.process_html_content.return_value = ("", "")
+        pages_mixin.confluence.get_page_properties.return_value = {"results": []}
+
+        # Act - should not raise exception
+        result = pages_mixin.get_page_history(page_id, version)
+
+        # Assert - empty content should be handled gracefully
+        assert isinstance(result, ConfluencePage)
+        assert result.id == page_id
+        assert result.content == ""
+
+    def test_get_page_history_auth_error_v1(self, pages_mixin):
+        """Test that authentication errors raise MCPAtlassianAuthenticationError."""
+        # Arrange
+        page_id = "987654321"
+        version = 1
+
+        from requests.exceptions import HTTPError
+
+        from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
+
+        # Create a mock HTTP error response with 401
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        http_error = HTTPError()
+        http_error.response = mock_response
+
+        pages_mixin.confluence.get_page_by_id.side_effect = http_error
+
+        # Act/Assert
+        with pytest.raises(
+            MCPAtlassianAuthenticationError,
+            match="Authentication failed for Confluence API",
+        ):
+            pages_mixin.get_page_history(page_id, version)
+
+    def test_get_page_history_http_error_v1(self, pages_mixin):
+        """Test that non-auth HTTP errors are propagated."""
+        # Arrange
+        page_id = "987654321"
+        version = 1
+
+        from requests.exceptions import HTTPError
+
+        # Create a mock HTTP error response with 500
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        http_error = HTTPError("Internal Server Error")
+        http_error.response = mock_response
+
+        pages_mixin.confluence.get_page_by_id.side_effect = http_error
+
+        # Act/Assert - should propagate the HTTPError
+        with pytest.raises(HTTPError, match="Internal Server Error"):
+            pages_mixin.get_page_history(page_id, version)
+
+    def test_get_page_history_includes_emoji_v1(self, pages_mixin):
+        """Test that emoji is fetched and included in historical version result."""
+        # Arrange
+        page_id = "987654321"
+        version = 1
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        historical_page_data = {
+            "id": page_id,
+            "title": "Page with Emoji",
+            "space": {"key": "PROJ"},
+            "version": {"number": version},
+            "body": {"storage": {"value": "<p>Content with emoji</p>"}},
+            "children": {"attachment": {"results": []}},
+        }
+        pages_mixin.confluence.get_page_by_id.return_value = historical_page_data
+
+        # Mock preprocessor
+        pages_mixin.preprocessor.process_html_content.return_value = (
+            "<p>Content with emoji</p>",
+            "Content with emoji",
+        )
+
+        # Mock emoji properties
+        pages_mixin.confluence.get_page_properties.return_value = {
+            "results": [
+                {
+                    "key": "emoji-title-published",
+                    "value": {"fallback": "📖"},
+                },
+            ]
+        }
+
+        # Act
+        result = pages_mixin.get_page_history(page_id, version)
+
+        # Assert - emoji should be included
+        assert isinstance(result, ConfluencePage)
+        assert result.emoji == "📖"
+        assert result.version.number == version
+
 
 class TestPagesOAuthMixin:
     """Tests for PagesMixin with OAuth authentication."""
@@ -1253,6 +1497,208 @@ class TestPagesOAuthMixin:
 
             # Verify result
             assert result is True
+
+    def test_get_page_history_oauth_uses_v2_api(self, oauth_pages_mixin):
+        """Test that OAuth authentication uses v2 API for getting page history."""
+        # Arrange
+        page_id = "oauth_history_123"
+        version = 2
+
+        # Mock the v2 adapter
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceV2Adapter"
+        ) as mock_v2_adapter_class:
+            mock_v2_adapter = MagicMock()
+            mock_v2_adapter_class.return_value = mock_v2_adapter
+
+            # Mock v2 API response for historical page
+            mock_v2_adapter.get_page_by_version.return_value = {
+                "id": page_id,
+                "title": "OAuth Historical Page",
+                "space": {"key": "OAUTH", "name": "OAuth Space"},
+                "version": {"number": version},
+                "body": {
+                    "storage": {"value": "<h2>OAuth Historical</h2><p>Content</p>"}
+                },
+                "children": {"attachment": {"results": []}},
+            }
+
+            # Mock emoji
+            mock_v2_adapter.get_page_emoji.return_value = None
+
+            # Mock preprocessor
+            oauth_pages_mixin.preprocessor.process_html_content.return_value = (
+                "<h2>OAuth Historical</h2><p>Content</p>",
+                "## OAuth Historical\n\nContent",
+            )
+
+            # Act
+            result = oauth_pages_mixin.get_page_history(
+                page_id, version, convert_to_markdown=True
+            )
+
+            # Assert that v2 API was used instead of v1
+            mock_v2_adapter.get_page_by_version.assert_called_once_with(
+                page_id=page_id,
+                version=version,
+                expand="body.storage,version,space,children.attachment",
+            )
+
+            # Verify v1 API was NOT called
+            oauth_pages_mixin.confluence.get_page_by_id.assert_not_called()
+
+            # Verify result
+            assert isinstance(result, ConfluencePage)
+            assert result.id == page_id
+            assert result.title == "OAuth Historical Page"
+            assert result.version.number == version
+            assert result.content == "## OAuth Historical\n\nContent"
+            assert result.space.key == "OAUTH"
+
+    def test_get_page_history_oauth_success(self, oauth_pages_mixin):
+        """Test successfully retrieving historical version with OAuth."""
+        # Arrange
+        page_id = "oauth_hist_456"
+        version = 3
+
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceV2Adapter"
+        ) as mock_v2_adapter_class:
+            mock_v2_adapter = MagicMock()
+            mock_v2_adapter_class.return_value = mock_v2_adapter
+
+            mock_v2_adapter.get_page_by_version.return_value = {
+                "id": page_id,
+                "title": "OAuth Page Version 3",
+                "space": {"key": "PROJ", "name": "Project"},
+                "version": {"number": version},
+                "body": {"storage": {"value": "<p>Version 3 content</p>"}},
+                "children": {"attachment": {"results": []}},
+            }
+
+            mock_v2_adapter.get_page_emoji.return_value = None
+            oauth_pages_mixin.preprocessor.process_html_content.return_value = (
+                "<p>Version 3 content</p>",
+                "Version 3 content",
+            )
+
+            # Act
+            result = oauth_pages_mixin.get_page_history(page_id, version)
+
+            # Assert
+            assert isinstance(result, ConfluencePage)
+            assert result.id == page_id
+            assert result.version.number == version
+            assert result.content == "Version 3 content"
+            assert result.space.key == "PROJ"
+
+    def test_get_page_history_oauth_html(self, oauth_pages_mixin):
+        """Test retrieving historical version with HTML format using OAuth."""
+        # Arrange
+        page_id = "oauth_html_789"
+        version = 1
+
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceV2Adapter"
+        ) as mock_v2_adapter_class:
+            mock_v2_adapter = MagicMock()
+            mock_v2_adapter_class.return_value = mock_v2_adapter
+
+            mock_v2_adapter.get_page_by_version.return_value = {
+                "id": page_id,
+                "title": "OAuth HTML Version",
+                "space": {"key": "PROJ"},
+                "version": {"number": version},
+                "body": {"storage": {"value": "<h1>HTML</h1>"}},
+                "children": {"attachment": {"results": []}},
+            }
+
+            mock_v2_adapter.get_page_emoji.return_value = None
+            oauth_pages_mixin.preprocessor.process_html_content.return_value = (
+                "<h1>Processed HTML</h1>",
+                "Processed markdown",
+            )
+
+            # Act - get HTML instead of markdown
+            result = oauth_pages_mixin.get_page_history(
+                page_id, version, convert_to_markdown=False
+            )
+
+            # Assert - should return HTML
+            assert isinstance(result, ConfluencePage)
+            assert result.content == "<h1>Processed HTML</h1>"
+            assert result.version.number == version
+
+    def test_get_page_history_oauth_missing_body(self, oauth_pages_mixin):
+        """Test handling missing body with v2 API."""
+        # Arrange
+        page_id = "oauth_no_body_123"
+        version = 1
+
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceV2Adapter"
+        ) as mock_v2_adapter_class:
+            mock_v2_adapter = MagicMock()
+            mock_v2_adapter_class.return_value = mock_v2_adapter
+
+            # Mock historical page with missing body
+            mock_v2_adapter.get_page_by_version.return_value = {
+                "id": page_id,
+                "title": "OAuth No Body",
+                "space": {"key": "PROJ"},
+                "version": {"number": version},
+                "body": None,
+                "children": {"attachment": {"results": []}},
+            }
+
+            mock_v2_adapter.get_page_emoji.return_value = None
+            # Mock preprocessor to return empty strings for missing body
+            oauth_pages_mixin.preprocessor.process_html_content.return_value = ("", "")
+
+            # Act - should not raise exception
+            result = oauth_pages_mixin.get_page_history(page_id, version)
+
+            # Assert - empty content should be handled gracefully
+            assert isinstance(result, ConfluencePage)
+            assert result.id == page_id
+            assert result.content == ""
+
+    def test_get_page_history_includes_emoji_oauth(self, oauth_pages_mixin):
+        """Test that emoji is fetched and included in historical version with OAuth."""
+        # Arrange
+        page_id = "oauth_emoji_hist_123"
+        version = 2
+
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceV2Adapter"
+        ) as mock_v2_adapter_class:
+            mock_v2_adapter = MagicMock()
+            mock_v2_adapter_class.return_value = mock_v2_adapter
+
+            mock_v2_adapter.get_page_by_version.return_value = {
+                "id": page_id,
+                "title": "OAuth Emoji History",
+                "space": {"key": "PROJ", "name": "Project"},
+                "version": {"number": version},
+                "body": {"storage": {"value": "<p>Content</p>"}},
+                "children": {"attachment": {"results": []}},
+            }
+
+            # Mock emoji
+            mock_v2_adapter.get_page_emoji.return_value = "🔥"
+
+            oauth_pages_mixin.preprocessor.process_html_content.return_value = (
+                "<p>Content</p>",
+                "Content",
+            )
+
+            # Act
+            result = oauth_pages_mixin.get_page_history(page_id, version)
+
+            # Assert - emoji should be included
+            assert isinstance(result, ConfluencePage)
+            assert result.emoji == "🔥"
+            assert result.version.number == version
 
 
 class TestPageEmoji:

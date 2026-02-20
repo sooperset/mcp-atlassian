@@ -82,6 +82,9 @@ class ConfluenceUser(ApiModel):
 class ConfluenceAttachment(ApiModel):
     """
     Model representing a Confluence attachment.
+
+    Contains information about files attached to Confluence content (pages, blog posts),
+    including filename, size, media type, download URL, and version information.
     """
 
     id: str | None = None
@@ -90,6 +93,12 @@ class ConfluenceAttachment(ApiModel):
     title: str | None = None
     media_type: str | None = None
     file_size: int | None = None
+    download_url: str | None = None
+    version_number: int | None = None
+    version_when: str | None = None
+    created: str | None = None
+    author_display_name: str | None = None
+    author_account_id: str | None = None
 
     @classmethod
     def from_api_response(
@@ -107,6 +116,24 @@ class ConfluenceAttachment(ApiModel):
         if not data:
             return cls()
 
+        # Extract version information if available
+        version_data = data.get("version", {})
+        version_number = version_data.get("number") if version_data else None
+        version_when = version_data.get("when") if version_data else None
+
+        # Extract author information
+        author_data = (
+            version_data.get("by", {})
+            if version_data
+            else data.get("metadata", {}).get("author", {})
+        )
+        author_display_name = author_data.get("displayName") if author_data else None
+        author_account_id = author_data.get("accountId") if author_data else None
+
+        # Extract download URL from _links
+        links = data.get("_links", {})
+        download_url = links.get("download") if links else None
+
         return cls(
             id=data.get("id"),
             type=data.get("type"),
@@ -114,11 +141,17 @@ class ConfluenceAttachment(ApiModel):
             title=data.get("title"),
             media_type=data.get("extensions", {}).get("mediaType"),
             file_size=data.get("extensions", {}).get("fileSize"),
+            download_url=download_url,
+            version_number=version_number,
+            version_when=version_when,
+            created=data.get("created"),
+            author_display_name=author_display_name,
+            author_account_id=author_account_id,
         )
 
     def to_simplified_dict(self) -> dict[str, Any]:
         """Convert to simplified dictionary for API response."""
-        return {
+        result = {
             "id": self.id,
             "type": self.type,
             "status": self.status,
@@ -126,3 +159,17 @@ class ConfluenceAttachment(ApiModel):
             "media_type": self.media_type,
             "file_size": self.file_size,
         }
+
+        # Add optional fields only if they exist
+        if self.download_url:
+            result["download_url"] = self.download_url
+        if self.version_number is not None:
+            result["version_number"] = self.version_number
+        if self.version_when:
+            result["version_when"] = self.version_when
+        if self.created:
+            result["created"] = self.created
+        if self.author_display_name:
+            result["author_display_name"] = self.author_display_name
+
+        return result

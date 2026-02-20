@@ -526,10 +526,23 @@ class TestSearchMixin:
             "startAt": 0,
             "maxResults": 50,
         }
-        search_mixin.jira.get_sprint_issues.return_value = mock_issues
+
+        # Mock search_issues since get_sprint_issues now uses it internally
+        search_result = JiraSearchResult.from_api_response(
+            mock_issues, base_url=search_mixin.config.url
+        )
+        search_mixin.search_issues = MagicMock(return_value=search_result)
 
         # Call the method
         result = search_mixin.get_sprint_issues("10001")
+
+        # Verify that search_issues was called with correct JQL
+        search_mixin.search_issues.assert_called_once_with(
+            jql="sprint = 10001",
+            fields=None,
+            start=0,
+            limit=50,
+        )
 
         # Verify results
         assert isinstance(result, JiraSearchResult)
@@ -552,20 +565,91 @@ class TestSearchMixin:
         assert issue.priority.name == "High"
 
     def test_get_sprint_issues_exception(self, search_mixin: SearchMixin):
-        search_mixin.jira.get_sprint_issues.side_effect = Exception("API Error")
+        search_mixin.search_issues = MagicMock(side_effect=Exception("API Error"))
 
         with pytest.raises(Exception) as e:
             search_mixin.get_sprint_issues("10001")
         assert "API Error" in str(e.value)
 
     def test_get_sprint_issues_http_error(self, search_mixin: SearchMixin):
-        search_mixin.jira.get_sprint_issues.side_effect = requests.HTTPError(
-            response=MagicMock(content="API Error content")
+        search_mixin.search_issues = MagicMock(
+            side_effect=requests.HTTPError(
+                response=MagicMock(content="API Error content")
+            )
         )
 
         with pytest.raises(Exception) as e:
             search_mixin.get_sprint_issues("10001")
-        assert "API Error content" in str(e.value)
+        assert "Error searching issues for sprint" in str(e.value)
+
+    def test_get_sprint_issues_with_fields_parameter(self, search_mixin: SearchMixin):
+        """Test get_sprint_issues method properly passes fields parameter to search_issues."""
+        mock_issues = {
+            "issues": [
+                {
+                    "id": "10001",
+                    "key": "TEST-123",
+                    "fields": {
+                        "summary": "Test issue with custom field",
+                        "assignee": {
+                            "displayName": "Test User",
+                            "emailAddress": "test@example.com",
+                            "active": True,
+                        },
+                        "customfield_10049": "Custom value",
+                        "issuetype": {"name": "Bug"},
+                        "status": {"name": "Open"},
+                        "description": "Issue description",
+                        "created": "2024-01-01T10:00:00.000+0000",
+                        "updated": "2024-01-01T11:00:00.000+0000",
+                        "priority": {"name": "High"},
+                    },
+                }
+            ],
+            "total": 1,
+            "startAt": 0,
+            "maxResults": 50,
+        }
+
+        # Mock search_issues to return a result with requested_fields set
+        search_result = JiraSearchResult.from_api_response(
+            mock_issues,
+            base_url=search_mixin.config.url,
+            requested_fields="summary,assignee,customfield_10049",
+        )
+        search_mixin.search_issues = MagicMock(return_value=search_result)
+
+        # Call the method with specific fields
+        result = search_mixin.get_sprint_issues(
+            "10001", fields="summary,assignee,customfield_10049"
+        )
+
+        # Verify that search_issues was called with correct parameters
+        search_mixin.search_issues.assert_called_once_with(
+            jql="sprint = 10001",
+            fields="summary,assignee,customfield_10049",
+            start=0,
+            limit=50,
+        )
+
+        # Verify results
+        assert isinstance(result, JiraSearchResult)
+        assert len(result.issues) == 1
+        issue = result.issues[0]
+
+        # Convert to simplified dict to check field filtering
+        simplified = issue.to_simplified_dict()
+
+        # These fields should be included (plus id and key which are always included)
+        assert "id" in simplified
+        assert "key" in simplified
+        assert "summary" in simplified
+        assert "assignee" in simplified
+        assert "customfield_10049" in simplified
+
+        assert simplified["customfield_10049"] == {"value": "Custom value"}
+        assert "assignee" in simplified
+        assert simplified["assignee"]["display_name"] == "Test User"
 
     @pytest.mark.parametrize("is_cloud", [True, False])
     def test_search_issues_with_projects_filter_jql_construction(
@@ -747,3 +831,59 @@ class TestSearchMixin:
             "  ORDER BY priority DESC  ", projects_filter="PROJ1"
         )
         assert get_jql_from_call() == 'project = "PROJ1"   ORDER BY priority DESC  '
+
+    @pytest.mark.parametrize("is_cloud", [True, False])
+    def test_search_issues_with_trailing_order_by_and_projects_filter(
+        self, search_mixin: SearchMixin, mock_issues_response, is_cloud
+    ):
+        """Test that JQL with trailing ORDER BY correctly extracts and appends it after project filter."""
+        # Setup
+        search_mixin.config.is_cloud = is_cloud
+        search_mixin.config.projects_filter = None
+        search_mixin.config.url = "https://test.example.com"
+
+        # Setup mock response for both API methods
+        search_mixin.jira.post = MagicMock(return_value=mock_issues_response)
+        search_mixin.jira.jql = MagicMock(return_value=mock_issues_response)
+
+        # Helper to get the JQL from the appropriate mock
+        def get_jql_from_call():
+            if is_cloud:
+                return search_mixin.jira.post.call_args[1]["json"]["jql"]
+            else:
+                return search_mixin.jira.jql.call_args[0][0]
+
+        # Test 1: Query with trailing ORDER BY - should extract and append after project filter
+        search_mixin.search_issues(
+            'assignee = "testuser" ORDER BY updated DESC', projects_filter="PROJ1"
+        )
+        assert (
+            get_jql_from_call()
+            == '(assignee = "testuser") AND project = "PROJ1" ORDER BY updated DESC'
+        )
+
+        # Reset mocks
+        search_mixin.jira.post.reset_mock()
+        search_mixin.jira.jql.reset_mock()
+
+        # Test 2: Query with trailing ORDER BY and multiple projects
+        search_mixin.search_issues(
+            'status = "Done" ORDER BY created ASC', projects_filter="PROJ1,PROJ2"
+        )
+        assert (
+            get_jql_from_call()
+            == '(status = "Done") AND project IN ("PROJ1", "PROJ2") ORDER BY created ASC'
+        )
+
+        # Reset mocks
+        search_mixin.jira.post.reset_mock()
+        search_mixin.jira.jql.reset_mock()
+
+        # Test 3: Query with case-insensitive trailing order by
+        search_mixin.search_issues(
+            "priority = High order by updated desc", projects_filter="PROJ1"
+        )
+        assert (
+            get_jql_from_call()
+            == '(priority = High) AND project = "PROJ1" order by updated desc'
+        )

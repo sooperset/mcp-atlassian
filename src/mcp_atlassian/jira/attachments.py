@@ -1,6 +1,7 @@
 """Attachment operations for Jira API."""
 
 import logging
+import mimetypes
 import os
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,130 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
         except Exception as e:
             logger.error(f"Error downloading attachment: {str(e)}")
             return False
+
+    def fetch_attachment_content(self, url: str) -> bytes | None:
+        """
+        Fetch attachment content into memory.
+
+        Args:
+            url: The URL of the attachment to download
+
+        Returns:
+            The raw bytes of the attachment, or None on failure
+        """
+        if not url:
+            logger.error("No URL provided for attachment fetch")
+            return None
+
+        try:
+            logger.info(f"Fetching attachment from {url}")
+            response = self.jira._session.get(url, stream=True)
+            response.raise_for_status()
+
+            chunks: list[bytes] = []
+            for chunk in response.iter_content(chunk_size=8192):
+                chunks.append(chunk)
+
+            data = b"".join(chunks)
+            logger.info(
+                f"Successfully fetched attachment from {url} (size: {len(data)} bytes)"
+            )
+            return data
+
+        except Exception as e:
+            logger.error(f"Error fetching attachment: {str(e)}")
+            return None
+
+    def get_issue_attachment_contents(self, issue_key: str) -> dict[str, Any]:
+        """
+        Fetch all attachment contents for a Jira issue into memory.
+
+        Unlike download_issue_attachments, this method does not write to
+        the filesystem.  Each attachment is returned as raw bytes so the
+        caller (e.g. the MCP server layer) can serialise them however it
+        needs (base64 embedded resources, etc.).
+
+        Args:
+            issue_key: The Jira issue key (e.g., 'PROJ-123')
+
+        Returns:
+            A dictionary with:
+                success (bool)
+                issue_key (str)
+                total (int)
+                attachments (list[dict]): each dict has 'filename',
+                    'content_type', 'size', and 'data' (bytes)
+                failed (list[dict]): each dict has 'filename' and 'error'
+        """
+        logger.info(f"Fetching attachment contents for {issue_key}")
+
+        issue_data = self.jira.issue(issue_key, fields="attachment")
+
+        if not isinstance(issue_data, dict):
+            msg = f"Unexpected return value type from `jira.issue`: {type(issue_data)}"
+            logger.error(msg)
+            raise TypeError(msg)
+
+        if "fields" not in issue_data:
+            logger.error(f"Could not retrieve issue {issue_key}")
+            return {
+                "success": False,
+                "error": f"Could not retrieve issue {issue_key}",
+            }
+
+        attachment_data = issue_data.get("fields", {}).get("attachment", [])
+
+        if not attachment_data:
+            return {
+                "success": True,
+                "message": f"No attachments found for issue {issue_key}",
+                "attachments": [],
+                "failed": [],
+            }
+
+        attachments: list[JiraAttachment] = []
+        for item in attachment_data:
+            if isinstance(item, dict):
+                attachments.append(JiraAttachment.from_api_response(item))
+
+        fetched: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+
+        for attachment in attachments:
+            if not attachment.url:
+                logger.warning(f"No URL for attachment {attachment.filename}")
+                failed.append(
+                    {"filename": attachment.filename, "error": "No URL available"}
+                )
+                continue
+
+            data = self.fetch_attachment_content(attachment.url)
+            if data is not None:
+                content_type = (
+                    attachment.content_type
+                    or mimetypes.guess_type(attachment.filename)[0]
+                    or "application/octet-stream"
+                )
+                fetched.append(
+                    {
+                        "filename": attachment.filename,
+                        "content_type": content_type,
+                        "size": len(data),
+                        "data": data,
+                    }
+                )
+            else:
+                failed.append(
+                    {"filename": attachment.filename, "error": "Fetch failed"}
+                )
+
+        return {
+            "success": True,
+            "issue_key": issue_key,
+            "total": len(attachments),
+            "attachments": fetched,
+            "failed": failed,
+        }
 
     def download_issue_attachments(
         self, issue_key: str, target_dir: str

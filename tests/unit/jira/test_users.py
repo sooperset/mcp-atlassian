@@ -6,7 +6,7 @@ import pytest
 import requests
 
 from mcp_atlassian.jira.config import JiraConfig
-from mcp_atlassian.jira.users import UsersMixin
+from mcp_atlassian.jira.users import UsersMixin, normalize_text
 
 
 class TestUsersMixin:
@@ -625,3 +625,134 @@ class TestUsersMixin:
             Exception, match="Error processing user profile for 'error_user'"
         ):
             users_mixin.get_user_profile_by_identifier("error_user")
+
+
+class TestNormalizeText:
+    """Tests for the normalize_text helper function."""
+
+    def test_normalize_text_empty_string(self):
+        """Test normalize_text with empty string."""
+        assert normalize_text("") == ""
+
+    def test_normalize_text_none_returns_empty(self):
+        """Test normalize_text with None returns empty string."""
+        assert normalize_text(None) == ""
+
+    def test_normalize_text_ascii(self):
+        """Test normalize_text with ASCII text."""
+        assert normalize_text("Test User") == "test user"
+        assert normalize_text("test user") == "test user"
+        assert normalize_text("TEST USER") == "test user"
+
+    def test_normalize_text_polish_characters(self):
+        """Test normalize_text with Polish characters like ł and ó."""
+        # Polish "Kowalczyk" with ł should match ASCII "Kowalczyk" after normalization
+        # unidecode converts ł to l, and ó to o
+        normalized_polish = normalize_text("Pawełł")
+        normalized_ascii = normalize_text("Pawell")
+        # With unidecode, Polish characters are transliterated to ASCII
+        assert normalized_polish == normalized_ascii
+
+    def test_normalize_text_german_characters(self):
+        """Test normalize_text with German characters like ß and ü."""
+        # German ß should casefold to ss
+        assert normalize_text("Müller") == normalize_text("müller")
+        assert "ss" in normalize_text("Strauß")
+
+
+class TestUnicodeLookup:
+    """Tests for Unicode handling in user lookup."""
+
+    @pytest.fixture
+    def users_mixin(self, jira_client):
+        """Create a UsersMixin instance with mocked dependencies."""
+        mixin = UsersMixin(config=jira_client.config)
+        mixin.jira = jira_client.jira
+        return mixin
+
+    def test_lookup_user_directly_unicode_displayname(self, users_mixin):
+        """Test _lookup_user_directly matches Unicode display names."""
+        # Mock the API response with a Polish name
+        users_mixin.jira.user_find_by_user_string.return_value = [
+            {
+                "accountId": "unicode-account-id",
+                "displayName": "Paweł Kowalczyk",
+                "emailAddress": "pawel@example.com",
+            }
+        ]
+
+        # Mock config.is_cloud to return True
+        users_mixin.config = MagicMock()
+        users_mixin.config.is_cloud = True
+
+        # Searching with the exact Unicode name should match
+        account_id = users_mixin._lookup_user_directly("Paweł Kowalczyk")
+        assert account_id == "unicode-account-id"
+
+    def test_lookup_user_directly_case_insensitive_unicode(self, users_mixin):
+        """Test _lookup_user_directly is case-insensitive for Unicode names."""
+        # Mock the API response with a Polish name
+        users_mixin.jira.user_find_by_user_string.return_value = [
+            {
+                "accountId": "unicode-account-id",
+                "displayName": "Paweł Kowalczyk",
+                "emailAddress": "pawel@example.com",
+            }
+        ]
+
+        # Mock config.is_cloud to return True
+        users_mixin.config = MagicMock()
+        users_mixin.config.is_cloud = True
+
+        # Searching with different case should still match
+        account_id = users_mixin._lookup_user_directly("paweł kowalczyk")
+        assert account_id == "unicode-account-id"
+
+    def test_lookup_user_directly_ascii_still_works(self, users_mixin):
+        """Test _lookup_user_directly still works for ASCII names."""
+        # Mock the API response with an ASCII name
+        users_mixin.jira.user_find_by_user_string.return_value = [
+            {
+                "accountId": "ascii-account-id",
+                "displayName": "John Smith",
+                "emailAddress": "john@example.com",
+            }
+        ]
+
+        # Mock config.is_cloud to return True
+        users_mixin.config = MagicMock()
+        users_mixin.config.is_cloud = True
+
+        # Searching with the ASCII name should match
+        account_id = users_mixin._lookup_user_directly("John Smith")
+        assert account_id == "ascii-account-id"
+
+        # Case insensitive should also work
+        users_mixin.jira.user_find_by_user_string.return_value = [
+            {
+                "accountId": "ascii-account-id",
+                "displayName": "John Smith",
+                "emailAddress": "john@example.com",
+            }
+        ]
+        account_id = users_mixin._lookup_user_directly("john smith")
+        assert account_id == "ascii-account-id"
+
+    def test_lookup_user_directly_email_with_unicode(self, users_mixin):
+        """Test _lookup_user_directly matches email addresses correctly."""
+        # Mock the API response
+        users_mixin.jira.user_find_by_user_string.return_value = [
+            {
+                "accountId": "email-account-id",
+                "displayName": "Test User",
+                "emailAddress": "tëst@example.com",
+            }
+        ]
+
+        # Mock config.is_cloud to return True
+        users_mixin.config = MagicMock()
+        users_mixin.config.is_cloud = True
+
+        # Searching with the email should match (case insensitive)
+        account_id = users_mixin._lookup_user_directly("TËST@EXAMPLE.COM")
+        assert account_id == "email-account-id"

@@ -37,6 +37,24 @@ def test_is_atlassian_cloud_url_multi_cloud_oauth():
     assert is_atlassian_cloud_url("https://api.atlassian.com") is True
 
 
+def test_is_atlassian_cloud_url_us_gov():
+    """Test that is_atlassian_cloud_url returns True for US Government Cloud URLs."""
+    # Test US Government Moderate (FedRAMP) Cloud URLs
+    assert is_atlassian_cloud_url("https://company.atlassian-us-gov-mod.net") is True
+    assert (
+        is_atlassian_cloud_url("https://company.atlassian-us-gov-mod.net/wiki") is True
+    )
+    assert (
+        is_atlassian_cloud_url("https://subdomain.atlassian-us-gov-mod.net/jira")
+        is True
+    )
+    assert is_atlassian_cloud_url("http://other.atlassian-us-gov-mod.net") is True
+
+    # Test US Government (FedRAMP) Cloud URLs
+    assert is_atlassian_cloud_url("https://company.atlassian-us-gov.net") is True
+    assert is_atlassian_cloud_url("https://company.atlassian-us-gov.net/wiki") is True
+
+
 def test_is_atlassian_cloud_url_server():
     """Test that is_atlassian_cloud_url returns False for Atlassian Server/Data Center URLs."""
     # Test with various server/data center domains

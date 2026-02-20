@@ -157,7 +157,11 @@ class JiraConfig:
         """
         url = os.getenv("JIRA_URL")
         if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE"):
-            error_msg = "Missing required JIRA_URL environment variable"
+            error_msg = (
+                "Missing required JIRA_URL environment variable. "
+                "Set JIRA_URL to your Jira base URL, for example "
+                "https://your-company.atlassian.net"
+            )
             raise ValueError(error_msg)
 
         # Determine authentication type based on available environment variables
@@ -170,7 +174,7 @@ class JiraConfig:
         auth_type = None
 
         # Use the shared utility function directly
-        is_cloud = is_atlassian_cloud_url(url)
+        is_cloud = is_atlassian_cloud_url(url) if url else False
 
         if is_cloud:
             # Cloud: OAuth takes priority, then basic auth
@@ -179,7 +183,21 @@ class JiraConfig:
             elif username and api_token:
                 auth_type = "basic"
             else:
-                error_msg = "Cloud authentication requires JIRA_USERNAME and JIRA_API_TOKEN, or OAuth configuration (set ATLASSIAN_OAUTH_ENABLE=true for user-provided tokens)"
+                missing_fields: list[str] = []
+                if not username:
+                    missing_fields.append("JIRA_USERNAME")
+                if not api_token:
+                    missing_fields.append("JIRA_API_TOKEN")
+                missing_fields_text = ", ".join(missing_fields)
+                error_msg = (
+                    "Cloud authentication requires JIRA_USERNAME and "
+                    "JIRA_API_TOKEN, or OAuth configuration "
+                    "(set ATLASSIAN_OAUTH_ENABLE=true for user-provided tokens). "
+                    "Jira Cloud authentication is incomplete. Missing: "
+                    f"{missing_fields_text}. "
+                    "Set JIRA_USERNAME and JIRA_API_TOKEN, or enable OAuth with "
+                    "ATLASSIAN_OAUTH_ENABLE=true."
+                )
                 raise ValueError(error_msg)
         else:  # Server/Data Center
             # Server/DC: PAT takes priority over OAuth (fixes #824)
@@ -195,7 +213,13 @@ class JiraConfig:
             elif username and api_token:
                 auth_type = "basic"
             else:
-                error_msg = "Server/Data Center authentication requires JIRA_PERSONAL_TOKEN or JIRA_USERNAME and JIRA_API_TOKEN"
+                error_msg = (
+                    "Server/Data Center authentication requires "
+                    "JIRA_PERSONAL_TOKEN or JIRA_USERNAME and JIRA_API_TOKEN. "
+                    "Jira Server/Data Center authentication is incomplete. "
+                    "Set JIRA_PERSONAL_TOKEN, or set both JIRA_USERNAME and "
+                    "JIRA_API_TOKEN."
+                )
                 raise ValueError(error_msg)
 
         # SSL verification (for Server/DC)
@@ -224,7 +248,7 @@ class JiraConfig:
         client_key_password = os.getenv("JIRA_CLIENT_KEY_PASSWORD")
 
         return cls(
-            url=url,
+            url=url or "",
             auth_type=auth_type,
             username=username,
             api_token=api_token,

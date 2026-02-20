@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from atlassian import Jira
 from requests import Session
+from requests.exceptions import ConnectionError as RequestsConnectionError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.preprocessing import JiraPreprocessor
@@ -171,6 +172,13 @@ class JiraClient:
                     "Jira authentication test returned empty user info - "
                     "this may indicate an issue"
                 )
+        except RequestsConnectionError as e:
+            error_msg = (
+                f"Could not connect to Jira at {self.config.url}. "
+                "Check that JIRA_URL is correct and the instance is reachable."
+            )
+            logger.error(error_msg)
+            raise MCPAtlassianAuthenticationError(error_msg) from e
         except Exception as e:
             error_msg = f"Jira authentication validation failed: {e}"
             logger.error(error_msg)

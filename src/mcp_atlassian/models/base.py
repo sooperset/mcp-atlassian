@@ -50,7 +50,7 @@ class ApiModel(BaseModel):
         Returns:
             A dictionary with only the essential fields for API responses
         """
-        return self.model_dump(exclude_none=True)
+        return self.model_dump(mode="json", exclude_none=True)
 
 
 class TimestampMixin:
