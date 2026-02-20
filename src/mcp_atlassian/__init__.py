@@ -241,9 +241,9 @@ def main(
 
     Supports both Atlassian Cloud and Jira Server/Data Center deployments.
     Authentication methods supported:
-    - Username and API token (Cloud)
+    - Username and API token (Cloud and Server/Data Center)
     - Personal Access Token (Server/Data Center)
-    - OAuth 2.0 (Cloud only)
+    - OAuth 2.0 (Cloud and Data Center)
     """
     # Logging level logic
     if verbose == 1:
