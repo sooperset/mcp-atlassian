@@ -77,6 +77,7 @@ class TestAttachmentsMixin:
             patch("os.path.exists") as mock_exists,
             patch("os.path.getsize") as mock_getsize,
             patch("os.makedirs") as mock_makedirs,
+            patch("os.getcwd", return_value="/tmp"),
         ):
             mock_exists.return_value = True
             mock_getsize.return_value = 12  # Length of "test content"
@@ -113,11 +114,16 @@ class TestAttachmentsMixin:
             patch("os.makedirs") as mock_makedirs,
             patch("os.path.abspath") as mock_abspath,
             patch("os.path.isabs") as mock_isabs,
+            patch("os.getcwd", return_value="/absolute/path"),
         ):
             mock_exists.return_value = True
             mock_getsize.return_value = 12
             mock_isabs.return_value = False
-            mock_abspath.return_value = "/absolute/path/test_file.txt"
+            mock_abspath.side_effect = lambda p: (
+                "/absolute/path/test_file.txt"
+                if p == "test_file.txt"
+                else p
+            )
 
             # Call the method with a relative path
             result = attachments_mixin.download_attachment(
@@ -127,7 +133,7 @@ class TestAttachmentsMixin:
             # Assertions
             assert result is True
             mock_isabs.assert_called_once_with("test_file.txt")
-            mock_abspath.assert_called_once_with("test_file.txt")
+            mock_abspath.assert_any_call("test_file.txt")
             mock_file.assert_called_once_with("/absolute/path/test_file.txt", "wb")
 
     def test_download_attachment_no_url(self, attachments_mixin: AttachmentsMixin):

@@ -40,7 +40,9 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             # Guard against path traversal
             base_dir = os.path.abspath(os.getcwd())
             if not target_path.startswith(base_dir):
-                raise ValueError(f"Path traversal detected: {target_path} is outside {base_dir}")
+                raise ValueError(
+                    f"Path traversal detected: {target_path} is outside {base_dir}"
+                )
 
             logger.info(f"Downloading attachment from {url} to {target_path}")
 
