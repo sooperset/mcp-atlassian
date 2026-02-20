@@ -65,7 +65,7 @@ def _assert_service_availability(result, confluence_expected, jira_expected):
 def _assert_authentication_logs(caplog, auth_type, services):
     """Helper to assert authentication log messages."""
     log_patterns = {
-        "oauth": "OAuth 2.0 (3LO) authentication (Cloud-only features)",
+        "oauth": "OAuth 2.0 (3LO) authentication (Cloud)",
         "cloud_basic": "Cloud Basic Authentication (API Token)",
         "server": "Server/Data Center authentication (PAT or Basic Auth)",
         "not_configured": "is not configured or required environment variables are missing",
@@ -138,15 +138,18 @@ class TestGetAvailableServices:
         [
             "ATLASSIAN_OAUTH_CLIENT_ID",
             "ATLASSIAN_OAUTH_CLIENT_SECRET",
-            "ATLASSIAN_OAUTH_REDIRECT_URI",
-            "ATLASSIAN_OAUTH_SCOPE",
             "ATLASSIAN_OAUTH_CLOUD_ID",
         ],
     )
     def test_oauth_missing_required_vars(
         self, env_scenarios, missing_oauth_var, caplog
     ):
-        """Test that OAuth fails when any required variable is missing."""
+        """Test that Cloud OAuth fails when core variables are missing.
+
+        Cloud OAuth detection requires client_id, client_secret, and cloud_id.
+        redirect_uri and scope are config-level concerns validated during
+        config loading, not during service detection.
+        """
         with MockEnvironment.clean_env():
             oauth_config = env_scenarios["oauth_cloud"]
             # Remove one required OAuth variable
@@ -392,3 +395,42 @@ class TestGetAvailableServicesWithHeaders:
             _assert_service_availability(
                 result, confluence_expected=False, jira_expected=False
             )
+
+    def test_dc_oauth_detected(self, caplog):
+        """Test DC OAuth detection with non-cloud URL + client credentials."""
+        with MockEnvironment.clean_env():
+            import os
+
+            os.environ["JIRA_URL"] = "https://jira.corp.example.com"
+            os.environ["ATLASSIAN_OAUTH_CLIENT_ID"] = "dc-client"
+            os.environ["ATLASSIAN_OAUTH_CLIENT_SECRET"] = "dc-secret"
+            os.environ["CONFLUENCE_URL"] = "https://confluence.corp.example.com"
+
+            result = get_available_services()
+            assert result["jira"] is True
+            assert result["confluence"] is True
+            assert "Data Center" in caplog.text
+
+    def test_dc_oauth_service_specific_env_vars(self, caplog):
+        """Test DC OAuth with service-specific env vars."""
+        with MockEnvironment.clean_env():
+            import os
+
+            os.environ["JIRA_URL"] = "https://jira.corp.example.com"
+            os.environ["JIRA_OAUTH_CLIENT_ID"] = "jira-dc-client"
+            os.environ["JIRA_OAUTH_CLIENT_SECRET"] = "jira-dc-secret"
+
+            result = get_available_services()
+            assert result["jira"] is True
+
+    def test_dc_byo_access_token_detected(self, caplog):
+        """Test DC BYO access token detection."""
+        with MockEnvironment.clean_env():
+            import os
+
+            os.environ["JIRA_URL"] = "https://jira.corp.example.com"
+            os.environ["ATLASSIAN_OAUTH_ACCESS_TOKEN"] = "my-dc-token"
+
+            result = get_available_services()
+            assert result["jira"] is True
+            assert "Data Center" in caplog.text

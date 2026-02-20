@@ -49,14 +49,23 @@ class ConfluenceConfig:
             True if this is a cloud instance (atlassian.net), False otherwise.
             Localhost URLs are always considered non-cloud (Server/Data Center).
         """
-        # Multi-Cloud OAuth mode: URL might be None, but we use api.atlassian.com
+        # OAuth with cloud_id uses api.atlassian.com which is always Cloud
         if (
             self.auth_type == "oauth"
             and self.oauth_config
             and self.oauth_config.cloud_id
         ):
-            # OAuth with cloud_id uses api.atlassian.com which is always Cloud
             return True
+
+        # DC OAuth has base_url but no cloud_id — not Cloud
+        if (
+            self.auth_type == "oauth"
+            and self.oauth_config
+            and hasattr(self.oauth_config, "base_url")
+            and self.oauth_config.base_url
+            and not self.oauth_config.cloud_id
+        ):
+            return False
 
         # For other auth types, check the URL
         return is_atlassian_cloud_url(self.url) if self.url else False
@@ -94,8 +103,10 @@ class ConfluenceConfig:
         api_token = os.getenv("CONFLUENCE_API_TOKEN")
         personal_token = os.getenv("CONFLUENCE_PERSONAL_TOKEN")
 
-        # Check for OAuth configuration
-        oauth_config = get_oauth_config_from_env()
+        # Check for OAuth configuration (pass service info for DC detection)
+        oauth_config = get_oauth_config_from_env(
+            service_url=url, service_type="confluence"
+        )
         auth_type = None
 
         # Use the shared utility function directly
@@ -204,10 +215,26 @@ class ConfluenceConfig:
         """
         logger = logging.getLogger("mcp-atlassian.confluence.config")
         if self.auth_type == "oauth":
-            # Handle different OAuth configuration types
             if self.oauth_config:
-                # Full OAuth configuration (traditional mode)
+                # Minimal OAuth (user-provided tokens mode)
                 if isinstance(self.oauth_config, OAuthConfig):
+                    if (
+                        not self.oauth_config.client_id
+                        and not self.oauth_config.client_secret
+                    ):
+                        logger.debug(
+                            "Minimal OAuth config detected - "
+                            "expecting user-provided tokens via headers"
+                        )
+                        return True
+                    # DC OAuth: needs client_id + client_secret (no cloud_id needed)
+                    if hasattr(self.oauth_config, "is_data_center"):
+                        if self.oauth_config.is_data_center:
+                            return bool(
+                                self.oauth_config.client_id
+                                and self.oauth_config.client_secret
+                            )
+                    # Cloud OAuth: full set required
                     if (
                         self.oauth_config.client_id
                         and self.oauth_config.client_secret
@@ -216,23 +243,17 @@ class ConfluenceConfig:
                         and self.oauth_config.cloud_id
                     ):
                         return True
-                    # Minimal OAuth configuration (user-provided tokens mode)
-                    # This is valid if we have oauth_config but missing client credentials
-                    # In this case, we expect authentication to come from user-provided headers
-                    elif (
-                        not self.oauth_config.client_id
-                        and not self.oauth_config.client_secret
-                    ):
-                        logger.debug(
-                            "Minimal OAuth config detected - expecting user-provided tokens via headers"
-                        )
-                        return True
-                # Bring Your Own Access Token mode
+                # BYO Access Token mode
                 elif isinstance(self.oauth_config, BYOAccessTokenOAuthConfig):
-                    if self.oauth_config.cloud_id and self.oauth_config.access_token:
-                        return True
+                    if self.oauth_config.access_token:
+                        # DC BYO: access_token is enough
+                        if hasattr(self.oauth_config, "is_data_center"):
+                            if self.oauth_config.is_data_center:
+                                return True
+                        # Cloud BYO: needs cloud_id + access_token
+                        if self.oauth_config.cloud_id:
+                            return True
 
-            # Partial configuration is invalid
             logger.warning("Incomplete OAuth configuration detected")
             return False
         elif self.auth_type == "pat":
