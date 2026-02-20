@@ -120,9 +120,7 @@ class TestAttachmentsMixin:
             mock_getsize.return_value = 12
             mock_isabs.return_value = False
             mock_abspath.side_effect = lambda p: (
-                "/absolute/path/test_file.txt"
-                if p == "test_file.txt"
-                else p
+                "/absolute/path/test_file.txt" if p == "test_file.txt" else p
             )
 
             # Call the method with a relative path
