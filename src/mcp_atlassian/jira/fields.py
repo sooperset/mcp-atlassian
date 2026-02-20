@@ -590,7 +590,14 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
         elif schema_type == "datetime" and isinstance(value, str):
             try:
                 dt = parse_date(value)
-                return dt.isoformat() if dt else value
+                if dt is None:
+                    return value
+                # Jira requires ISO 8601 basic tz format (±HHMM), not extended (±HH:MM)
+                iso_str = dt.isoformat(timespec="milliseconds")
+                # Strip colon from tz offset: +HH:MM → +HHMM, -HH:MM → -HHMM
+                if dt.tzinfo is not None and len(iso_str) >= 6 and iso_str[-3] == ":":
+                    iso_str = iso_str[:-3] + iso_str[-2:]
+                return iso_str
             except Exception:
                 logger.warning(
                     f"Could not parse datetime for field {field_id}: {value}"

@@ -828,3 +828,73 @@ class TestFormatFieldValueForWrite:
             "customfield_99999", "anything", None
         )
         assert result == "anything"
+
+
+class TestDatetimeTimezoneFormat:
+    """Test datetime field formatting produces Jira-compatible tz offsets."""
+
+    @pytest.fixture
+    def fields_mixin(self, jira_fetcher: "JiraFetcher") -> FieldsMixin:
+        """Create a FieldsMixin instance with mocked dependencies."""
+        mixin = jira_fetcher
+        mixin._field_ids_cache = None
+        return mixin
+
+    @pytest.mark.parametrize(
+        "input_value,expected",
+        [
+            pytest.param(
+                "2026-01-21T15:00:00.000+0000",
+                "2026-01-21T15:00:00.000+0000",
+                id="already-basic-format",
+            ),
+            pytest.param(
+                "2026-01-21T15:00:00+00:00",
+                "2026-01-21T15:00:00.000+0000",
+                id="extended-to-basic",
+            ),
+            pytest.param(
+                "2026-01-21T15:00:00.000+0530",
+                "2026-01-21T15:00:00.000+0530",
+                id="non-utc-preserved",
+            ),
+            pytest.param(
+                "2026-01-21T15:00:00-0800",
+                "2026-01-21T15:00:00.000-0800",
+                id="negative-offset-basic",
+            ),
+            pytest.param(
+                "2026-01-21T15:00:00",
+                "2026-01-21T15:00:00.000",
+                id="naive-no-tz",
+            ),
+            pytest.param(
+                "2026-01-21",
+                "2026-01-21T00:00:00.000",
+                id="date-only-to-midnight",
+            ),
+            pytest.param(
+                "invalid-date",
+                "invalid-date",
+                id="unparseable-passthrough",
+            ),
+            pytest.param(
+                "",
+                "",
+                id="empty-string",
+            ),
+        ],
+    )
+    def test_datetime_timezone_format(
+        self, fields_mixin: FieldsMixin, input_value: str, expected: str
+    ):
+        """Datetime fields must use ±HHMM (basic) format, not ±HH:MM."""
+        mock_datetime_field = {
+            "id": "customfield_10050",
+            "name": "Due DateTime",
+            "schema": {"type": "datetime"},
+        }
+        fields_mixin.get_field_by_id = MagicMock(return_value=mock_datetime_field)
+
+        result = fields_mixin.format_field_value("customfield_10050", input_value)
+        assert result == expected

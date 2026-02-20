@@ -1442,3 +1442,87 @@ async def test_update_issue_additional_fields_empty_string(jira_client):
             },
         )
     assert "not valid JSON" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_update_issue_with_components(jira_client, mock_jira_fetcher):
+    """Test components CSV param is parsed and passed to update_issue."""
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": {"summary": "Updated"},
+            "components": "Frontend,API",
+        },
+    )
+    text_content = response.content[0]
+    content = json.loads(text_content.text)
+    assert content["message"] == "Issue updated successfully"
+    # Verify components were passed to the fetcher
+    mock_jira_fetcher.update_issue.assert_called_once()
+    call_kwargs = mock_jira_fetcher.update_issue.call_args[1]
+    assert call_kwargs["components"] == ["Frontend", "API"]
+
+
+@pytest.mark.anyio
+async def test_update_issue_with_components_single(jira_client, mock_jira_fetcher):
+    """Test single component is parsed as single-item list."""
+    await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": {"summary": "Updated"},
+            "components": "Frontend",
+        },
+    )
+    call_kwargs = mock_jira_fetcher.update_issue.call_args[1]
+    assert call_kwargs["components"] == ["Frontend"]
+
+
+@pytest.mark.anyio
+async def test_update_issue_with_components_empty(jira_client, mock_jira_fetcher):
+    """Test empty components string is not passed to update_issue."""
+    await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": {"summary": "Updated"},
+            "components": "",
+        },
+    )
+    call_kwargs = mock_jira_fetcher.update_issue.call_args[1]
+    assert "components" not in call_kwargs
+
+
+@pytest.mark.anyio
+async def test_update_issue_with_components_none(jira_client, mock_jira_fetcher):
+    """Test None components (default) is not passed to update_issue."""
+    await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": {"summary": "Updated"},
+        },
+    )
+    call_kwargs = mock_jira_fetcher.update_issue.call_args[1]
+    assert "components" not in call_kwargs
+
+
+@pytest.mark.anyio
+async def test_update_issue_components_with_additional_fields(
+    jira_client, mock_jira_fetcher
+):
+    """Test components param merged with additional_fields; components takes precedence."""
+    await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": {"summary": "Updated"},
+            "components": "Frontend,API",
+            "additional_fields": '{"labels": ["urgent"], "components": ["Backend"]}',
+        },
+    )
+    call_kwargs = mock_jira_fetcher.update_issue.call_args[1]
+    # Explicit components param should override additional_fields
+    assert call_kwargs["components"] == ["Frontend", "API"]
+    assert call_kwargs["labels"] == ["urgent"]

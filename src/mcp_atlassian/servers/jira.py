@@ -1061,6 +1061,16 @@ async def update_issue(
             default=None,
         ),
     ] = None,
+    components: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Comma-separated list of component names "
+                "(e.g., 'Frontend,API')"
+            ),
+            default=None,
+        ),
+    ] = None,
     attachments: Annotated[
         str | None,
         Field(
@@ -1079,6 +1089,7 @@ async def update_issue(
         issue_key: Jira issue key.
         fields: Dictionary of fields to update. Text fields like 'description' should use Markdown format.
         additional_fields: Optional dictionary or JSON string of additional fields.
+        components: Comma-separated list of component names.
         attachments: Optional JSON array string or comma-separated list of file paths.
 
     Returns:
@@ -1090,6 +1101,13 @@ async def update_issue(
     jira = await get_jira_fetcher(ctx)
     # Use fields directly as dict
     update_fields = fields
+
+    # Parse components from comma-separated string to list
+    components_list = None
+    if components and isinstance(components, str):
+        components_list = [
+            comp.strip() for comp in components.split(",") if comp.strip()
+        ]
 
     extra_fields = _parse_additional_fields(additional_fields)
 
@@ -1115,6 +1133,8 @@ async def update_issue(
 
     # Combine fields and additional_fields
     all_updates = {**update_fields, **extra_fields}
+    if components_list:
+        all_updates["components"] = components_list
     if attachment_paths:
         all_updates["attachments"] = attachment_paths
 
