@@ -31,6 +31,63 @@ jira_mcp = FastMCP(
 )
 
 
+def _json_dumps_compact(data: Any) -> str:
+    """Serialize JSON without pretty-print whitespace to reduce payload size."""
+    return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+
+
+def _to_values_only_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Convert an options payload to a compact values-only response shape."""
+    options = payload.get("options", [])
+    values = [
+        option.get("value")
+        for option in options
+        if isinstance(option, dict) and option.get("value") is not None
+    ]
+    return {
+        "pagination": payload.get("pagination", {}),
+        "values": values,
+    }
+
+
+def _apply_option_filters(
+    payload: dict[str, Any],
+    contains: str | None = None,
+    return_limit: int | None = None,
+) -> dict[str, Any]:
+    """Filter options by substring and optional result cap."""
+    options = payload.get("options", [])
+    if not isinstance(options, list):
+        return payload
+
+    filtered_options = options
+    if contains:
+        needle = contains.casefold()
+        filtered_options = [
+            option
+            for option in filtered_options
+            if isinstance(option, dict)
+            and needle in str(option.get("value", "")).casefold()
+        ]
+
+    matched = len(filtered_options)
+
+    if return_limit is not None:
+        filtered_options = filtered_options[:return_limit]
+
+    if filtered_options is options:
+        return payload
+
+    result = dict(payload)
+    result["options"] = filtered_options
+    result["filter"] = {
+        "contains": contains,
+        "matched": matched,
+        "returned": len(filtered_options),
+    }
+    return result
+
+
 def _parse_additional_fields(
     additional_fields: dict[str, Any] | str | None,
 ) -> dict[str, Any]:
@@ -2591,3 +2648,282 @@ async def get_issues_development_info(
         logger.error(f"Error getting development info for issues: {str(e)}")
         error_result = {"success": False, "error": str(e)}
         return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
+async def get_customfield_options(
+    ctx: Context,
+    field_id: Annotated[
+        str,
+        Field(
+            description="The ID of the custom field (e.g., 'customfield_10001'). "
+            "You can use the 'search_fields' tool to find the field ID for a custom field name."
+        ),
+    ],
+    start_at: Annotated[
+        int,
+        Field(
+            description="Starting index for pagination (0-based)",
+            default=0,
+            ge=0,
+        ),
+    ] = 0,
+    max_results: Annotated[
+        int,
+        Field(
+            description="Maximum number of results per page (1-10000)",
+            default=10000,
+            ge=1,
+            le=10000,
+        ),
+    ] = 10000,
+    contains: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional case-insensitive substring filter applied to "
+                "option values before returning the response."
+            ),
+            default=None,
+        ),
+    ] = None,
+    return_limit: Annotated[
+        int | None,
+        Field(
+            description=(
+                "Optional cap on number of returned options after filtering "
+                "(1-10000)."
+            ),
+            default=None,
+            ge=1,
+            le=10000,
+        ),
+    ] = None,
+    values_only: Annotated[
+        bool,
+        Field(
+            description=(
+                "If true, returns only option values (plus pagination) "
+                "to reduce response payload size."
+            ),
+            default=False,
+        ),
+    ] = False,
+) -> str:
+    """Get available options for a custom field in Jira.
+
+    This retrieves the global options for a custom field. For more precise options
+    based on context (project, issue type), use get_customfield_context_options.
+
+    Args:
+        ctx: The FastMCP context.
+        field_id: The ID of the custom field (e.g., 'customfield_10001').
+        start_at: Starting index for pagination.
+        max_results: Maximum number of results per page.
+        contains: Optional case-insensitive substring filter for values.
+        return_limit: Optional cap on number of items returned after filtering.
+        values_only: Whether to return only values (without option objects).
+
+    Returns:
+        JSON string representing the field options with pagination info.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        options_response = jira.get_customfield_options(
+            field_id=field_id,
+            start_at=start_at,
+            max_results=max_results,
+        )
+        result = options_response.to_simplified_dict()
+        result = _apply_option_filters(
+            result,
+            contains=contains,
+            return_limit=return_limit,
+        )
+        if values_only:
+            result = _to_values_only_payload(result)
+        return _json_dumps_compact(result)
+    except Exception as e:
+        logger.error(f"Error getting options for field '{field_id}': {str(e)}")
+        error_result = {
+            "success": False,
+            "error": str(e),
+            "field_id": field_id,
+        }
+        return _json_dumps_compact(error_result)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
+async def get_customfield_contexts(
+    ctx: Context,
+    field_id: Annotated[
+        str,
+        Field(
+            description="The ID of the custom field (e.g., 'customfield_10001'). "
+            "You can use the 'search_fields' tool to find the field ID for a custom field name."
+        ),
+    ],
+    start_at: Annotated[
+        int,
+        Field(
+            description="Starting index for pagination (0-based)",
+            default=0,
+            ge=0,
+        ),
+    ] = 0,
+    max_results: Annotated[
+        int,
+        Field(
+            description="Maximum number of results per page (1-10000)",
+            default=10000,
+            ge=1,
+            le=10000,
+        ),
+    ] = 10000,
+) -> str:
+    """Get contexts for a custom field in Jira.
+
+    Contexts define where and how custom fields are used. Different contexts
+    can have different available options for the same field.
+
+    Args:
+        ctx: The FastMCP context.
+        field_id: The ID of the custom field (e.g., 'customfield_10001').
+        start_at: Starting index for pagination.
+        max_results: Maximum number of results per page.
+
+    Returns:
+        JSON string representing the field contexts with pagination info.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        contexts_response = jira.get_customfield_contexts(
+            field_id=field_id,
+            start_at=start_at,
+            max_results=max_results,
+        )
+        result = contexts_response.to_simplified_dict()
+        return _json_dumps_compact(result)
+    except Exception as e:
+        logger.error(f"Error getting contexts for field '{field_id}': {str(e)}")
+        error_result = {
+            "success": False,
+            "error": str(e),
+            "field_id": field_id,
+        }
+        return _json_dumps_compact(error_result)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
+async def get_customfield_context_options(
+    ctx: Context,
+    field_id: Annotated[
+        str,
+        Field(
+            description="The ID of the custom field (e.g., 'customfield_10001'). "
+            "You can use the 'search_fields' tool to find the field ID for a custom field name."
+        ),
+    ],
+    context_id: Annotated[
+        str,
+        Field(
+            description="The ID of the context. Use 'get_customfield_contexts' to find context IDs."
+        ),
+    ],
+    start_at: Annotated[
+        int,
+        Field(
+            description="Starting index for pagination (0-based)",
+            default=0,
+            ge=0,
+        ),
+    ] = 0,
+    max_results: Annotated[
+        int,
+        Field(
+            description="Maximum number of results per page (1-10000)",
+            default=10000,
+            ge=1,
+            le=10000,
+        ),
+    ] = 10000,
+    contains: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional case-insensitive substring filter applied to "
+                "option values before returning the response."
+            ),
+            default=None,
+        ),
+    ] = None,
+    return_limit: Annotated[
+        int | None,
+        Field(
+            description=(
+                "Optional cap on number of returned options after filtering "
+                "(1-10000)."
+            ),
+            default=None,
+            ge=1,
+            le=10000,
+        ),
+    ] = None,
+    values_only: Annotated[
+        bool,
+        Field(
+            description=(
+                "If true, returns only option values (plus pagination) "
+                "to reduce response payload size."
+            ),
+            default=False,
+        ),
+    ] = False,
+) -> str:
+    """Get options for a custom field within a specific context.
+
+    This is the most precise way to get field options as they can differ by context.
+    Different contexts (e.g., different projects or issue types) can have different
+    available options for the same custom field.
+
+    Args:
+        ctx: The FastMCP context.
+        field_id: The ID of the custom field (e.g., 'customfield_10001').
+        context_id: The ID of the context.
+        start_at: Starting index for pagination.
+        max_results: Maximum number of results per page.
+        contains: Optional case-insensitive substring filter for values.
+        return_limit: Optional cap on number of items returned after filtering.
+        values_only: Whether to return only values (without option objects).
+
+    Returns:
+        JSON string representing the field options for the context with pagination info.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        context_options_response = jira.get_customfield_context_options(
+            field_id=field_id,
+            context_id=context_id,
+            start_at=start_at,
+            max_results=max_results,
+        )
+        result = context_options_response.to_simplified_dict()
+        result = _apply_option_filters(
+            result,
+            contains=contains,
+            return_limit=return_limit,
+        )
+        if values_only:
+            result = _to_values_only_payload(result)
+        return _json_dumps_compact(result)
+    except Exception as e:
+        logger.error(
+            f"Error getting context options for field '{field_id}' in context '{context_id}': {str(e)}"
+        )
+        error_result = {
+            "success": False,
+            "error": str(e),
+            "field_id": field_id,
+            "context_id": context_id,
+        }
+        return _json_dumps_compact(error_result)

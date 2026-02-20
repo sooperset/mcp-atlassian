@@ -18,6 +18,13 @@ from .common import (
     JiraUser,
 )
 from .field_option import FieldContext, FieldOption
+from .field_option import (
+    JiraFieldContext,
+    JiraFieldContextOptionsResponse,
+    JiraFieldContextsResponse,
+    JiraFieldOption,
+    JiraFieldOptionsResponse,
+)
 from .forms import ProFormaForm, ProFormaFormField, ProFormaFormState
 from .issue import JiraIssue
 from .link import (
@@ -97,4 +104,10 @@ __all__ = [
     "ResolutionTimeMetric",
     "FirstResponseTimeMetric",
     "WorkingHoursConfig",
+    # Field options models
+    "JiraFieldOption",
+    "JiraFieldContext",
+    "JiraFieldOptionsResponse",
+    "JiraFieldContextOptionsResponse",
+    "JiraFieldContextsResponse",
 ]

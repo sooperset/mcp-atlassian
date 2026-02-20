@@ -6,6 +6,12 @@ from typing import Any
 from thefuzz import fuzz
 
 from ..utils import parse_date
+from mcp_atlassian.models.jira.field_option import (
+    JiraFieldContextOptionsResponse,
+    JiraFieldContextsResponse,
+    JiraFieldOptionsResponse,
+)
+
 from .client import JiraClient
 from .protocols import EpicOperationsProto, UsersOperationsProto
 
@@ -697,3 +703,228 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
         except Exception as e:
             logger.error(f"Error searching fields: {str(e)}")
             return []
+
+    def get_customfield_contexts(
+        self,
+        field_id: str,
+        start_at: int = 0,
+        max_results: int = 10000,
+    ) -> JiraFieldContextsResponse:
+        """
+        Get contexts for a custom field.
+
+        Args:
+            field_id: The ID of the field (e.g., 'customfield_10001')
+            start_at: Starting index for pagination (default: 0)
+            max_results: Maximum number of results per page (default: 10000)
+
+        Returns:
+            JiraFieldContextsResponse with contexts for the field
+
+        Raises:
+            ValueError: If the field_id is not provided or invalid
+        """
+        if not field_id:
+            raise ValueError("Field ID is required")
+
+        if not field_id.startswith("customfield_"):
+            raise ValueError(
+                "Field ID must be a custom field (starting with 'customfield_')"
+            )
+
+        try:
+            logger.debug(f"Getting contexts for field '{field_id}'")
+
+            # Use different API endpoints for Cloud vs DC/Server
+            if self.config.is_cloud:
+                # Cloud API
+                path = f"/rest/api/3/field/{field_id}/context"
+            else:
+                # DC/Server API - contexts endpoint may not exist or be different
+                # For DC, we'll use the same endpoint as Cloud but with API v2
+                path = f"/rest/api/2/field/{field_id}/context"
+
+            params = {
+                "startAt": start_at,
+                "maxResults": max_results,
+            }
+
+            result = self.jira.get(
+                path=path,
+                params=params,
+            )
+
+            if not isinstance(result, dict):
+                error_msg = (
+                    f"Unexpected response type from field contexts API: {type(result)}"
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+
+            # Parse the response using our model
+            contexts_response = JiraFieldContextsResponse.from_api_response(
+                result, max_results=max_results
+            )
+            logger.debug(
+                f"Retrieved {len(contexts_response.values)} contexts for field '{field_id}'"
+            )
+            return contexts_response
+
+        except Exception as e:
+            logger.error(f"Error getting contexts for field '{field_id}': {str(e)}")
+            raise
+
+    def get_customfield_options(
+        self,
+        field_id: str,
+        start_at: int = 0,
+        max_results: int = 10000,
+    ) -> JiraFieldOptionsResponse:
+        """
+        Get options for a custom field (global options).
+
+        Args:
+            field_id: The ID of the field (e.g., 'customfield_10001')
+            start_at: Starting index for pagination (default: 0)
+            max_results: Maximum number of results per page (default: 10000)
+
+        Returns:
+            JiraFieldOptionsResponse with options for the field
+
+        Raises:
+            ValueError: If the field_id is not provided or invalid
+        """
+        if not field_id:
+            raise ValueError("Field ID is required")
+
+        if not field_id.startswith("customfield_"):
+            raise ValueError(
+                "Field ID must be a custom field (starting with 'customfield_')"
+            )
+
+        try:
+            logger.debug(f"Getting global options for field '{field_id}'")
+
+            # Use different API endpoints for Cloud vs DC/Server
+            if self.config.is_cloud:
+                # Cloud API - different endpoint structure
+                path = f"/rest/api/3/field/{field_id}/option"
+            else:
+                # DC/Server API - uses customFields endpoint with numerical ID only
+                # Extract numerical ID from customfield_XXXXX
+                numerical_id = field_id.replace("customfield_", "")
+                path = f"/rest/api/2/customFields/{numerical_id}/options"
+
+            params = {
+                "startAt": start_at,
+                "maxResults": max_results,
+            }
+
+            result = self.jira.get(
+                path=path,
+                params=params,
+            )
+
+            if not isinstance(result, dict):
+                error_msg = (
+                    f"Unexpected response type from field options API: {type(result)}"
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+
+            # Parse the response using our model
+            options_response = JiraFieldOptionsResponse.from_api_response(
+                result, max_results=max_results
+            )
+            logger.debug(
+                f"Retrieved {len(options_response.values)} options for field '{field_id}'"
+            )
+            return options_response
+
+        except Exception as e:
+            logger.error(f"Error getting options for field '{field_id}': {str(e)}")
+            raise
+
+    def get_customfield_context_options(
+        self,
+        field_id: str,
+        context_id: str,
+        start_at: int = 0,
+        max_results: int = 10000,
+    ) -> JiraFieldContextOptionsResponse:
+        """
+        Get options for a custom field within a specific context.
+        This is the most precise way to get field options as they can differ by context.
+
+        Args:
+            field_id: The ID of the field (e.g., 'customfield_10001')
+            context_id: The ID of the context
+            start_at: Starting index for pagination (default: 0)
+            max_results: Maximum number of results per page (default: 10000)
+
+        Returns:
+            JiraFieldContextOptionsResponse with options for the field in the specified context
+
+        Raises:
+            ValueError: If the field_id or context_id is not provided or invalid
+        """
+        if not field_id:
+            raise ValueError("Field ID is required")
+        if not context_id:
+            raise ValueError("Context ID is required")
+
+        if not field_id.startswith("customfield_"):
+            raise ValueError(
+                "Field ID must be a custom field (starting with 'customfield_')"
+            )
+
+        try:
+            logger.debug(
+                f"Getting context options for field '{field_id}' in context '{context_id}'"
+            )
+
+            # Use different API endpoints for Cloud vs DC/Server
+            if self.config.is_cloud:
+                # Cloud API
+                path = f"/rest/api/3/field/{field_id}/context/{context_id}/option"
+            else:
+                # DC/Server API - context-specific options may not be available
+                # Fall back to general options endpoint with numerical ID only
+                # Extract numerical ID from customfield_XXXXX
+                numerical_id = field_id.replace("customfield_", "")
+                path = f"/rest/api/2/customFields/{numerical_id}/options"
+                logger.warning(
+                    f"DC/Server may not support context-specific options for field '{field_id}', using general options"
+                )
+
+            params = {
+                "startAt": start_at,
+                "maxResults": max_results,
+            }
+
+            result = self.jira.get(
+                path=path,
+                params=params,
+            )
+
+            if not isinstance(result, dict):
+                error_msg = f"Unexpected response type from field context options API: {type(result)}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+
+            # Parse the response using our model
+            context_options_response = (
+                JiraFieldContextOptionsResponse.from_api_response(
+                    result, max_results=max_results
+                )
+            )
+            logger.debug(
+                f"Retrieved {len(context_options_response.values)} options for field '{field_id}' in context '{context_id}'"
+            )
+            return context_options_response
+
+        except Exception as e:
+            logger.error(
+                f"Error getting context options for field '{field_id}' in context '{context_id}': {str(e)}"
+            )
+            raise
