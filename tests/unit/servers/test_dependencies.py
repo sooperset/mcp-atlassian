@@ -1003,6 +1003,169 @@ class TestGetConfluenceFetcher:
             await get_confluence_fetcher(mock_context)
 
 
+class TestBasicAuthMultiUser:
+    """Tests for Basic Auth multi-user support (#739)."""
+
+    @pytest.mark.parametrize("config_type", ["jira", "confluence"])
+    def test_create_user_config_basic_auth(self, config_factory, config_type):
+        """Test creating user-specific config with basic auth credentials."""
+        if config_type == "jira":
+            base_config = config_factory.create_jira_config(auth_type="basic")
+            expected_type = JiraConfig
+        else:
+            base_config = config_factory.create_confluence_config(auth_type="basic")
+            expected_type = ConfluenceConfig
+
+        credentials = {
+            "user_email_context": "user@example.com",
+            "user_email": "user@example.com",
+            "api_token": "user-api-token-123",
+        }
+
+        result = _create_user_config_for_fetcher(
+            base_config=base_config,
+            auth_type="basic",
+            credentials=credentials,
+        )
+
+        assert isinstance(result, expected_type)
+        assert result.auth_type == "basic"
+        assert result.username == "user@example.com"
+        assert result.api_token == "user-api-token-123"
+        assert result.personal_token is None
+        assert result.oauth_config is None
+
+    @pytest.mark.parametrize(
+        "missing_field,credentials",
+        [
+            (
+                "email",
+                {"user_email_context": None, "api_token": "token"},
+            ),
+            (
+                "api_token",
+                {"user_email_context": None, "user_email": "user@example.com"},
+            ),
+        ],
+    )
+    def test_basic_auth_missing_credentials(
+        self, config_factory, missing_field, credentials
+    ):
+        """Test that missing email or api_token raises ValueError."""
+        base_config = config_factory.create_jira_config(auth_type="basic")
+
+        with pytest.raises(ValueError, match="Email and API token missing"):
+            _create_user_config_for_fetcher(
+                base_config=base_config,
+                auth_type="basic",
+                credentials=credentials,
+            )
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_jira_basic_auth_fetcher_creation(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ):
+        """Test creating user-specific JiraFetcher with basic auth."""
+        # Setup request state for basic auth
+        mock_request.state.jira_fetcher = None
+        mock_request.state.confluence_fetcher = None
+        mock_request.state.atlassian_service_headers = {}
+        mock_request.state.user_atlassian_auth_type = "basic"
+        mock_request.state.user_atlassian_email = "user@example.com"
+        mock_request.state.user_atlassian_api_token = "user-api-token"
+        mock_request.state.user_atlassian_token = None
+        mock_request.state.user_atlassian_cloud_id = None
+        mock_get_http_request.return_value = mock_request
+
+        # Setup context with global config
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
+
+        # Setup mock fetcher
+        mock_fetcher = _create_mock_fetcher(JiraFetcher)
+        mock_jira_fetcher_class.return_value = mock_fetcher
+
+        result = await get_jira_fetcher(mock_context)
+
+        assert result == mock_fetcher
+        assert mock_request.state.jira_fetcher == mock_fetcher
+        mock_jira_fetcher_class.assert_called_once()
+
+        called_config = mock_jira_fetcher_class.call_args[1]["config"]
+        assert called_config.auth_type == "basic"
+        assert called_config.username == "user@example.com"
+        assert called_config.api_token == "user-api-token"
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_confluence_basic_auth_fetcher_creation(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ):
+        """Test creating user-specific ConfluenceFetcher with basic auth."""
+        mock_request.state.jira_fetcher = None
+        mock_request.state.confluence_fetcher = None
+        mock_request.state.atlassian_service_headers = {}
+        mock_request.state.user_atlassian_auth_type = "basic"
+        mock_request.state.user_atlassian_email = "user@example.com"
+        mock_request.state.user_atlassian_api_token = "user-api-token"
+        mock_request.state.user_atlassian_token = None
+        mock_request.state.user_atlassian_cloud_id = None
+        mock_get_http_request.return_value = mock_request
+
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(ConfluenceFetcher)
+        mock_confluence_fetcher_class.return_value = mock_fetcher
+
+        result = await get_confluence_fetcher(mock_context)
+
+        assert result == mock_fetcher
+        assert mock_request.state.confluence_fetcher == mock_fetcher
+        mock_confluence_fetcher_class.assert_called_once()
+
+        called_config = mock_confluence_fetcher_class.call_args[1]["config"]
+        assert called_config.auth_type == "basic"
+        assert called_config.username == "user@example.com"
+        assert called_config.api_token == "user-api-token"
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    async def test_basic_auth_empty_email_raises(
+        self,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ):
+        """Test that empty email with basic auth raises ValueError."""
+        mock_request.state.jira_fetcher = None
+        mock_request.state.confluence_fetcher = None
+        mock_request.state.atlassian_service_headers = {}
+        mock_request.state.user_atlassian_auth_type = "basic"
+        mock_request.state.user_atlassian_email = None  # Empty
+        mock_request.state.user_atlassian_api_token = "user-api-token"
+        mock_request.state.user_atlassian_token = None
+        mock_request.state.user_atlassian_cloud_id = None
+        mock_get_http_request.return_value = mock_request
+
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
+
+        with pytest.raises(ValueError, match="email or API token missing"):
+            await get_jira_fetcher(mock_context)
+
+
 class TestResolveBearerAuthType:
     """Tests for _resolve_bearer_auth_type bearer token disambiguation."""
 
