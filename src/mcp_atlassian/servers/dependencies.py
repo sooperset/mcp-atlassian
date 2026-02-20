@@ -27,6 +27,53 @@ if TYPE_CHECKING:
 logger = logging.getLogger("mcp-atlassian.servers.dependencies")
 
 
+def _resolve_bearer_auth_type(
+    base_config: JiraConfig | ConfluenceConfig,
+    middleware_auth_type: str,
+    cloud_id: str | None = None,
+) -> str:
+    """Disambiguate Bearer tokens: determine if they're OAuth or PAT.
+
+    The middleware treats all ``Bearer`` tokens as ``auth_type="oauth"`` because
+    it is stateless.  The dependency layer has access to the global config and can
+    make a better decision:
+
+    * If the global config has OAuth configured (cloud_id or DC base_url) → keep "oauth"
+    * Otherwise → fall back to "pat" (Server/DC Bearer-prefixed PAT)
+
+    Args:
+        base_config: The global JiraConfig or ConfluenceConfig.
+        middleware_auth_type: The auth_type set by the middleware ("oauth" or "pat").
+        cloud_id: Optional per-request cloud_id from headers.
+
+    Returns:
+        The resolved auth_type ("oauth" or "pat").
+    """
+    if middleware_auth_type != "oauth":
+        return middleware_auth_type
+
+    # Per-request cloud_id header means the client intends Cloud OAuth
+    if cloud_id:
+        return "oauth"
+
+    # Check if global config has OAuth set up
+    global_oauth = getattr(base_config, "oauth_config", None)
+    if global_oauth is not None:
+        # Has cloud_id → Cloud OAuth
+        if global_oauth.cloud_id:
+            return "oauth"
+        # Has DC base_url → DC OAuth
+        if getattr(global_oauth, "is_data_center", False) is True:
+            return "oauth"
+
+    # No OAuth config globally → Bearer token is actually a PAT
+    logger.info(
+        "Bearer token received but no OAuth config found globally. "
+        "Treating as PAT for Server/Data Center."
+    )
+    return "pat"
+
+
 def _create_user_config_for_fetcher(
     base_config: JiraConfig | ConfluenceConfig,
     auth_type: str,
@@ -242,11 +289,6 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
 
             if not user_token:
                 raise ValueError("User Atlassian token found in state but is empty.")
-            credentials = {"user_email_context": user_email}
-            if user_auth_type == "oauth":
-                credentials["oauth_access_token"] = user_token
-            elif user_auth_type == "pat":
-                credentials["personal_access_token"] = user_token
             lifespan_ctx_dict = ctx.request_context.lifespan_context  # type: ignore
             app_lifespan_ctx: MainAppContext | None = (
                 lifespan_ctx_dict.get("app_lifespan_context")
@@ -258,13 +300,24 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
                     "Jira global configuration (URL, SSL) is not available from lifespan context."
                 )
 
+            # Disambiguate Bearer tokens: OAuth vs PAT (#892)
+            resolved_auth_type = _resolve_bearer_auth_type(
+                app_lifespan_ctx.full_jira_config, user_auth_type, user_cloud_id
+            )
+
+            credentials = {"user_email_context": user_email}
+            if resolved_auth_type == "oauth":
+                credentials["oauth_access_token"] = user_token
+            else:
+                credentials["personal_access_token"] = user_token
+
             cloud_id_info = f" with cloudId {user_cloud_id}" if user_cloud_id else ""
             logger.info(
-                f"Creating user-specific JiraFetcher (type: {user_auth_type}) for user {user_email or 'unknown'} (token ...{str(user_token)[-8:]}){cloud_id_info}"
+                f"Creating user-specific JiraFetcher (type: {resolved_auth_type}) for user {user_email or 'unknown'} (token ...{str(user_token)[-8:]}){cloud_id_info}"
             )
             user_specific_config = _create_user_config_for_fetcher(
                 base_config=app_lifespan_ctx.full_jira_config,
-                auth_type=user_auth_type,
+                auth_type=resolved_auth_type,
                 credentials=credentials,
                 cloud_id=user_cloud_id,
             )
@@ -410,11 +463,6 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
 
             if not user_token:
                 raise ValueError("User Atlassian token found in state but is empty.")
-            credentials = {"user_email_context": user_email}
-            if user_auth_type == "oauth":
-                credentials["oauth_access_token"] = user_token
-            elif user_auth_type == "pat":
-                credentials["personal_access_token"] = user_token
             lifespan_ctx_dict = ctx.request_context.lifespan_context  # type: ignore
             app_lifespan_ctx: MainAppContext | None = (
                 lifespan_ctx_dict.get("app_lifespan_context")
@@ -426,13 +474,26 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
                     "Confluence global configuration (URL, SSL) is not available from lifespan context."
                 )
 
+            # Disambiguate Bearer tokens: OAuth vs PAT (#892)
+            resolved_auth_type = _resolve_bearer_auth_type(
+                app_lifespan_ctx.full_confluence_config,
+                user_auth_type,
+                user_cloud_id,
+            )
+
+            credentials = {"user_email_context": user_email}
+            if resolved_auth_type == "oauth":
+                credentials["oauth_access_token"] = user_token
+            else:
+                credentials["personal_access_token"] = user_token
+
             cloud_id_info = f" with cloudId {user_cloud_id}" if user_cloud_id else ""
             logger.info(
-                f"Creating user-specific ConfluenceFetcher (type: {user_auth_type}) for user {user_email or 'unknown'} (token ...{str(user_token)[-8:]}){cloud_id_info}"
+                f"Creating user-specific ConfluenceFetcher (type: {resolved_auth_type}) for user {user_email or 'unknown'} (token ...{str(user_token)[-8:]}){cloud_id_info}"
             )
             user_specific_config = _create_user_config_for_fetcher(
                 base_config=app_lifespan_ctx.full_confluence_config,
-                auth_type=user_auth_type,
+                auth_type=resolved_auth_type,
                 credentials=credentials,
                 cloud_id=user_cloud_id,
             )

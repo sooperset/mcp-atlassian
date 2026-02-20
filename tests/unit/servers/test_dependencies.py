@@ -11,6 +11,7 @@ from mcp_atlassian.jira import JiraConfig, JiraFetcher
 from mcp_atlassian.servers.context import MainAppContext
 from mcp_atlassian.servers.dependencies import (
     _create_user_config_for_fetcher,
+    _resolve_bearer_auth_type,
     get_confluence_fetcher,
     get_jira_fetcher,
 )
@@ -1000,3 +1001,82 @@ class TestGetConfluenceFetcher:
 
         with pytest.raises(ValueError, match=expected_error_match):
             await get_confluence_fetcher(mock_context)
+
+
+class TestResolveBearerAuthType:
+    """Tests for _resolve_bearer_auth_type bearer token disambiguation."""
+
+    def test_bearer_fallback_to_pat_when_no_oauth_config(self):
+        """Bearer token treated as PAT when global config has no oauth_config."""
+        config = JiraConfig(
+            url="https://jira.corp.example.com",
+            auth_type="pat",
+            personal_token="server-pat",
+        )
+        result = _resolve_bearer_auth_type(config, "oauth")
+        assert result == "pat"
+
+    def test_bearer_with_cloud_id_stays_oauth(self):
+        """Bearer token stays as OAuth when global config has cloud_id."""
+        oauth_config = OAuthConfig(
+            client_id="c",
+            client_secret="s",
+            redirect_uri="r",
+            scope="sc",
+            cloud_id="cloud-123",
+        )
+        config = JiraConfig(
+            url="https://test.atlassian.net",
+            auth_type="oauth",
+            oauth_config=oauth_config,
+        )
+        result = _resolve_bearer_auth_type(config, "oauth")
+        assert result == "oauth"
+
+    def test_bearer_with_dc_base_url_stays_oauth(self):
+        """Bearer token stays as OAuth when global config has DC base_url."""
+        oauth_config = OAuthConfig(
+            client_id="c",
+            client_secret="s",
+            redirect_uri="r",
+            scope="sc",
+            base_url="https://jira.corp.com",
+        )
+        config = JiraConfig(
+            url="https://jira.corp.com",
+            auth_type="oauth",
+            oauth_config=oauth_config,
+        )
+        result = _resolve_bearer_auth_type(config, "oauth")
+        assert result == "oauth"
+
+    def test_bearer_with_header_cloud_id_stays_oauth(self):
+        """Bearer token stays as OAuth when per-request cloud_id is provided."""
+        config = JiraConfig(
+            url="https://test.atlassian.net",
+            auth_type="basic",
+            username="user",
+            api_token="token",
+        )
+        result = _resolve_bearer_auth_type(config, "oauth", cloud_id="from-header")
+        assert result == "oauth"
+
+    def test_pat_auth_type_passes_through(self):
+        """PAT auth_type is never re-mapped."""
+        config = JiraConfig(
+            url="https://jira.corp.example.com",
+            auth_type="pat",
+            personal_token="server-pat",
+        )
+        result = _resolve_bearer_auth_type(config, "pat")
+        assert result == "pat"
+
+    def test_confluence_bearer_fallback_to_pat(self):
+        """Bearer disambiguation works for Confluence configs too."""
+        config = ConfluenceConfig(
+            url="https://confluence.corp.example.com",
+            auth_type="pat",
+            personal_token="server-pat",
+        )
+        result = _resolve_bearer_auth_type(config, "oauth")
+        assert result == "pat"
