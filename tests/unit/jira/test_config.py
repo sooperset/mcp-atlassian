@@ -260,3 +260,32 @@ def test_from_env_without_client_cert():
         assert config.client_cert is None
         assert config.client_key is None
         assert config.client_key_password is None
+
+
+def test_jira_config_timeout_from_env():
+    """Test that timeout is read from JIRA_TIMEOUT env var."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://jira.example.com",
+            "JIRA_PERSONAL_TOKEN": "test_pat",
+            "JIRA_TIMEOUT": "120",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.timeout == 120
+
+
+def test_jira_config_timeout_default():
+    """Test that timeout defaults to 75 when no env var is set."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://jira.example.com",
+            "JIRA_PERSONAL_TOKEN": "test_pat",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.timeout == 75

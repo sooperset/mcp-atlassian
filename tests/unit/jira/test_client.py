@@ -44,6 +44,7 @@ def test_init_with_basic_auth():
             password="test_token",
             cloud=True,
             verify_ssl=True,
+            timeout=75,
         )
 
         # Verify SSL verification was configured
@@ -85,6 +86,7 @@ def test_init_with_token_auth():
             token="test_personal_token",
             cloud=False,
             verify_ssl=False,
+            timeout=75,
         )
 
         # Verify SSL verification was configured with ssl_verify=False
@@ -295,3 +297,28 @@ def test_init_no_proxies(monkeypatch):
     )
     client = JiraClient(config=config)
     assert mock_session.proxies == {}
+
+
+def test_jira_client_passes_timeout_to_constructor():
+    """Test that JiraClient passes custom timeout to Jira constructor."""
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        config = JiraConfig(
+            url="https://test.atlassian.net",
+            auth_type="basic",
+            username="test_user",
+            api_token="test_token",
+            timeout=120,
+        )
+        JiraClient(config=config)
+
+        mock_jira.assert_called_once_with(
+            url="https://test.atlassian.net",
+            username="test_user",
+            password="test_token",
+            cloud=True,
+            verify_ssl=True,
+            timeout=120,
+        )
