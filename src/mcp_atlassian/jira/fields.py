@@ -570,11 +570,15 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
 
         elif schema_type == "user":
             if isinstance(value, str):
-                identifier = self._get_account_id(value)
-                if self.config.is_cloud:
-                    return {"accountId": identifier}
-                else:
-                    return {"name": identifier}
+                try:
+                    identifier = self._get_account_id(value)
+                    if self.config.is_cloud:
+                        return {"accountId": identifier}
+                    else:
+                        return {"name": identifier}
+                except (ValueError, Exception) as e:
+                    logger.warning(f"Could not resolve user for field {field_id}: {e}")
+                    return None
             return value
 
         elif schema_type == "date":

@@ -774,6 +774,18 @@ class TestFormatFieldValueForWrite:
         )
         assert result == {"name": "jdoe"}
 
+    def test_custom_user_unresolvable(self, mixin):
+        """Unresolvable custom user field returns None instead of raising."""
+        mixin._get_account_id = MagicMock(side_effect=ValueError("User not found"))
+        field_def = {
+            "name": "Reviewer",
+            "schema": {"type": "user", "custom": "userpicker"},
+        }
+        result = mixin._format_field_value_for_write(
+            "customfield_10022", "nobody@ex.com", field_def
+        )
+        assert result is None
+
     # -- Custom date field -----------------------------------------------
 
     def test_custom_date_valid(self, mixin):
