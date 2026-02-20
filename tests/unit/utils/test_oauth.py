@@ -1137,6 +1137,26 @@ class TestDataCenterOAuth:
         mock_logger.warning.assert_called_once()
         assert "No access_token or refresh_token" in str(mock_logger.warning.call_args)
 
+    @patch("mcp_atlassian.utils.oauth.logger")
+    def test_configure_oauth_session_minimal_oauth_no_tokens(self, mock_logger):
+        """Regression: minimal OAuth config (ATLASSIAN_OAUTH_ENABLE=true) with no
+        tokens should return False with clear warning, not crash (#858)."""
+        session = requests.Session()
+        # Minimal config: empty client_id/secret, as created by ATLASSIAN_OAUTH_ENABLE=true
+        config = OAuthConfig(
+            client_id="",
+            client_secret="",
+            redirect_uri="",
+            scope="",
+        )
+
+        result = configure_oauth_session(session, config)
+
+        assert result is False
+        assert "Authorization" not in session.headers
+        mock_logger.warning.assert_called_once()
+        assert "per-request auth" in str(mock_logger.warning.call_args)
+
     # --- _save_tokens includes base_url ---
 
     @patch("keyring.set_password")

@@ -1080,3 +1080,21 @@ class TestResolveBearerAuthType:
         )
         result = _resolve_bearer_auth_type(config, "oauth")
         assert result == "pat"
+
+    def test_minimal_oauth_config_bearer_fallback_to_pat(self):
+        """Regression: ATLASSIAN_OAUTH_ENABLE=true with no cloud_id creates
+        minimal OAuth config. Bearer token should fall back to PAT (#858)."""
+        # Minimal OAuth config: empty strings, no cloud_id, no base_url
+        minimal_oauth = OAuthConfig(
+            client_id="",
+            client_secret="",
+            redirect_uri="",
+            scope="",
+        )
+        config = JiraConfig(
+            url="https://jira.corp.example.com",
+            auth_type="oauth",
+            oauth_config=minimal_oauth,
+        )
+        result = _resolve_bearer_auth_type(config, "oauth")
+        assert result == "pat"
