@@ -106,6 +106,11 @@ class JiraClient:
                 f"{get_masked_session_headers(dict(self.jira._session.headers))}"
             )
 
+        # Disable trust_env for PAT and OAuth to prevent .netrc from overriding
+        # explicit credentials (#860). Basic auth can safely use .netrc.
+        if self.config.auth_type in ("pat", "oauth"):
+            self.jira._session.trust_env = False
+
         # Configure SSL verification using the shared utility
         configure_ssl_verification(
             service_name="Jira",
