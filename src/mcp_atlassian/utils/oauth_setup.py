@@ -269,12 +269,8 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
     logger.info("Exchanging authorization code for tokens...")
     if oauth_config.exchange_code_for_tokens(authorization_code):
         logger.info("✅ OAuth authorization successful!")
-        logger.info(
-            f"Access token: {oauth_config.access_token[:10]}...{oauth_config.access_token[-5:]}"
-        )
-        logger.info(
-            f"Refresh token saved: {oauth_config.refresh_token[:5]}...{oauth_config.refresh_token[-3:]}"
-        )
+        logger.info("Access token obtained successfully.")
+        logger.info("Refresh token saved successfully.")
 
         if oauth_config.cloud_id:
             logger.info(f"Cloud ID: {oauth_config.cloud_id}")
@@ -293,7 +289,7 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
             )
             logger.info("------------------------------------------------------------")
             logger.info(f"ATLASSIAN_OAUTH_CLIENT_ID={oauth_config.client_id}")
-            logger.info(f"ATLASSIAN_OAUTH_CLIENT_SECRET={oauth_config.client_secret}")
+            logger.info("ATLASSIAN_OAUTH_CLIENT_SECRET=<redacted>")
             logger.info(f"ATLASSIAN_OAUTH_REDIRECT_URI={oauth_config.redirect_uri}")
             logger.info(f"ATLASSIAN_OAUTH_SCOPE={oauth_config.scope}")
             logger.info(f"ATLASSIAN_OAUTH_CLOUD_ID={oauth_config.cloud_id}")
