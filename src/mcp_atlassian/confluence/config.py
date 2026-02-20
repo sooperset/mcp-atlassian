@@ -39,6 +39,7 @@ class ConfluenceConfig:
     client_cert: str | None = None  # Client certificate file path (.pem)
     client_key: str | None = None  # Client private key file path (.pem)
     client_key_password: str | None = None  # Password for encrypted private key
+    timeout: int = 75  # Connection timeout in seconds
 
     @property
     def is_cloud(self) -> bool:
@@ -167,6 +168,14 @@ class ConfluenceConfig:
         client_key = os.getenv("CONFLUENCE_CLIENT_KEY")
         client_key_password = os.getenv("CONFLUENCE_CLIENT_KEY_PASSWORD")
 
+        # Timeout setting
+        timeout = 75  # Default timeout
+        if (
+            os.getenv("CONFLUENCE_TIMEOUT")
+            and os.getenv("CONFLUENCE_TIMEOUT", "").isdigit()
+        ):
+            timeout = int(os.getenv("CONFLUENCE_TIMEOUT", "75"))
+
         return cls(
             url=url or "",
             auth_type=auth_type,
@@ -184,6 +193,7 @@ class ConfluenceConfig:
             client_cert=client_cert,
             client_key=client_key,
             client_key_password=client_key_password,
+            timeout=timeout,
         )
 
     def is_auth_configured(self) -> bool:

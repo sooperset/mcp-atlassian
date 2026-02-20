@@ -240,3 +240,32 @@ def test_from_env_without_client_cert():
         assert config.client_cert is None
         assert config.client_key is None
         assert config.client_key_password is None
+
+
+def test_confluence_config_timeout_from_env():
+    """Test that timeout is read from CONFLUENCE_TIMEOUT env var."""
+    with patch.dict(
+        os.environ,
+        {
+            "CONFLUENCE_URL": "https://confluence.example.com",
+            "CONFLUENCE_PERSONAL_TOKEN": "test_pat",
+            "CONFLUENCE_TIMEOUT": "120",
+        },
+        clear=True,
+    ):
+        config = ConfluenceConfig.from_env()
+        assert config.timeout == 120
+
+
+def test_confluence_config_timeout_default():
+    """Test that timeout defaults to 75 when no env var is set."""
+    with patch.dict(
+        os.environ,
+        {
+            "CONFLUENCE_URL": "https://confluence.example.com",
+            "CONFLUENCE_PERSONAL_TOKEN": "test_pat",
+        },
+        clear=True,
+    ):
+        config = ConfluenceConfig.from_env()
+        assert config.timeout == 75
