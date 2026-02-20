@@ -84,6 +84,41 @@ def session_jira_field_definitions():
             "schema": {"type": "array", "items": "component"},
         },
         {
+            "id": "duedate",
+            "name": "Due Date",
+            "schema": {"type": "date"},
+        },
+        # Cascading select
+        {
+            "id": "customfield_10020",
+            "name": "Region",
+            "schema": {"type": "option-with-child", "custom": "cascadingselect"},
+        },
+        # Multi-select (array of options)
+        {
+            "id": "customfield_10021",
+            "name": "Categories",
+            "schema": {"type": "array", "items": "option", "custom": "multiselect"},
+        },
+        # Custom user field
+        {
+            "id": "customfield_10022",
+            "name": "Reviewer",
+            "schema": {"type": "user", "custom": "userpicker"},
+        },
+        # Custom date field
+        {
+            "id": "customfield_10023",
+            "name": "Target Date",
+            "schema": {"type": "date"},
+        },
+        # Generic option (radio/select)
+        {
+            "id": "customfield_10024",
+            "name": "Severity",
+            "schema": {"type": "option", "custom": "radiobuttons"},
+        },
+        {
             "id": "resolution",
             "name": "Resolution",
             "schema": {"type": "resolution"},

@@ -1670,6 +1670,56 @@ class TestIssuesMixin:
         assert result.key == "PROD-123"
         assert result.summary == "Production issue"
 
+    def test_create_issue_with_cascading_select(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Test create_issue with a cascading select custom field via kwargs."""
+        create_response = {"id": "12345", "key": "TEST-123"}
+        issues_mixin.jira.create_issue.return_value = create_response
+        issues_mixin.jira.get_issue.return_value = make_issue_data()
+
+        result = issues_mixin.create_issue(
+            project_key="TEST",
+            summary="Test Issue",
+            issue_type="Bug",
+            customfield_10020=("NA", "US"),
+        )
+
+        # Verify the create API was called
+        issues_mixin.jira.create_issue.assert_called_once()
+        fields = issues_mixin.jira.create_issue.call_args[1]["fields"]
+        # Cascading select should be formatted as {value, child}
+        assert fields["customfield_10020"] == {
+            "value": "NA",
+            "child": {"value": "US"},
+        }
+        assert result.key == "TEST-123"
+
+    def test_create_issue_with_multiselect(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Test create_issue with a multi-select custom field via kwargs."""
+        create_response = {"id": "12345", "key": "TEST-123"}
+        issues_mixin.jira.create_issue.return_value = create_response
+        issues_mixin.jira.get_issue.return_value = make_issue_data()
+
+        result = issues_mixin.create_issue(
+            project_key="TEST",
+            summary="Test Issue",
+            issue_type="Bug",
+            customfield_10021=["opt1", "opt2"],
+        )
+
+        # Verify the create API was called
+        issues_mixin.jira.create_issue.assert_called_once()
+        fields = issues_mixin.jira.create_issue.call_args[1]["fields"]
+        # Multi-select strings should be wrapped in {value: ...}
+        assert fields["customfield_10021"] == [
+            {"value": "opt1"},
+            {"value": "opt2"},
+        ]
+        assert result.key == "TEST-123"
+
     def test_get_issue_with_whitespace_in_projects_filter(
         self, issues_mixin: IssuesMixin, make_issue_data
     ):

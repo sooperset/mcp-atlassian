@@ -31,6 +31,37 @@ jira_mcp = FastMCP(
 )
 
 
+def _parse_additional_fields(
+    additional_fields: dict[str, Any] | str | None,
+) -> dict[str, Any]:
+    """Parse additional_fields from dict or JSON string.
+
+    Args:
+        additional_fields: Dict, JSON string, or None.
+
+    Returns:
+        Parsed dict of additional fields.
+
+    Raises:
+        ValueError: If the input is not valid JSON or not a dict.
+    """
+    if additional_fields is None:
+        return {}
+    if isinstance(additional_fields, dict):
+        return additional_fields
+    if isinstance(additional_fields, str):
+        try:
+            parsed = json.loads(additional_fields)
+            if not isinstance(parsed, dict):
+                raise ValueError(
+                    "Parsed additional_fields is not a JSON object (dict)."
+                )
+            return parsed
+        except json.JSONDecodeError as e:
+            raise ValueError(f"additional_fields is not valid JSON: {e}") from e
+    raise ValueError("additional_fields must be a dictionary or JSON string.")
+
+
 @jira_mcp.tool(
     tags={"jira", "read"},
     annotations={"title": "Get User Profile", "readOnlyHint": True},
@@ -830,23 +861,7 @@ async def create_issue(
             comp.strip() for comp in components.split(",") if comp.strip()
         ]
 
-    # Use additional_fields directly as dict
-    # Accept either dict or JSON string for additional fields
-    if additional_fields is None:
-        extra_fields: dict[str, Any] = {}
-    elif isinstance(additional_fields, dict):
-        extra_fields = additional_fields
-    elif isinstance(additional_fields, str):
-        try:
-            extra_fields = json.loads(additional_fields)
-            if not isinstance(extra_fields, dict):
-                raise ValueError(
-                    "Parsed additional_fields is not a JSON object (dict)."
-                )
-        except json.JSONDecodeError as e:
-            raise ValueError(f"additional_fields is not valid JSON: {e}") from e
-    else:
-        raise ValueError("additional_fields must be a dictionary or JSON string.")
+    extra_fields = _parse_additional_fields(additional_fields)
 
     issue = jira.create_issue(
         project_key=project_key,
@@ -1037,9 +1052,12 @@ async def update_issue(
         ),
     ],
     additional_fields: Annotated[
-        dict[str, Any] | None,
+        dict[str, Any] | str | None,
         Field(
-            description="(Optional) Dictionary of additional fields to update. Use this for custom fields or more complex updates.",
+            description=(
+                "(Optional) Dictionary or JSON string of additional fields to update. "
+                "Use this for custom fields or more complex updates."
+            ),
             default=None,
         ),
     ] = None,
@@ -1060,7 +1078,7 @@ async def update_issue(
         ctx: The FastMCP context.
         issue_key: Jira issue key.
         fields: Dictionary of fields to update. Text fields like 'description' should use Markdown format.
-        additional_fields: Optional dictionary of additional fields.
+        additional_fields: Optional dictionary or JSON string of additional fields.
         attachments: Optional JSON array string or comma-separated list of file paths.
 
     Returns:
@@ -1073,10 +1091,7 @@ async def update_issue(
     # Use fields directly as dict
     update_fields = fields
 
-    # Use additional_fields directly as dict
-    extra_fields = additional_fields or {}
-    if not isinstance(extra_fields, dict):
-        raise ValueError("additional_fields must be a dictionary.")
+    extra_fields = _parse_additional_fields(additional_fields)
 
     # Parse attachments
     attachment_paths = []

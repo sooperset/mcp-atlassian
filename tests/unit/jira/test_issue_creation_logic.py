@@ -58,6 +58,9 @@ class ConcreteIssuesMixin(
     def upload_attachments(self, issue_key, attachment_paths):
         pass
 
+    def _format_field_value_for_write(self, field_id, value, field_definition):
+        pass
+
 
 @pytest.fixture
 def issues_mixin():

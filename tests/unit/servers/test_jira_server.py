@@ -133,6 +133,19 @@ def mock_jira_fetcher():
 
     mock_fetcher.create_issue.side_effect = mock_create_issue
 
+    # Configure update_issue
+    def mock_update_issue(issue_key, **kwargs):
+        mock_issue = MagicMock()
+        mock_issue.to_simplified_dict.return_value = {
+            "key": issue_key,
+            "summary": "Updated Issue",
+            "status": {"name": "Open"},
+            **{k: v for k, v in kwargs.items() if k not in ("fields", "status")},
+        }
+        return mock_issue
+
+    mock_fetcher.update_issue.side_effect = mock_update_issue
+
     # Configure batch_create_issues
     def mock_batch_create_issues(issues, validate_only=False):
         if not isinstance(issues, list):
@@ -1357,3 +1370,75 @@ def test_issue_and_project_key_patterns_reject_invalid_keys():
 
     assert not re.match(PROJECT_KEY_PATTERN, "lowercase")
     assert not re.match(PROJECT_KEY_PATTERN, "123")
+
+
+# =============================================================================
+# update_issue additional_fields JSON string tests
+# =============================================================================
+
+
+@pytest.mark.anyio
+async def test_update_issue_accepts_json_string_additional_fields(
+    jira_client, mock_jira_fetcher
+):
+    """Ensure update_issue additional_fields can be a JSON string."""
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": {"summary": "Updated"},
+            "additional_fields": '{"labels": ["ai"]}',
+        },
+    )
+    assert hasattr(response, "content")
+    assert len(response.content) > 0
+    text_content = response.content[0]
+    assert text_content.type == "text"
+    content = json.loads(text_content.text)
+    assert content["message"] == "Issue updated successfully"
+    assert "issue" in content
+
+
+@pytest.mark.anyio
+async def test_update_issue_additional_fields_invalid_json(jira_client):
+    """Test that invalid JSON additional_fields raises ValueError."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "fields": {"summary": "Updated"},
+                "additional_fields": "{invalid",
+            },
+        )
+    assert "not valid JSON" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_update_issue_additional_fields_non_dict_json(jira_client):
+    """Test that JSON array additional_fields raises ValueError."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "fields": {"summary": "Updated"},
+                "additional_fields": '["a","b"]',
+            },
+        )
+    assert "not a JSON object" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_update_issue_additional_fields_empty_string(jira_client):
+    """Test that empty string additional_fields raises ValueError."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "fields": {"summary": "Updated"},
+                "additional_fields": "",
+            },
+        )
+    assert "not valid JSON" in str(excinfo.value)
