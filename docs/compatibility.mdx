@@ -15,22 +15,22 @@ MCP Atlassian works with any MCP-compatible client. This page documents platform
 | Cursor | Fully supported | stdio | |
 | Windsurf | Fully supported | stdio | |
 | VS Code (Copilot) | Supported | stdio | See [Copilot setup](#github-copilot) |
-| Vertex AI / Google ADK | Supported | stdio / HTTP | Schema sanitization applied automatically (v0.18.0+) |
-| Amazon Bedrock | Supported | stdio / HTTP | |
-| LiteLLM | Supported | stdio / HTTP | |
-| OpenAI Gateway | Supported | stdio / HTTP | |
+| Vertex AI / Google ADK | Supported | stdio / HTTP | Schema sanitization applied automatically |
+| Amazon Bedrock | Compatible | stdio / HTTP | Not explicitly tested |
+| LiteLLM | Compatible | stdio / HTTP | Passes schemas to underlying provider |
+| OpenAI Gateway | Compatible | stdio / HTTP | |
 | ChatGPT | Not tested | HTTP | See [ChatGPT notes](#chatgpt) |
 
 ## Schema Compatibility
 
-As of v0.18.0, MCP Atlassian includes automatic schema sanitization to ensure compatibility with strict AI platforms:
+MCP Atlassian includes automatic schema sanitization to ensure compatibility with strict AI platforms:
 
 - **`anyOf` flattening**: Pydantic v2 generates `anyOf` patterns for optional parameters (`T | None`). These are automatically collapsed to simple `{"type": T}` before schemas are sent to clients, since Vertex AI and Google ADK reject `anyOf` alongside `default` or `description` fields.
 - **No zero-argument tools**: All tools have at least one parameter, which is required by some OpenAI-compatible gateways.
 - **All properties have explicit `type`**: Required by Vertex AI.
 - **No `$defs` / `$ref`**: All schemas are fully inlined.
 
-These constraints are enforced by CI tests across all 59 tools.
+These constraints are enforced by CI tests across all tools.
 
 ## Platform-Specific Notes
 
@@ -87,7 +87,7 @@ GitHub Copilot's coding agent supports MCP servers via stdio transport. Key conf
 
 ### Vertex AI / Google ADK
 
-Vertex AI enforces strict JSON Schema validation. The automatic `anyOf` flattening in v0.18.0+ resolves the `INVALID_ARGUMENT` errors previously reported with Google ADK.
+Vertex AI enforces strict JSON Schema validation. The automatic `anyOf` flattening resolves the `INVALID_ARGUMENT` errors previously reported with Google ADK.
 
 If you encounter schema errors, ensure you are running the latest version:
 
