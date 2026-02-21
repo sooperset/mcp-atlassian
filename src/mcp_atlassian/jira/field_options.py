@@ -151,6 +151,9 @@ class FieldOptionsMixin(JiraClient):
     ) -> list[FieldOption]:
         """Get field options via Server/DC createmeta.
 
+        Uses the new createmeta endpoint introduced in Jira 9.x+:
+        ``/rest/api/2/issue/createmeta/{project}/issuetypes/{issueTypeId}``
+
         Args:
             field_id: The custom field ID
             project_key: Project key (required)
@@ -172,36 +175,58 @@ class FieldOptionsMixin(JiraClient):
             raise ValueError(msg)
 
         try:
-            response = self.jira.get(
-                "rest/api/2/issue/createmeta",
-                params={
-                    "projectKeys": project_key,
-                    "issuetypeNames": issue_type,
-                    "expand": "projects.issuetypes.fields",
-                },
-            )
-
-            if not isinstance(response, dict):
+            # Step 1: Resolve issue type name to ID
+            if not hasattr(self, "get_project_issue_types"):
+                logger.error(
+                    "get_project_issue_types not available. "
+                    "Cannot resolve issue type ID."
+                )
                 return []
 
-            # Navigate: projects[0].issuetypes[0].fields.{field_id}.allowedValues
-            projects = response.get("projects", [])
-            if not projects:
+            all_issue_types = self.get_project_issue_types(project_key)
+            issue_type_id = None
+            for it in all_issue_types:
+                if it.get("name", "").lower() == issue_type.lower():
+                    issue_type_id = it.get("id")
+                    break
+
+            if not issue_type_id:
+                logger.warning(
+                    f"Issue type '{issue_type}' not found in project '{project_key}'"
+                )
                 return []
 
-            issue_types = projects[0].get("issuetypes", [])
-            if not issue_types:
-                return []
+            # Step 2: Paginate through createmeta fields
+            start_at = 0
+            max_results = 50
 
-            fields = issue_types[0].get("fields", {})
-            field_data = fields.get(field_id, {})
-            allowed_values = field_data.get("allowedValues", [])
+            while True:
+                meta = self.jira.issue_createmeta_fieldtypes(
+                    project=project_key,
+                    issue_type_id=issue_type_id,
+                    start=start_at,
+                    limit=max_results,
+                )
 
-            return [
-                FieldOption.from_api_response(item)
-                for item in allowed_values
-                if isinstance(item, dict)
-            ]
+                if not isinstance(meta, dict):
+                    return []
+
+                field_entries = meta.get("values", [])
+                for entry in field_entries:
+                    if isinstance(entry, dict) and entry.get("fieldId") == field_id:
+                        allowed_values = entry.get("allowedValues", [])
+                        return [
+                            FieldOption.from_api_response(item)
+                            for item in allowed_values
+                            if isinstance(item, dict)
+                        ]
+
+                total = meta.get("total", len(field_entries))
+                start_at += len(field_entries)
+                if start_at >= total or not field_entries:
+                    break
+
+            return []
 
         except ValueError:
             raise

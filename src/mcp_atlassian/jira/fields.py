@@ -229,9 +229,11 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
 
             required_fields = {}
             # Step 3: Parse the response and extract required fields
-            if isinstance(meta, dict) and "fields" in meta:
-                if isinstance(meta["fields"], list):
-                    for field_meta in meta["fields"]:
+            # The new createmeta endpoint returns paginated "values" array
+            if isinstance(meta, dict):
+                field_list = meta.get("values", meta.get("fields", []))
+                if isinstance(field_list, list):
+                    for field_meta in field_list:
                         if isinstance(field_meta, dict) and field_meta.get(
                             "required", False
                         ):
@@ -239,9 +241,7 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
                             if field_id:
                                 required_fields[field_id] = field_meta
                 else:
-                    logger.warning(
-                        "Unexpected format for 'fields' in createmeta response."
-                    )
+                    logger.warning("Unexpected format in createmeta response.")
 
             if not required_fields:
                 logger.warning(

@@ -217,9 +217,14 @@ class TestFieldsMixin:
         ]
         fields_mixin.get_project_issue_types = MagicMock(return_value=mock_issue_types)
 
-        # Mock the response for issue_createmeta_fieldtypes based on API docs
+        # Mock the response for issue_createmeta_fieldtypes
+        # Real API returns paginated "values" array
         mock_field_meta = {
-            "fields": [
+            "maxResults": 50,
+            "startAt": 0,
+            "total": 3,
+            "isLast": True,
+            "values": [
                 {
                     "required": True,
                     "schema": {"type": "string", "system": "summary"},
@@ -242,7 +247,7 @@ class TestFieldsMixin:
                     "name": "Epic Link",
                     "fieldId": "customfield_10010",
                 },
-            ]
+            ],
         }
         fields_mixin.jira.issue_createmeta_fieldtypes.return_value = mock_field_meta
 

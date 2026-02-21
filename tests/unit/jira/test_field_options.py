@@ -110,6 +110,20 @@ class TestFieldOptionModel:
                 False,
             ),
             (
+                "name_fallback",
+                {"id": "1", "name": "Highest"},
+                "1",
+                "Highest",
+                False,
+            ),
+            (
+                "value_over_name",
+                {"id": "1", "value": "Val", "name": "Name"},
+                "1",
+                "Val",
+                False,
+            ),
+            (
                 "empty_data",
                 {},
                 "",
@@ -351,25 +365,33 @@ class TestFieldOptionsMixin:
     # -- get_field_options (Server/DC) --------------------------------------
 
     def test_options_server_with_params(self, mixin):
+        """New createmeta endpoint: resolve issue type, extract allowedValues."""
         mixin.config.is_cloud = False
-        mixin.jira.get = MagicMock(
+        mixin.get_project_issue_types = MagicMock(
+            return_value=[{"id": "10001", "name": "Bug"}]
+        )
+        mixin.jira.issue_createmeta_fieldtypes = MagicMock(
             return_value={
-                "projects": [
+                "maxResults": 50,
+                "startAt": 0,
+                "total": 2,
+                "isLast": True,
+                "values": [
                     {
-                        "issuetypes": [
-                            {
-                                "fields": {
-                                    "customfield_10001": {
-                                        "allowedValues": [
-                                            {"id": "1", "value": "High"},
-                                            {"id": "2", "value": "Low"},
-                                        ]
-                                    }
-                                }
-                            }
-                        ]
-                    }
-                ]
+                        "fieldId": "summary",
+                        "required": True,
+                        "name": "Summary",
+                    },
+                    {
+                        "fieldId": "customfield_10001",
+                        "required": False,
+                        "name": "Priority",
+                        "allowedValues": [
+                            {"id": "1", "value": "High"},
+                            {"id": "2", "value": "Low"},
+                        ],
+                    },
+                ],
             }
         )
 
@@ -378,6 +400,9 @@ class TestFieldOptionsMixin:
         )
         assert len(result) == 2
         assert result[0].value == "High"
+        mixin.jira.issue_createmeta_fieldtypes.assert_called_once_with(
+            project="TEST", issue_type_id="10001", start=0, limit=50
+        )
 
     def test_options_server_missing_params(self, mixin):
         mixin.config.is_cloud = False
@@ -385,24 +410,23 @@ class TestFieldOptionsMixin:
             mixin.get_field_options("customfield_10001")
 
     def test_options_server_field_not_found(self, mixin):
+        """Field not in createmeta response → empty list."""
         mixin.config.is_cloud = False
-        mixin.jira.get = MagicMock(
+        mixin.get_project_issue_types = MagicMock(
+            return_value=[{"id": "10001", "name": "Bug"}]
+        )
+        mixin.jira.issue_createmeta_fieldtypes = MagicMock(
             return_value={
-                "projects": [
+                "maxResults": 50,
+                "startAt": 0,
+                "total": 1,
+                "isLast": True,
+                "values": [
                     {
-                        "issuetypes": [
-                            {
-                                "fields": {
-                                    "customfield_99999": {
-                                        "allowedValues": [
-                                            {"id": "1", "value": "X"},
-                                        ]
-                                    }
-                                }
-                            }
-                        ]
-                    }
-                ]
+                        "fieldId": "customfield_99999",
+                        "allowedValues": [{"id": "1", "value": "X"}],
+                    },
+                ],
             }
         )
 
@@ -410,3 +434,85 @@ class TestFieldOptionsMixin:
             "customfield_10001", project_key="TEST", issue_type="Bug"
         )
         assert result == []
+
+    def test_options_server_issue_type_not_found(self, mixin):
+        """Issue type name not in project → empty list."""
+        mixin.config.is_cloud = False
+        mixin.get_project_issue_types = MagicMock(
+            return_value=[{"id": "10001", "name": "Task"}]
+        )
+
+        result = mixin.get_field_options(
+            "customfield_10001", project_key="TEST", issue_type="Bug"
+        )
+        assert result == []
+
+    def test_options_server_pagination(self, mixin):
+        """Field on second page of createmeta results."""
+        mixin.config.is_cloud = False
+        mixin.get_project_issue_types = MagicMock(
+            return_value=[{"id": "10001", "name": "Bug"}]
+        )
+        mixin.jira.issue_createmeta_fieldtypes = MagicMock(
+            side_effect=[
+                # Page 1: field not here
+                {
+                    "maxResults": 2,
+                    "startAt": 0,
+                    "total": 3,
+                    "isLast": False,
+                    "values": [
+                        {"fieldId": "summary", "required": True},
+                        {"fieldId": "description", "required": False},
+                    ],
+                },
+                # Page 2: target field here
+                {
+                    "maxResults": 2,
+                    "startAt": 2,
+                    "total": 3,
+                    "isLast": True,
+                    "values": [
+                        {
+                            "fieldId": "customfield_10001",
+                            "allowedValues": [
+                                {"id": "1", "value": "Option A"},
+                            ],
+                        },
+                    ],
+                },
+            ]
+        )
+
+        result = mixin.get_field_options(
+            "customfield_10001", project_key="TEST", issue_type="Bug"
+        )
+        assert len(result) == 1
+        assert result[0].value == "Option A"
+
+    def test_options_server_case_insensitive_issue_type(self, mixin):
+        """Issue type name matching is case-insensitive."""
+        mixin.config.is_cloud = False
+        mixin.get_project_issue_types = MagicMock(
+            return_value=[{"id": "10001", "name": "Bug"}]
+        )
+        mixin.jira.issue_createmeta_fieldtypes = MagicMock(
+            return_value={
+                "maxResults": 50,
+                "startAt": 0,
+                "total": 1,
+                "isLast": True,
+                "values": [
+                    {
+                        "fieldId": "customfield_10001",
+                        "allowedValues": [{"id": "1", "value": "Yes"}],
+                    },
+                ],
+            }
+        )
+
+        result = mixin.get_field_options(
+            "customfield_10001", project_key="TEST", issue_type="bug"
+        )
+        assert len(result) == 1
+        assert result[0].value == "Yes"
