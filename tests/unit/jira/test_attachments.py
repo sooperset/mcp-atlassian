@@ -240,6 +240,7 @@ class TestAttachmentsMixin:
                 "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
                 side_effect=[mock_attachment1, mock_attachment2],
             ),
+            patch("os.getcwd", return_value="/tmp"),
         ):
             result = attachments_mixin.download_issue_attachments(
                 "TEST-123", "/tmp/attachments"
@@ -290,6 +291,7 @@ class TestAttachmentsMixin:
             ),
             patch("os.path.isabs") as mock_isabs,
             patch("os.path.abspath") as mock_abspath,
+            patch("os.getcwd", return_value="/absolute/path"),
         ):
             mock_isabs.return_value = False
             mock_abspath.return_value = "/absolute/path/attachments"
@@ -311,7 +313,10 @@ class TestAttachmentsMixin:
         mock_issue = {"fields": {"attachment": []}}
         attachments_mixin.jira.issue.return_value = mock_issue
 
-        with patch("pathlib.Path.mkdir") as mock_mkdir:
+        with (
+            patch("pathlib.Path.mkdir") as mock_mkdir,
+            patch("os.getcwd", return_value="/tmp"),
+        ):
             result = attachments_mixin.download_issue_attachments(
                 "TEST-123", "/tmp/attachments"
             )
@@ -329,9 +334,12 @@ class TestAttachmentsMixin:
         """Test download when issue cannot be retrieved."""
         attachments_mixin.jira.issue.return_value = None
 
-        with pytest.raises(
-            TypeError,
-            match="Unexpected return value type from `jira.issue`: <class 'NoneType'>",
+        with (
+            patch("os.getcwd", return_value="/tmp"),
+            pytest.raises(
+                TypeError,
+                match="Unexpected return value type from `jira.issue`: <class 'NoneType'>",
+            ),
         ):
             attachments_mixin.download_issue_attachments("TEST-123", "/tmp/attachments")
 
@@ -343,9 +351,10 @@ class TestAttachmentsMixin:
         mock_issue = {}  # Missing 'fields' key
         attachments_mixin.jira.issue.return_value = mock_issue
 
-        result = attachments_mixin.download_issue_attachments(
-            "TEST-123", "/tmp/attachments"
-        )
+        with patch("os.getcwd", return_value="/tmp"):
+            result = attachments_mixin.download_issue_attachments(
+                "TEST-123", "/tmp/attachments"
+            )
 
         # Assertions
         assert result["success"] is False
@@ -395,6 +404,7 @@ class TestAttachmentsMixin:
                 "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
                 side_effect=[mock_attachment1, mock_attachment2],
             ),
+            patch("os.getcwd", return_value="/tmp"),
         ):
             result = attachments_mixin.download_issue_attachments(
                 "TEST-123", "/tmp/attachments"
@@ -439,6 +449,7 @@ class TestAttachmentsMixin:
                 "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
                 return_value=mock_attachment,
             ),
+            patch("os.getcwd", return_value="/tmp"),
         ):
             result = attachments_mixin.download_issue_attachments(
                 "TEST-123", "/tmp/attachments"
