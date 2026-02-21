@@ -739,7 +739,7 @@ class ConfluenceV2Adapter:
         """
         try:
             # Use the Analytics API endpoint
-            url = f"{self.base_url}/wiki/rest/api/analytics/content/{page_id}/views"
+            url = f"{self.base_url}/rest/api/analytics/content/{page_id}/views"
 
             response = self.session.get(url)
             response.raise_for_status()
@@ -795,7 +795,7 @@ class ConfluenceV2Adapter:
             ValueError: If page not found or other errors
         """
         try:
-            url = f"{self.base_url}/wiki/api/v2/pages/{page_id}/attachments"
+            url = f"{self.base_url}/api/v2/pages/{page_id}/attachments"
             params: dict[str, Any] = {"start": start, "limit": limit}
 
             if filename:
@@ -847,7 +847,7 @@ class ConfluenceV2Adapter:
             ValueError: If attachment not found or other errors
         """
         try:
-            url = f"{self.base_url}/wiki/api/v2/attachments/{attachment_id}"
+            url = f"{self.base_url}/api/v2/attachments/{attachment_id}"
 
             response = self.session.get(url)
             response.raise_for_status()
@@ -883,7 +883,7 @@ class ConfluenceV2Adapter:
             ValueError: If attachment not found or deletion fails
         """
         try:
-            url = f"{self.base_url}/wiki/api/v2/attachments/{attachment_id}"
+            url = f"{self.base_url}/api/v2/attachments/{attachment_id}"
 
             response = self.session.delete(url)
             response.raise_for_status()
