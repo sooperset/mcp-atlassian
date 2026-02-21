@@ -35,6 +35,58 @@ from .jira import jira_mcp
 logger = logging.getLogger("mcp-atlassian.server.main")
 
 
+def _sanitize_schema_for_compatibility(tool: MCPTool) -> MCPTool:
+    """Sanitize tool inputSchema for AI platform compatibility.
+
+    Collapses simple nullable ``anyOf`` unions that Pydantic v2 generates
+    for ``T | None`` into a plain ``{"type": T}`` property.  This fixes
+    Vertex AI / Google ADK rejecting ``anyOf`` alongside ``default`` or
+    ``description`` fields (issues #640, #733).
+
+    The transform is intentionally conservative — it only flattens unions
+    of exactly ``[{"type": <primitive>}, {"type": "null"}]`` so that
+    complex / nested schemas are left untouched.
+
+    Note: Only top-level ``properties`` are processed.  Nested schemas
+    (e.g. ``items`` of arrays or ``properties`` of sub-objects) are not
+    walked.  This is sufficient for current tool definitions; extend if
+    nested ``anyOf`` patterns appear in the future.
+
+    Args:
+        tool: The MCP tool whose inputSchema will be sanitized in-place.
+
+    Returns:
+        The same MCPTool instance (mutated) for chaining convenience.
+    """
+    schema = tool.inputSchema
+    if not schema or not isinstance(schema, dict):
+        return tool
+
+    properties = schema.get("properties")
+    if not properties or not isinstance(properties, dict):
+        return tool
+
+    for _prop_name, prop_def in properties.items():
+        if not isinstance(prop_def, dict):
+            continue
+
+        any_of = prop_def.get("anyOf")
+        if not any_of or not isinstance(any_of, list):
+            continue
+
+        # Only flatten simple nullable unions: [{"type": T}, {"type": "null"}]
+        non_null = [v for v in any_of if v != {"type": "null"}]
+        null_present = any(v == {"type": "null"} for v in any_of)
+
+        if null_present and len(non_null) == 1 and "type" in non_null[0]:
+            # Collapse: pull the real type up, drop anyOf
+            resolved_type = non_null[0]["type"]
+            prop_def.pop("anyOf")
+            prop_def["type"] = resolved_type
+
+    return tool
+
+
 async def health_check(request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
@@ -226,7 +278,9 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             if not service_configured_and_available:
                 continue
 
-            filtered_tools.append(tool_obj.to_mcp_tool(name=registered_name))
+            mcp_tool = tool_obj.to_mcp_tool(name=registered_name)
+            _sanitize_schema_for_compatibility(mcp_tool)
+            filtered_tools.append(mcp_tool)
 
         logger.debug(
             f"_list_tools_mcp: Total tools after filtering: {len(filtered_tools)}"

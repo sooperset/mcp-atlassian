@@ -487,7 +487,7 @@ async def test_create_issue(jira_client, mock_jira_fetcher):
             "issue_type": "Task",
             "description": "This is a new task",
             "components": "Frontend,API",
-            "additional_fields": {"priority": {"name": "Medium"}},
+            "additional_fields": '{"priority": {"name": "Medium"}}',
         },
     )
     assert hasattr(response, "content")
