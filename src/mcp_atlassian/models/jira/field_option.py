@@ -85,7 +85,7 @@ class FieldOption(ApiModel):
 
         return cls(
             id=str(data.get("id", data.get("optionId", ""))),
-            value=data.get("value", ""),
+            value=data.get("value", "") or data.get("name", ""),
             disabled=data.get("disabled", False),
             child_options=children,
         )
