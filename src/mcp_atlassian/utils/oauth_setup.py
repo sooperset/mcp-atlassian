@@ -338,7 +338,7 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
                             "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
                             "JIRA_URL": "https://your-company.atlassian.net",
                             "ATLASSIAN_OAUTH_CLIENT_ID": oauth_config.client_id,
-                            "ATLASSIAN_OAUTH_CLIENT_SECRET": oauth_config.client_secret,
+                            "ATLASSIAN_OAUTH_CLIENT_SECRET": "<redacted - set via environment variable>",
                             "ATLASSIAN_OAUTH_REDIRECT_URI": oauth_config.redirect_uri,
                             "ATLASSIAN_OAUTH_SCOPE": oauth_config.scope,
                             "ATLASSIAN_OAUTH_CLOUD_ID": oauth_config.cloud_id,

@@ -38,11 +38,13 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
                 target_path = os.path.abspath(target_path)
 
             # Guard against path traversal
-            base_dir = os.path.abspath(os.getcwd())
-            if not target_path.startswith(base_dir):
+            base_dir = Path(os.getcwd()).resolve()
+            resolved = Path(target_path).resolve()
+            if not resolved.is_relative_to(base_dir):
                 raise ValueError(
-                    f"Path traversal detected: {target_path} is outside {base_dir}"
+                    f"Path traversal detected: {resolved} is outside {base_dir}"
                 )
+            target_path = str(resolved)
 
             logger.info(f"Downloading attachment from {url} to {target_path}")
 
@@ -213,6 +215,15 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
         # Convert to absolute path if relative
         if not os.path.isabs(target_dir):
             target_dir = os.path.abspath(target_dir)
+
+        # Guard against path traversal
+        base_dir = Path(os.getcwd()).resolve()
+        resolved_dir = Path(target_dir).resolve()
+        if not resolved_dir.is_relative_to(base_dir):
+            raise ValueError(
+                f"Path traversal detected: {resolved_dir} is outside {base_dir}"
+            )
+        target_dir = str(resolved_dir)
 
         logger.info(
             f"Downloading attachments for {issue_key} to directory: {target_dir}"
