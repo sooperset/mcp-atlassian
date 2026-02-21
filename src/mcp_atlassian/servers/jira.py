@@ -826,11 +826,20 @@ async def get_sprint_issues(
     tags={"jira", "read"},
     annotations={"title": "Get Link Types", "readOnlyHint": True},
 )
-async def get_link_types(ctx: Context) -> str:
+async def get_link_types(
+    ctx: Context,
+    name_filter: Annotated[
+        str | None,
+        Field(
+            description="(Optional) Filter link types by name substring (case-insensitive)",
+        ),
+    ] = None,
+) -> str:
     """Get all available issue link types.
 
     Args:
         ctx: The FastMCP context.
+        name_filter: Optional substring to filter link types by name.
 
     Returns:
         JSON string representing a list of issue link type objects.
@@ -838,6 +847,13 @@ async def get_link_types(ctx: Context) -> str:
     jira = await get_jira_fetcher(ctx)
     link_types = jira.get_issue_link_types()
     formatted_link_types = [link_type.to_simplified_dict() for link_type in link_types]
+    if name_filter:
+        name_lower = name_filter.lower()
+        formatted_link_types = [
+            lt
+            for lt in formatted_link_types
+            if name_lower in lt.get("name", "").lower()
+        ]
     return json.dumps(formatted_link_types, indent=2, ensure_ascii=False)
 
 
@@ -889,15 +905,15 @@ async def create_issue(
         ),
     ] = None,
     additional_fields: Annotated[
-        dict[str, Any] | str | None,
+        str | None,
         Field(
             description=(
-                "(Optional) Dictionary of additional fields to set. Examples:\n"
-                "- Set priority: {'priority': {'name': 'High'}}\n"
-                "- Add labels: {'labels': ['frontend', 'urgent']}\n"
-                "- Link to parent (for any issue type): {'parent': 'PROJ-123'}\n"
-                "- Set Fix Version/s: {'fixVersions': [{'id': '10020'}]}\n"
-                "- Custom fields: {'customfield_10010': 'value'}"
+                "(Optional) JSON string of additional fields to set. Examples:\n"
+                '- Set priority: {"priority": {"name": "High"}}\n'
+                '- Add labels: {"labels": ["frontend", "urgent"]}\n'
+                '- Link to parent (for any issue type): {"parent": "PROJ-123"}\n'
+                '- Set Fix Version/s: {"fixVersions": [{"id": "10020"}]}\n'
+                '- Custom fields: {"customfield_10010": "value"}'
             ),
             default=None,
         ),
@@ -1027,15 +1043,15 @@ async def batch_create_issues(
 async def batch_get_changelogs(
     ctx: Context,
     issue_ids_or_keys: Annotated[
-        list[str],
+        str,
         Field(
-            description="List of Jira issue IDs or keys, e.g. ['PROJ-123', 'PROJ-124']"
+            description="Comma-separated list of Jira issue IDs or keys (e.g. 'PROJ-123,PROJ-124')"
         ),
     ],
     fields: Annotated[
-        list[str] | None,
+        str | None,
         Field(
-            description="(Optional) Filter the changelogs by fields, e.g. ['status', 'assignee']. Default to None for all fields.",
+            description="(Optional) Comma-separated list of fields to filter changelogs by (e.g. 'status,assignee'). Default to None for all fields.",
             default=None,
         ),
     ] = None,
@@ -1074,9 +1090,15 @@ async def batch_get_changelogs(
             "Batch get issue changelogs is only available on Jira Cloud."
         )
 
+    # Parse CSV strings into lists
+    keys_list = [k.strip() for k in issue_ids_or_keys.split(",") if k.strip()]
+    fields_list: list[str] | None = None
+    if fields is not None:
+        fields_list = [f.strip() for f in fields.split(",") if f.strip()]
+
     # Call the underlying method
     issues_with_changelogs = jira.batch_get_changelogs(
-        issue_ids_or_keys=issue_ids_or_keys, fields=fields
+        issue_ids_or_keys=keys_list, fields=fields_list
     )
 
     # Format the response
@@ -1120,10 +1142,10 @@ async def update_issue(
         ),
     ],
     additional_fields: Annotated[
-        dict[str, Any] | str | None,
+        str | None,
         Field(
             description=(
-                "(Optional) Dictionary or JSON string of additional fields to update. "
+                "(Optional) JSON string of additional fields to update. "
                 "Use this for custom fields or more complex updates."
             ),
             default=None,
@@ -1274,9 +1296,9 @@ async def add_comment(
     ],
     comment: Annotated[str, Field(description="Comment text in Markdown format")],
     visibility: Annotated[
-        dict[str, str] | None,
+        str | None,
         Field(
-            description="""(Optional) Comment visibility (e.g. {"type":"group","value":"jira-users"})"""
+            description='(Optional) Comment visibility as JSON string (e.g. \'{"type":"group","value":"jira-users"}\')'
         ),
     ] = None,
 ) -> str:
@@ -1286,7 +1308,7 @@ async def add_comment(
         ctx: The FastMCP context.
         issue_key: Jira issue key.
         comment: Comment text in Markdown.
-        visibility: (Optional) Comment visibility (e.g. {"type":"group","value":"jira-users"}).
+        visibility: (Optional) Comment visibility as JSON string.
 
     Returns:
         JSON string representing the added comment object.
@@ -1295,8 +1317,22 @@ async def add_comment(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    # add_comment returns dict
-    result = jira.add_comment(issue_key, comment, visibility)
+    visibility_dict: dict[str, str] | None = None
+    if visibility is not None:
+        try:
+            parsed = json.loads(visibility)
+            if not isinstance(parsed, dict):
+                raise ValueError(
+                    "visibility must be a valid JSON object, e.g. "
+                    '{"type":"group","value":"jira-users"}'
+                )
+            visibility_dict = parsed
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                "visibility must be a valid JSON object, e.g. "
+                f'{{"type":"group","value":"jira-users"}}; got error: {e}'
+            ) from e
+    result = jira.add_comment(issue_key, comment, visibility_dict)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
@@ -1319,9 +1355,9 @@ async def edit_comment(
         str, Field(description="Updated comment text in Markdown format")
     ],
     visibility: Annotated[
-        dict[str, str] | None,
+        str | None,
         Field(
-            description="""(Optional) Comment visibility (e.g. {"type":"group","value":"jira-users"})"""
+            description='(Optional) Comment visibility as JSON string (e.g. \'{"type":"group","value":"jira-users"}\')'
         ),
     ] = None,
 ) -> str:
@@ -1332,7 +1368,7 @@ async def edit_comment(
         issue_key: Jira issue key.
         comment_id: The ID of the comment to edit.
         comment: Updated comment text in Markdown.
-        visibility: (Optional) Comment visibility (e.g. {"type":"group","value":"jira-users"}).
+        visibility: (Optional) Comment visibility as JSON string.
 
     Returns:
         JSON string representing the updated comment object.
@@ -1341,8 +1377,22 @@ async def edit_comment(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    # edit_comment returns dict
-    result = jira.edit_comment(issue_key, comment_id, comment, visibility)
+    visibility_dict: dict[str, str] | None = None
+    if visibility is not None:
+        try:
+            parsed = json.loads(visibility)
+            if not isinstance(parsed, dict):
+                raise ValueError(
+                    "visibility must be a valid JSON object, e.g. "
+                    '{"type":"group","value":"jira-users"}'
+                )
+            visibility_dict = parsed
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                "visibility must be a valid JSON object, e.g. "
+                f'{{"type":"group","value":"jira-users"}}; got error: {e}'
+            ) from e
+    result = jira.edit_comment(issue_key, comment_id, comment, visibility_dict)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
@@ -1497,9 +1547,12 @@ async def create_issue_link(
         str | None, Field(description="(Optional) Comment to add to the link")
     ] = None,
     comment_visibility: Annotated[
-        dict[str, str] | None,
+        str | None,
         Field(
-            description="(Optional) Visibility settings for the comment (e.g., {'type': 'group', 'value': 'jira-users'})",
+            description=(
+                "(Optional) Visibility settings for the comment as JSON string "
+                '(e.g. \'{"type":"group","value":"jira-users"}\')'
+            ),
             default=None,
         ),
     ] = None,
@@ -1512,7 +1565,7 @@ async def create_issue_link(
         inward_issue_key: The key of the source issue.
         outward_issue_key: The key of the target issue.
         comment: Optional comment text.
-        comment_visibility: Optional dictionary for comment visibility.
+        comment_visibility: Optional JSON string for comment visibility.
 
     Returns:
         JSON string indicating success or failure.
@@ -1526,6 +1579,23 @@ async def create_issue_link(
             "link_type, inward_issue_key, and outward_issue_key are required."
         )
 
+    # Parse comment_visibility from JSON string
+    visibility_dict: dict[str, str] | None = None
+    if comment_visibility is not None:
+        try:
+            parsed = json.loads(comment_visibility)
+            if not isinstance(parsed, dict):
+                raise ValueError(
+                    "comment_visibility must be a valid JSON object, e.g. "
+                    '{"type":"group","value":"jira-users"}'
+                )
+            visibility_dict = parsed
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                "comment_visibility must be a valid JSON object, e.g. "
+                f'{{"type":"group","value":"jira-users"}}; got error: {e}'
+            ) from e
+
     link_data = {
         "type": {"name": link_type},
         "inwardIssue": {"key": inward_issue_key},
@@ -1533,10 +1603,10 @@ async def create_issue_link(
     }
 
     if comment:
-        comment_obj = {"body": comment}
-        if comment_visibility and isinstance(comment_visibility, dict):
-            if "type" in comment_visibility and "value" in comment_visibility:
-                comment_obj["visibility"] = comment_visibility
+        comment_obj: dict[str, Any] = {"body": comment}
+        if visibility_dict:
+            if "type" in visibility_dict and "value" in visibility_dict:
+                comment_obj["visibility"] = visibility_dict
             else:
                 logger.warning("Invalid comment_visibility dictionary structure.")
         link_data["comment"] = comment_obj
@@ -1686,12 +1756,12 @@ async def transition_issue(
         ),
     ],
     fields: Annotated[
-        dict[str, Any] | None,
+        str | None,
         Field(
             description=(
-                "(Optional) Dictionary of fields to update during the transition. "
+                "(Optional) JSON string of fields to update during the transition. "
                 "Some transitions require specific fields to be set (e.g., resolution). "
-                "Example: {'resolution': {'name': 'Fixed'}}"
+                'Example: \'{"resolution": {"name": "Fixed"}}\''
             ),
             default=None,
         ),
@@ -1712,7 +1782,7 @@ async def transition_issue(
         ctx: The FastMCP context.
         issue_key: Jira issue key.
         transition_id: ID of the transition.
-        fields: Optional dictionary of fields to update during transition.
+        fields: Optional JSON string of fields to update during transition.
         comment: Optional comment for the transition in Markdown format.
 
     Returns:
@@ -1725,10 +1795,8 @@ async def transition_issue(
     if not issue_key or not transition_id:
         raise ValueError("issue_key and transition_id are required.")
 
-    # Use fields directly as dict
-    update_fields = fields or {}
-    if not isinstance(update_fields, dict):
-        raise ValueError("fields must be a dictionary.")
+    # Parse fields from JSON string
+    update_fields = _parse_additional_fields(fields)
 
     issue = jira.transition_issue(
         issue_key=issue_key,
@@ -2542,8 +2610,10 @@ async def get_issue_development_info(
 async def get_issues_development_info(
     ctx: Context,
     issue_keys: Annotated[
-        list[str],
-        Field(description="List of Jira issue keys (e.g., ['PROJ-123', 'PROJ-456'])"),
+        str,
+        Field(
+            description="Comma-separated list of Jira issue keys (e.g., 'PROJ-123,PROJ-456')"
+        ),
     ],
     application_type: Annotated[
         str | None,
@@ -2580,9 +2650,11 @@ async def get_issues_development_info(
         JSON string with list of development information for each issue.
     """
     jira = await get_jira_fetcher(ctx)
+    # Parse CSV string into list
+    keys_list = [k.strip() for k in issue_keys.split(",") if k.strip()]
     try:
         results = jira.get_issues_development_info(
-            issue_keys=issue_keys,
+            issue_keys=keys_list,
             application_type=application_type,
             data_type=data_type,
         )

@@ -1089,11 +1089,11 @@ async def upload_attachments(
         ),
     ],
     file_paths: Annotated[
-        list[str],
+        str,
         Field(
             description=(
-                "List of file paths to upload. Can be absolute or relative paths. "
-                "Examples: ['./file1.pdf', './file2.png'], ['C:\\\\docs\\\\report.docx', 'D:\\\\image.jpg']. "
+                "Comma-separated list of file paths to upload. Can be absolute or relative paths. "
+                "Examples: './file1.pdf,./file2.png' or 'C:\\docs\\report.docx,D:\\image.jpg'. "
                 "All files uploaded with same comment/minor_edit settings."
             )
         ),
@@ -1141,9 +1141,15 @@ async def upload_attachments(
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
+    # Parse file_paths: accept CSV string or list for backward compat
+    if isinstance(file_paths, str):
+        paths_list = [p.strip() for p in file_paths.split(",") if p.strip()]
+    else:
+        paths_list = list(file_paths)
+
     results = confluence_fetcher.upload_attachments(
         content_id=content_id,
-        file_paths=file_paths,
+        file_paths=paths_list,
         comment=comment,
         minor_edit=minor_edit,
     )
