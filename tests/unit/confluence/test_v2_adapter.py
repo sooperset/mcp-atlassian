@@ -135,3 +135,50 @@ class TestConfluenceV2Adapter:
 
         # Verify we still get a result
         assert result["id"] == "123456"
+
+    @pytest.mark.parametrize(
+        "method,call_kwargs,expected_path",
+        [
+            (
+                "get_page_views",
+                {"page_id": "123"},
+                "/rest/api/analytics/content/123/views",
+            ),
+            (
+                "get_page_attachments",
+                {"page_id": "123"},
+                "/api/v2/pages/123/attachments",
+            ),
+            (
+                "get_attachment_by_id",
+                {"attachment_id": "att-1"},
+                "/api/v2/attachments/att-1",
+            ),
+            (
+                "delete_attachment",
+                {"attachment_id": "att-1"},
+                "/api/v2/attachments/att-1",
+            ),
+        ],
+        ids=["analytics", "page_attachments", "get_attachment", "delete_attachment"],
+    )
+    def test_no_double_wiki_prefix(
+        self, v2_adapter, mock_session, method, call_kwargs, expected_path
+    ):
+        """Regression: URLs must not duplicate /wiki (issue #962)."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"count": 0, "results": []}
+        mock_session.get.return_value = mock_response
+        mock_session.delete.return_value = mock_response
+
+        getattr(v2_adapter, method)(**call_kwargs)
+
+        # Grab the URL from whichever HTTP method was called
+        if method == "delete_attachment":
+            url = mock_session.delete.call_args[0][0]
+        else:
+            url = mock_session.get.call_args[0][0]
+
+        assert "/wiki/wiki/" not in url, f"Double /wiki in URL: {url}"
+        assert url.endswith(expected_path), f"Expected {expected_path}, got {url}"

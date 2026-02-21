@@ -130,7 +130,7 @@ class AnalyticsMixin:
         Raises:
             HTTPError: If the API request fails
         """
-        url = f"{self.confluence.url}/wiki/rest/api/analytics/content/{page_id}/views"
+        url = f"{self.confluence.url}/rest/api/analytics/content/{page_id}/views"
         response = self.confluence._session.get(url)
         response.raise_for_status()
         return response.json()
