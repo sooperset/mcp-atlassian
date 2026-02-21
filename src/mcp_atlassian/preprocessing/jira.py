@@ -236,7 +236,7 @@ class JiraPreprocessor(BasePreprocessor):
         # Inline code
         output = re.sub(r"\{\{([^}]+)\}\}", r"`\1`", output)
 
-        # Citation (use non-backtracking pattern to avoid ReDoS on unmatched ??)
+        # Citation (non-overlapping alternation to avoid catastrophic backtracking)
         output = re.sub(r"\?\?([^?]+(?:\?[^?]+)*)\?\?", r"<cite>\1</cite>", output)
 
         # Inserted text
