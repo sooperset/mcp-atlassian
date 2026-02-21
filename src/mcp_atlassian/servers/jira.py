@@ -31,6 +31,39 @@ jira_mcp = FastMCP(
 )
 
 
+def _parse_visibility(
+    visibility: str | None,
+    field_name: str = "visibility",
+) -> dict[str, str] | None:
+    """Parse a visibility JSON string into a dict.
+
+    Args:
+        visibility: JSON string like '{"type":"group","value":"jira-users"}', or None.
+        field_name: Parameter name for error messages.
+
+    Returns:
+        Parsed dict or None.
+
+    Raises:
+        ValueError: If the input is not valid JSON or not a dict.
+    """
+    if visibility is None:
+        return None
+    try:
+        parsed = json.loads(visibility)
+        if not isinstance(parsed, dict):
+            raise ValueError(
+                f"{field_name} must be a valid JSON object, e.g. "
+                '{"type":"group","value":"jira-users"}'
+            )
+        return parsed
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"{field_name} must be a valid JSON object, e.g. "
+            f'{{"type":"group","value":"jira-users"}}; got error: {e}'
+        ) from e
+
+
 def _parse_additional_fields(
     additional_fields: dict[str, Any] | str | None,
 ) -> dict[str, Any]:
@@ -929,7 +962,7 @@ async def create_issue(
         assignee: Assignee's user identifier (string): Email, display name, or account ID (e.g., 'user@example.com', 'John Doe', 'accountid:...').
         description: Issue description in Markdown format.
         components: Comma-separated list of component names.
-        additional_fields: Dictionary or JSON string of additional fields.
+        additional_fields: JSON string of additional fields.
 
     Returns:
         JSON string representing the created issue object.
@@ -1178,7 +1211,7 @@ async def update_issue(
         ctx: The FastMCP context.
         issue_key: Jira issue key.
         fields: Dictionary of fields to update. Text fields like 'description' should use Markdown format.
-        additional_fields: Optional dictionary or JSON string of additional fields.
+        additional_fields: Optional JSON string of additional fields.
         components: Comma-separated list of component names.
         attachments: Optional JSON array string or comma-separated list of file paths.
 
@@ -1317,21 +1350,7 @@ async def add_comment(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    visibility_dict: dict[str, str] | None = None
-    if visibility is not None:
-        try:
-            parsed = json.loads(visibility)
-            if not isinstance(parsed, dict):
-                raise ValueError(
-                    "visibility must be a valid JSON object, e.g. "
-                    '{"type":"group","value":"jira-users"}'
-                )
-            visibility_dict = parsed
-        except json.JSONDecodeError as e:
-            raise ValueError(
-                "visibility must be a valid JSON object, e.g. "
-                f'{{"type":"group","value":"jira-users"}}; got error: {e}'
-            ) from e
+    visibility_dict = _parse_visibility(visibility)
     result = jira.add_comment(issue_key, comment, visibility_dict)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
@@ -1377,21 +1396,7 @@ async def edit_comment(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    visibility_dict: dict[str, str] | None = None
-    if visibility is not None:
-        try:
-            parsed = json.loads(visibility)
-            if not isinstance(parsed, dict):
-                raise ValueError(
-                    "visibility must be a valid JSON object, e.g. "
-                    '{"type":"group","value":"jira-users"}'
-                )
-            visibility_dict = parsed
-        except json.JSONDecodeError as e:
-            raise ValueError(
-                "visibility must be a valid JSON object, e.g. "
-                f'{{"type":"group","value":"jira-users"}}; got error: {e}'
-            ) from e
+    visibility_dict = _parse_visibility(visibility)
     result = jira.edit_comment(issue_key, comment_id, comment, visibility_dict)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
@@ -1579,22 +1584,7 @@ async def create_issue_link(
             "link_type, inward_issue_key, and outward_issue_key are required."
         )
 
-    # Parse comment_visibility from JSON string
-    visibility_dict: dict[str, str] | None = None
-    if comment_visibility is not None:
-        try:
-            parsed = json.loads(comment_visibility)
-            if not isinstance(parsed, dict):
-                raise ValueError(
-                    "comment_visibility must be a valid JSON object, e.g. "
-                    '{"type":"group","value":"jira-users"}'
-                )
-            visibility_dict = parsed
-        except json.JSONDecodeError as e:
-            raise ValueError(
-                "comment_visibility must be a valid JSON object, e.g. "
-                f'{{"type":"group","value":"jira-users"}}; got error: {e}'
-            ) from e
+    visibility_dict = _parse_visibility(comment_visibility, "comment_visibility")
 
     link_data = {
         "type": {"name": link_type},

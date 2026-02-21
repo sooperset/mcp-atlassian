@@ -1141,11 +1141,7 @@ async def upload_attachments(
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
-    # Parse file_paths: accept CSV string or list for backward compat
-    if isinstance(file_paths, str):
-        paths_list = [p.strip() for p in file_paths.split(",") if p.strip()]
-    else:
-        paths_list = list(file_paths)
+    paths_list = [p.strip() for p in file_paths.split(",") if p.strip()]
 
     results = confluence_fetcher.upload_attachments(
         content_id=content_id,

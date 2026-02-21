@@ -223,7 +223,12 @@ class TestSanitizeSchemaForCompatibility:
         assert prop == {"type": "string", "description": "required name"}
 
     def test_preserves_complex_anyof(self) -> None:
-        """Complex ``anyOf`` with multiple non-null types is NOT flattened."""
+        """Complex ``anyOf`` with multiple non-null types is NOT flattened.
+
+        This is a sanitizer unit test only.  No production tool should use
+        multi-type unions — ``test_no_anyof_in_schema`` will catch any that
+        slip through, which is the intended safety net.
+        """
         tool = self._make_tool(
             {
                 "data": {

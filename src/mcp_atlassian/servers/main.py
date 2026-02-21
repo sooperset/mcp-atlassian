@@ -47,6 +47,11 @@ def _sanitize_schema_for_compatibility(tool: MCPTool) -> MCPTool:
     of exactly ``[{"type": <primitive>}, {"type": "null"}]`` so that
     complex / nested schemas are left untouched.
 
+    Note: Only top-level ``properties`` are processed.  Nested schemas
+    (e.g. ``items`` of arrays or ``properties`` of sub-objects) are not
+    walked.  This is sufficient for current tool definitions; extend if
+    nested ``anyOf`` patterns appear in the future.
+
     Args:
         tool: The MCP tool whose inputSchema will be sanitized in-place.
 
