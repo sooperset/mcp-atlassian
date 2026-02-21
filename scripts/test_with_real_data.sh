@@ -80,6 +80,7 @@ fi
 
 # Function to run model tests
 run_model_tests() {
+    export USE_REAL_DATA=true
     echo "Running Pydantic model tests with real data..."
     echo ""
 

@@ -30,9 +30,9 @@ elif 'token' in data:
 else:
     print('ERROR: ' + json.dumps(data), file=sys.stderr)
     sys.exit(1)
-" 2>/dev/null)
+" 2>/dev/null) || true
 
-if [ -n "$JIRA_PAT" ] && [ "$JIRA_PAT" != "ERROR"* ]; then
+if [ -n "$JIRA_PAT" ]; then
   echo "Jira PAT created successfully."
   echo "  Token: ${JIRA_PAT}"
 else
@@ -59,9 +59,9 @@ elif 'token' in data:
 else:
     print('ERROR: ' + json.dumps(data), file=sys.stderr)
     sys.exit(1)
-" 2>/dev/null)
+" 2>/dev/null) || true
 
-if [ -n "$CONFLUENCE_PAT" ] && [ "$CONFLUENCE_PAT" != "ERROR"* ]; then
+if [ -n "$CONFLUENCE_PAT" ]; then
   echo "Confluence PAT created successfully."
   echo "  Token: ${CONFLUENCE_PAT}"
 else
