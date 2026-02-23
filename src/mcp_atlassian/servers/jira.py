@@ -945,6 +945,7 @@ async def create_issue(
                 '- Set priority: {"priority": {"name": "High"}}\n'
                 '- Add labels: {"labels": ["frontend", "urgent"]}\n'
                 '- Link to parent (for any issue type): {"parent": "PROJ-123"}\n'
+                '- Link to epic: {"epicKey": "EPIC-123"} or {"epic_link": "EPIC-123"}\n'
                 '- Set Fix Version/s: {"fixVersions": [{"id": "10020"}]}\n'
                 '- Custom fields: {"customfield_10010": "value"}'
             ),
@@ -1179,7 +1180,8 @@ async def update_issue(
         Field(
             description=(
                 "(Optional) JSON string of additional fields to update. "
-                "Use this for custom fields or more complex updates."
+                "Use this for custom fields or more complex updates. "
+                'Link to epic: {"epicKey": "EPIC-123"} or {"epic_link": "EPIC-123"}.'
             ),
             default=None,
         ),
