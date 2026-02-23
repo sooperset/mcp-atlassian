@@ -98,6 +98,31 @@ def mock_jira_fetcher():
 
     mock_fetcher.search_issues.side_effect = mock_search_issues
 
+    # Configure get_field_options
+    def mock_get_field_options(
+        field_id,
+        context_id=None,
+        project_key=None,
+        issue_type=None,
+    ):
+        if not field_id.startswith("customfield_"):
+            raise ValueError("Field ID must be a custom field")
+
+        option_payloads = [
+            {"id": "10001", "value": "Backend"},
+            {"id": "10002", "value": "Frontend"},
+            {"id": "10003", "value": "Product Ops"},
+            {"id": "10004", "value": "Platform"},
+        ]
+        options = []
+        for payload in option_payloads:
+            option = MagicMock()
+            option.to_simplified_dict.return_value = payload
+            options.append(option)
+        return options
+
+    mock_fetcher.get_field_options.side_effect = mock_get_field_options
+
     # Configure create_issue
     def mock_create_issue(
         project_key,
@@ -299,6 +324,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         get_agile_boards,
         get_all_projects,
         get_board_issues,
+        get_field_options,
         get_issue,
         get_link_types,
         get_project_issues,
@@ -321,6 +347,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(get_issue)
     jira_sub_mcp.add_tool(search)
     jira_sub_mcp.add_tool(search_fields)
+    jira_sub_mcp.add_tool(get_field_options)
     jira_sub_mcp.add_tool(get_project_issues)
     jira_sub_mcp.add_tool(get_project_versions)
     jira_sub_mcp.add_tool(get_all_projects)
@@ -474,6 +501,84 @@ async def test_search(jira_client, mock_jira_fetcher):
         projects_filter=None,
         expand=None,
     )
+
+
+@pytest.mark.anyio
+async def test_get_field_options_default_shape(jira_client, mock_jira_fetcher):
+    """Ensure get_field_options keeps backward-compatible list response by default."""
+    response = await jira_client.call_tool(
+        "jira_get_field_options",
+        {"field_id": "customfield_10001"},
+    )
+
+    assert hasattr(response, "content")
+    assert len(response.content) == 1
+    content = json.loads(response.content[0].text)
+
+    assert isinstance(content, list)
+    assert len(content) == 4
+    assert content[0]["value"] == "Backend"
+    assert content[2]["value"] == "Product Ops"
+
+    mock_jira_fetcher.get_field_options.assert_called_with(
+        field_id="customfield_10001",
+        context_id=None,
+        project_key=None,
+        issue_type=None,
+    )
+
+
+@pytest.mark.anyio
+async def test_get_field_options_contains_filter(jira_client):
+    """Ensure contains applies case-insensitive server-side filtering."""
+    response = await jira_client.call_tool(
+        "jira_get_field_options",
+        {
+            "field_id": "customfield_10001",
+            "contains": "PROD",
+        },
+    )
+
+    content = json.loads(response.content[0].text)
+    assert isinstance(content, list)
+    assert len(content) == 1
+    assert content[0]["value"] == "Product Ops"
+
+
+@pytest.mark.anyio
+async def test_get_field_options_return_limit(jira_client):
+    """Ensure return_limit caps the number of returned options."""
+    response = await jira_client.call_tool(
+        "jira_get_field_options",
+        {
+            "field_id": "customfield_10001",
+            "return_limit": 2,
+        },
+    )
+
+    content = json.loads(response.content[0].text)
+    assert isinstance(content, list)
+    assert len(content) == 2
+    assert content[0]["value"] == "Backend"
+    assert content[1]["value"] == "Frontend"
+
+
+@pytest.mark.anyio
+async def test_get_field_options_values_only(jira_client):
+    """Ensure values_only returns only value strings."""
+    response = await jira_client.call_tool(
+        "jira_get_field_options",
+        {
+            "field_id": "customfield_10001",
+            "contains": "t",
+            "return_limit": 2,
+            "values_only": True,
+        },
+    )
+
+    content = json.loads(response.content[0].text)
+    assert isinstance(content, list)
+    assert content == ["Frontend", "Product Ops"]
 
 
 @pytest.mark.anyio

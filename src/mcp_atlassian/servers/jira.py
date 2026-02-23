@@ -31,6 +31,70 @@ jira_mcp = FastMCP(
 )
 
 
+def _json_dumps_compact(data: Any) -> str:
+    """Serialize JSON without pretty-print whitespace to reduce payload size.
+
+    Args:
+        data: Data to serialize.
+
+    Returns:
+        Compact JSON string.
+    """
+    return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+
+
+def _to_values_only_payload(options: list[dict[str, Any]]) -> list[str]:
+    """Convert option objects to a compact values-only list.
+
+    Args:
+        options: List of option dictionaries with 'value' keys.
+
+    Returns:
+        List of option values only.
+    """
+    values: list[str] = []
+    for option in options:
+        if isinstance(option, dict):
+            value = option.get("value")
+            if value is not None:
+                values.append(str(value))
+    return values
+
+
+def _apply_option_filters(
+    options: list[dict[str, Any]],
+    contains: str | None = None,
+    return_limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Filter options by substring and optional result cap.
+
+    Args:
+        options: List of option dictionaries.
+        contains: Optional case-insensitive substring filter.
+        return_limit: Optional cap on number of results.
+
+    Returns:
+        Filtered list of option dictionaries.
+    """
+    filtered_options = options
+
+    # Apply substring filter
+    if contains:
+        needle = contains.casefold()
+        filtered_options = [
+            option
+            for option in filtered_options
+            if isinstance(option, dict)
+            and needle in str(option.get("value", "")).casefold()
+        ]
+
+    # Apply result limit
+    if return_limit is not None and return_limit > 0:
+        filtered_options = filtered_options[:return_limit]
+
+    return filtered_options
+
+
 def _parse_visibility(
     visibility: str | None,
     field_name: str = "visibility",
@@ -410,6 +474,33 @@ async def get_field_options(
             default=None,
         ),
     ] = None,
+    contains: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional case-insensitive substring filter applied to option values."
+            ),
+            default=None,
+        ),
+    ] = None,
+    return_limit: Annotated[
+        int | None,
+        Field(
+            description=(
+                "Optional cap on number of returned options after filtering (1-10000)."
+            ),
+            default=None,
+            ge=1,
+            le=10000,
+        ),
+    ] = None,
+    values_only: Annotated[
+        bool | None,
+        Field(
+            description=("If true, returns only option values to reduce payload size."),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Get allowed option values for a custom field.
 
@@ -422,15 +513,21 @@ async def get_field_options(
     Server/DC: Uses createmeta to get allowedValues. Requires project_key
     and issue_type parameters.
 
+    Supports server-side filtering and compact response modes for large
+    option sets (e.g., 6500+ options).
+
     Args:
         ctx: The FastMCP context.
         field_id: The custom field ID.
         context_id: Field context ID (Cloud only, auto-resolved if omitted).
         project_key: Project key (required for Server/DC).
         issue_type: Issue type name (required for Server/DC).
+        contains: Optional case-insensitive substring filter for values.
+        return_limit: Optional cap on number of results after filtering.
+        values_only: If true, returns only values instead of full option objects.
 
     Returns:
-        JSON string with the list of available options.
+        JSON string with the list of available options, optionally filtered.
     """
     jira = await get_jira_fetcher(ctx)
     options = jira.get_field_options(
@@ -440,7 +537,16 @@ async def get_field_options(
         issue_type=issue_type,
     )
     result = [opt.to_simplified_dict() for opt in options]
-    return json.dumps(result, indent=2, ensure_ascii=False)
+
+    # Apply server-side filtering
+    filtered_result = _apply_option_filters(
+        result, contains=contains, return_limit=return_limit
+    )
+
+    # Keep backward-compatible output shape by default
+    if values_only:
+        return _json_dumps_compact(_to_values_only_payload(filtered_result))
+    return _json_dumps_compact(filtered_result)
 
 
 @jira_mcp.tool(
