@@ -67,9 +67,7 @@ class QueuesMixin(JiraClient):
                 for service_desk_data in service_desks:
                     if not isinstance(service_desk_data, dict):
                         continue
-                    current_key = str(
-                        service_desk_data.get("projectKey", "")
-                    ).upper()
+                    current_key = str(service_desk_data.get("projectKey", "")).upper()
                     if current_key == normalized_project_key:
                         return JiraServiceDesk.from_api_response(service_desk_data)
 
