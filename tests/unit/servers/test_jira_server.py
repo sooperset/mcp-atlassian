@@ -1378,6 +1378,27 @@ def test_issue_and_project_key_patterns_reject_invalid_keys():
 
 
 @pytest.mark.anyio
+async def test_update_issue_accepts_json_string_fields(jira_client, mock_jira_fetcher):
+    """Regression: fields must accept a JSON string (not just a dict).
+
+    d57b7fd narrowed all dict-typed tool params to str for AI platform
+    schema compatibility but missed the fields param in update_issue,
+    causing a Pydantic validation error when an LLM passed a JSON string.
+    """
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": '{"summary": "Updated via JSON string"}',
+        },
+    )
+    content = json.loads(response.content[0].text)
+    assert content["message"] == "Issue updated successfully"
+    call_kwargs = mock_jira_fetcher.update_issue.call_args[1]
+    assert call_kwargs["summary"] == "Updated via JSON string"
+
+
+@pytest.mark.anyio
 async def test_update_issue_accepts_json_string_additional_fields(
     jira_client, mock_jira_fetcher
 ):
@@ -1386,7 +1407,7 @@ async def test_update_issue_accepts_json_string_additional_fields(
         "jira_update_issue",
         {
             "issue_key": "TEST-123",
-            "fields": {"summary": "Updated"},
+            "fields": '{"summary": "Updated"}',
             "additional_fields": '{"labels": ["ai"]}',
         },
     )
@@ -1407,7 +1428,7 @@ async def test_update_issue_additional_fields_invalid_json(jira_client):
             "jira_update_issue",
             {
                 "issue_key": "TEST-123",
-                "fields": {"summary": "Updated"},
+                "fields": '{"summary": "Updated"}',
                 "additional_fields": "{invalid",
             },
         )
@@ -1422,7 +1443,7 @@ async def test_update_issue_additional_fields_non_dict_json(jira_client):
             "jira_update_issue",
             {
                 "issue_key": "TEST-123",
-                "fields": {"summary": "Updated"},
+                "fields": '{"summary": "Updated"}',
                 "additional_fields": '["a","b"]',
             },
         )
@@ -1437,7 +1458,7 @@ async def test_update_issue_additional_fields_empty_string(jira_client):
             "jira_update_issue",
             {
                 "issue_key": "TEST-123",
-                "fields": {"summary": "Updated"},
+                "fields": '{"summary": "Updated"}',
                 "additional_fields": "",
             },
         )
@@ -1451,7 +1472,7 @@ async def test_update_issue_with_components(jira_client, mock_jira_fetcher):
         "jira_update_issue",
         {
             "issue_key": "TEST-123",
-            "fields": {"summary": "Updated"},
+            "fields": '{"summary": "Updated"}',
             "components": "Frontend,API",
         },
     )
@@ -1471,7 +1492,7 @@ async def test_update_issue_with_components_single(jira_client, mock_jira_fetche
         "jira_update_issue",
         {
             "issue_key": "TEST-123",
-            "fields": {"summary": "Updated"},
+            "fields": '{"summary": "Updated"}',
             "components": "Frontend",
         },
     )
@@ -1486,7 +1507,7 @@ async def test_update_issue_with_components_empty(jira_client, mock_jira_fetcher
         "jira_update_issue",
         {
             "issue_key": "TEST-123",
-            "fields": {"summary": "Updated"},
+            "fields": '{"summary": "Updated"}',
             "components": "",
         },
     )
@@ -1501,7 +1522,7 @@ async def test_update_issue_with_components_none(jira_client, mock_jira_fetcher)
         "jira_update_issue",
         {
             "issue_key": "TEST-123",
-            "fields": {"summary": "Updated"},
+            "fields": '{"summary": "Updated"}',
         },
     )
     call_kwargs = mock_jira_fetcher.update_issue.call_args[1]
@@ -1517,7 +1538,7 @@ async def test_update_issue_components_with_additional_fields(
         "jira_update_issue",
         {
             "issue_key": "TEST-123",
-            "fields": {"summary": "Updated"},
+            "fields": '{"summary": "Updated"}',
             "components": "Frontend,API",
             "additional_fields": '{"labels": ["urgent"], "components": ["Backend"]}',
         },
