@@ -1034,11 +1034,38 @@ class IssuesMixin(
                 elif key == "description":
                     # Handle description with markdown conversion
                     update_fields["description"] = self._markdown_to_jira(value)
+                elif key == "parent":
+                    # Handle parent/epic relationship explicitly
+                    # create_issue uses _prepare_parent_fields but update_issue
+                    # was missing this path, causing parent to be silently dropped.
+                    # See: https://github.com/sooperset/mcp-atlassian/issues/623
+                    if isinstance(value, str) and value:
+                        update_fields["parent"] = {"key": value}
+                    elif isinstance(value, dict) and value.get("key"):
+                        update_fields["parent"] = {"key": str(value["key"])}
+                    else:
+                        logger.warning(
+                            f"Invalid parent value for issue {issue_key}: {value}"
+                        )
                 else:
                     # Process regular fields using _process_additional_fields
                     # Create a temporary dict with just this field
                     field_kwargs = {key: value}
                     self._process_additional_fields(update_fields, field_kwargs)
+
+            # Normalize parent field when passed via `fields` dict
+            # Accept {"parent": "KEY"} or {"parent": {"key": "KEY"}}
+            if "parent" in update_fields:
+                parent_val = update_fields["parent"]
+                if isinstance(parent_val, str) and parent_val:
+                    update_fields["parent"] = {"key": parent_val}
+                elif isinstance(parent_val, dict) and parent_val.get("key"):
+                    update_fields["parent"] = {"key": str(parent_val["key"])}
+                else:
+                    logger.warning(
+                        f"Invalid parent field value for {issue_key}: {parent_val}"
+                    )
+                    update_fields.pop("parent", None)
 
             # Update the issue fields
             if update_fields:
