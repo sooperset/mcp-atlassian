@@ -25,6 +25,9 @@ from .protocols import (
 
 logger = logging.getLogger("mcp-jira")
 
+# Friendly aliases that users may pass for the epic link custom field
+_EPIC_LINK_ALIASES = frozenset({"epickey", "epic_link", "epiclink", "epic link"})
+
 
 class IssuesMixin(
     JiraClient,
@@ -660,6 +663,10 @@ class IssuesMixin(
                             {"name": comp_name} for comp_name in valid_components
                         ]
 
+            # Resolve epic link aliases (epicKey, epic_link, etc.) before
+            # kwargs_copy so the alias is not double-processed.
+            self._prepare_epic_link_fields(fields, kwargs)
+
             # Make a copy of kwargs to preserve original values for two-step Epic creation
             kwargs_copy = kwargs.copy()
 
@@ -855,6 +862,59 @@ class IssuesMixin(
                 "Issue type is a sub-task but parent issue key or id not specified. Please provide a 'parent' parameter with the parent issue key."
             )
 
+    def _prepare_epic_link_fields(
+        self, fields: dict[str, Any], kwargs: dict[str, Any]
+    ) -> None:
+        """Resolve epic link aliases (epicKey, epic_link, etc.) to the actual custom field ID.
+
+        Checks kwargs for known epic link aliases, discovers the real
+        custom field ID via ``get_field_ids_to_epic()``, and sets it in
+        *fields*.  On Cloud, falls back to the ``parent`` field when no
+        epic link custom field is discovered (team-managed projects use
+        parent for epic relationships).
+
+        Args:
+            fields: The issue fields dict (mutated in place).
+            kwargs: Caller-provided keyword arguments (matched alias is popped).
+        """
+        epic_key_value = None
+        matched_alias = None
+        for key in list(kwargs.keys()):
+            if key.lower() in _EPIC_LINK_ALIASES:
+                epic_key_value = kwargs.pop(key)
+                matched_alias = key
+                break
+
+        if not epic_key_value:
+            return
+
+        # Discover the epic link custom field ID
+        try:
+            field_ids = self.get_field_ids_to_epic()
+            epic_link_field_id = field_ids.get("epic_link")
+        except Exception as e:
+            logger.debug(f"Could not discover epic link field: {e}")
+            epic_link_field_id = None
+
+        if epic_link_field_id:
+            fields[epic_link_field_id] = epic_key_value
+            logger.info(
+                f"Set epic link field {epic_link_field_id}={epic_key_value} "
+                f"from alias '{matched_alias}'"
+            )
+        elif self.config.is_cloud and "parent" not in fields:
+            fields["parent"] = {"key": epic_key_value}
+            logger.info(
+                f"No epic link field found, using parent field for "
+                f"epic link '{epic_key_value}' (Cloud fallback)"
+            )
+        else:
+            logger.warning(
+                f"Could not resolve epic link alias '{matched_alias}'="
+                f"{epic_key_value}. No epic link custom field discovered. "
+                f"Try using the exact custom field ID (e.g., customfield_10014)."
+            )
+
     def _add_assignee_to_fields(self, fields: dict[str, Any], assignee: str) -> None:
         """
         Add assignee to issue fields.
@@ -984,6 +1044,8 @@ class IssuesMixin(
                 - attachments: List of file paths to upload as attachments
                 - status: New status for the issue (handled via transitions)
                 - assignee: New assignee for the issue
+                - parent: Parent issue key (str or {"key": "..."} dict)
+                - epicKey/epic_link/epicLink: Epic link alias
 
         Returns:
             JiraIssue model representing the updated issue
@@ -1005,8 +1067,12 @@ class IssuesMixin(
                     update_fields["description"]
                 )
 
+            # Resolve epic link aliases before processing kwargs
+            kwargs_mutable = dict(kwargs)
+            self._prepare_epic_link_fields(update_fields, kwargs_mutable)
+
             # Process kwargs
-            for key, value in kwargs.items():
+            for key, value in kwargs_mutable.items():
                 if key == "status":
                     # Status changes are handled separately via transitions
                     # Add status to fields so _update_issue_with_status can find it
@@ -1031,6 +1097,15 @@ class IssuesMixin(
                             self._add_assignee_to_fields(update_fields, account_id)
                         except ValueError as e:
                             logger.warning(f"Could not update assignee: {str(e)}")
+                elif key == "parent":
+                    if isinstance(value, dict) and value.get("key"):
+                        update_fields["parent"] = {"key": str(value["key"])}
+                    elif isinstance(value, str) and value:
+                        update_fields["parent"] = {"key": value}
+                    else:
+                        logger.warning(
+                            f"Invalid parent value for issue {issue_key}: {value}"
+                        )
                 elif key == "description":
                     # Handle description with markdown conversion
                     update_fields["description"] = self._markdown_to_jira(value)
