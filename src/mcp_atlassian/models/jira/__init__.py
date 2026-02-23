@@ -33,6 +33,12 @@ from .metrics import (
     StatusTimeSummary,
 )
 from .project import JiraProject
+from .queue import (
+    JiraQueue,
+    JiraQueueIssuesResult,
+    JiraServiceDesk,
+    JiraServiceDeskQueuesResult,
+)
 from .search import JiraSearchResult
 from .sla import (
     CycleTimeMetric,
@@ -72,6 +78,10 @@ __all__ = [
     "JiraSprint",
     "JiraIssue",
     "JiraSearchResult",
+    "JiraServiceDesk",
+    "JiraQueue",
+    "JiraServiceDeskQueuesResult",
+    "JiraQueueIssuesResult",
     "JiraIssueLinkType",
     "JiraIssueLink",
     "JiraLinkedIssue",
