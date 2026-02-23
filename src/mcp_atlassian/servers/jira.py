@@ -2051,7 +2051,7 @@ async def get_service_desk_queues(
     ] = 0,
     limit: Annotated[
         int,
-        Field(description="Maximum number of results (1-50)", default=50, ge=1),
+        Field(description="Maximum number of results (1-50)", default=50, ge=1, le=50),
     ] = 50,
 ) -> str:
     """
