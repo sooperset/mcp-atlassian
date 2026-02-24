@@ -378,7 +378,7 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
 
             cloud_id_info = f" with cloudId {user_cloud_id}" if user_cloud_id else ""
             logger.info(
-                f"Creating user-specific JiraFetcher (type: {resolved_auth_type}) for user {user_email or 'unknown'} (token ...{str(user_token)[-8:]}){cloud_id_info}"
+                f"Creating user-specific JiraFetcher (type: {resolved_auth_type}) for user {user_email or 'unknown'} (token ...<redacted>){cloud_id_info}"
             )
             user_specific_config = _create_user_config_for_fetcher(
                 base_config=app_lifespan_ctx_oauth.full_jira_config,
@@ -607,7 +607,7 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
 
             cloud_id_info = f" with cloudId {user_cloud_id}" if user_cloud_id else ""
             logger.info(
-                f"Creating user-specific ConfluenceFetcher (type: {resolved_auth_type}) for user {user_email or 'unknown'} (token ...{str(user_token)[-8:]}){cloud_id_info}"
+                f"Creating user-specific ConfluenceFetcher (type: {resolved_auth_type}) for user {user_email or 'unknown'} (token ...<redacted>){cloud_id_info}"
             )
             user_specific_config = _create_user_config_for_fetcher(
                 base_config=app_lifespan_ctx_oauth.full_confluence_config,

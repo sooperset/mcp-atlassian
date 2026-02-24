@@ -62,6 +62,12 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                 projects = [p.strip() for p in filter_to_use.split(",")]
 
                 # Build the project filter query part
+                # Sanitize project names to prevent JQL injection
+                # Escape backslashes before double-quotes to prevent bypass
+                projects = [
+                    p.replace("\\", "\\\\").replace('"', '\\"') for p in projects
+                ]
+
                 if len(projects) == 1:
                     quoted = quote_jql_identifier_if_needed(projects[0])
                     project_query = f"project = {quoted}"
