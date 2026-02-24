@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ..models.jira import JiraAttachment
+from ..utils.io import validate_safe_path
 from .client import JiraClient
 from .protocols import AttachmentsOperationsProto
 
@@ -37,12 +38,8 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             if not os.path.isabs(target_path):
                 target_path = os.path.abspath(target_path)
 
-            # Guard against path traversal
-            base_dir = os.getcwd()
-            if not Path(target_path).is_relative_to(base_dir):
-                raise ValueError(
-                    f"Path traversal detected: {target_path} is outside {base_dir}"
-                )
+            # Guard against path traversal (resolves symlinks)
+            validate_safe_path(target_path)
 
             logger.info(f"Downloading attachment from {url} to {target_path}")
 
@@ -214,12 +211,8 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
         if not os.path.isabs(target_dir):
             target_dir = os.path.abspath(target_dir)
 
-        # Guard against path traversal
-        base_dir = os.getcwd()
-        if not Path(target_dir).is_relative_to(base_dir):
-            raise ValueError(
-                f"Path traversal detected: {target_dir} is outside {base_dir}"
-            )
+        # Guard against path traversal (resolves symlinks)
+        validate_safe_path(target_dir)
 
         logger.info(
             f"Downloading attachments for {issue_key} to directory: {target_dir}"

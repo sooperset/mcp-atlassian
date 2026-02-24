@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from ..models.confluence import ConfluenceAttachment
+from ..utils.io import validate_safe_path
 from .client import ConfluenceClient
 from .protocols import AttachmentsOperationsProto
 from .v2_adapter import ConfluenceV2Adapter
@@ -185,6 +186,9 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             if not os.path.isabs(target_path):
                 target_path = os.path.abspath(target_path)
 
+            # Guard against path traversal (resolves symlinks)
+            validate_safe_path(target_path)
+
             logger.info(f"Downloading attachment from {url} to {target_path}")
 
             # Create the directory if it doesn't exist
@@ -230,6 +234,9 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
         # Convert to absolute path if relative
         if not os.path.isabs(target_dir):
             target_dir = os.path.abspath(target_dir)
+
+        # Guard against path traversal (resolves symlinks)
+        validate_safe_path(target_dir)
 
         logger.info(
             f"Downloading attachments for content {content_id} to directory: {target_dir}"
