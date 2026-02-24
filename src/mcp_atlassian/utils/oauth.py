@@ -374,7 +374,9 @@ class OAuthConfig:
             logger.debug(f"Saved OAuth tokens to keyring for {username}")
 
             # Also save to base username for compatibility with load_tokens()
-            # which uses the simpler oauth-{client_id} pattern
+            # which uses the simpler oauth-{client_id} pattern.
+            # Note: If the same client_id is used for both Cloud and DC (rare),
+            # the base key will be overwritten by whichever saves last.
             if username != base_username:
                 keyring.set_password(KEYRING_SERVICE_NAME, base_username, token_json)
                 logger.debug(f"Saved OAuth tokens to keyring for {base_username}")

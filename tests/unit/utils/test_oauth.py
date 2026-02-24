@@ -379,6 +379,44 @@ class TestOAuthConfig:
 
     @patch("keyring.set_password")
     @patch.object(OAuthConfig, "_save_tokens_to_file")
+    def test_save_tokens_keyring_success_dc(self, mock_save_to_file, mock_set_password):
+        """Test _save_tokens with successful keyring storage for Data Center."""
+        config = OAuthConfig(
+            client_id="test-client-id",
+            client_secret="test-client-secret",
+            redirect_uri="https://example.com/callback",
+            scope="WRITE",
+            base_url="https://jira.example.com",
+            refresh_token="test-refresh-token",
+            access_token="test-access-token",
+            expires_at=1234567890,
+        )
+        config._save_tokens()
+
+        # Verify keyring was used - should be called twice:
+        # 1. For context-specific key (oauth-{client_id}-dc-{url_hash})
+        # 2. For base key (oauth-{client_id}) for load_tokens() compatibility
+        assert mock_set_password.call_count == 2
+
+        # Check first call (context-specific DC key)
+        first_call = mock_set_password.call_args_list[0]
+        assert first_call[0][0] == KEYRING_SERVICE_NAME
+        assert first_call[0][1].startswith("oauth-test-client-id-dc-")
+        assert "test-refresh-token" in first_call[0][2]
+        assert "test-access-token" in first_call[0][2]
+
+        # Check second call (base key for load_tokens() compatibility)
+        second_call = mock_set_password.call_args_list[1]
+        assert second_call[0][0] == KEYRING_SERVICE_NAME
+        assert second_call[0][1] == "oauth-test-client-id"
+        assert "test-refresh-token" in second_call[0][2]
+        assert "test-access-token" in second_call[0][2]
+
+        # Verify file backup was created
+        mock_save_to_file.assert_called_once()
+
+    @patch("keyring.set_password")
+    @patch.object(OAuthConfig, "_save_tokens_to_file")
     def test_save_tokens_keyring_failure(self, mock_save_to_file, mock_set_password):
         """Test _save_tokens with keyring failure fallback."""
         # Make keyring fail
