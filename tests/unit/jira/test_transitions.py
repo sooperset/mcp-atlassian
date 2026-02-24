@@ -507,7 +507,11 @@ class TestTransitionsMixin:
         assert "update" in transition_data
         assert "comment" in transition_data["update"]
         assert len(transition_data["update"]["comment"]) == 1
-        assert transition_data["update"]["comment"][0]["add"]["body"] == "Test comment"
+        # On Cloud, body is ADF dict (not plain string)
+        body = transition_data["update"]["comment"][0]["add"]["body"]
+        assert isinstance(body, dict)
+        assert body["version"] == 1
+        assert body["type"] == "doc"
 
     def test_add_comment_to_transition_data_with_non_string(
         self, transitions_mixin: TransitionsMixin
@@ -519,8 +523,10 @@ class TestTransitionsMixin:
         # Call the method with int
         transitions_mixin._add_comment_to_transition_data(transition_data, 123)
 
-        # Verify comment was converted to string
-        assert transition_data["update"]["comment"][0]["add"]["body"] == "123"
+        # On Cloud, converted "123" becomes ADF dict
+        body = transition_data["update"]["comment"][0]["add"]["body"]
+        assert isinstance(body, dict)
+        assert body["version"] == 1
 
     def test_add_comment_to_transition_data_with_markdown_to_jira(
         self, transitions_mixin

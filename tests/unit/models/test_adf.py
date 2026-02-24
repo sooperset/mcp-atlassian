@@ -2,10 +2,15 @@
 Tests for the ADF (Atlassian Document Format) parser.
 
 These tests validate the conversion of ADF content to plain text,
-including handling of various inline and block node types.
+including handling of various inline and block node types,
+and the reverse conversion from Markdown to ADF.
 """
 
-from src.mcp_atlassian.models.jira.adf import adf_to_text
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from src.mcp_atlassian.models.jira.adf import adf_to_text, markdown_to_adf
 
 
 class TestAdfToText:
@@ -283,3 +288,293 @@ class TestAdfToText:
             ],
         }
         assert adf_to_text(node) == "Item 1"
+
+
+class TestMarkdownToAdf:
+    """Tests for the markdown_to_adf function."""
+
+    def _assert_valid_adf(self, result: dict) -> None:
+        """Helper: assert the result is a valid ADF document."""
+        assert result["version"] == 1
+        assert result["type"] == "doc"
+        assert isinstance(result["content"], list)
+
+    # -- Structure -----------------------------------------------------------
+
+    def test_structure(self):
+        """Any input always produces version:1, type:doc, content:[...]."""
+        result = markdown_to_adf("anything")
+        self._assert_valid_adf(result)
+
+    # -- Empty / whitespace -------------------------------------------------
+
+    def test_empty_string(self):
+        """Empty string produces a minimal ADF doc with an empty paragraph."""
+        result = markdown_to_adf("")
+        self._assert_valid_adf(result)
+        assert len(result["content"]) >= 1
+        assert result["content"][0]["type"] == "paragraph"
+
+    # -- Paragraphs ---------------------------------------------------------
+
+    def test_simple_paragraph(self):
+        """Plain text becomes a paragraph with a text node."""
+        result = markdown_to_adf("Hello world")
+        self._assert_valid_adf(result)
+        para = result["content"][0]
+        assert para["type"] == "paragraph"
+        texts = [n["text"] for n in para["content"] if n["type"] == "text"]
+        assert "Hello world" in " ".join(texts)
+
+    # -- Headings -----------------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "md, level",
+        [
+            ("# H1", 1),
+            ("## H2", 2),
+            ("### H3", 3),
+            ("#### H4", 4),
+            ("##### H5", 5),
+            ("###### H6", 6),
+        ],
+        ids=[f"heading_h{i}" for i in range(1, 7)],
+    )
+    def test_headings(self, md: str, level: int):
+        """Headings produce heading nodes with the correct level attr."""
+        result = markdown_to_adf(md)
+        heading = result["content"][0]
+        assert heading["type"] == "heading"
+        assert heading["attrs"]["level"] == level
+
+    # -- Inline formatting --------------------------------------------------
+
+    def test_bold(self):
+        """**bold** text gets a strong mark."""
+        result = markdown_to_adf("**bold**")
+        para = result["content"][0]
+        bold_nodes = [
+            n
+            for n in para["content"]
+            if n["type"] == "text"
+            and any(m["type"] == "strong" for m in n.get("marks", []))
+        ]
+        assert len(bold_nodes) >= 1
+        assert bold_nodes[0]["text"] == "bold"
+
+    def test_italic(self):
+        """*italic* text gets an em mark."""
+        result = markdown_to_adf("*italic*")
+        para = result["content"][0]
+        italic_nodes = [
+            n
+            for n in para["content"]
+            if n["type"] == "text"
+            and any(m["type"] == "em" for m in n.get("marks", []))
+        ]
+        assert len(italic_nodes) >= 1
+        assert italic_nodes[0]["text"] == "italic"
+
+    def test_inline_code(self):
+        """`code` text gets a code mark."""
+        result = markdown_to_adf("`code`")
+        para = result["content"][0]
+        code_nodes = [
+            n
+            for n in para["content"]
+            if n["type"] == "text"
+            and any(m["type"] == "code" for m in n.get("marks", []))
+        ]
+        assert len(code_nodes) >= 1
+        assert code_nodes[0]["text"] == "code"
+
+    def test_strikethrough(self):
+        """~~strike~~ text gets a strike mark."""
+        result = markdown_to_adf("~~strike~~")
+        para = result["content"][0]
+        strike_nodes = [
+            n
+            for n in para["content"]
+            if n["type"] == "text"
+            and any(m["type"] == "strike" for m in n.get("marks", []))
+        ]
+        assert len(strike_nodes) >= 1
+        assert strike_nodes[0]["text"] == "strike"
+
+    # -- Links --------------------------------------------------------------
+
+    def test_link(self):
+        """[text](url) produces a text node with a link mark."""
+        result = markdown_to_adf("[click here](https://example.com)")
+        para = result["content"][0]
+        link_nodes = [
+            n
+            for n in para["content"]
+            if n["type"] == "text"
+            and any(m["type"] == "link" for m in n.get("marks", []))
+        ]
+        assert len(link_nodes) >= 1
+        assert link_nodes[0]["text"] == "click here"
+        link_mark = next(m for m in link_nodes[0]["marks"] if m["type"] == "link")
+        assert link_mark["attrs"]["href"] == "https://example.com"
+
+    # -- Code blocks --------------------------------------------------------
+
+    def test_code_block_with_lang(self):
+        """Fenced code block with language attr."""
+        md = "```python\nprint('hi')\n```"
+        result = markdown_to_adf(md)
+        cb = next(n for n in result["content"] if n["type"] == "codeBlock")
+        assert cb["attrs"]["language"] == "python"
+        code_text = cb["content"][0]["text"]
+        assert "print('hi')" in code_text
+
+    def test_code_block_no_lang(self):
+        """Fenced code block without language."""
+        md = "```\nsome code\n```"
+        result = markdown_to_adf(md)
+        cb = next(n for n in result["content"] if n["type"] == "codeBlock")
+        # language should be absent or empty
+        lang = cb.get("attrs", {}).get("language", "")
+        assert lang == "" or lang is None or "language" not in cb.get("attrs", {})
+
+    # -- Lists --------------------------------------------------------------
+
+    def test_bullet_list(self):
+        """- items produce a bulletList with listItem > paragraph > text."""
+        md = "- alpha\n- beta"
+        result = markdown_to_adf(md)
+        bl = next(n for n in result["content"] if n["type"] == "bulletList")
+        items = bl["content"]
+        assert len(items) == 2
+        for item in items:
+            assert item["type"] == "listItem"
+            # listItem must contain paragraph (not bare text)
+            assert item["content"][0]["type"] == "paragraph"
+
+    def test_ordered_list(self):
+        """1. items produce an orderedList with listItem > paragraph > text."""
+        md = "1. first\n2. second"
+        result = markdown_to_adf(md)
+        ol = next(n for n in result["content"] if n["type"] == "orderedList")
+        items = ol["content"]
+        assert len(items) == 2
+        for item in items:
+            assert item["type"] == "listItem"
+            assert item["content"][0]["type"] == "paragraph"
+
+    # -- Blockquote ---------------------------------------------------------
+
+    def test_blockquote(self):
+        """> text produces a blockquote wrapping a paragraph."""
+        result = markdown_to_adf("> quoted text")
+        bq = next(n for n in result["content"] if n["type"] == "blockquote")
+        assert bq["content"][0]["type"] == "paragraph"
+
+    # -- Horizontal rule ----------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "md", ["---", "***", "___"], ids=["dashes", "stars", "underscores"]
+    )
+    def test_horizontal_rule(self, md: str):
+        """Horizontal rule markers produce a rule node."""
+        result = markdown_to_adf(md)
+        rule_nodes = [n for n in result["content"] if n["type"] == "rule"]
+        assert len(rule_nodes) >= 1
+
+    # -- Mixed formatting ---------------------------------------------------
+
+    def test_mixed_formatting(self):
+        """Bold and italic in the same line get correct marks per segment."""
+        result = markdown_to_adf("**bold** and *italic*")
+        para = result["content"][0]
+        assert para["type"] == "paragraph"
+        # Find bold
+        bold = [
+            n
+            for n in para["content"]
+            if n["type"] == "text"
+            and any(m["type"] == "strong" for m in n.get("marks", []))
+        ]
+        # Find italic
+        italic = [
+            n
+            for n in para["content"]
+            if n["type"] == "text"
+            and any(m["type"] == "em" for m in n.get("marks", []))
+        ]
+        assert len(bold) >= 1
+        assert len(italic) >= 1
+        assert bold[0]["text"] == "bold"
+        assert italic[0]["text"] == "italic"
+
+    # -- Roundtrip ----------------------------------------------------------
+
+    def test_roundtrip(self):
+        """markdown_to_adf → adf_to_text preserves the original words."""
+        original = "Hello world with **bold** and *italic* text"
+        adf = markdown_to_adf(original)
+        text_back = adf_to_text(adf) or ""
+        for word in ["Hello", "world", "bold", "italic", "text"]:
+            assert word in text_back
+
+
+class TestMarkdownToJiraDispatch:
+    """Tests for _markdown_to_jira Cloud/Server dispatch."""
+
+    @pytest.fixture
+    def cloud_client(self):
+        """Create a mock JiraClient configured for Cloud."""
+        with patch("atlassian.Jira"):
+            from mcp_atlassian.jira.client import JiraClient
+
+            client = MagicMock(spec=JiraClient)
+            client.config = MagicMock()
+            client.config.is_cloud = True
+            client.preprocessor = MagicMock()
+            # Bind the real method to the mock
+            client._markdown_to_jira = JiraClient._markdown_to_jira.__get__(
+                client, JiraClient
+            )
+            return client
+
+    @pytest.fixture
+    def server_client(self):
+        """Create a mock JiraClient configured for Server/DC."""
+        with patch("atlassian.Jira"):
+            from mcp_atlassian.jira.client import JiraClient
+
+            client = MagicMock(spec=JiraClient)
+            client.config = MagicMock()
+            client.config.is_cloud = False
+            client.preprocessor = MagicMock()
+            client.preprocessor.markdown_to_jira.return_value = "wiki markup"
+            client._markdown_to_jira = JiraClient._markdown_to_jira.__get__(
+                client, JiraClient
+            )
+            return client
+
+    def test_server_returns_string(self, server_client):
+        """Server/DC path returns a string (wiki markup)."""
+        result = server_client._markdown_to_jira("# Hello")
+        assert isinstance(result, str)
+
+    def test_cloud_returns_adf_dict(self, cloud_client):
+        """Cloud path returns an ADF dict with version/type/content."""
+        result = cloud_client._markdown_to_jira("# Hello")
+        assert isinstance(result, dict)
+        assert result["version"] == 1
+        assert result["type"] == "doc"
+        assert isinstance(result["content"], list)
+
+    def test_cloud_empty(self, cloud_client):
+        """Cloud path with empty string returns an ADF dict."""
+        result = cloud_client._markdown_to_jira("")
+        assert isinstance(result, dict)
+        assert result["version"] == 1
+        assert result["type"] == "doc"
+
+    def test_server_empty(self, server_client):
+        """Server/DC path with empty string returns empty string."""
+        result = server_client._markdown_to_jira("")
+        assert result == ""
