@@ -32,15 +32,11 @@ class TestAnalyticsMixin:
         mixin.get_page_views = lambda *args, **kwargs: AnalyticsMixin.get_page_views(
             mixin, *args, **kwargs
         )
-        mixin.batch_get_page_views = (
-            lambda *args, **kwargs: AnalyticsMixin.batch_get_page_views(
-                mixin, *args, **kwargs
-            )
+        mixin.batch_get_page_views = lambda *args, **kwargs: (
+            AnalyticsMixin.batch_get_page_views(mixin, *args, **kwargs)
         )
-        mixin._get_page_views_direct = (
-            lambda *args, **kwargs: AnalyticsMixin._get_page_views_direct(
-                mixin, *args, **kwargs
-            )
+        mixin._get_page_views_direct = lambda *args, **kwargs: (
+            AnalyticsMixin._get_page_views_direct(mixin, *args, **kwargs)
         )
 
         return mixin

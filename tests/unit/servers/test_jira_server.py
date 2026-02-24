@@ -634,6 +634,7 @@ async def test_get_field_options_values_only(jira_client):
 @pytest.mark.anyio
 async def test_get_field_options_values_only_cascading(jira_client, mock_jira_fetcher):
     """Ensure values_only preserves parent-child structure for cascading selects."""
+
     # Mock cascading select options
     def mock_cascading_options(
         field_id,
@@ -1118,8 +1119,8 @@ async def test_get_all_projects_tool(jira_client, mock_jira_fetcher):
     ]
     # Reset the mock and set specific return value for this test
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        mock_projects
     )
 
     # Test with default parameters (include_archived=False)
@@ -1167,8 +1168,8 @@ async def test_get_all_projects_tool_with_archived(jira_client, mock_jira_fetche
     ]
     # Reset the mock and set specific return value for this test
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        mock_projects
     )
 
     # Test with include_archived=True
@@ -1221,8 +1222,8 @@ async def test_get_all_projects_tool_with_projects_filter(
 
     # Set up the mock to return all projects
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: all_mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        all_mock_projects
     )
 
     # Set up the projects filter in the config
@@ -1275,8 +1276,8 @@ async def test_get_all_projects_tool_no_projects_filter(jira_client, mock_jira_f
 
     # Set up the mock to return all projects
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: all_mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        all_mock_projects
     )
 
     # Ensure no projects filter is set
@@ -1336,8 +1337,8 @@ async def test_get_all_projects_tool_case_insensitive_filter(
 
     # Set up the mock to return all projects
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: all_mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        all_mock_projects
     )
 
     # Set up projects filter with mixed case and whitespace
@@ -1677,7 +1678,7 @@ async def test_update_issue_accepts_json_string_additional_fields(
         "jira_update_issue",
         {
             "issue_key": "TEST-123",
-            "fields": {"summary": "Updated"},
+            "fields": '{"summary": "Updated"}',
             "additional_fields": '{"labels": ["ai"]}',
         },
     )
@@ -1698,7 +1699,7 @@ async def test_update_issue_additional_fields_invalid_json(jira_client):
             "jira_update_issue",
             {
                 "issue_key": "TEST-123",
-                "fields": {"summary": "Updated"},
+                "fields": '{"summary": "Updated"}',
                 "additional_fields": "{invalid",
             },
         )
@@ -1713,7 +1714,7 @@ async def test_update_issue_additional_fields_non_dict_json(jira_client):
             "jira_update_issue",
             {
                 "issue_key": "TEST-123",
-                "fields": {"summary": "Updated"},
+                "fields": '{"summary": "Updated"}',
                 "additional_fields": '["a","b"]',
             },
         )
@@ -1728,7 +1729,7 @@ async def test_update_issue_additional_fields_empty_string(jira_client):
             "jira_update_issue",
             {
                 "issue_key": "TEST-123",
-                "fields": {"summary": "Updated"},
+                "fields": '{"summary": "Updated"}',
                 "additional_fields": "",
             },
         )
@@ -1742,7 +1743,7 @@ async def test_update_issue_with_components(jira_client, mock_jira_fetcher):
         "jira_update_issue",
         {
             "issue_key": "TEST-123",
-            "fields": {"summary": "Updated"},
+            "fields": '{"summary": "Updated"}',
             "components": "Frontend,API",
         },
     )
@@ -1762,7 +1763,7 @@ async def test_update_issue_with_components_single(jira_client, mock_jira_fetche
         "jira_update_issue",
         {
             "issue_key": "TEST-123",
-            "fields": {"summary": "Updated"},
+            "fields": '{"summary": "Updated"}',
             "components": "Frontend",
         },
     )
@@ -1777,7 +1778,7 @@ async def test_update_issue_with_components_empty(jira_client, mock_jira_fetcher
         "jira_update_issue",
         {
             "issue_key": "TEST-123",
-            "fields": {"summary": "Updated"},
+            "fields": '{"summary": "Updated"}',
             "components": "",
         },
     )
@@ -1792,7 +1793,7 @@ async def test_update_issue_with_components_none(jira_client, mock_jira_fetcher)
         "jira_update_issue",
         {
             "issue_key": "TEST-123",
-            "fields": {"summary": "Updated"},
+            "fields": '{"summary": "Updated"}',
         },
     )
     call_kwargs = mock_jira_fetcher.update_issue.call_args[1]
@@ -1808,7 +1809,7 @@ async def test_update_issue_components_with_additional_fields(
         "jira_update_issue",
         {
             "issue_key": "TEST-123",
-            "fields": {"summary": "Updated"},
+            "fields": '{"summary": "Updated"}',
             "components": "Frontend,API",
             "additional_fields": '{"labels": ["urgent"], "components": ["Backend"]}',
         },

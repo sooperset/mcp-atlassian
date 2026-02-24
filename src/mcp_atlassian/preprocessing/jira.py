@@ -211,9 +211,11 @@ class JiraPreprocessor(BasePreprocessor):
         # Text formatting (bold, italic)
         output = re.sub(
             r"([*_])(.*?)\1",
-            lambda match: ("**" if match.group(1) == "*" else "*")
-            + match.group(2)
-            + ("**" if match.group(1) == "*" else "*"),
+            lambda match: (
+                ("**" if match.group(1) == "*" else "*")
+                + match.group(2)
+                + ("**" if match.group(1) == "*" else "*")
+            ),
             output,
         )
 
@@ -442,9 +444,11 @@ class JiraPreprocessor(BasePreprocessor):
             # Apply bold/italic conversion
             return re.sub(
                 r"([*_]+)(.*?)\1",
-                lambda m: ("_" if len(m.group(1)) == 1 else "*")
-                + m.group(2)
-                + ("_" if len(m.group(1)) == 1 else "*"),
+                lambda m: (
+                    ("_" if len(m.group(1)) == 1 else "*")
+                    + m.group(2)
+                    + ("_" if len(m.group(1)) == 1 else "*")
+                ),
                 line,
             )
 
