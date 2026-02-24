@@ -1169,9 +1169,9 @@ async def update_issue(
         str,
         Field(
             description=(
-                "Dictionary of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
+                "JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
                 "For 'description', provide text in Markdown format. "
-                "Example: `{'assignee': 'user@example.com', 'summary': 'New Summary', 'description': '## Updated\\nMarkdown text'}`"
+                'Example: \'{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\\nMarkdown text"}\''
             )
         ),
     ],
@@ -1212,7 +1212,7 @@ async def update_issue(
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        fields: Dictionary of fields to update. Text fields like 'description' should use Markdown format.
+        fields: JSON string of fields to update. Text fields like 'description' should use Markdown format.
         additional_fields: Optional JSON string of additional fields.
         components: Comma-separated list of component names.
         attachments: Optional JSON array string or comma-separated list of file paths.
@@ -1938,7 +1938,13 @@ async def get_project_versions(
 )
 async def get_project_components(
     ctx: Context,
-    project_key: Annotated[str, Field(description="Jira project key (e.g., 'PROJ')")],
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'PROJ', 'ACV2')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
 ) -> str:
     """Get all components for a specific Jira project."""
     jira = await get_jira_fetcher(ctx)
