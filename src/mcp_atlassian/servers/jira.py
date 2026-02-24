@@ -1934,6 +1934,20 @@ async def get_project_versions(
 
 @jira_mcp.tool(
     tags={"jira", "read"},
+    annotations={"title": "Get Project Components", "readOnlyHint": True},
+)
+async def get_project_components(
+    ctx: Context,
+    project_key: Annotated[str, Field(description="Jira project key (e.g., 'PROJ')")],
+) -> str:
+    """Get all components for a specific Jira project."""
+    jira = await get_jira_fetcher(ctx)
+    components = jira.get_project_components(project_key)
+    return json.dumps(components, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read"},
     annotations={"title": "Get All Projects", "readOnlyHint": True},
 )
 async def get_all_projects(
