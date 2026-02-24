@@ -28,8 +28,50 @@ Go to https://id.atlassian.com/manage-profile/security/api-tokens and create a t
 
 ### 2. Configure Your IDE
 
-Add to your IntelliJ IDEA MCP configuration (mcp.json):
+#### Add to your IntelliJ IDEA MCP configuration (mcp.json):
 
+##### Configure connection to remote Medhost MCP server:
+
+Example for InelliJ IDEA, add you your mcp.sjon (sometimes it requires restart of IDEA):
+```json
+        "mcp-atlassian-remote": {
+            "url": "https://mcp.mhdidevxasayd.com:9000/mcp",
+            "requestInit": {
+                "headers": {
+                    "X-Atlassian-Confluence-Personal-Token": "YOUR CONFLUENCE PAT TOKEN (Optional)",
+                    "X-Atlassian-Confluence-Url": "https://confluence.medhost.com:8443/",
+                    "X-Atlassian-Jira-Personal-Token": "YOUR JIRA PAT TOKEN (optional)",
+                    "X-Atlassian-Jira-Url": "https://jira.medhost.com:8443"
+                }
+            }
+        }
+```
+
+Example for AWS Kiro IDE:
+```json
+"mcp-atlassian-service": {
+      "url": "https://mcp.mhdidevxasayd.com:9000/mcp",
+      "headers": {
+        "X-Atlassian-Confluence-Personal-Token": "YOUR CONFLUENCE PAT TOKEN (Optional)",
+        "X-Atlassian-Confluence-Url": "https://confluence.medhost.com:8443/",
+        "X-Atlassian-Jira-Personal-Token": "YOUR JIRA PAT TOKEN (optional)",
+        "X-Atlassian-Jira-Url": "https://jira.medhost.com:8443"
+      },
+      "disabled": false,
+      "disabledTools": [],
+      "autoApprove": [
+        "bitbucket_bitbucket_get_pull_requests",
+        "jira_get_issue",
+        "jira_get_transitions",
+        "jira_transition_issue"
+      ]
+    }
+```
+
+
+##### Running MCP server in docker conainer on your PC:
+
+Example for IntelliJ IDEA:
 ```json
 {
   "servers": {
@@ -42,10 +84,8 @@ Add to your IntelliJ IDEA MCP configuration (mcp.json):
                 "-i",
                 "-e", "CONFLUENCE_URL",
                 "-e", "CONFLUENCE_PERSONAL_TOKEN",
-                "-e", "CONFLUENCE_SSL_VERIFY",
                 "-e", "JIRA_URL",
                 "-e", "JIRA_PERSONAL_TOKEN",
-                "-e", "JIRA_SSL_VERIFY",
                 "docker.test.yourcareuniverse.net/medhost/mcp-atlassian:latest"
             ],
             "env": {
@@ -53,10 +93,7 @@ Add to your IntelliJ IDEA MCP configuration (mcp.json):
                 "CONFLUENCE_PERSONAL_TOKEN": "YOUR CONFLUENCE PAT TOKEN",
                 "JIRA_URL": "https://jira.medhost.com:8443",
                 "JIRA_PERSONAL_TOKEN": "YOUR JIRA PAT TOKEN",
-                "JIRA_SSL_VERIFY": "true",
-                "CONFLUENCE_SSL_VERIFY": "true",
-                "TRANSPORT": "stdio",
-                "MCP_VERY_VERBOSE": "true"
+                "MCP_VERBOSE": "true"
             }
         }
   }
