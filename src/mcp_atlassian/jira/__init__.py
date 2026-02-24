@@ -23,6 +23,7 @@ from .issues import IssuesMixin
 from .links import LinksMixin
 from .metrics import MetricsMixin
 from .projects import ProjectsMixin
+from .queues import QueuesMixin
 from .sla import SLAMixin
 from .search import SearchMixin
 from .sprints import SprintsMixin
@@ -46,6 +47,7 @@ class JiraFetcher(
     UsersMixin,
     BoardsMixin,
     SprintsMixin,
+    QueuesMixin,
     AttachmentsMixin,
     LinksMixin,
     MetricsMixin,
