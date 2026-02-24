@@ -2015,6 +2015,129 @@ async def get_all_projects(
 
 
 @jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={
+        "title": "Get Service Desk For Project",
+        "readOnlyHint": True,
+    },
+)
+async def get_service_desk_for_project(
+    ctx: Context,
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'SUP')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
+) -> str:
+    """
+    Get the Jira Service Desk associated with a project key.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: Jira project key.
+
+    Returns:
+        JSON string with project key and service desk data (or null if not found).
+    """
+    jira = await get_jira_fetcher(ctx)
+    service_desk = jira.get_service_desk_for_project(project_key=project_key)
+    result = {
+        "project_key": project_key.upper(),
+        "service_desk": service_desk.to_simplified_dict() if service_desk else None,
+    }
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Service Desk Queues", "readOnlyHint": True},
+)
+async def get_service_desk_queues(
+    ctx: Context,
+    service_desk_id: Annotated[
+        str,
+        Field(description="Service desk ID (e.g., '4')"),
+    ],
+    start_at: Annotated[
+        int,
+        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(description="Maximum number of results (1-50)", default=50, ge=1, le=50),
+    ] = 50,
+) -> str:
+    """
+    Get queues for a Jira Service Desk.
+
+    Args:
+        ctx: The FastMCP context.
+        service_desk_id: Service desk ID.
+        start_at: Starting index for pagination.
+        limit: Maximum number of queues to return.
+
+    Returns:
+        JSON string with queue list and pagination metadata.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_service_desk_queues(
+        service_desk_id=service_desk_id,
+        start_at=start_at,
+        limit=limit,
+        include_count=True,
+    )
+    return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Queue Issues", "readOnlyHint": True},
+)
+async def get_queue_issues(
+    ctx: Context,
+    service_desk_id: Annotated[
+        str,
+        Field(description="Service desk ID (e.g., '4')"),
+    ],
+    queue_id: Annotated[
+        str,
+        Field(description="Queue ID (e.g., '47')"),
+    ],
+    start_at: Annotated[
+        int,
+        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(description="Maximum number of results (1-50)", default=50, ge=1),
+    ] = 50,
+) -> str:
+    """
+    Get issues from a Jira Service Desk queue.
+
+    Args:
+        ctx: The FastMCP context.
+        service_desk_id: Service desk ID.
+        queue_id: Queue ID.
+        start_at: Starting index for pagination.
+        limit: Maximum number of issues to return.
+
+    Returns:
+        JSON string with queue metadata, issues, and pagination metadata.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_queue_issues(
+        service_desk_id=service_desk_id,
+        queue_id=queue_id,
+        start_at=start_at,
+        limit=limit,
+    )
+    return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
     tags={"jira", "write"},
     annotations={"title": "Create Version", "destructiveHint": True},
 )
