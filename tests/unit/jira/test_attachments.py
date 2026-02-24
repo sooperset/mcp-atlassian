@@ -108,6 +108,8 @@ class TestAttachmentsMixin:
             patch("os.makedirs") as mock_makedirs,
             patch("os.path.abspath") as mock_abspath,
             patch("os.path.isabs") as mock_isabs,
+            patch("os.getcwd", return_value="/absolute/path"),
+            patch("mcp_atlassian.jira.attachments.validate_safe_path"),
         ):
             mock_exists.return_value = True
             mock_getsize.return_value = 12
@@ -281,6 +283,8 @@ class TestAttachmentsMixin:
             ),
             patch("os.path.isabs") as mock_isabs,
             patch("os.path.abspath") as mock_abspath,
+            patch("os.getcwd", return_value="/absolute/path"),
+            patch("mcp_atlassian.jira.attachments.validate_safe_path"),
         ):
             mock_isabs.return_value = False
             mock_abspath.return_value = "/absolute/path/attachments"
