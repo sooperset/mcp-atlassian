@@ -19,6 +19,9 @@ from mcp_atlassian.utils.decorators import check_write_access
 
 logger = logging.getLogger(__name__)
 
+# Maximum attachment size for inline download (50 MB)
+_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024
+
 # Regex patterns for Jira key validation.
 # Per Atlassian docs, Cloud project keys are 2-10 chars. Server/Data Center
 # allows longer keys (configurable). We accept any length to support both.
@@ -586,32 +589,28 @@ async def download_attachments(
 
     attachments = result.get("attachments", [])
     failed = result.get("failed", [])
-
-    summary = {
-        "success": True,
-        "issue_key": result.get("issue_key", issue_key),
-        "total": result.get("total", 0),
-        "downloaded": len(attachments),
-        "failed": failed,
-    }
-
-    if not attachments and not failed:
-        summary["message"] = result.get(
-            "message", f"No attachments found for issue {issue_key}"
-        )
-
-    contents.append(
-        TextContent(
-            type="text",
-            text=json.dumps(summary, indent=2, ensure_ascii=False),
-        )
-    )
+    downloaded = 0
 
     for attachment in attachments:
         data_bytes: bytes = attachment["data"]
+        filename = attachment["filename"]
+
+        if len(data_bytes) > _ATTACHMENT_MAX_BYTES:
+            failed.append(
+                {
+                    "filename": filename,
+                    "error": (
+                        f"Attachment '{filename}' is {len(data_bytes)} bytes"
+                        " which exceeds the 50 MB inline limit."
+                        " Retrieve it directly from Jira."
+                    ),
+                }
+            )
+            continue
+
         encoded = base64.b64encode(data_bytes).decode("ascii")
         mime_type = attachment.get("content_type", "application/octet-stream")
-        filename = attachment["filename"]
+        downloaded += 1
 
         contents.append(
             EmbeddedResource(
@@ -623,6 +622,28 @@ async def download_attachments(
                 ),
             )
         )
+
+    summary: dict[str, Any] = {
+        "success": True,
+        "issue_key": result.get("issue_key", issue_key),
+        "total": result.get("total", 0),
+        "downloaded": downloaded,
+        "failed": failed,
+    }
+
+    if not attachments and not failed:
+        summary["message"] = result.get(
+            "message", f"No attachments found for issue {issue_key}"
+        )
+
+    # Insert summary text at the beginning
+    contents.insert(
+        0,
+        TextContent(
+            type="text",
+            text=json.dumps(summary, indent=2, ensure_ascii=False),
+        ),
+    )
 
     return contents
 

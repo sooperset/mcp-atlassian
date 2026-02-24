@@ -14,6 +14,9 @@ from .protocols import AttachmentsOperationsProto
 # Configure logging
 logger = logging.getLogger("mcp-jira")
 
+# Maximum attachment size for in-memory download (50 MB)
+_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024
+
 
 class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
     """Mixin for Jira attachment operations."""
@@ -163,6 +166,24 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
                 logger.warning(f"No URL for attachment {attachment.filename}")
                 failed.append(
                     {"filename": attachment.filename, "error": "No URL available"}
+                )
+                continue
+
+            if attachment.size is not None and attachment.size > _ATTACHMENT_MAX_BYTES:
+                logger.warning(
+                    f"Skipping attachment {attachment.filename}: "
+                    f"{attachment.size} bytes exceeds 50 MB limit"
+                )
+                failed.append(
+                    {
+                        "filename": attachment.filename,
+                        "error": (
+                            f"Attachment '{attachment.filename}' is "
+                            f"{attachment.size} bytes which exceeds "
+                            "the 50 MB inline limit. Retrieve it "
+                            "directly from Jira."
+                        ),
+                    }
                 )
                 continue
 
