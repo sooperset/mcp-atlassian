@@ -36,6 +36,8 @@ class TestJQLQuoting:
             ('my"key', '"my\\"key"'),
             # Internal backslash escaping
             ("my\\key", '"my\\\\key"'),
+            # Both backslash and double-quote (PR #949 regression)
+            ('my\\"key', '"my\\\\\\"key"'),
         ],
         ids=[
             "reserved-IF",
@@ -54,6 +56,7 @@ class TestJQLQuoting:
             "digit-start-1ABC",
             "internal-quote",
             "internal-backslash",
+            "internal-backslash-and-quote",
         ],
     )
     def test_quoting(self, identifier: str, expected: str) -> None:
