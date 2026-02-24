@@ -1,6 +1,10 @@
 """Tests for the URL utilities module."""
 
-from mcp_atlassian.utils.urls import is_atlassian_cloud_url
+import os
+import socket
+from unittest.mock import patch
+
+from mcp_atlassian.utils.urls import is_atlassian_cloud_url, validate_url_for_ssrf
 
 
 def test_is_atlassian_cloud_url_empty():
@@ -90,3 +94,135 @@ def test_is_atlassian_cloud_url_with_protocols():
     assert (
         is_atlassian_cloud_url("ftp://example.atlassian.net") is True
     )  # URL parsing still works
+
+
+class TestValidateUrlForSsrf:
+    """Tests for validate_url_for_ssrf."""
+
+    def test_valid_cloud_url(self) -> None:
+        """Atlassian Cloud URL passes validation."""
+        with patch("mcp_atlassian.utils.urls.socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, "", ("104.192.141.1", 0))]
+            assert validate_url_for_ssrf("https://company.atlassian.net") is None
+
+    def test_valid_server_url(self) -> None:
+        """Server/DC URL passes validation."""
+        with patch("mcp_atlassian.utils.urls.socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, "", ("8.8.8.8", 0))]
+            assert validate_url_for_ssrf("https://jira.example.com") is None
+
+    def test_empty_url(self) -> None:
+        """Empty URL is rejected."""
+        result = validate_url_for_ssrf("")
+        assert result is not None
+        assert "Empty" in result
+
+    def test_ftp_scheme(self) -> None:
+        """FTP scheme is rejected."""
+        result = validate_url_for_ssrf("ftp://evil.com")
+        assert result is not None
+        assert "scheme" in result.lower()
+
+    def test_file_scheme(self) -> None:
+        """file:// scheme is rejected."""
+        result = validate_url_for_ssrf("file:///etc/passwd")
+        assert result is not None
+        assert "scheme" in result.lower()
+
+    def test_localhost(self) -> None:
+        """localhost is rejected."""
+        result = validate_url_for_ssrf("http://localhost:8080")
+        assert result is not None
+        assert "localhost" in result.lower() or "Blocked" in result
+
+    def test_loopback_ip(self) -> None:
+        """127.0.0.1 is rejected."""
+        result = validate_url_for_ssrf("http://127.0.0.1")
+        assert result is not None
+
+    def test_private_10(self) -> None:
+        """10.x.x.x is rejected."""
+        result = validate_url_for_ssrf("http://10.0.0.1")
+        assert result is not None
+
+    def test_private_172(self) -> None:
+        """172.16.x.x is rejected."""
+        result = validate_url_for_ssrf("http://172.16.0.1")
+        assert result is not None
+
+    def test_private_192(self) -> None:
+        """192.168.x.x is rejected."""
+        result = validate_url_for_ssrf("http://192.168.1.100")
+        assert result is not None
+
+    def test_carrier_grade_nat(self) -> None:
+        """100.64.x.x (CGNAT) is rejected."""
+        result = validate_url_for_ssrf("http://100.64.0.1")
+        assert result is not None
+
+    def test_cloud_metadata(self) -> None:
+        """169.254.169.254 (cloud metadata) is rejected."""
+        result = validate_url_for_ssrf("http://169.254.169.254")
+        assert result is not None
+
+    def test_ipv6_loopback(self) -> None:
+        """IPv6 loopback ::1 is rejected."""
+        result = validate_url_for_ssrf("http://[::1]")
+        assert result is not None
+
+    def test_dns_resolves_private(self) -> None:
+        """Hostname resolving to private IP is rejected."""
+        with patch("mcp_atlassian.utils.urls.socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, "", ("10.0.0.1", 0))]
+            result = validate_url_for_ssrf("https://evil.example.com")
+            assert result is not None
+            assert "non-global" in result.lower()
+
+    def test_dns_unresolvable(self) -> None:
+        """Unresolvable hostname is rejected."""
+        with patch("mcp_atlassian.utils.urls.socket.getaddrinfo") as mock_dns:
+            mock_dns.side_effect = socket.gaierror("Name resolution failed")
+            result = validate_url_for_ssrf("https://nonexistent.invalid")
+            assert result is not None
+            assert "DNS" in result
+
+    def test_allowlist_exact_match(self) -> None:
+        """Domain allowlist allows exact match."""
+        with patch.dict(
+            os.environ,
+            {"MCP_ALLOWED_URL_DOMAINS": "corp.com"},
+        ):
+            with patch("mcp_atlassian.utils.urls.socket.getaddrinfo") as mock_dns:
+                mock_dns.return_value = [(2, 1, 6, "", ("8.8.8.8", 0))]
+                assert validate_url_for_ssrf("https://corp.com") is None
+
+    def test_allowlist_subdomain_match(self) -> None:
+        """Domain allowlist allows subdomain match."""
+        with patch.dict(
+            os.environ,
+            {"MCP_ALLOWED_URL_DOMAINS": "atlassian.net"},
+        ):
+            with patch("mcp_atlassian.utils.urls.socket.getaddrinfo") as mock_dns:
+                mock_dns.return_value = [(2, 1, 6, "", ("104.192.141.1", 0))]
+                assert validate_url_for_ssrf("https://company.atlassian.net") is None
+
+    def test_allowlist_reject(self) -> None:
+        """Domain allowlist rejects non-matching hostname."""
+        with patch.dict(
+            os.environ,
+            {"MCP_ALLOWED_URL_DOMAINS": "atlassian.net"},
+        ):
+            result = validate_url_for_ssrf("https://evil.com")
+            assert result is not None
+            assert "not in allowed" in result.lower()
+
+    def test_metadata_google_internal(self) -> None:
+        """GCP metadata endpoint is rejected."""
+        result = validate_url_for_ssrf("http://metadata.google.internal")
+        assert result is not None
+        assert "Blocked hostname" in result
+
+    def test_ipv4_mapped_ipv6(self) -> None:
+        """IPv4-mapped IPv6 loopback is rejected."""
+        result = validate_url_for_ssrf("http://[::ffff:127.0.0.1]")
+        assert result is not None

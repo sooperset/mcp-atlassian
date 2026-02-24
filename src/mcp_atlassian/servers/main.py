@@ -27,6 +27,7 @@ from mcp_atlassian.utils.environment import get_available_services
 from mcp_atlassian.utils.io import is_read_only_mode
 from mcp_atlassian.utils.logging import mask_sensitive
 from mcp_atlassian.utils.tools import get_enabled_tools, should_include_tool
+from mcp_atlassian.utils.urls import validate_url_for_ssrf
 
 from .confluence import confluence_mcp
 from .context import MainAppContext
@@ -471,6 +472,23 @@ class UserTokenMiddleware:
                 if confluence_url_header
                 else None
             )
+
+            # Validate URLs to prevent SSRF
+            if jira_url_str:
+                ssrf_error = validate_url_for_ssrf(jira_url_str)
+                if ssrf_error:
+                    scope["state"]["auth_validation_error"] = (
+                        f"Forbidden: Invalid Jira URL - {ssrf_error}"
+                    )
+                    return
+
+            if confluence_url_str:
+                ssrf_error = validate_url_for_ssrf(confluence_url_str)
+                if ssrf_error:
+                    scope["state"]["auth_validation_error"] = (
+                        f"Forbidden: Invalid Confluence URL - {ssrf_error}"
+                    )
+                    return
 
             # Build service headers dict
             service_headers = {}

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from fastmcp import Context
@@ -17,6 +18,7 @@ from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
 from mcp_atlassian.jira import JiraConfig, JiraFetcher
 from mcp_atlassian.servers.context import MainAppContext
 from mcp_atlassian.utils.oauth import OAuthConfig
+from mcp_atlassian.utils.urls import validate_url_for_ssrf
 
 if TYPE_CHECKING:
     from mcp_atlassian.confluence.config import (
@@ -25,6 +27,34 @@ if TYPE_CHECKING:
     from mcp_atlassian.jira.config import JiraConfig as UserJiraConfigType
 
 logger = logging.getLogger("mcp-atlassian.servers.dependencies")
+
+
+def _make_ssrf_safe_hook(
+    validate_fn: Callable[[str], str | None],
+) -> Callable[..., Any]:
+    """Create a requests response hook that validates redirect URLs.
+
+    Blocks HTTP redirects that target internal/private IP addresses
+    to prevent SSRF via open-redirect chains.
+
+    Args:
+        validate_fn: A function that returns None if safe,
+            error string if blocked.
+
+    Returns:
+        A requests response hook function.
+    """
+
+    def hook(response: Any, **kwargs: Any) -> Any:
+        if response.is_redirect:
+            redirect_url = response.headers.get("Location", "")
+            error = validate_fn(redirect_url)
+            if error:
+                response.close()
+                raise ValueError(f"Redirect blocked (SSRF): {error}")
+        return response
+
+    return hook
 
 
 def _resolve_bearer_auth_type(
@@ -281,6 +311,11 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
             )
             try:
                 header_jira_fetcher = JiraFetcher(config=header_config)
+                # Attach SSRF redirect hook to block
+                # 302 redirects to internal targets
+                header_jira_fetcher.jira._session.hooks["response"].append(
+                    _make_ssrf_safe_hook(validate_url_for_ssrf)
+                )
                 current_user_id = header_jira_fetcher.get_current_user_account_id()
                 logger.debug(
                     f"get_jira_fetcher: Validated header-based Jira token for user ID: {current_user_id}"
@@ -488,6 +523,11 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
             )
             try:
                 header_confluence_fetcher = ConfluenceFetcher(config=header_config)
+                # Attach SSRF redirect hook to block
+                # 302 redirects to internal targets
+                header_confluence_fetcher.confluence._session.hooks["response"].append(
+                    _make_ssrf_safe_hook(validate_url_for_ssrf)
+                )
                 current_user_data = header_confluence_fetcher.get_current_user_info()
                 derived_email = (
                     current_user_data.get("email")

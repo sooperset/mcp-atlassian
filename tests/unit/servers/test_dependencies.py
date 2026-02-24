@@ -411,6 +411,11 @@ def _create_mock_fetcher(fetcher_class, validation_return=None, validation_error
             mock_fetcher.get_current_user_account_id.return_value = (
                 validation_return or "test-account-id"
             )
+        # Set up jira._session.hooks for SSRF redirect hook attachment
+        mock_session = MagicMock()
+        mock_session.hooks = {"response": []}
+        mock_fetcher.jira = MagicMock()
+        mock_fetcher.jira._session = mock_session
     elif fetcher_class == ConfluenceFetcher:
         if validation_error:
             mock_fetcher.get_current_user_info.side_effect = validation_error
@@ -419,6 +424,11 @@ def _create_mock_fetcher(fetcher_class, validation_return=None, validation_error
                 "email": "user@example.com",
                 "displayName": "Test User",
             }
+        # Set up confluence._session.hooks for SSRF redirect hook attachment
+        mock_session = MagicMock()
+        mock_session.hooks = {"response": []}
+        mock_fetcher.confluence = MagicMock()
+        mock_fetcher.confluence._session = mock_session
 
     return mock_fetcher
 
@@ -1261,3 +1271,75 @@ class TestResolveBearerAuthType:
         )
         result = _resolve_bearer_auth_type(config, "oauth")
         assert result == "pat"
+
+
+class TestSsrfProtection:
+    """SSRF protection regression tests."""
+
+    def test_validate_rejects_private_ip(self) -> None:
+        """Private IP URLs are rejected by SSRF validation."""
+        from mcp_atlassian.utils.urls import validate_url_for_ssrf
+
+        result = validate_url_for_ssrf("http://127.0.0.1:8080")
+        assert result is not None
+
+    def test_validate_rejects_metadata(self) -> None:
+        """Cloud metadata endpoint is rejected."""
+        from mcp_atlassian.utils.urls import validate_url_for_ssrf
+
+        result = validate_url_for_ssrf("http://169.254.169.254")
+        assert result is not None
+
+    def test_validate_rejects_file_scheme(self) -> None:
+        """file:// scheme is rejected."""
+        from mcp_atlassian.utils.urls import validate_url_for_ssrf
+
+        result = validate_url_for_ssrf("file:///etc/passwd")
+        assert result is not None
+
+    def test_redirect_hook_blocks_internal(self) -> None:
+        """Redirect to internal IP is blocked by SSRF hook."""
+        from mcp_atlassian.servers.dependencies import _make_ssrf_safe_hook
+        from mcp_atlassian.utils.urls import validate_url_for_ssrf
+
+        hook = _make_ssrf_safe_hook(validate_url_for_ssrf)
+
+        # Create a mock response that simulates a redirect
+        mock_response = MagicMock()
+        mock_response.is_redirect = True
+        mock_response.headers = {"Location": "http://169.254.169.254/latest/meta-data"}
+
+        with pytest.raises(ValueError, match="Redirect blocked"):
+            hook(mock_response)
+
+    def test_redirect_hook_allows_safe(self) -> None:
+        """Redirect to safe URL passes through."""
+        from mcp_atlassian.servers.dependencies import _make_ssrf_safe_hook
+        from mcp_atlassian.utils.urls import validate_url_for_ssrf
+
+        hook = _make_ssrf_safe_hook(validate_url_for_ssrf)
+
+        mock_response = MagicMock()
+        mock_response.is_redirect = True
+        mock_response.headers = {
+            "Location": "https://company.atlassian.net/rest/api/2/issue"
+        }
+
+        # Mock DNS for the redirect target
+        with patch("mcp_atlassian.utils.urls.socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, "", ("104.192.141.1", 0))]
+            result = hook(mock_response)
+            assert result == mock_response
+
+    def test_redirect_hook_ignores_non_redirect(self) -> None:
+        """Non-redirect response passes through without checks."""
+        from mcp_atlassian.servers.dependencies import _make_ssrf_safe_hook
+        from mcp_atlassian.utils.urls import validate_url_for_ssrf
+
+        hook = _make_ssrf_safe_hook(validate_url_for_ssrf)
+
+        mock_response = MagicMock()
+        mock_response.is_redirect = False
+
+        result = hook(mock_response)
+        assert result == mock_response

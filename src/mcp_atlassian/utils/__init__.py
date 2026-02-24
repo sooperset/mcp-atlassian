@@ -16,7 +16,7 @@ from .logging import setup_logging
 # Export OAuth utilities
 from .oauth import OAuthConfig, configure_oauth_session
 from .ssl import SSLIgnoreAdapter, configure_ssl_verification
-from .urls import is_atlassian_cloud_url
+from .urls import is_atlassian_cloud_url, validate_url_for_ssrf
 
 # Export all utility functions for backward compatibility
 __all__ = [
@@ -32,4 +32,5 @@ __all__ = [
     "configure_oauth_session",
     "setup_signal_handlers",
     "ensure_clean_exit",
+    "validate_url_for_ssrf",
 ]
