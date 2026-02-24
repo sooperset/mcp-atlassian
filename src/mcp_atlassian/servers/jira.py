@@ -1290,12 +1290,12 @@ async def update_issue(
         ),
     ],
     fields: Annotated[
-        dict[str, Any],
+        str,
         Field(
             description=(
-                "Dictionary of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
+                "JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
                 "For 'description', provide text in Markdown format. "
-                "Example: `{'assignee': 'user@example.com', 'summary': 'New Summary', 'description': '## Updated\\nMarkdown text'}`"
+                'Example: \'{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\\nMarkdown text"}\''
             )
         ),
     ],
@@ -1336,7 +1336,7 @@ async def update_issue(
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        fields: Dictionary of fields to update. Text fields like 'description' should use Markdown format.
+        fields: JSON string of fields to update. Text fields like 'description' should use Markdown format.
         additional_fields: Optional JSON string of additional fields.
         components: Comma-separated list of component names.
         attachments: Optional JSON array string or comma-separated list of file paths.
@@ -1348,8 +1348,7 @@ async def update_issue(
         ValueError: If in read-only mode or Jira client unavailable, or invalid input.
     """
     jira = await get_jira_fetcher(ctx)
-    # Use fields directly as dict
-    update_fields = fields
+    update_fields = _parse_additional_fields(fields)
 
     # Parse components from comma-separated string to list
     components_list = None
@@ -2059,6 +2058,26 @@ async def get_project_versions(
 
 @jira_mcp.tool(
     tags={"jira", "read"},
+    annotations={"title": "Get Project Components", "readOnlyHint": True},
+)
+async def get_project_components(
+    ctx: Context,
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'PROJ', 'ACV2')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
+) -> str:
+    """Get all components for a specific Jira project."""
+    jira = await get_jira_fetcher(ctx)
+    components = jira.get_project_components(project_key)
+    return json.dumps(components, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read"},
     annotations={"title": "Get All Projects", "readOnlyHint": True},
 )
 async def get_all_projects(
@@ -2123,6 +2142,144 @@ async def get_all_projects(
         ]
 
     return json.dumps(projects, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={
+        "title": "Get Service Desk For Project",
+        "readOnlyHint": True,
+    },
+)
+async def get_service_desk_for_project(
+    ctx: Context,
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'SUP')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
+) -> str:
+    """
+    Get the Jira Service Desk associated with a project key.
+
+    Server/Data Center only. Not available on Jira Cloud.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: Jira project key.
+
+    Returns:
+        JSON string with project key and service desk data (or null if not found).
+
+    Raises:
+        NotImplementedError: If connected to Jira Cloud (Server/DC only).
+    """
+    jira = await get_jira_fetcher(ctx)
+    service_desk = jira.get_service_desk_for_project(project_key=project_key)
+    result = {
+        "project_key": project_key.upper(),
+        "service_desk": service_desk.to_simplified_dict() if service_desk else None,
+    }
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Service Desk Queues", "readOnlyHint": True},
+)
+async def get_service_desk_queues(
+    ctx: Context,
+    service_desk_id: Annotated[
+        str,
+        Field(description="Service desk ID (e.g., '4')"),
+    ],
+    start_at: Annotated[
+        int,
+        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(description="Maximum number of results (1-50)", default=50, ge=1, le=50),
+    ] = 50,
+) -> str:
+    """
+    Get queues for a Jira Service Desk.
+
+    Server/Data Center only. Not available on Jira Cloud.
+
+    Args:
+        ctx: The FastMCP context.
+        service_desk_id: Service desk ID.
+        start_at: Starting index for pagination.
+        limit: Maximum number of queues to return.
+
+    Returns:
+        JSON string with queue list and pagination metadata.
+
+    Raises:
+        NotImplementedError: If connected to Jira Cloud (Server/DC only).
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_service_desk_queues(
+        service_desk_id=service_desk_id,
+        start_at=start_at,
+        limit=limit,
+        include_count=True,
+    )
+    return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Queue Issues", "readOnlyHint": True},
+)
+async def get_queue_issues(
+    ctx: Context,
+    service_desk_id: Annotated[
+        str,
+        Field(description="Service desk ID (e.g., '4')"),
+    ],
+    queue_id: Annotated[
+        str,
+        Field(description="Queue ID (e.g., '47')"),
+    ],
+    start_at: Annotated[
+        int,
+        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(description="Maximum number of results (1-50)", default=50, ge=1),
+    ] = 50,
+) -> str:
+    """
+    Get issues from a Jira Service Desk queue.
+
+    Server/Data Center only. Not available on Jira Cloud.
+
+    Args:
+        ctx: The FastMCP context.
+        service_desk_id: Service desk ID.
+        queue_id: Queue ID.
+        start_at: Starting index for pagination.
+        limit: Maximum number of issues to return.
+
+    Returns:
+        JSON string with queue metadata, issues, and pagination metadata.
+
+    Raises:
+        NotImplementedError: If connected to Jira Cloud (Server/DC only).
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_queue_issues(
+        service_desk_id=service_desk_id,
+        queue_id=queue_id,
+        start_at=start_at,
+        limit=limit,
+    )
+    return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(

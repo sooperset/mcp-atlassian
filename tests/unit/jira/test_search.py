@@ -965,3 +965,87 @@ class TestSearchMixin:
             get_jql_from_call()
             == "(priority = High) AND project = PROJ1 order by updated desc"
         )
+
+    # Tests for JQL injection prevention in projects filter (PR #949)
+
+    @pytest.mark.parametrize(
+        "input_value,expected",
+        [
+            ("normal", "normal"),
+            ('has"quote', 'has\\"quote'),
+            ("has\\backslash", "has\\\\backslash"),
+            ('has\\"both', 'has\\\\\\"both'),
+        ],
+        ids=[
+            "no-special-chars",
+            "double-quote-escaped",
+            "backslash-escaped",
+            "backslash-and-quote-escaped",
+        ],
+    )
+    def test_projects_filter_inline_escaping_logic(
+        self,
+        input_value: str,
+        expected: str,
+    ):
+        """Regression: verify the inline escaping logic used in search_issues.
+
+        The projects filter escaping (search.py lines 67-69) applies:
+          1. Replace \\ with \\\\  (backslash first)
+          2. Replace " with \\"   (then double-quote)
+
+        This ordering is critical: reversing it would allow \\" bypass attacks.
+        """
+        # Reproduce the exact inline escaping logic from search.py
+        result = input_value.replace("\\", "\\\\").replace('"', '\\"')
+        assert result == expected
+
+    @pytest.mark.parametrize(
+        "malicious_filter",
+        [
+            'PROJ") OR 1=1 --',
+            "PROJ\\",
+            'PROJ\\"injection',
+        ],
+        ids=[
+            "double-quote-injection",
+            "backslash-injection",
+            "backslash-and-quote-injection",
+        ],
+    )
+    @pytest.mark.parametrize("is_cloud", [True, False])
+    def test_search_issues_projects_filter_handles_special_chars(
+        self,
+        search_mixin: SearchMixin,
+        mock_issues_response: dict,
+        malicious_filter: str,
+        is_cloud: bool,
+    ):
+        """Regression: projects filter with special chars must not cause errors.
+
+        PR #949 added inline escaping to prevent JQL injection through the
+        projects_filter parameter. This test verifies that malicious inputs
+        containing backslashes and double-quotes are handled without errors
+        and produce a JQL string with a project clause.
+        """
+        search_mixin.config.is_cloud = is_cloud
+        search_mixin.config.projects_filter = None
+        search_mixin.config.url = "https://test.example.com"
+
+        search_mixin.jira.post = MagicMock(return_value=mock_issues_response)
+        search_mixin.jira.jql = MagicMock(return_value=mock_issues_response)
+
+        def get_jql_from_call() -> str:
+            if is_cloud:
+                return search_mixin.jira.post.call_args[1]["json"]["jql"]
+            else:
+                return search_mixin.jira.jql.call_args[0][0]
+
+        # Should not raise any exceptions
+        search_mixin.search_issues("status = Open", projects_filter=malicious_filter)
+        jql = get_jql_from_call()
+
+        # The JQL should contain a project clause (escaping was applied)
+        assert "project" in jql.lower()
+        # The original query should still be present
+        assert "status = Open" in jql

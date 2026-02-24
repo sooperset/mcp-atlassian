@@ -275,6 +275,48 @@ def mock_jira_fetcher():
 
     mock_get_user_profile.side_effect = side_effect_func
     mock_fetcher.get_user_profile_by_identifier = mock_get_user_profile
+
+    # Configure service desk methods
+    mock_service_desk = MagicMock()
+    mock_service_desk.to_simplified_dict.return_value = {
+        "id": "4",
+        "project_id": "10400",
+        "project_key": "SUP",
+        "project_name": "support",
+        "links": {"self": "https://test.atlassian.net/rest/servicedeskapi/4"},
+    }
+    mock_fetcher.get_service_desk_for_project.return_value = mock_service_desk
+
+    mock_service_desk_queues = MagicMock()
+    mock_service_desk_queues.to_simplified_dict.return_value = {
+        "service_desk_id": "4",
+        "start": 0,
+        "limit": 50,
+        "size": 2,
+        "is_last_page": True,
+        "queues": [
+            {"id": "47", "name": "Support Team", "issue_count": 11},
+            {"id": "48", "name": "Waiting for customer", "issue_count": 33},
+        ],
+    }
+    mock_fetcher.get_service_desk_queues.return_value = mock_service_desk_queues
+
+    mock_queue_issues = MagicMock()
+    mock_queue_issues.to_simplified_dict.return_value = {
+        "service_desk_id": "4",
+        "queue_id": "47",
+        "start": 0,
+        "limit": 2,
+        "size": 2,
+        "is_last_page": True,
+        "queue": {"id": "47", "name": "Support Team", "issue_count": 11},
+        "issues": [
+            {"id": "1", "key": "SUP-1"},
+            {"id": "2", "key": "SUP-2"},
+        ],
+    }
+    mock_fetcher.get_queue_issues.return_value = mock_queue_issues
+
     return mock_fetcher
 
 
@@ -327,8 +369,12 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         get_field_options,
         get_issue,
         get_link_types,
+        get_project_components,
         get_project_issues,
         get_project_versions,
+        get_queue_issues,
+        get_service_desk_for_project,
+        get_service_desk_queues,
         get_sprint_issues,
         get_sprints_from_board,
         get_transitions,
@@ -350,7 +396,11 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(get_field_options)
     jira_sub_mcp.add_tool(get_project_issues)
     jira_sub_mcp.add_tool(get_project_versions)
+    jira_sub_mcp.add_tool(get_project_components)
     jira_sub_mcp.add_tool(get_all_projects)
+    jira_sub_mcp.add_tool(get_service_desk_for_project)
+    jira_sub_mcp.add_tool(get_service_desk_queues)
+    jira_sub_mcp.add_tool(get_queue_issues)
     jira_sub_mcp.add_tool(get_transitions)
     jira_sub_mcp.add_tool(get_worklog)
     jira_sub_mcp.add_tool(download_attachments)
@@ -638,6 +688,83 @@ async def test_get_field_options_values_only_cascading(jira_client, mock_jira_fe
         "value": "UK",
         "children": ["London", "Manchester"],
     }
+
+
+@pytest.mark.anyio
+async def test_get_service_desk_for_project(jira_client, mock_jira_fetcher):
+    """Test service desk lookup by project key."""
+    response = await jira_client.call_tool(
+        "jira_get_service_desk_for_project", {"project_key": "SUP"}
+    )
+    assert hasattr(response, "content")
+    assert len(response.content) > 0
+
+    content = json.loads(response.content[0].text)
+    assert content["project_key"] == "SUP"
+    assert content["service_desk"]["id"] == "4"
+    assert content["service_desk"]["project_key"] == "SUP"
+    mock_jira_fetcher.get_service_desk_for_project.assert_called_once_with(
+        project_key="SUP"
+    )
+
+
+@pytest.mark.anyio
+async def test_get_service_desk_for_project_not_found(jira_client, mock_jira_fetcher):
+    """Test service desk lookup returns null payload when not found."""
+    mock_jira_fetcher.get_service_desk_for_project.return_value = None
+
+    response = await jira_client.call_tool(
+        "jira_get_service_desk_for_project", {"project_key": "SUP"}
+    )
+    content = json.loads(response.content[0].text)
+
+    assert content["project_key"] == "SUP"
+    assert content["service_desk"] is None
+
+
+@pytest.mark.anyio
+async def test_get_service_desk_queues(jira_client, mock_jira_fetcher):
+    """Test queue listing for a service desk."""
+    response = await jira_client.call_tool(
+        "jira_get_service_desk_queues",
+        {"service_desk_id": "4", "start_at": 0, "limit": 50},
+    )
+    assert hasattr(response, "content")
+    assert len(response.content) > 0
+
+    content = json.loads(response.content[0].text)
+    assert content["service_desk_id"] == "4"
+    assert content["size"] == 2
+    assert content["queues"][0]["id"] == "47"
+    mock_jira_fetcher.get_service_desk_queues.assert_called_once_with(
+        service_desk_id="4",
+        start_at=0,
+        limit=50,
+        include_count=True,
+    )
+
+
+@pytest.mark.anyio
+async def test_get_queue_issues(jira_client, mock_jira_fetcher):
+    """Test queue issue retrieval."""
+    response = await jira_client.call_tool(
+        "jira_get_queue_issues",
+        {"service_desk_id": "4", "queue_id": "47", "start_at": 0, "limit": 2},
+    )
+    assert hasattr(response, "content")
+    assert len(response.content) > 0
+
+    content = json.loads(response.content[0].text)
+    assert content["service_desk_id"] == "4"
+    assert content["queue_id"] == "47"
+    assert content["size"] == 2
+    assert content["issues"][0]["key"] == "SUP-1"
+    mock_jira_fetcher.get_queue_issues.assert_called_once_with(
+        service_desk_id="4",
+        queue_id="47",
+        start_at=0,
+        limit=2,
+    )
 
 
 @pytest.mark.anyio

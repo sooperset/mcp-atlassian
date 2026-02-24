@@ -1,5 +1,6 @@
 """Tests for the Jira attachments module."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
@@ -77,6 +78,7 @@ class TestAttachmentsMixin:
             patch("os.path.exists") as mock_exists,
             patch("os.path.getsize") as mock_getsize,
             patch("os.makedirs") as mock_makedirs,
+            patch("os.getcwd", return_value="/tmp"),
         ):
             mock_exists.return_value = True
             mock_getsize.return_value = 12  # Length of "test content"
@@ -113,11 +115,14 @@ class TestAttachmentsMixin:
             patch("os.makedirs") as mock_makedirs,
             patch("os.path.abspath") as mock_abspath,
             patch("os.path.isabs") as mock_isabs,
+            patch("os.getcwd", return_value="/absolute/path"),
         ):
             mock_exists.return_value = True
             mock_getsize.return_value = 12
             mock_isabs.return_value = False
-            mock_abspath.return_value = "/absolute/path/test_file.txt"
+            mock_abspath.side_effect = lambda p: (
+                "/absolute/path/test_file.txt" if p == "test_file.txt" else p
+            )
 
             # Call the method with a relative path
             result = attachments_mixin.download_attachment(
@@ -127,7 +132,7 @@ class TestAttachmentsMixin:
             # Assertions
             assert result is True
             mock_isabs.assert_called_once_with("test_file.txt")
-            mock_abspath.assert_called_once_with("test_file.txt")
+            mock_abspath.assert_any_call("test_file.txt")
             mock_file.assert_called_once_with("/absolute/path/test_file.txt", "wb")
 
     def test_download_attachment_no_url(self, attachments_mixin: AttachmentsMixin):
@@ -236,6 +241,7 @@ class TestAttachmentsMixin:
                 "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
                 side_effect=[mock_attachment1, mock_attachment2],
             ),
+            patch("os.getcwd", return_value="/tmp"),
         ):
             result = attachments_mixin.download_issue_attachments(
                 "TEST-123", "/tmp/attachments"
@@ -286,6 +292,7 @@ class TestAttachmentsMixin:
             ),
             patch("os.path.isabs") as mock_isabs,
             patch("os.path.abspath") as mock_abspath,
+            patch("os.getcwd", return_value="/absolute/path"),
         ):
             mock_isabs.return_value = False
             mock_abspath.return_value = "/absolute/path/attachments"
@@ -307,7 +314,10 @@ class TestAttachmentsMixin:
         mock_issue = {"fields": {"attachment": []}}
         attachments_mixin.jira.issue.return_value = mock_issue
 
-        with patch("pathlib.Path.mkdir") as mock_mkdir:
+        with (
+            patch("pathlib.Path.mkdir") as mock_mkdir,
+            patch("os.getcwd", return_value="/tmp"),
+        ):
             result = attachments_mixin.download_issue_attachments(
                 "TEST-123", "/tmp/attachments"
             )
@@ -325,9 +335,12 @@ class TestAttachmentsMixin:
         """Test download when issue cannot be retrieved."""
         attachments_mixin.jira.issue.return_value = None
 
-        with pytest.raises(
-            TypeError,
-            match="Unexpected return value type from `jira.issue`: <class 'NoneType'>",
+        with (
+            patch("os.getcwd", return_value="/tmp"),
+            pytest.raises(
+                TypeError,
+                match="Unexpected return value type from `jira.issue`: <class 'NoneType'>",
+            ),
         ):
             attachments_mixin.download_issue_attachments("TEST-123", "/tmp/attachments")
 
@@ -339,9 +352,10 @@ class TestAttachmentsMixin:
         mock_issue = {}  # Missing 'fields' key
         attachments_mixin.jira.issue.return_value = mock_issue
 
-        result = attachments_mixin.download_issue_attachments(
-            "TEST-123", "/tmp/attachments"
-        )
+        with patch("os.getcwd", return_value="/tmp"):
+            result = attachments_mixin.download_issue_attachments(
+                "TEST-123", "/tmp/attachments"
+            )
 
         # Assertions
         assert result["success"] is False
@@ -391,6 +405,7 @@ class TestAttachmentsMixin:
                 "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
                 side_effect=[mock_attachment1, mock_attachment2],
             ),
+            patch("os.getcwd", return_value="/tmp"),
         ):
             result = attachments_mixin.download_issue_attachments(
                 "TEST-123", "/tmp/attachments"
@@ -435,6 +450,7 @@ class TestAttachmentsMixin:
                 "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
                 return_value=mock_attachment,
             ),
+            patch("os.getcwd", return_value="/tmp"),
         ):
             result = attachments_mixin.download_issue_attachments(
                 "TEST-123", "/tmp/attachments"
@@ -969,3 +985,104 @@ class TestAttachmentsMixin:
             assert len(result["attachments"]) == 0
             assert len(result["failed"]) == 1
             assert "No URL available" in result["failed"][0]["error"]
+
+    # Tests for path traversal rejection (PR #949 security hardening)
+
+    @pytest.mark.parametrize(
+        "malicious_path",
+        [
+            # Absolute paths that resolve outside cwd
+            "/etc/passwd",
+            "/tmp/evil/file.txt",
+            "/var/log/secrets.txt",
+        ],
+        ids=[
+            "absolute-etc-passwd",
+            "absolute-tmp-evil",
+            "absolute-var-log",
+        ],
+    )
+    def test_download_attachment_rejects_path_traversal(
+        self,
+        attachments_mixin: AttachmentsMixin,
+        malicious_path: str,
+    ):
+        """Regression: path traversal in attachment filenames must be rejected.
+
+        The guard in download_attachment checks that the resolved absolute path
+        is within cwd via ``Path(target_path).is_relative_to(cwd)``.  Paths
+        outside cwd trigger a ValueError which is caught internally, causing
+        the method to return False.
+        """
+        with patch("os.getcwd", return_value="/safe/working/dir"):
+            result = attachments_mixin.download_attachment(
+                "https://test.url/attachment",
+                malicious_path,
+            )
+            assert result is False
+
+    @pytest.mark.parametrize(
+        "relative_path",
+        [
+            "../../../etc/passwd",
+            "normal/../../../etc/shadow",
+        ],
+        ids=[
+            "relative-traversal-etc-passwd",
+            "relative-traversal-nested",
+        ],
+    )
+    def test_download_attachment_rejects_relative_path_traversal(
+        self,
+        attachments_mixin: AttachmentsMixin,
+        relative_path: str,
+    ):
+        """Regression: relative paths that resolve outside cwd are rejected.
+
+        When a relative path is given, os.path.abspath resolves it.  If the
+        resolved path escapes cwd, the guard rejects it and returns False.
+        """
+        import os
+
+        cwd = os.getcwd()
+        with patch("os.getcwd", return_value=cwd):
+            result = attachments_mixin.download_attachment(
+                "https://test.url/attachment",
+                relative_path,
+            )
+            # The relative path resolves outside cwd (it traverses up)
+            resolved = os.path.abspath(relative_path)
+            if not Path(resolved).is_relative_to(cwd):
+                assert result is False
+
+    @pytest.mark.parametrize(
+        "malicious_dir",
+        [
+            "/etc",
+            "/tmp/evil",
+            "/var/log",
+        ],
+        ids=[
+            "absolute-etc",
+            "absolute-tmp-evil",
+            "absolute-var-log",
+        ],
+    )
+    def test_download_issue_attachments_rejects_path_traversal(
+        self,
+        attachments_mixin: AttachmentsMixin,
+        malicious_dir: str,
+    ):
+        """Regression: path traversal in target_dir must raise ValueError.
+
+        Unlike download_attachment (which catches the error internally),
+        download_issue_attachments lets the ValueError propagate.
+        """
+        with (
+            patch("os.getcwd", return_value="/safe/working/dir"),
+            pytest.raises(ValueError, match="Path traversal detected"),
+        ):
+            attachments_mixin.download_issue_attachments(
+                "TEST-123",
+                malicious_dir,
+            )
