@@ -152,9 +152,26 @@ def test_get_queue_issues_invalid_payload_returns_safe_default(
     assert result.size == 0
 
 
-def test_queue_endpoints_are_server_only_in_v1(queues_fetcher: JiraFetcher):
-    """Cloud mode should raise NotImplementedError in v1."""
-    queues_fetcher.config.is_cloud = True
+@pytest.fixture
+def cloud_queues_fetcher(jira_fetcher: JiraFetcher) -> JiraFetcher:
+    """Create a Jira fetcher configured as Cloud for queue rejection testing."""
+    fetcher = jira_fetcher
+    fetcher.config = MagicMock()
+    fetcher.config.is_cloud = True
+    return fetcher
 
-    with pytest.raises(NotImplementedError):
-        queues_fetcher.get_service_desk_for_project("SUP")
+
+@pytest.mark.parametrize(
+    "method,args",
+    [
+        ("get_service_desk_for_project", ("SUP",)),
+        ("get_service_desk_queues", ("4",)),
+        ("get_queue_issues", ("4", "47")),
+    ],
+)
+def test_queue_methods_reject_cloud(
+    cloud_queues_fetcher: JiraFetcher, method: str, args: tuple[str, ...]
+) -> None:
+    """All queue methods should raise NotImplementedError on Cloud."""
+    with pytest.raises(NotImplementedError, match="Server/Data Center"):
+        getattr(cloud_queues_fetcher, method)(*args)

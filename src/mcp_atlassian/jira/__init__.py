@@ -73,6 +73,7 @@ class JiraFetcher(
     - AttachmentsMixin: Attachment download operations
     - LinksMixin: Issue link operations
     - MetricsMixin: Issue metrics and date operations
+    - QueuesMixin: Service Desk queue read operations (Server/DC)
     - SLAMixin: SLA calculations
 
     The class structure is designed to maintain backward compatibility while
