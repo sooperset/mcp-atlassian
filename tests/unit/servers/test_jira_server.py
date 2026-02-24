@@ -582,6 +582,65 @@ async def test_get_field_options_values_only(jira_client):
 
 
 @pytest.mark.anyio
+async def test_get_field_options_values_only_cascading(jira_client, mock_jira_fetcher):
+    """Ensure values_only preserves parent-child structure for cascading selects."""
+    # Mock cascading select options
+    def mock_cascading_options(
+        field_id,
+        context_id=None,
+        project_key=None,
+        issue_type=None,
+    ):
+        cascading_payloads = [
+            {
+                "id": "10001",
+                "value": "US",
+                "child_options": [
+                    {"id": "10011", "value": "California"},
+                    {"id": "10012", "value": "New York"},
+                ],
+            },
+            {
+                "id": "10002",
+                "value": "UK",
+                "child_options": [
+                    {"id": "10021", "value": "London"},
+                    {"id": "10022", "value": "Manchester"},
+                ],
+            },
+        ]
+        options = []
+        for payload in cascading_payloads:
+            option = MagicMock()
+            option.to_simplified_dict.return_value = payload
+            options.append(option)
+        return options
+
+    mock_jira_fetcher.get_field_options.side_effect = mock_cascading_options
+
+    response = await jira_client.call_tool(
+        "jira_get_field_options",
+        {
+            "field_id": "customfield_10005",
+            "values_only": True,
+        },
+    )
+
+    content = json.loads(response.content[0].text)
+    assert isinstance(content, list)
+    assert len(content) == 2
+    # Verify parent-child structure is preserved
+    assert content[0] == {
+        "value": "US",
+        "children": ["California", "New York"],
+    }
+    assert content[1] == {
+        "value": "UK",
+        "children": ["London", "Manchester"],
+    }
+
+
+@pytest.mark.anyio
 async def test_create_issue(jira_client, mock_jira_fetcher):
     """Test the create_issue tool with fixture data."""
     response = await jira_client.call_tool(

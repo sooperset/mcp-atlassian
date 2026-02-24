@@ -43,21 +43,33 @@ def _json_dumps_compact(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
 
 
-def _to_values_only_payload(options: list[dict[str, Any]]) -> list[str]:
+def _to_values_only_payload(
+    options: list[dict[str, Any]],
+) -> list[str | dict[str, Any]]:
     """Convert option objects to a compact values-only list.
+
+    For cascading select fields, preserves parent-child structure as
+    {"value": "parent", "children": ["child1", "child2"]}.
 
     Args:
         options: List of option dictionaries with 'value' keys.
 
     Returns:
-        List of option values only.
+        List of option values. For cascading fields with children,
+        returns dict with value and children keys.
     """
-    values: list[str] = []
+    values: list[str | dict[str, Any]] = []
     for option in options:
         if isinstance(option, dict):
             value = option.get("value")
             if value is not None:
-                values.append(str(value))
+                child_options = option.get("child_options")
+                if child_options:
+                    # Recursively extract child values
+                    child_values = _to_values_only_payload(child_options)
+                    values.append({"value": str(value), "children": child_values})
+                else:
+                    values.append(str(value))
     return values
 
 
@@ -497,7 +509,11 @@ async def get_field_options(
     values_only: Annotated[
         bool | None,
         Field(
-            description=("If true, returns only option values to reduce payload size."),
+            description=(
+                "If true, returns only option values to reduce payload size. "
+                "For cascading select fields, preserves parent-child structure as "
+                '{"value": "parent", "children": ["child1", "child2"]}.'
+            ),
             default=None,
         ),
     ] = None,
@@ -525,6 +541,8 @@ async def get_field_options(
         contains: Optional case-insensitive substring filter for values.
         return_limit: Optional cap on number of results after filtering.
         values_only: If true, returns only values instead of full option objects.
+            For cascading select fields, preserves parent-child relationships
+            as {"value": "parent", "children": ["child1", "child2"]}.
 
     Returns:
         JSON string with the list of available options, optionally filtered.
@@ -546,7 +564,7 @@ async def get_field_options(
     # Keep backward-compatible output shape by default
     if values_only:
         return _json_dumps_compact(_to_values_only_payload(filtered_result))
-    return _json_dumps_compact(filtered_result)
+    return json.dumps(filtered_result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
