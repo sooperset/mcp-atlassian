@@ -356,6 +356,7 @@ class OAuthConfig:
         """
         try:
             username = self._get_keyring_username()
+            base_username = f"oauth-{self.client_id}"
 
             # Store token data as JSON string in keyring
             token_data = {
@@ -366,10 +367,19 @@ class OAuthConfig:
                 "base_url": self.base_url,
             }
 
-            # Store the token data in the system keyring
-            keyring.set_password(KEYRING_SERVICE_NAME, username, json.dumps(token_data))
+            token_json = json.dumps(token_data)
 
+            # Store the token data in the system keyring using context-specific key
+            keyring.set_password(KEYRING_SERVICE_NAME, username, token_json)
             logger.debug(f"Saved OAuth tokens to keyring for {username}")
+
+            # Also save to base username for compatibility with load_tokens()
+            # which uses the simpler oauth-{client_id} pattern.
+            # Note: If the same client_id is used for both Cloud and DC (rare),
+            # the base key will be overwritten by whichever saves last.
+            if username != base_username:
+                keyring.set_password(KEYRING_SERVICE_NAME, base_username, token_json)
+                logger.debug(f"Saved OAuth tokens to keyring for {base_username}")
 
             # Also maintain backwards compatibility with file storage
             # for environments where keyring might not work
