@@ -73,6 +73,16 @@ def _to_values_only_payload(
     return values
 
 
+def _matches_contains(option: dict[str, Any], needle: str) -> bool:
+    """Return True if option or any of its child options match the needle."""
+    if needle in str(option.get("value", "")).casefold():
+        return True
+    for child in option.get("child_options", []):
+        if isinstance(child, dict) and needle in str(child.get("value", "")).casefold():
+            return True
+    return False
+
+
 def _apply_option_filters(
     options: list[dict[str, Any]],
     contains: str | None = None,
@@ -90,14 +100,13 @@ def _apply_option_filters(
     """
     filtered_options = options
 
-    # Apply substring filter
+    # Apply substring filter (matches parent or child values)
     if contains:
         needle = contains.casefold()
         filtered_options = [
             option
             for option in filtered_options
-            if isinstance(option, dict)
-            and needle in str(option.get("value", "")).casefold()
+            if isinstance(option, dict) and _matches_contains(option, needle)
         ]
 
     # Apply result limit

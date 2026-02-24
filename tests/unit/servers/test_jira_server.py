@@ -596,6 +596,50 @@ async def test_get_field_options_contains_filter(jira_client):
 
 
 @pytest.mark.anyio
+async def test_get_field_options_contains_filter_cascading(
+    jira_client, mock_jira_fetcher
+):
+    """Ensure contains matches child values on cascading select fields."""
+
+    def mock_cascading_options(
+        field_id, context_id=None, project_key=None, issue_type=None
+    ):
+        raw = [
+            {
+                "id": "1",
+                "value": "US",
+                "child_options": [
+                    {"id": "11", "value": "California"},
+                    {"id": "12", "value": "Texas"},
+                ],
+            },
+            {
+                "id": "2",
+                "value": "Canada",
+                "child_options": [{"id": "21", "value": "Ontario"}],
+            },
+        ]
+        options = []
+        for payload in raw:
+            option = MagicMock()
+            option.to_simplified_dict.return_value = payload
+            options.append(option)
+        return options
+
+    mock_jira_fetcher.get_field_options.side_effect = mock_cascading_options
+
+    response = await jira_client.call_tool(
+        "jira_get_field_options",
+        {"field_id": "customfield_10001", "contains": "california"},
+    )
+
+    content = json.loads(response.content[0].text)
+    assert isinstance(content, list)
+    assert len(content) == 1
+    assert content[0]["value"] == "US"
+
+
+@pytest.mark.anyio
 async def test_get_field_options_return_limit(jira_client):
     """Ensure return_limit caps the number of returned options."""
     response = await jira_client.call_tool(
