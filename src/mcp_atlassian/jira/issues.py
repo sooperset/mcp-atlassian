@@ -127,10 +127,28 @@ class IssuesMixin(
                 ):
                     additional_fields.append("properties")
 
+                # Request comment field when comments are requested so the API returns
+                # fields.comment and we can populate it via _get_issue_comments_if_needed
+                if (
+                    comment_limit is not None
+                    and comment_limit != 0
+                    and "comment" not in default_fields_list
+                    and "comment" not in additional_fields
+                ):
+                    additional_fields.append("comment")
+
                 # Combine default fields with additional fields, preserving order
                 if additional_fields:
                     fields_param = ",".join(default_fields_list + additional_fields)
-            # Handle non-default fields string
+            # Handle non-default fields string: ensure comment is requested when
+            # comment_limit is set so that comments are fetched and included
+            elif (
+                comment_limit is not None
+                and comment_limit != 0
+                and fields_param
+                and "comment" not in [f.strip() for f in fields_param.split(",")]
+            ):
+                fields_param = fields_param.rstrip(",") + ",comment"
 
             # Build expand parameter if provided
             expand_param = expand
@@ -167,7 +185,9 @@ class IssuesMixin(
                 comments = self._get_issue_comments_if_needed(
                     issue_key, comment_limit_int
                 )
-                # Add comments to the issue data for processing by the model
+                # Ensure comment is a dict (API may return null or omit comments key)
+                if not isinstance(fields_data.get("comment"), dict):
+                    fields_data["comment"] = {}
                 fields_data["comment"]["comments"] = comments
 
             # Extract epic information
@@ -1538,3 +1558,68 @@ class IssuesMixin(
         ]
 
         return issues
+
+    def bulk_move_issues(
+        self,
+        issue_ids_or_keys: list[str],
+        target_project_key: str,
+        target_issue_type_id: str,
+        *,
+        infer_field_defaults: bool = True,
+        infer_status_defaults: bool = True,
+        infer_subtask_type_default: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Move multiple issues to another project (Jira Cloud bulk move API).
+
+        Uses POST /rest/api/3/bulk/issues/move. The operation is asynchronous;
+        the API returns a taskId that can be polled via the bulk queue API.
+
+        Args:
+            issue_ids_or_keys: List of issue keys or IDs to move (e.g. ["OPS-16232", "OPS-16233"]).
+            target_project_key: Target project key (e.g. "OS").
+            target_issue_type_id: Issue type ID in the target project (e.g. "10001").
+                Get from an existing issue in the target project or project settings.
+            infer_field_defaults: Let Jira infer mandatory field values in target project.
+            infer_status_defaults: Let Jira infer status mapping from source to target workflow.
+            infer_subtask_type_default: Let Jira infer subtask type in target project.
+
+        Returns:
+            Dict with "taskId" for the bulk operation; poll GET /rest/api/3/bulk/queue/{taskId} for progress.
+
+        Raises:
+            NotImplementedError: If not using Jira Cloud.
+            ValueError: If issue list is empty or invalid.
+            HTTPError: If the bulk move API request fails.
+        """
+        if not self.config.is_cloud:
+            raise NotImplementedError(
+                "Bulk move issues is only available on Jira Cloud."
+            )
+        if not issue_ids_or_keys:
+            raise ValueError("issue_ids_or_keys must not be empty.")
+        if not target_project_key or not target_issue_type_id:
+            raise ValueError(
+                "target_project_key and target_issue_type_id are required."
+            )
+
+        mapping_key = f"{target_project_key},{target_issue_type_id}"
+        payload = {
+            "targetToSourcesMapping": {
+                mapping_key: {
+                    "issueIdsOrKeys": issue_ids_or_keys,
+                    "inferFieldDefaults": infer_field_defaults,
+                    "inferStatusDefaults": infer_status_defaults,
+                    "inferSubtaskTypeDefault": infer_subtask_type_default,
+                }
+            }
+        }
+        response = self.jira.post(
+            "/rest/api/3/bulk/issues/move",
+            json=payload,
+        )
+        if not isinstance(response, dict) or "taskId" not in response:
+            raise ValueError(
+                f"Unexpected bulk move response: {response}"
+            )
+        return response
