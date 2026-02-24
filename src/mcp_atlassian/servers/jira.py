@@ -2040,12 +2040,17 @@ async def get_service_desk_for_project(
     """
     Get the Jira Service Desk associated with a project key.
 
+    Server/Data Center only. Not available on Jira Cloud.
+
     Args:
         ctx: The FastMCP context.
         project_key: Jira project key.
 
     Returns:
         JSON string with project key and service desk data (or null if not found).
+
+    Raises:
+        NotImplementedError: If connected to Jira Cloud (Server/DC only).
     """
     jira = await get_jira_fetcher(ctx)
     service_desk = jira.get_service_desk_for_project(project_key=project_key)
@@ -2078,6 +2083,8 @@ async def get_service_desk_queues(
     """
     Get queues for a Jira Service Desk.
 
+    Server/Data Center only. Not available on Jira Cloud.
+
     Args:
         ctx: The FastMCP context.
         service_desk_id: Service desk ID.
@@ -2086,6 +2093,9 @@ async def get_service_desk_queues(
 
     Returns:
         JSON string with queue list and pagination metadata.
+
+    Raises:
+        NotImplementedError: If connected to Jira Cloud (Server/DC only).
     """
     jira = await get_jira_fetcher(ctx)
     result = jira.get_service_desk_queues(
@@ -2123,6 +2133,8 @@ async def get_queue_issues(
     """
     Get issues from a Jira Service Desk queue.
 
+    Server/Data Center only. Not available on Jira Cloud.
+
     Args:
         ctx: The FastMCP context.
         service_desk_id: Service desk ID.
@@ -2132,6 +2144,9 @@ async def get_queue_issues(
 
     Returns:
         JSON string with queue metadata, issues, and pagination metadata.
+
+    Raises:
+        NotImplementedError: If connected to Jira Cloud (Server/DC only).
     """
     jira = await get_jira_fetcher(ctx)
     result = jira.get_queue_issues(
