@@ -1166,7 +1166,7 @@ async def update_issue(
         ),
     ],
     fields: Annotated[
-        dict[str, Any],
+        str,
         Field(
             description=(
                 "Dictionary of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
@@ -1224,8 +1224,7 @@ async def update_issue(
         ValueError: If in read-only mode or Jira client unavailable, or invalid input.
     """
     jira = await get_jira_fetcher(ctx)
-    # Use fields directly as dict
-    update_fields = fields
+    update_fields = _parse_additional_fields(fields)
 
     # Parse components from comma-separated string to list
     components_list = None
