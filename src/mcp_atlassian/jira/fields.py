@@ -465,6 +465,8 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
 
         # --- 0. Check custom field plugins (before system/schema dispatch) ---
         if schema_custom and "checklist" in schema_custom.lower():
+            if schema_type == "array":
+                return value  # Array-type checklist (Server/DC): pass through
             return self._format_checklist_value(value)
 
         # --- 1. Dispatch on system field ID (reliable, not display name) ---

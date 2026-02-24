@@ -918,6 +918,17 @@ class TestChecklistFieldFormatting:
         },
     }
 
+    CHECKLIST_ARRAY_FIELD_DEF = {
+        "id": "customfield_11004",
+        "name": "Checklist",
+        "schema": {
+            "type": "array",
+            "items": "checklist-item",
+            "custom": "com.okapya.jira.checklist:checklist",
+            "customId": 11004,
+        },
+    }
+
     @pytest.fixture
     def mixin(self, jira_fetcher: "JiraFetcher") -> FieldsMixin:
         """Create a FieldsMixin instance with mocked dependencies."""
@@ -965,6 +976,42 @@ class TestChecklistFieldFormatting:
         """Checklist fields should be converted to markdown string format."""
         result = mixin._format_field_value_for_write(
             "customfield_11003", value, self.CHECKLIST_FIELD_DEF
+        )
+        assert result == expected
+
+    @pytest.mark.parametrize(
+        "test_id, value, expected",
+        [
+            pytest.param(
+                "array_dict_list_passthrough",
+                [{"name": "A", "checked": True}, {"name": "B", "checked": False}],
+                [{"name": "A", "checked": True}, {"name": "B", "checked": False}],
+                id="array_dict_list_passthrough",
+            ),
+            pytest.param(
+                "array_string_list_passthrough",
+                ["Task A", "Task B"],
+                ["Task A", "Task B"],
+                id="array_string_list_passthrough",
+            ),
+            pytest.param(
+                "array_string_passthrough",
+                "* [x] done\n* todo",
+                "* [x] done\n* todo",
+                id="array_string_passthrough",
+            ),
+            pytest.param(
+                "array_empty_list_passthrough",
+                [],
+                [],
+                id="array_empty_list_passthrough",
+            ),
+        ],
+    )
+    def test_checklist_array_passthrough(self, mixin, test_id, value, expected):
+        """Array-type checklist fields (Server/DC) should pass through unchanged."""
+        result = mixin._format_field_value_for_write(
+            "customfield_11004", value, self.CHECKLIST_ARRAY_FIELD_DEF
         )
         assert result == expected
 

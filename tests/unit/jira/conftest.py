@@ -158,6 +158,17 @@ def session_jira_field_definitions():
                 "customId": 11003,
             },
         },
+        # Checklist plugin (Okapya) — Server/DC array variant
+        {
+            "id": "customfield_11004",
+            "name": "Checklist",
+            "schema": {
+                "type": "array",
+                "items": "checklist-item",
+                "custom": "com.okapya.jira.checklist:checklist",
+                "customId": 11004,
+            },
+        },
     ]
 
 
