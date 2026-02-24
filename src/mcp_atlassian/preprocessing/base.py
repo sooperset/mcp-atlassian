@@ -2,6 +2,7 @@
 
 import logging
 import re
+import urllib.parse
 import warnings
 from typing import Any, Protocol
 
@@ -40,6 +41,8 @@ class BasePreprocessor:
         html_content: str,
         space_key: str = "",
         confluence_client: ConfluenceClient | None = None,
+        content_id: str = "",
+        attachments: list[dict[str, Any]] | None = None,
     ) -> tuple[str, str]:
         """
         Process HTML content to replace user refs and page links.
@@ -48,6 +51,10 @@ class BasePreprocessor:
             html_content: The HTML content to process
             space_key: Optional space key for context
             confluence_client: Optional Confluence client for user lookups
+            content_id: Optional page/content ID for attachment URL
+                construction
+            attachments: Optional list of attachment dicts from
+                Confluence API for URL lookup
 
         Returns:
             Tuple of (processed_html, processed_markdown)
@@ -59,6 +66,9 @@ class BasePreprocessor:
             # Process user mentions
             self._process_user_mentions_in_soup(soup, confluence_client)
             self._process_user_profile_macros_in_soup(soup, confluence_client)
+
+            # Process Confluence image tags
+            self._process_images_in_soup(soup, content_id, attachments)
 
             # Convert to string and markdown
             processed_html = str(soup)
@@ -222,6 +232,95 @@ class BasePreprocessor:
         # Fallback: just use the account ID
         new_text = f"@user_{account_id}"
         user_element.replace_with(new_text)
+
+    def _find_attachment_url(
+        self,
+        filename: str,
+        attachments: list[dict[str, Any]] | None,
+    ) -> str | None:
+        """Find an attachment's download URL by filename.
+
+        Args:
+            filename: The attachment filename to look up
+            attachments: List of attachment dicts from Confluence API
+
+        Returns:
+            The download URL if found, None otherwise
+        """
+        if not attachments:
+            return None
+        for att in attachments:
+            if att.get("title") == filename:
+                download = att.get("_links", {}).get("download")
+                if download:
+                    return str(download)
+        return None
+
+    def _process_images_in_soup(
+        self,
+        soup: BeautifulSoup,
+        content_id: str = "",
+        attachments: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Convert Confluence ac:image tags to standard HTML img tags.
+
+        Args:
+            soup: BeautifulSoup object containing HTML
+            content_id: Optional page/content ID for fallback URL
+            attachments: Optional attachment list for URL lookup
+        """
+        for ac_image in soup.find_all("ac:image"):
+            src = ""
+            alt = ""
+
+            # Case 1: ri:attachment (file attached to the page)
+            ri_att = ac_image.find("ri:attachment")
+            if ri_att:
+                filename = ri_att.get("ri:filename", "")
+                alt = filename
+
+                # Try attachment list lookup first
+                url = self._find_attachment_url(filename, attachments)
+                if url:
+                    # Prepend base_url if relative path
+                    if url.startswith("/") and self.base_url:
+                        src = f"{self.base_url}{url}"
+                    else:
+                        src = url
+                elif content_id:
+                    encoded = urllib.parse.quote(filename, safe="")
+                    src = f"{self.base_url}/download/attachments/{content_id}/{encoded}"
+                else:
+                    src = filename
+            else:
+                # Case 2: ri:url (external URL)
+                ri_url = ac_image.find("ri:url")
+                if ri_url:
+                    src = ri_url.get("ri:value", "")
+                    # Extract filename from URL path for alt text
+                    path = urllib.parse.urlparse(src).path
+                    alt = path.rsplit("/", 1)[-1] if "/" in path else src
+                else:
+                    # Unknown inner element
+                    logger.warning(
+                        "ac:image tag with unsupported child: %s",
+                        ac_image,
+                    )
+                    ac_image.replace_with("[unsupported image]")
+                    continue
+
+            # Build a standard <img> tag
+            img_tag = soup.new_tag("img", src=src, alt=alt)
+
+            # Preserve dimension attributes
+            width = ac_image.get("ac:width")
+            if width:
+                img_tag["width"] = width
+            height = ac_image.get("ac:height")
+            if height:
+                img_tag["height"] = height
+
+            ac_image.replace_with(img_tag)
 
     def _convert_html_to_markdown(self, text: str) -> str:
         """Convert HTML content to markdown if needed."""

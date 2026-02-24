@@ -903,3 +903,150 @@ some code
     assert 'print("hello")' in result
     assert "FROM alpine" in result
     assert "some code" in result
+
+
+# Confluence ac:image tag processing tests
+
+
+class TestImageProcessing:
+    """Tests for Confluence ac:image tag processing."""
+
+    @pytest.fixture
+    def preprocessor(self):
+        return ConfluencePreprocessor(base_url="https://example.net")
+
+    @pytest.mark.parametrize(
+        "test_id, html, content_id, attachments, expected",
+        [
+            pytest.param(
+                "ri-attachment-basic",
+                '<ac:image><ri:attachment ri:filename="shot.png"/></ac:image>',
+                "123",
+                None,
+                "![shot.png](https://example.net/download/attachments/123/shot.png)",
+                id="ri-attachment-basic",
+            ),
+            pytest.param(
+                "ri-url-basic",
+                '<ac:image><ri:url ri:value="https://cdn/logo.png"/></ac:image>',
+                "",
+                None,
+                "![logo.png](https://cdn/logo.png)",
+                id="ri-url-basic",
+            ),
+            pytest.param(
+                "width-attr",
+                '<ac:image ac:width="600"><ri:attachment ri:filename="d.png"/></ac:image>',
+                "123",
+                None,
+                "![d.png]",
+                id="width-attr",
+            ),
+            pytest.param(
+                "mixed-content",
+                '<p>Text</p><ac:image><ri:attachment ri:filename="x.png"/></ac:image><p>More</p>',
+                "123",
+                None,
+                "x.png",
+                id="mixed-content",
+            ),
+            pytest.param(
+                "no-content-id",
+                '<ac:image><ri:attachment ri:filename="test.png"/></ac:image>',
+                "",
+                None,
+                "![test.png](test.png)",
+                id="no-content-id",
+            ),
+            pytest.param(
+                "attachment-lookup",
+                '<ac:image><ri:attachment ri:filename="doc.png"/></ac:image>',
+                "123",
+                [
+                    {
+                        "title": "doc.png",
+                        "_links": {"download": "/download/attachments/123/doc.png"},
+                    }
+                ],
+                "![doc.png](https://example.net/download/attachments/123/doc.png)",
+                id="attachment-lookup",
+            ),
+            pytest.param(
+                "filename-spaces",
+                '<ac:image><ri:attachment ri:filename="Screen Shot 2024.png"/></ac:image>',
+                "123",
+                None,
+                "Screen%20Shot%202024.png",
+                id="filename-spaces",
+            ),
+            pytest.param(
+                "unknown-inner",
+                "<ac:image><ri:unknown/></ac:image>",
+                "123",
+                None,
+                "[unsupported image]",
+                id="unknown-inner",
+            ),
+            pytest.param(
+                "no-image-tags",
+                "<p>Normal content</p>",
+                "123",
+                None,
+                "Normal content",
+                id="no-image-tags",
+            ),
+        ],
+    )
+    def test_image_processing(
+        self,
+        preprocessor,
+        test_id: str,
+        html: str,
+        content_id: str,
+        attachments: list[dict] | None,
+        expected: str,
+    ):
+        """Test ac:image tag processing with various inputs."""
+        _, markdown = preprocessor.process_html_content(
+            html,
+            content_id=content_id,
+            attachments=attachments,
+        )
+        assert expected in markdown
+
+    def test_width_attr_in_img(self, preprocessor):
+        """Verify width attribute is preserved in the img tag."""
+        html = (
+            '<ac:image ac:width="600"><ri:attachment ri:filename="d.png"/></ac:image>'
+        )
+        processed_html, _ = preprocessor.process_html_content(html, content_id="123")
+        assert 'width="600"' in processed_html
+
+    def test_mixed_content_has_all_parts(self, preprocessor):
+        """Verify mixed content retains both text and image."""
+        html = '<p>Text</p><ac:image><ri:attachment ri:filename="x.png"/></ac:image><p>More</p>'
+        _, markdown = preprocessor.process_html_content(html, content_id="123")
+        assert "Text" in markdown
+        assert "x.png" in markdown
+        assert "More" in markdown
+
+    def test_attachment_lookup_uses_download_url(self, preprocessor):
+        """Verify attachment lookup prefers _links.download over fallback."""
+        attachments = [
+            {
+                "title": "doc.png",
+                "_links": {"download": "/download/attachments/123/doc.png"},
+            }
+        ]
+        html = '<ac:image><ri:attachment ri:filename="doc.png"/></ac:image>'
+        _, markdown = preprocessor.process_html_content(
+            html, content_id="123", attachments=attachments
+        )
+        # Should use the download link, not the fallback construction
+        assert "/download/attachments/123/doc.png" in markdown
+
+    def test_backward_compatibility(self, preprocessor):
+        """Ensure existing calls without new params still work."""
+        html = "<p>Simple text</p>"
+        processed_html, processed_markdown = preprocessor.process_html_content(html)
+        assert "Simple text" in processed_markdown

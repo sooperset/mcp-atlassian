@@ -81,8 +81,16 @@ class PagesMixin(ConfluenceClient):
                     f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
                 )
                 content = ""
+            page_id_str = str(page.get("id", ""))
+            page_attachments = (
+                page.get("children", {}).get("attachment", {}).get("results", [])
+            )
             processed_html, processed_markdown = self.preprocessor.process_html_content(
-                content, space_key=space_key, confluence_client=self.confluence
+                content,
+                space_key=space_key,
+                confluence_client=self.confluence,
+                content_id=page_id_str,
+                attachments=page_attachments,
             )
 
             # Use the appropriate content format based on the convert_to_markdown flag
@@ -325,7 +333,10 @@ class PagesMixin(ConfluenceClient):
                 )
                 content = ""
             processed_html, processed_markdown = self.preprocessor.process_html_content(
-                content, space_key=space_key, confluence_client=self.confluence
+                content,
+                space_key=space_key,
+                confluence_client=self.confluence,
+                content_id=str(page.get("id", "")),
             )
 
             # Use the appropriate content format based on the convert_to_markdown flag
@@ -396,7 +407,10 @@ class PagesMixin(ConfluenceClient):
                 )
                 content = ""
             processed_html, processed_markdown = self.preprocessor.process_html_content(
-                content, space_key=space_key, confluence_client=self.confluence
+                content,
+                space_key=space_key,
+                confluence_client=self.confluence,
+                content_id=str(page.get("id", "")),
             )
 
             # Use the appropriate content format based on the convert_to_markdown flag
@@ -688,6 +702,7 @@ class PagesMixin(ConfluenceClient):
                             content,
                             space_key=space_key,
                             confluence_client=self.confluence,
+                            content_id=str(item.get("id", "")),
                         )
                         content_override = processed_markdown
 
@@ -815,10 +830,15 @@ class PagesMixin(ConfluenceClient):
                 content = ""
 
             space_key = page.get("space", {}).get("key", "")
+            page_attachments = (
+                page.get("children", {}).get("attachment", {}).get("results", [])
+            )
             processed_html, processed_markdown = self.preprocessor.process_html_content(
                 content,
                 space_key=space_key,
                 confluence_client=self.confluence,
+                content_id=str(page.get("id", "")),
+                attachments=page_attachments,
             )
 
             page_content = processed_markdown if convert_to_markdown else processed_html
