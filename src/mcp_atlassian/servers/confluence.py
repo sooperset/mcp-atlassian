@@ -1359,9 +1359,19 @@ async def download_attachment(
                 ),
             )
 
-        resp = confluence_fetcher.confluence._session.get(download_url, stream=True)
-        resp.raise_for_status()
-        data_bytes = b"".join(resp.iter_content(chunk_size=8192))
+        data_bytes = confluence_fetcher.fetch_attachment_content(download_url)
+        if data_bytes is None:
+            return TextContent(
+                type="text",
+                text=json.dumps(
+                    {
+                        "success": False,
+                        "error": (f"Failed to download attachment {attachment_id}"),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+            )
 
         if len(data_bytes) > _ATTACHMENT_MAX_BYTES:
             return TextContent(
@@ -1518,12 +1528,9 @@ async def download_content_attachments(
             base_url = confluence_fetcher.config.url.rstrip("/")
             download_url = f"{base_url}{download_url}"
 
-        try:
-            resp = confluence_fetcher.confluence._session.get(download_url, stream=True)
-            resp.raise_for_status()
-            data_bytes = b"".join(resp.iter_content(chunk_size=8192))
-        except Exception as exc:
-            failed.append({"filename": filename, "error": str(exc)})
+        data_bytes = confluence_fetcher.fetch_attachment_content(download_url)
+        if data_bytes is None:
+            failed.append({"filename": filename, "error": "Fetch failed"})
             continue
 
         if len(data_bytes) > _ATTACHMENT_MAX_BYTES:
