@@ -1045,6 +1045,21 @@ class TestImageProcessing:
         # Should use the download link, not the fallback construction
         assert "/download/attachments/123/doc.png" in markdown
 
+    def test_cross_page_attachment_uses_filename_fallback(self, preprocessor):
+        """Cross-page ri:attachment should not use current page's content_id."""
+        html = (
+            "<ac:image>"
+            '<ri:attachment ri:filename="img.png">'
+            '<ri:page ri:content-title="Other Page" ri:space-key="X"/>'
+            "</ri:attachment>"
+            "</ac:image>"
+        )
+        _, markdown = preprocessor.process_html_content(html, content_id="999")
+        # Should NOT contain /999/ (wrong page ID); should fall back to
+        # filename-only reference since we can't resolve the other page
+        assert "/999/" not in markdown
+        assert "![img.png](img.png)" in markdown
+
     def test_backward_compatibility(self, preprocessor):
         """Ensure existing calls without new params still work."""
         html = "<p>Simple text</p>"

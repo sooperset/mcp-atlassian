@@ -279,6 +279,9 @@ class BasePreprocessor:
                 filename = ri_att.get("ri:filename", "")
                 alt = filename
 
+                # Check if this references a different page
+                is_cross_page = ri_att.find("ri:page") is not None
+
                 # Try attachment list lookup first
                 url = self._find_attachment_url(filename, attachments)
                 if url:
@@ -287,7 +290,7 @@ class BasePreprocessor:
                         src = f"{self.base_url}{url}"
                     else:
                         src = url
-                elif content_id:
+                elif content_id and not is_cross_page:
                     encoded = urllib.parse.quote(filename, safe="")
                     src = f"{self.base_url}/download/attachments/{content_id}/{encoded}"
                 else:
