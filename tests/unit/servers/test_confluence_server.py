@@ -140,6 +140,12 @@ def mock_confluence_fetcher():
         "attachment_id": "att123",
         "message": "Attachment deleted successfully",
     }
+    mock_fetcher.fetch_attachment_content.return_value = b"\x89PNG"
+
+    # Mock config for tools that need config.url
+    mock_config = MagicMock()
+    mock_config.url = "https://mock.atlassian.net/wiki"
+    mock_fetcher.config = mock_config
 
     return mock_fetcher
 
@@ -179,6 +185,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_labels,
         get_page,
         get_page_children,
+        get_page_images,
         search,
         search_user,
         update_page,
@@ -220,6 +227,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(download_attachment)
     confluence_sub_mcp.add_tool(download_content_attachments)
     confluence_sub_mcp.add_tool(delete_attachment)
+    confluence_sub_mcp.add_tool(get_page_images)
 
     test_mcp.mount(confluence_sub_mcp, prefix="confluence")
 
@@ -244,6 +252,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         get_labels,
         get_page,
         get_page_children,
+        get_page_images,
         search,
         search_user,
         update_page,
@@ -287,6 +296,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.add_tool(download_attachment)
     confluence_sub_mcp.add_tool(download_content_attachments)
     confluence_sub_mcp.add_tool(delete_attachment)
+    confluence_sub_mcp.add_tool(get_page_images)
 
     test_mcp.mount(confluence_sub_mcp, prefix="confluence")
 
@@ -665,3 +675,181 @@ async def test_delete_attachment(client, mock_confluence_fetcher):
     result_data = json.loads(response.content[0].text)
     assert result_data["message"] == "Attachment deleted successfully"
     assert result_data["attachment_id"] == "att123"
+
+
+# --- get_page_images tool tests ---
+
+
+@pytest.mark.anyio
+async def test_get_page_images_basic(client, mock_confluence_fetcher):
+    """Test getting page images with a mix of image and non-image attachments."""
+    mock_confluence_fetcher.get_content_attachments.return_value = {
+        "success": True,
+        "content_id": "123",
+        "attachments": [
+            {
+                "id": "att1",
+                "title": "photo.png",
+                "type": "attachment",
+                "metadata": {"mediaType": "image/png"},
+                "extensions": {"mediaType": "image/png", "fileSize": 1024},
+                "_links": {"download": "/download/attachments/123/photo.png"},
+            },
+            {
+                "id": "att2",
+                "title": "readme.txt",
+                "type": "attachment",
+                "metadata": {"mediaType": "text/plain"},
+                "extensions": {"mediaType": "text/plain", "fileSize": 100},
+                "_links": {"download": "/download/attachments/123/readme.txt"},
+            },
+        ],
+        "total": 2,
+        "start": 0,
+        "limit": 50,
+    }
+    mock_confluence_fetcher.fetch_attachment_content.return_value = b"\x89PNG"
+
+    response = await client.call_tool(
+        "confluence_get_page_images", {"content_id": "123"}
+    )
+
+    # First content is text summary
+    summary = json.loads(response.content[0].text)
+    assert summary["total_images"] == 1
+    assert summary["downloaded"] == 1
+    # Second content is the image
+    assert response.content[1].type == "image"
+    assert response.content[1].mimeType == "image/png"
+
+
+@pytest.mark.anyio
+async def test_get_page_images_octet_stream_fallback(client, mock_confluence_fetcher):
+    """Test that application/octet-stream with image extension is detected."""
+    mock_confluence_fetcher.get_content_attachments.return_value = {
+        "success": True,
+        "content_id": "123",
+        "attachments": [
+            {
+                "id": "att1",
+                "title": "screenshot.jpg",
+                "type": "attachment",
+                "metadata": {"mediaType": "application/octet-stream"},
+                "extensions": {
+                    "mediaType": "application/octet-stream",
+                    "fileSize": 2048,
+                },
+                "_links": {"download": "/download/attachments/123/screenshot.jpg"},
+            },
+        ],
+        "total": 1,
+        "start": 0,
+        "limit": 50,
+    }
+    mock_confluence_fetcher.fetch_attachment_content.return_value = b"\xff\xd8\xff"
+
+    response = await client.call_tool(
+        "confluence_get_page_images", {"content_id": "123"}
+    )
+
+    summary = json.loads(response.content[0].text)
+    assert summary["total_images"] == 1
+    assert response.content[1].type == "image"
+    # MIME should be corrected to image/jpeg based on extension
+    assert response.content[1].mimeType == "image/jpeg"
+
+
+@pytest.mark.anyio
+async def test_get_page_images_no_images(client, mock_confluence_fetcher):
+    """Test when page has no image attachments."""
+    mock_confluence_fetcher.get_content_attachments.return_value = {
+        "success": True,
+        "content_id": "123",
+        "attachments": [
+            {
+                "id": "att1",
+                "title": "doc.pdf",
+                "type": "attachment",
+                "metadata": {"mediaType": "application/pdf"},
+                "extensions": {"mediaType": "application/pdf", "fileSize": 5000},
+                "_links": {"download": "/download/attachments/123/doc.pdf"},
+            },
+        ],
+        "total": 1,
+        "start": 0,
+        "limit": 50,
+    }
+
+    response = await client.call_tool(
+        "confluence_get_page_images", {"content_id": "123"}
+    )
+
+    summary = json.loads(response.content[0].text)
+    assert summary["total_images"] == 0
+    assert len(response.content) == 1  # Only summary, no images
+
+
+@pytest.mark.anyio
+async def test_get_page_images_size_limit(client, mock_confluence_fetcher):
+    """Test that images exceeding 50MB are skipped."""
+    mock_confluence_fetcher.get_content_attachments.return_value = {
+        "success": True,
+        "content_id": "123",
+        "attachments": [
+            {
+                "id": "att1",
+                "title": "huge.png",
+                "type": "attachment",
+                "metadata": {"mediaType": "image/png"},
+                "extensions": {
+                    "mediaType": "image/png",
+                    "fileSize": 60 * 1024 * 1024,
+                },
+                "_links": {"download": "/download/attachments/123/huge.png"},
+            },
+        ],
+        "total": 1,
+        "start": 0,
+        "limit": 50,
+    }
+
+    response = await client.call_tool(
+        "confluence_get_page_images", {"content_id": "123"}
+    )
+
+    summary = json.loads(response.content[0].text)
+    assert summary["total_images"] == 1
+    assert summary["downloaded"] == 0
+    assert len(summary["failed"]) == 1
+    assert "50 MB" in summary["failed"][0]["error"]
+
+
+@pytest.mark.anyio
+async def test_get_page_images_fetch_failure(client, mock_confluence_fetcher):
+    """Test graceful handling when fetch_attachment_content returns None."""
+    mock_confluence_fetcher.get_content_attachments.return_value = {
+        "success": True,
+        "content_id": "123",
+        "attachments": [
+            {
+                "id": "att1",
+                "title": "broken.png",
+                "type": "attachment",
+                "metadata": {"mediaType": "image/png"},
+                "extensions": {"mediaType": "image/png", "fileSize": 1024},
+                "_links": {"download": "/download/attachments/123/broken.png"},
+            },
+        ],
+        "total": 1,
+        "start": 0,
+        "limit": 50,
+    }
+    mock_confluence_fetcher.fetch_attachment_content.return_value = None
+
+    response = await client.call_tool(
+        "confluence_get_page_images", {"content_id": "123"}
+    )
+
+    summary = json.loads(response.content[0].text)
+    assert summary["downloaded"] == 0
+    assert len(summary["failed"]) == 1
