@@ -1035,10 +1035,10 @@ class TestAttachmentsMixin:
             assert len(result["failed"]) == 1
             assert "50 MB" in result["failed"][0]["error"]
 
-    def test_get_issue_attachment_contents_allows_none_size(
+    def test_get_issue_attachment_contents_allows_zero_size(
         self, attachments_mixin: AttachmentsMixin
     ):
-        """Attachment with size = None still gets downloaded (metadata unavailable)."""
+        """Attachment with size=0 (metadata missing) still gets downloaded."""
         mock_issue = {
             "fields": {
                 "attachment": [
@@ -1054,7 +1054,7 @@ class TestAttachmentsMixin:
         mock_attachment = MagicMock()
         mock_attachment.filename = "unknown.bin"
         mock_attachment.url = "https://test.url/unknown"
-        mock_attachment.size = None
+        mock_attachment.size = 0
         mock_attachment.content_type = "application/octet-stream"
 
         with (

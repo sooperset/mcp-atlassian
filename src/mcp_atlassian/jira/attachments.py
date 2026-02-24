@@ -169,7 +169,7 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
                 )
                 continue
 
-            if attachment.size is not None and attachment.size > _ATTACHMENT_MAX_BYTES:
+            if attachment.size > _ATTACHMENT_MAX_BYTES:
                 logger.warning(
                     f"Skipping attachment {attachment.filename}: "
                     f"{attachment.size} bytes exceeds 50 MB limit"
