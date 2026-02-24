@@ -523,6 +523,76 @@ class TestAttachmentsMixin:
             )
             assert result is False
 
+    # Tests for fetch_attachment_content method
+
+    def test_fetch_attachment_content_success(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test successful in-memory attachment fetch returns bytes."""
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.iter_content.return_value = [b"hello ", b"world"]
+        attachments_mixin.confluence._session.get.return_value = mock_response
+
+        result = attachments_mixin.fetch_attachment_content(
+            "https://test.atlassian.net/download/att123"
+        )
+
+        assert result == b"hello world"
+        attachments_mixin.confluence._session.get.assert_called_once_with(
+            "https://test.atlassian.net/download/att123", stream=True
+        )
+
+    def test_fetch_attachment_content_empty_url(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test fetch_attachment_content returns None for empty URL."""
+        assert attachments_mixin.fetch_attachment_content("") is None
+        attachments_mixin.confluence._session.get.assert_not_called()
+
+    def test_fetch_attachment_content_http_error(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test fetch_attachment_content returns None on HTTP error."""
+        mock_response = Mock()
+        mock_response.raise_for_status.side_effect = Exception("404 Not Found")
+        attachments_mixin.confluence._session.get.return_value = mock_response
+
+        result = attachments_mixin.fetch_attachment_content(
+            "https://test.atlassian.net/download/att123"
+        )
+        assert result is None
+
+    def test_fetch_attachment_content_network_exception(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test fetch_attachment_content returns None on network exception."""
+        attachments_mixin.confluence._session.get.side_effect = ConnectionError(
+            "Connection refused"
+        )
+
+        result = attachments_mixin.fetch_attachment_content(
+            "https://test.atlassian.net/download/att123"
+        )
+        assert result is None
+
+    def test_fetch_attachment_content_streaming(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test fetch_attachment_content reads in chunks via streaming."""
+        chunks = [b"chunk1", b"chunk2", b"chunk3"]
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.iter_content.return_value = chunks
+        attachments_mixin.confluence._session.get.return_value = mock_response
+
+        result = attachments_mixin.fetch_attachment_content(
+            "https://test.atlassian.net/download/att123"
+        )
+
+        assert result == b"chunk1chunk2chunk3"
+        mock_response.iter_content.assert_called_once_with(chunk_size=8192)
+
     # Tests for download_content_attachments method
 
     def test_download_content_attachments_success(
@@ -1132,12 +1202,9 @@ class TestDownloadAttachmentServerTool:
             "extensions": {"mediaType": "application/pdf", "fileSize": 100},
         }
         meta_resp.raise_for_status.return_value = None
+        mock_fetcher.confluence._session.get.return_value = meta_resp
 
-        download_resp = MagicMock()
-        download_resp.iter_content.return_value = [b"pdf content"]
-        download_resp.raise_for_status.return_value = None
-
-        mock_fetcher.confluence._session.get.side_effect = [meta_resp, download_resp]
+        mock_fetcher.fetch_attachment_content.return_value = b"pdf content"
 
         with patch(
             "mcp_atlassian.servers.confluence.get_confluence_fetcher",
@@ -1266,10 +1333,7 @@ class TestDownloadContentAttachmentsServerTool:
             ],
         }
 
-        download_resp = MagicMock()
-        download_resp.iter_content.return_value = [b"hello world!"]
-        download_resp.raise_for_status.return_value = None
-        mock_fetcher.confluence._session.get.return_value = download_resp
+        mock_fetcher.fetch_attachment_content.return_value = b"hello world!"
 
         with patch(
             "mcp_atlassian.servers.confluence.get_confluence_fetcher",

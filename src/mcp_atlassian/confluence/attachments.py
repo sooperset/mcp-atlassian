@@ -166,6 +166,38 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             "failed": failed,
         }
 
+    def fetch_attachment_content(self, url: str) -> bytes | None:
+        """Fetch attachment content into memory.
+
+        Args:
+            url: The URL of the attachment to download.
+
+        Returns:
+            The raw bytes of the attachment, or None on failure.
+        """
+        if not url:
+            logger.error("No URL provided for attachment fetch")
+            return None
+
+        try:
+            logger.info(f"Fetching attachment from {url}")
+            response = self.confluence._session.get(url, stream=True)
+            response.raise_for_status()
+
+            chunks: list[bytes] = []
+            for chunk in response.iter_content(chunk_size=8192):
+                chunks.append(chunk)
+
+            data = b"".join(chunks)
+            logger.info(
+                f"Successfully fetched attachment from {url} (size: {len(data)} bytes)"
+            )
+            return data
+
+        except Exception as e:
+            logger.error(f"Error fetching attachment: {str(e)}")
+            return None
+
     def download_attachment(self, url: str, target_path: str) -> bool:
         """
         Download a Confluence attachment to the specified path.
