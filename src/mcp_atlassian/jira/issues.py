@@ -1456,7 +1456,7 @@ class IssuesMixin(
 
                 # Add optional fields
                 if description:
-                    fields["description"] = description
+                    fields["description"] = self._markdown_to_jira(description)
 
                 # Add assignee if provided
                 if assignee:

@@ -1,6 +1,6 @@
 """Tests for the Jira Comments mixin."""
 
-from unittest.mock import MagicMock, Mock
+from unittest.mock import Mock
 
 import pytest
 
@@ -154,7 +154,7 @@ class TestCommentsMixin:
             comments_mixin.get_issue_comments("TEST-123")
 
     def test_add_comment_basic(self, comments_mixin):
-        """Test add_comment with basic data."""
+        """Test add_comment with basic data (Cloud → ADF conversion)."""
         # Setup mock response
         comments_mixin.jira.issue_add_comment.return_value = {
             "id": "10001",
@@ -166,57 +166,44 @@ class TestCommentsMixin:
         # Call the method
         result = comments_mixin.add_comment("TEST-123", "Test comment")
 
-        # Verify
-        comments_mixin.preprocessor.markdown_to_jira.assert_called_once_with(
-            "Test comment"
-        )
-        comments_mixin.jira.issue_add_comment.assert_called_once_with(
-            "TEST-123", "*This* is _Jira_ formatted", None
-        )
+        # On Cloud, _markdown_to_jira returns ADF dict (not wiki markup)
+        call_args = comments_mixin.jira.issue_add_comment.call_args
+        adf_arg = call_args[0][1]
+        assert isinstance(adf_arg, dict)
+        assert adf_arg["version"] == 1
+        assert adf_arg["type"] == "doc"
+        # preprocessor.markdown_to_jira should NOT be called on Cloud
+        comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
         assert result["id"] == "10001"
         assert result["body"] == "This is a comment"
-        assert result["created"] == "2024-01-01 10:00:00+00:00"  # Parsed date
+        assert result["created"] == "2024-01-01 10:00:00+00:00"
         assert result["author"] == "John Doe"
 
     def test_add_comment_with_markdown_conversion(self, comments_mixin):
-        """Test add_comment with markdown conversion."""
+        """Test add_comment with markdown conversion (Cloud → ADF)."""
         # Setup mock response
         comments_mixin.jira.issue_add_comment.return_value = {
             "id": "10001",
-            "body": "*This* is _Jira_ formatted",
+            "body": "Heading and content",
             "created": "2024-01-01T10:00:00.000+0000",
             "author": {"displayName": "John Doe"},
         }
 
-        # Create a complex markdown comment
-        markdown_comment = """
-        # Heading 1
-
-        This is a paragraph with **bold** and *italic* text.
-
-        - List item 1
-        - List item 2
-
-        ```python
-        def hello():
-            print("Hello world")
-        ```
-        """
+        markdown_comment = "# Heading 1\n\nThis is **bold** text."
 
         # Call the method
         result = comments_mixin.add_comment("TEST-123", markdown_comment)
 
-        # Verify
-        comments_mixin.preprocessor.markdown_to_jira.assert_called_once_with(
-            markdown_comment
-        )
-        comments_mixin.jira.issue_add_comment.assert_called_once_with(
-            "TEST-123", "*This* is _Jira_ formatted", None
-        )
-        assert result["body"] == "*This* is _Jira_ formatted"
+        # On Cloud, should produce ADF, not call preprocessor
+        call_args = comments_mixin.jira.issue_add_comment.call_args
+        adf_arg = call_args[0][1]
+        assert isinstance(adf_arg, dict)
+        assert adf_arg["version"] == 1
+        comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
+        assert result["body"] == "Heading and content"
 
     def test_add_comment_with_empty_comment(self, comments_mixin):
-        """Test add_comment with an empty comment."""
+        """Test add_comment with an empty comment (Cloud → minimal ADF)."""
         # Setup mock response
         comments_mixin.jira.issue_add_comment.return_value = {
             "id": "10001",
@@ -228,15 +215,16 @@ class TestCommentsMixin:
         # Call the method with empty comment
         result = comments_mixin.add_comment("TEST-123", "")
 
-        # Verify - for empty comments, markdown_to_jira should NOT be called as per implementation
+        # On Cloud, empty string produces a minimal ADF dict
+        call_args = comments_mixin.jira.issue_add_comment.call_args
+        adf_arg = call_args[0][1]
+        assert isinstance(adf_arg, dict)
+        assert adf_arg["version"] == 1
         comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
-        comments_mixin.jira.issue_add_comment.assert_called_once_with(
-            "TEST-123", "", None
-        )
         assert result["body"] == ""
 
     def test_add_comment_with_restricted_visibility(self, comments_mixin):
-        """Test add_comment with visibility set."""
+        """Test add_comment with visibility set (Cloud → ADF)."""
         # Setup mock response
         comments_mixin.jira.issue_add_comment.return_value = {
             "id": "10001",
@@ -250,18 +238,17 @@ class TestCommentsMixin:
             "TEST-123", "Test comment", {"type": "group", "value": "restricted"}
         )
 
-        # Verify
-        comments_mixin.preprocessor.markdown_to_jira.assert_called_once_with(
-            "Test comment"
-        )
-        comments_mixin.jira.issue_add_comment.assert_called_once_with(
-            "TEST-123",
-            "*This* is _Jira_ formatted",
-            {"type": "group", "value": "restricted"},
-        )
+        # Verify ADF conversion on Cloud
+        call_args = comments_mixin.jira.issue_add_comment.call_args
+        adf_arg = call_args[0][1]
+        assert isinstance(adf_arg, dict)
+        assert adf_arg["version"] == 1
+        visibility_arg = call_args[0][2]
+        assert visibility_arg == {"type": "group", "value": "restricted"}
+        comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
         assert result["id"] == "10001"
         assert result["body"] == "This is a comment"
-        assert result["created"] == "2024-01-01 10:00:00+00:00"  # Parsed date
+        assert result["created"] == "2024-01-01 10:00:00+00:00"
         assert result["author"] == "John Doe"
 
     def test_add_comment_with_error(self, comments_mixin):
@@ -274,7 +261,7 @@ class TestCommentsMixin:
             comments_mixin.add_comment("TEST-123", "Test comment")
 
     def test_edit_comment_basic(self, comments_mixin):
-        """Test edit_comment with basic data."""
+        """Test edit_comment with basic data (Cloud → ADF)."""
         # Setup mock response
         comments_mixin.jira.issue_edit_comment.return_value = {
             "id": "10001",
@@ -286,57 +273,42 @@ class TestCommentsMixin:
         # Call the method
         result = comments_mixin.edit_comment("TEST-123", "10001", "Updated comment")
 
-        # Verify
-        comments_mixin.preprocessor.markdown_to_jira.assert_called_once_with(
-            "Updated comment"
-        )
-        comments_mixin.jira.issue_edit_comment.assert_called_once_with(
-            "TEST-123", "10001", "*This* is _Jira_ formatted", None
-        )
+        # On Cloud, should produce ADF dict
+        call_args = comments_mixin.jira.issue_edit_comment.call_args
+        adf_arg = call_args[0][2]
+        assert isinstance(adf_arg, dict)
+        assert adf_arg["version"] == 1
+        comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
         assert result["id"] == "10001"
         assert result["body"] == "This is an updated comment"
-        assert result["updated"] == "2024-01-01 12:00:00+00:00"  # Parsed date
+        assert result["updated"] == "2024-01-01 12:00:00+00:00"
         assert result["author"] == "John Doe"
 
     def test_edit_comment_with_markdown_conversion(self, comments_mixin):
-        """Test edit_comment with markdown conversion."""
+        """Test edit_comment with markdown conversion (Cloud → ADF)."""
         # Setup mock response
         comments_mixin.jira.issue_edit_comment.return_value = {
             "id": "10001",
-            "body": "*This* is _Jira_ formatted",
+            "body": "Updated content",
             "updated": "2024-01-01T12:00:00.000+0000",
             "author": {"displayName": "John Doe"},
         }
 
-        # Create a complex markdown comment
-        markdown_comment = """
-        # Updated Heading
-
-        This is an **updated** paragraph with *italic* text.
-
-        - Updated list item 1
-        - Updated list item 2
-
-        ```python
-        def updated():
-            print("Updated code")
-        ```
-        """
+        markdown_comment = "# Updated Heading\n\nThis is **updated** text."
 
         # Call the method
         result = comments_mixin.edit_comment("TEST-123", "10001", markdown_comment)
 
-        # Verify
-        comments_mixin.preprocessor.markdown_to_jira.assert_called_once_with(
-            markdown_comment
-        )
-        comments_mixin.jira.issue_edit_comment.assert_called_once_with(
-            "TEST-123", "10001", "*This* is _Jira_ formatted", None
-        )
-        assert result["body"] == "*This* is _Jira_ formatted"
+        # On Cloud, should produce ADF dict
+        call_args = comments_mixin.jira.issue_edit_comment.call_args
+        adf_arg = call_args[0][2]
+        assert isinstance(adf_arg, dict)
+        assert adf_arg["version"] == 1
+        comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
+        assert result["body"] == "Updated content"
 
     def test_edit_comment_with_empty_comment(self, comments_mixin):
-        """Test edit_comment with an empty comment."""
+        """Test edit_comment with an empty comment (Cloud → minimal ADF)."""
         # Setup mock response
         comments_mixin.jira.issue_edit_comment.return_value = {
             "id": "10001",
@@ -348,15 +320,16 @@ class TestCommentsMixin:
         # Call the method with empty comment
         result = comments_mixin.edit_comment("TEST-123", "10001", "")
 
-        # Verify - for empty comments, markdown_to_jira should NOT be called as per implementation
+        # On Cloud, empty string produces a minimal ADF dict
+        call_args = comments_mixin.jira.issue_edit_comment.call_args
+        adf_arg = call_args[0][2]
+        assert isinstance(adf_arg, dict)
+        assert adf_arg["version"] == 1
         comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
-        comments_mixin.jira.issue_edit_comment.assert_called_once_with(
-            "TEST-123", "10001", "", None
-        )
         assert result["body"] == ""
 
     def test_edit_comment_with_restricted_visibility(self, comments_mixin):
-        """Test edit_comment with visibility set."""
+        """Test edit_comment with visibility set (Cloud → ADF)."""
         # Setup mock response
         comments_mixin.jira.issue_edit_comment.return_value = {
             "id": "10001",
@@ -373,19 +346,17 @@ class TestCommentsMixin:
             {"type": "group", "value": "restricted"},
         )
 
-        # Verify
-        comments_mixin.preprocessor.markdown_to_jira.assert_called_once_with(
-            "Updated comment"
-        )
-        comments_mixin.jira.issue_edit_comment.assert_called_once_with(
-            "TEST-123",
-            "10001",
-            "*This* is _Jira_ formatted",
-            {"type": "group", "value": "restricted"},
-        )
+        # Verify ADF conversion on Cloud
+        call_args = comments_mixin.jira.issue_edit_comment.call_args
+        adf_arg = call_args[0][2]
+        assert isinstance(adf_arg, dict)
+        assert adf_arg["version"] == 1
+        visibility_arg = call_args[0][3]
+        assert visibility_arg == {"type": "group", "value": "restricted"}
+        comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
         assert result["id"] == "10001"
         assert result["body"] == "This is an updated comment"
-        assert result["updated"] == "2024-01-01 12:00:00+00:00"  # Parsed date
+        assert result["updated"] == "2024-01-01 12:00:00+00:00"
         assert result["author"] == "John Doe"
 
     def test_edit_comment_with_error(self, comments_mixin):
@@ -397,28 +368,18 @@ class TestCommentsMixin:
         with pytest.raises(Exception, match="Error editing comment"):
             comments_mixin.edit_comment("TEST-123", "10001", "Updated comment")
 
-    def test_markdown_to_jira(self, comments_mixin):
-        """Test markdown to Jira conversion."""
-        # Setup - need to replace the mock entirely
-        comments_mixin.preprocessor.markdown_to_jira = MagicMock(
-            return_value="Jira text"
-        )
-
-        # Call the method
+    def test_markdown_to_jira_cloud(self, comments_mixin):
+        """Test _markdown_to_jira returns ADF dict on Cloud."""
         result = comments_mixin._markdown_to_jira("Markdown text")
+        # Cloud config → ADF dict
+        assert isinstance(result, dict)
+        assert result["version"] == 1
+        assert result["type"] == "doc"
+        comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
 
-        # Verify
-        assert result == "Jira text"
-        comments_mixin.preprocessor.markdown_to_jira.assert_called_once_with(
-            "Markdown text"
-        )
-
-    def test_markdown_to_jira_with_empty_text(self, comments_mixin):
-        """Test markdown to Jira conversion with empty text."""
-        # Call the method with empty text
+    def test_markdown_to_jira_cloud_empty(self, comments_mixin):
+        """Test _markdown_to_jira with empty text on Cloud returns ADF."""
         result = comments_mixin._markdown_to_jira("")
-
-        # Verify
-        assert result == ""
-        # The preprocessor should not be called with empty text
+        assert isinstance(result, dict)
+        assert result["version"] == 1
         comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
