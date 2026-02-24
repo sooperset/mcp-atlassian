@@ -383,3 +383,52 @@ class TestCommentsMixin:
         assert isinstance(result, dict)
         assert result["version"] == 1
         comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
+
+    # --- Server/DC path tests ---
+
+    @pytest.fixture
+    def server_comments_mixin(self, jira_config_factory):
+        """Create a CommentsMixin configured for Server/DC."""
+        config = jira_config_factory(url="https://jira.example.com")
+        mixin = CommentsMixin(config=config)
+        mixin.jira = Mock()
+        mixin.preprocessor = Mock()
+        mixin.preprocessor.markdown_to_jira = Mock(return_value="h1. Hello")
+        mixin._clean_text = Mock(side_effect=lambda x: x)
+        return mixin
+
+    def test_markdown_to_jira_server_returns_string(self, server_comments_mixin):
+        """Server/DC path returns wiki markup string."""
+        result = server_comments_mixin._markdown_to_jira("# Hello")
+        assert isinstance(result, str)
+        assert result == "h1. Hello"
+        server_comments_mixin.preprocessor.markdown_to_jira.assert_called_once()
+
+    def test_add_comment_server_sends_string(self, server_comments_mixin):
+        """Server/DC add_comment sends wiki markup string to API."""
+        server_comments_mixin.jira.issue_add_comment.return_value = {
+            "id": "10001",
+            "body": "h1. Hello",
+            "created": "2024-01-01T10:00:00.000+0000",
+            "author": {"displayName": "Test User"},
+        }
+        result = server_comments_mixin.add_comment("TEST-123", "# Hello")
+        call_args = server_comments_mixin.jira.issue_add_comment.call_args
+        comment_arg = call_args[0][1]
+        assert isinstance(comment_arg, str)
+        assert result["body"] == "h1. Hello"
+
+    def test_edit_comment_server_sends_string(self, server_comments_mixin):
+        """Server/DC edit_comment sends wiki markup string to API."""
+        server_comments_mixin.jira.issue_edit_comment.return_value = {
+            "id": "10001",
+            "body": "h1. Updated",
+            "updated": "2024-01-01T11:00:00.000+0000",
+            "author": {"displayName": "Test User"},
+        }
+        server_comments_mixin.preprocessor.markdown_to_jira.return_value = "h1. Updated"
+        result = server_comments_mixin.edit_comment("TEST-123", "10001", "# Updated")
+        call_args = server_comments_mixin.jira.issue_edit_comment.call_args
+        comment_arg = call_args[0][2]
+        assert isinstance(comment_arg, str)
+        assert result["body"] == "h1. Updated"
