@@ -1,5 +1,6 @@
 """Tests for the Jira attachments module."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
@@ -984,3 +985,104 @@ class TestAttachmentsMixin:
             assert len(result["attachments"]) == 0
             assert len(result["failed"]) == 1
             assert "No URL available" in result["failed"][0]["error"]
+
+    # Tests for path traversal rejection (PR #949 security hardening)
+
+    @pytest.mark.parametrize(
+        "malicious_path",
+        [
+            # Absolute paths that resolve outside cwd
+            "/etc/passwd",
+            "/tmp/evil/file.txt",
+            "/var/log/secrets.txt",
+        ],
+        ids=[
+            "absolute-etc-passwd",
+            "absolute-tmp-evil",
+            "absolute-var-log",
+        ],
+    )
+    def test_download_attachment_rejects_path_traversal(
+        self,
+        attachments_mixin: AttachmentsMixin,
+        malicious_path: str,
+    ):
+        """Regression: path traversal in attachment filenames must be rejected.
+
+        The guard in download_attachment checks that the resolved absolute path
+        is within cwd via ``Path(target_path).is_relative_to(cwd)``.  Paths
+        outside cwd trigger a ValueError which is caught internally, causing
+        the method to return False.
+        """
+        with patch("os.getcwd", return_value="/safe/working/dir"):
+            result = attachments_mixin.download_attachment(
+                "https://test.url/attachment",
+                malicious_path,
+            )
+            assert result is False
+
+    @pytest.mark.parametrize(
+        "relative_path",
+        [
+            "../../../etc/passwd",
+            "normal/../../../etc/shadow",
+        ],
+        ids=[
+            "relative-traversal-etc-passwd",
+            "relative-traversal-nested",
+        ],
+    )
+    def test_download_attachment_rejects_relative_path_traversal(
+        self,
+        attachments_mixin: AttachmentsMixin,
+        relative_path: str,
+    ):
+        """Regression: relative paths that resolve outside cwd are rejected.
+
+        When a relative path is given, os.path.abspath resolves it.  If the
+        resolved path escapes cwd, the guard rejects it and returns False.
+        """
+        import os
+
+        cwd = os.getcwd()
+        with patch("os.getcwd", return_value=cwd):
+            result = attachments_mixin.download_attachment(
+                "https://test.url/attachment",
+                relative_path,
+            )
+            # The relative path resolves outside cwd (it traverses up)
+            resolved = os.path.abspath(relative_path)
+            if not Path(resolved).is_relative_to(cwd):
+                assert result is False
+
+    @pytest.mark.parametrize(
+        "malicious_dir",
+        [
+            "/etc",
+            "/tmp/evil",
+            "/var/log",
+        ],
+        ids=[
+            "absolute-etc",
+            "absolute-tmp-evil",
+            "absolute-var-log",
+        ],
+    )
+    def test_download_issue_attachments_rejects_path_traversal(
+        self,
+        attachments_mixin: AttachmentsMixin,
+        malicious_dir: str,
+    ):
+        """Regression: path traversal in target_dir must raise ValueError.
+
+        Unlike download_attachment (which catches the error internally),
+        download_issue_attachments lets the ValueError propagate.
+        """
+        with (
+            patch("os.getcwd", return_value="/safe/working/dir"),
+            pytest.raises(ValueError, match="Path traversal detected"),
+        ):
+            attachments_mixin.download_issue_attachments(
+                "TEST-123",
+                malicious_dir,
+            )
