@@ -74,9 +74,16 @@ class CommentsMixin(JiraClient):
             # Convert Markdown to Jira's markup format
             jira_formatted_comment = self._markdown_to_jira(comment)
 
-            result = self.jira.issue_add_comment(
-                issue_key, jira_formatted_comment, visibility
-            )
+            # Use v3 API on Cloud for ADF comments
+            if isinstance(jira_formatted_comment, dict) and self.config.is_cloud:
+                data: dict[str, Any] = {"body": jira_formatted_comment}
+                if visibility:
+                    data["visibility"] = visibility
+                result = self._post_api3(f"issue/{issue_key}/comment", data)
+            else:
+                result = self.jira.issue_add_comment(
+                    issue_key, jira_formatted_comment, visibility
+                )
             if not isinstance(result, dict):
                 msg = f"Unexpected return value type from `jira.issue_add_comment`: {type(result)}"
                 logger.error(msg)
@@ -122,9 +129,16 @@ class CommentsMixin(JiraClient):
             # Convert Markdown to Jira's markup format
             jira_formatted_comment = self._markdown_to_jira(comment)
 
-            result = self.jira.issue_edit_comment(
-                issue_key, comment_id, jira_formatted_comment, visibility
-            )
+            # Use v3 API on Cloud for ADF comments
+            if isinstance(jira_formatted_comment, dict) and self.config.is_cloud:
+                data: dict[str, Any] = {"body": jira_formatted_comment}
+                if visibility:
+                    data["visibility"] = visibility
+                result = self._put_api3(f"issue/{issue_key}/comment/{comment_id}", data)
+            else:
+                result = self.jira.issue_edit_comment(
+                    issue_key, comment_id, jira_formatted_comment, visibility
+                )
             if not isinstance(result, dict):
                 msg = f"Unexpected return value type from `jira.issue_edit_comment`: {type(result)}"
                 logger.error(msg)

@@ -8,6 +8,8 @@ This ensures that the conversion functions are actually called in the read/write
 which was broken in PR #72 (March 2025) and went undetected for 11 months.
 """
 
+from unittest.mock import Mock
+
 import pytest
 
 
@@ -158,14 +160,16 @@ class TestFormatConversionIntegration:
     ):
         """Test that creating an issue converts Markdown description to ADF on Cloud.
 
-        This verifies the write path: Markdown → ADF (Cloud).
+        This verifies the write path: Markdown → ADF (Cloud) via v3 API.
         """
-        # Mock API response
-        jira_fetcher_with_real_preprocessor.jira.create_issue.return_value = {
-            "id": "12345",
-            "key": "TEST-123",
-            "self": "https://test.atlassian.net/rest/api/3/issue/TEST-123",
-        }
+        # Mock v3 API response (Cloud uses _post_api3 for ADF payloads)
+        jira_fetcher_with_real_preprocessor._post_api3 = Mock(
+            return_value={
+                "id": "12345",
+                "key": "TEST-123",
+                "self": "https://test.atlassian.net/rest/api/3/issue/TEST-123",
+            }
+        )
 
         # Create issue with Markdown description
         markdown_description = "## Summary\n\nThis is **bold** and *italic* text."
@@ -177,9 +181,9 @@ class TestFormatConversionIntegration:
             description=markdown_description,
         )
 
-        # Verify create_issue was called with ADF dict (Cloud)
-        call_args = jira_fetcher_with_real_preprocessor.jira.create_issue.call_args
-        sent_fields = call_args[1]["fields"]
+        # Verify _post_api3 was called with ADF dict (Cloud)
+        call_args = jira_fetcher_with_real_preprocessor._post_api3.call_args
+        sent_fields = call_args[0][1]["fields"]
         sent_description = sent_fields["description"]
 
         # On Cloud, description should be an ADF dict
