@@ -1,3 +1,4 @@
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,9 +21,10 @@ async def test_check_write_access_blocks_in_read_only():
         return x * 2
 
     ctx = DummyContext(read_only=True)
-    with pytest.raises(ValueError) as exc:
-        await dummy_tool(ctx, 3)
-    assert "read-only mode" in str(exc.value)
+    result = await dummy_tool(ctx, 3)
+    error = json.loads(result)
+    assert "error" in error
+    assert "read-only mode" in error["error"]
 
 
 @pytest.mark.asyncio
