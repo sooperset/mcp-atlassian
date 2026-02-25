@@ -6,16 +6,18 @@ import logging
 from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
-from mcp.types import BlobResourceContents, EmbeddedResource, TextContent
+from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
 from pydantic import Field
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 from mcp_atlassian.jira.forms_common import convert_datetime_to_timestamp
+from mcp_atlassian.models.jira import JiraAttachment
 from mcp_atlassian.models.jira.common import JiraUser
 from mcp_atlassian.servers.dependencies import get_jira_fetcher
 from mcp_atlassian.utils.decorators import check_write_access
+from mcp_atlassian.utils.media import is_image_attachment
 
 logger = logging.getLogger(__name__)
 
@@ -645,6 +647,139 @@ async def download_attachments(
         ),
     )
 
+    return contents
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "attachments"},
+    annotations={"title": "Get Issue Images", "readOnlyHint": True},
+)
+async def get_issue_images(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description=(
+                "Jira issue key (e.g., 'PROJ-123'). Returns image "
+                "attachments as inline ImageContent for LLM vision."
+            ),
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+) -> list[TextContent | ImageContent]:
+    """Get all images attached to a Jira issue as inline image content.
+
+    Filters attachments to images only (PNG, JPEG, GIF, WebP, SVG, BMP)
+    and returns them as base64-encoded ImageContent that clients can
+    render directly. Non-image attachments are excluded.
+
+    Files with ambiguous MIME types (application/octet-stream) are
+    detected by filename extension as a fallback. Images larger than
+    50 MB are skipped with an error entry in the summary.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+
+    Returns:
+        A list with a text summary followed by one ImageContent per
+        successfully downloaded image.
+    """
+    jira = await get_jira_fetcher(ctx)
+    contents: list[TextContent | ImageContent] = []
+
+    attachments = jira.get_issue_attachments(issue_key)
+
+    # Filter to image attachments
+    image_attachments: list[tuple[JiraAttachment, str]] = []
+    for att in attachments:
+        is_img, resolved_mime = is_image_attachment(att.content_type, att.filename)
+        if is_img:
+            image_attachments.append((att, resolved_mime))
+
+    if not image_attachments:
+        contents.append(
+            TextContent(
+                type="text",
+                text=json.dumps(
+                    {
+                        "success": True,
+                        "issue_key": issue_key,
+                        "total_images": 0,
+                        "downloaded": 0,
+                        "failed": [],
+                        "message": "No image attachments found",
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+            )
+        )
+        return contents
+
+    fetched: list[dict[str, object]] = []
+    failed: list[dict[str, object]] = []
+
+    for att, resolved_mime in image_attachments:
+        filename = att.filename or "unknown"
+
+        if att.size > _ATTACHMENT_MAX_BYTES:
+            failed.append(
+                {
+                    "filename": filename,
+                    "error": (
+                        f"Image is {att.size} bytes "
+                        "which exceeds the 50 MB inline limit."
+                    ),
+                }
+            )
+            continue
+
+        if not att.url:
+            failed.append({"filename": filename, "error": "No download URL"})
+            continue
+
+        data_bytes = jira.fetch_attachment_content(att.url)
+        if data_bytes is None:
+            failed.append({"filename": filename, "error": "Fetch failed"})
+            continue
+
+        if len(data_bytes) > _ATTACHMENT_MAX_BYTES:
+            failed.append(
+                {
+                    "filename": filename,
+                    "error": (
+                        f"Downloaded size {len(data_bytes)} bytes "
+                        "exceeds the 50 MB inline limit."
+                    ),
+                }
+            )
+            continue
+
+        encoded = base64.b64encode(data_bytes).decode("ascii")
+        fetched.append({"filename": filename, "size": len(data_bytes)})
+        contents.append(
+            ImageContent(
+                type="image",
+                data=encoded,
+                mimeType=resolved_mime,
+            )
+        )
+
+    summary: dict[str, object] = {
+        "success": True,
+        "issue_key": issue_key,
+        "total_images": len(image_attachments),
+        "downloaded": len(fetched),
+        "failed": failed,
+    }
+    contents.insert(
+        0,
+        TextContent(
+            type="text",
+            text=json.dumps(summary, indent=2, ensure_ascii=False),
+        ),
+    )
     return contents
 
 

@@ -12,6 +12,7 @@ from .lifecycle import (
     setup_signal_handlers,
 )
 from .logging import setup_logging
+from .media import is_image_attachment
 
 # Export OAuth utilities
 from .oauth import OAuthConfig, configure_oauth_session
@@ -32,5 +33,6 @@ __all__ = [
     "configure_oauth_session",
     "setup_signal_handlers",
     "ensure_clean_exit",
+    "is_image_attachment",
     "validate_url_for_ssrf",
 ]
