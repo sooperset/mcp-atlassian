@@ -1,3 +1,4 @@
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from functools import wraps
@@ -15,14 +16,41 @@ logger = logging.getLogger(__name__)
 F = TypeVar("F", bound=Callable[..., Awaitable[Any]])
 
 
+def handle_tool_errors(func: F) -> F:
+    """
+    Decorator for FastMCP tool handlers that catches exceptions and returns
+    descriptive JSON error messages instead of letting them propagate to the
+    MCP framework (which would produce a generic error).
+
+    Assumes the decorated function is async.
+    """
+
+    @wraps(func)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return await func(*args, **kwargs)
+        except Exception as e:
+            tool_name = func.__name__
+            logger.error(f"Error in tool '{tool_name}': {e}", exc_info=True)
+            return json.dumps(
+                {"error": str(e), "tool": tool_name},
+                indent=2,
+                ensure_ascii=False,
+            )
+
+    return wrapper  # type: ignore
+
+
 def check_write_access(func: F) -> F:
     """
     Decorator for FastMCP tools to check if the application is in read-only mode.
     If in read-only mode, it raises a ValueError.
+    Also catches unhandled exceptions and returns descriptive JSON error messages.
     Assumes the decorated function is async and has `ctx: Context` as its first argument.
     """
 
     @wraps(func)
+    @handle_tool_errors
     async def wrapper(ctx: Context, *args: Any, **kwargs: Any) -> Any:
         lifespan_ctx_dict = ctx.request_context.lifespan_context
         app_lifespan_ctx = (
