@@ -409,7 +409,7 @@ def main(
             else:
                 log_display_path = fastmcp_settings.streamable_http_path or "/mcp"
 
-        fastmcp_settings.stateless_http = final_stateless
+        run_kwargs["stateless_http"] = final_stateless
 
         logger.info(
             f"Starting server with {final_transport.upper()} transport on http://{final_host}:{final_port}{log_display_path}"
