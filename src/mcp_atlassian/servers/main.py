@@ -1,5 +1,6 @@
 """Main FastMCP server setup for Atlassian integration."""
 
+import base64
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -26,6 +27,7 @@ from mcp_atlassian.utils.environment import get_available_services
 from mcp_atlassian.utils.io import is_read_only_mode
 from mcp_atlassian.utils.logging import mask_sensitive
 from mcp_atlassian.utils.tools import get_enabled_tools, should_include_tool
+from mcp_atlassian.utils.urls import validate_url_for_ssrf
 from mcp_atlassian.zephyr.config import ZephyrConfig
 
 from .confluence import confluence_mcp
@@ -34,6 +36,58 @@ from .jira import jira_mcp
 from .zephyr import zephyr_mcp
 
 logger = logging.getLogger("mcp-atlassian.server.main")
+
+
+def _sanitize_schema_for_compatibility(tool: MCPTool) -> MCPTool:
+    """Sanitize tool inputSchema for AI platform compatibility.
+
+    Collapses simple nullable ``anyOf`` unions that Pydantic v2 generates
+    for ``T | None`` into a plain ``{"type": T}`` property.  This fixes
+    Vertex AI / Google ADK rejecting ``anyOf`` alongside ``default`` or
+    ``description`` fields (issues #640, #733).
+
+    The transform is intentionally conservative — it only flattens unions
+    of exactly ``[{"type": <primitive>}, {"type": "null"}]`` so that
+    complex / nested schemas are left untouched.
+
+    Note: Only top-level ``properties`` are processed.  Nested schemas
+    (e.g. ``items`` of arrays or ``properties`` of sub-objects) are not
+    walked.  This is sufficient for current tool definitions; extend if
+    nested ``anyOf`` patterns appear in the future.
+
+    Args:
+        tool: The MCP tool whose inputSchema will be sanitized in-place.
+
+    Returns:
+        The same MCPTool instance (mutated) for chaining convenience.
+    """
+    schema = tool.inputSchema
+    if not schema or not isinstance(schema, dict):
+        return tool
+
+    properties = schema.get("properties")
+    if not properties or not isinstance(properties, dict):
+        return tool
+
+    for _prop_name, prop_def in properties.items():
+        if not isinstance(prop_def, dict):
+            continue
+
+        any_of = prop_def.get("anyOf")
+        if not any_of or not isinstance(any_of, list):
+            continue
+
+        # Only flatten simple nullable unions: [{"type": T}, {"type": "null"}]
+        non_null = [v for v in any_of if v != {"type": "null"}]
+        null_present = any(v == {"type": "null"} for v in any_of)
+
+        if null_present and len(non_null) == 1 and "type" in non_null[0]:
+            # Collapse: pull the real type up, drop anyOf
+            resolved_type = non_null[0]["type"]
+            prop_def.pop("anyOf")
+            prop_def["type"] = resolved_type
+
+    return tool
 
 
 async def health_check(request: Request) -> JSONResponse:
@@ -278,7 +332,9 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             if not service_configured_and_available:
                 continue
 
-            filtered_tools.append(tool_obj.to_mcp_tool(name=registered_name))
+            mcp_tool = tool_obj.to_mcp_tool(name=registered_name)
+            _sanitize_schema_for_compatibility(mcp_tool)
+            filtered_tools.append(mcp_tool)
 
         logger.debug(
             f"_list_tools_mcp: Total tools after filtering: {len(filtered_tools)}"
@@ -480,6 +536,23 @@ class UserTokenMiddleware:
                 zephyr_url_header.decode("latin-1") if zephyr_url_header else None
             )
 
+            # Validate URLs to prevent SSRF
+            if jira_url_str:
+                ssrf_error = validate_url_for_ssrf(jira_url_str)
+                if ssrf_error:
+                    scope["state"]["auth_validation_error"] = (
+                        f"Forbidden: Invalid Jira URL - {ssrf_error}"
+                    )
+                    return
+
+            if confluence_url_str:
+                ssrf_error = validate_url_for_ssrf(confluence_url_str)
+                if ssrf_error:
+                    scope["state"]["auth_validation_error"] = (
+                        f"Forbidden: Invalid Confluence URL - {ssrf_error}"
+                    )
+                    return
+
             # Build service headers dict
             service_headers = {}
             if jira_token_str:
@@ -580,14 +653,50 @@ class UserTokenMiddleware:
                     f"...{mask_sensitive(token, 8)}"
                 )
 
+        elif auth_header.startswith("Basic "):
+            encoded = auth_header[6:].strip()
+            if not encoded:
+                scope["state"]["auth_validation_error"] = (
+                    "Unauthorized: Empty Basic auth credentials"
+                )
+                return
+            try:
+                decoded = base64.b64decode(encoded).decode("utf-8")
+            except (ValueError, UnicodeDecodeError) as e:
+                logger.warning(f"Failed to decode Basic auth: {e}")
+                scope["state"]["auth_validation_error"] = (
+                    "Unauthorized: Invalid Basic auth encoding"
+                )
+                return
+            if ":" not in decoded:
+                scope["state"]["auth_validation_error"] = (
+                    "Unauthorized: Invalid Basic auth format. "
+                    "Expected 'email:api_token'"
+                )
+                return
+            email, api_token = decoded.split(":", 1)
+            if not email or not api_token:
+                scope["state"]["auth_validation_error"] = (
+                    "Unauthorized: Email or API token is empty"
+                )
+                return
+            scope["state"]["user_atlassian_email"] = email
+            scope["state"]["user_atlassian_api_token"] = api_token
+            scope["state"]["user_atlassian_auth_type"] = "basic"
+            scope["state"]["user_atlassian_token"] = None
+            logger.debug(
+                f"UserTokenMiddleware: Basic auth extracted for email: {email}"
+            )
+
         elif auth_header.strip():
             # Non-empty but unsupported auth type
             auth_value = auth_header.strip()
             auth_type = auth_value.split(" ", 1)[0] if " " in auth_value else auth_value
             logger.warning(f"Unsupported Authorization type: {auth_type}")
             scope["state"]["auth_validation_error"] = (
-                "Unauthorized: Only 'Bearer <OAuthToken>' or "
-                "'Token <PAT>' types are supported."
+                "Unauthorized: Only 'Bearer <OAuthToken>', "
+                "'Token <PAT>', or 'Basic <base64(email:api_token)>' "
+                "types are supported."
             )
         else:
             # Empty or whitespace-only

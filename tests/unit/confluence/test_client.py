@@ -38,6 +38,7 @@ def test_init_with_basic_auth():
             password="test_token",
             cloud=True,
             verify_ssl=True,
+            timeout=75,
         )
         assert client.config == config
         assert client.confluence == mock_confluence.return_value
@@ -84,6 +85,7 @@ def test_init_with_token_auth():
             token="test_personal_token",
             cloud=False,
             verify_ssl=False,
+            timeout=75,
         )
         assert client.config == config
         assert client.confluence == mock_confluence.return_value
@@ -266,6 +268,53 @@ def test_init_no_proxies(monkeypatch):
     )
     client = ConfluenceClient(config=config)
     assert mock_session.proxies == {}
+
+
+def test_confluence_client_passes_timeout_to_constructor():
+    """Test that ConfluenceClient passes custom timeout to Confluence constructor."""
+    with (
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+        patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+    ):
+        config = ConfluenceConfig(
+            url="https://test.atlassian.net/wiki",
+            auth_type="basic",
+            username="test_user",
+            api_token="test_token",
+            timeout=120,
+        )
+        ConfluenceClient(config=config)
+
+        mock_confluence.assert_called_once_with(
+            url="https://test.atlassian.net/wiki",
+            username="test_user",
+            password="test_token",
+            cloud=True,
+            verify_ssl=True,
+            timeout=120,
+        )
+
+
+def test_confluence_client_pat_disables_trust_env():
+    """Test that PAT auth disables trust_env to prevent .netrc override (#860)."""
+    with (
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+        patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+    ):
+        mock_session = MagicMock()
+        mock_session.trust_env = True
+        mock_confluence.return_value._session = mock_session
+
+        config = ConfluenceConfig(
+            url="https://confluence.example.com",
+            auth_type="pat",
+            personal_token="test_pat",
+        )
+        ConfluenceClient(config=config)
+
+        assert mock_session.trust_env is False
 
 
 # Phase 4: AttachmentsMixin Integration Tests

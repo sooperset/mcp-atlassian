@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import sys
-import time
+import threading
 from importlib.metadata import PackageNotFoundError, version
 
 import click
@@ -41,13 +41,12 @@ logging_stream = sys.stdout if is_env_truthy("MCP_LOGGING_STDOUT") else sys.stde
 logger = setup_logging(logging_level, logging_stream)
 
 
-async def _watch_parent_exit() -> None:
+async def _watch_parent_exit(stop_event: threading.Event) -> None:
     parent_pid = os.getppid()
     loop = asyncio.get_running_loop()
 
     def _poll_parent_alive() -> None:
-        while True:
-            time.sleep(5)
+        while not stop_event.wait(5):
             current_ppid = os.getppid()
             # On Unix, when the parent dies the child is reparented (ppid changes)
             if current_ppid != parent_pid:
@@ -65,13 +64,15 @@ async def _watch_parent_exit() -> None:
 async def _run_stdio_with_stdin_guard(run_kwargs: dict[str, object]) -> None:
     from mcp_atlassian.servers import main_mcp
 
+    parent_watch_stop = threading.Event()
     server_task = asyncio.create_task(main_mcp.run_async(**run_kwargs))
-    parent_task = asyncio.create_task(_watch_parent_exit())
+    parent_task = asyncio.create_task(_watch_parent_exit(parent_watch_stop))
 
     done, pending = await asyncio.wait(
         {server_task, parent_task},
         return_when=asyncio.FIRST_COMPLETED,
     )
+    parent_watch_stop.set()
 
     if parent_task in done and not server_task.done():
         logger.info("Parent process exited. Shutting down STDIO server.")
@@ -240,9 +241,9 @@ def main(
 
     Supports both Atlassian Cloud and Jira Server/Data Center deployments.
     Authentication methods supported:
-    - Username and API token (Cloud)
+    - Username and API token (Cloud and Server/Data Center)
     - Personal Access Token (Server/Data Center)
-    - OAuth 2.0 (Cloud only)
+    - OAuth 2.0 (Cloud and Data Center)
     """
     # Logging level logic
     if verbose == 1:
@@ -408,7 +409,7 @@ def main(
             else:
                 log_display_path = fastmcp_settings.streamable_http_path or "/mcp"
 
-        fastmcp_settings.stateless_http = final_stateless
+        run_kwargs["stateless_http"] = final_stateless
 
         logger.info(
             f"Starting server with {final_transport.upper()} transport on http://{final_host}:{final_port}{log_display_path}"

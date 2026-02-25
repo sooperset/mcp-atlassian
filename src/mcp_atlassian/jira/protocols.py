@@ -170,6 +170,21 @@ class FieldsOperationsProto(Protocol):
         """
 
     @abstractmethod
+    def _format_field_value_for_write(
+        self, field_id: str, value: Any, field_definition: dict | None
+    ) -> Any:
+        """Format field values for the Jira API.
+
+        Args:
+            field_id: The Jira field ID
+            value: The raw value to format
+            field_definition: Field definition dict, or None
+
+        Returns:
+            Formatted value suitable for the Jira API
+        """
+
+    @abstractmethod
     def get_field_by_id(
         self, field_id: str, refresh: bool = False
     ) -> dict[str, Any] | None:

@@ -1,5 +1,6 @@
 """Tests for the Jira attachments module."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
@@ -77,6 +78,7 @@ class TestAttachmentsMixin:
             patch("os.path.exists") as mock_exists,
             patch("os.path.getsize") as mock_getsize,
             patch("os.makedirs") as mock_makedirs,
+            patch("os.getcwd", return_value="/tmp"),
         ):
             mock_exists.return_value = True
             mock_getsize.return_value = 12  # Length of "test content"
@@ -113,11 +115,15 @@ class TestAttachmentsMixin:
             patch("os.makedirs") as mock_makedirs,
             patch("os.path.abspath") as mock_abspath,
             patch("os.path.isabs") as mock_isabs,
+            patch("os.getcwd", return_value="/absolute/path"),
+            patch("mcp_atlassian.jira.attachments.validate_safe_path"),
         ):
             mock_exists.return_value = True
             mock_getsize.return_value = 12
             mock_isabs.return_value = False
-            mock_abspath.return_value = "/absolute/path/test_file.txt"
+            mock_abspath.side_effect = lambda p: (
+                "/absolute/path/test_file.txt" if p == "test_file.txt" else p
+            )
 
             # Call the method with a relative path
             result = attachments_mixin.download_attachment(
@@ -127,7 +133,7 @@ class TestAttachmentsMixin:
             # Assertions
             assert result is True
             mock_isabs.assert_called_once_with("test_file.txt")
-            mock_abspath.assert_called_once_with("test_file.txt")
+            mock_abspath.assert_any_call("test_file.txt")
             mock_file.assert_called_once_with("/absolute/path/test_file.txt", "wb")
 
     def test_download_attachment_no_url(self, attachments_mixin: AttachmentsMixin):
@@ -236,6 +242,7 @@ class TestAttachmentsMixin:
                 "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
                 side_effect=[mock_attachment1, mock_attachment2],
             ),
+            patch("os.getcwd", return_value="/tmp"),
         ):
             result = attachments_mixin.download_issue_attachments(
                 "TEST-123", "/tmp/attachments"
@@ -286,6 +293,8 @@ class TestAttachmentsMixin:
             ),
             patch("os.path.isabs") as mock_isabs,
             patch("os.path.abspath") as mock_abspath,
+            patch("os.getcwd", return_value="/absolute/path"),
+            patch("mcp_atlassian.jira.attachments.validate_safe_path"),
         ):
             mock_isabs.return_value = False
             mock_abspath.return_value = "/absolute/path/attachments"
@@ -307,7 +316,10 @@ class TestAttachmentsMixin:
         mock_issue = {"fields": {"attachment": []}}
         attachments_mixin.jira.issue.return_value = mock_issue
 
-        with patch("pathlib.Path.mkdir") as mock_mkdir:
+        with (
+            patch("pathlib.Path.mkdir") as mock_mkdir,
+            patch("os.getcwd", return_value="/tmp"),
+        ):
             result = attachments_mixin.download_issue_attachments(
                 "TEST-123", "/tmp/attachments"
             )
@@ -325,9 +337,12 @@ class TestAttachmentsMixin:
         """Test download when issue cannot be retrieved."""
         attachments_mixin.jira.issue.return_value = None
 
-        with pytest.raises(
-            TypeError,
-            match="Unexpected return value type from `jira.issue`: <class 'NoneType'>",
+        with (
+            patch("os.getcwd", return_value="/tmp"),
+            pytest.raises(
+                TypeError,
+                match="Unexpected return value type from `jira.issue`: <class 'NoneType'>",
+            ),
         ):
             attachments_mixin.download_issue_attachments("TEST-123", "/tmp/attachments")
 
@@ -339,9 +354,10 @@ class TestAttachmentsMixin:
         mock_issue = {}  # Missing 'fields' key
         attachments_mixin.jira.issue.return_value = mock_issue
 
-        result = attachments_mixin.download_issue_attachments(
-            "TEST-123", "/tmp/attachments"
-        )
+        with patch("os.getcwd", return_value="/tmp"):
+            result = attachments_mixin.download_issue_attachments(
+                "TEST-123", "/tmp/attachments"
+            )
 
         # Assertions
         assert result["success"] is False
@@ -391,6 +407,7 @@ class TestAttachmentsMixin:
                 "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
                 side_effect=[mock_attachment1, mock_attachment2],
             ),
+            patch("os.getcwd", return_value="/tmp"),
         ):
             result = attachments_mixin.download_issue_attachments(
                 "TEST-123", "/tmp/attachments"
@@ -435,6 +452,7 @@ class TestAttachmentsMixin:
                 "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
                 return_value=mock_attachment,
             ),
+            patch("os.getcwd", return_value="/tmp"),
         ):
             result = attachments_mixin.download_issue_attachments(
                 "TEST-123", "/tmp/attachments"
@@ -818,11 +836,13 @@ class TestAttachmentsMixin:
         mock_attachment1.filename = "test1.txt"
         mock_attachment1.url = "https://test.url/attachment1"
         mock_attachment1.content_type = "text/plain"
+        mock_attachment1.size = 100
 
         mock_attachment2 = MagicMock()
         mock_attachment2.filename = "test2.png"
         mock_attachment2.url = "https://test.url/attachment2"
         mock_attachment2.content_type = "image/png"
+        mock_attachment2.size = 200
 
         with (
             patch.object(
@@ -913,11 +933,13 @@ class TestAttachmentsMixin:
         mock_attachment1.filename = "good.txt"
         mock_attachment1.url = "https://test.url/good"
         mock_attachment1.content_type = "text/plain"
+        mock_attachment1.size = 100
 
         mock_attachment2 = MagicMock()
         mock_attachment2.filename = "bad.txt"
         mock_attachment2.url = "https://test.url/bad"
         mock_attachment2.content_type = "text/plain"
+        mock_attachment2.size = 200
 
         with (
             patch.object(
@@ -969,3 +991,328 @@ class TestAttachmentsMixin:
             assert len(result["attachments"]) == 0
             assert len(result["failed"]) == 1
             assert "No URL available" in result["failed"][0]["error"]
+
+    # Tests for 50MB attachment size limit
+
+    def test_get_issue_attachment_contents_skips_oversized(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Attachment with size > 50MB in metadata is skipped before download."""
+        mock_issue = {
+            "fields": {
+                "attachment": [
+                    {
+                        "filename": "huge.bin",
+                        "content": "https://test.url/huge",
+                        "size": 60 * 1024 * 1024,  # 60 MB
+                    }
+                ]
+            }
+        }
+        attachments_mixin.jira.issue.return_value = mock_issue
+
+        mock_attachment = MagicMock()
+        mock_attachment.filename = "huge.bin"
+        mock_attachment.url = "https://test.url/huge"
+        mock_attachment.size = 60 * 1024 * 1024
+        mock_attachment.content_type = "application/octet-stream"
+
+        with (
+            patch.object(
+                attachments_mixin,
+                "fetch_attachment_content",
+            ) as mock_fetch,
+            patch(
+                "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
+                return_value=mock_attachment,
+            ),
+        ):
+            result = attachments_mixin.get_issue_attachment_contents("TEST-123")
+
+            # fetch_attachment_content should NOT be called for oversized file
+            mock_fetch.assert_not_called()
+            assert len(result["attachments"]) == 0
+            assert len(result["failed"]) == 1
+            assert "50 MB" in result["failed"][0]["error"]
+
+    def test_get_issue_attachment_contents_allows_zero_size(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Attachment with size=0 (metadata missing) still gets downloaded."""
+        mock_issue = {
+            "fields": {
+                "attachment": [
+                    {
+                        "filename": "unknown.bin",
+                        "content": "https://test.url/unknown",
+                    }
+                ]
+            }
+        }
+        attachments_mixin.jira.issue.return_value = mock_issue
+
+        mock_attachment = MagicMock()
+        mock_attachment.filename = "unknown.bin"
+        mock_attachment.url = "https://test.url/unknown"
+        mock_attachment.size = 0
+        mock_attachment.content_type = "application/octet-stream"
+
+        with (
+            patch.object(
+                attachments_mixin,
+                "fetch_attachment_content",
+                return_value=b"data",
+            ) as mock_fetch,
+            patch(
+                "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
+                return_value=mock_attachment,
+            ),
+        ):
+            result = attachments_mixin.get_issue_attachment_contents("TEST-123")
+
+            mock_fetch.assert_called_once()
+            assert len(result["attachments"]) == 1
+            assert len(result["failed"]) == 0
+
+    def test_get_issue_attachment_contents_allows_small(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Attachment with size < 50MB gets downloaded normally."""
+        mock_issue = {
+            "fields": {
+                "attachment": [
+                    {
+                        "filename": "small.txt",
+                        "content": "https://test.url/small",
+                        "size": 1024,
+                    }
+                ]
+            }
+        }
+        attachments_mixin.jira.issue.return_value = mock_issue
+
+        mock_attachment = MagicMock()
+        mock_attachment.filename = "small.txt"
+        mock_attachment.url = "https://test.url/small"
+        mock_attachment.size = 1024
+        mock_attachment.content_type = "text/plain"
+
+        with (
+            patch.object(
+                attachments_mixin,
+                "fetch_attachment_content",
+                return_value=b"small content",
+            ) as mock_fetch,
+            patch(
+                "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
+                return_value=mock_attachment,
+            ),
+        ):
+            result = attachments_mixin.get_issue_attachment_contents("TEST-123")
+
+            mock_fetch.assert_called_once()
+            assert len(result["attachments"]) == 1
+            assert len(result["failed"]) == 0
+
+    def test_get_issue_attachment_contents_mixed_sizes(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Mix of large and small attachments — only large ones skipped."""
+        mock_issue = {
+            "fields": {
+                "attachment": [
+                    {
+                        "filename": "small.txt",
+                        "content": "https://test.url/small",
+                        "size": 1024,
+                    },
+                    {
+                        "filename": "huge.bin",
+                        "content": "https://test.url/huge",
+                        "size": 60 * 1024 * 1024,
+                    },
+                    {
+                        "filename": "medium.txt",
+                        "content": "https://test.url/medium",
+                        "size": 10 * 1024 * 1024,
+                    },
+                ]
+            }
+        }
+        attachments_mixin.jira.issue.return_value = mock_issue
+
+        mock_small = MagicMock()
+        mock_small.filename = "small.txt"
+        mock_small.url = "https://test.url/small"
+        mock_small.size = 1024
+        mock_small.content_type = "text/plain"
+
+        mock_huge = MagicMock()
+        mock_huge.filename = "huge.bin"
+        mock_huge.url = "https://test.url/huge"
+        mock_huge.size = 60 * 1024 * 1024
+        mock_huge.content_type = "application/octet-stream"
+
+        mock_medium = MagicMock()
+        mock_medium.filename = "medium.txt"
+        mock_medium.url = "https://test.url/medium"
+        mock_medium.size = 10 * 1024 * 1024
+        mock_medium.content_type = "text/plain"
+
+        with (
+            patch.object(
+                attachments_mixin,
+                "fetch_attachment_content",
+                side_effect=[b"small data", b"medium data"],
+            ) as mock_fetch,
+            patch(
+                "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
+                side_effect=[mock_small, mock_huge, mock_medium],
+            ),
+        ):
+            result = attachments_mixin.get_issue_attachment_contents("TEST-123")
+
+            # Only small and medium should be fetched
+            assert mock_fetch.call_count == 2
+            assert len(result["attachments"]) == 2
+            assert len(result["failed"]) == 1
+            assert result["failed"][0]["filename"] == "huge.bin"
+            assert "50 MB" in result["failed"][0]["error"]
+            filenames = [a["filename"] for a in result["attachments"]]
+            assert "small.txt" in filenames
+            assert "medium.txt" in filenames
+
+    # Tests for path traversal rejection (PR #949 security hardening)
+
+    @pytest.mark.parametrize(
+        "malicious_path",
+        [
+            # Absolute paths that resolve outside cwd
+            "/etc/passwd",
+            "/tmp/evil/file.txt",
+            "/var/log/secrets.txt",
+        ],
+        ids=[
+            "absolute-etc-passwd",
+            "absolute-tmp-evil",
+            "absolute-var-log",
+        ],
+    )
+    def test_download_attachment_rejects_path_traversal(
+        self,
+        attachments_mixin: AttachmentsMixin,
+        malicious_path: str,
+    ):
+        """Regression: path traversal in attachment filenames must be rejected.
+
+        The guard in download_attachment checks that the resolved absolute path
+        is within cwd via ``Path(target_path).is_relative_to(cwd)``.  Paths
+        outside cwd trigger a ValueError which is caught internally, causing
+        the method to return False.
+        """
+        with patch("os.getcwd", return_value="/safe/working/dir"):
+            result = attachments_mixin.download_attachment(
+                "https://test.url/attachment",
+                malicious_path,
+            )
+            assert result is False
+
+    @pytest.mark.parametrize(
+        "relative_path",
+        [
+            "../../../etc/passwd",
+            "normal/../../../etc/shadow",
+        ],
+        ids=[
+            "relative-traversal-etc-passwd",
+            "relative-traversal-nested",
+        ],
+    )
+    def test_download_attachment_rejects_relative_path_traversal(
+        self,
+        attachments_mixin: AttachmentsMixin,
+        relative_path: str,
+    ):
+        """Regression: relative paths that resolve outside cwd are rejected.
+
+        When a relative path is given, os.path.abspath resolves it.  If the
+        resolved path escapes cwd, the guard rejects it and returns False.
+        """
+        import os
+
+        cwd = os.getcwd()
+        with patch("os.getcwd", return_value=cwd):
+            result = attachments_mixin.download_attachment(
+                "https://test.url/attachment",
+                relative_path,
+            )
+            # The relative path resolves outside cwd (it traverses up)
+            resolved = os.path.abspath(relative_path)
+            if not Path(resolved).is_relative_to(cwd):
+                assert result is False
+
+    @pytest.mark.parametrize(
+        "malicious_dir",
+        [
+            "/etc",
+            "/tmp/evil",
+            "/var/log",
+        ],
+        ids=[
+            "absolute-etc",
+            "absolute-tmp-evil",
+            "absolute-var-log",
+        ],
+    )
+    def test_download_issue_attachments_rejects_path_traversal(
+        self,
+        attachments_mixin: AttachmentsMixin,
+        malicious_dir: str,
+    ):
+        """Regression: path traversal in target_dir must raise ValueError.
+
+        Unlike download_attachment (which catches the error internally),
+        download_issue_attachments lets the ValueError propagate.
+        """
+        with (
+            patch("os.getcwd", return_value="/safe/working/dir"),
+            pytest.raises(ValueError, match="Path traversal detected"),
+        ):
+            attachments_mixin.download_issue_attachments(
+                "TEST-123",
+                malicious_dir,
+            )
+
+    def test_get_issue_attachments_metadata(self, attachments_mixin: AttachmentsMixin):
+        """get_issue_attachments returns JiraAttachment list without downloading."""
+        attachments_mixin.jira.issue.return_value = {
+            "fields": {
+                "attachment": [
+                    {
+                        "id": "101",
+                        "filename": "photo.png",
+                        "size": 1024,
+                        "mimeType": "image/png",
+                        "content": "https://jira.example.com/att/101",
+                    },
+                    {
+                        "id": "102",
+                        "filename": "report.pdf",
+                        "size": 2048,
+                        "mimeType": "application/pdf",
+                        "content": "https://jira.example.com/att/102",
+                    },
+                ]
+            }
+        }
+
+        from mcp_atlassian.models.jira import JiraAttachment
+
+        result = attachments_mixin.get_issue_attachments("TEST-123")
+        assert len(result) == 2
+        assert all(isinstance(a, JiraAttachment) for a in result)
+        assert result[0].filename == "photo.png"
+        assert result[0].content_type == "image/png"
+        assert result[1].filename == "report.pdf"
+        # No download calls should have been made
+        attachments_mixin.jira._session.get.assert_not_called()

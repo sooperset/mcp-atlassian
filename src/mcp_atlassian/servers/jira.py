@@ -6,29 +6,98 @@ import logging
 from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
-from mcp.types import BlobResourceContents, EmbeddedResource, TextContent
+from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
 from pydantic import Field
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 from mcp_atlassian.jira.forms_common import convert_datetime_to_timestamp
+from mcp_atlassian.models.jira import JiraAttachment
 from mcp_atlassian.models.jira.common import JiraUser
 from mcp_atlassian.servers.dependencies import get_jira_fetcher
 from mcp_atlassian.utils.decorators import check_write_access
+from mcp_atlassian.utils.media import is_image_attachment
 
 logger = logging.getLogger(__name__)
 
+# Maximum attachment size for inline download (50 MB)
+_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024
+
 # Regex patterns for Jira key validation.
-# Per Atlassian docs, project keys are 2-10 chars starting with an uppercase
-# letter, followed by uppercase letters and/or digits (e.g. ACV2, CMSV2).
-ISSUE_KEY_PATTERN = r"^[A-Z][A-Z0-9]{1,9}-\d+$"
-PROJECT_KEY_PATTERN = r"^[A-Z][A-Z0-9]{1,9}$"
+# Per Atlassian docs, Cloud project keys are 2-10 chars. Server/Data Center
+# allows longer keys (configurable). We accept any length to support both.
+ISSUE_KEY_PATTERN = r"^[A-Z][A-Z0-9]+-\d+$"
+PROJECT_KEY_PATTERN = r"^[A-Z][A-Z0-9]+$"
 
 jira_mcp = FastMCP(
     name="Jira MCP Service",
     instructions="Provides tools for interacting with Atlassian Jira.",
 )
+
+
+def _parse_visibility(
+    visibility: str | None,
+    field_name: str = "visibility",
+) -> dict[str, str] | None:
+    """Parse a visibility JSON string into a dict.
+
+    Args:
+        visibility: JSON string like '{"type":"group","value":"jira-users"}', or None.
+        field_name: Parameter name for error messages.
+
+    Returns:
+        Parsed dict or None.
+
+    Raises:
+        ValueError: If the input is not valid JSON or not a dict.
+    """
+    if visibility is None:
+        return None
+    try:
+        parsed = json.loads(visibility)
+        if not isinstance(parsed, dict):
+            raise ValueError(
+                f"{field_name} must be a valid JSON object, e.g. "
+                '{"type":"group","value":"jira-users"}'
+            )
+        return parsed
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"{field_name} must be a valid JSON object, e.g. "
+            f'{{"type":"group","value":"jira-users"}}; got error: {e}'
+        ) from e
+
+
+def _parse_additional_fields(
+    additional_fields: dict[str, Any] | str | None,
+) -> dict[str, Any]:
+    """Parse additional_fields from dict or JSON string.
+
+    Args:
+        additional_fields: Dict, JSON string, or None.
+
+    Returns:
+        Parsed dict of additional fields.
+
+    Raises:
+        ValueError: If the input is not valid JSON or not a dict.
+    """
+    if additional_fields is None:
+        return {}
+    if isinstance(additional_fields, dict):
+        return additional_fields
+    if isinstance(additional_fields, str):
+        try:
+            parsed = json.loads(additional_fields)
+            if not isinstance(parsed, dict):
+                raise ValueError(
+                    "Parsed additional_fields is not a JSON object (dict)."
+                )
+            return parsed
+        except json.JSONDecodeError as e:
+            raise ValueError(f"additional_fields is not valid JSON: {e}") from e
+    raise ValueError("additional_fields must be a dictionary or JSON string.")
 
 
 @jira_mcp.tool(
@@ -313,6 +382,74 @@ async def search_fields(
 
 @jira_mcp.tool(
     tags={"jira", "read"},
+    annotations={"title": "Get Field Options", "readOnlyHint": True},
+)
+async def get_field_options(
+    ctx: Context,
+    field_id: Annotated[
+        str,
+        Field(
+            description="Custom field ID (e.g., 'customfield_10001'). "
+            "Use jira_search_fields to find field IDs."
+        ),
+    ],
+    context_id: Annotated[
+        str | None,
+        Field(
+            description="Field context ID (Cloud only). "
+            "If omitted, auto-resolves to the global context.",
+            default=None,
+        ),
+    ] = None,
+    project_key: Annotated[
+        str | None,
+        Field(
+            description="Project key (required for Server/DC). Example: 'PROJ'",
+            default=None,
+        ),
+    ] = None,
+    issue_type: Annotated[
+        str | None,
+        Field(
+            description="Issue type name (required for Server/DC). Example: 'Bug'",
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """Get allowed option values for a custom field.
+
+    Returns the list of valid options for select, multi-select, radio,
+    checkbox, and cascading select custom fields.
+
+    Cloud: Uses the Field Context Option API. If context_id is not provided,
+    automatically resolves to the global context.
+
+    Server/DC: Uses createmeta to get allowedValues. Requires project_key
+    and issue_type parameters.
+
+    Args:
+        ctx: The FastMCP context.
+        field_id: The custom field ID.
+        context_id: Field context ID (Cloud only, auto-resolved if omitted).
+        project_key: Project key (required for Server/DC).
+        issue_type: Issue type name (required for Server/DC).
+
+    Returns:
+        JSON string with the list of available options.
+    """
+    jira = await get_jira_fetcher(ctx)
+    options = jira.get_field_options(
+        field_id=field_id,
+        context_id=context_id,
+        project_key=project_key,
+        issue_type=issue_type,
+    )
+    result = [opt.to_simplified_dict() for opt in options]
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read"},
     annotations={"title": "Get Project Issues", "readOnlyHint": True},
 )
 async def get_project_issues(
@@ -454,32 +591,28 @@ async def download_attachments(
 
     attachments = result.get("attachments", [])
     failed = result.get("failed", [])
-
-    summary = {
-        "success": True,
-        "issue_key": result.get("issue_key", issue_key),
-        "total": result.get("total", 0),
-        "downloaded": len(attachments),
-        "failed": failed,
-    }
-
-    if not attachments and not failed:
-        summary["message"] = result.get(
-            "message", f"No attachments found for issue {issue_key}"
-        )
-
-    contents.append(
-        TextContent(
-            type="text",
-            text=json.dumps(summary, indent=2, ensure_ascii=False),
-        )
-    )
+    downloaded = 0
 
     for attachment in attachments:
         data_bytes: bytes = attachment["data"]
+        filename = attachment["filename"]
+
+        if len(data_bytes) > _ATTACHMENT_MAX_BYTES:
+            failed.append(
+                {
+                    "filename": filename,
+                    "error": (
+                        f"Attachment '{filename}' is {len(data_bytes)} bytes"
+                        " which exceeds the 50 MB inline limit."
+                        " Retrieve it directly from Jira."
+                    ),
+                }
+            )
+            continue
+
         encoded = base64.b64encode(data_bytes).decode("ascii")
         mime_type = attachment.get("content_type", "application/octet-stream")
-        filename = attachment["filename"]
+        downloaded += 1
 
         contents.append(
             EmbeddedResource(
@@ -492,6 +625,161 @@ async def download_attachments(
             )
         )
 
+    summary: dict[str, Any] = {
+        "success": True,
+        "issue_key": result.get("issue_key", issue_key),
+        "total": result.get("total", 0),
+        "downloaded": downloaded,
+        "failed": failed,
+    }
+
+    if not attachments and not failed:
+        summary["message"] = result.get(
+            "message", f"No attachments found for issue {issue_key}"
+        )
+
+    # Insert summary text at the beginning
+    contents.insert(
+        0,
+        TextContent(
+            type="text",
+            text=json.dumps(summary, indent=2, ensure_ascii=False),
+        ),
+    )
+
+    return contents
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "attachments"},
+    annotations={"title": "Get Issue Images", "readOnlyHint": True},
+)
+async def get_issue_images(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description=(
+                "Jira issue key (e.g., 'PROJ-123'). Returns image "
+                "attachments as inline ImageContent for LLM vision."
+            ),
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+) -> list[TextContent | ImageContent]:
+    """Get all images attached to a Jira issue as inline image content.
+
+    Filters attachments to images only (PNG, JPEG, GIF, WebP, SVG, BMP)
+    and returns them as base64-encoded ImageContent that clients can
+    render directly. Non-image attachments are excluded.
+
+    Files with ambiguous MIME types (application/octet-stream) are
+    detected by filename extension as a fallback. Images larger than
+    50 MB are skipped with an error entry in the summary.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+
+    Returns:
+        A list with a text summary followed by one ImageContent per
+        successfully downloaded image.
+    """
+    jira = await get_jira_fetcher(ctx)
+    contents: list[TextContent | ImageContent] = []
+
+    attachments = jira.get_issue_attachments(issue_key)
+
+    # Filter to image attachments
+    image_attachments: list[tuple[JiraAttachment, str]] = []
+    for att in attachments:
+        is_img, resolved_mime = is_image_attachment(att.content_type, att.filename)
+        if is_img:
+            image_attachments.append((att, resolved_mime))
+
+    if not image_attachments:
+        contents.append(
+            TextContent(
+                type="text",
+                text=json.dumps(
+                    {
+                        "success": True,
+                        "issue_key": issue_key,
+                        "total_images": 0,
+                        "downloaded": 0,
+                        "failed": [],
+                        "message": "No image attachments found",
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+            )
+        )
+        return contents
+
+    fetched: list[dict[str, object]] = []
+    failed: list[dict[str, object]] = []
+
+    for att, resolved_mime in image_attachments:
+        filename = att.filename or "unknown"
+
+        if att.size > _ATTACHMENT_MAX_BYTES:
+            failed.append(
+                {
+                    "filename": filename,
+                    "error": (
+                        f"Image is {att.size} bytes "
+                        "which exceeds the 50 MB inline limit."
+                    ),
+                }
+            )
+            continue
+
+        if not att.url:
+            failed.append({"filename": filename, "error": "No download URL"})
+            continue
+
+        data_bytes = jira.fetch_attachment_content(att.url)
+        if data_bytes is None:
+            failed.append({"filename": filename, "error": "Fetch failed"})
+            continue
+
+        if len(data_bytes) > _ATTACHMENT_MAX_BYTES:
+            failed.append(
+                {
+                    "filename": filename,
+                    "error": (
+                        f"Downloaded size {len(data_bytes)} bytes "
+                        "exceeds the 50 MB inline limit."
+                    ),
+                }
+            )
+            continue
+
+        encoded = base64.b64encode(data_bytes).decode("ascii")
+        fetched.append({"filename": filename, "size": len(data_bytes)})
+        contents.append(
+            ImageContent(
+                type="image",
+                data=encoded,
+                mimeType=resolved_mime,
+            )
+        )
+
+    summary: dict[str, object] = {
+        "success": True,
+        "issue_key": issue_key,
+        "total_images": len(image_attachments),
+        "downloaded": len(fetched),
+        "failed": failed,
+    }
+    contents.insert(
+        0,
+        TextContent(
+            type="text",
+            text=json.dumps(summary, indent=2, ensure_ascii=False),
+        ),
+    )
     return contents
 
 
@@ -727,11 +1015,20 @@ async def get_sprint_issues(
     tags={"jira", "read"},
     annotations={"title": "Get Link Types", "readOnlyHint": True},
 )
-async def get_link_types(ctx: Context) -> str:
+async def get_link_types(
+    ctx: Context,
+    name_filter: Annotated[
+        str | None,
+        Field(
+            description="(Optional) Filter link types by name substring (case-insensitive)",
+        ),
+    ] = None,
+) -> str:
     """Get all available issue link types.
 
     Args:
         ctx: The FastMCP context.
+        name_filter: Optional substring to filter link types by name.
 
     Returns:
         JSON string representing a list of issue link type objects.
@@ -739,6 +1036,13 @@ async def get_link_types(ctx: Context) -> str:
     jira = await get_jira_fetcher(ctx)
     link_types = jira.get_issue_link_types()
     formatted_link_types = [link_type.to_simplified_dict() for link_type in link_types]
+    if name_filter:
+        name_lower = name_filter.lower()
+        formatted_link_types = [
+            lt
+            for lt in formatted_link_types
+            if name_lower in lt.get("name", "").lower()
+        ]
     return json.dumps(formatted_link_types, indent=2, ensure_ascii=False)
 
 
@@ -790,15 +1094,16 @@ async def create_issue(
         ),
     ] = None,
     additional_fields: Annotated[
-        dict[str, Any] | str | None,
+        str | None,
         Field(
             description=(
-                "(Optional) Dictionary of additional fields to set. Examples:\n"
-                "- Set priority: {'priority': {'name': 'High'}}\n"
-                "- Add labels: {'labels': ['frontend', 'urgent']}\n"
-                "- Link to parent (for any issue type): {'parent': 'PROJ-123'}\n"
-                "- Set Fix Version/s: {'fixVersions': [{'id': '10020'}]}\n"
-                "- Custom fields: {'customfield_10010': 'value'}"
+                "(Optional) JSON string of additional fields to set. Examples:\n"
+                '- Set priority: {"priority": {"name": "High"}}\n'
+                '- Add labels: {"labels": ["frontend", "urgent"]}\n'
+                '- Link to parent (for any issue type): {"parent": "PROJ-123"}\n'
+                '- Link to epic: {"epicKey": "EPIC-123"} or {"epic_link": "EPIC-123"}\n'
+                '- Set Fix Version/s: {"fixVersions": [{"id": "10020"}]}\n'
+                '- Custom fields: {"customfield_10010": "value"}'
             ),
             default=None,
         ),
@@ -814,7 +1119,7 @@ async def create_issue(
         assignee: Assignee's user identifier (string): Email, display name, or account ID (e.g., 'user@example.com', 'John Doe', 'accountid:...').
         description: Issue description in Markdown format.
         components: Comma-separated list of component names.
-        additional_fields: Dictionary or JSON string of additional fields.
+        additional_fields: JSON string of additional fields.
 
     Returns:
         JSON string representing the created issue object.
@@ -830,23 +1135,7 @@ async def create_issue(
             comp.strip() for comp in components.split(",") if comp.strip()
         ]
 
-    # Use additional_fields directly as dict
-    # Accept either dict or JSON string for additional fields
-    if additional_fields is None:
-        extra_fields: dict[str, Any] = {}
-    elif isinstance(additional_fields, dict):
-        extra_fields = additional_fields
-    elif isinstance(additional_fields, str):
-        try:
-            extra_fields = json.loads(additional_fields)
-            if not isinstance(extra_fields, dict):
-                raise ValueError(
-                    "Parsed additional_fields is not a JSON object (dict)."
-                )
-        except json.JSONDecodeError as e:
-            raise ValueError(f"additional_fields is not valid JSON: {e}") from e
-    else:
-        raise ValueError("additional_fields must be a dictionary or JSON string.")
+    extra_fields = _parse_additional_fields(additional_fields)
 
     issue = jira.create_issue(
         project_key=project_key,
@@ -944,15 +1233,15 @@ async def batch_create_issues(
 async def batch_get_changelogs(
     ctx: Context,
     issue_ids_or_keys: Annotated[
-        list[str],
+        str,
         Field(
-            description="List of Jira issue IDs or keys, e.g. ['PROJ-123', 'PROJ-124']"
+            description="Comma-separated list of Jira issue IDs or keys (e.g. 'PROJ-123,PROJ-124')"
         ),
     ],
     fields: Annotated[
-        list[str] | None,
+        str | None,
         Field(
-            description="(Optional) Filter the changelogs by fields, e.g. ['status', 'assignee']. Default to None for all fields.",
+            description="(Optional) Comma-separated list of fields to filter changelogs by (e.g. 'status,assignee'). Default to None for all fields.",
             default=None,
         ),
     ] = None,
@@ -991,9 +1280,15 @@ async def batch_get_changelogs(
             "Batch get issue changelogs is only available on Jira Cloud."
         )
 
+    # Parse CSV strings into lists
+    keys_list = [k.strip() for k in issue_ids_or_keys.split(",") if k.strip()]
+    fields_list: list[str] | None = None
+    if fields is not None:
+        fields_list = [f.strip() for f in fields.split(",") if f.strip()]
+
     # Call the underlying method
     issues_with_changelogs = jira.batch_get_changelogs(
-        issue_ids_or_keys=issue_ids_or_keys, fields=fields
+        issue_ids_or_keys=keys_list, fields=fields_list
     )
 
     # Format the response
@@ -1027,19 +1322,33 @@ async def update_issue(
         ),
     ],
     fields: Annotated[
-        dict[str, Any],
+        str,
         Field(
             description=(
-                "Dictionary of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
+                "JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
                 "For 'description', provide text in Markdown format. "
-                "Example: `{'assignee': 'user@example.com', 'summary': 'New Summary', 'description': '## Updated\\nMarkdown text'}`"
+                'Example: \'{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\\nMarkdown text"}\''
             )
         ),
     ],
     additional_fields: Annotated[
-        dict[str, Any] | None,
+        str | None,
         Field(
-            description="(Optional) Dictionary of additional fields to update. Use this for custom fields or more complex updates.",
+            description=(
+                "(Optional) JSON string of additional fields to update. "
+                "Use this for custom fields or more complex updates. "
+                'Link to epic: {"epicKey": "EPIC-123"} or {"epic_link": "EPIC-123"}.'
+            ),
+            default=None,
+        ),
+    ] = None,
+    components: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Comma-separated list of component names "
+                "(e.g., 'Frontend,API')"
+            ),
             default=None,
         ),
     ] = None,
@@ -1059,8 +1368,9 @@ async def update_issue(
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        fields: Dictionary of fields to update. Text fields like 'description' should use Markdown format.
-        additional_fields: Optional dictionary of additional fields.
+        fields: JSON string of fields to update. Text fields like 'description' should use Markdown format.
+        additional_fields: Optional JSON string of additional fields.
+        components: Comma-separated list of component names.
         attachments: Optional JSON array string or comma-separated list of file paths.
 
     Returns:
@@ -1070,13 +1380,16 @@ async def update_issue(
         ValueError: If in read-only mode or Jira client unavailable, or invalid input.
     """
     jira = await get_jira_fetcher(ctx)
-    # Use fields directly as dict
-    update_fields = fields
+    update_fields = _parse_additional_fields(fields)
 
-    # Use additional_fields directly as dict
-    extra_fields = additional_fields or {}
-    if not isinstance(extra_fields, dict):
-        raise ValueError("additional_fields must be a dictionary.")
+    # Parse components from comma-separated string to list
+    components_list = None
+    if components and isinstance(components, str):
+        components_list = [
+            comp.strip() for comp in components.split(",") if comp.strip()
+        ]
+
+    extra_fields = _parse_additional_fields(additional_fields)
 
     # Parse attachments
     attachment_paths = []
@@ -1100,6 +1413,8 @@ async def update_issue(
 
     # Combine fields and additional_fields
     all_updates = {**update_fields, **extra_fields}
+    if components_list:
+        all_updates["components"] = components_list
     if attachment_paths:
         all_updates["attachments"] = attachment_paths
 
@@ -1171,9 +1486,9 @@ async def add_comment(
     ],
     comment: Annotated[str, Field(description="Comment text in Markdown format")],
     visibility: Annotated[
-        dict[str, str] | None,
+        str | None,
         Field(
-            description="""(Optional) Comment visibility (e.g. {"type":"group","value":"jira-users"})"""
+            description='(Optional) Comment visibility as JSON string (e.g. \'{"type":"group","value":"jira-users"}\')'
         ),
     ] = None,
 ) -> str:
@@ -1183,7 +1498,7 @@ async def add_comment(
         ctx: The FastMCP context.
         issue_key: Jira issue key.
         comment: Comment text in Markdown.
-        visibility: (Optional) Comment visibility (e.g. {"type":"group","value":"jira-users"}).
+        visibility: (Optional) Comment visibility as JSON string.
 
     Returns:
         JSON string representing the added comment object.
@@ -1192,8 +1507,8 @@ async def add_comment(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    # add_comment returns dict
-    result = jira.add_comment(issue_key, comment, visibility)
+    visibility_dict = _parse_visibility(visibility)
+    result = jira.add_comment(issue_key, comment, visibility_dict)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
@@ -1216,9 +1531,9 @@ async def edit_comment(
         str, Field(description="Updated comment text in Markdown format")
     ],
     visibility: Annotated[
-        dict[str, str] | None,
+        str | None,
         Field(
-            description="""(Optional) Comment visibility (e.g. {"type":"group","value":"jira-users"})"""
+            description='(Optional) Comment visibility as JSON string (e.g. \'{"type":"group","value":"jira-users"}\')'
         ),
     ] = None,
 ) -> str:
@@ -1229,7 +1544,7 @@ async def edit_comment(
         issue_key: Jira issue key.
         comment_id: The ID of the comment to edit.
         comment: Updated comment text in Markdown.
-        visibility: (Optional) Comment visibility (e.g. {"type":"group","value":"jira-users"}).
+        visibility: (Optional) Comment visibility as JSON string.
 
     Returns:
         JSON string representing the updated comment object.
@@ -1238,8 +1553,8 @@ async def edit_comment(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    # edit_comment returns dict
-    result = jira.edit_comment(issue_key, comment_id, comment, visibility)
+    visibility_dict = _parse_visibility(visibility)
+    result = jira.edit_comment(issue_key, comment_id, comment, visibility_dict)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
@@ -1394,9 +1709,12 @@ async def create_issue_link(
         str | None, Field(description="(Optional) Comment to add to the link")
     ] = None,
     comment_visibility: Annotated[
-        dict[str, str] | None,
+        str | None,
         Field(
-            description="(Optional) Visibility settings for the comment (e.g., {'type': 'group', 'value': 'jira-users'})",
+            description=(
+                "(Optional) Visibility settings for the comment as JSON string "
+                '(e.g. \'{"type":"group","value":"jira-users"}\')'
+            ),
             default=None,
         ),
     ] = None,
@@ -1409,7 +1727,7 @@ async def create_issue_link(
         inward_issue_key: The key of the source issue.
         outward_issue_key: The key of the target issue.
         comment: Optional comment text.
-        comment_visibility: Optional dictionary for comment visibility.
+        comment_visibility: Optional JSON string for comment visibility.
 
     Returns:
         JSON string indicating success or failure.
@@ -1423,6 +1741,8 @@ async def create_issue_link(
             "link_type, inward_issue_key, and outward_issue_key are required."
         )
 
+    visibility_dict = _parse_visibility(comment_visibility, "comment_visibility")
+
     link_data = {
         "type": {"name": link_type},
         "inwardIssue": {"key": inward_issue_key},
@@ -1430,10 +1750,10 @@ async def create_issue_link(
     }
 
     if comment:
-        comment_obj = {"body": comment}
-        if comment_visibility and isinstance(comment_visibility, dict):
-            if "type" in comment_visibility and "value" in comment_visibility:
-                comment_obj["visibility"] = comment_visibility
+        comment_obj: dict[str, Any] = {"body": comment}
+        if visibility_dict:
+            if "type" in visibility_dict and "value" in visibility_dict:
+                comment_obj["visibility"] = visibility_dict
             else:
                 logger.warning("Invalid comment_visibility dictionary structure.")
         link_data["comment"] = comment_obj
@@ -1583,12 +1903,12 @@ async def transition_issue(
         ),
     ],
     fields: Annotated[
-        dict[str, Any] | None,
+        str | None,
         Field(
             description=(
-                "(Optional) Dictionary of fields to update during the transition. "
+                "(Optional) JSON string of fields to update during the transition. "
                 "Some transitions require specific fields to be set (e.g., resolution). "
-                "Example: {'resolution': {'name': 'Fixed'}}"
+                'Example: \'{"resolution": {"name": "Fixed"}}\''
             ),
             default=None,
         ),
@@ -1609,7 +1929,7 @@ async def transition_issue(
         ctx: The FastMCP context.
         issue_key: Jira issue key.
         transition_id: ID of the transition.
-        fields: Optional dictionary of fields to update during transition.
+        fields: Optional JSON string of fields to update during transition.
         comment: Optional comment for the transition in Markdown format.
 
     Returns:
@@ -1622,10 +1942,8 @@ async def transition_issue(
     if not issue_key or not transition_id:
         raise ValueError("issue_key and transition_id are required.")
 
-    # Use fields directly as dict
-    update_fields = fields or {}
-    if not isinstance(update_fields, dict):
-        raise ValueError("fields must be a dictionary.")
+    # Parse fields from JSON string
+    update_fields = _parse_additional_fields(fields)
 
     issue = jira.transition_issue(
         issue_key=issue_key,
@@ -1772,6 +2090,26 @@ async def get_project_versions(
 
 @jira_mcp.tool(
     tags={"jira", "read"},
+    annotations={"title": "Get Project Components", "readOnlyHint": True},
+)
+async def get_project_components(
+    ctx: Context,
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'PROJ', 'ACV2')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
+) -> str:
+    """Get all components for a specific Jira project."""
+    jira = await get_jira_fetcher(ctx)
+    components = jira.get_project_components(project_key)
+    return json.dumps(components, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read"},
     annotations={"title": "Get All Projects", "readOnlyHint": True},
 )
 async def get_all_projects(
@@ -1836,6 +2174,144 @@ async def get_all_projects(
         ]
 
     return json.dumps(projects, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={
+        "title": "Get Service Desk For Project",
+        "readOnlyHint": True,
+    },
+)
+async def get_service_desk_for_project(
+    ctx: Context,
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'SUP')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
+) -> str:
+    """
+    Get the Jira Service Desk associated with a project key.
+
+    Server/Data Center only. Not available on Jira Cloud.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: Jira project key.
+
+    Returns:
+        JSON string with project key and service desk data (or null if not found).
+
+    Raises:
+        NotImplementedError: If connected to Jira Cloud (Server/DC only).
+    """
+    jira = await get_jira_fetcher(ctx)
+    service_desk = jira.get_service_desk_for_project(project_key=project_key)
+    result = {
+        "project_key": project_key.upper(),
+        "service_desk": service_desk.to_simplified_dict() if service_desk else None,
+    }
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Service Desk Queues", "readOnlyHint": True},
+)
+async def get_service_desk_queues(
+    ctx: Context,
+    service_desk_id: Annotated[
+        str,
+        Field(description="Service desk ID (e.g., '4')"),
+    ],
+    start_at: Annotated[
+        int,
+        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(description="Maximum number of results (1-50)", default=50, ge=1, le=50),
+    ] = 50,
+) -> str:
+    """
+    Get queues for a Jira Service Desk.
+
+    Server/Data Center only. Not available on Jira Cloud.
+
+    Args:
+        ctx: The FastMCP context.
+        service_desk_id: Service desk ID.
+        start_at: Starting index for pagination.
+        limit: Maximum number of queues to return.
+
+    Returns:
+        JSON string with queue list and pagination metadata.
+
+    Raises:
+        NotImplementedError: If connected to Jira Cloud (Server/DC only).
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_service_desk_queues(
+        service_desk_id=service_desk_id,
+        start_at=start_at,
+        limit=limit,
+        include_count=True,
+    )
+    return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Queue Issues", "readOnlyHint": True},
+)
+async def get_queue_issues(
+    ctx: Context,
+    service_desk_id: Annotated[
+        str,
+        Field(description="Service desk ID (e.g., '4')"),
+    ],
+    queue_id: Annotated[
+        str,
+        Field(description="Queue ID (e.g., '47')"),
+    ],
+    start_at: Annotated[
+        int,
+        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(description="Maximum number of results (1-50)", default=50, ge=1),
+    ] = 50,
+) -> str:
+    """
+    Get issues from a Jira Service Desk queue.
+
+    Server/Data Center only. Not available on Jira Cloud.
+
+    Args:
+        ctx: The FastMCP context.
+        service_desk_id: Service desk ID.
+        queue_id: Queue ID.
+        start_at: Starting index for pagination.
+        limit: Maximum number of issues to return.
+
+    Returns:
+        JSON string with queue metadata, issues, and pagination metadata.
+
+    Raises:
+        NotImplementedError: If connected to Jira Cloud (Server/DC only).
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_queue_issues(
+        service_desk_id=service_desk_id,
+        queue_id=queue_id,
+        start_at=start_at,
+        limit=limit,
+    )
+    return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -2439,8 +2915,10 @@ async def get_issue_development_info(
 async def get_issues_development_info(
     ctx: Context,
     issue_keys: Annotated[
-        list[str],
-        Field(description="List of Jira issue keys (e.g., ['PROJ-123', 'PROJ-456'])"),
+        str,
+        Field(
+            description="Comma-separated list of Jira issue keys (e.g., 'PROJ-123,PROJ-456')"
+        ),
     ],
     application_type: Annotated[
         str | None,
@@ -2477,9 +2955,11 @@ async def get_issues_development_info(
         JSON string with list of development information for each issue.
     """
     jira = await get_jira_fetcher(ctx)
+    # Parse CSV string into list
+    keys_list = [k.strip() for k in issue_keys.split(",") if k.strip()]
     try:
         results = jira.get_issues_development_info(
-            issue_keys=issue_keys,
+            issue_keys=keys_list,
             application_type=application_type,
             data_type=data_type,
         )

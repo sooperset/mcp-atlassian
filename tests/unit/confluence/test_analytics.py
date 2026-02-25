@@ -175,6 +175,23 @@ class TestAnalyticsMixin:
         assert result.success_count == 3
         assert result.error_count == 0
 
+    def test_no_double_wiki_prefix_in_direct_api(self, analytics_mixin):
+        """Regression: _get_page_views_direct must not duplicate /wiki (#962)."""
+        analytics_mixin.confluence.url = "https://example.atlassian.net/wiki"
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"count": 0}
+        mock_response.raise_for_status = MagicMock()
+        analytics_mixin.confluence._session.get.return_value = mock_response
+
+        analytics_mixin._get_page_views_direct("123")
+
+        url = analytics_mixin.confluence._session.get.call_args[0][0]
+        assert "/wiki/wiki/" not in url, f"Double /wiki in URL: {url}"
+        assert url == (
+            "https://example.atlassian.net/wiki/rest/api/analytics/content/123/views"
+        )
+
 
 class TestAnalyticsModels:
     """Tests for the Analytics Pydantic models."""

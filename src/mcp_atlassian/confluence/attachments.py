@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from ..models.confluence import ConfluenceAttachment
+from ..utils.io import validate_safe_path
 from .client import ConfluenceClient
 from .protocols import AttachmentsOperationsProto
 from .v2_adapter import ConfluenceV2Adapter
@@ -165,6 +166,38 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             "failed": failed,
         }
 
+    def fetch_attachment_content(self, url: str) -> bytes | None:
+        """Fetch attachment content into memory.
+
+        Args:
+            url: The URL of the attachment to download.
+
+        Returns:
+            The raw bytes of the attachment, or None on failure.
+        """
+        if not url:
+            logger.error("No URL provided for attachment fetch")
+            return None
+
+        try:
+            logger.info(f"Fetching attachment from {url}")
+            response = self.confluence._session.get(url, stream=True)
+            response.raise_for_status()
+
+            chunks: list[bytes] = []
+            for chunk in response.iter_content(chunk_size=8192):
+                chunks.append(chunk)
+
+            data = b"".join(chunks)
+            logger.info(
+                f"Successfully fetched attachment from {url} (size: {len(data)} bytes)"
+            )
+            return data
+
+        except Exception as e:
+            logger.error(f"Error fetching attachment: {str(e)}")
+            return None
+
     def download_attachment(self, url: str, target_path: str) -> bool:
         """
         Download a Confluence attachment to the specified path.
@@ -184,6 +217,9 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             # Convert to absolute path if relative
             if not os.path.isabs(target_path):
                 target_path = os.path.abspath(target_path)
+
+            # Guard against path traversal (resolves symlinks)
+            validate_safe_path(target_path)
 
             logger.info(f"Downloading attachment from {url} to {target_path}")
 
@@ -230,6 +266,9 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
         # Convert to absolute path if relative
         if not os.path.isabs(target_dir):
             target_dir = os.path.abspath(target_dir)
+
+        # Guard against path traversal (resolves symlinks)
+        validate_safe_path(target_dir)
 
         logger.info(
             f"Downloading attachments for content {content_id} to directory: {target_dir}"

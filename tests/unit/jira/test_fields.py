@@ -217,9 +217,14 @@ class TestFieldsMixin:
         ]
         fields_mixin.get_project_issue_types = MagicMock(return_value=mock_issue_types)
 
-        # Mock the response for issue_createmeta_fieldtypes based on API docs
+        # Mock the response for issue_createmeta_fieldtypes
+        # Real API returns paginated "values" array
         mock_field_meta = {
-            "fields": [
+            "maxResults": 50,
+            "startAt": 0,
+            "total": 3,
+            "isLast": True,
+            "values": [
                 {
                     "required": True,
                     "schema": {"type": "string", "system": "summary"},
@@ -242,7 +247,7 @@ class TestFieldsMixin:
                     "name": "Epic Link",
                     "fieldId": "customfield_10010",
                 },
-            ]
+            ],
         }
         fields_mixin.jira.issue_createmeta_fieldtypes.return_value = mock_field_meta
 
@@ -361,55 +366,43 @@ class TestFieldsMixin:
         # Test with standard field
         assert fields_mixin.is_custom_field("summary") is False
 
-    def test_format_field_value_user_field(
+    def test_format_field_value_user_field_cloud(
         self, fields_mixin: FieldsMixin, mock_fields
     ):
-        """Test format_field_value formats user fields correctly."""
+        """Test format_field_value formats user fields correctly for Cloud."""
         # Set up the mocks
         fields_mixin.get_field_by_id = MagicMock(
             return_value=mock_fields[3]
         )  # The Assignee field
         fields_mixin._get_account_id = MagicMock(return_value="account123")
+        fields_mixin.config = MagicMock()
+        fields_mixin.config.is_cloud = True
 
         # Call the method with a user field and string value
         result = fields_mixin.format_field_value("assignee", "johndoe")
 
-        # Verify the result
+        # Verify the result — Cloud uses accountId
         assert result == {"accountId": "account123"}
         fields_mixin._get_account_id.assert_called_once_with("johndoe")
 
-    # FIXME: The test covers impossible case.
-    #
-    # This test is failing because it assumes that the `_get_account_id`
-    # method is unavailable. As default, `format_field_value` will return
-    # `{"name": value}` for server/DC.
-    #
-    # However, in any case `JiraFetcher` always inherits from `UsersMixin`
-    # and will therefore have the `_get_account_id` method available.
-    #
-    # That is to say, the `format_field_value` method will never return in
-    # format `{"name": value}`.
-    #
-    # Further fixes are needed in the `FieldsMixin` class to support the case
-    # for server/DC.
-    #
-    # See also:
-    # https://github.com/sooperset/mcp-atlassian/blob/651c271e8aa76b469e9c67535669d93267ad5da6/src/mcp_atlassian/jira/fields.py#L279-L297
+    def test_format_field_value_user_field_server(
+        self, fields_mixin: FieldsMixin, mock_fields
+    ):
+        """Test format_field_value formats user fields correctly for Server/DC."""
+        # Set up the mocks
+        fields_mixin.get_field_by_id = MagicMock(
+            return_value=mock_fields[3]
+        )  # The Assignee field
+        fields_mixin._get_account_id = MagicMock(return_value="jdoe")
+        fields_mixin.config = MagicMock()
+        fields_mixin.config.is_cloud = False
 
-    # def test_format_field_value_user_field_no_account_id(
-    #     self, fields_mixin: FieldsMixin, mock_fields
-    # ):
-    #     """Test format_field_value handles user fields without _get_account_id."""
-    #     # Set up the mocks
-    #     fields_mixin.get_field_by_id = MagicMock(
-    #         return_value=mock_fields[3]
-    #     )  # The Assignee field
+        # Call the method with a user field and string value
+        result = fields_mixin.format_field_value("assignee", "johndoe")
 
-    #     # Call the method with a user field and string value
-    #     result = fields_mixin.format_field_value("assignee", "johndoe")
-
-    #     # Verify the result - should use name for server/DC
-    #     assert result == {"name": "johndoe"}
+        # Verify the result — Server/DC uses name
+        assert result == {"name": "jdoe"}
+        fields_mixin._get_account_id.assert_called_once_with("johndoe")
 
     def test_format_field_value_array_field(self, fields_mixin: FieldsMixin):
         """Test format_field_value formats array fields correctly."""
@@ -429,23 +422,36 @@ class TestFieldsMixin:
         result = fields_mixin.format_field_value("labels", ["bug", "feature"])
         assert result == ["bug", "feature"]
 
-    def test_format_field_value_option_field(self, fields_mixin: FieldsMixin):
-        """Test format_field_value formats option fields correctly."""
-        # Set up the mocks
-        mock_option_field = {
+    def test_format_field_value_priority_field(self, fields_mixin: FieldsMixin):
+        """Test format_field_value formats priority correctly with {name: ...}."""
+        mock_priority_field = {
             "id": "priority",
             "name": "Priority",
-            "schema": {"type": "option"},
+            "schema": {"type": "priority"},
+        }
+        fields_mixin.get_field_by_id = MagicMock(return_value=mock_priority_field)
+
+        result = fields_mixin.format_field_value("priority", "High")
+        assert result == {"name": "High"}
+
+        already_formatted = {"name": "Medium"}
+        result = fields_mixin.format_field_value("priority", already_formatted)
+        assert result == already_formatted
+
+    def test_format_field_value_option_field(self, fields_mixin: FieldsMixin):
+        """Test format_field_value formats option fields with {value: ...}."""
+        mock_option_field = {
+            "id": "customfield_10024",
+            "name": "Severity",
+            "schema": {"type": "option", "custom": "radiobuttons"},
         }
         fields_mixin.get_field_by_id = MagicMock(return_value=mock_option_field)
 
-        # Test with string value
-        result = fields_mixin.format_field_value("priority", "High")
-        assert result == {"value": "High"}
+        result = fields_mixin.format_field_value("customfield_10024", "Critical")
+        assert result == {"value": "Critical"}
 
-        # Test with already formatted value
         already_formatted = {"value": "Medium"}
-        result = fields_mixin.format_field_value("priority", already_formatted)
+        result = fields_mixin.format_field_value("customfield_10024", already_formatted)
         assert result == already_formatted
 
     def test_format_field_value_unknown_field(self, fields_mixin: FieldsMixin):
@@ -540,3 +546,485 @@ class TestFieldsMixin:
 
         # Verify empty list is returned on error
         assert result == []
+
+
+class TestFormatFieldValueForWrite:
+    """Tests for _format_field_value_for_write on FieldsMixin."""
+
+    @pytest.fixture
+    def mixin(self, jira_fetcher: JiraFetcher) -> FieldsMixin:
+        """Create a FieldsMixin instance with mocked dependencies."""
+        fetcher = jira_fetcher
+        fetcher._get_account_id = MagicMock(return_value="resolved-id")
+        fetcher.config = MagicMock()
+        fetcher.config.is_cloud = True
+        return fetcher
+
+    # -- Priority --------------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "test_id, field_id, value, field_definition, expected",
+        [
+            (
+                "priority_string",
+                "priority",
+                "High",
+                {"name": "Priority", "schema": {"type": "priority"}},
+                {"name": "High"},
+            ),
+            (
+                "priority_dict",
+                "priority",
+                {"name": "High"},
+                {"name": "Priority", "schema": {"type": "priority"}},
+                {"name": "High"},
+            ),
+        ],
+    )
+    def test_priority(
+        self, mixin, test_id, field_id, value, field_definition, expected
+    ):
+        result = mixin._format_field_value_for_write(field_id, value, field_definition)
+        assert result == expected
+
+    # -- Labels ----------------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "test_id, field_id, value, field_definition, expected",
+        [
+            (
+                "labels_list",
+                "labels",
+                ["a", "b"],
+                {"name": "Labels", "schema": {"type": "array", "items": "string"}},
+                ["a", "b"],
+            ),
+            (
+                "labels_csv",
+                "labels",
+                "a,b",
+                {"name": "Labels", "schema": {"type": "array", "items": "string"}},
+                ["a", "b"],
+            ),
+        ],
+    )
+    def test_labels(self, mixin, test_id, field_id, value, field_definition, expected):
+        result = mixin._format_field_value_for_write(field_id, value, field_definition)
+        assert result == expected
+
+    # -- Components / fixVersions ----------------------------------------
+
+    @pytest.mark.parametrize(
+        "test_id, field_id, value, field_definition, expected",
+        [
+            (
+                "components_strings",
+                "components",
+                ["UI", "API"],
+                {
+                    "name": "Component/s",
+                    "schema": {"type": "array", "items": "component"},
+                },
+                [{"name": "UI"}, {"name": "API"}],
+            ),
+            (
+                "components_dicts",
+                "components",
+                [{"name": "UI"}],
+                {
+                    "name": "Component/s",
+                    "schema": {"type": "array", "items": "component"},
+                },
+                [{"name": "UI"}],
+            ),
+            (
+                "fixversions",
+                "fixVersions",
+                ["1.0"],
+                {
+                    "name": "Fix Version/s",
+                    "schema": {"type": "array", "items": "version"},
+                },
+                [{"name": "1.0"}],
+            ),
+        ],
+    )
+    def test_name_wrapped_arrays(
+        self, mixin, test_id, field_id, value, field_definition, expected
+    ):
+        result = mixin._format_field_value_for_write(field_id, value, field_definition)
+        assert result == expected
+
+    # -- Reporter (Cloud vs Server) --------------------------------------
+
+    def test_reporter_cloud(self, mixin):
+        mixin.config.is_cloud = True
+        mixin._get_account_id = MagicMock(return_value="cloud-acc-id")
+        result = mixin._format_field_value_for_write(
+            "reporter",
+            "user@ex.com",
+            {"name": "Reporter", "schema": {"type": "user"}},
+        )
+        assert result == {"accountId": "cloud-acc-id"}
+        mixin._get_account_id.assert_called_once_with("user@ex.com")
+
+    def test_reporter_server(self, mixin):
+        mixin.config.is_cloud = False
+        mixin._get_account_id = MagicMock(return_value="jdoe")
+        result = mixin._format_field_value_for_write(
+            "reporter",
+            "jdoe",
+            {"name": "Reporter", "schema": {"type": "user"}},
+        )
+        assert result == {"name": "jdoe"}
+        mixin._get_account_id.assert_called_once_with("jdoe")
+
+    # -- Duedate ---------------------------------------------------------
+
+    def test_duedate_valid(self, mixin):
+        result = mixin._format_field_value_for_write("duedate", "2026-03-01", None)
+        assert result == "2026-03-01"
+
+    def test_duedate_invalid(self, mixin):
+        result = mixin._format_field_value_for_write("duedate", 12345, None)
+        assert result is None
+
+    # -- Cascading select ------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "test_id, value, expected",
+        [
+            (
+                "cascading_tuple",
+                ("NA", "US"),
+                {"value": "NA", "child": {"value": "US"}},
+            ),
+            (
+                "cascading_dict",
+                {"value": "NA", "child": {"value": "US"}},
+                {"value": "NA", "child": {"value": "US"}},
+            ),
+            (
+                "cascading_string",
+                "NA",
+                {"value": "NA"},
+            ),
+        ],
+    )
+    def test_cascading_select(self, mixin, test_id, value, expected):
+        field_def = {
+            "name": "Region",
+            "schema": {"type": "option-with-child", "custom": "cascadingselect"},
+        }
+        result = mixin._format_field_value_for_write(
+            "customfield_10020", value, field_def
+        )
+        assert result == expected
+
+    # -- Multi-select ----------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "test_id, value, expected",
+        [
+            (
+                "multiselect_strings",
+                ["opt1", "opt2"],
+                [{"value": "opt1"}, {"value": "opt2"}],
+            ),
+            (
+                "multiselect_dicts",
+                [{"value": "opt1"}],
+                [{"value": "opt1"}],
+            ),
+            (
+                "multiselect_csv",
+                "opt1,opt2",
+                [{"value": "opt1"}, {"value": "opt2"}],
+            ),
+        ],
+    )
+    def test_multiselect(self, mixin, test_id, value, expected):
+        field_def = {
+            "name": "Categories",
+            "schema": {"type": "array", "items": "option", "custom": "multiselect"},
+        }
+        result = mixin._format_field_value_for_write(
+            "customfield_10021", value, field_def
+        )
+        assert result == expected
+
+    # -- Custom user field -----------------------------------------------
+
+    def test_custom_user_cloud(self, mixin):
+        mixin.config.is_cloud = True
+        mixin._get_account_id = MagicMock(return_value="cloud-acc-id")
+        field_def = {
+            "name": "Reviewer",
+            "schema": {"type": "user", "custom": "userpicker"},
+        }
+        result = mixin._format_field_value_for_write(
+            "customfield_10022", "user@ex.com", field_def
+        )
+        assert result == {"accountId": "cloud-acc-id"}
+
+    def test_custom_user_server(self, mixin):
+        mixin.config.is_cloud = False
+        mixin._get_account_id = MagicMock(return_value="jdoe")
+        field_def = {
+            "name": "Reviewer",
+            "schema": {"type": "user", "custom": "userpicker"},
+        }
+        result = mixin._format_field_value_for_write(
+            "customfield_10022", "jdoe", field_def
+        )
+        assert result == {"name": "jdoe"}
+
+    def test_custom_user_unresolvable(self, mixin):
+        """Unresolvable custom user field returns None instead of raising."""
+        mixin._get_account_id = MagicMock(side_effect=ValueError("User not found"))
+        field_def = {
+            "name": "Reviewer",
+            "schema": {"type": "user", "custom": "userpicker"},
+        }
+        result = mixin._format_field_value_for_write(
+            "customfield_10022", "nobody@ex.com", field_def
+        )
+        assert result is None
+
+    # -- Custom date field -----------------------------------------------
+
+    def test_custom_date_valid(self, mixin):
+        field_def = {"name": "Target Date", "schema": {"type": "date"}}
+        result = mixin._format_field_value_for_write(
+            "customfield_10023", "2026-03-01", field_def
+        )
+        assert result == "2026-03-01"
+
+    def test_custom_date_invalid(self, mixin):
+        field_def = {"name": "Target Date", "schema": {"type": "date"}}
+        result = mixin._format_field_value_for_write(
+            "customfield_10023", 12345, field_def
+        )
+        assert result is None
+
+    # -- Generic option (radio/select) -----------------------------------
+
+    @pytest.mark.parametrize(
+        "test_id, value, expected",
+        [
+            ("option_string", "Critical", {"value": "Critical"}),
+            ("option_dict", {"value": "Critical"}, {"value": "Critical"}),
+        ],
+    )
+    def test_option_field(self, mixin, test_id, value, expected):
+        field_def = {
+            "name": "Severity",
+            "schema": {"type": "option", "custom": "radiobuttons"},
+        }
+        result = mixin._format_field_value_for_write(
+            "customfield_10024", value, field_def
+        )
+        assert result == expected
+
+    # -- Unknown field passthrough ---------------------------------------
+
+    def test_unknown_passthrough(self, mixin):
+        result = mixin._format_field_value_for_write(
+            "customfield_99999", "anything", None
+        )
+        assert result == "anything"
+
+
+class TestDatetimeTimezoneFormat:
+    """Test datetime field formatting produces Jira-compatible tz offsets."""
+
+    @pytest.fixture
+    def fields_mixin(self, jira_fetcher: "JiraFetcher") -> FieldsMixin:
+        """Create a FieldsMixin instance with mocked dependencies."""
+        mixin = jira_fetcher
+        mixin._field_ids_cache = None
+        return mixin
+
+    @pytest.mark.parametrize(
+        "input_value,expected",
+        [
+            pytest.param(
+                "2026-01-21T15:00:00.000+0000",
+                "2026-01-21T15:00:00.000+0000",
+                id="already-basic-format",
+            ),
+            pytest.param(
+                "2026-01-21T15:00:00+00:00",
+                "2026-01-21T15:00:00.000+0000",
+                id="extended-to-basic",
+            ),
+            pytest.param(
+                "2026-01-21T15:00:00.000+0530",
+                "2026-01-21T15:00:00.000+0530",
+                id="non-utc-preserved",
+            ),
+            pytest.param(
+                "2026-01-21T15:00:00-0800",
+                "2026-01-21T15:00:00.000-0800",
+                id="negative-offset-basic",
+            ),
+            pytest.param(
+                "2026-01-21T15:00:00",
+                "2026-01-21T15:00:00.000",
+                id="naive-no-tz",
+            ),
+            pytest.param(
+                "2026-01-21",
+                "2026-01-21T00:00:00.000",
+                id="date-only-to-midnight",
+            ),
+            pytest.param(
+                "invalid-date",
+                "invalid-date",
+                id="unparseable-passthrough",
+            ),
+            pytest.param(
+                "",
+                "",
+                id="empty-string",
+            ),
+        ],
+    )
+    def test_datetime_timezone_format(
+        self, fields_mixin: FieldsMixin, input_value: str, expected: str
+    ):
+        """Datetime fields must use ±HHMM (basic) format, not ±HH:MM."""
+        mock_datetime_field = {
+            "id": "customfield_10050",
+            "name": "Due DateTime",
+            "schema": {"type": "datetime"},
+        }
+        fields_mixin.get_field_by_id = MagicMock(return_value=mock_datetime_field)
+
+        result = fields_mixin.format_field_value("customfield_10050", input_value)
+        assert result == expected
+
+
+class TestChecklistFieldFormatting:
+    """Tests for checklist field formatting in _format_field_value_for_write."""
+
+    CHECKLIST_FIELD_DEF = {
+        "id": "customfield_11003",
+        "name": "Definition of Done",
+        "schema": {
+            "type": "string",
+            "custom": "com.okapya.jira.checklist:checklist",
+            "customId": 11003,
+        },
+    }
+
+    CHECKLIST_ARRAY_FIELD_DEF = {
+        "id": "customfield_11004",
+        "name": "Checklist",
+        "schema": {
+            "type": "array",
+            "items": "checklist-item",
+            "custom": "com.okapya.jira.checklist:checklist",
+            "customId": 11004,
+        },
+    }
+
+    @pytest.fixture
+    def mixin(self, jira_fetcher: "JiraFetcher") -> FieldsMixin:
+        """Create a FieldsMixin instance with mocked dependencies."""
+        fetcher = jira_fetcher
+        fetcher.config = MagicMock()
+        fetcher.config.is_cloud = True
+        return fetcher
+
+    @pytest.mark.parametrize(
+        "test_id, value, expected",
+        [
+            pytest.param(
+                "list_to_markdown",
+                ["Task A", "Task B"],
+                "* Task A\n* Task B",
+                id="list_to_markdown",
+            ),
+            pytest.param(
+                "list_with_checked_tuples",
+                [("Task A", True), ("Task B", False)],
+                "* [x] Task A\n* Task B",
+                id="list_with_checked_tuples",
+            ),
+            pytest.param(
+                "dict_list",
+                [{"name": "Task A", "checked": True}],
+                "* [x] Task A",
+                id="dict_list",
+            ),
+            pytest.param(
+                "string_passthrough",
+                "* [x] done\n* todo",
+                "* [x] done\n* todo",
+                id="string_passthrough",
+            ),
+            pytest.param(
+                "empty_list",
+                [],
+                "",
+                id="empty_list",
+            ),
+        ],
+    )
+    def test_checklist_formatting(self, mixin, test_id, value, expected):
+        """Checklist fields should be converted to markdown string format."""
+        result = mixin._format_field_value_for_write(
+            "customfield_11003", value, self.CHECKLIST_FIELD_DEF
+        )
+        assert result == expected
+
+    @pytest.mark.parametrize(
+        "test_id, value, expected",
+        [
+            pytest.param(
+                "array_dict_list_passthrough",
+                [{"name": "A", "checked": True}, {"name": "B", "checked": False}],
+                [{"name": "A", "checked": True}, {"name": "B", "checked": False}],
+                id="array_dict_list_passthrough",
+            ),
+            pytest.param(
+                "array_string_list_passthrough",
+                ["Task A", "Task B"],
+                ["Task A", "Task B"],
+                id="array_string_list_passthrough",
+            ),
+            pytest.param(
+                "array_string_passthrough",
+                "* [x] done\n* todo",
+                "* [x] done\n* todo",
+                id="array_string_passthrough",
+            ),
+            pytest.param(
+                "array_empty_list_passthrough",
+                [],
+                [],
+                id="array_empty_list_passthrough",
+            ),
+        ],
+    )
+    def test_checklist_array_passthrough(self, mixin, test_id, value, expected):
+        """Array-type checklist fields (Server/DC) should pass through unchanged."""
+        result = mixin._format_field_value_for_write(
+            "customfield_11004", value, self.CHECKLIST_ARRAY_FIELD_DEF
+        )
+        assert result == expected
+
+    def test_non_checklist_string_field_unaffected(self, mixin):
+        """Non-checklist string fields should not be affected by checklist logic."""
+        non_checklist_def = {
+            "id": "customfield_99999",
+            "name": "Some Text Field",
+            "schema": {"type": "string"},
+        }
+        value = ["a", "b"]
+        result = mixin._format_field_value_for_write(
+            "customfield_99999", value, non_checklist_def
+        )
+        # Should pass through unchanged (no checklist conversion)
+        assert result == ["a", "b"]

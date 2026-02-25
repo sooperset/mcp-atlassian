@@ -3,6 +3,7 @@
 import logging
 from typing import Any
 
+from ..models.jira.adf import adf_to_text
 from ..utils import parse_date
 from .client import JiraClient
 
@@ -73,17 +74,28 @@ class CommentsMixin(JiraClient):
             # Convert Markdown to Jira's markup format
             jira_formatted_comment = self._markdown_to_jira(comment)
 
-            result = self.jira.issue_add_comment(
-                issue_key, jira_formatted_comment, visibility
-            )
+            # Use v3 API on Cloud for ADF comments
+            if isinstance(jira_formatted_comment, dict) and self.config.is_cloud:
+                data: dict[str, Any] = {"body": jira_formatted_comment}
+                if visibility:
+                    data["visibility"] = visibility
+                result = self._post_api3(f"issue/{issue_key}/comment", data)
+            else:
+                result = self.jira.issue_add_comment(
+                    issue_key, jira_formatted_comment, visibility
+                )
             if not isinstance(result, dict):
                 msg = f"Unexpected return value type from `jira.issue_add_comment`: {type(result)}"
                 logger.error(msg)
                 raise TypeError(msg)
 
+            body_raw = result.get("body", "")
+            body_text = (
+                adf_to_text(body_raw) if isinstance(body_raw, dict) else body_raw
+            )
             return {
                 "id": result.get("id"),
-                "body": self._clean_text(result.get("body", "")),
+                "body": self._clean_text(body_text or ""),
                 "created": str(parse_date(result.get("created"))),
                 "author": result.get("author", {}).get("displayName", "Unknown"),
             }
@@ -117,17 +129,28 @@ class CommentsMixin(JiraClient):
             # Convert Markdown to Jira's markup format
             jira_formatted_comment = self._markdown_to_jira(comment)
 
-            result = self.jira.issue_edit_comment(
-                issue_key, comment_id, jira_formatted_comment, visibility
-            )
+            # Use v3 API on Cloud for ADF comments
+            if isinstance(jira_formatted_comment, dict) and self.config.is_cloud:
+                data: dict[str, Any] = {"body": jira_formatted_comment}
+                if visibility:
+                    data["visibility"] = visibility
+                result = self._put_api3(f"issue/{issue_key}/comment/{comment_id}", data)
+            else:
+                result = self.jira.issue_edit_comment(
+                    issue_key, comment_id, jira_formatted_comment, visibility
+                )
             if not isinstance(result, dict):
                 msg = f"Unexpected return value type from `jira.issue_edit_comment`: {type(result)}"
                 logger.error(msg)
                 raise TypeError(msg)
 
+            body_raw = result.get("body", "")
+            body_text = (
+                adf_to_text(body_raw) if isinstance(body_raw, dict) else body_raw
+            )
             return {
                 "id": result.get("id"),
-                "body": self._clean_text(result.get("body", "")),
+                "body": self._clean_text(body_text or ""),
                 "updated": str(parse_date(result.get("updated"))),
                 "author": result.get("author", {}).get("displayName", "Unknown"),
             }
@@ -136,27 +159,3 @@ class CommentsMixin(JiraClient):
                 f"Error editing comment {comment_id} on issue {issue_key}: {str(e)}"
             )
             raise Exception(f"Error editing comment: {str(e)}") from e
-
-    def _markdown_to_jira(self, markdown_text: str) -> str:
-        """
-        Convert Markdown syntax to Jira markup syntax.
-
-        This method uses the TextPreprocessor implementation for consistent
-        conversion between Markdown and Jira markup.
-
-        Args:
-            markdown_text: Text in Markdown format
-
-        Returns:
-            Text in Jira markup format
-        """
-        if not markdown_text:
-            return ""
-
-        # Use the existing preprocessor
-        try:
-            return self.preprocessor.markdown_to_jira(markdown_text)
-        except Exception as e:
-            logger.warning(f"Error converting markdown to Jira format: {str(e)}")
-            # Return the original text if conversion fails
-            return markdown_text

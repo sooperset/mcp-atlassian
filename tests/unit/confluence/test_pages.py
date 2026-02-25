@@ -612,6 +612,7 @@ class TestPagesMixin:
             "<p>This is some content</p>",
             space_key="DEMO",
             confluence_client=pages_mixin.confluence,
+            content_id="789012",
         )
 
     def test_get_page_children_empty(self, pages_mixin):
@@ -1463,6 +1464,8 @@ class TestPagesOAuthMixin:
                 "<p>OAuth page content</p>",
                 space_key="PROJ",
                 confluence_client=oauth_pages_mixin.confluence,
+                content_id=page_id,
+                attachments=[],
             )
 
             # Verify result is a ConfluencePage with correct data

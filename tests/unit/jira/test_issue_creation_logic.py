@@ -58,6 +58,9 @@ class ConcreteIssuesMixin(
     def upload_attachments(self, issue_key, attachment_paths):
         pass
 
+    def _format_field_value_for_write(self, field_id, value, field_definition):
+        pass
+
 
 @pytest.fixture
 def issues_mixin():
@@ -191,3 +194,239 @@ def test_find_subtask_issue_type_id_returns_none_if_not_found(issues_mixin):
 
     subtask_id = issues_mixin._find_subtask_issue_type_id("PROJ")
     assert subtask_id is None
+
+
+# --- Epic link alias tests ---
+
+
+class TestPrepareEpicLinkFields:
+    """Tests for _prepare_epic_link_fields method."""
+
+    @pytest.mark.parametrize(
+        "alias",
+        ["epicKey", "epic_link", "epicLink", "Epic Link"],
+        ids=["epicKey", "epic_link", "epicLink", "Epic_Link"],
+    )
+    def test_alias_resolves_to_custom_field(self, issues_mixin, alias):
+        """Epic link alias should resolve to the discovered custom field ID."""
+        issues_mixin.get_field_ids_to_epic = MagicMock(
+            return_value={"epic_link": "customfield_10014"}
+        )
+        fields: dict = {}
+        kwargs = {alias: "EPIC-1"}
+
+        issues_mixin._prepare_epic_link_fields(fields, kwargs)
+
+        assert fields["customfield_10014"] == "EPIC-1"
+        assert alias not in kwargs  # consumed from kwargs
+
+    def test_cloud_fallback_to_parent_when_no_epic_field(self, issues_mixin):
+        """On Cloud, if no epic link field discovered, fall back to parent."""
+        issues_mixin.config.is_cloud = True
+        issues_mixin.get_field_ids_to_epic = MagicMock(return_value={})
+        fields: dict = {}
+        kwargs = {"epicKey": "EPIC-1"}
+
+        issues_mixin._prepare_epic_link_fields(fields, kwargs)
+
+        assert fields["parent"] == {"key": "EPIC-1"}
+
+    def test_server_no_fallback_to_parent(self, issues_mixin):
+        """On Server/DC, if no epic link field discovered, do NOT set parent."""
+        issues_mixin.config.is_cloud = False
+        issues_mixin.get_field_ids_to_epic = MagicMock(return_value={})
+        fields: dict = {}
+        kwargs = {"epicKey": "EPIC-1"}
+
+        issues_mixin._prepare_epic_link_fields(fields, kwargs)
+
+        assert "parent" not in fields
+        assert "customfield_10014" not in fields
+
+    def test_fallback_skipped_when_parent_already_set(self, issues_mixin):
+        """If parent is already in fields, Cloud fallback should not override it."""
+        issues_mixin.config.is_cloud = True
+        issues_mixin.get_field_ids_to_epic = MagicMock(return_value={})
+        fields: dict = {"parent": {"key": "EXISTING-1"}}
+        kwargs = {"epicKey": "EPIC-1"}
+
+        issues_mixin._prepare_epic_link_fields(fields, kwargs)
+
+        assert fields["parent"] == {"key": "EXISTING-1"}
+
+    def test_alias_consumed_from_kwargs(self, issues_mixin):
+        """Epic link alias must be removed from kwargs to prevent double processing."""
+        issues_mixin.get_field_ids_to_epic = MagicMock(
+            return_value={"epic_link": "customfield_10014"}
+        )
+        fields: dict = {}
+        kwargs = {"epicKey": "EPIC-1", "priority": "High"}
+
+        issues_mixin._prepare_epic_link_fields(fields, kwargs)
+
+        assert "epicKey" not in kwargs
+        assert kwargs["priority"] == "High"  # other kwargs untouched
+
+    def test_no_op_when_no_alias_present(self, issues_mixin):
+        """No changes when no epic link alias is in kwargs."""
+        fields: dict = {}
+        kwargs = {"priority": "High"}
+
+        issues_mixin._prepare_epic_link_fields(fields, kwargs)
+
+        assert fields == {}
+        assert kwargs == {"priority": "High"}
+
+    def test_empty_value_is_ignored(self, issues_mixin):
+        """Empty string epic key should be treated as no-op."""
+        fields: dict = {}
+        kwargs = {"epicKey": ""}
+
+        issues_mixin._prepare_epic_link_fields(fields, kwargs)
+
+        assert fields == {}
+
+    def test_none_value_is_ignored(self, issues_mixin):
+        """None epic key should be treated as no-op."""
+        fields: dict = {}
+        kwargs = {"epicKey": None}
+
+        issues_mixin._prepare_epic_link_fields(fields, kwargs)
+
+        assert fields == {}
+
+
+class TestCreateIssueEpicLink:
+    """Tests for epic link alias resolution in create_issue."""
+
+    def test_create_issue_resolves_epic_alias(self, issues_mixin):
+        """create_issue should resolve epicKey alias to epic link custom field."""
+        issues_mixin.get_project_issue_types.return_value = [
+            {"id": "10000", "name": "Story", "subtask": False},
+        ]
+        issues_mixin.jira.create_issue.return_value = {"key": "PROJ-1"}
+        issues_mixin.get_field_ids_to_epic = MagicMock(
+            return_value={"epic_link": "customfield_10014"}
+        )
+
+        issues_mixin.create_issue(
+            project_key="PROJ",
+            summary="Linked to epic",
+            issue_type="Story",
+            epicKey="EPIC-1",
+        )
+
+        # Check that create_issue was called and epicKey was resolved
+        call_args = issues_mixin.jira.create_issue.call_args
+        assert call_args is not None
+        fields = call_args[1]["fields"]
+        assert fields.get("customfield_10014") == "EPIC-1"
+
+    def test_create_issue_epic_alias_not_in_additional_fields(self, issues_mixin):
+        """epicKey alias should NOT be passed to _process_additional_fields."""
+        issues_mixin.get_project_issue_types.return_value = [
+            {"id": "10000", "name": "Story", "subtask": False},
+        ]
+        issues_mixin.jira.create_issue.return_value = {"key": "PROJ-1"}
+        issues_mixin.get_field_ids_to_epic = MagicMock(
+            return_value={"epic_link": "customfield_10014"}
+        )
+
+        issues_mixin.create_issue(
+            project_key="PROJ",
+            summary="Linked to epic",
+            issue_type="Story",
+            epicKey="EPIC-1",
+        )
+
+        # _process_additional_fields should not receive epicKey
+        paf_call = issues_mixin._process_additional_fields.call_args
+        if paf_call:
+            kwargs_passed = paf_call[0][1]  # second arg is kwargs
+            assert "epicKey" not in kwargs_passed
+
+    def test_create_issue_explicit_parent_overrides_epic_fallback(self, issues_mixin):
+        """When both epicKey and parent are passed, explicit parent wins."""
+        issues_mixin.config.is_cloud = True
+        issues_mixin.get_project_issue_types.return_value = [
+            {"id": "10000", "name": "Story", "subtask": False},
+        ]
+        issues_mixin.jira.create_issue.return_value = {"key": "PROJ-1"}
+        # No epic link field discovered → Cloud fallback would set parent
+        issues_mixin.get_field_ids_to_epic = MagicMock(return_value={})
+        # Restore _prepare_parent_fields to real implementation so it overwrites
+        issues_mixin._prepare_parent_fields = (
+            IssuesMixin._prepare_parent_fields.__get__(issues_mixin)
+        )
+
+        issues_mixin.create_issue(
+            project_key="PROJ",
+            summary="Story with both",
+            issue_type="Story",
+            epicKey="EPIC-1",
+            parent="PARENT-1",
+        )
+
+        call_args = issues_mixin.jira.create_issue.call_args
+        assert call_args is not None
+        fields = call_args[1]["fields"]
+        # Explicit parent should override Cloud fallback
+        assert fields["parent"] == {"key": "PARENT-1"}
+
+
+class TestUpdateIssueParent:
+    """Tests for parent handling in update_issue."""
+
+    def test_update_issue_parent_string(self, issues_mixin):
+        """update_issue should handle parent as a string key."""
+        issues_mixin.get_field_ids_to_epic = MagicMock(return_value={})
+        issues_mixin.jira.update_issue = MagicMock()
+        issues_mixin.jira.get_issue.return_value = {
+            "key": "PROJ-1",
+            "fields": {"summary": "Test"},
+        }
+
+        issues_mixin.update_issue(issue_key="PROJ-1", parent="PROJ-2")
+
+        call_args = issues_mixin.jira.update_issue.call_args
+        assert call_args is not None
+        update_fields = call_args[1]["update"]["fields"]
+        assert update_fields["parent"] == {"key": "PROJ-2"}
+
+    def test_update_issue_parent_dict(self, issues_mixin):
+        """update_issue should handle parent as a dict with key."""
+        issues_mixin.get_field_ids_to_epic = MagicMock(return_value={})
+        issues_mixin.jira.update_issue = MagicMock()
+        issues_mixin.jira.get_issue.return_value = {
+            "key": "PROJ-1",
+            "fields": {"summary": "Test"},
+        }
+
+        issues_mixin.update_issue(issue_key="PROJ-1", parent={"key": "PROJ-2"})
+
+        call_args = issues_mixin.jira.update_issue.call_args
+        assert call_args is not None
+        update_fields = call_args[1]["update"]["fields"]
+        assert update_fields["parent"] == {"key": "PROJ-2"}
+
+
+class TestUpdateIssueEpicLink:
+    """Tests for epic link alias resolution in update_issue."""
+
+    def test_update_issue_resolves_epic_alias(self, issues_mixin):
+        """update_issue should resolve epicKey alias to epic link custom field."""
+        issues_mixin.get_field_ids_to_epic = MagicMock(
+            return_value={"epic_link": "customfield_10014"}
+        )
+        issues_mixin.jira.update_issue = MagicMock()
+        issues_mixin.jira.get_issue.return_value = {
+            "key": "PROJ-1",
+            "fields": {"summary": "Test"},
+        }
+
+        issues_mixin.update_issue(issue_key="PROJ-1", epicKey="EPIC-1")
+
+        call_args = issues_mixin.jira.update_issue.call_args
+        assert call_args is not None
+        update_fields = call_args[1]["update"]["fields"]
+        assert update_fields.get("customfield_10014") == "EPIC-1"

@@ -11,6 +11,7 @@ from mcp_atlassian.jira import JiraConfig, JiraFetcher
 from mcp_atlassian.servers.context import MainAppContext
 from mcp_atlassian.servers.dependencies import (
     _create_user_config_for_fetcher,
+    _resolve_bearer_auth_type,
     get_confluence_fetcher,
     get_jira_fetcher,
 )
@@ -410,6 +411,11 @@ def _create_mock_fetcher(fetcher_class, validation_return=None, validation_error
             mock_fetcher.get_current_user_account_id.return_value = (
                 validation_return or "test-account-id"
             )
+        # Set up jira._session.hooks for SSRF redirect hook attachment
+        mock_session = MagicMock()
+        mock_session.hooks = {"response": []}
+        mock_fetcher.jira = MagicMock()
+        mock_fetcher.jira._session = mock_session
     elif fetcher_class == ConfluenceFetcher:
         if validation_error:
             mock_fetcher.get_current_user_info.side_effect = validation_error
@@ -418,6 +424,11 @@ def _create_mock_fetcher(fetcher_class, validation_return=None, validation_error
                 "email": "user@example.com",
                 "displayName": "Test User",
             }
+        # Set up confluence._session.hooks for SSRF redirect hook attachment
+        mock_session = MagicMock()
+        mock_session.hooks = {"response": []}
+        mock_fetcher.confluence = MagicMock()
+        mock_fetcher.confluence._session = mock_session
 
     return mock_fetcher
 
@@ -1000,3 +1011,335 @@ class TestGetConfluenceFetcher:
 
         with pytest.raises(ValueError, match=expected_error_match):
             await get_confluence_fetcher(mock_context)
+
+
+class TestBasicAuthMultiUser:
+    """Tests for Basic Auth multi-user support (#739)."""
+
+    @pytest.mark.parametrize("config_type", ["jira", "confluence"])
+    def test_create_user_config_basic_auth(self, config_factory, config_type):
+        """Test creating user-specific config with basic auth credentials."""
+        if config_type == "jira":
+            base_config = config_factory.create_jira_config(auth_type="basic")
+            expected_type = JiraConfig
+        else:
+            base_config = config_factory.create_confluence_config(auth_type="basic")
+            expected_type = ConfluenceConfig
+
+        credentials = {
+            "user_email_context": "user@example.com",
+            "user_email": "user@example.com",
+            "api_token": "user-api-token-123",
+        }
+
+        result = _create_user_config_for_fetcher(
+            base_config=base_config,
+            auth_type="basic",
+            credentials=credentials,
+        )
+
+        assert isinstance(result, expected_type)
+        assert result.auth_type == "basic"
+        assert result.username == "user@example.com"
+        assert result.api_token == "user-api-token-123"
+        assert result.personal_token is None
+        assert result.oauth_config is None
+
+    @pytest.mark.parametrize(
+        "missing_field,credentials",
+        [
+            (
+                "email",
+                {"user_email_context": None, "api_token": "token"},
+            ),
+            (
+                "api_token",
+                {"user_email_context": None, "user_email": "user@example.com"},
+            ),
+        ],
+    )
+    def test_basic_auth_missing_credentials(
+        self, config_factory, missing_field, credentials
+    ):
+        """Test that missing email or api_token raises ValueError."""
+        base_config = config_factory.create_jira_config(auth_type="basic")
+
+        with pytest.raises(ValueError, match="Email and API token missing"):
+            _create_user_config_for_fetcher(
+                base_config=base_config,
+                auth_type="basic",
+                credentials=credentials,
+            )
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_jira_basic_auth_fetcher_creation(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ):
+        """Test creating user-specific JiraFetcher with basic auth."""
+        # Setup request state for basic auth
+        mock_request.state.jira_fetcher = None
+        mock_request.state.confluence_fetcher = None
+        mock_request.state.atlassian_service_headers = {}
+        mock_request.state.user_atlassian_auth_type = "basic"
+        mock_request.state.user_atlassian_email = "user@example.com"
+        mock_request.state.user_atlassian_api_token = "user-api-token"
+        mock_request.state.user_atlassian_token = None
+        mock_request.state.user_atlassian_cloud_id = None
+        mock_get_http_request.return_value = mock_request
+
+        # Setup context with global config
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
+
+        # Setup mock fetcher
+        mock_fetcher = _create_mock_fetcher(JiraFetcher)
+        mock_jira_fetcher_class.return_value = mock_fetcher
+
+        result = await get_jira_fetcher(mock_context)
+
+        assert result == mock_fetcher
+        assert mock_request.state.jira_fetcher == mock_fetcher
+        mock_jira_fetcher_class.assert_called_once()
+
+        called_config = mock_jira_fetcher_class.call_args[1]["config"]
+        assert called_config.auth_type == "basic"
+        assert called_config.username == "user@example.com"
+        assert called_config.api_token == "user-api-token"
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_confluence_basic_auth_fetcher_creation(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ):
+        """Test creating user-specific ConfluenceFetcher with basic auth."""
+        mock_request.state.jira_fetcher = None
+        mock_request.state.confluence_fetcher = None
+        mock_request.state.atlassian_service_headers = {}
+        mock_request.state.user_atlassian_auth_type = "basic"
+        mock_request.state.user_atlassian_email = "user@example.com"
+        mock_request.state.user_atlassian_api_token = "user-api-token"
+        mock_request.state.user_atlassian_token = None
+        mock_request.state.user_atlassian_cloud_id = None
+        mock_get_http_request.return_value = mock_request
+
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(ConfluenceFetcher)
+        mock_confluence_fetcher_class.return_value = mock_fetcher
+
+        result = await get_confluence_fetcher(mock_context)
+
+        assert result == mock_fetcher
+        assert mock_request.state.confluence_fetcher == mock_fetcher
+        mock_confluence_fetcher_class.assert_called_once()
+
+        called_config = mock_confluence_fetcher_class.call_args[1]["config"]
+        assert called_config.auth_type == "basic"
+        assert called_config.username == "user@example.com"
+        assert called_config.api_token == "user-api-token"
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    async def test_basic_auth_empty_email_raises(
+        self,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ):
+        """Test that empty email with basic auth raises ValueError."""
+        mock_request.state.jira_fetcher = None
+        mock_request.state.confluence_fetcher = None
+        mock_request.state.atlassian_service_headers = {}
+        mock_request.state.user_atlassian_auth_type = "basic"
+        mock_request.state.user_atlassian_email = None  # Empty
+        mock_request.state.user_atlassian_api_token = "user-api-token"
+        mock_request.state.user_atlassian_token = None
+        mock_request.state.user_atlassian_cloud_id = None
+        mock_get_http_request.return_value = mock_request
+
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
+
+        with pytest.raises(ValueError, match="email or API token missing"):
+            await get_jira_fetcher(mock_context)
+
+
+class TestResolveBearerAuthType:
+    """Tests for _resolve_bearer_auth_type bearer token disambiguation."""
+
+    def test_bearer_fallback_to_pat_when_no_oauth_config(self):
+        """Bearer token treated as PAT when global config has no oauth_config."""
+        config = JiraConfig(
+            url="https://jira.corp.example.com",
+            auth_type="pat",
+            personal_token="server-pat",
+        )
+        result = _resolve_bearer_auth_type(config, "oauth")
+        assert result == "pat"
+
+    def test_bearer_with_cloud_id_stays_oauth(self):
+        """Bearer token stays as OAuth when global config has cloud_id."""
+        oauth_config = OAuthConfig(
+            client_id="c",
+            client_secret="s",
+            redirect_uri="r",
+            scope="sc",
+            cloud_id="cloud-123",
+        )
+        config = JiraConfig(
+            url="https://test.atlassian.net",
+            auth_type="oauth",
+            oauth_config=oauth_config,
+        )
+        result = _resolve_bearer_auth_type(config, "oauth")
+        assert result == "oauth"
+
+    def test_bearer_with_dc_base_url_stays_oauth(self):
+        """Bearer token stays as OAuth when global config has DC base_url."""
+        oauth_config = OAuthConfig(
+            client_id="c",
+            client_secret="s",
+            redirect_uri="r",
+            scope="sc",
+            base_url="https://jira.corp.com",
+        )
+        config = JiraConfig(
+            url="https://jira.corp.com",
+            auth_type="oauth",
+            oauth_config=oauth_config,
+        )
+        result = _resolve_bearer_auth_type(config, "oauth")
+        assert result == "oauth"
+
+    def test_bearer_with_header_cloud_id_stays_oauth(self):
+        """Bearer token stays as OAuth when per-request cloud_id is provided."""
+        config = JiraConfig(
+            url="https://test.atlassian.net",
+            auth_type="basic",
+            username="user",
+            api_token="token",
+        )
+        result = _resolve_bearer_auth_type(config, "oauth", cloud_id="from-header")
+        assert result == "oauth"
+
+    def test_pat_auth_type_passes_through(self):
+        """PAT auth_type is never re-mapped."""
+        config = JiraConfig(
+            url="https://jira.corp.example.com",
+            auth_type="pat",
+            personal_token="server-pat",
+        )
+        result = _resolve_bearer_auth_type(config, "pat")
+        assert result == "pat"
+
+    def test_confluence_bearer_fallback_to_pat(self):
+        """Bearer disambiguation works for Confluence configs too."""
+        config = ConfluenceConfig(
+            url="https://confluence.corp.example.com",
+            auth_type="pat",
+            personal_token="server-pat",
+        )
+        result = _resolve_bearer_auth_type(config, "oauth")
+        assert result == "pat"
+
+    def test_minimal_oauth_config_bearer_fallback_to_pat(self):
+        """Regression: ATLASSIAN_OAUTH_ENABLE=true with no cloud_id creates
+        minimal OAuth config. Bearer token should fall back to PAT (#858)."""
+        # Minimal OAuth config: empty strings, no cloud_id, no base_url
+        minimal_oauth = OAuthConfig(
+            client_id="",
+            client_secret="",
+            redirect_uri="",
+            scope="",
+        )
+        config = JiraConfig(
+            url="https://jira.corp.example.com",
+            auth_type="oauth",
+            oauth_config=minimal_oauth,
+        )
+        result = _resolve_bearer_auth_type(config, "oauth")
+        assert result == "pat"
+
+
+class TestSsrfProtection:
+    """SSRF protection regression tests."""
+
+    def test_validate_rejects_private_ip(self) -> None:
+        """Private IP URLs are rejected by SSRF validation."""
+        from mcp_atlassian.utils.urls import validate_url_for_ssrf
+
+        result = validate_url_for_ssrf("http://127.0.0.1:8080")
+        assert result is not None
+
+    def test_validate_rejects_metadata(self) -> None:
+        """Cloud metadata endpoint is rejected."""
+        from mcp_atlassian.utils.urls import validate_url_for_ssrf
+
+        result = validate_url_for_ssrf("http://169.254.169.254")
+        assert result is not None
+
+    def test_validate_rejects_file_scheme(self) -> None:
+        """file:// scheme is rejected."""
+        from mcp_atlassian.utils.urls import validate_url_for_ssrf
+
+        result = validate_url_for_ssrf("file:///etc/passwd")
+        assert result is not None
+
+    def test_redirect_hook_blocks_internal(self) -> None:
+        """Redirect to internal IP is blocked by SSRF hook."""
+        from mcp_atlassian.servers.dependencies import _make_ssrf_safe_hook
+        from mcp_atlassian.utils.urls import validate_url_for_ssrf
+
+        hook = _make_ssrf_safe_hook(validate_url_for_ssrf)
+
+        # Create a mock response that simulates a redirect
+        mock_response = MagicMock()
+        mock_response.is_redirect = True
+        mock_response.headers = {"Location": "http://169.254.169.254/latest/meta-data"}
+
+        with pytest.raises(ValueError, match="Redirect blocked"):
+            hook(mock_response)
+
+    def test_redirect_hook_allows_safe(self) -> None:
+        """Redirect to safe URL passes through."""
+        from mcp_atlassian.servers.dependencies import _make_ssrf_safe_hook
+        from mcp_atlassian.utils.urls import validate_url_for_ssrf
+
+        hook = _make_ssrf_safe_hook(validate_url_for_ssrf)
+
+        mock_response = MagicMock()
+        mock_response.is_redirect = True
+        mock_response.headers = {
+            "Location": "https://company.atlassian.net/rest/api/2/issue"
+        }
+
+        # Mock DNS for the redirect target
+        with patch("mcp_atlassian.utils.urls.socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, "", ("104.192.141.1", 0))]
+            result = hook(mock_response)
+            assert result == mock_response
+
+    def test_redirect_hook_ignores_non_redirect(self) -> None:
+        """Non-redirect response passes through without checks."""
+        from mcp_atlassian.servers.dependencies import _make_ssrf_safe_hook
+        from mcp_atlassian.utils.urls import validate_url_for_ssrf
+
+        hook = _make_ssrf_safe_hook(validate_url_for_ssrf)
+
+        mock_response = MagicMock()
+        mock_response.is_redirect = False
+
+        result = hook(mock_response)
+        assert result == mock_response

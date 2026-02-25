@@ -12,6 +12,7 @@ from ..models.jira import JiraSearchResult
 from .client import JiraClient
 from .constants import DEFAULT_READ_JIRA_FIELDS
 from .protocols import IssueOperationsProto
+from .utils import quote_jql_identifier_if_needed, sanitize_jql_reserved_words
 
 logger = logging.getLogger("mcp-jira")
 
@@ -49,6 +50,9 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             Exception: If there is an error searching for issues
         """
         try:
+            # Sanitize JQL reserved words in project key values
+            jql = sanitize_jql_reserved_words(jql)
+
             # Use projects_filter parameter if provided, otherwise fall back to config
             filter_to_use = projects_filter or self.config.projects_filter
 
@@ -58,10 +62,19 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                 projects = [p.strip() for p in filter_to_use.split(",")]
 
                 # Build the project filter query part
+                # Sanitize project names to prevent JQL injection
+                # Escape backslashes before double-quotes to prevent bypass
+                projects = [
+                    p.replace("\\", "\\\\").replace('"', '\\"') for p in projects
+                ]
+
                 if len(projects) == 1:
-                    project_query = f'project = "{projects[0]}"'
+                    quoted = quote_jql_identifier_if_needed(projects[0])
+                    project_query = f"project = {quoted}"
                 else:
-                    quoted_projects = [f'"{p}"' for p in projects]
+                    quoted_projects = [
+                        quote_jql_identifier_if_needed(p) for p in projects
+                    ]
                     projects_list = ", ".join(quoted_projects)
                     project_query = f"project IN ({projects_list})"
 
@@ -220,6 +233,9 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             Exception: If there is an error getting board issues
         """
         try:
+            # Sanitize JQL reserved words in project key values
+            jql = sanitize_jql_reserved_words(jql) or jql
+
             # Determine fields_param
             fields_param = fields
             if fields_param is None:

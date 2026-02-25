@@ -18,6 +18,7 @@ from mcp_atlassian.utils.logging import (
 from mcp_atlassian.utils.oauth import configure_oauth_session
 from mcp_atlassian.utils.ssl import configure_ssl_verification
 
+from ..models.jira.adf import markdown_to_adf
 from .config import JiraConfig
 
 # Configure logging
@@ -48,8 +49,17 @@ class JiraClient:
 
         # Initialize the Jira client based on auth type
         if self.config.auth_type == "oauth":
-            if not self.config.oauth_config or not self.config.oauth_config.cloud_id:
-                error_msg = "OAuth authentication requires a valid cloud_id"
+            if not self.config.oauth_config:
+                error_msg = "OAuth authentication requires oauth_config"
+                raise ValueError(error_msg)
+
+            # Determine Cloud vs Data Center OAuth
+            is_dc_oauth = (
+                getattr(self.config.oauth_config, "is_data_center", False) is True
+            )
+
+            if not is_dc_oauth and not self.config.oauth_config.cloud_id:
+                error_msg = "Cloud OAuth authentication requires a valid cloud_id"
                 raise ValueError(error_msg)
 
             # Create a session for OAuth
@@ -60,17 +70,22 @@ class JiraClient:
                 error_msg = "Failed to configure OAuth session"
                 raise MCPAtlassianAuthenticationError(error_msg)
 
-            # The Jira API URL with OAuth is different
-            api_url = (
-                f"https://api.atlassian.com/ex/jira/{self.config.oauth_config.cloud_id}"
-            )
+            if is_dc_oauth:
+                # Data Center: use the instance URL directly
+                api_url = self.config.url
+                is_cloud = False
+            else:
+                # Cloud: use the Atlassian Cloud API URL
+                api_url = f"https://api.atlassian.com/ex/jira/{self.config.oauth_config.cloud_id}"
+                is_cloud = True
 
             # Initialize Jira with the session
             self.jira = Jira(
                 url=api_url,
                 session=session,
-                cloud=True,  # OAuth is only for Cloud
+                cloud=is_cloud,
                 verify_ssl=self.config.ssl_verify,
+                timeout=self.config.timeout,
             )
         elif self.config.auth_type == "pat":
             logger.debug(
@@ -83,6 +98,7 @@ class JiraClient:
                 token=self.config.personal_token,
                 cloud=self.config.is_cloud,
                 verify_ssl=self.config.ssl_verify,
+                timeout=self.config.timeout,
             )
         else:  # basic auth
             logger.debug(
@@ -97,11 +113,17 @@ class JiraClient:
                 password=self.config.api_token,
                 cloud=self.config.is_cloud,
                 verify_ssl=self.config.ssl_verify,
+                timeout=self.config.timeout,
             )
             logger.debug(
                 f"Jira client initialized. Session headers (Authorization masked): "
                 f"{get_masked_session_headers(dict(self.jira._session.headers))}"
             )
+
+        # Disable trust_env for PAT and OAuth to prevent .netrc from overriding
+        # explicit credentials (#860). Basic auth can safely use .netrc.
+        if self.config.auth_type in ("pat", "oauth"):
+            self.jira._session.trust_env = False
 
         # Configure SSL verification using the shared utility
         configure_ssl_verification(
@@ -218,26 +240,54 @@ class JiraClient:
         _ = self.config.url if hasattr(self, "config") else ""
         return self.preprocessor.clean_jira_text(text)
 
-    def _markdown_to_jira(self, markdown_text: str) -> str:
-        """
-        Convert Markdown syntax to Jira markup syntax.
+    def _markdown_to_jira(self, markdown_text: str) -> str | dict[str, Any]:
+        """Convert Markdown to Jira format (ADF for Cloud, wiki markup for Server).
 
         Args:
             markdown_text: Text in Markdown format
 
         Returns:
-            Text in Jira markup format
+            ADF dict for Cloud, wiki markup string for Server/DC
         """
         if not markdown_text:
-            return ""
+            return markdown_to_adf("") if self.config.is_cloud else ""
 
-        # Use the shared preprocessor if available
-        if hasattr(self, "preprocessor"):
+        if self.config.is_cloud:
+            try:
+                return markdown_to_adf(markdown_text)
+            except Exception as e:
+                logger.warning(f"Error converting markdown to ADF: {e}")
+                return {
+                    "version": 1,
+                    "type": "doc",
+                    "content": [
+                        {
+                            "type": "paragraph",
+                            "content": [{"type": "text", "text": markdown_text}],
+                        }
+                    ],
+                }
+
+        try:
             return self.preprocessor.markdown_to_jira(markdown_text)
+        except Exception as e:
+            logger.warning(f"Error converting markdown to Jira format: {str(e)}")
+            return markdown_text
 
-        # Otherwise create a temporary one
-        _ = self.config.url if hasattr(self, "config") else ""
-        return self.preprocessor.markdown_to_jira(markdown_text)
+    def _post_api3(self, resource: str, data: dict[str, Any]) -> Any:
+        """POST to Jira REST API v3 (required for ADF payloads on Cloud).
+
+        The atlassian-python-api library defaults to /rest/api/2/ which
+        expects description/body as plain strings. ADF dicts require v3.
+        Callers are responsible for choosing v2 vs v3 based on payload type.
+        """
+        url = self.jira.resource_url(resource, api_version="3")
+        return self.jira.post(url, data=data)
+
+    def _put_api3(self, resource: str, data: dict[str, Any]) -> Any:
+        """PUT to Jira REST API v3 (required for ADF payloads on Cloud)."""
+        url = self.jira.resource_url(resource, api_version="3")
+        return self.jira.put(url, data=data)
 
     def get_paged(
         self,

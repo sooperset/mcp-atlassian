@@ -5,32 +5,12 @@ special character preservation, and performance with large content.
 """
 
 import time
-from typing import Any
 
 import pytest
 
 from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
 from mcp_atlassian.preprocessing.jira import JiraPreprocessor
-
-
-class MockConfluenceClient:
-    """Mock Confluence client for testing user lookups."""
-
-    def get_user_details_by_accountid(self, account_id: str) -> dict[str, Any]:
-        """Mock user details by account ID."""
-        return {
-            "displayName": f"User {account_id}",
-            "accountType": "atlassian",
-            "accountStatus": "active",
-        }
-
-    def get_user_details_by_username(self, username: str) -> dict[str, Any]:
-        """Mock user details by username (Server/DC compatibility)."""
-        return {
-            "displayName": f"User {username}",
-            "accountType": "atlassian",
-            "accountStatus": "active",
-        }
+from tests.utils.mocks import MockConfluenceClient
 
 
 @pytest.fixture
@@ -434,10 +414,10 @@ def process():
         )
 
         # Verify all user mentions are processed
-        assert "@User user123" in processed_markdown
-        assert "@User user456" in processed_markdown
-        assert "@User user789" in processed_markdown
-        assert "@User admin" in processed_markdown
+        assert "@Test User user123" in processed_markdown
+        assert "@Test User user456" in processed_markdown
+        assert "@Test User user789" in processed_markdown
+        assert "@Test User admin" in processed_markdown
 
     def test_confluence_markdown_roundtrip(self, confluence_preprocessor):
         """Test Markdown to Confluence storage format and processing."""
@@ -640,7 +620,7 @@ def function_{i}():
         assert (
             "function" in processed_markdown
         )  # Function names might have escaped underscores
-        assert "@User user10" in processed_markdown
+        assert "@Test User user10" in processed_markdown
 
     def test_confluence_nested_structures(self, confluence_preprocessor):
         """Test handling of deeply nested structures."""

@@ -106,6 +106,7 @@ Documentation is also available in [llms.txt format](https://llmstxt.org/), whic
 | `jira_create_issue` - Create issues | `confluence_create_page` - Create pages | **Scale**: `zephyr_create_test_execution` - Create test executions |
 | `jira_update_issue` - Update issues | `confluence_update_page` - Update pages | **Squad**: `zephyr_squad_get_cycles` - Get test cycles          |
 | `jira_transition_issue` - Change status | `confluence_add_comment` - Add comments | **Squad**: `zephyr_squad_create_execution` - Create test execution |
+| `jira_get_queue_issues` - Read JSM queue items | | |
 | `jira_get_issue_sla` - Calculate SLA metrics | `confluence_get_page_history` - Get historical page versions | **Squad**: `zephyr_squad_execute_test` - Execute test           |
 | `jira_get_issue_development_info` - Get linked PRs, branches, commits | `confluence_get_page_views` - Get page view stats (Cloud only) | |
 | `jira_get_issue_proforma_forms` - Get ProForma forms | | |

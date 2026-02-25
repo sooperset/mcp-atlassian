@@ -7,7 +7,7 @@ import mimetypes
 from typing import Annotated
 
 from fastmcp import Context, FastMCP
-from mcp.types import BlobResourceContents, EmbeddedResource, TextContent
+from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
 from pydantic import BeforeValidator, Field
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
@@ -16,6 +16,7 @@ from mcp_atlassian.servers.dependencies import get_confluence_fetcher
 from mcp_atlassian.utils.decorators import (
     check_write_access,
 )
+from mcp_atlassian.utils.media import is_image_attachment
 
 logger = logging.getLogger(__name__)
 
@@ -1089,11 +1090,11 @@ async def upload_attachments(
         ),
     ],
     file_paths: Annotated[
-        list[str],
+        str,
         Field(
             description=(
-                "List of file paths to upload. Can be absolute or relative paths. "
-                "Examples: ['./file1.pdf', './file2.png'], ['C:\\\\docs\\\\report.docx', 'D:\\\\image.jpg']. "
+                "Comma-separated list of file paths to upload. Can be absolute or relative paths. "
+                "Examples: './file1.pdf,./file2.png' or 'C:\\docs\\report.docx,D:\\image.jpg'. "
                 "All files uploaded with same comment/minor_edit settings."
             )
         ),
@@ -1141,9 +1142,11 @@ async def upload_attachments(
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
+    paths_list = [p.strip() for p in file_paths.split(",") if p.strip()]
+
     results = confluence_fetcher.upload_attachments(
         content_id=content_id,
-        file_paths=file_paths,
+        file_paths=paths_list,
         comment=comment,
         minor_edit=minor_edit,
     )
@@ -1357,9 +1360,19 @@ async def download_attachment(
                 ),
             )
 
-        resp = confluence_fetcher.confluence._session.get(download_url, stream=True)
-        resp.raise_for_status()
-        data_bytes = b"".join(resp.iter_content(chunk_size=8192))
+        data_bytes = confluence_fetcher.fetch_attachment_content(download_url)
+        if data_bytes is None:
+            return TextContent(
+                type="text",
+                text=json.dumps(
+                    {
+                        "success": False,
+                        "error": (f"Failed to download attachment {attachment_id}"),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+            )
 
         if len(data_bytes) > _ATTACHMENT_MAX_BYTES:
             return TextContent(
@@ -1516,12 +1529,9 @@ async def download_content_attachments(
             base_url = confluence_fetcher.config.url.rstrip("/")
             download_url = f"{base_url}{download_url}"
 
-        try:
-            resp = confluence_fetcher.confluence._session.get(download_url, stream=True)
-            resp.raise_for_status()
-            data_bytes = b"".join(resp.iter_content(chunk_size=8192))
-        except Exception as exc:
-            failed.append({"filename": filename, "error": str(exc)})
+        data_bytes = confluence_fetcher.fetch_attachment_content(download_url)
+        if data_bytes is None:
+            failed.append({"filename": filename, "error": "Fetch failed"})
             continue
 
         if len(data_bytes) > _ATTACHMENT_MAX_BYTES:
@@ -1618,3 +1628,161 @@ async def delete_attachment(
         indent=2,
         ensure_ascii=False,
     )
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "attachments"},
+    annotations={"title": "Get Page Images", "readOnlyHint": True},
+)
+async def get_page_images(
+    ctx: Context,
+    content_id: Annotated[
+        str,
+        Field(
+            description=(
+                "The ID of the Confluence page or blog post to retrieve "
+                "images from. Example: '123456789'"
+            )
+        ),
+    ],
+) -> list[TextContent | ImageContent]:
+    """Get all images attached to a Confluence page as inline image content.
+
+    Filters attachments to images only (PNG, JPEG, GIF, WebP, SVG, BMP)
+    and returns them as base64-encoded ImageContent that clients can
+    render directly. Non-image attachments are excluded.
+
+    Files with ambiguous MIME types (application/octet-stream) are
+    detected by filename extension as a fallback. Images larger than
+    50 MB are skipped with an error entry in the summary.
+
+    Args:
+        ctx: The FastMCP context.
+        content_id: The ID of the content.
+
+    Returns:
+        A list with a text summary followed by one ImageContent per
+        successfully downloaded image.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    contents: list[TextContent | ImageContent] = []
+
+    attachments_result = confluence_fetcher.get_content_attachments(content_id)
+
+    if not attachments_result.get("success"):
+        contents.append(
+            TextContent(
+                type="text",
+                text=json.dumps(attachments_result, indent=2, ensure_ascii=False),
+            )
+        )
+        return contents
+
+    attachment_data = attachments_result.get("attachments", [])
+
+    # Filter to image attachments
+    image_attachments: list[tuple[dict[str, object], str]] = []
+    for att_dict in attachment_data:
+        if not isinstance(att_dict, dict):
+            continue
+        media_type = att_dict.get("extensions", {}).get("mediaType") or att_dict.get(
+            "metadata", {}
+        ).get("mediaType")
+        filename = att_dict.get("title")
+        is_img, resolved_mime = is_image_attachment(media_type, filename)
+        if is_img:
+            image_attachments.append((att_dict, resolved_mime))
+
+    if not image_attachments:
+        contents.append(
+            TextContent(
+                type="text",
+                text=json.dumps(
+                    {
+                        "success": True,
+                        "content_id": content_id,
+                        "total_images": 0,
+                        "downloaded": 0,
+                        "failed": [],
+                        "message": "No image attachments found",
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+            )
+        )
+        return contents
+
+    fetched: list[dict[str, object]] = []
+    failed: list[dict[str, object]] = []
+
+    for att_dict, resolved_mime in image_attachments:
+        attachment = ConfluenceAttachment.from_api_response(att_dict)
+        filename = attachment.title or "unknown"
+
+        if (
+            attachment.file_size is not None
+            and attachment.file_size > _ATTACHMENT_MAX_BYTES
+        ):
+            failed.append(
+                {
+                    "filename": filename,
+                    "error": (
+                        f"Image is {attachment.file_size} bytes "
+                        "which exceeds the 50 MB inline limit."
+                    ),
+                }
+            )
+            continue
+
+        download_url = attachment.download_url or ""
+        if not download_url:
+            failed.append({"filename": filename, "error": "No download URL"})
+            continue
+
+        if download_url.startswith("/"):
+            base_url = confluence_fetcher.config.url.rstrip("/")
+            download_url = f"{base_url}{download_url}"
+
+        data_bytes = confluence_fetcher.fetch_attachment_content(download_url)
+        if data_bytes is None:
+            failed.append({"filename": filename, "error": "Fetch failed"})
+            continue
+
+        if len(data_bytes) > _ATTACHMENT_MAX_BYTES:
+            failed.append(
+                {
+                    "filename": filename,
+                    "error": (
+                        f"Downloaded size {len(data_bytes)} bytes "
+                        "exceeds the 50 MB inline limit."
+                    ),
+                }
+            )
+            continue
+
+        encoded = base64.b64encode(data_bytes).decode("ascii")
+        fetched.append({"filename": filename, "size": len(data_bytes)})
+        contents.append(
+            ImageContent(
+                type="image",
+                data=encoded,
+                mimeType=resolved_mime,
+            )
+        )
+
+    summary: dict[str, object] = {
+        "success": True,
+        "content_id": content_id,
+        "total_images": len(image_attachments),
+        "downloaded": len(fetched),
+        "failed": failed,
+    }
+    contents.insert(
+        0,
+        TextContent(
+            type="text",
+            text=json.dumps(summary, indent=2, ensure_ascii=False),
+        ),
+    )
+    return contents

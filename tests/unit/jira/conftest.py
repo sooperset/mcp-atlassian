@@ -84,6 +84,41 @@ def session_jira_field_definitions():
             "schema": {"type": "array", "items": "component"},
         },
         {
+            "id": "duedate",
+            "name": "Due Date",
+            "schema": {"type": "date"},
+        },
+        # Cascading select
+        {
+            "id": "customfield_10020",
+            "name": "Region",
+            "schema": {"type": "option-with-child", "custom": "cascadingselect"},
+        },
+        # Multi-select (array of options)
+        {
+            "id": "customfield_10021",
+            "name": "Categories",
+            "schema": {"type": "array", "items": "option", "custom": "multiselect"},
+        },
+        # Custom user field
+        {
+            "id": "customfield_10022",
+            "name": "Reviewer",
+            "schema": {"type": "user", "custom": "userpicker"},
+        },
+        # Custom date field
+        {
+            "id": "customfield_10023",
+            "name": "Target Date",
+            "schema": {"type": "date"},
+        },
+        # Generic option (radio/select)
+        {
+            "id": "customfield_10024",
+            "name": "Severity",
+            "schema": {"type": "option", "custom": "radiobuttons"},
+        },
+        {
             "id": "resolution",
             "name": "Resolution",
             "schema": {"type": "resolution"},
@@ -112,6 +147,27 @@ def session_jira_field_definitions():
             "id": "timeoriginalestimate",
             "name": "Original Estimate",
             "schema": {"type": "timetracking"},
+        },
+        # Checklist plugin (Okapya)
+        {
+            "id": "customfield_11003",
+            "name": "Definition of Done",
+            "schema": {
+                "type": "string",
+                "custom": "com.okapya.jira.checklist:checklist",
+                "customId": 11003,
+            },
+        },
+        # Checklist plugin (Okapya) — Server/DC array variant
+        {
+            "id": "customfield_11004",
+            "name": "Checklist",
+            "schema": {
+                "type": "array",
+                "items": "checklist-item",
+                "custom": "com.okapya.jira.checklist:checklist",
+                "customId": 11004,
+            },
         },
     ]
 
@@ -230,26 +286,6 @@ def mock_config(jira_config_factory):
 # ============================================================================
 # Environment Fixtures
 # ============================================================================
-
-
-@pytest.fixture
-def mock_env_vars():
-    """
-    Mock environment variables for testing.
-
-    Note: This fixture is maintained for backward compatibility.
-    Consider using the environment fixtures from root conftest.py.
-    """
-    with patch.dict(
-        os.environ,
-        {
-            "JIRA_URL": "https://test.atlassian.net",
-            "JIRA_USERNAME": "test_username",
-            "JIRA_API_TOKEN": "test_token",
-        },
-        clear=True,  # Clear existing environment variables
-    ):
-        yield
 
 
 @pytest.fixture

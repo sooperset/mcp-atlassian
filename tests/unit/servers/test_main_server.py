@@ -248,8 +248,8 @@ class TestUserTokenMiddleware:
     async def test_unsupported_auth_type_returns_401(
         self, middleware, mock_scope, mock_receive, mock_send
     ):
-        """Test that unsupported auth types (e.g., Basic) return 401 Unauthorized."""
-        mock_scope["headers"] = [(b"authorization", b"Basic dXNlcjpwYXNz")]
+        """Test that unsupported auth types (e.g., Digest) return 401 Unauthorized."""
+        mock_scope["headers"] = [(b"authorization", b"Digest username=test")]
 
         await middleware(mock_scope, mock_receive, mock_send)
 
@@ -260,7 +260,11 @@ class TestUserTokenMiddleware:
 
         body_call = mock_send.call_args_list[1][0][0]
         body = json.loads(body_call["body"].decode())
-        assert "Bearer" in body["error"] or "Token" in body["error"]
+        assert (
+            "Bearer" in body["error"]
+            or "Token" in body["error"]
+            or "Basic" in body["error"]
+        )
 
         # Verify app was NOT called
         middleware.app.assert_not_called()
@@ -400,6 +404,126 @@ class TestUserTokenMiddleware:
         passed_scope = middleware.app.call_args[0][0]
         assert passed_scope["state"]["user_atlassian_token"] == "my-pat-token"
         assert passed_scope["state"]["user_atlassian_auth_type"] == "pat"
+
+    @pytest.mark.anyio
+    async def test_basic_auth_header_extraction_success(
+        self, middleware, mock_scope, mock_receive, mock_send
+    ):
+        """Test successful Basic auth header extraction."""
+        import base64
+
+        credentials = base64.b64encode(b"user@example.com:api-token-123").decode()
+        mock_scope["headers"] = [
+            (b"authorization", f"Basic {credentials}".encode()),
+        ]
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        # Verify app was called (no 401)
+        middleware.app.assert_called_once()
+        mock_send.assert_not_called()
+
+        # Verify credentials were extracted
+        passed_scope = middleware.app.call_args[0][0]
+        assert passed_scope["state"]["user_atlassian_auth_type"] == "basic"
+        assert passed_scope["state"]["user_atlassian_email"] == "user@example.com"
+        assert passed_scope["state"]["user_atlassian_api_token"] == "api-token-123"
+        assert passed_scope["state"]["user_atlassian_token"] is None
+
+    @pytest.mark.anyio
+    async def test_basic_auth_malformed_base64_returns_401(
+        self, middleware, mock_scope, mock_receive, mock_send
+    ):
+        """Test that malformed base64 in Basic auth returns 401."""
+        mock_scope["headers"] = [(b"authorization", b"Basic !!!not-base64!!!")]
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        assert mock_send.call_count == 2
+        start_call = mock_send.call_args_list[0][0][0]
+        assert start_call["status"] == 401
+
+        body_call = mock_send.call_args_list[1][0][0]
+        body = json.loads(body_call["body"].decode())
+        assert "error" in body
+        middleware.app.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_basic_auth_missing_colon_returns_401(
+        self, middleware, mock_scope, mock_receive, mock_send
+    ):
+        """Test that base64 without colon separator returns 401."""
+        import base64
+
+        encoded = base64.b64encode(b"no-colon-here").decode()
+        mock_scope["headers"] = [(b"authorization", f"Basic {encoded}".encode())]
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        assert mock_send.call_count == 2
+        start_call = mock_send.call_args_list[0][0][0]
+        assert start_call["status"] == 401
+
+        body_call = mock_send.call_args_list[1][0][0]
+        body = json.loads(body_call["body"].decode())
+        assert "email:api_token" in body["error"]
+        middleware.app.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_basic_auth_empty_email_returns_401(
+        self, middleware, mock_scope, mock_receive, mock_send
+    ):
+        """Test that empty email in Basic auth returns 401."""
+        import base64
+
+        encoded = base64.b64encode(b":api-token").decode()
+        mock_scope["headers"] = [(b"authorization", f"Basic {encoded}".encode())]
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        assert mock_send.call_count == 2
+        start_call = mock_send.call_args_list[0][0][0]
+        assert start_call["status"] == 401
+
+        body_call = mock_send.call_args_list[1][0][0]
+        body = json.loads(body_call["body"].decode())
+        assert "empty" in body["error"].lower() or "Email" in body["error"]
+        middleware.app.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_basic_auth_empty_token_returns_401(
+        self, middleware, mock_scope, mock_receive, mock_send
+    ):
+        """Test that empty API token in Basic auth returns 401."""
+        import base64
+
+        encoded = base64.b64encode(b"user@example.com:").decode()
+        mock_scope["headers"] = [(b"authorization", f"Basic {encoded}".encode())]
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        assert mock_send.call_count == 2
+        start_call = mock_send.call_args_list[0][0][0]
+        assert start_call["status"] == 401
+
+        body_call = mock_send.call_args_list[1][0][0]
+        body = json.loads(body_call["body"].decode())
+        assert "empty" in body["error"].lower() or "token" in body["error"].lower()
+        middleware.app.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_basic_auth_empty_credentials_returns_401(
+        self, middleware, mock_scope, mock_receive, mock_send
+    ):
+        """Test that empty Basic auth credentials returns 401."""
+        mock_scope["headers"] = [(b"authorization", b"Basic ")]
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        assert mock_send.call_count == 2
+        start_call = mock_send.call_args_list[0][0][0]
+        assert start_call["status"] == 401
+        middleware.app.assert_not_called()
 
     def test_should_process_auth_uses_runtime_streamable_path(self):
         mock_app = AsyncMock()

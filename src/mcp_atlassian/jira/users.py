@@ -184,6 +184,42 @@ class UsersMixin(JiraClient):
             logger.info(f"Error looking up user directly: {str(e)}")
             return None
 
+    def _resolve_server_dc_user_params(self, email: str) -> dict[str, str] | None:
+        """Resolve email to Server/DC user API params via search.
+
+        Unlike _lookup_user_directly which returns a bare string,
+        this returns the correct API parameter dict, avoiding the
+        need to guess whether the value is a username or key.
+
+        Args:
+            email: Email address to resolve.
+
+        Returns:
+            Dict with 'username' or 'key' param, or None if not found.
+        """
+        try:
+            response = self.jira.user_find_by_user_string(
+                username=email, start=0, limit=1
+            )
+            if not isinstance(response, list):
+                return None
+
+            search_norm = normalize_text(email)
+            for user in response:
+                if (
+                    normalize_text(user.get("displayName", "")) == search_norm
+                    or normalize_text(user.get("name", "")) == search_norm
+                    or normalize_text(user.get("emailAddress", "")) == search_norm
+                ):
+                    if user.get("name"):
+                        return {"username": user["name"]}
+                    elif user.get("key"):
+                        return {"key": user["key"]}
+            return None
+        except Exception as e:
+            logger.info(f"Error resolving server user by email: {e}")
+            return None
+
     def _lookup_user_by_permissions(self, username: str) -> str | None:
         """
         Look up a user account ID by permissions.
@@ -259,14 +295,25 @@ class UsersMixin(JiraClient):
         # Server/DC: username, key, or email
         elif not self.config.is_cloud:
             if "@" in identifier:
-                api_kwargs["username"] = identifier
-                logger.debug(
-                    f"Determined param: username='{identifier}' (Server/DC email - might not work)"
-                )
-            elif "-" in identifier and any(c.isdigit() for c in identifier):
-                api_kwargs["key"] = identifier
-                logger.debug(f"Determined param: key='{identifier}' (Server/DC)")
+                # /rest/api/2/user?username=email won't match by email on Server/DC.
+                # Use /rest/api/2/user/search first to resolve email → actual username/key.
+                resolved_params = self._resolve_server_dc_user_params(identifier)
+                if resolved_params:
+                    api_kwargs.update(resolved_params)
+                    param_name = next(iter(resolved_params))
+                    logger.debug(
+                        f"Resolved email '{identifier}' to {param_name}="
+                        f"'{resolved_params[param_name]}' (Server/DC)"
+                    )
+                else:
+                    # Fallback: try email as username directly (works if login name IS the email)
+                    api_kwargs["username"] = identifier
+                    logger.debug(
+                        f"Could not resolve email '{identifier}' via search, "
+                        f"trying as username directly (Server/DC)"
+                    )
             else:
+                # Non-email: use username= (safe default for Server/DC 7.x+)
                 api_kwargs["username"] = identifier
                 logger.debug(f"Determined param: username='{identifier}' (Server/DC)")
         # Cloud: identifier is email

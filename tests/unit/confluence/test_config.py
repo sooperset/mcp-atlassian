@@ -240,3 +240,92 @@ def test_from_env_without_client_cert():
         assert config.client_cert is None
         assert config.client_key is None
         assert config.client_key_password is None
+
+
+def test_confluence_config_timeout_from_env():
+    """Test that timeout is read from CONFLUENCE_TIMEOUT env var."""
+    with patch.dict(
+        os.environ,
+        {
+            "CONFLUENCE_URL": "https://confluence.example.com",
+            "CONFLUENCE_PERSONAL_TOKEN": "test_pat",
+            "CONFLUENCE_TIMEOUT": "120",
+        },
+        clear=True,
+    ):
+        config = ConfluenceConfig.from_env()
+        assert config.timeout == 120
+
+
+def test_confluence_config_timeout_default():
+    """Test that timeout defaults to 75 when no env var is set."""
+    with patch.dict(
+        os.environ,
+        {
+            "CONFLUENCE_URL": "https://confluence.example.com",
+            "CONFLUENCE_PERSONAL_TOKEN": "test_pat",
+        },
+        clear=True,
+    ):
+        config = ConfluenceConfig.from_env()
+        assert config.timeout == 75
+
+
+def test_from_env_oauth_enable_no_url():
+    """Test BYOT OAuth mode — ATLASSIAN_OAUTH_ENABLE=true without URL."""
+    with patch.dict(
+        os.environ,
+        {"ATLASSIAN_OAUTH_ENABLE": "true"},
+        clear=True,
+    ):
+        config = ConfluenceConfig.from_env()
+        assert config.auth_type == "oauth"
+        assert config.url == ""
+        assert config.is_cloud is False
+
+
+def test_from_env_oauth_enable_no_url_with_cloud_id():
+    """Test BYOT OAuth mode — ATLASSIAN_OAUTH_ENABLE=true with cloud_id but no URL."""
+    with patch.dict(
+        os.environ,
+        {
+            "ATLASSIAN_OAUTH_ENABLE": "true",
+            "ATLASSIAN_OAUTH_CLOUD_ID": "test-cloud-id",
+        },
+        clear=True,
+    ):
+        config = ConfluenceConfig.from_env()
+        assert config.auth_type == "oauth"
+        assert config.is_cloud is True
+
+
+def test_from_env_oauth_enable_with_cloud_url():
+    """Test BYOT OAuth mode — ATLASSIAN_OAUTH_ENABLE=true with Cloud URL."""
+    with patch.dict(
+        os.environ,
+        {
+            "ATLASSIAN_OAUTH_ENABLE": "true",
+            "CONFLUENCE_URL": "https://test.atlassian.net/wiki",
+        },
+        clear=True,
+    ):
+        config = ConfluenceConfig.from_env()
+        assert config.url == "https://test.atlassian.net/wiki"
+        assert config.auth_type == "oauth"
+        assert config.is_cloud is True
+
+
+def test_from_env_oauth_enable_with_server_url():
+    """Test BYOT OAuth mode — ATLASSIAN_OAUTH_ENABLE=true with Server URL."""
+    with patch.dict(
+        os.environ,
+        {
+            "ATLASSIAN_OAUTH_ENABLE": "true",
+            "CONFLUENCE_URL": "https://confluence.example.com",
+        },
+        clear=True,
+    ):
+        config = ConfluenceConfig.from_env()
+        assert config.url == "https://confluence.example.com"
+        assert config.auth_type == "oauth"
+        assert config.is_cloud is False

@@ -8,6 +8,8 @@ This ensures that the conversion functions are actually called in the read/write
 which was broken in PR #72 (March 2025) and went undetected for 11 months.
 """
 
+from unittest.mock import Mock
+
 import pytest
 
 
@@ -153,32 +155,24 @@ class TestFormatConversionIntegration:
         # Verify ADF was converted to plain text
         assert result.description == "This is ADF content"
 
-    def test_create_issue_converts_markdown_description_to_jira(
+    def test_create_issue_converts_markdown_description_to_adf_on_cloud(
         self, jira_fetcher_with_real_preprocessor
     ):
-        """Test that creating an issue converts Markdown description to Jira wiki markup.
+        """Test that creating an issue converts Markdown description to ADF on Cloud.
 
-        This verifies the write path: Markdown → Jira wiki markup.
+        This verifies the write path: Markdown → ADF (Cloud) via v3 API.
         """
-        # Mock API response
-        jira_fetcher_with_real_preprocessor.jira.create_issue.return_value = {
-            "id": "12345",
-            "key": "TEST-123",
-            "self": "https://test.atlassian.net/rest/api/3/issue/TEST-123",
-        }
+        # Mock v3 API response (Cloud uses _post_api3 for ADF payloads)
+        jira_fetcher_with_real_preprocessor._post_api3 = Mock(
+            return_value={
+                "id": "12345",
+                "key": "TEST-123",
+                "self": "https://test.atlassian.net/rest/api/3/issue/TEST-123",
+            }
+        )
 
         # Create issue with Markdown description
-        markdown_description = """## Summary
-
-This is **bold** and *italic* text.
-
-1. First item
-2. Second item
-
-| Header 1 | Header 2 |
-|----------|----------|
-| Cell 1   | Cell 2   |
-"""
+        markdown_description = "## Summary\n\nThis is **bold** and *italic* text."
 
         result = jira_fetcher_with_real_preprocessor.create_issue(
             project_key="TEST",
@@ -187,22 +181,21 @@ This is **bold** and *italic* text.
             description=markdown_description,
         )
 
-        # Verify create_issue was called with Jira wiki markup
-        call_args = jira_fetcher_with_real_preprocessor.jira.create_issue.call_args
-        sent_fields = call_args[1]["fields"]
+        # Verify _post_api3 was called with ADF dict (Cloud)
+        call_args = jira_fetcher_with_real_preprocessor._post_api3.call_args
+        sent_fields = call_args[0][1]["fields"]
         sent_description = sent_fields["description"]
 
-        # Should be converted to Jira wiki markup
-        assert "h2. Summary" in sent_description  # ## → h2.
-        assert "*bold*" in sent_description  # **bold** → *bold*
-        assert "_italic_" in sent_description  # *italic* → _italic_
-        assert "# First item" in sent_description  # 1. → #
-        assert "# Second item" in sent_description  # 2. → #
-        assert "||" in sent_description  # | Header | → || Header ||
+        # On Cloud, description should be an ADF dict
+        assert isinstance(sent_description, dict)
+        assert sent_description["version"] == 1
+        assert sent_description["type"] == "doc"
+        assert isinstance(sent_description["content"], list)
 
-        # Should NOT contain Markdown
-        assert "**bold**" not in sent_description
-        assert "1. First" not in sent_description
+        # Verify ADF contains the expected heading and formatting
+        heading = sent_description["content"][0]
+        assert heading["type"] == "heading"
+        assert heading["attrs"]["level"] == 2
 
     def test_numbered_list_not_converted_to_heading(
         self, jira_fetcher_with_real_preprocessor

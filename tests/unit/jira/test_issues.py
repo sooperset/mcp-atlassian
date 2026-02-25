@@ -1,6 +1,6 @@
 """Tests for the Jira Issues mixin."""
 
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import ANY, MagicMock, Mock, patch
 
 import pytest
 
@@ -25,6 +25,23 @@ class TestIssuesMixin:
         mixin.transition_issue = MagicMock(
             return_value=JiraIssue(id="123", key="TEST-123", summary="Test Issue")
         )
+
+        # Cloud ADF paths delegate to _post_api3/_put_api3. Route back
+        # to jira.create_issue / jira.update_issue so existing mocks work.
+        def _mock_post_api3(resource: str, data: dict) -> dict:
+            if resource == "issue":
+                return mixin.jira.create_issue(fields=data.get("fields", data))
+            return mixin.jira.post(resource, data=data)
+
+        def _mock_put_api3(resource: str, data: dict) -> dict:
+            if resource.startswith("issue/"):
+                return mixin.jira.update_issue(
+                    issue_key=resource.split("/")[1], update=data
+                )
+            return mixin.jira.put(resource, data=data)
+
+        mixin._post_api3 = Mock(side_effect=_mock_post_api3)
+        mixin._put_api3 = Mock(side_effect=_mock_put_api3)
 
         return mixin
 
@@ -272,14 +289,12 @@ class TestIssuesMixin:
             description="This is a test issue",
         )
 
-        # Verify API calls
-        expected_fields = {
-            "project": {"key": "TEST"},
-            "summary": "Test Issue",
-            "issuetype": {"name": "Bug"},
-            "description": "This is a test issue",
-        }
-        issues_mixin.jira.create_issue.assert_called_once_with(fields=expected_fields)
+        # On Cloud, ADF is routed through _post_api3 which delegates to
+        # jira.create_issue via the fixture mock
+        issues_mixin.jira.create_issue.assert_called_once()
+        sent = issues_mixin.jira.create_issue.call_args[1]["fields"]["description"]
+        assert isinstance(sent, dict)
+        assert sent["version"] == 1
         issues_mixin.jira.get_issue.assert_called_once_with("TEST-123")
 
         # Verify issue
@@ -306,14 +321,15 @@ class TestIssuesMixin:
             components=None,
         )
 
-        # Verify API calls
-        expected_fields = {
-            "project": {"key": "TEST"},
-            "summary": "Test Issue",
-            "issuetype": {"name": "Bug"},
-            "description": "This is a test issue",
-        }
-        issues_mixin.jira.create_issue.assert_called_once_with(fields=expected_fields)
+        # Verify API calls — description is ADF on Cloud
+        issues_mixin.jira.create_issue.assert_called_once_with(
+            fields={
+                "project": {"key": "TEST"},
+                "summary": "Test Issue",
+                "issuetype": {"name": "Bug"},
+                "description": ANY,
+            }
+        )
 
         # Verify 'components' is not in the fields
         assert "components" not in issues_mixin.jira.create_issue.call_args[1]["fields"]
@@ -340,15 +356,16 @@ class TestIssuesMixin:
             components=["UI"],
         )
 
-        # Verify API calls
-        expected_fields = {
-            "project": {"key": "TEST"},
-            "summary": "Test Issue",
-            "issuetype": {"name": "Bug"},
-            "description": "This is a test issue",
-            "components": [{"name": "UI"}],
-        }
-        issues_mixin.jira.create_issue.assert_called_once_with(fields=expected_fields)
+        # Verify API calls — description is ADF on Cloud
+        issues_mixin.jira.create_issue.assert_called_once_with(
+            fields={
+                "project": {"key": "TEST"},
+                "summary": "Test Issue",
+                "issuetype": {"name": "Bug"},
+                "description": ANY,
+                "components": [{"name": "UI"}],
+            }
+        )
 
         # Verify the components field was passed correctly
         assert issues_mixin.jira.create_issue.call_args[1]["fields"]["components"] == [
@@ -377,15 +394,16 @@ class TestIssuesMixin:
             components=["UI", "API"],
         )
 
-        # Verify API calls
-        expected_fields = {
-            "project": {"key": "TEST"},
-            "summary": "Test Issue",
-            "issuetype": {"name": "Bug"},
-            "description": "This is a test issue",
-            "components": [{"name": "UI"}, {"name": "API"}],
-        }
-        issues_mixin.jira.create_issue.assert_called_once_with(fields=expected_fields)
+        # Verify API calls — description is ADF on Cloud
+        issues_mixin.jira.create_issue.assert_called_once_with(
+            fields={
+                "project": {"key": "TEST"},
+                "summary": "Test Issue",
+                "issuetype": {"name": "Bug"},
+                "description": ANY,
+                "components": [{"name": "UI"}, {"name": "API"}],
+            }
+        )
 
         # Verify the components field was passed correctly
         assert issues_mixin.jira.create_issue.call_args[1]["fields"]["components"] == [
@@ -415,15 +433,16 @@ class TestIssuesMixin:
             components=["Valid", "", None, "  Backend  "],
         )
 
-        # Verify API calls
-        expected_fields = {
-            "project": {"key": "TEST"},
-            "summary": "Test Issue",
-            "issuetype": {"name": "Bug"},
-            "description": "This is a test issue",
-            "components": [{"name": "Valid"}, {"name": "Backend"}],
-        }
-        issues_mixin.jira.create_issue.assert_called_once_with(fields=expected_fields)
+        # Verify API calls — description is ADF on Cloud
+        issues_mixin.jira.create_issue.assert_called_once_with(
+            fields={
+                "project": {"key": "TEST"},
+                "summary": "Test Issue",
+                "issuetype": {"name": "Bug"},
+                "description": ANY,
+                "components": [{"name": "Valid"}, {"name": "Backend"}],
+            }
+        )
 
         # Verify the components field was passed correctly, with invalid entries filtered out
         assert issues_mixin.jira.create_issue.call_args[1]["fields"]["components"] == [
@@ -897,7 +916,9 @@ class TestIssuesMixin:
         assert fields["project"]["key"] == "TEST"
         assert fields["summary"] == "Test Issue"
         assert fields["issuetype"]["name"] == "Bug"
-        assert fields["description"] == "This is a test issue"
+        # Description is ADF dict on Cloud
+        assert isinstance(fields["description"], dict)
+        assert fields["description"]["version"] == 1
         assert "fixVersions" in fields
         assert fields["fixVersions"] == [{"name": "1.0.0"}]
 
@@ -1669,6 +1690,56 @@ class TestIssuesMixin:
         assert isinstance(result, JiraIssue)
         assert result.key == "PROD-123"
         assert result.summary == "Production issue"
+
+    def test_create_issue_with_cascading_select(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Test create_issue with a cascading select custom field via kwargs."""
+        create_response = {"id": "12345", "key": "TEST-123"}
+        issues_mixin.jira.create_issue.return_value = create_response
+        issues_mixin.jira.get_issue.return_value = make_issue_data()
+
+        result = issues_mixin.create_issue(
+            project_key="TEST",
+            summary="Test Issue",
+            issue_type="Bug",
+            customfield_10020=("NA", "US"),
+        )
+
+        # Verify the create API was called
+        issues_mixin.jira.create_issue.assert_called_once()
+        fields = issues_mixin.jira.create_issue.call_args[1]["fields"]
+        # Cascading select should be formatted as {value, child}
+        assert fields["customfield_10020"] == {
+            "value": "NA",
+            "child": {"value": "US"},
+        }
+        assert result.key == "TEST-123"
+
+    def test_create_issue_with_multiselect(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Test create_issue with a multi-select custom field via kwargs."""
+        create_response = {"id": "12345", "key": "TEST-123"}
+        issues_mixin.jira.create_issue.return_value = create_response
+        issues_mixin.jira.get_issue.return_value = make_issue_data()
+
+        result = issues_mixin.create_issue(
+            project_key="TEST",
+            summary="Test Issue",
+            issue_type="Bug",
+            customfield_10021=["opt1", "opt2"],
+        )
+
+        # Verify the create API was called
+        issues_mixin.jira.create_issue.assert_called_once()
+        fields = issues_mixin.jira.create_issue.call_args[1]["fields"]
+        # Multi-select strings should be wrapped in {value: ...}
+        assert fields["customfield_10021"] == [
+            {"value": "opt1"},
+            {"value": "opt2"},
+        ]
+        assert result.key == "TEST-123"
 
     def test_get_issue_with_whitespace_in_projects_filter(
         self, issues_mixin: IssuesMixin, make_issue_data

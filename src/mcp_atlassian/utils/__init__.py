@@ -4,7 +4,7 @@ This package provides various utility functions used throughout the codebase.
 """
 
 from .date import parse_date
-from .io import is_read_only_mode
+from .io import is_read_only_mode, validate_safe_path
 
 # Export lifecycle utilities
 from .lifecycle import (
@@ -12,11 +12,12 @@ from .lifecycle import (
     setup_signal_handlers,
 )
 from .logging import setup_logging
+from .media import is_image_attachment
 
 # Export OAuth utilities
 from .oauth import OAuthConfig, configure_oauth_session
 from .ssl import SSLIgnoreAdapter, configure_ssl_verification
-from .urls import is_atlassian_cloud_url
+from .urls import is_atlassian_cloud_url, validate_url_for_ssrf
 
 # Export all utility functions for backward compatibility
 __all__ = [
@@ -24,6 +25,7 @@ __all__ = [
     "configure_ssl_verification",
     "is_atlassian_cloud_url",
     "is_read_only_mode",
+    "validate_safe_path",
     "setup_logging",
     "parse_date",
     "parse_iso8601_date",
@@ -31,4 +33,6 @@ __all__ = [
     "configure_oauth_session",
     "setup_signal_handlers",
     "ensure_clean_exit",
+    "is_image_attachment",
+    "validate_url_for_ssrf",
 ]

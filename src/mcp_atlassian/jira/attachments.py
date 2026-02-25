@@ -7,11 +7,15 @@ from pathlib import Path
 from typing import Any
 
 from ..models.jira import JiraAttachment
+from ..utils.io import validate_safe_path
 from .client import JiraClient
 from .protocols import AttachmentsOperationsProto
 
 # Configure logging
 logger = logging.getLogger("mcp-jira")
+
+# Maximum attachment size for in-memory download (50 MB)
+_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024
 
 
 class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
@@ -36,6 +40,9 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             # Convert to absolute path if relative
             if not os.path.isabs(target_path):
                 target_path = os.path.abspath(target_path)
+
+            # Guard against path traversal (resolves symlinks)
+            validate_safe_path(target_path)
 
             logger.info(f"Downloading attachment from {url} to {target_path}")
 
@@ -99,6 +106,34 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             logger.error(f"Error fetching attachment: {str(e)}")
             return None
 
+    def get_issue_attachments(self, issue_key: str) -> list[JiraAttachment]:
+        """Return attachment metadata for a Jira issue without downloading.
+
+        Args:
+            issue_key: The Jira issue key (e.g., 'PROJ-123').
+
+        Returns:
+            A list of JiraAttachment instances.
+        """
+        logger.info(f"Fetching attachment metadata for {issue_key}")
+        issue_data = self.jira.issue(issue_key, fields="attachment")
+
+        if not isinstance(issue_data, dict):
+            msg = f"Unexpected return value type from `jira.issue`: {type(issue_data)}"
+            logger.error(msg)
+            raise TypeError(msg)
+
+        if "fields" not in issue_data:
+            logger.error(f"Could not retrieve issue {issue_key}")
+            return []
+
+        attachment_data = issue_data.get("fields", {}).get("attachment", [])
+        return [
+            JiraAttachment.from_api_response(item)
+            for item in attachment_data
+            if isinstance(item, dict)
+        ]
+
     def get_issue_attachment_contents(self, issue_key: str) -> dict[str, Any]:
         """
         Fetch all attachment contents for a Jira issue into memory.
@@ -151,6 +186,14 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             if isinstance(item, dict):
                 attachments.append(JiraAttachment.from_api_response(item))
 
+        if not attachments:
+            return {
+                "success": True,
+                "message": f"No attachments found for issue {issue_key}",
+                "attachments": [],
+                "failed": [],
+            }
+
         fetched: list[dict[str, Any]] = []
         failed: list[dict[str, Any]] = []
 
@@ -159,6 +202,24 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
                 logger.warning(f"No URL for attachment {attachment.filename}")
                 failed.append(
                     {"filename": attachment.filename, "error": "No URL available"}
+                )
+                continue
+
+            if attachment.size > _ATTACHMENT_MAX_BYTES:
+                logger.warning(
+                    f"Skipping attachment {attachment.filename}: "
+                    f"{attachment.size} bytes exceeds 50 MB limit"
+                )
+                failed.append(
+                    {
+                        "filename": attachment.filename,
+                        "error": (
+                            f"Attachment '{attachment.filename}' is "
+                            f"{attachment.size} bytes which exceeds "
+                            "the 50 MB inline limit. Retrieve it "
+                            "directly from Jira."
+                        ),
+                    }
                 )
                 continue
 
@@ -206,6 +267,9 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
         # Convert to absolute path if relative
         if not os.path.isabs(target_dir):
             target_dir = os.path.abspath(target_dir)
+
+        # Guard against path traversal (resolves symlinks)
+        validate_safe_path(target_dir)
 
         logger.info(
             f"Downloading attachments for {issue_key} to directory: {target_dir}"
