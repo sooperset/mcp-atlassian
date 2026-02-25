@@ -16,6 +16,7 @@ from mcp_atlassian.servers.dependencies import get_confluence_fetcher
 from mcp_atlassian.utils.decorators import (
     check_write_access,
 )
+from mcp_atlassian.utils.media import is_image_attachment
 
 logger = logging.getLogger(__name__)
 
@@ -1629,51 +1630,6 @@ async def delete_attachment(
     )
 
 
-_IMAGE_MIME_TYPES = frozenset(
-    {
-        "image/png",
-        "image/jpeg",
-        "image/gif",
-        "image/webp",
-        "image/svg+xml",
-        "image/bmp",
-    }
-)
-
-_AMBIGUOUS_MIME_TYPES = frozenset({"application/octet-stream", "application/binary"})
-
-_IMAGE_EXTENSIONS = frozenset(
-    {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp"}
-)
-
-
-def _is_image_attachment(
-    media_type: str | None, filename: str | None
-) -> tuple[bool, str]:
-    """Detect whether an attachment is an image.
-
-    Uses two-tier detection: explicit MIME type check, then filename
-    extension fallback for ambiguous MIME types.
-
-    Args:
-        media_type: The MIME type reported by the API.
-        filename: The attachment filename.
-
-    Returns:
-        Tuple of (is_image, resolved_mime_type).
-    """
-    if media_type and media_type in _IMAGE_MIME_TYPES:
-        return True, media_type
-
-    if media_type and media_type in _AMBIGUOUS_MIME_TYPES and filename:
-        ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-        if ext in _IMAGE_EXTENSIONS:
-            guessed = mimetypes.guess_type(filename)[0] or "image/png"
-            return True, guessed
-
-    return False, media_type or "application/octet-stream"
-
-
 @confluence_mcp.tool(
     tags={"confluence", "read", "attachments"},
     annotations={"title": "Get Page Images", "readOnlyHint": True},
@@ -1733,7 +1689,7 @@ async def get_page_images(
             "metadata", {}
         ).get("mediaType")
         filename = att_dict.get("title")
-        is_img, resolved_mime = _is_image_attachment(media_type, filename)
+        is_img, resolved_mime = is_image_attachment(media_type, filename)
         if is_img:
             image_attachments.append((att_dict, resolved_mime))
 
