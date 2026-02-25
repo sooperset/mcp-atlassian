@@ -414,10 +414,10 @@ def process():
         )
 
         # Verify all user mentions are processed
-        assert "@Test Useruser123" in processed_markdown
-        assert "@Test Useruser456" in processed_markdown
-        assert "@Test Useruser789" in processed_markdown
-        assert "@Test Useradmin" in processed_markdown
+        assert "@Test User user123" in processed_markdown
+        assert "@Test User user456" in processed_markdown
+        assert "@Test User user789" in processed_markdown
+        assert "@Test User admin" in processed_markdown
 
     def test_confluence_markdown_roundtrip(self, confluence_preprocessor):
         """Test Markdown to Confluence storage format and processing."""
@@ -620,7 +620,7 @@ def function_{i}():
         assert (
             "function" in processed_markdown
         )  # Function names might have escaped underscores
-        assert "@Test Useruser10" in processed_markdown
+        assert "@Test User user10" in processed_markdown
 
     def test_confluence_nested_structures(self, confluence_preprocessor):
         """Test handling of deeply nested structures."""
