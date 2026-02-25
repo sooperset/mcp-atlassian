@@ -179,25 +179,6 @@ def mock_config(confluence_config_factory):
 
 
 @pytest.fixture
-def mock_env_vars():
-    """
-    Mock environment variables for testing.
-
-    Note: This fixture is maintained for backward compatibility.
-    Consider using the environment fixtures from root conftest.py.
-    """
-    with patch.dict(
-        "os.environ",
-        {
-            "CONFLUENCE_URL": "https://example.atlassian.net/wiki",
-            "CONFLUENCE_USERNAME": "test_user",
-            "CONFLUENCE_API_TOKEN": "test_token",
-        },
-    ):
-        yield
-
-
-@pytest.fixture
 def confluence_auth_environment():
     """
     Fixture providing Confluence-specific authentication environment.

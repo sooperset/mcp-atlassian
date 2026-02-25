@@ -289,26 +289,6 @@ def mock_config(jira_config_factory):
 
 
 @pytest.fixture
-def mock_env_vars():
-    """
-    Mock environment variables for testing.
-
-    Note: This fixture is maintained for backward compatibility.
-    Consider using the environment fixtures from root conftest.py.
-    """
-    with patch.dict(
-        os.environ,
-        {
-            "JIRA_URL": "https://test.atlassian.net",
-            "JIRA_USERNAME": "test_username",
-            "JIRA_API_TOKEN": "test_token",
-        },
-        clear=True,  # Clear existing environment variables
-    ):
-        yield
-
-
-@pytest.fixture
 def jira_auth_environment():
     """
     Fixture providing Jira-specific authentication environment.
