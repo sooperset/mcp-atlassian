@@ -4,7 +4,6 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastmcp import settings as fastmcp_settings
 
 from mcp_atlassian import _run_stdio_with_stdin_guard, main
 
@@ -69,20 +68,29 @@ class TestMainTransportSelection:
 
     @pytest.mark.parametrize("stateless", ["False", "True"])
     def test_stateless_set(self, mock_asyncio_run, stateless):
-        """Verify that the server is started in stateless mode when the environment variable is set."""
-        with patch.dict("os.environ", {"STATELESS": stateless}):
-            with patch.dict("os.environ", {"TRANSPORT": "streamable-http"}):
+        """Verify that stateless_http is passed to run_async via run_kwargs."""
+        from mcp_atlassian.servers import main_mcp
+
+        with patch.object(
+            main_mcp, "run_async", new_callable=AsyncMock
+        ) as mock_run_async:
+            with patch.dict(
+                "os.environ",
+                {"STATELESS": stateless, "TRANSPORT": "streamable-http"},
+            ):
                 with patch("sys.argv", ["mcp-atlassian"]):
                     try:
                         main()
                     except SystemExit:
                         pass
 
-                    # Verify asyncio.run was called
-                    assert mock_asyncio_run.called
+                    # Verify run_async was called
+                    assert mock_run_async.called
 
+                    # Verify stateless_http was passed correctly
+                    call_kwargs = mock_run_async.call_args[1]
                     desired = stateless.lower() == "true"
-                    assert fastmcp_settings.stateless_http == desired
+                    assert call_kwargs["stateless_http"] == desired
 
     @pytest.mark.parametrize("transport", ["stdio", "sse"])
     def test_stateless_rejects_non_streamable_http(self, mock_asyncio_run, transport):
