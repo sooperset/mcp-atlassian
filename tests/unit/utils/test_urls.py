@@ -222,6 +222,52 @@ class TestValidateUrlForSsrf:
         assert result is not None
         assert "Blocked hostname" in result
 
+    def test_allowlist_subdomain_private_ip(self) -> None:
+        """Allowlisted subdomain resolving to private IP is accepted."""
+        with patch.dict(
+            os.environ,
+            {"MCP_ALLOWED_URL_DOMAINS": "corp.example.com"},
+        ):
+            assert validate_url_for_ssrf("https://jira.corp.example.com") is None
+
+    def test_allowlist_exact_private_ip(self) -> None:
+        """Allowlisted exact domain resolving to private IP is accepted."""
+        with patch.dict(
+            os.environ,
+            {"MCP_ALLOWED_URL_DOMAINS": "internal.company.com"},
+        ):
+            assert validate_url_for_ssrf("https://internal.company.com") is None
+
+    def test_allowlist_rejects_non_matching_private_ip(self) -> None:
+        """Non-allowlisted domain resolving to private IP is still rejected."""
+        with patch.dict(
+            os.environ,
+            {"MCP_ALLOWED_URL_DOMAINS": "corp.example.com"},
+        ):
+            result = validate_url_for_ssrf("https://evil.com")
+            assert result is not None
+            assert "not in allowed" in result.lower()
+
+    def test_no_allowlist_private_ip_rejected(self) -> None:
+        """Without allowlist, hostname resolving to private IP is rejected."""
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("MCP_ALLOWED_URL_DOMAINS", None)
+            with patch("mcp_atlassian.utils.urls.socket.getaddrinfo") as mock_dns:
+                mock_dns.return_value = [(2, 1, 6, "", ("10.0.0.1", 0))]
+                result = validate_url_for_ssrf("https://some.host")
+                assert result is not None
+                assert "non-global" in result.lower()
+
+    def test_allowlist_bypasses_dns_failure(self) -> None:
+        """Allowlisted domain is accepted even when DNS resolution fails."""
+        with patch.dict(
+            os.environ,
+            {"MCP_ALLOWED_URL_DOMAINS": "corp.example.com"},
+        ):
+            with patch("mcp_atlassian.utils.urls.socket.getaddrinfo") as mock_dns:
+                mock_dns.side_effect = socket.gaierror("Name resolution failed")
+                assert validate_url_for_ssrf("https://jira.corp.example.com") is None
+
     def test_ipv4_mapped_ipv6(self) -> None:
         """IPv4-mapped IPv6 loopback is rejected."""
         result = validate_url_for_ssrf("http://[::ffff:127.0.0.1]")

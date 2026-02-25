@@ -88,6 +88,7 @@ def validate_url_for_ssrf(url: str) -> str | None:
     if allowlist is not None:
         if not _hostname_matches_allowlist(hostname, allowlist):
             return f"Hostname {hostname} not in allowed domains"
+        return None  # explicitly allowlisted — skip DNS check
 
     # DNS resolution check - resolve hostname and check all IPs
     dns_error = _check_dns_resolution(hostname)
