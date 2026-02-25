@@ -10,7 +10,7 @@ import base64
 import logging
 import uuid
 from collections.abc import Generator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
@@ -99,8 +99,6 @@ class DCInstanceInfo:
     jira_pat: str = ""
     confluence_pat: str = ""
     admin_email: str = ""
-    _cleanup_issue_keys: list[str] = field(default_factory=list)
-    _cleanup_page_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -288,7 +286,6 @@ def _create_image_test_issue(info: DCInstanceInfo) -> str:
     )
     resp.raise_for_status()
     issue_key = resp.json()["key"]
-    info._cleanup_issue_keys.append(issue_key)
 
     # Upload image attachment
     requests.post(
@@ -340,7 +337,6 @@ def _create_image_test_page(info: DCInstanceInfo) -> str:
     )
     resp.raise_for_status()
     page_id = resp.json()["id"]
-    info._cleanup_page_ids.append(page_id)
 
     # Upload image attachment
     requests.post(
