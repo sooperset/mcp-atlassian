@@ -10,8 +10,10 @@ conftest files lazily after argument parsing.
 
 from __future__ import annotations
 
+import base64
 import logging
 import os
+import uuid
 from collections.abc import Generator
 from dataclasses import dataclass
 from typing import Any
@@ -222,6 +224,107 @@ def _find_or_create_test_page(info: CloudInstanceInfo) -> Any:
     return resp.json()["id"]
 
 
+# 1x1 red PNG (67 bytes) — minimal valid image for attachment tests
+TINY_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4"
+    "2mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+)
+
+
+def _create_image_test_issue(info: CloudInstanceInfo) -> str:
+    """Create a Jira Cloud issue and upload a tiny PNG attachment."""
+    uid = uuid.uuid4().hex[:8]
+    resp = requests.post(
+        f"{info.jira_url}/rest/api/2/issue",
+        json={
+            "fields": {
+                "project": {"key": info.project_key},
+                "summary": f"Cloud E2E Image Test {uid}",
+                "issuetype": {"name": "Task"},
+                "description": "Auto-created for image E2E tests.",
+            }
+        },
+        auth=(info.username, info.api_token),
+        timeout=30,
+    )
+    resp.raise_for_status()
+    issue_key = resp.json()["key"]
+
+    # Upload image attachment
+    requests.post(
+        f"{info.jira_url}/rest/api/2/issue/{issue_key}/attachments",
+        headers={"X-Atlassian-Token": "no-check"},
+        files={"file": ("test.png", TINY_PNG, "image/png")},
+        auth=(info.username, info.api_token),
+        timeout=30,
+    ).raise_for_status()
+
+    return issue_key
+
+
+def _delete_issue(info: CloudInstanceInfo, issue_key: str) -> None:
+    """Delete a Jira Cloud issue (best-effort)."""
+    try:
+        requests.delete(
+            f"{info.jira_url}/rest/api/2/issue/{issue_key}",
+            auth=(info.username, info.api_token),
+            timeout=15,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("Failed to delete issue %s", issue_key)
+
+
+def _create_image_test_page(info: CloudInstanceInfo) -> str:
+    """Create a Confluence Cloud page with ac:image macro and PNG."""
+    uid = uuid.uuid4().hex[:8]
+    storage_body = (
+        "<p>Text before image</p>"
+        '<ac:image><ri:attachment ri:filename="test.png"/></ac:image>'
+        "<p>Text after image</p>"
+    )
+    resp = requests.post(
+        f"{info.confluence_url}/rest/api/content",
+        json={
+            "type": "page",
+            "title": f"Cloud E2E Image Test {uid}",
+            "space": {"key": info.space_key},
+            "body": {
+                "storage": {
+                    "value": storage_body,
+                    "representation": "storage",
+                }
+            },
+        },
+        auth=(info.username, info.api_token),
+        timeout=30,
+    )
+    resp.raise_for_status()
+    page_id = resp.json()["id"]
+
+    # Upload image attachment
+    requests.post(
+        f"{info.confluence_url}/rest/api/content/{page_id}/child/attachment",
+        headers={"X-Atlassian-Token": "no-check"},
+        files={"file": ("test.png", TINY_PNG, "image/png")},
+        auth=(info.username, info.api_token),
+        timeout=30,
+    ).raise_for_status()
+
+    return page_id
+
+
+def _delete_page(info: CloudInstanceInfo, page_id: str) -> None:
+    """Delete a Confluence Cloud page (best-effort)."""
+    try:
+        requests.delete(
+            f"{info.confluence_url}/rest/api/content/{page_id}",
+            auth=(info.username, info.api_token),
+            timeout=15,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("Failed to delete page %s", page_id)
+
+
 # --- Config Factory Functions ---
 
 
@@ -361,3 +464,29 @@ def resource_tracker(
         jira_client=jira_fetcher,
         confluence_client=confluence_fetcher,
     )
+
+
+@pytest.fixture(scope="module")
+def cloud_image_issue(
+    cloud_instance: CloudInstanceInfo,
+) -> Generator[str, None, None]:
+    """Module-scoped Jira Cloud issue with an image attachment."""
+    try:
+        key = _create_image_test_issue(cloud_instance)
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"Failed to create image test issue: {exc}")
+    yield key
+    _delete_issue(cloud_instance, key)
+
+
+@pytest.fixture(scope="module")
+def cloud_image_page(
+    cloud_instance: CloudInstanceInfo,
+) -> Generator[str, None, None]:
+    """Module-scoped Confluence Cloud page with an image attachment."""
+    try:
+        page_id = _create_image_test_page(cloud_instance)
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"Failed to create image test page: {exc}")
+    yield page_id
+    _delete_page(cloud_instance, page_id)
