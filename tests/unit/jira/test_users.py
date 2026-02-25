@@ -364,6 +364,58 @@ class TestUsersMixin:
         # Verify result
         assert account_id is None
 
+    def test_resolve_server_dc_user_params_returns_username(self, users_mixin):
+        """Test _resolve_server_dc_user_params returns username dict when name is available."""
+        users_mixin.jira.user_find_by_user_string.return_value = [
+            {
+                "name": "jnovak",
+                "displayName": "Jan Novák",
+                "emailAddress": "jnovak@firma.cz",
+            }
+        ]
+        result = users_mixin._resolve_server_dc_user_params("jnovak@firma.cz")
+        assert result == {"username": "jnovak"}
+        users_mixin.jira.user_find_by_user_string.assert_called_once_with(
+            username="jnovak@firma.cz", start=0, limit=1
+        )
+
+    def test_resolve_server_dc_user_params_returns_key(self, users_mixin):
+        """Test _resolve_server_dc_user_params returns key dict when only key is available."""
+        users_mixin.jira.user_find_by_user_string.return_value = [
+            {
+                "key": "JIRAUSER-12345",
+                "displayName": "Jan Novák",
+                "emailAddress": "jnovak@firma.cz",
+            }
+        ]
+        result = users_mixin._resolve_server_dc_user_params("jnovak@firma.cz")
+        assert result == {"key": "JIRAUSER-12345"}
+
+    def test_resolve_server_dc_user_params_no_match(self, users_mixin):
+        """Test _resolve_server_dc_user_params returns None when no user matches."""
+        users_mixin.jira.user_find_by_user_string.return_value = []
+        result = users_mixin._resolve_server_dc_user_params("nobody@firma.cz")
+        assert result is None
+
+    def test_resolve_server_dc_user_params_skips_empty_name(self, users_mixin):
+        """Test _resolve_server_dc_user_params skips empty name and falls back to key."""
+        users_mixin.jira.user_find_by_user_string.return_value = [
+            {
+                "name": "",
+                "key": "JIRAUSER-99999",
+                "displayName": "Jan Novák",
+                "emailAddress": "jnovak@firma.cz",
+            }
+        ]
+        result = users_mixin._resolve_server_dc_user_params("jnovak@firma.cz")
+        assert result == {"key": "JIRAUSER-99999"}
+
+    def test_resolve_server_dc_user_params_error(self, users_mixin):
+        """Test _resolve_server_dc_user_params returns None on API error."""
+        users_mixin.jira.user_find_by_user_string.side_effect = Exception("API error")
+        result = users_mixin._resolve_server_dc_user_params("jnovak@firma.cz")
+        assert result is None
+
     def test_lookup_user_by_permissions(self, users_mixin):
         """Test _lookup_user_by_permissions when user is found."""
         # Mock requests.get
@@ -510,12 +562,16 @@ class TestUsersMixin:
         """Test Server/DC email is resolved via search, not passed directly as username."""
         users_mixin.config = MagicMock(spec=JiraConfig)
         users_mixin.config.is_cloud = False
-        users_mixin._lookup_user_directly = MagicMock(return_value="jnovak")
+        users_mixin._resolve_server_dc_user_params = MagicMock(
+            return_value={"username": "jnovak"}
+        )
 
         params = users_mixin._determine_user_api_params("jnovak@firma.cz")
 
         assert params == {"username": "jnovak"}
-        users_mixin._lookup_user_directly.assert_called_once_with("jnovak@firma.cz")
+        users_mixin._resolve_server_dc_user_params.assert_called_once_with(
+            "jnovak@firma.cz"
+        )
 
     def test_determine_user_api_params_server_dc_email_resolved_to_key(
         self, users_mixin
@@ -523,7 +579,9 @@ class TestUsersMixin:
         """Test Server/DC email resolving to a key-style identifier."""
         users_mixin.config = MagicMock(spec=JiraConfig)
         users_mixin.config.is_cloud = False
-        users_mixin._lookup_user_directly = MagicMock(return_value="JIRAUSER-12345")
+        users_mixin._resolve_server_dc_user_params = MagicMock(
+            return_value={"key": "JIRAUSER-12345"}
+        )
 
         params = users_mixin._determine_user_api_params("jnovak@firma.cz")
 
@@ -535,18 +593,37 @@ class TestUsersMixin:
         """Test Server/DC email falls back to direct username when lookup returns None."""
         users_mixin.config = MagicMock(spec=JiraConfig)
         users_mixin.config.is_cloud = False
-        users_mixin._lookup_user_directly = MagicMock(return_value=None)
+        users_mixin._resolve_server_dc_user_params = MagicMock(return_value=None)
 
         params = users_mixin._determine_user_api_params("login@example.com")
 
         # Fallback: email used as username directly (e.g., when login IS the email)
         assert params == {"username": "login@example.com"}
 
+    def test_determine_user_api_params_server_dc_non_email_uses_username(
+        self, users_mixin
+    ):
+        """Test Server/DC non-email identifiers always use username= param."""
+        users_mixin.config = MagicMock(spec=JiraConfig)
+        users_mixin.config.is_cloud = False
+
+        # Even key-like identifiers should use username= (safe default for Server/DC)
+        params = users_mixin._determine_user_api_params("JIRAUSER-12345")
+        assert params == {"username": "JIRAUSER-12345"}
+
+        params = users_mixin._determine_user_api_params("j-smith2")
+        assert params == {"username": "j-smith2"}
+
+        params = users_mixin._determine_user_api_params("jnovak")
+        assert params == {"username": "jnovak"}
+
     def test_get_user_profile_by_identifier_server_dc_email(self, users_mixin):
         """Regression: Server/DC email lookup must search first, not pass email as username."""
         users_mixin.config = MagicMock(spec=JiraConfig)
         users_mixin.config.is_cloud = False
-        users_mixin._lookup_user_directly = MagicMock(return_value="jnovak")
+        users_mixin._resolve_server_dc_user_params = MagicMock(
+            return_value={"username": "jnovak"}
+        )
 
         with patch(
             "src.mcp_atlassian.jira.users.JiraUser.from_api_response"
@@ -564,8 +641,10 @@ class TestUsersMixin:
             user = users_mixin.get_user_profile_by_identifier("jnovak@firma.cz")
 
             assert user == mock_user_instance
-            # Must resolve email to username first
-            users_mixin._lookup_user_directly.assert_called_once_with("jnovak@firma.cz")
+            # Must resolve email via _resolve_server_dc_user_params
+            users_mixin._resolve_server_dc_user_params.assert_called_once_with(
+                "jnovak@firma.cz"
+            )
             # Must call user() with resolved username, NOT the raw email
             users_mixin.jira.user.assert_called_once_with(username="jnovak")
 
