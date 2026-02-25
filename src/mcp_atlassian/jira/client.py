@@ -274,6 +274,21 @@ class JiraClient:
             logger.warning(f"Error converting markdown to Jira format: {str(e)}")
             return markdown_text
 
+    def _post_api3(self, resource: str, data: dict[str, Any]) -> Any:
+        """POST to Jira REST API v3 (required for ADF payloads on Cloud).
+
+        The atlassian-python-api library defaults to /rest/api/2/ which
+        expects description/body as plain strings. ADF dicts require v3.
+        Callers are responsible for choosing v2 vs v3 based on payload type.
+        """
+        url = self.jira.resource_url(resource, api_version="3")
+        return self.jira.post(url, data=data)
+
+    def _put_api3(self, resource: str, data: dict[str, Any]) -> Any:
+        """PUT to Jira REST API v3 (required for ADF payloads on Cloud)."""
+        url = self.jira.resource_url(resource, api_version="3")
+        return self.jira.put(url, data=data)
+
     def get_paged(
         self,
         method: Literal["get", "post"],

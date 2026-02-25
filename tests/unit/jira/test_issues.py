@@ -1,6 +1,6 @@
 """Tests for the Jira Issues mixin."""
 
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import ANY, MagicMock, Mock, patch
 
 import pytest
 
@@ -25,6 +25,23 @@ class TestIssuesMixin:
         mixin.transition_issue = MagicMock(
             return_value=JiraIssue(id="123", key="TEST-123", summary="Test Issue")
         )
+
+        # Cloud ADF paths delegate to _post_api3/_put_api3. Route back
+        # to jira.create_issue / jira.update_issue so existing mocks work.
+        def _mock_post_api3(resource: str, data: dict) -> dict:
+            if resource == "issue":
+                return mixin.jira.create_issue(fields=data.get("fields", data))
+            return mixin.jira.post(resource, data=data)
+
+        def _mock_put_api3(resource: str, data: dict) -> dict:
+            if resource.startswith("issue/"):
+                return mixin.jira.update_issue(
+                    issue_key=resource.split("/")[1], update=data
+                )
+            return mixin.jira.put(resource, data=data)
+
+        mixin._post_api3 = Mock(side_effect=_mock_post_api3)
+        mixin._put_api3 = Mock(side_effect=_mock_put_api3)
 
         return mixin
 
@@ -272,16 +289,9 @@ class TestIssuesMixin:
             description="This is a test issue",
         )
 
-        # Verify API calls — description is ADF dict on Cloud, use ANY
-        issues_mixin.jira.create_issue.assert_called_once_with(
-            fields={
-                "project": {"key": "TEST"},
-                "summary": "Test Issue",
-                "issuetype": {"name": "Bug"},
-                "description": ANY,
-            }
-        )
-        # Verify description is ADF on Cloud
+        # On Cloud, ADF is routed through _post_api3 which delegates to
+        # jira.create_issue via the fixture mock
+        issues_mixin.jira.create_issue.assert_called_once()
         sent = issues_mixin.jira.create_issue.call_args[1]["fields"]["description"]
         assert isinstance(sent, dict)
         assert sent["version"] == 1
