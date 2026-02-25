@@ -279,7 +279,7 @@ class JiraClient:
 
         The atlassian-python-api library defaults to /rest/api/2/ which
         expects description/body as plain strings. ADF dicts require v3.
-        Falls back to v2 on Server/DC where ADF is not used.
+        Callers are responsible for choosing v2 vs v3 based on payload type.
         """
         url = self.jira.resource_url(resource, api_version="3")
         return self.jira.post(url, data=data)
