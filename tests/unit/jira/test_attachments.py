@@ -1282,3 +1282,37 @@ class TestAttachmentsMixin:
                 "TEST-123",
                 malicious_dir,
             )
+
+    def test_get_issue_attachments_metadata(self, attachments_mixin: AttachmentsMixin):
+        """get_issue_attachments returns JiraAttachment list without downloading."""
+        attachments_mixin.jira.issue.return_value = {
+            "fields": {
+                "attachment": [
+                    {
+                        "id": "101",
+                        "filename": "photo.png",
+                        "size": 1024,
+                        "mimeType": "image/png",
+                        "content": "https://jira.example.com/att/101",
+                    },
+                    {
+                        "id": "102",
+                        "filename": "report.pdf",
+                        "size": 2048,
+                        "mimeType": "application/pdf",
+                        "content": "https://jira.example.com/att/102",
+                    },
+                ]
+            }
+        }
+
+        from mcp_atlassian.models.jira import JiraAttachment
+
+        result = attachments_mixin.get_issue_attachments("TEST-123")
+        assert len(result) == 2
+        assert all(isinstance(a, JiraAttachment) for a in result)
+        assert result[0].filename == "photo.png"
+        assert result[0].content_type == "image/png"
+        assert result[1].filename == "report.pdf"
+        # No download calls should have been made
+        attachments_mixin.jira._session.get.assert_not_called()
