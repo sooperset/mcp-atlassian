@@ -92,32 +92,55 @@ async def search(
         JSON string representing a list of simplified Confluence page objects.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
-    # Check if the query is a simple search term or already a CQL query
-    if query and not any(
-        x in query for x in ["=", "~", ">", "<", " AND ", " OR ", "currentUser()"]
-    ):
-        original_query = query
-        try:
-            query = f'siteSearch ~ "{original_query}"'
-            logger.info(
-                f"Converting simple search term to CQL using siteSearch: {query}"
-            )
+    try:
+        # Check if the query is a simple search term or already a CQL query
+        if query and not any(
+            x in query for x in ["=", "~", ">", "<", " AND ", " OR ", "currentUser()"]
+        ):
+            original_query = query
+            try:
+                query = f'siteSearch ~ "{original_query}"'
+                logger.info(
+                    f"Converting simple search term to CQL using siteSearch: {query}"
+                )
+                pages = confluence_fetcher.search(
+                    query, limit=limit, spaces_filter=spaces_filter
+                )
+            except Exception as e:
+                logger.warning(
+                    f"siteSearch failed ('{e}'), falling back to text search."
+                )
+                query = f'text ~ "{original_query}"'
+                logger.info(f"Falling back to text search with CQL: {query}")
+                pages = confluence_fetcher.search(
+                    query, limit=limit, spaces_filter=spaces_filter
+                )
+        else:
             pages = confluence_fetcher.search(
                 query, limit=limit, spaces_filter=spaces_filter
             )
-        except Exception as e:
-            logger.warning(f"siteSearch failed ('{e}'), falling back to text search.")
-            query = f'text ~ "{original_query}"'
-            logger.info(f"Falling back to text search with CQL: {query}")
-            pages = confluence_fetcher.search(
-                query, limit=limit, spaces_filter=spaces_filter
-            )
-    else:
-        pages = confluence_fetcher.search(
-            query, limit=limit, spaces_filter=spaces_filter
+        search_results = [page.to_simplified_dict() for page in pages]
+        return json.dumps(search_results, indent=2, ensure_ascii=False)
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error during search: {e}", exc_info=False)
+        return json.dumps(
+            {
+                "error": "Authentication failed. Please check your credentials.",
+                "details": str(e),
+            },
+            indent=2,
+            ensure_ascii=False,
         )
-    search_results = [page.to_simplified_dict() for page in pages]
-    return json.dumps(search_results, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Error searching Confluence: {str(e)}")
+        return json.dumps(
+            {
+                "error": f"An error occurred while searching Confluence: {str(e)}",
+                "query": query,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
 
 
 @confluence_mcp.tool(

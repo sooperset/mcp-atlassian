@@ -357,6 +357,76 @@ async def test_search(client, mock_confluence_fetcher):
 
 
 @pytest.mark.anyio
+async def test_search_cql_http_error_returns_json(client, mock_confluence_fetcher):
+    """Test HTTP errors during CQL search return JSON error."""
+    from requests.exceptions import HTTPError
+    from requests.models import Response
+
+    mock_response = MagicMock(spec=Response)
+    mock_response.status_code = 500
+    mock_response.text = "Internal Server Error"
+    http_error = HTTPError(
+        "Please contact your admin passing attached Log's referral number: abc-123",
+        response=mock_response,
+    )
+    mock_confluence_fetcher.search.side_effect = http_error
+
+    # CQL query (contains operators so it goes to the direct CQL path)
+    response = await client.call_tool(
+        "confluence_search",
+        {"query": 'type=page AND lastModified > startOfMonth("-3M")'},
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert isinstance(result_data, dict)
+    assert "error" in result_data
+    assert "query" in result_data
+
+
+@pytest.mark.anyio
+async def test_search_cql_auth_error_returns_json(client, mock_confluence_fetcher):
+    """Test auth errors during CQL search return JSON error."""
+    from src.mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
+
+    mock_confluence_fetcher.search.side_effect = MCPAtlassianAuthenticationError(
+        "Authentication failed for Confluence API (401). "
+        "Token may be expired or invalid."
+    )
+
+    response = await client.call_tool(
+        "confluence_search",
+        {"query": 'type=page AND space=DEV'},
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert isinstance(result_data, dict)
+    assert "error" in result_data
+    assert "authentication" in result_data["error"].lower()
+
+
+@pytest.mark.anyio
+async def test_search_simple_query_fallback_http_error(client, mock_confluence_fetcher):
+    """Test HTTP errors during simple query fallback return JSON error."""
+    from requests.exceptions import HTTPError
+    from requests.models import Response
+
+    mock_response = MagicMock(spec=Response)
+    mock_response.status_code = 500
+    http_error = HTTPError("Server error", response=mock_response)
+    # Both siteSearch and text fallback fail
+    mock_confluence_fetcher.search.side_effect = http_error
+
+    response = await client.call_tool(
+        "confluence_search",
+        {"query": "simple search terms"},
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert isinstance(result_data, dict)
+    assert "error" in result_data
+
+
+@pytest.mark.anyio
 async def test_get_page(client, mock_confluence_fetcher):
     """Test the get_page tool with default parameters."""
     response = await client.call_tool("confluence_get_page", {"page_id": "123456"})
