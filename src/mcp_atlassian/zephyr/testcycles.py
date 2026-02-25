@@ -85,7 +85,7 @@ class TestCyclesMixin(ZephyrClient):
         if planned_end_date:
             payload["plannedEndDate"] = planned_end_date
         if status:
-            payload["status"] = status
+            payload["statusName"] = status
         if folder_id:
             payload["folderId"] = folder_id
         if custom_fields:
@@ -106,37 +106,43 @@ class TestCyclesMixin(ZephyrClient):
     ) -> dict[str, Any]:
         """Update an existing test cycle.
 
+        The Zephyr Scale v2 API clears any unspecified fields on PUT,
+        so we GET the current test cycle first and merge changes into
+        the full object before sending.
+
         Args:
             test_cycle_key: Test cycle key
             name: Test cycle name
             description: Test cycle description
             planned_start_date: Start date (ISO 8601 format)
             planned_end_date: End date (ISO 8601 format)
-            status: Status
+            status: Status name (will be resolved to object format)
             folder_id: Folder ID
             custom_fields: Custom field values
 
         Returns:
             Updated test cycle data
         """
-        payload: dict[str, Any] = {}
+        current = self.get_test_cycle(test_cycle_key)
+        if not isinstance(current, dict):
+            current = {}
 
-        if name:
-            payload["name"] = name
-        if description:
-            payload["description"] = description
-        if planned_start_date:
-            payload["plannedStartDate"] = planned_start_date
-        if planned_end_date:
-            payload["plannedEndDate"] = planned_end_date
-        if status:
-            payload["status"] = status
-        if folder_id:
-            payload["folderId"] = folder_id
-        if custom_fields:
-            payload["customFields"] = custom_fields
+        if name is not None:
+            current["name"] = name
+        if description is not None:
+            current["description"] = description
+        if planned_start_date is not None:
+            current["plannedStartDate"] = planned_start_date
+        if planned_end_date is not None:
+            current["plannedEndDate"] = planned_end_date
+        if status is not None:
+            current["status"] = {"name": status}
+        if folder_id is not None:
+            current["folderId"] = folder_id
+        if custom_fields is not None:
+            current["customFields"] = custom_fields
 
-        return self.put(f"testcycles/{test_cycle_key}", json=payload)
+        return self.put(f"testcycles/{test_cycle_key}", json=current)
 
     def delete_test_cycle(self, test_cycle_key: str) -> dict[str, Any]:
         """Delete a test cycle.

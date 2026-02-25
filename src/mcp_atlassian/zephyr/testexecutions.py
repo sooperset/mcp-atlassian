@@ -55,7 +55,7 @@ class TestExecutionsMixin(ZephyrClient):
         self,
         project_key: str,
         test_case_key: str,
-        test_cycle_key: str | None = None,
+        test_cycle_key: str,
         status: str | None = None,
         environment: str | None = None,
         assigned_to: str | None = None,
@@ -69,7 +69,7 @@ class TestExecutionsMixin(ZephyrClient):
         Args:
             project_key: Project key
             test_case_key: Test case key
-            test_cycle_key: Optional test cycle key
+            test_cycle_key: Test cycle key (required by the v2 API)
             status: Execution status (e.g., 'Pass', 'Fail', 'Blocked', 'Not Executed')
             environment: Test environment
             assigned_to: Account ID of user assigned to execute
@@ -84,10 +84,8 @@ class TestExecutionsMixin(ZephyrClient):
         payload: dict[str, Any] = {
             "projectKey": project_key,
             "testCaseKey": test_case_key,
+            "testCycleKey": test_cycle_key,
         }
-
-        if test_cycle_key:
-            payload["testCycleKey"] = test_cycle_key
         if status:
             payload["statusName"] = status
         if environment:

@@ -147,7 +147,7 @@ class ZephyrClient:
             logger.error(f"HTTP error: {e}, Response: {response.text}")
             raise
 
-        if response.status_code == 204:  # No content
+        if response.status_code == 204 or not response.text.strip():
             return {}
 
         return response.json()

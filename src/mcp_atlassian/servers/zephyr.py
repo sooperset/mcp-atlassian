@@ -362,8 +362,8 @@ async def zephyr_create_test_execution(
     project_key: Annotated[str, Field(description="Project key (e.g., 'PROJ')")],
     test_case_key: Annotated[str, Field(description="Test case key (e.g., 'PROJ-T1')")],
     test_cycle_key: Annotated[
-        str | None, Field(description="Optional test cycle key")
-    ] = None,
+        str, Field(description="Test cycle key (required by v2 API)")
+    ],
     status: Annotated[
         str | None,
         Field(
@@ -380,7 +380,7 @@ async def zephyr_create_test_execution(
         ctx: The FastMCP context.
         project_key: Project key.
         test_case_key: Test case key.
-        test_cycle_key: Optional test cycle key.
+        test_cycle_key: Test cycle key (required).
         status: Execution status.
         comment: Execution comment/notes.
 
