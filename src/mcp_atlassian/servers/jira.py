@@ -13,6 +13,7 @@ from requests.exceptions import HTTPError
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 from mcp_atlassian.jira.forms_common import convert_datetime_to_timestamp
+from mcp_atlassian.models.jira import JiraAttachment
 from mcp_atlassian.models.jira.common import JiraUser
 from mcp_atlassian.servers.dependencies import get_jira_fetcher
 from mcp_atlassian.utils.decorators import check_write_access
@@ -690,7 +691,7 @@ async def get_issue_images(
     attachments = jira.get_issue_attachments(issue_key)
 
     # Filter to image attachments
-    image_attachments: list[tuple[Any, str]] = []
+    image_attachments: list[tuple[JiraAttachment, str]] = []
     for att in attachments:
         is_img, resolved_mime = is_image_attachment(att.content_type, att.filename)
         if is_img:

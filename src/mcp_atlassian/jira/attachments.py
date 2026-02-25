@@ -123,6 +123,10 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             logger.error(msg)
             raise TypeError(msg)
 
+        if "fields" not in issue_data:
+            logger.error(f"Could not retrieve issue {issue_key}")
+            return []
+
         attachment_data = issue_data.get("fields", {}).get("attachment", [])
         return [
             JiraAttachment.from_api_response(item)
@@ -181,6 +185,14 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
         for item in attachment_data:
             if isinstance(item, dict):
                 attachments.append(JiraAttachment.from_api_response(item))
+
+        if not attachments:
+            return {
+                "success": True,
+                "message": f"No attachments found for issue {issue_key}",
+                "attachments": [],
+                "failed": [],
+            }
 
         fetched: list[dict[str, Any]] = []
         failed: list[dict[str, Any]] = []
