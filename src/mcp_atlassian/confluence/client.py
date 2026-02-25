@@ -111,6 +111,13 @@ class ConfluenceClient:
         # explicit credentials (#860). Basic auth can safely use .netrc.
         if self.config.auth_type in ("pat", "oauth"):
             self.confluence._session.trust_env = False
+            # Restore CA bundle -- trust_env=False also disables REQUESTS_CA_BUNDLE
+            # which breaks SSL in environments with internal/corporate CAs.
+            # See: https://requests.readthedocs.io/en/latest/api/#requests.Session.verify
+            if self.config.ssl_verify:
+                ca_bundle = os.environ.get("REQUESTS_CA_BUNDLE")
+                if ca_bundle and os.path.exists(ca_bundle):
+                    self.confluence._session.verify = ca_bundle
 
         # Configure SSL verification using the shared utility
         configure_ssl_verification(
