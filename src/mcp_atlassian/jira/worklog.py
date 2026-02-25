@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 from ..models import JiraWorklog
+from ..models.jira.adf import adf_to_text
 from ..utils import parse_date
 from .client import JiraClient
 
@@ -93,9 +94,7 @@ class WorklogMixin(JiraClient):
 
             # Convert Markdown comment to Jira format if provided
             if comment:
-                # Check if _markdown_to_jira is available (from CommentsMixin)
-                if hasattr(self, "_markdown_to_jira"):
-                    comment = self._markdown_to_jira(comment)
+                comment = self._markdown_to_jira(comment)
 
             # Step 1: Update original estimate if provided (separate API call)
             original_estimate_updated = False
@@ -138,9 +137,15 @@ class WorklogMixin(JiraClient):
                 raise TypeError(msg)
 
             # Format and return the result
+            comment_raw = result.get("comment", "")
+            comment_text = (
+                adf_to_text(comment_raw)
+                if isinstance(comment_raw, dict)
+                else comment_raw
+            )
             return {
                 "id": result.get("id"),
-                "comment": self._clean_text(result.get("comment", "")),
+                "comment": self._clean_text(comment_text or ""),
                 "created": str(parse_date(result.get("created", ""))),
                 "updated": str(parse_date(result.get("updated", ""))),
                 "started": str(parse_date(result.get("started", ""))),

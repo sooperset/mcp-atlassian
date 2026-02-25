@@ -48,6 +48,54 @@ class TestConfluenceAttachment:
         assert attachment.media_type == "application/binary"
         assert attachment.file_size == 1098
 
+    def test_from_api_response_with_enhanced_fields(self):
+        """Test creating a ConfluenceAttachment with version and author data."""
+        attachment_data = {
+            "id": "att105348",
+            "type": "attachment",
+            "status": "current",
+            "title": "document.pdf",
+            "extensions": {"mediaType": "application/pdf", "fileSize": 2048},
+            "version": {
+                "number": 3,
+                "when": "2024-01-15T10:30:00.000Z",
+                "by": {"accountId": "user123", "displayName": "John Doe"},
+            },
+            "_links": {"download": "/download/attachments/123456/document.pdf"},
+            "created": "2024-01-01T09:00:00.000Z",
+        }
+
+        attachment = ConfluenceAttachment.from_api_response(attachment_data)
+
+        assert attachment.id == "att105348"
+        assert attachment.title == "document.pdf"
+        assert attachment.media_type == "application/pdf"
+        assert attachment.file_size == 2048
+        # New fields
+        assert attachment.download_url == "/download/attachments/123456/document.pdf"
+        assert attachment.version_number == 3
+        assert attachment.version_when == "2024-01-15T10:30:00.000Z"
+        assert attachment.created == "2024-01-01T09:00:00.000Z"
+        assert attachment.author_display_name == "John Doe"
+        assert attachment.author_account_id == "user123"
+
+    def test_from_api_response_with_metadata_author(self):
+        """Test attachment with author in metadata instead of version."""
+        attachment_data = {
+            "id": "att105349",
+            "title": "image.png",
+            "metadata": {
+                "mediaType": "image/png",
+                "author": {"accountId": "user456", "displayName": "Jane Smith"},
+            },
+            "extensions": {"fileSize": 512},
+        }
+
+        attachment = ConfluenceAttachment.from_api_response(attachment_data)
+
+        assert attachment.author_display_name == "Jane Smith"
+        assert attachment.author_account_id == "user456"
+
     def test_from_api_response_with_empty_data(self):
         """Test creating a ConfluenceAttachment from empty data."""
         attachment = ConfluenceAttachment.from_api_response({})
@@ -59,6 +107,13 @@ class TestConfluenceAttachment:
         assert attachment.status is None
         assert attachment.media_type is None
         assert attachment.file_size is None
+        # New fields should also be None
+        assert attachment.download_url is None
+        assert attachment.version_number is None
+        assert attachment.version_when is None
+        assert attachment.created is None
+        assert attachment.author_display_name is None
+        assert attachment.author_account_id is None
 
     def test_from_api_response_with_none_data(self):
         """Test creating a ConfluenceAttachment from None data."""
@@ -72,7 +127,7 @@ class TestConfluenceAttachment:
         assert attachment.media_type is None
         assert attachment.file_size is None
 
-    def test_to_simplified_dict(self):
+    def test_to_simplified_dict_basic(self):
         """Test converting ConfluenceAttachment to a simplified dictionary."""
         attachment = ConfluenceAttachment(
             id="att105348",
@@ -92,6 +147,56 @@ class TestConfluenceAttachment:
         assert simplified["status"] == "current"
         assert simplified["media_type"] == "application/binary"
         assert simplified["file_size"] == 1098
+        # New fields should not be present when not set
+        assert "download_url" not in simplified
+        assert "version_number" not in simplified
+
+    def test_to_simplified_dict_with_enhanced_fields(self):
+        """Test simplified dict includes enhanced fields when present."""
+        attachment = ConfluenceAttachment(
+            id="att105348",
+            title="document.pdf",
+            type="attachment",
+            status="current",
+            media_type="application/pdf",
+            file_size=2048,
+            download_url="/download/attachments/123456/document.pdf",
+            version_number=3,
+            version_when="2024-01-15T10:30:00.000Z",
+            created="2024-01-01T09:00:00.000Z",
+            author_display_name="John Doe",
+            author_account_id="user123",
+        )
+
+        simplified = attachment.to_simplified_dict()
+
+        assert isinstance(simplified, dict)
+        assert simplified["download_url"] == "/download/attachments/123456/document.pdf"
+        assert simplified["version_number"] == 3
+        assert simplified["version_when"] == "2024-01-15T10:30:00.000Z"
+        assert simplified["created"] == "2024-01-01T09:00:00.000Z"
+        assert simplified["author_display_name"] == "John Doe"
+        # account_id is intentionally not included in simplified dict
+
+    def test_to_simplified_dict_conditional_fields(self):
+        """Test that optional fields are only included when they have values."""
+        # Attachment with only some enhanced fields
+        attachment = ConfluenceAttachment(
+            id="att105348",
+            title="document.pdf",
+            download_url="/download/attachments/123456/document.pdf",
+            version_number=1,
+            # Other optional fields are None
+        )
+
+        simplified = attachment.to_simplified_dict()
+
+        assert "download_url" in simplified
+        assert "version_number" in simplified
+        # These should not be present
+        assert "version_when" not in simplified
+        assert "created" not in simplified
+        assert "author_display_name" not in simplified
 
 
 class TestConfluenceUser:

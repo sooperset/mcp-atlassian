@@ -11,6 +11,7 @@ from md2conf.converter import (
     elements_to_string,
     markdown_to_html,
 )
+from md2conf.metadata import ConfluenceSiteMetadata
 
 # Handle md2conf API changes: elements_from_string may be renamed to elements_from_strings
 try:
@@ -71,6 +72,9 @@ class ConfluencePreprocessor(BasePreprocessor):
                     options=options,
                     path=Path(temp_dir) / "temp.md",
                     root_dir=Path(temp_dir),
+                    site_metadata=ConfluenceSiteMetadata(
+                        domain="", base_path="", space_key=None
+                    ),
                     page_metadata={},
                 )
 

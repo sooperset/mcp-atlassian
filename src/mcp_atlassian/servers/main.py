@@ -1,5 +1,6 @@
 """Main FastMCP server setup for Atlassian integration."""
 
+import base64
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -8,9 +9,11 @@ from typing import Any, Literal, Optional
 
 from cachetools import TTLCache
 from fastmcp import FastMCP
+from fastmcp import settings as fastmcp_settings
+from fastmcp.server.event_store import EventStore
+from fastmcp.server.http import StarletteWithLifespan
 from fastmcp.tools import Tool as FastMCPTool
 from mcp.types import Tool as MCPTool
-from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -24,6 +27,7 @@ from mcp_atlassian.utils.environment import get_available_services
 from mcp_atlassian.utils.io import is_read_only_mode
 from mcp_atlassian.utils.logging import mask_sensitive
 from mcp_atlassian.utils.tools import get_enabled_tools, should_include_tool
+from mcp_atlassian.utils.urls import validate_url_for_ssrf
 
 from .confluence import confluence_mcp
 from .context import MainAppContext
@@ -32,12 +36,64 @@ from .jira import jira_mcp
 logger = logging.getLogger("mcp-atlassian.server.main")
 
 
+def _sanitize_schema_for_compatibility(tool: MCPTool) -> MCPTool:
+    """Sanitize tool inputSchema for AI platform compatibility.
+
+    Collapses simple nullable ``anyOf`` unions that Pydantic v2 generates
+    for ``T | None`` into a plain ``{"type": T}`` property.  This fixes
+    Vertex AI / Google ADK rejecting ``anyOf`` alongside ``default`` or
+    ``description`` fields (issues #640, #733).
+
+    The transform is intentionally conservative — it only flattens unions
+    of exactly ``[{"type": <primitive>}, {"type": "null"}]`` so that
+    complex / nested schemas are left untouched.
+
+    Note: Only top-level ``properties`` are processed.  Nested schemas
+    (e.g. ``items`` of arrays or ``properties`` of sub-objects) are not
+    walked.  This is sufficient for current tool definitions; extend if
+    nested ``anyOf`` patterns appear in the future.
+
+    Args:
+        tool: The MCP tool whose inputSchema will be sanitized in-place.
+
+    Returns:
+        The same MCPTool instance (mutated) for chaining convenience.
+    """
+    schema = tool.inputSchema
+    if not schema or not isinstance(schema, dict):
+        return tool
+
+    properties = schema.get("properties")
+    if not properties or not isinstance(properties, dict):
+        return tool
+
+    for _prop_name, prop_def in properties.items():
+        if not isinstance(prop_def, dict):
+            continue
+
+        any_of = prop_def.get("anyOf")
+        if not any_of or not isinstance(any_of, list):
+            continue
+
+        # Only flatten simple nullable unions: [{"type": T}, {"type": "null"}]
+        non_null = [v for v in any_of if v != {"type": "null"}]
+        null_present = any(v == {"type": "null"} for v in any_of)
+
+        if null_present and len(non_null) == 1 and "type" in non_null[0]:
+            # Collapse: pull the real type up, drop anyOf
+            resolved_type = non_null[0]["type"]
+            prop_def.pop("anyOf")
+            prop_def["type"] = resolved_type
+
+    return tool
+
+
 async def health_check(request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
 @asynccontextmanager
-async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
+async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str, Any]]:
     logger.info("Main Atlassian MCP server lifespan starting...")
     services = get_available_services()
     read_only = is_read_only_mode()
@@ -107,6 +163,23 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
 class AtlassianMCP(FastMCP[MainAppContext]):
     """Custom FastMCP server class for Atlassian integration with tool filtering."""
 
+    _active_streamable_http_path: str | None = None
+
+    @staticmethod
+    def _normalize_http_path(path: str) -> str:
+        normalized_path = path.strip()
+        if not normalized_path:
+            return "/"
+        if not normalized_path.startswith("/"):
+            normalized_path = f"/{normalized_path}"
+        normalized_path = normalized_path.rstrip("/")
+        return normalized_path or "/"
+
+    def get_streamable_http_path(self) -> str:
+        if self._active_streamable_http_path:
+            return self._active_streamable_http_path
+        return self._normalize_http_path(fastmcp_settings.streamable_http_path)
+
     async def _list_tools_mcp(self) -> list[MCPTool]:
         # Filter tools based on enabled_tools, read_only mode, and service configuration from the lifespan context.
         req_context = self._mcp_server.request_context
@@ -132,8 +205,19 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             if app_lifespan_state
             else None
         )
+
+        header_based_services = {"jira": False, "confluence": False}
+        request = getattr(req_context, "request", None)
+        if request is not None:
+            service_headers = getattr(request.state, "atlassian_service_headers", {})
+            if service_headers:
+                header_based_services = get_available_services(service_headers)
+                logger.debug(
+                    f"Header-based service availability: {header_based_services}"
+                )
+
         logger.debug(
-            f"_list_tools_mcp: read_only={read_only}, enabled_tools_filter={enabled_tools_filter}"
+            f"_list_tools_mcp: read_only={read_only}, enabled_tools_filter={enabled_tools_filter}, header_services={header_based_services}"
         )
 
         all_tools: dict[str, FastMCPTool] = await self.get_tools()
@@ -160,26 +244,44 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             is_confluence_tool = "confluence" in tool_tags
             service_configured_and_available = True
             if app_lifespan_state:
-                if is_jira_tool and not app_lifespan_state.full_jira_config:
+                jira_available = (
+                    app_lifespan_state.full_jira_config is not None
+                ) or header_based_services.get("jira", False)
+                confluence_available = (
+                    app_lifespan_state.full_confluence_config is not None
+                ) or header_based_services.get("confluence", False)
+
+                if is_jira_tool and not jira_available:
                     logger.debug(
-                        f"Excluding Jira tool '{registered_name}' as Jira configuration/authentication is incomplete."
+                        f"Excluding Jira tool '{registered_name}' as Jira configuration/authentication is incomplete and no header-based auth available."
                     )
                     service_configured_and_available = False
-                if is_confluence_tool and not app_lifespan_state.full_confluence_config:
+                if is_confluence_tool and not confluence_available:
                     logger.debug(
-                        f"Excluding Confluence tool '{registered_name}' as Confluence configuration/authentication is incomplete."
+                        f"Excluding Confluence tool '{registered_name}' as Confluence configuration/authentication is incomplete and no header-based auth available."
                     )
                     service_configured_and_available = False
             elif is_jira_tool or is_confluence_tool:
-                logger.warning(
-                    f"Excluding tool '{registered_name}' as application context is unavailable to verify service configuration."
-                )
-                service_configured_and_available = False
+                jira_available = header_based_services.get("jira", False)
+                confluence_available = header_based_services.get("confluence", False)
+
+                if is_jira_tool and not jira_available:
+                    logger.debug(
+                        f"Excluding Jira tool '{registered_name}' as no Jira authentication available."
+                    )
+                    service_configured_and_available = False
+                if is_confluence_tool and not confluence_available:
+                    logger.debug(
+                        f"Excluding Confluence tool '{registered_name}' as no Confluence authentication available."
+                    )
+                    service_configured_and_available = False
 
             if not service_configured_and_available:
                 continue
 
-            filtered_tools.append(tool_obj.to_mcp_tool(name=registered_name))
+            mcp_tool = tool_obj.to_mcp_tool(name=registered_name)
+            _sanitize_schema_for_compatibility(mcp_tool)
+            filtered_tools.append(mcp_tool)
 
         logger.debug(
             f"_list_tools_mcp: Total tools after filtering: {len(filtered_tools)}"
@@ -190,15 +292,30 @@ class AtlassianMCP(FastMCP[MainAppContext]):
         self,
         path: str | None = None,
         middleware: list[Middleware] | None = None,
-        transport: Literal["streamable-http", "sse"] = "streamable-http",
-        **kwargs: Any,
-    ) -> "Starlette":
+        json_response: bool | None = None,
+        stateless_http: bool | None = None,
+        transport: Literal["http", "streamable-http", "sse"] = "streamable-http",
+        event_store: EventStore | None = None,
+        retry_interval: int | None = None,
+    ) -> StarletteWithLifespan:
+        final_path = path
+        if transport == "streamable-http":
+            configured_path = path or fastmcp_settings.streamable_http_path
+            final_path = self._normalize_http_path(configured_path)
+            self._active_streamable_http_path = final_path
+
         user_token_mw = Middleware(UserTokenMiddleware, mcp_server_ref=self)
         final_middleware_list = [user_token_mw]
         if middleware:
             final_middleware_list.extend(middleware)
         app = super().http_app(
-            path=path, middleware=final_middleware_list, transport=transport, **kwargs
+            path=final_path,
+            middleware=final_middleware_list,
+            json_response=json_response,
+            stateless_http=stateless_http,
+            transport=transport,
+            event_store=event_store,
+            retry_interval=retry_interval,
         )
         return app
 
@@ -239,9 +356,9 @@ class UserTokenMiddleware:
         if "state" not in scope_copy:
             scope_copy["state"] = {}
 
-        # Initialize default authentication state
-        scope_copy["state"]["user_atlassian_token"] = None
-        scope_copy["state"]["user_atlassian_auth_type"] = None
+        # Initialize default authentication state (only initialize fields that should always exist)
+        # Note: user_atlassian_token and user_atlassian_auth_type are NOT initialized
+        # They are only set when present, so hasattr() checks work correctly
         scope_copy["state"]["user_atlassian_email"] = None
         scope_copy["state"]["user_atlassian_cloud_id"] = None
         scope_copy["state"]["auth_validation_error"] = None
@@ -309,8 +426,8 @@ class UserTokenMiddleware:
             return False
 
         try:
-            mcp_path = self.mcp_server_ref.settings.streamable_http_path.rstrip("/")
-            request_path = scope.get("path", "").rstrip("/")
+            mcp_path = self.mcp_server_ref.get_streamable_http_path()
+            request_path = AtlassianMCP._normalize_http_path(scope.get("path", ""))
             return request_path == mcp_path
         except (AttributeError, ValueError) as e:
             logger.warning(f"Error checking auth path: {e}")
@@ -329,6 +446,68 @@ class UserTokenMiddleware:
             cloud_id_str = (
                 cloud_id_header.decode("latin-1") if cloud_id_header else None
             )
+
+            # Extract additional Atlassian service headers for service availability detection
+            jira_token_header = headers.get(b"x-atlassian-jira-personal-token")
+            jira_url_header = headers.get(b"x-atlassian-jira-url")
+            confluence_token_header = headers.get(
+                b"x-atlassian-confluence-personal-token"
+            )
+            confluence_url_header = headers.get(b"x-atlassian-confluence-url")
+
+            # Convert service header bytes to strings
+            jira_token_str = (
+                jira_token_header.decode("latin-1") if jira_token_header else None
+            )
+            jira_url_str = (
+                jira_url_header.decode("latin-1") if jira_url_header else None
+            )
+            confluence_token_str = (
+                confluence_token_header.decode("latin-1")
+                if confluence_token_header
+                else None
+            )
+            confluence_url_str = (
+                confluence_url_header.decode("latin-1")
+                if confluence_url_header
+                else None
+            )
+
+            # Validate URLs to prevent SSRF
+            if jira_url_str:
+                ssrf_error = validate_url_for_ssrf(jira_url_str)
+                if ssrf_error:
+                    scope["state"]["auth_validation_error"] = (
+                        f"Forbidden: Invalid Jira URL - {ssrf_error}"
+                    )
+                    return
+
+            if confluence_url_str:
+                ssrf_error = validate_url_for_ssrf(confluence_url_str)
+                if ssrf_error:
+                    scope["state"]["auth_validation_error"] = (
+                        f"Forbidden: Invalid Confluence URL - {ssrf_error}"
+                    )
+                    return
+
+            # Build service headers dict
+            service_headers = {}
+            if jira_token_str:
+                service_headers["X-Atlassian-Jira-Personal-Token"] = jira_token_str
+            if jira_url_str:
+                service_headers["X-Atlassian-Jira-Url"] = jira_url_str
+            if confluence_token_str:
+                service_headers["X-Atlassian-Confluence-Personal-Token"] = (
+                    confluence_token_str
+                )
+            if confluence_url_str:
+                service_headers["X-Atlassian-Confluence-Url"] = confluence_url_str
+
+            scope["state"]["atlassian_service_headers"] = service_headers
+            if service_headers:
+                logger.debug(
+                    f"UserTokenMiddleware: Extracted service headers: {list(service_headers.keys())}"
+                )
 
             # Log mcp-session-id for debugging
             mcp_session_id = headers.get(b"mcp-session-id")
@@ -356,6 +535,16 @@ class UserTokenMiddleware:
                 self._parse_auth_header(auth_header_str, scope)
             else:
                 logger.debug("UserTokenMiddleware: No Authorization header provided")
+                # If service headers are present without Authorization header, set PAT auth type
+                if service_headers and (
+                    (jira_token_str and jira_url_str)
+                    or (confluence_token_str and confluence_url_str)
+                ):
+                    scope["state"]["user_atlassian_auth_type"] = "pat"
+                    scope["state"]["user_atlassian_email"] = None
+                    logger.debug(
+                        "UserTokenMiddleware: Header-based authentication detected. Setting PAT auth type."
+                    )
 
         except Exception as e:
             logger.error(f"Error processing authentication headers: {e}", exc_info=True)
@@ -392,14 +581,50 @@ class UserTokenMiddleware:
                     f"...{mask_sensitive(token, 8)}"
                 )
 
+        elif auth_header.startswith("Basic "):
+            encoded = auth_header[6:].strip()
+            if not encoded:
+                scope["state"]["auth_validation_error"] = (
+                    "Unauthorized: Empty Basic auth credentials"
+                )
+                return
+            try:
+                decoded = base64.b64decode(encoded).decode("utf-8")
+            except (ValueError, UnicodeDecodeError) as e:
+                logger.warning(f"Failed to decode Basic auth: {e}")
+                scope["state"]["auth_validation_error"] = (
+                    "Unauthorized: Invalid Basic auth encoding"
+                )
+                return
+            if ":" not in decoded:
+                scope["state"]["auth_validation_error"] = (
+                    "Unauthorized: Invalid Basic auth format. "
+                    "Expected 'email:api_token'"
+                )
+                return
+            email, api_token = decoded.split(":", 1)
+            if not email or not api_token:
+                scope["state"]["auth_validation_error"] = (
+                    "Unauthorized: Email or API token is empty"
+                )
+                return
+            scope["state"]["user_atlassian_email"] = email
+            scope["state"]["user_atlassian_api_token"] = api_token
+            scope["state"]["user_atlassian_auth_type"] = "basic"
+            scope["state"]["user_atlassian_token"] = None
+            logger.debug(
+                f"UserTokenMiddleware: Basic auth extracted for email: {email}"
+            )
+
         elif auth_header.strip():
             # Non-empty but unsupported auth type
             auth_value = auth_header.strip()
             auth_type = auth_value.split(" ", 1)[0] if " " in auth_value else auth_value
             logger.warning(f"Unsupported Authorization type: {auth_type}")
             scope["state"]["auth_validation_error"] = (
-                "Unauthorized: Only 'Bearer <OAuthToken>' or "
-                "'Token <PAT>' types are supported."
+                "Unauthorized: Only 'Bearer <OAuthToken>', "
+                "'Token <PAT>', or 'Basic <base64(email:api_token)>' "
+                "types are supported."
             )
         else:
             # Empty or whitespace-only
@@ -409,8 +634,8 @@ class UserTokenMiddleware:
 
 
 main_mcp = AtlassianMCP(name="Atlassian MCP", lifespan=main_lifespan)
-main_mcp.mount(jira_mcp, prefix="jira")
-main_mcp.mount(confluence_mcp, prefix="confluence")
+main_mcp.mount(jira_mcp, "jira")
+main_mcp.mount(confluence_mcp, "confluence")
 
 
 @main_mcp.custom_route("/healthz", methods=["GET"], include_in_schema=False)

@@ -5,6 +5,7 @@ from typing import Any
 
 from thefuzz import fuzz
 
+from ..utils import parse_date
 from .client import JiraClient
 from .protocols import EpicOperationsProto, UsersOperationsProto
 
@@ -228,9 +229,11 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
 
             required_fields = {}
             # Step 3: Parse the response and extract required fields
-            if isinstance(meta, dict) and "fields" in meta:
-                if isinstance(meta["fields"], list):
-                    for field_meta in meta["fields"]:
+            # The new createmeta endpoint returns paginated "values" array
+            if isinstance(meta, dict):
+                field_list = meta.get("values", meta.get("fields", []))
+                if isinstance(field_list, list):
+                    for field_meta in field_list:
                         if isinstance(field_meta, dict) and field_meta.get(
                             "required", False
                         ):
@@ -238,9 +241,7 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
                             if field_id:
                                 required_fields[field_id] = field_meta
                 else:
-                    logger.warning(
-                        "Unexpected format for 'fields' in createmeta response."
-                    )
+                    logger.warning("Unexpected format in createmeta response.")
 
             if not required_fields:
                 logger.warning(
@@ -424,8 +425,7 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
         """
         Format a field value based on its type for update operations.
 
-        Different field types in Jira require different JSON formats when updating.
-        This method helps format the value correctly for the specific field type.
+        Delegates to _format_field_value_for_write with field definition lookup.
 
         Args:
             field_id: The ID of the field
@@ -434,47 +434,222 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
         Returns:
             Properly formatted value for the field
         """
-        try:
-            # Get field definition
-            field = self.get_field_by_id(field_id)
+        field_def = self.get_field_by_id(field_id)
+        return self._format_field_value_for_write(field_id, value, field_def)
 
-            if not field:
-                # For unknown fields, return value as-is
+    def _format_field_value_for_write(
+        self, field_id: str, value: Any, field_definition: dict | None
+    ) -> Any:
+        """Format field values for the Jira API.
+
+        Dispatch order:
+        1. System field IDs (field_id.lower()) — always reliable
+        2. Schema type from field_definition — covers custom fields
+
+        Args:
+            field_id: The Jira field ID (e.g. "priority", "customfield_10020")
+            value: The raw value to format
+            field_definition: Field definition dict from get_field_by_id(), or None
+
+        Returns:
+            Formatted value suitable for the Jira API, or None on invalid input
+        """
+        schema_type = (
+            field_definition.get("schema", {}).get("type") if field_definition else None
+        )
+        schema_custom = (
+            field_definition.get("schema", {}).get("custom")
+            if field_definition
+            else None
+        )
+
+        # --- 0. Check custom field plugins (before system/schema dispatch) ---
+        if schema_custom and "checklist" in schema_custom.lower():
+            if schema_type == "array":
+                return value  # Array-type checklist (Server/DC): pass through
+            return self._format_checklist_value(value)
+
+        # --- 1. Dispatch on system field ID (reliable, not display name) ---
+        normalized_id = field_id.lower()
+
+        if normalized_id == "priority":
+            if isinstance(value, str):
+                return {"name": value}
+            elif isinstance(value, dict) and ("name" in value or "id" in value):
                 return value
+            else:
+                logger.warning(
+                    f"Invalid format for priority field: {value}. "
+                    "Expected string name or dict."
+                )
+                return None
 
-            field_type = field.get("schema", {}).get("type")
+        elif normalized_id == "labels":
+            if isinstance(value, list) and all(isinstance(item, str) for item in value):
+                return value
+            elif isinstance(value, str):
+                return [label.strip() for label in value.split(",") if label.strip()]
+            else:
+                logger.warning(
+                    f"Invalid format for labels field: {value}. "
+                    "Expected list of strings or comma-separated string."
+                )
+                return None
 
-            # Format based on field type
-            if field_type == "user":
-                # Handle user fields - need accountId for cloud or name for server
+        elif normalized_id in ("fixversions", "versions", "components"):
+            if isinstance(value, list):
+                formatted_list = []
+                for item in value:
+                    if isinstance(item, str):
+                        formatted_list.append({"name": item})
+                    elif isinstance(item, dict) and ("name" in item or "id" in item):
+                        formatted_list.append(item)
+                    else:
+                        logger.warning(
+                            f"Invalid item format in {normalized_id} list: {item}"
+                        )
+                return formatted_list
+            else:
+                logger.warning(
+                    f"Invalid format for {normalized_id} field: {value}. Expected list."
+                )
+                return None
+
+        elif normalized_id == "reporter":
+            if isinstance(value, str):
+                try:
+                    reporter_identifier = self._get_account_id(value)
+                    if self.config.is_cloud:
+                        return {"accountId": reporter_identifier}
+                    else:
+                        return {"name": reporter_identifier}
+                except ValueError as e:
+                    logger.warning(f"Could not format reporter field: {str(e)}")
+                    return None
+            elif isinstance(value, dict) and ("name" in value or "accountId" in value):
+                return value
+            else:
+                logger.warning(f"Invalid format for reporter field: {value}")
+                return None
+
+        elif normalized_id == "duedate":
+            if isinstance(value, str):
+                return value
+            else:
+                logger.warning(
+                    f"Invalid format for duedate field: {value}. "
+                    "Expected YYYY-MM-DD string."
+                )
+                return None
+
+        # --- 2. Dispatch on schema type (covers custom fields) ---
+        elif schema_type == "option-with-child":
+            if isinstance(value, tuple) and len(value) == 2:
+                return {"value": value[0], "child": {"value": value[1]}}
+            elif isinstance(value, str):
+                return {"value": value}
+            elif isinstance(value, dict):
+                return value
+            return value
+
+        elif schema_type == "option":
+            if isinstance(value, str):
+                return {"value": value}
+            return value
+
+        elif schema_type == "array":
+            items_type = (
+                field_definition.get("schema", {}).get("items")
+                if field_definition
+                else None
+            )
+            if items_type == "option":
                 if isinstance(value, str):
-                    try:
-                        account_id = self._get_account_id(value)
-                        return {"accountId": account_id}
-                    except Exception as e:
-                        logger.warning(f"Could not resolve user '{value}': {str(e)}")
-                        return value
-                else:
+                    return [{"value": v.strip()} for v in value.split(",") if v.strip()]
+                elif isinstance(value, list):
+                    return [
+                        {"value": item} if isinstance(item, str) else item
+                        for item in value
+                    ]
+            elif items_type in ("version", "component"):
+                if isinstance(value, list):
+                    return [
+                        {"name": item} if isinstance(item, str) else item
+                        for item in value
+                    ]
+            return value
+
+        elif schema_type == "user":
+            if isinstance(value, str):
+                try:
+                    identifier = self._get_account_id(value)
+                    if self.config.is_cloud:
+                        return {"accountId": identifier}
+                    else:
+                        return {"name": identifier}
+                except (ValueError, Exception) as e:
+                    logger.warning(f"Could not resolve user for field {field_id}: {e}")
+                    return None
+            return value
+
+        elif schema_type == "date":
+            if isinstance(value, str):
+                return value
+            logger.warning(f"Invalid format for date field {field_id}: {value}")
+            return None
+
+        elif schema_type == "datetime" and isinstance(value, str):
+            try:
+                dt = parse_date(value)
+                if dt is None:
                     return value
-
-            elif field_type == "array":
-                # Handle array fields - convert single value to list if needed
-                if not isinstance(value, list):
-                    return [value]
+                # Jira requires ISO 8601 basic tz format (±HHMM), not extended (±HH:MM)
+                iso_str = dt.isoformat(timespec="milliseconds")
+                # Strip colon from tz offset: +HH:MM → +HHMM, -HH:MM → -HHMM
+                if dt.tzinfo is not None and len(iso_str) >= 6 and iso_str[-3] == ":":
+                    iso_str = iso_str[:-3] + iso_str[-2:]
+                return iso_str
+            except Exception:
+                logger.warning(
+                    f"Could not parse datetime for field {field_id}: {value}"
+                )
                 return value
 
-            elif field_type == "option":
-                # Handle option fields - convert to {"value": value} format
-                if isinstance(value, str):
-                    return {"value": value}
-                return value
+        # Default: return value as-is
+        return value
 
-            # For other types, return as-is
-            return value
+    @staticmethod
+    def _format_checklist_value(value: Any) -> Any:
+        """Format a checklist field value to markdown string.
 
-        except Exception as e:
-            logger.warning(f"Error formatting field value for '{field_id}': {str(e)}")
+        Checklist plugins (e.g., Okapya "Checklist for Jira") store data
+        as markdown-formatted text. This converts various input formats
+        to the expected string format.
+
+        Args:
+            value: The raw checklist value (list, string, etc.)
+
+        Returns:
+            Markdown-formatted checklist string
+        """
+        if isinstance(value, str):
             return value
+        if isinstance(value, list):
+            lines = []
+            for item in value:
+                if isinstance(item, str):
+                    lines.append(f"* {item}")
+                elif isinstance(item, tuple) and len(item) == 2:
+                    name, checked = item
+                    prefix = "* [x] " if checked else "* "
+                    lines.append(f"{prefix}{name}")
+                elif isinstance(item, dict):
+                    name = item.get("name", "")
+                    checked = item.get("checked", False)
+                    prefix = "* [x] " if checked else "* "
+                    lines.append(f"{prefix}{name}")
+            return "\n".join(lines)
+        return value
 
     def search_fields(
         self, keyword: str, limit: int = 10, *, refresh: bool = False

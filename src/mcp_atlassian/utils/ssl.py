@@ -19,7 +19,6 @@ class SSLIgnoreAdapter(HTTPAdapter):
     This implementation ensures that both verify_mode is set to CERT_NONE and check_hostname
     is disabled, which is required for properly ignoring SSL certificates.
 
-    This adapter also enables legacy SSL renegotiation which may be required for some older servers.
     Note that this reduces security and should only be used when absolutely necessary.
     """
 
@@ -41,10 +40,6 @@ class SSLIgnoreAdapter(HTTPAdapter):
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
-
-        # Enable legacy SSL renegotiation
-        context.options |= 0x4  # SSL_OP_LEGACY_SERVER_CONNECT
-        context.options |= 0x40000  # SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION
 
         self.poolmanager = PoolManager(
             num_pools=connections,

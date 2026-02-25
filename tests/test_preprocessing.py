@@ -4,16 +4,7 @@ from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
 from mcp_atlassian.preprocessing.jira import JiraPreprocessor
 from tests.fixtures.confluence_mocks import MOCK_COMMENTS_RESPONSE, MOCK_PAGE_RESPONSE
 from tests.fixtures.jira_mocks import MOCK_JIRA_ISSUE_RESPONSE
-
-
-class MockConfluenceClient:
-    def get_user_details_by_accountid(self, account_id):
-        # Mock user details response based on the format in MOCK_PAGE_RESPONSE
-        return {
-            "displayName": f"Test User {account_id}",
-            "accountType": "atlassian",
-            "accountStatus": "active",
-        }
+from tests.utils.mocks import MockConfluenceClient
 
 
 @pytest.fixture
@@ -238,6 +229,42 @@ For more information, see [our website|https://example.com].
     assert "- Feature 1" in converted
     assert "```python" in converted
     assert "[our website](https://example.com)" in converted
+
+
+def test_jira_to_markdown_citation(preprocessor_with_jira):
+    """Test citation markup conversion and that unmatched ?? does not cause ReDoS."""
+    # Matched citation
+    assert "<cite>cited text</cite>" in preprocessor_with_jira.jira_to_markdown(
+        "??cited text??"
+    )
+
+    # Citation with a single ? inside
+    result = preprocessor_with_jira.jira_to_markdown("??is this cited? yes??")
+    assert "<cite>" in result
+
+    # Unmatched ?? followed by inline code must complete quickly (was ReDoS before fix)
+    text = "* (??) Some weird formatting"
+    result = preprocessor_with_jira.jira_to_markdown(text)
+    assert "<cite>" not in result
+
+
+def test_jira_to_markdown_citation_no_redos(preprocessor_with_jira):
+    """Regression test: complex Jira wiki markup with unmatched ?? must not hang."""
+    description = (
+        "h2. Known limitations\n"
+        "* (??) The {{retry-handler}} -> {{fallback}} path is *broken* "
+        "if the upstream timeout during {{retry-handler}} has not "
+        "elapsed yet. Each component would need to track pending "
+        "requests and report a metric. _This means a request could "
+        "be stuck in {{retry-handler}} indefinitely._\n"
+        "* Each component must validate the configuration and *stop* "
+        "after detecting an invalid setting.\n"
+        "h2. Monitoring\n"
+        "* Report the current status through a *metric*."
+    )
+    result = preprocessor_with_jira.jira_to_markdown(description)
+    assert "Known limitations" in result
+    assert "retry-handler" in result
 
 
 def test_markdown_to_jira(preprocessor_with_jira):
@@ -616,3 +643,416 @@ def test_md2conf_elements_from_string_available():
     from mcp_atlassian.preprocessing.confluence import elements_from_string
 
     assert callable(elements_from_string)
+
+
+# Issue #893 regression tests - Code Block Content Corruption
+
+
+def test_markdown_to_jira_code_block_preserves_hash(preprocessor_with_jira):
+    """Test that # characters inside code blocks are preserved (issue #893)."""
+    markdown = """Here's a script:
+
+```
+#!/bin/bash
+
+# This is a comment
+echo "hello"
+```"""
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+
+    # The shebang and comment should be preserved, not converted to headings
+    assert "#!/bin/bash" in result
+    assert "# This is a comment" in result
+    assert "h1." not in result  # Should NOT have heading conversion
+
+
+def test_markdown_to_jira_code_block_with_language_preserves_hash(
+    preprocessor_with_jira,
+):
+    """Test that # in code blocks with language specifier is preserved (issue #893)."""
+    markdown = """```python
+# Python comment
+def hello():
+    print("world")
+```"""
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+
+    assert "# Python comment" in result
+    assert "h1." not in result
+
+
+def test_markdown_to_jira_code_block_multiple_hash_lines(preprocessor_with_jira):
+    """Test multiple # lines in code block are all preserved (issue #893)."""
+    markdown = """```bash
+# First comment
+# Second comment
+# Third comment
+echo "test"
+```"""
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+
+    assert "# First comment" in result
+    assert "# Second comment" in result
+    assert "# Third comment" in result
+    assert result.count("h1.") == 0
+
+
+def test_markdown_to_jira_inline_code_preserves_hash(preprocessor_with_jira):
+    """Test that # in inline code is preserved (issue #893)."""
+    markdown = "The shebang line is `#!/bin/bash` in shell scripts."
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+
+    assert "#!/bin/bash" in result
+    assert "h1." not in result
+
+
+def test_markdown_to_jira_mixed_code_and_headers(preprocessor_with_jira):
+    """Test that headers outside code blocks still convert while code is preserved."""
+    markdown = """# Real Heading
+
+Here's some code:
+
+```
+# This is a comment, not a heading
+```
+
+## Another Heading"""
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+
+    # Headers should convert
+    assert "h1. Real Heading" in result
+    assert "h2. Another Heading" in result
+
+    # Code block content should be preserved
+    assert "# This is a comment" in result
+
+
+# Language mapping tests for code blocks (issue #669)
+
+
+def test_normalize_code_language_valid_jira_languages(preprocessor_with_jira):
+    """Test that valid JIRA languages pass through unchanged."""
+    # Official JIRA-supported languages should be returned as-is (lowercase)
+    # Source: https://jira.atlassian.com/browse/JRASERVER-21067
+    assert preprocessor_with_jira._normalize_code_language("python") == "python"
+    assert preprocessor_with_jira._normalize_code_language("java") == "java"
+    assert preprocessor_with_jira._normalize_code_language("javascript") == "javascript"
+    assert preprocessor_with_jira._normalize_code_language("bash") == "bash"
+    assert preprocessor_with_jira._normalize_code_language("sql") == "sql"
+    assert preprocessor_with_jira._normalize_code_language("xml") == "xml"
+    assert preprocessor_with_jira._normalize_code_language("json") == "json"
+    assert preprocessor_with_jira._normalize_code_language("go") == "go"
+    assert preprocessor_with_jira._normalize_code_language("ruby") == "ruby"
+    assert preprocessor_with_jira._normalize_code_language("none") == "none"
+
+
+def test_normalize_code_language_case_insensitive(preprocessor_with_jira):
+    """Test that language normalization is case-insensitive."""
+    assert preprocessor_with_jira._normalize_code_language("Python") == "python"
+    assert preprocessor_with_jira._normalize_code_language("JAVA") == "java"
+    assert preprocessor_with_jira._normalize_code_language("JavaScript") == "javascript"
+    assert preprocessor_with_jira._normalize_code_language("BASH") == "bash"
+
+
+def test_normalize_code_language_mapped_languages(preprocessor_with_jira):
+    """Test that unsupported languages map to their closest JIRA equivalent."""
+    # Dockerfile → bash (similar syntax)
+    assert preprocessor_with_jira._normalize_code_language("dockerfile") == "bash"
+    assert preprocessor_with_jira._normalize_code_language("docker") == "bash"
+
+    # TypeScript/JSX → javascript
+    assert preprocessor_with_jira._normalize_code_language("typescript") == "javascript"
+    assert preprocessor_with_jira._normalize_code_language("ts") == "javascript"
+    assert preprocessor_with_jira._normalize_code_language("tsx") == "javascript"
+    assert preprocessor_with_jira._normalize_code_language("jsx") == "javascript"
+
+    # Kotlin → java (JVM-based)
+    assert preprocessor_with_jira._normalize_code_language("kotlin") == "java"
+    assert preprocessor_with_jira._normalize_code_language("kt") == "java"
+
+    # Build files → bash
+    assert preprocessor_with_jira._normalize_code_language("makefile") == "bash"
+    assert preprocessor_with_jira._normalize_code_language("make") == "bash"
+
+
+def test_normalize_code_language_unmapped_returns_none(preprocessor_with_jira):
+    """Test that unmapped languages return None for plain {code} blocks."""
+    # Languages with no good JIRA alternative should return None
+    assert preprocessor_with_jira._normalize_code_language("rust") is None
+    assert preprocessor_with_jira._normalize_code_language("toml") is None
+    assert preprocessor_with_jira._normalize_code_language("markdown") is None
+    assert preprocessor_with_jira._normalize_code_language("unknownlang") is None
+    assert preprocessor_with_jira._normalize_code_language("zig") is None
+
+
+def test_normalize_code_language_empty_input(preprocessor_with_jira):
+    """Test that empty/None language returns None."""
+    assert preprocessor_with_jira._normalize_code_language("") is None
+    assert preprocessor_with_jira._normalize_code_language(None) is None
+
+
+def test_markdown_to_jira_code_block_valid_language(preprocessor_with_jira):
+    """Test code block conversion with valid JIRA language."""
+    markdown = """```python
+def hello():
+    print("Hello World")
+```"""
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+    assert "{code:python}" in result
+    assert "def hello():" in result
+    assert "{code}" in result
+
+
+def test_markdown_to_jira_code_block_dockerfile_maps_to_bash(preprocessor_with_jira):
+    """Test that dockerfile code blocks map to bash (issue #669)."""
+    markdown = """```dockerfile
+FROM ubuntu:22.04
+RUN apt-get update
+CMD ["/bin/bash"]
+```"""
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+    assert "{code:bash}" in result
+    assert "FROM ubuntu:22.04" in result
+    assert "{code}" in result
+
+
+def test_markdown_to_jira_code_block_typescript_maps_to_javascript(
+    preprocessor_with_jira,
+):
+    """Test that typescript code blocks map to javascript."""
+    markdown = """```typescript
+interface User {
+    name: string;
+    age: number;
+}
+```"""
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+    assert "{code:javascript}" in result
+    assert "interface User" in result
+
+
+def test_markdown_to_jira_code_block_jsx_maps_to_javascript(preprocessor_with_jira):
+    """Test that jsx code blocks map to javascript (issue #669)."""
+    markdown = """```jsx
+const Component = () => {
+  return <div>Hello</div>;
+}
+```"""
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+    assert "{code:javascript}" in result
+    assert "const Component" in result
+
+
+def test_markdown_to_jira_code_block_unmapped_language_plain(preprocessor_with_jira):
+    """Test that unmapped languages produce plain {code} blocks."""
+    markdown = """```rust
+fn main() {
+    println!("Hello, world!");
+}
+```"""
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+    # Should produce {code} without language specifier
+    assert "{code}" in result
+    assert "{code:rust}" not in result
+    assert "fn main()" in result
+
+
+def test_markdown_to_jira_code_block_no_language_plain(preprocessor_with_jira):
+    """Test that code blocks without language produce plain {code}."""
+    markdown = """```
+plain text code
+no syntax highlighting
+```"""
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+    assert "{code}" in result
+    # Should not have any language specifier
+    assert "{code:" not in result
+    assert "plain text code" in result
+
+
+def test_markdown_to_jira_multiple_code_blocks_mixed_languages(preprocessor_with_jira):
+    """Test multiple code blocks with different language mappings."""
+    markdown = """
+Python code:
+```python
+print("hello")
+```
+
+Dockerfile:
+```dockerfile
+FROM alpine
+```
+
+Unknown language:
+```unknownlang
+some code
+```
+"""
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+    assert "{code:python}" in result
+    assert "{code:bash}" in result  # dockerfile mapped to bash
+    assert 'print("hello")' in result
+    assert "FROM alpine" in result
+    assert "some code" in result
+
+
+# Confluence ac:image tag processing tests
+
+
+class TestImageProcessing:
+    """Tests for Confluence ac:image tag processing."""
+
+    @pytest.fixture
+    def preprocessor(self):
+        return ConfluencePreprocessor(base_url="https://example.net")
+
+    @pytest.mark.parametrize(
+        "test_id, html, content_id, attachments, expected",
+        [
+            pytest.param(
+                "ri-attachment-basic",
+                '<ac:image><ri:attachment ri:filename="shot.png"/></ac:image>',
+                "123",
+                None,
+                "![shot.png](https://example.net/download/attachments/123/shot.png)",
+                id="ri-attachment-basic",
+            ),
+            pytest.param(
+                "ri-url-basic",
+                '<ac:image><ri:url ri:value="https://cdn/logo.png"/></ac:image>',
+                "",
+                None,
+                "![logo.png](https://cdn/logo.png)",
+                id="ri-url-basic",
+            ),
+            pytest.param(
+                "width-attr",
+                '<ac:image ac:width="600"><ri:attachment ri:filename="d.png"/></ac:image>',
+                "123",
+                None,
+                "![d.png]",
+                id="width-attr",
+            ),
+            pytest.param(
+                "mixed-content",
+                '<p>Text</p><ac:image><ri:attachment ri:filename="x.png"/></ac:image><p>More</p>',
+                "123",
+                None,
+                "x.png",
+                id="mixed-content",
+            ),
+            pytest.param(
+                "no-content-id",
+                '<ac:image><ri:attachment ri:filename="test.png"/></ac:image>',
+                "",
+                None,
+                "![test.png](test.png)",
+                id="no-content-id",
+            ),
+            pytest.param(
+                "attachment-lookup",
+                '<ac:image><ri:attachment ri:filename="doc.png"/></ac:image>',
+                "123",
+                [
+                    {
+                        "title": "doc.png",
+                        "_links": {"download": "/download/attachments/123/doc.png"},
+                    }
+                ],
+                "![doc.png](https://example.net/download/attachments/123/doc.png)",
+                id="attachment-lookup",
+            ),
+            pytest.param(
+                "filename-spaces",
+                '<ac:image><ri:attachment ri:filename="Screen Shot 2024.png"/></ac:image>',
+                "123",
+                None,
+                "Screen%20Shot%202024.png",
+                id="filename-spaces",
+            ),
+            pytest.param(
+                "unknown-inner",
+                "<ac:image><ri:unknown/></ac:image>",
+                "123",
+                None,
+                "[unsupported image]",
+                id="unknown-inner",
+            ),
+            pytest.param(
+                "no-image-tags",
+                "<p>Normal content</p>",
+                "123",
+                None,
+                "Normal content",
+                id="no-image-tags",
+            ),
+        ],
+    )
+    def test_image_processing(
+        self,
+        preprocessor,
+        test_id: str,
+        html: str,
+        content_id: str,
+        attachments: list[dict] | None,
+        expected: str,
+    ):
+        """Test ac:image tag processing with various inputs."""
+        _, markdown = preprocessor.process_html_content(
+            html,
+            content_id=content_id,
+            attachments=attachments,
+        )
+        assert expected in markdown
+
+    def test_width_attr_in_img(self, preprocessor):
+        """Verify width attribute is preserved in the img tag."""
+        html = (
+            '<ac:image ac:width="600"><ri:attachment ri:filename="d.png"/></ac:image>'
+        )
+        processed_html, _ = preprocessor.process_html_content(html, content_id="123")
+        assert 'width="600"' in processed_html
+
+    def test_mixed_content_has_all_parts(self, preprocessor):
+        """Verify mixed content retains both text and image."""
+        html = '<p>Text</p><ac:image><ri:attachment ri:filename="x.png"/></ac:image><p>More</p>'
+        _, markdown = preprocessor.process_html_content(html, content_id="123")
+        assert "Text" in markdown
+        assert "x.png" in markdown
+        assert "More" in markdown
+
+    def test_attachment_lookup_uses_download_url(self, preprocessor):
+        """Verify attachment lookup prefers _links.download over fallback."""
+        attachments = [
+            {
+                "title": "doc.png",
+                "_links": {"download": "/download/attachments/123/doc.png"},
+            }
+        ]
+        html = '<ac:image><ri:attachment ri:filename="doc.png"/></ac:image>'
+        _, markdown = preprocessor.process_html_content(
+            html, content_id="123", attachments=attachments
+        )
+        # Should use the download link, not the fallback construction
+        assert "/download/attachments/123/doc.png" in markdown
+
+    def test_cross_page_attachment_uses_filename_fallback(self, preprocessor):
+        """Cross-page ri:attachment should not use current page's content_id."""
+        html = (
+            "<ac:image>"
+            '<ri:attachment ri:filename="img.png">'
+            '<ri:page ri:content-title="Other Page" ri:space-key="X"/>'
+            "</ri:attachment>"
+            "</ac:image>"
+        )
+        _, markdown = preprocessor.process_html_content(html, content_id="999")
+        # Should NOT contain /999/ (wrong page ID); should fall back to
+        # filename-only reference since we can't resolve the other page
+        assert "/999/" not in markdown
+        assert "![img.png](img.png)" in markdown
+
+    def test_backward_compatibility(self, preprocessor):
+        """Ensure existing calls without new params still work."""
+        html = "<p>Simple text</p>"
+        processed_html, processed_markdown = preprocessor.process_html_content(html)
+        assert "Simple text" in processed_markdown

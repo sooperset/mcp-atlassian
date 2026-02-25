@@ -84,6 +84,41 @@ def session_jira_field_definitions():
             "schema": {"type": "array", "items": "component"},
         },
         {
+            "id": "duedate",
+            "name": "Due Date",
+            "schema": {"type": "date"},
+        },
+        # Cascading select
+        {
+            "id": "customfield_10020",
+            "name": "Region",
+            "schema": {"type": "option-with-child", "custom": "cascadingselect"},
+        },
+        # Multi-select (array of options)
+        {
+            "id": "customfield_10021",
+            "name": "Categories",
+            "schema": {"type": "array", "items": "option", "custom": "multiselect"},
+        },
+        # Custom user field
+        {
+            "id": "customfield_10022",
+            "name": "Reviewer",
+            "schema": {"type": "user", "custom": "userpicker"},
+        },
+        # Custom date field
+        {
+            "id": "customfield_10023",
+            "name": "Target Date",
+            "schema": {"type": "date"},
+        },
+        # Generic option (radio/select)
+        {
+            "id": "customfield_10024",
+            "name": "Severity",
+            "schema": {"type": "option", "custom": "radiobuttons"},
+        },
+        {
             "id": "resolution",
             "name": "Resolution",
             "schema": {"type": "resolution"},
@@ -112,6 +147,27 @@ def session_jira_field_definitions():
             "id": "timeoriginalestimate",
             "name": "Original Estimate",
             "schema": {"type": "timetracking"},
+        },
+        # Checklist plugin (Okapya)
+        {
+            "id": "customfield_11003",
+            "name": "Definition of Done",
+            "schema": {
+                "type": "string",
+                "custom": "com.okapya.jira.checklist:checklist",
+                "customId": 11003,
+            },
+        },
+        # Checklist plugin (Okapya) — Server/DC array variant
+        {
+            "id": "customfield_11004",
+            "name": "Checklist",
+            "schema": {
+                "type": "array",
+                "items": "checklist-item",
+                "custom": "com.okapya.jira.checklist:checklist",
+                "customId": 11004,
+            },
         },
     ]
 
@@ -230,26 +286,6 @@ def mock_config(jira_config_factory):
 # ============================================================================
 # Environment Fixtures
 # ============================================================================
-
-
-@pytest.fixture
-def mock_env_vars():
-    """
-    Mock environment variables for testing.
-
-    Note: This fixture is maintained for backward compatibility.
-    Consider using the environment fixtures from root conftest.py.
-    """
-    with patch.dict(
-        os.environ,
-        {
-            "JIRA_URL": "https://test.atlassian.net",
-            "JIRA_USERNAME": "test_username",
-            "JIRA_API_TOKEN": "test_token",
-        },
-        clear=True,  # Clear existing environment variables
-    ):
-        yield
 
 
 @pytest.fixture
@@ -575,3 +611,73 @@ def parametrized_jira_status(request):
     """
     status = request.param
     return JiraIssueFactory.create(fields={"status": {"name": status}})
+
+
+@pytest.fixture
+def make_issue_data():
+    """
+    Factory fixture for creating Jira issue API response data.
+
+    This fixture provides a convenient way to create issue data with
+    sensible defaults that can be selectively overridden. It wraps
+    JiraIssueFactory.create() with a more ergonomic interface for tests.
+
+    Returns:
+        Callable: Function that creates issue response dicts
+
+    Example:
+        def test_something(make_issue_data):
+            # Basic usage - uses all defaults
+            issue = make_issue_data()
+
+            # Override specific fields
+            issue = make_issue_data(
+                key="PROJ-456",
+                summary="Custom summary",
+                status="In Progress",
+                issue_type="Bug",
+            )
+
+            # Add custom fields
+            issue = make_issue_data(
+                components=[{"name": "UI"}],
+                labels=["urgent", "frontend"],
+            )
+    """
+
+    def _make_issue_data(
+        key: str = "TEST-123",
+        issue_id: str = "12345",
+        summary: str = "Test Issue",
+        description: str = "This is a test issue",
+        status: str = "Open",
+        issue_type: str = "Bug",
+        **extra_fields,
+    ) -> dict:
+        """
+        Create a Jira issue API response dict.
+
+        Args:
+            key: Issue key (e.g., "TEST-123")
+            issue_id: Issue ID
+            summary: Issue summary
+            description: Issue description
+            status: Status name
+            issue_type: Issue type name
+            **extra_fields: Additional fields to merge into the fields dict
+
+        Returns:
+            Dict matching Jira API issue response structure
+        """
+        fields = {
+            "summary": summary,
+            "description": description,
+            "status": {"name": status},
+            "issuetype": {"name": issue_type},
+            "created": "2023-01-01T00:00:00.000+0000",
+            "updated": "2023-01-02T00:00:00.000+0000",
+            **extra_fields,
+        }
+        return JiraIssueFactory.create(key=key, id=issue_id, fields=fields)
+
+    return _make_issue_data

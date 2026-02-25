@@ -230,7 +230,9 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
 
                 # Apply fields and comments separately if needed
                 if fields_for_api or update_for_api:
-                    payload: dict[str, Any] = {}
+                    payload: dict[str, Any] = {
+                        "transition": {"id": str(normalized_transition_id)},
+                    }
                     if fields_for_api:
                         payload["fields"] = fields_for_api
                     if update_for_api:
@@ -238,8 +240,8 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
 
                     if payload:
                         base_url = self.jira.resource_url("issue")
-                        url = f"{base_url}/{issue_key}"
-                        self.jira.put(url, data=payload)
+                        url = f"{base_url}/{issue_key}/transitions"
+                        self.jira.post(url, json=payload)
 
             # Return the updated issue
             return self.get_issue(issue_key)

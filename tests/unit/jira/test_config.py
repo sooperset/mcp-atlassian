@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from mcp_atlassian.jira.config import JiraConfig
+from mcp_atlassian.utils.oauth import OAuthConfig
 
 
 def test_from_env_basic_auth():
@@ -260,3 +261,143 @@ def test_from_env_without_client_cert():
         assert config.client_cert is None
         assert config.client_key is None
         assert config.client_key_password is None
+
+
+def test_jira_config_timeout_from_env():
+    """Test that timeout is read from JIRA_TIMEOUT env var."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://jira.example.com",
+            "JIRA_PERSONAL_TOKEN": "test_pat",
+            "JIRA_TIMEOUT": "120",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.timeout == 120
+
+
+def test_jira_config_timeout_default():
+    """Test that timeout defaults to 75 when no env var is set."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://jira.example.com",
+            "JIRA_PERSONAL_TOKEN": "test_pat",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.timeout == 75
+
+
+def test_jira_config_is_cloud_false_for_dc_oauth():
+    """Test is_cloud returns False when DC OAuth is configured."""
+    dc_oauth = OAuthConfig(
+        client_id="c",
+        client_secret="s",
+        redirect_uri="r",
+        scope="sc",
+        base_url="https://jira.corp.com",
+    )
+    config = JiraConfig(
+        url="https://jira.corp.com",
+        auth_type="oauth",
+        oauth_config=dc_oauth,
+    )
+    assert config.is_cloud is False
+
+
+def test_jira_config_is_cloud_true_for_cloud_oauth():
+    """Test is_cloud returns True when Cloud OAuth is configured."""
+    cloud_oauth = OAuthConfig(
+        client_id="c",
+        client_secret="s",
+        redirect_uri="r",
+        scope="sc",
+        cloud_id="cloud-123",
+    )
+    config = JiraConfig(
+        url="https://test.atlassian.net",
+        auth_type="oauth",
+        oauth_config=cloud_oauth,
+    )
+    assert config.is_cloud is True
+
+
+def test_jira_config_is_auth_configured_dc_oauth():
+    """Test is_auth_configured returns True for DC OAuth with client_id + secret."""
+    dc_oauth = OAuthConfig(
+        client_id="c",
+        client_secret="s",
+        redirect_uri="r",
+        scope="sc",
+        base_url="https://jira.corp.com",
+    )
+    config = JiraConfig(
+        url="https://jira.corp.com",
+        auth_type="oauth",
+        oauth_config=dc_oauth,
+    )
+    assert config.is_auth_configured() is True
+
+
+def test_from_env_oauth_enable_no_url():
+    """Test BYOT OAuth mode — ATLASSIAN_OAUTH_ENABLE=true without URL."""
+    with patch.dict(
+        os.environ,
+        {"ATLASSIAN_OAUTH_ENABLE": "true"},
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.auth_type == "oauth"
+        assert config.url == ""
+        assert config.is_cloud is False
+
+
+def test_from_env_oauth_enable_no_url_with_cloud_id():
+    """Test BYOT OAuth mode — ATLASSIAN_OAUTH_ENABLE=true with cloud_id but no URL."""
+    with patch.dict(
+        os.environ,
+        {
+            "ATLASSIAN_OAUTH_ENABLE": "true",
+            "ATLASSIAN_OAUTH_CLOUD_ID": "test-cloud-id",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.auth_type == "oauth"
+        assert config.is_cloud is True
+
+
+def test_from_env_oauth_enable_with_cloud_url():
+    """Test BYOT OAuth mode — ATLASSIAN_OAUTH_ENABLE=true with Cloud URL."""
+    with patch.dict(
+        os.environ,
+        {
+            "ATLASSIAN_OAUTH_ENABLE": "true",
+            "JIRA_URL": "https://test.atlassian.net",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.url == "https://test.atlassian.net"
+        assert config.auth_type == "oauth"
+        assert config.is_cloud is True
+
+
+def test_from_env_oauth_enable_with_server_url():
+    """Test BYOT OAuth mode — ATLASSIAN_OAUTH_ENABLE=true with Server URL."""
+    with patch.dict(
+        os.environ,
+        {
+            "ATLASSIAN_OAUTH_ENABLE": "true",
+            "JIRA_URL": "https://jira.example.com",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.url == "https://jira.example.com"
+        assert config.auth_type == "oauth"
+        assert config.is_cloud is False

@@ -6,7 +6,7 @@ import pytest
 import requests
 
 from mcp_atlassian.jira.config import JiraConfig
-from mcp_atlassian.jira.users import UsersMixin
+from mcp_atlassian.jira.users import UsersMixin, normalize_text
 
 
 class TestUsersMixin:
@@ -364,6 +364,58 @@ class TestUsersMixin:
         # Verify result
         assert account_id is None
 
+    def test_resolve_server_dc_user_params_returns_username(self, users_mixin):
+        """Test _resolve_server_dc_user_params returns username dict when name is available."""
+        users_mixin.jira.user_find_by_user_string.return_value = [
+            {
+                "name": "jnovak",
+                "displayName": "Jan Novák",
+                "emailAddress": "jnovak@firma.cz",
+            }
+        ]
+        result = users_mixin._resolve_server_dc_user_params("jnovak@firma.cz")
+        assert result == {"username": "jnovak"}
+        users_mixin.jira.user_find_by_user_string.assert_called_once_with(
+            username="jnovak@firma.cz", start=0, limit=1
+        )
+
+    def test_resolve_server_dc_user_params_returns_key(self, users_mixin):
+        """Test _resolve_server_dc_user_params returns key dict when only key is available."""
+        users_mixin.jira.user_find_by_user_string.return_value = [
+            {
+                "key": "JIRAUSER-12345",
+                "displayName": "Jan Novák",
+                "emailAddress": "jnovak@firma.cz",
+            }
+        ]
+        result = users_mixin._resolve_server_dc_user_params("jnovak@firma.cz")
+        assert result == {"key": "JIRAUSER-12345"}
+
+    def test_resolve_server_dc_user_params_no_match(self, users_mixin):
+        """Test _resolve_server_dc_user_params returns None when no user matches."""
+        users_mixin.jira.user_find_by_user_string.return_value = []
+        result = users_mixin._resolve_server_dc_user_params("nobody@firma.cz")
+        assert result is None
+
+    def test_resolve_server_dc_user_params_skips_empty_name(self, users_mixin):
+        """Test _resolve_server_dc_user_params skips empty name and falls back to key."""
+        users_mixin.jira.user_find_by_user_string.return_value = [
+            {
+                "name": "",
+                "key": "JIRAUSER-99999",
+                "displayName": "Jan Novák",
+                "emailAddress": "jnovak@firma.cz",
+            }
+        ]
+        result = users_mixin._resolve_server_dc_user_params("jnovak@firma.cz")
+        assert result == {"key": "JIRAUSER-99999"}
+
+    def test_resolve_server_dc_user_params_error(self, users_mixin):
+        """Test _resolve_server_dc_user_params returns None on API error."""
+        users_mixin.jira.user_find_by_user_string.side_effect = Exception("API error")
+        result = users_mixin._resolve_server_dc_user_params("jnovak@firma.cz")
+        assert result is None
+
     def test_lookup_user_by_permissions(self, users_mixin):
         """Test _lookup_user_by_permissions when user is found."""
         # Mock requests.get
@@ -504,6 +556,98 @@ class TestUsersMixin:
                 "permissions": "BROWSE",
             }
 
+    def test_determine_user_api_params_server_dc_email_resolved_to_username(
+        self, users_mixin
+    ):
+        """Test Server/DC email is resolved via search, not passed directly as username."""
+        users_mixin.config = MagicMock(spec=JiraConfig)
+        users_mixin.config.is_cloud = False
+        users_mixin._resolve_server_dc_user_params = MagicMock(
+            return_value={"username": "jnovak"}
+        )
+
+        params = users_mixin._determine_user_api_params("jnovak@firma.cz")
+
+        assert params == {"username": "jnovak"}
+        users_mixin._resolve_server_dc_user_params.assert_called_once_with(
+            "jnovak@firma.cz"
+        )
+
+    def test_determine_user_api_params_server_dc_email_resolved_to_key(
+        self, users_mixin
+    ):
+        """Test Server/DC email resolving to a key-style identifier."""
+        users_mixin.config = MagicMock(spec=JiraConfig)
+        users_mixin.config.is_cloud = False
+        users_mixin._resolve_server_dc_user_params = MagicMock(
+            return_value={"key": "JIRAUSER-12345"}
+        )
+
+        params = users_mixin._determine_user_api_params("jnovak@firma.cz")
+
+        assert params == {"key": "JIRAUSER-12345"}
+
+    def test_determine_user_api_params_server_dc_email_lookup_fails_fallback(
+        self, users_mixin
+    ):
+        """Test Server/DC email falls back to direct username when lookup returns None."""
+        users_mixin.config = MagicMock(spec=JiraConfig)
+        users_mixin.config.is_cloud = False
+        users_mixin._resolve_server_dc_user_params = MagicMock(return_value=None)
+
+        params = users_mixin._determine_user_api_params("login@example.com")
+
+        # Fallback: email used as username directly (e.g., when login IS the email)
+        assert params == {"username": "login@example.com"}
+
+    def test_determine_user_api_params_server_dc_non_email_uses_username(
+        self, users_mixin
+    ):
+        """Test Server/DC non-email identifiers always use username= param."""
+        users_mixin.config = MagicMock(spec=JiraConfig)
+        users_mixin.config.is_cloud = False
+
+        # Even key-like identifiers should use username= (safe default for Server/DC)
+        params = users_mixin._determine_user_api_params("JIRAUSER-12345")
+        assert params == {"username": "JIRAUSER-12345"}
+
+        params = users_mixin._determine_user_api_params("j-smith2")
+        assert params == {"username": "j-smith2"}
+
+        params = users_mixin._determine_user_api_params("jnovak")
+        assert params == {"username": "jnovak"}
+
+    def test_get_user_profile_by_identifier_server_dc_email(self, users_mixin):
+        """Regression: Server/DC email lookup must search first, not pass email as username."""
+        users_mixin.config = MagicMock(spec=JiraConfig)
+        users_mixin.config.is_cloud = False
+        users_mixin._resolve_server_dc_user_params = MagicMock(
+            return_value={"username": "jnovak"}
+        )
+
+        with patch(
+            "src.mcp_atlassian.jira.users.JiraUser.from_api_response"
+        ) as mock_from_api_response:
+            mock_user_instance = MagicMock()
+            mock_from_api_response.return_value = mock_user_instance
+            mock_response_data = {
+                "name": "jnovak",
+                "displayName": "Jan Novák",
+                "emailAddress": "jnovak@firma.cz",
+                "active": True,
+            }
+            users_mixin.jira.user = MagicMock(return_value=mock_response_data)
+
+            user = users_mixin.get_user_profile_by_identifier("jnovak@firma.cz")
+
+            assert user == mock_user_instance
+            # Must resolve email via _resolve_server_dc_user_params
+            users_mixin._resolve_server_dc_user_params.assert_called_once_with(
+                "jnovak@firma.cz"
+            )
+            # Must call user() with resolved username, NOT the raw email
+            users_mixin.jira.user.assert_called_once_with(username="jnovak")
+
     def test_get_user_profile_by_identifier_cloud_account_id(self, users_mixin):
         """Test get_user_profile_by_identifier with Cloud and accountId."""
         users_mixin.config = MagicMock(spec=JiraConfig)
@@ -625,3 +769,134 @@ class TestUsersMixin:
             Exception, match="Error processing user profile for 'error_user'"
         ):
             users_mixin.get_user_profile_by_identifier("error_user")
+
+
+class TestNormalizeText:
+    """Tests for the normalize_text helper function."""
+
+    def test_normalize_text_empty_string(self):
+        """Test normalize_text with empty string."""
+        assert normalize_text("") == ""
+
+    def test_normalize_text_none_returns_empty(self):
+        """Test normalize_text with None returns empty string."""
+        assert normalize_text(None) == ""
+
+    def test_normalize_text_ascii(self):
+        """Test normalize_text with ASCII text."""
+        assert normalize_text("Test User") == "test user"
+        assert normalize_text("test user") == "test user"
+        assert normalize_text("TEST USER") == "test user"
+
+    def test_normalize_text_polish_characters(self):
+        """Test normalize_text with Polish characters like ł and ó."""
+        # Polish "Kowalczyk" with ł should match ASCII "Kowalczyk" after normalization
+        # unidecode converts ł to l, and ó to o
+        normalized_polish = normalize_text("Pawełł")
+        normalized_ascii = normalize_text("Pawell")
+        # With unidecode, Polish characters are transliterated to ASCII
+        assert normalized_polish == normalized_ascii
+
+    def test_normalize_text_german_characters(self):
+        """Test normalize_text with German characters like ß and ü."""
+        # German ß should casefold to ss
+        assert normalize_text("Müller") == normalize_text("müller")
+        assert "ss" in normalize_text("Strauß")
+
+
+class TestUnicodeLookup:
+    """Tests for Unicode handling in user lookup."""
+
+    @pytest.fixture
+    def users_mixin(self, jira_client):
+        """Create a UsersMixin instance with mocked dependencies."""
+        mixin = UsersMixin(config=jira_client.config)
+        mixin.jira = jira_client.jira
+        return mixin
+
+    def test_lookup_user_directly_unicode_displayname(self, users_mixin):
+        """Test _lookup_user_directly matches Unicode display names."""
+        # Mock the API response with a Polish name
+        users_mixin.jira.user_find_by_user_string.return_value = [
+            {
+                "accountId": "unicode-account-id",
+                "displayName": "Paweł Kowalczyk",
+                "emailAddress": "pawel@example.com",
+            }
+        ]
+
+        # Mock config.is_cloud to return True
+        users_mixin.config = MagicMock()
+        users_mixin.config.is_cloud = True
+
+        # Searching with the exact Unicode name should match
+        account_id = users_mixin._lookup_user_directly("Paweł Kowalczyk")
+        assert account_id == "unicode-account-id"
+
+    def test_lookup_user_directly_case_insensitive_unicode(self, users_mixin):
+        """Test _lookup_user_directly is case-insensitive for Unicode names."""
+        # Mock the API response with a Polish name
+        users_mixin.jira.user_find_by_user_string.return_value = [
+            {
+                "accountId": "unicode-account-id",
+                "displayName": "Paweł Kowalczyk",
+                "emailAddress": "pawel@example.com",
+            }
+        ]
+
+        # Mock config.is_cloud to return True
+        users_mixin.config = MagicMock()
+        users_mixin.config.is_cloud = True
+
+        # Searching with different case should still match
+        account_id = users_mixin._lookup_user_directly("paweł kowalczyk")
+        assert account_id == "unicode-account-id"
+
+    def test_lookup_user_directly_ascii_still_works(self, users_mixin):
+        """Test _lookup_user_directly still works for ASCII names."""
+        # Mock the API response with an ASCII name
+        users_mixin.jira.user_find_by_user_string.return_value = [
+            {
+                "accountId": "ascii-account-id",
+                "displayName": "John Smith",
+                "emailAddress": "john@example.com",
+            }
+        ]
+
+        # Mock config.is_cloud to return True
+        users_mixin.config = MagicMock()
+        users_mixin.config.is_cloud = True
+
+        # Searching with the ASCII name should match
+        account_id = users_mixin._lookup_user_directly("John Smith")
+        assert account_id == "ascii-account-id"
+
+        # Case insensitive should also work
+        users_mixin.jira.user_find_by_user_string.return_value = [
+            {
+                "accountId": "ascii-account-id",
+                "displayName": "John Smith",
+                "emailAddress": "john@example.com",
+            }
+        ]
+        account_id = users_mixin._lookup_user_directly("john smith")
+        assert account_id == "ascii-account-id"
+
+    def test_lookup_user_directly_email_with_unicode(self, users_mixin):
+        """Test _lookup_user_directly matches email addresses correctly."""
+        # Mock the API response
+        users_mixin.jira.user_find_by_user_string.return_value = [
+            {
+                "accountId": "email-account-id",
+                "displayName": "Test User",
+                "emailAddress": "tëst@example.com",
+            }
+        ]
+
+        # Mock config.is_cloud to return True
+        users_mixin.config = MagicMock()
+        users_mixin.config.is_cloud = True
+
+        # Searching with the email should match (case insensitive)
+        account_id = users_mixin._lookup_user_directly("TËST@EXAMPLE.COM")
+        assert account_id == "email-account-id"

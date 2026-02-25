@@ -1,6 +1,7 @@
 """Module for Jira search operations."""
 
 import logging
+import re
 from typing import Any
 
 import requests
@@ -11,6 +12,7 @@ from ..models.jira import JiraSearchResult
 from .client import JiraClient
 from .constants import DEFAULT_READ_JIRA_FIELDS
 from .protocols import IssueOperationsProto
+from .utils import quote_jql_identifier_if_needed, sanitize_jql_reserved_words
 
 logger = logging.getLogger("mcp-jira")
 
@@ -48,6 +50,9 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             Exception: If there is an error searching for issues
         """
         try:
+            # Sanitize JQL reserved words in project key values
+            jql = sanitize_jql_reserved_words(jql)
+
             # Use projects_filter parameter if provided, otherwise fall back to config
             filter_to_use = projects_filter or self.config.projects_filter
 
@@ -57,10 +62,19 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                 projects = [p.strip() for p in filter_to_use.split(",")]
 
                 # Build the project filter query part
+                # Sanitize project names to prevent JQL injection
+                # Escape backslashes before double-quotes to prevent bypass
+                projects = [
+                    p.replace("\\", "\\\\").replace('"', '\\"') for p in projects
+                ]
+
                 if len(projects) == 1:
-                    project_query = f'project = "{projects[0]}"'
+                    quoted = quote_jql_identifier_if_needed(projects[0])
+                    project_query = f"project = {quoted}"
                 else:
-                    quoted_projects = [f'"{p}"' for p in projects]
+                    quoted_projects = [
+                        quote_jql_identifier_if_needed(p) for p in projects
+                    ]
                     projects_list = ", ".join(quoted_projects)
                     project_query = f"project IN ({projects_list})"
 
@@ -75,7 +89,18 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                     "project = " not in jql.lower() and "project in" not in jql.lower()
                 ):
                     # Only add if not already filtering by project
-                    jql = f"({jql}) AND {project_query}"
+                    # Extract ORDER BY clause if present to avoid invalid JQL
+                    order_match = re.search(
+                        r"\s+(ORDER\s+BY\s+.*)$", jql, re.IGNORECASE
+                    )
+                    if order_match:
+                        order_clause = order_match.group(1)
+                        jql_without_order = jql[: order_match.start()]
+                        jql = (
+                            f"({jql_without_order}) AND {project_query} {order_clause}"
+                        )
+                    else:
+                        jql = f"({jql}) AND {project_query}"
 
                 logger.info(f"Applied projects filter to query: {jql}")
 
@@ -208,6 +233,9 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             Exception: If there is an error getting board issues
         """
         try:
+            # Sanitize JQL reserved words in project key values
+            jql = sanitize_jql_reserved_words(jql) or jql
+
             # Determine fields_param
             fields_param = fields
             if fields_param is None:
@@ -264,36 +292,17 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             JiraSearchResult object containing sprint issues and metadata
 
         Raises:
-            Exception: If there is an error getting board issues
+            Exception: If there is an error getting sprint issues
         """
         try:
-            # Determine fields_param
-            fields_param = fields
-            if fields_param is None:
-                fields_param = ",".join(DEFAULT_READ_JIRA_FIELDS)
-
-            response = self.jira.get_sprint_issues(
-                sprint_id=sprint_id,
+            # Use JQL search to get sprint issues with proper fields filtering
+            jql = f"sprint = {sprint_id}"
+            return self.search_issues(
+                jql=jql,
+                fields=fields,
                 start=start,
                 limit=limit,
             )
-            if not isinstance(response, dict):
-                msg = f"Unexpected return value type from `jira.get_sprint_issues`: {type(response)}"
-                logger.error(msg)
-                raise TypeError(msg)
-
-            # Convert the response to a search result model
-            search_result = JiraSearchResult.from_api_response(
-                response, base_url=self.config.url, requested_fields=fields_param
-            )
-            return search_result
-        except requests.HTTPError as e:
-            logger.error(
-                f"Error searching issues for sprint '{sprint_id}': {str(e.response.content)}"
-            )
-            raise Exception(
-                f"Error searching issues for sprint: {str(e.response.content)}"
-            ) from e
         except Exception as e:
-            logger.error(f"Error searching issues for sprint: {sprint_id}': {str(e)}")
+            logger.error(f"Error searching issues for sprint '{sprint_id}': {str(e)}")
             raise Exception(f"Error searching issues for sprint: {str(e)}") from e

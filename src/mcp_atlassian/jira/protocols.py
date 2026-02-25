@@ -1,10 +1,13 @@
 """Module for Jira protocol definitions."""
 
 from abc import abstractmethod
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from ..models.jira import JiraIssue
+from ..models.jira import JiraIssue, ProFormaForm
 from ..models.jira.search import JiraSearchResult
+
+if TYPE_CHECKING:
+    from ..models.jira.metrics import IssueDatesResponse
 
 
 class AttachmentsOperationsProto(Protocol):
@@ -23,6 +26,35 @@ class AttachmentsOperationsProto(Protocol):
 
         Returns:
             A dictionary with upload results
+        """
+
+
+class FormsOperationsProto(Protocol):
+    """Protocol defining ProForma forms operations interface."""
+
+    @abstractmethod
+    def get_issue_forms(self, issue_key: str) -> list[ProFormaForm]:
+        """
+        Get all ProForma forms associated with an issue.
+
+        Args:
+            issue_key: The issue key (e.g. 'PROJ-123')
+
+        Returns:
+            List of ProFormaForm objects
+        """
+
+    @abstractmethod
+    def get_form_details(self, issue_key: str, form_id: str) -> ProFormaForm | None:
+        """
+        Get detailed information about a specific ProForma form.
+
+        Args:
+            issue_key: The issue key (e.g. 'PROJ-123')
+            form_id: The form identifier (e.g. 'i12345')
+
+        Returns:
+            ProFormaForm object or None if not found
         """
 
 
@@ -138,6 +170,21 @@ class FieldsOperationsProto(Protocol):
         """
 
     @abstractmethod
+    def _format_field_value_for_write(
+        self, field_id: str, value: Any, field_definition: dict | None
+    ) -> Any:
+        """Format field values for the Jira API.
+
+        Args:
+            field_id: The Jira field ID
+            value: The raw value to format
+            field_definition: Field definition dict, or None
+
+        Returns:
+            Formatted value suitable for the Jira API
+        """
+
+    @abstractmethod
     def get_field_by_id(
         self, field_id: str, refresh: bool = False
     ) -> dict[str, Any] | None:
@@ -204,4 +251,35 @@ class UsersOperationsProto(Protocol):
 
         Raises:
             ValueError: If the account ID could not be found
+        """
+
+
+@runtime_checkable
+class MetricsOperationsProto(Protocol):
+    """Protocol defining metrics operations interface."""
+
+    @abstractmethod
+    def get_issue_dates(
+        self,
+        issue_key: str,
+        include_created: bool = True,
+        include_updated: bool = True,
+        include_due_date: bool = True,
+        include_resolution_date: bool = True,
+        include_status_changes: bool = True,
+        include_status_summary: bool = True,
+    ) -> "IssueDatesResponse":
+        """Get date information and status history for an issue.
+
+        Args:
+            issue_key: The Jira issue key (e.g., 'PROJ-123')
+            include_created: Include created date
+            include_updated: Include updated date
+            include_due_date: Include due date
+            include_resolution_date: Include resolution date
+            include_status_changes: Include status change history
+            include_status_summary: Include time in status summary
+
+        Returns:
+            IssueDatesResponse with date information
         """

@@ -81,6 +81,7 @@ class JiraComment(ApiModel, TimestampMixin):
     def to_simplified_dict(self) -> dict[str, Any]:
         """Convert to simplified dictionary for API response."""
         result = {
+            "id": self.id,
             "body": self.body,
         }
 

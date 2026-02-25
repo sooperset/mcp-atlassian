@@ -1,0 +1,104 @@
+---
+title: "AI Platform Compatibility"
+description: "Compatibility status across AI platforms, clients, and gateways"
+---
+
+# AI Platform Compatibility
+
+MCP Atlassian works with any MCP-compatible client. This page documents platform-specific notes and known issues.
+
+## Compatibility Matrix
+
+| Platform | Status | Transport | Notes |
+|----------|--------|-----------|-------|
+| Claude Desktop | Fully supported | stdio | Primary development target |
+| Cursor | Fully supported | stdio | |
+| Windsurf | Fully supported | stdio | |
+| VS Code (Copilot) | Supported | stdio | See [Copilot setup](#github-copilot) |
+| Vertex AI / Google ADK | Supported | stdio / HTTP | Schema sanitization applied automatically |
+| Amazon Bedrock | Compatible | stdio / HTTP | Not explicitly tested |
+| LiteLLM | Compatible | stdio / HTTP | Passes schemas to underlying provider |
+| OpenAI Gateway | Compatible | stdio / HTTP | |
+| ChatGPT | Not tested | HTTP | See [ChatGPT notes](#chatgpt) |
+
+## Schema Compatibility
+
+MCP Atlassian includes automatic schema sanitization to ensure compatibility with strict AI platforms:
+
+- **`anyOf` flattening**: Pydantic v2 generates `anyOf` patterns for optional parameters (`T | None`). These are automatically collapsed to simple `{"type": T}` before schemas are sent to clients, since Vertex AI and Google ADK reject `anyOf` alongside `default` or `description` fields.
+- **No zero-argument tools**: All tools have at least one parameter, which is required by some OpenAI-compatible gateways.
+- **All properties have explicit `type`**: Required by Vertex AI.
+- **No `$defs` / `$ref`**: All schemas are fully inlined.
+
+These constraints are enforced by CI tests across all tools.
+
+## Platform-Specific Notes
+
+### GitHub Copilot
+
+GitHub Copilot's coding agent supports MCP servers via stdio transport. Key configuration notes:
+
+<Steps>
+  <Step title="Use stdio transport">
+    Copilot's agent mode uses stdio, not HTTP. Configure as a standard MCP server:
+
+    ```json
+    {
+      "mcpServers": {
+        "mcp-atlassian": {
+          "command": "uvx",
+          "args": ["mcp-atlassian"],
+          "env": {
+            "JIRA_URL": "https://your-instance.atlassian.net",
+            "JIRA_USERNAME": "your-email@example.com",
+            "JIRA_API_TOKEN": "your-api-token"
+          }
+        }
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Verify tool discovery">
+    If Copilot reports "Retrieved 0 tools", ensure you are using `mcp-atlassian >= 0.16.0` (which includes FastMCP updates for better protocol compliance).
+  </Step>
+
+  <Step title="Docker alternative">
+    When using Docker, expose via stdio (not HTTP):
+
+    ```json
+    {
+      "mcpServers": {
+        "mcp-atlassian": {
+          "command": "docker",
+          "args": [
+            "run", "-i", "--rm",
+            "-e", "JIRA_URL=https://your-instance.atlassian.net",
+            "-e", "JIRA_USERNAME=your-email@example.com",
+            "-e", "JIRA_API_TOKEN=your-api-token",
+            "ghcr.io/sooperset/mcp-atlassian:latest"
+          ]
+        }
+      }
+    }
+    ```
+  </Step>
+</Steps>
+
+### Vertex AI / Google ADK
+
+Vertex AI enforces strict JSON Schema validation. The automatic `anyOf` flattening resolves the `INVALID_ARGUMENT` errors previously reported with Google ADK.
+
+If you encounter schema errors, ensure you are running the latest version:
+
+```bash
+uvx mcp-atlassian@latest
+```
+
+### ChatGPT
+
+ChatGPT's MCP integration has reported vague "violates guidelines" errors. This may be related to schema validation but no specific diagnostics are available. If you encounter this, please [open an issue](https://github.com/sooperset/mcp-atlassian/issues) with the exact error message.
+
+## HTTP Transport
+
+For platforms that require HTTP transport (e.g., remote deployments, gateways), see the [HTTP Transport](/docs/http-transport) guide.

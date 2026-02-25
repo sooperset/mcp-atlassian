@@ -179,25 +179,6 @@ def mock_config(confluence_config_factory):
 
 
 @pytest.fixture
-def mock_env_vars():
-    """
-    Mock environment variables for testing.
-
-    Note: This fixture is maintained for backward compatibility.
-    Consider using the environment fixtures from root conftest.py.
-    """
-    with patch.dict(
-        "os.environ",
-        {
-            "CONFLUENCE_URL": "https://example.atlassian.net/wiki",
-            "CONFLUENCE_USERNAME": "test_user",
-            "CONFLUENCE_API_TOKEN": "test_token",
-        },
-    ):
-        yield
-
-
-@pytest.fixture
 def confluence_auth_environment():
     """
     Fixture providing Confluence-specific authentication environment.
@@ -508,6 +489,34 @@ def confluence_client(mock_config, mock_atlassian_confluence, mock_preprocessor)
         # Replace the actual preprocessor with our mock
         client.preprocessor = mock_preprocessor
         yield client
+
+
+@pytest.fixture
+def confluence_fetcher(mock_config, mock_atlassian_confluence, mock_preprocessor):
+    """
+    Create a ConfluenceFetcher instance with mocked dependencies.
+
+    Args:
+        mock_config: Mock configuration
+        mock_atlassian_confluence: Mock Atlassian client
+        mock_preprocessor: Mock text preprocessor
+
+    Returns:
+        ConfluenceFetcher: Configured fetcher instance
+    """
+    from mcp_atlassian.confluence import ConfluenceFetcher
+
+    with patch(
+        "mcp_atlassian.preprocessing.TextPreprocessor"
+    ) as mock_text_preprocessor:
+        mock_text_preprocessor.return_value = mock_preprocessor
+
+        fetcher = ConfluenceFetcher(config=mock_config)
+        # Replace the actual Confluence instance with our mock
+        fetcher.confluence = mock_atlassian_confluence
+        # Replace the actual preprocessor with our mock
+        fetcher.preprocessor = mock_preprocessor
+        yield fetcher
 
 
 # ============================================================================

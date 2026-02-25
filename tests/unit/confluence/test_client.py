@@ -38,6 +38,7 @@ def test_init_with_basic_auth():
             password="test_token",
             cloud=True,
             verify_ssl=True,
+            timeout=75,
         )
         assert client.config == config
         assert client.confluence == mock_confluence.return_value
@@ -84,6 +85,7 @@ def test_init_with_token_auth():
             token="test_personal_token",
             cloud=False,
             verify_ssl=False,
+            timeout=75,
         )
         assert client.config == config
         assert client.confluence == mock_confluence.return_value
@@ -266,3 +268,194 @@ def test_init_no_proxies(monkeypatch):
     )
     client = ConfluenceClient(config=config)
     assert mock_session.proxies == {}
+
+
+def test_confluence_client_passes_timeout_to_constructor():
+    """Test that ConfluenceClient passes custom timeout to Confluence constructor."""
+    with (
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+        patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+    ):
+        config = ConfluenceConfig(
+            url="https://test.atlassian.net/wiki",
+            auth_type="basic",
+            username="test_user",
+            api_token="test_token",
+            timeout=120,
+        )
+        ConfluenceClient(config=config)
+
+        mock_confluence.assert_called_once_with(
+            url="https://test.atlassian.net/wiki",
+            username="test_user",
+            password="test_token",
+            cloud=True,
+            verify_ssl=True,
+            timeout=120,
+        )
+
+
+def test_confluence_client_pat_disables_trust_env():
+    """Test that PAT auth disables trust_env to prevent .netrc override (#860)."""
+    with (
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+        patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+    ):
+        mock_session = MagicMock()
+        mock_session.trust_env = True
+        mock_confluence.return_value._session = mock_session
+
+        config = ConfluenceConfig(
+            url="https://confluence.example.com",
+            auth_type="pat",
+            personal_token="test_pat",
+        )
+        ConfluenceClient(config=config)
+
+        assert mock_session.trust_env is False
+
+
+# Phase 4: AttachmentsMixin Integration Tests
+def test_confluence_fetcher_has_attachments_mixin():
+    """Test that ConfluenceFetcher includes AttachmentsMixin in inheritance."""
+    from mcp_atlassian.confluence import AttachmentsMixin
+
+    # Check that AttachmentsMixin is in the MRO
+    assert AttachmentsMixin in ConfluenceFetcher.__mro__
+
+    # Check inheritance order (should come after other mixins)
+    mro_classes = [cls.__name__ for cls in ConfluenceFetcher.__mro__]
+    assert "AttachmentsMixin" in mro_classes
+    assert "ConfluenceClient" in mro_classes
+
+
+def test_confluence_fetcher_has_attachment_methods():
+    """Test that ConfluenceFetcher exposes all attachment methods."""
+    with (
+        patch("mcp_atlassian.confluence.client.ConfluenceConfig.from_env"),
+        patch("mcp_atlassian.confluence.client.Confluence"),
+        patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+    ):
+        fetcher = ConfluenceFetcher()
+
+        # Check that all attachment methods are accessible
+        assert hasattr(fetcher, "upload_attachment")
+        assert hasattr(fetcher, "upload_attachments")
+        assert hasattr(fetcher, "download_attachment")
+        assert hasattr(fetcher, "download_content_attachments")
+        assert hasattr(fetcher, "get_content_attachments")
+        assert hasattr(fetcher, "delete_attachment")
+
+        # Check methods are callable
+        assert callable(fetcher.upload_attachment)
+        assert callable(fetcher.upload_attachments)
+        assert callable(fetcher.download_attachment)
+        assert callable(fetcher.download_content_attachments)
+        assert callable(fetcher.get_content_attachments)
+        assert callable(fetcher.delete_attachment)
+
+
+def test_confluence_fetcher_attachment_method_calls():
+    """Test that attachment methods can be called through ConfluenceFetcher."""
+    with (
+        patch("mcp_atlassian.confluence.client.ConfluenceConfig.from_env"),
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence_class,
+        patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+    ):
+        # Setup mocks
+        mock_confluence = mock_confluence_class.return_value
+        mock_session = MagicMock()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"id": "att123", "title": "test.txt"}
+        mock_response.raise_for_status.return_value = None
+        mock_session.post.return_value = mock_response
+        mock_confluence._session = mock_session
+
+        fetcher = ConfluenceFetcher()
+
+        # Test upload_attachment can be called
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("os.path.isabs", return_value=True),
+            patch("os.path.basename", return_value="test.txt"),
+            patch("os.path.getsize", return_value=100),
+            patch("builtins.open", MagicMock()),
+        ):
+            result = fetcher.upload_attachment("123", "/path/to/test.txt")
+            assert result["success"] is True
+            assert result["content_id"] == "123"
+
+        # Test get_content_attachments can be called
+        mock_confluence.get_attachments_from_content.return_value = {
+            "results": [],
+            "size": 0,
+        }
+        result = fetcher.get_content_attachments("123")
+        assert result["success"] is True
+        mock_confluence.get_attachments_from_content.assert_called_once()
+
+
+def test_confluence_fetcher_no_method_conflicts():
+    """Test that AttachmentsMixin methods don't conflict with other mixins."""
+    # Get all method names from ConfluenceFetcher
+    fetcher_methods = [
+        m
+        for m in dir(ConfluenceFetcher)
+        if not m.startswith("_") and callable(getattr(ConfluenceFetcher, m))
+    ]
+
+    # Attachment-specific methods
+    attachment_methods = [
+        "upload_attachment",
+        "upload_attachments",
+        "download_attachment",
+        "download_content_attachments",
+        "get_content_attachments",
+    ]
+
+    # All attachment methods should be present
+    for method in attachment_methods:
+        assert method in fetcher_methods
+
+    # Check for naming patterns that might indicate conflicts
+    # (e.g., multiple methods with similar names from different mixins)
+    method_names = set(fetcher_methods)
+    assert len(method_names) == len(fetcher_methods), "Duplicate method names detected!"
+
+
+def test_confluence_fetcher_mro_order():
+    """Test that Method Resolution Order is correct for AttachmentsMixin."""
+    mro = ConfluenceFetcher.__mro__
+
+    # Find positions of key classes
+    attachments_idx = next(
+        i for i, cls in enumerate(mro) if cls.__name__ == "AttachmentsMixin"
+    )
+    client_idx = next(
+        i for i, cls in enumerate(mro) if cls.__name__ == "ConfluenceClient"
+    )
+    proto_idx = next(
+        (
+            i
+            for i, cls in enumerate(mro)
+            if cls.__name__ == "AttachmentsOperationsProto"
+        ),
+        None,
+    )
+
+    # AttachmentsMixin should come before ConfluenceClient
+    assert attachments_idx < client_idx, (
+        "AttachmentsMixin should be before ConfluenceClient in MRO"
+    )
+
+    # AttachmentsOperationsProto should be in MRO (from AttachmentsMixin inheritance)
+    # Note: Protocol position doesn't matter for functionality, just that it's present
+    assert proto_idx is not None, "AttachmentsOperationsProto should be in MRO"
+
+    # Verify that attachment methods are accessible (the real test)
+    assert hasattr(ConfluenceFetcher, "upload_attachment")
+    assert hasattr(ConfluenceFetcher, "get_content_attachments")

@@ -48,7 +48,8 @@
             "pages": [
               "docs/configuration",
               "docs/tools-reference",
-              "docs/http-transport"
+              "docs/http-transport",
+              "docs/compatibility"
             ]
           },
           {

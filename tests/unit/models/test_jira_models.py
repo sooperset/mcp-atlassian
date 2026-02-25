@@ -11,14 +11,20 @@ import re
 from datetime import datetime, timezone
 
 import pytest
+from atlassian import Jira
 
-from src.mcp_atlassian.models.constants import (
+from mcp_atlassian.jira import JiraConfig, JiraFetcher
+from mcp_atlassian.jira.issues import IssuesMixin
+from mcp_atlassian.jira.projects import ProjectsMixin
+from mcp_atlassian.jira.transitions import TransitionsMixin
+from mcp_atlassian.jira.worklog import WorklogMixin
+from mcp_atlassian.models.constants import (
     EMPTY_STRING,
     JIRA_DEFAULT_ID,
     JIRA_DEFAULT_PROJECT,
     UNKNOWN,
 )
-from src.mcp_atlassian.models.jira import (
+from mcp_atlassian.models.jira import (
     JiraComment,
     JiraIssue,
     JiraIssueLink,
@@ -37,57 +43,7 @@ from src.mcp_atlassian.models.jira import (
     JiraUser,
     JiraWorklog,
 )
-from src.mcp_atlassian.models.jira.common import JiraChangelog
-
-# Optional: Import real API client for optional real-data testing
-try:
-    from atlassian import Jira
-
-    from src.mcp_atlassian.jira import JiraConfig, JiraFetcher
-    from src.mcp_atlassian.jira.issues import IssuesMixin
-    from src.mcp_atlassian.jira.projects import ProjectsMixin
-    from src.mcp_atlassian.jira.transitions import TransitionsMixin
-    from src.mcp_atlassian.jira.worklog import WorklogMixin
-
-    real_api_available = True
-except ImportError:
-    real_api_available = False
-
-    # Create a module-level namespace for dummy classes
-    class _DummyClasses:
-        """Namespace for dummy classes when real imports fail."""
-
-        class JiraFetcher:
-            pass
-
-        class JiraConfig:
-            @staticmethod
-            def from_env():
-                return None
-
-        class IssuesMixin:
-            pass
-
-        class ProjectsMixin:
-            pass
-
-        class TransitionsMixin:
-            pass
-
-        class WorklogMixin:
-            pass
-
-        class Jira:
-            pass
-
-    # Assign dummy classes to module namespace
-    JiraFetcher = _DummyClasses.JiraFetcher
-    JiraConfig = _DummyClasses.JiraConfig
-    IssuesMixin = _DummyClasses.IssuesMixin
-    ProjectsMixin = _DummyClasses.ProjectsMixin
-    TransitionsMixin = _DummyClasses.TransitionsMixin
-    WorklogMixin = _DummyClasses.WorklogMixin
-    Jira = _DummyClasses.Jira
+from mcp_atlassian.models.jira.common import JiraChangelog
 
 
 class TestJiraUser:
@@ -362,6 +318,7 @@ class TestJiraComment:
         )
         simplified = comment.to_simplified_dict()
         assert isinstance(simplified, dict)
+        assert simplified["id"] == "10000"
         assert "body" in simplified
         assert simplified["body"] == "This is a test comment"
         assert "created" in simplified
@@ -369,6 +326,19 @@ class TestJiraComment:
         assert "author" in simplified
         assert isinstance(simplified["author"], dict)
         assert simplified["author"]["display_name"] == "Comment User"
+
+    def test_to_simplified_dict_default_id(self):
+        """Test that default comment ID is included in simplified dict."""
+        comment = JiraComment()
+        simplified = comment.to_simplified_dict()
+        assert simplified["id"] == JIRA_DEFAULT_ID
+
+    def test_to_simplified_dict_no_author(self):
+        """Test comment ID present even without optional fields."""
+        comment = JiraComment(id="99999", body="text only")
+        simplified = comment.to_simplified_dict()
+        assert simplified["id"] == "99999"
+        assert "author" not in simplified
 
 
 class TestJiraTimetracking:
@@ -1714,8 +1684,6 @@ class TestRealJiraData:
 
     # Helper to get client/config
     def _get_client(self) -> IssuesMixin | None:
-        if not real_api_available:
-            return None
         try:
             config = JiraConfig.from_env()
             return JiraFetcher(config=config)
@@ -1724,8 +1692,6 @@ class TestRealJiraData:
             return None
 
     def _get_project_client(self) -> ProjectsMixin | None:
-        if not real_api_available:
-            return None
         try:
             config = JiraConfig.from_env()
 
@@ -1735,8 +1701,6 @@ class TestRealJiraData:
             return None
 
     def _get_transition_client(self) -> TransitionsMixin | None:
-        if not real_api_available:
-            return None
         try:
             config = JiraConfig.from_env()
             return JiraFetcher(config=config)
@@ -1745,8 +1709,6 @@ class TestRealJiraData:
             return None
 
     def _get_worklog_client(self) -> WorklogMixin | None:
-        if not real_api_available:
-            return None
         try:
             config = JiraConfig.from_env()
             return JiraFetcher(config=config)
@@ -1755,8 +1717,6 @@ class TestRealJiraData:
             return None
 
     def _get_base_jira_client(self) -> Jira | None:
-        if not real_api_available:
-            return None
         try:
             config = JiraConfig.from_env()
             if config.auth_type == "basic":

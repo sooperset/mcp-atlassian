@@ -17,6 +17,8 @@ from .common import (
     JiraTimetracking,
     JiraUser,
 )
+from .field_option import FieldContext, FieldOption
+from .forms import ProFormaForm, ProFormaFormField, ProFormaFormState
 from .issue import JiraIssue
 from .link import (
     JiraIssueLink,
@@ -31,11 +33,33 @@ from .metrics import (
     StatusTimeSummary,
 )
 from .project import JiraProject
+from .queue import (
+    JiraQueue,
+    JiraQueueIssuesResult,
+    JiraServiceDesk,
+    JiraServiceDeskQueuesResult,
+)
 from .search import JiraSearchResult
+from .sla import (
+    CycleTimeMetric,
+    DueDateComplianceMetric,
+    FirstResponseTimeMetric,
+    IssueSLABatchResponse,
+    IssueSLAMetrics,
+    IssueSLAResponse,
+    LeadTimeMetric,
+    ResolutionTimeMetric,
+    TimeInStatusEntry,
+    TimeInStatusMetric,
+    WorkingHoursConfig,
+)
 from .workflow import JiraTransition
 from .worklog import JiraWorklog
 
 __all__ = [
+    # Field option models
+    "FieldContext",
+    "FieldOption",
     # Common models
     "JiraUser",
     "JiraStatusCategory",
@@ -54,13 +78,33 @@ __all__ = [
     "JiraSprint",
     "JiraIssue",
     "JiraSearchResult",
+    "JiraServiceDesk",
+    "JiraQueue",
+    "JiraServiceDeskQueuesResult",
+    "JiraQueueIssuesResult",
     "JiraIssueLinkType",
     "JiraIssueLink",
     "JiraLinkedIssue",
     "JiraLinkedIssueFields",
+    # ProForma models
+    "ProFormaForm",
+    "ProFormaFormField",
+    "ProFormaFormState",
     # Metrics models
     "IssueDatesResponse",
     "IssueDatesBatchResponse",
     "StatusChangeEntry",
     "StatusTimeSummary",
+    # SLA models
+    "IssueSLAResponse",
+    "IssueSLABatchResponse",
+    "IssueSLAMetrics",
+    "CycleTimeMetric",
+    "LeadTimeMetric",
+    "TimeInStatusEntry",
+    "TimeInStatusMetric",
+    "DueDateComplianceMetric",
+    "ResolutionTimeMetric",
+    "FirstResponseTimeMetric",
+    "WorkingHoursConfig",
 ]

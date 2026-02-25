@@ -4,6 +4,7 @@ import logging
 from collections import defaultdict
 from typing import Any
 
+from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import HTTPError
 
 from ..exceptions import MCPAtlassianAuthenticationError
@@ -16,6 +17,7 @@ from .protocols import (
     AttachmentsOperationsProto,
     EpicOperationsProto,
     FieldsOperationsProto,
+    FormsOperationsProto,
     IssueOperationsProto,
     ProjectsOperationsProto,
     UsersOperationsProto,
@@ -23,12 +25,16 @@ from .protocols import (
 
 logger = logging.getLogger("mcp-jira")
 
+# Friendly aliases that users may pass for the epic link custom field
+_EPIC_LINK_ALIASES = frozenset({"epickey", "epic_link", "epiclink", "epic link"})
+
 
 class IssuesMixin(
     JiraClient,
     AttachmentsOperationsProto,
     EpicOperationsProto,
     FieldsOperationsProto,
+    FormsOperationsProto,
     IssueOperationsProto,
     ProjectsOperationsProto,
     UsersOperationsProto,
@@ -90,11 +96,11 @@ class IssuesMixin(
             elif isinstance(fields_param, list | tuple | set):
                 fields_param = ",".join(fields_param)
 
-            # Ensure necessary fields are included based on special parameters
-            if (
-                fields_param == ",".join(DEFAULT_READ_JIRA_FIELDS)
-                or fields_param == "*all"
-            ):
+            # Compare as sets to avoid hash randomization issues across processes
+            fields_set = (
+                set(fields_param.split(",")) if fields_param != "*all" else None
+            )
+            if fields_param == "*all" or fields_set == DEFAULT_READ_JIRA_FIELDS:
                 # Default fields are being used - preserve the order
                 default_fields_list = (
                     fields_param.split(",")
@@ -127,6 +133,14 @@ class IssuesMixin(
                 ):
                     additional_fields.append("properties")
 
+                comment_limit_int = self._normalize_comment_limit(comment_limit)
+                if (
+                    (comment_limit_int is None or comment_limit_int > 0)
+                    and "comment" not in default_fields_list
+                    and "comment" not in additional_fields
+                ):
+                    additional_fields.append("comment")
+
                 # Combine default fields with additional fields, preserving order
                 if additional_fields:
                     fields_param = ",".join(default_fields_list + additional_fields)
@@ -136,8 +150,10 @@ class IssuesMixin(
             expand_param = expand
 
             # Convert properties to proper format if it's a list
-            properties_param = properties
-            if properties and isinstance(properties, list | tuple | set):
+            properties_param: str | None = None
+            if isinstance(properties, str):
+                properties_param = properties
+            elif isinstance(properties, list | tuple | set):
                 properties_param = ",".join(properties)
 
             # Get the issue data with all parameters
@@ -149,7 +165,10 @@ class IssuesMixin(
                 update_history=update_history,
             )
             if not issue:
-                msg = f"Issue {issue_key} not found"
+                msg = (
+                    f"Issue {issue_key} not found. "
+                    "Verify the issue key and project access."
+                )
                 raise ValueError(msg)
             if not isinstance(issue, dict):
                 msg = (
@@ -161,6 +180,15 @@ class IssuesMixin(
             # Extract fields data, safely handling None
             fields_data = issue.get("fields", {}) or {}
 
+            # Clean description field (convert Jira wiki markup to Markdown)
+            # Note: ADF format (dict) is handled in the model layer
+            if "description" in fields_data:
+                raw_description = fields_data["description"]
+                # Only clean string descriptions (wiki markup)
+                # Dict descriptions (ADF) are handled by the model
+                if isinstance(raw_description, str) and raw_description:
+                    fields_data["description"] = self._clean_text(raw_description)
+
             # Get comments if needed
             if "comment" in fields_data:
                 comment_limit_int = self._normalize_comment_limit(comment_limit)
@@ -169,6 +197,19 @@ class IssuesMixin(
                 )
                 # Add comments to the issue data for processing by the model
                 fields_data["comment"]["comments"] = comments
+
+            # Clean comment bodies (convert Jira wiki markup/HTML to Markdown)
+            # Must happen AFTER _get_issue_comments_if_needed which may replace comments
+            if "comment" in fields_data and isinstance(fields_data["comment"], dict):
+                comments_list = fields_data["comment"].get("comments", [])
+                if isinstance(comments_list, list):
+                    for comment in comments_list:
+                        if isinstance(comment, dict) and "body" in comment:
+                            raw_body = comment["body"]
+                            # Only clean string bodies (wiki markup/HTML)
+                            # Dict bodies (ADF) are handled by the model
+                            if isinstance(raw_body, str) and raw_body:
+                                comment["body"] = self._clean_text(raw_body)
 
             # Extract epic information
             try:
@@ -204,25 +245,44 @@ class IssuesMixin(
             issue["fields"] = fields_data
 
             # Create and return the JiraIssue model, passing requested_fields
+            model_fields = "*all" if fields == "*all" else fields_param
             return JiraIssue.from_api_response(
                 issue,
                 base_url=self.config.url if hasattr(self, "config") else None,
-                requested_fields=fields,
+                requested_fields=model_fields,
             )
         except HTTPError as http_err:
-            if http_err.response is not None and http_err.response.status_code in [
-                401,
-                403,
-            ]:
+            status_code = (
+                http_err.response.status_code if http_err.response is not None else None
+            )
+            if status_code in [401, 403]:
                 error_msg = (
-                    f"Authentication failed for Jira API ({http_err.response.status_code}). "
+                    f"Authentication failed for Jira API ({status_code}). "
                     "Token may be expired or invalid. Please verify credentials."
                 )
                 logger.error(error_msg)
                 raise MCPAtlassianAuthenticationError(error_msg) from http_err
+            if status_code == 404:
+                error_msg = (
+                    f"Issue {issue_key} not found. "
+                    "Verify the issue key and project access."
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg) from http_err
+            if status_code == 429:
+                error_msg = "Jira API rate limit hit (429). Retry after a short delay."
+                logger.error(error_msg)
+                raise ValueError(error_msg) from http_err
             else:
                 logger.error(f"HTTP error during API call: {http_err}", exc_info=False)
                 raise
+        except RequestsConnectionError as e:
+            error_msg = (
+                f"Could not connect to Jira at {self.config.url}. "
+                "Check that JIRA_URL is correct and the instance is reachable."
+            )
+            logger.error(error_msg)
+            raise Exception(error_msg) from e
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Error retrieving issue {issue_key}: {error_msg}")
@@ -530,50 +590,63 @@ class IssuesMixin(
         try:
             # Validate required fields
             if not project_key:
-                raise ValueError("Project key is required")
+                raise ValueError(
+                    "Project key is required to create an issue. "
+                    "Provide project_key like 'PROJ'."
+                )
             if not summary:
-                raise ValueError("Summary is required")
+                raise ValueError(
+                    "Summary is required to create an issue. "
+                    "Provide a non-empty summary."
+                )
             if not issue_type:
-                raise ValueError("Issue type is required")
+                raise ValueError(
+                    "Issue type is required to create an issue. "
+                    "Provide issue_type like 'Task', 'Story', or 'Bug'."
+                )
 
             # Handle Epic and Subtask issue type names across different languages
-            actual_issue_type = issue_type
+            actual_issue_id = None
             if self._is_epic_issue_type(issue_type) and issue_type.lower() == "epic":
                 # If the user provided "Epic" but we need to find the localized name
-                epic_type_name = self._find_epic_issue_type_name(project_key)
-                if epic_type_name:
-                    actual_issue_type = epic_type_name
-                    logger.info(
-                        f"Using localized Epic issue type name: {actual_issue_type}"
-                    )
+                epic_type_id = self._find_epic_issue_type_id(project_key)
+                if epic_type_id:
+                    actual_issue_id = epic_type_id
+                    logger.info(f"Using localized Epic issue type id: {epic_type_id}")
             elif issue_type.lower() in ["subtask", "sub-task"]:
                 # If the user provided "Subtask" but we need to find the localized name
-                subtask_type_name = self._find_subtask_issue_type_name(project_key)
-                if subtask_type_name:
-                    actual_issue_type = subtask_type_name
+                subtask_type_id = self._find_subtask_issue_type_id(project_key)
+                if subtask_type_id:
+                    actual_issue_id = subtask_type_id
                     logger.info(
-                        f"Using localized Subtask issue type name: {actual_issue_type}"
+                        f"Using localized Subtask issue type id: {subtask_type_id}"
                     )
 
             # Prepare fields
             fields: dict[str, Any] = {
                 "project": {"key": project_key},
                 "summary": summary,
-                "issuetype": {"name": actual_issue_type},
+                "issuetype": {"name": issue_type}
+                if actual_issue_id is None
+                else {"id": actual_issue_id, "name": issue_type},
             }
 
             # Add description if provided (convert from Markdown to Jira format)
             if description:
                 fields["description"] = self._markdown_to_jira(description)
 
-            # Add assignee if provided
+            # Resolve and set assignee in the create fields, and also store
+            # the identifier for a post-creation assign_issue() call.
+            # Some Jira Server/DC configurations silently ignore the assignee
+            # field during creation, so the post-creation call acts as a safety
+            # net (similar to the epic two-step pattern).
+            assignee_identifier = None
             if assignee:
                 try:
-                    # _get_account_id now returns the correct identifier (accountId for cloud, name for server)
                     assignee_identifier = self._get_account_id(assignee)
                     self._add_assignee_to_fields(fields, assignee_identifier)
                 except ValueError as e:
-                    logger.warning(f"Could not assign issue: {str(e)}")
+                    logger.warning(f"Could not resolve assignee: {str(e)}")
 
             # Add components if provided
             if components:
@@ -589,6 +662,10 @@ class IssuesMixin(
                         fields["components"] = [
                             {"name": comp_name} for comp_name in valid_components
                         ]
+
+            # Resolve epic link aliases (epicKey, epic_link, etc.) before
+            # kwargs_copy so the alias is not double-processed.
+            self._prepare_epic_link_fields(fields, kwargs)
 
             # Make a copy of kwargs to preserve original values for two-step Epic creation
             kwargs_copy = kwargs.copy()
@@ -608,8 +685,12 @@ class IssuesMixin(
             # Process **kwargs using the dynamic field map
             self._process_additional_fields(fields, kwargs_copy)
 
-            # Create the issue
-            response = self.jira.create_issue(fields=fields)
+            # Create the issue (use v3 API on Cloud for ADF description)
+            has_adf = isinstance(fields.get("description"), dict)
+            if has_adf and self.config.is_cloud:
+                response = self._post_api3("issue", {"fields": fields})
+            else:
+                response = self.jira.create_issue(fields=fields)
             if not isinstance(response, dict):
                 msg = f"Unexpected return value type from `jira.create_issue`: {type(response)}"
                 logger.error(msg)
@@ -620,6 +701,15 @@ class IssuesMixin(
             if not issue_key:
                 error_msg = "No issue key in response"
                 raise ValueError(error_msg)
+
+            # Assign the issue post-creation using the dedicated API endpoint
+            if assignee_identifier:
+                try:
+                    self.jira.assign_issue(issue_key, assignee_identifier)
+                except Exception as e:
+                    logger.warning(
+                        f"Could not assign issue {issue_key} to {assignee}: {e}"
+                    )
 
             # For Epics, perform the second step: update Epic-specific fields
             if self._is_epic_issue_type(issue_type):
@@ -677,7 +767,7 @@ class IssuesMixin(
 
         return issue_type.lower() in epic_names or "epic" in issue_type.lower()
 
-    def _find_epic_issue_type_name(self, project_key: str) -> str | None:
+    def _find_epic_issue_type_id(self, project_key: str) -> str | None:
         """
         Find the actual Epic issue type name for a project.
 
@@ -692,13 +782,13 @@ class IssuesMixin(
             for issue_type in issue_types:
                 type_name = issue_type.get("name", "")
                 if self._is_epic_issue_type(type_name):
-                    return type_name
+                    return issue_type.get("id")
             return None
         except Exception as e:
             logger.warning(f"Could not get issue types for project {project_key}: {e}")
             return None
 
-    def _find_subtask_issue_type_name(self, project_key: str) -> str | None:
+    def _find_subtask_issue_type_id(self, project_key: str) -> str | None:
         """
         Find the actual Subtask issue type name for a project.
 
@@ -713,7 +803,7 @@ class IssuesMixin(
             for issue_type in issue_types:
                 # Check the subtask field - this is the most reliable way
                 if issue_type.get("subtask", False):
-                    return issue_type.get("name")
+                    return issue_type.get("id")
             return None
         except Exception as e:
             logger.warning(f"Could not get issue types for project {project_key}: {e}")
@@ -744,6 +834,8 @@ class IssuesMixin(
         # Since JiraFetcher inherits from both IssuesMixin and EpicsMixin,
         # this will correctly use the prepare_epic_fields method from EpicsMixin
         # which implements the two-step Epic creation approach
+        if not isinstance(project_key, str) or not project_key:
+            raise ValueError("Project key is required for epic preparation")
         self.prepare_epic_fields(fields, summary, kwargs, project_key)
 
     def _prepare_parent_fields(
@@ -772,6 +864,59 @@ class IssuesMixin(
             # Only raise error if issue type is subtask and parent is missing
             raise ValueError(
                 "Issue type is a sub-task but parent issue key or id not specified. Please provide a 'parent' parameter with the parent issue key."
+            )
+
+    def _prepare_epic_link_fields(
+        self, fields: dict[str, Any], kwargs: dict[str, Any]
+    ) -> None:
+        """Resolve epic link aliases (epicKey, epic_link, etc.) to the actual custom field ID.
+
+        Checks kwargs for known epic link aliases, discovers the real
+        custom field ID via ``get_field_ids_to_epic()``, and sets it in
+        *fields*.  On Cloud, falls back to the ``parent`` field when no
+        epic link custom field is discovered (team-managed projects use
+        parent for epic relationships).
+
+        Args:
+            fields: The issue fields dict (mutated in place).
+            kwargs: Caller-provided keyword arguments (matched alias is popped).
+        """
+        epic_key_value = None
+        matched_alias = None
+        for key in list(kwargs.keys()):
+            if key.lower() in _EPIC_LINK_ALIASES:
+                epic_key_value = kwargs.pop(key)
+                matched_alias = key
+                break
+
+        if not epic_key_value:
+            return
+
+        # Discover the epic link custom field ID
+        try:
+            field_ids = self.get_field_ids_to_epic()
+            epic_link_field_id = field_ids.get("epic_link")
+        except Exception as e:
+            logger.debug(f"Could not discover epic link field: {e}")
+            epic_link_field_id = None
+
+        if epic_link_field_id:
+            fields[epic_link_field_id] = epic_key_value
+            logger.info(
+                f"Set epic link field {epic_link_field_id}={epic_key_value} "
+                f"from alias '{matched_alias}'"
+            )
+        elif self.config.is_cloud and "parent" not in fields:
+            fields["parent"] = {"key": epic_key_value}
+            logger.info(
+                f"No epic link field found, using parent field for "
+                f"epic link '{epic_key_value}' (Cloud fallback)"
+            )
+        else:
+            logger.warning(
+                f"Could not resolve epic link alias '{matched_alias}'="
+                f"{epic_key_value}. No epic link custom field discovered. "
+                f"Try using the exact custom field ID (e.g., customfield_10014)."
             )
 
     def _add_assignee_to_fields(self, fields: dict[str, Any], assignee: str) -> None:
@@ -813,8 +958,11 @@ class IssuesMixin(
         # Process each kwarg
         # Iterate over a copy to allow modification of the original kwargs if needed elsewhere
         for key, value in kwargs.copy().items():
-            # Skip keys used internally for epic/parent handling or explicitly handled args like assignee/components
-            if key.startswith("__epic_") or key in ("parent", "assignee", "components"):
+            # Skip fields handled explicitly in create_issue()/update_issue()
+            # (e.g., assignee requires account ID lookup via _get_account_id).
+            # Other array fields like components, fixVersions, etc. flow through
+            # _format_field_value_for_write() which handles their formatting.
+            if key.startswith("__epic_") or key in ("parent", "assignee"):
                 continue
 
             normalized_key = key.lower()
@@ -860,103 +1008,6 @@ class IssuesMixin(
                     f"Ignoring unrecognized field '{key}' passed via kwargs."
                 )
 
-    def _format_field_value_for_write(
-        self, field_id: str, value: Any, field_definition: dict | None
-    ) -> Any:
-        """Formats field values for the Jira API."""
-        # Get schema type if definition is available
-        schema_type = (
-            field_definition.get("schema", {}).get("type") if field_definition else None
-        )
-        # Prefer name from definition if available, else use ID for logging/lookup
-        field_name_for_format = (
-            field_definition.get("name", field_id) if field_definition else field_id
-        )
-
-        # Example formatting rules based on standard field names (use lowercase for comparison)
-        normalized_name = field_name_for_format.lower()
-
-        if normalized_name == "priority":
-            if isinstance(value, str):
-                return {"name": value}
-            elif isinstance(value, dict) and ("name" in value or "id" in value):
-                return value  # Assume pre-formatted
-            else:
-                logger.warning(
-                    f"Invalid format for priority field: {value}. Expected string name or dict."
-                )
-                return None  # Or raise error
-        elif normalized_name == "labels":
-            if isinstance(value, list) and all(isinstance(item, str) for item in value):
-                return value
-            # Allow comma-separated string if passed via additional_fields JSON string
-            elif isinstance(value, str):
-                return [label.strip() for label in value.split(",") if label.strip()]
-            else:
-                logger.warning(
-                    f"Invalid format for labels field: {value}. Expected list of strings or comma-separated string."
-                )
-                return None
-        elif normalized_name in ["fixversions", "versions", "components"]:
-            # These expect lists of objects, typically {"name": "..."} or {"id": "..."}
-            if isinstance(value, list):
-                formatted_list = []
-                for item in value:
-                    if isinstance(item, str):
-                        formatted_list.append({"name": item})  # Convert simple strings
-                    elif isinstance(item, dict) and ("name" in item or "id" in item):
-                        formatted_list.append(item)  # Keep pre-formatted dicts
-                    else:
-                        logger.warning(
-                            f"Invalid item format in {normalized_name} list: {item}"
-                        )
-                return formatted_list
-            else:
-                logger.warning(
-                    f"Invalid format for {normalized_name} field: {value}. Expected list."
-                )
-                return None
-        elif normalized_name == "reporter":
-            if isinstance(value, str):
-                try:
-                    reporter_identifier = self._get_account_id(value)
-                    if self.config.is_cloud:
-                        return {"accountId": reporter_identifier}
-                    else:
-                        return {"name": reporter_identifier}
-                except ValueError as e:
-                    logger.warning(f"Could not format reporter field: {str(e)}")
-                    return None
-            elif isinstance(value, dict) and ("name" in value or "accountId" in value):
-                return value  # Assume pre-formatted
-            else:
-                logger.warning(f"Invalid format for reporter field: {value}")
-                return None
-        # Add more formatting rules for other standard fields based on schema_type or field_id
-        elif normalized_name == "duedate":
-            if isinstance(value, str):  # Basic check, could add date validation
-                return value
-            else:
-                logger.warning(
-                    f"Invalid format for duedate field: {value}. Expected YYYY-MM-DD string."
-                )
-                return None
-        elif schema_type == "datetime" and isinstance(value, str):
-            # Example: Ensure datetime fields are in ISO format if needed by API
-            try:
-                dt = parse_date(value)  # Assuming parse_date handles various inputs
-                return (
-                    dt.isoformat() if dt else value
-                )  # Return ISO or original if parse fails
-            except Exception:
-                logger.warning(
-                    f"Could not parse datetime for field {field_id}: {value}"
-                )
-                return value  # Return original on error
-
-        # Default: return value as is if no specific formatting needed/identified
-        return value
-
     def _handle_create_issue_error(self, exception: Exception, issue_type: str) -> None:
         """
         Handle errors when creating an issue.
@@ -997,6 +1048,8 @@ class IssuesMixin(
                 - attachments: List of file paths to upload as attachments
                 - status: New status for the issue (handled via transitions)
                 - assignee: New assignee for the issue
+                - parent: Parent issue key (str or {"key": "..."} dict)
+                - epicKey/epic_link/epicLink: Epic link alias
 
         Returns:
             JiraIssue model representing the updated issue
@@ -1018,8 +1071,12 @@ class IssuesMixin(
                     update_fields["description"]
                 )
 
+            # Resolve epic link aliases before processing kwargs
+            kwargs_mutable = dict(kwargs)
+            self._prepare_epic_link_fields(update_fields, kwargs_mutable)
+
             # Process kwargs
-            for key, value in kwargs.items():
+            for key, value in kwargs_mutable.items():
                 if key == "status":
                     # Status changes are handled separately via transitions
                     # Add status to fields so _update_issue_with_status can find it
@@ -1044,6 +1101,15 @@ class IssuesMixin(
                             self._add_assignee_to_fields(update_fields, account_id)
                         except ValueError as e:
                             logger.warning(f"Could not update assignee: {str(e)}")
+                elif key == "parent":
+                    if isinstance(value, dict) and value.get("key"):
+                        update_fields["parent"] = {"key": str(value["key"])}
+                    elif isinstance(value, str) and value:
+                        update_fields["parent"] = {"key": value}
+                    else:
+                        logger.warning(
+                            f"Invalid parent value for issue {issue_key}: {value}"
+                        )
                 elif key == "description":
                     # Handle description with markdown conversion
                     update_fields["description"] = self._markdown_to_jira(value)
@@ -1053,11 +1119,18 @@ class IssuesMixin(
                     field_kwargs = {key: value}
                     self._process_additional_fields(update_fields, field_kwargs)
 
-            # Update the issue fields
+            # Update the issue fields (use v3 API on Cloud for ADF description)
             if update_fields:
-                self.jira.update_issue(
-                    issue_key=issue_key, update={"fields": update_fields}
-                )
+                has_adf = isinstance(update_fields.get("description"), dict)
+                if has_adf and self.config.is_cloud:
+                    self._put_api3(
+                        f"issue/{issue_key}",
+                        {"fields": update_fields},
+                    )
+                else:
+                    self.jira.update_issue(
+                        issue_key=issue_key, update={"fields": update_fields}
+                    )
 
             # Handle attachments if provided
             if "attachments" in kwargs and kwargs["attachments"]:
@@ -1114,7 +1187,7 @@ class IssuesMixin(
 
         # First update any fields if needed
         if fields:
-            self.jira.update_issue(issue_key=issue_key, fields=fields)  # type: ignore[call-arg]
+            self.jira.update_issue(issue_key=issue_key, update={"fields": fields})
 
         # If no status change is requested, return the issue
         if not status:
@@ -1394,7 +1467,7 @@ class IssuesMixin(
 
                 # Add optional fields
                 if description:
-                    fields["description"] = description
+                    fields["description"] = self._markdown_to_jira(description)
 
                 # Add assignee if provided
                 if assignee:
