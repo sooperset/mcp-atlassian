@@ -504,6 +504,71 @@ class TestUsersMixin:
                 "permissions": "BROWSE",
             }
 
+    def test_determine_user_api_params_server_dc_email_resolved_to_username(
+        self, users_mixin
+    ):
+        """Test Server/DC email is resolved via search, not passed directly as username."""
+        users_mixin.config = MagicMock(spec=JiraConfig)
+        users_mixin.config.is_cloud = False
+        users_mixin._lookup_user_directly = MagicMock(return_value="jnovak")
+
+        params = users_mixin._determine_user_api_params("jnovak@firma.cz")
+
+        assert params == {"username": "jnovak"}
+        users_mixin._lookup_user_directly.assert_called_once_with("jnovak@firma.cz")
+
+    def test_determine_user_api_params_server_dc_email_resolved_to_key(
+        self, users_mixin
+    ):
+        """Test Server/DC email resolving to a key-style identifier."""
+        users_mixin.config = MagicMock(spec=JiraConfig)
+        users_mixin.config.is_cloud = False
+        users_mixin._lookup_user_directly = MagicMock(return_value="JIRAUSER-12345")
+
+        params = users_mixin._determine_user_api_params("jnovak@firma.cz")
+
+        assert params == {"key": "JIRAUSER-12345"}
+
+    def test_determine_user_api_params_server_dc_email_lookup_fails_fallback(
+        self, users_mixin
+    ):
+        """Test Server/DC email falls back to direct username when lookup returns None."""
+        users_mixin.config = MagicMock(spec=JiraConfig)
+        users_mixin.config.is_cloud = False
+        users_mixin._lookup_user_directly = MagicMock(return_value=None)
+
+        params = users_mixin._determine_user_api_params("login@example.com")
+
+        # Fallback: email used as username directly (e.g., when login IS the email)
+        assert params == {"username": "login@example.com"}
+
+    def test_get_user_profile_by_identifier_server_dc_email(self, users_mixin):
+        """Regression: Server/DC email lookup must search first, not pass email as username."""
+        users_mixin.config = MagicMock(spec=JiraConfig)
+        users_mixin.config.is_cloud = False
+        users_mixin._lookup_user_directly = MagicMock(return_value="jnovak")
+
+        with patch(
+            "src.mcp_atlassian.jira.users.JiraUser.from_api_response"
+        ) as mock_from_api_response:
+            mock_user_instance = MagicMock()
+            mock_from_api_response.return_value = mock_user_instance
+            mock_response_data = {
+                "name": "jnovak",
+                "displayName": "Jan Novák",
+                "emailAddress": "jnovak@firma.cz",
+                "active": True,
+            }
+            users_mixin.jira.user = MagicMock(return_value=mock_response_data)
+
+            user = users_mixin.get_user_profile_by_identifier("jnovak@firma.cz")
+
+            assert user == mock_user_instance
+            # Must resolve email to username first
+            users_mixin._lookup_user_directly.assert_called_once_with("jnovak@firma.cz")
+            # Must call user() with resolved username, NOT the raw email
+            users_mixin.jira.user.assert_called_once_with(username="jnovak")
+
     def test_get_user_profile_by_identifier_cloud_account_id(self, users_mixin):
         """Test get_user_profile_by_identifier with Cloud and accountId."""
         users_mixin.config = MagicMock(spec=JiraConfig)

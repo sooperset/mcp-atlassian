@@ -259,10 +259,27 @@ class UsersMixin(JiraClient):
         # Server/DC: username, key, or email
         elif not self.config.is_cloud:
             if "@" in identifier:
-                api_kwargs["username"] = identifier
-                logger.debug(
-                    f"Determined param: username='{identifier}' (Server/DC email - might not work)"
-                )
+                # /rest/api/2/user?username=email won't match by email on Server/DC.
+                # Use /rest/api/2/user/search first to resolve email → actual username/key.
+                resolved = self._lookup_user_directly(identifier)
+                if resolved:
+                    if "-" in resolved and any(c.isdigit() for c in resolved):
+                        api_kwargs["key"] = resolved
+                        logger.debug(
+                            f"Resolved email '{identifier}' to key '{resolved}' (Server/DC)"
+                        )
+                    else:
+                        api_kwargs["username"] = resolved
+                        logger.debug(
+                            f"Resolved email '{identifier}' to username '{resolved}' (Server/DC)"
+                        )
+                else:
+                    # Fallback: try email as username directly (works if login name IS the email)
+                    api_kwargs["username"] = identifier
+                    logger.debug(
+                        f"Could not resolve email '{identifier}' via search, "
+                        f"trying as username directly (Server/DC)"
+                    )
             elif "-" in identifier and any(c.isdigit() for c in identifier):
                 api_kwargs["key"] = identifier
                 logger.debug(f"Determined param: key='{identifier}' (Server/DC)")
