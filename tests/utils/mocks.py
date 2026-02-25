@@ -193,3 +193,27 @@ class MockPreprocessor:
         preprocessor = MagicMock()
         preprocessor.process.return_value = "<h1>HTML Content</h1>"
         return preprocessor
+
+
+class MockConfluenceClient:
+    """Mock Confluence client for testing user lookups.
+
+    Provides both Cloud (account ID) and Server/DC (username) user
+    detail methods so tests can exercise either code path.
+    """
+
+    def get_user_details_by_accountid(self, account_id: str) -> dict[str, str]:
+        """Mock user details by account ID (Cloud)."""
+        return {
+            "displayName": f"Test User {account_id}",
+            "accountType": "atlassian",
+            "accountStatus": "active",
+        }
+
+    def get_user_details_by_username(self, username: str) -> dict[str, str]:
+        """Mock user details by username (Server/DC)."""
+        return {
+            "displayName": f"Test User {username}",
+            "accountType": "atlassian",
+            "accountStatus": "active",
+        }

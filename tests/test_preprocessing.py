@@ -4,16 +4,7 @@ from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
 from mcp_atlassian.preprocessing.jira import JiraPreprocessor
 from tests.fixtures.confluence_mocks import MOCK_COMMENTS_RESPONSE, MOCK_PAGE_RESPONSE
 from tests.fixtures.jira_mocks import MOCK_JIRA_ISSUE_RESPONSE
-
-
-class MockConfluenceClient:
-    def get_user_details_by_accountid(self, account_id):
-        # Mock user details response based on the format in MOCK_PAGE_RESPONSE
-        return {
-            "displayName": f"Test User {account_id}",
-            "accountType": "atlassian",
-            "accountStatus": "active",
-        }
+from tests.utils.mocks import MockConfluenceClient
 
 
 @pytest.fixture
