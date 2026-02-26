@@ -675,53 +675,50 @@ async def test_create_issue_accepts_json_string(jira_client, mock_jira_fetcher):
 
 @pytest.mark.anyio
 async def test_create_issue_additional_fields_empty_string(jira_client):
-    """Test that empty string additional_fields returns a JSON error."""
-    response = await jira_client.call_tool(
-        "jira_create_issue",
-        {
-            "project_key": "TEST",
-            "summary": "Test issue",
-            "issue_type": "Task",
-            "additional_fields": "",
-        },
-    )
-    result = json.loads(response.content[0].text)
-    assert "error" in result
-    assert "not valid JSON" in result["error"]
+    """Test that empty string additional_fields raises ToolError."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_create_issue",
+            {
+                "project_key": "TEST",
+                "summary": "Test issue",
+                "issue_type": "Task",
+                "additional_fields": "",
+            },
+        )
+    assert "not valid JSON" in str(excinfo.value)
 
 
 @pytest.mark.anyio
 async def test_create_issue_additional_fields_invalid_json(jira_client):
-    """Test that invalid JSON additional_fields returns a JSON error."""
-    response = await jira_client.call_tool(
-        "jira_create_issue",
-        {
-            "project_key": "TEST",
-            "summary": "Test issue",
-            "issue_type": "Task",
-            "additional_fields": "{invalid json",
-        },
-    )
-    result = json.loads(response.content[0].text)
-    assert "error" in result
-    assert "not valid JSON" in result["error"]
+    """Test that invalid JSON additional_fields raises ToolError."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_create_issue",
+            {
+                "project_key": "TEST",
+                "summary": "Test issue",
+                "issue_type": "Task",
+                "additional_fields": "{invalid json",
+            },
+        )
+    assert "not valid JSON" in str(excinfo.value)
 
 
 @pytest.mark.anyio
 async def test_create_issue_additional_fields_non_dict_json(jira_client):
-    """Test that JSON array additional_fields returns a JSON error."""
-    response = await jira_client.call_tool(
-        "jira_create_issue",
-        {
-            "project_key": "TEST",
-            "summary": "Test issue",
-            "issue_type": "Task",
-            "additional_fields": '["item1", "item2"]',
-        },
-    )
-    result = json.loads(response.content[0].text)
-    assert "error" in result
-    assert "not a JSON object" in result["error"]
+    """Test that JSON array additional_fields raises ToolError."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_create_issue",
+            {
+                "project_key": "TEST",
+                "summary": "Test issue",
+                "issue_type": "Task",
+                "additional_fields": '["item1", "item2"]',
+            },
+        )
+    assert "not a JSON object" in str(excinfo.value)
 
 
 @pytest.mark.anyio
@@ -766,12 +763,12 @@ async def test_batch_create_issues(jira_client, mock_jira_fetcher):
 @pytest.mark.anyio
 async def test_batch_create_issues_invalid_json(jira_client):
     """Test error handling for invalid JSON in batch issue creation."""
-    response = await jira_client.call_tool(
-        "jira_batch_create_issues",
-        {"issues": "{invalid json", "validate_only": False},
-    )
-    result = json.loads(response.content[0].text)
-    assert "error" in result
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_batch_create_issues",
+            {"issues": "{invalid json", "validate_only": False},
+        )
+    assert "Invalid JSON" in str(excinfo.value)
 
 
 @pytest.mark.anyio
@@ -1582,50 +1579,47 @@ async def test_update_issue_accepts_json_string_additional_fields(
 
 @pytest.mark.anyio
 async def test_update_issue_additional_fields_invalid_json(jira_client):
-    """Test that invalid JSON additional_fields returns a JSON error."""
-    response = await jira_client.call_tool(
-        "jira_update_issue",
-        {
-            "issue_key": "TEST-123",
-            "fields": '{"summary": "Updated"}',
-            "additional_fields": "{invalid",
-        },
-    )
-    result = json.loads(response.content[0].text)
-    assert "error" in result
-    assert "not valid JSON" in result["error"]
+    """Test that invalid JSON additional_fields raises ToolError."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "fields": '{"summary": "Updated"}',
+                "additional_fields": "{invalid",
+            },
+        )
+    assert "not valid JSON" in str(excinfo.value)
 
 
 @pytest.mark.anyio
 async def test_update_issue_additional_fields_non_dict_json(jira_client):
-    """Test that JSON array additional_fields returns a JSON error."""
-    response = await jira_client.call_tool(
-        "jira_update_issue",
-        {
-            "issue_key": "TEST-123",
-            "fields": '{"summary": "Updated"}',
-            "additional_fields": '["a","b"]',
-        },
-    )
-    result = json.loads(response.content[0].text)
-    assert "error" in result
-    assert "not a JSON object" in result["error"]
+    """Test that JSON array additional_fields raises ToolError."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "fields": '{"summary": "Updated"}',
+                "additional_fields": '["a","b"]',
+            },
+        )
+    assert "not a JSON object" in str(excinfo.value)
 
 
 @pytest.mark.anyio
 async def test_update_issue_additional_fields_empty_string(jira_client):
-    """Test that empty string additional_fields returns a JSON error."""
-    response = await jira_client.call_tool(
-        "jira_update_issue",
-        {
-            "issue_key": "TEST-123",
-            "fields": '{"summary": "Updated"}',
-            "additional_fields": "",
-        },
-    )
-    result = json.loads(response.content[0].text)
-    assert "error" in result
-    assert "not valid JSON" in result["error"]
+    """Test that empty string additional_fields raises ToolError."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "fields": '{"summary": "Updated"}',
+                "additional_fields": "",
+            },
+        )
+    assert "not valid JSON" in str(excinfo.value)
 
 
 @pytest.mark.anyio

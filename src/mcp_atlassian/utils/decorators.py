@@ -1,4 +1,3 @@
-import json
 import logging
 from collections.abc import Awaitable, Callable
 from functools import wraps
@@ -6,6 +5,7 @@ from typing import Any, TypeVar
 
 import requests
 from fastmcp import Context
+from fastmcp.exceptions import ToolError
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
@@ -18,25 +18,26 @@ F = TypeVar("F", bound=Callable[..., Awaitable[Any]])
 
 def handle_tool_errors(func: F) -> F:
     """
-    Decorator for FastMCP tool handlers that catches exceptions and returns
-    descriptive JSON error messages instead of letting them propagate to the
-    MCP framework (which would produce a generic error).
+    Decorator for FastMCP tool handlers that catches exceptions and re-raises
+    them as ToolError with the original error message preserved.
+
+    ToolError bypasses FastMCP's mask_error_details setting, ensuring that
+    descriptive error messages are always sent to MCP clients regardless of
+    server configuration.
 
     Assumes the decorated function is async.
     """
+    tool_name = func.__name__
 
     @wraps(func)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return await func(*args, **kwargs)
+        except ToolError:
+            raise
         except Exception as e:
-            tool_name = func.__name__
             logger.error(f"Error in tool '{tool_name}': {e}", exc_info=True)
-            return json.dumps(
-                {"error": str(e), "tool": tool_name},
-                indent=2,
-                ensure_ascii=False,
-            )
+            raise ToolError(str(e)) from e
 
     return wrapper  # type: ignore
 
@@ -44,10 +45,12 @@ def handle_tool_errors(func: F) -> F:
 def check_write_access(func: F) -> F:
     """
     Decorator for FastMCP tools to check if the application is in read-only mode.
-    If in read-only mode, it raises a ValueError.
-    Also catches unhandled exceptions and returns descriptive JSON error messages.
+    If in read-only mode, it raises a ToolError.
+    Also catches unhandled exceptions and re-raises them as ToolError with
+    descriptive error messages.
     Assumes the decorated function is async and has `ctx: Context` as its first argument.
     """
+    tool_name = func.__name__
 
     @wraps(func)
     @handle_tool_errors
@@ -60,7 +63,6 @@ def check_write_access(func: F) -> F:
         )  # type: ignore
 
         if app_lifespan_ctx is not None and app_lifespan_ctx.read_only:
-            tool_name = func.__name__
             action_description = tool_name.replace(
                 "_", " "
             )  # e.g., "create_issue" -> "create issue"
