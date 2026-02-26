@@ -22,10 +22,16 @@ Search Jira issues using JQL (Jira Query Language).
 ```json
 {"jql": "project = PROJ AND status = 'In Progress' ORDER BY updated DESC", "limit": 20}
 ```
-<Tip>Always use `ORDER BY` for deterministic results. Use `fields` parameter to limit returned data for faster queries.
+
+<Tip>
+Always use `ORDER BY` for deterministic results. Use `fields` parameter to limit returned data for faster queries.
 </Tip>
-<Warning>Some JQL functions (e.g., `issueHistory()`) are Cloud-only.
+
+
+<Warning>
+Some JQL functions (e.g., `issueHistory()`) are Cloud-only.
 </Warning>
+
 
 ---
 
@@ -45,8 +51,11 @@ Search Jira fields by keyword with fuzzy match.
 ```json
 {"keyword": "story points", "issue_type": "Story", "project_key": "PROJ"}
 ```
-<Tip>Use this to discover custom field IDs before using them in `jira_create_issue` or `jira_update_issue`.
+
+<Tip>
+Use this to discover custom field IDs before using them in `jira_create_issue` or `jira_update_issue`.
 </Tip>
+
 
 ---
 
