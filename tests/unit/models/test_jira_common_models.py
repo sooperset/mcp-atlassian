@@ -85,6 +85,72 @@ class TestJiraUser:
         assert "account_id" not in simplified
         assert "time_zone" not in simplified
 
+    def test_from_api_response_server_dc_with_name_and_key(self):
+        """Test JiraUser captures username and key from Server/DC API response."""
+        user_data = {
+            "name": "jdoe",
+            "key": "JIRAUSER123",
+            "displayName": "John Doe",
+            "emailAddress": "jdoe@example.com",
+            "active": True,
+            "avatarUrls": {"48x48": "https://example.com/avatar.png"},
+        }
+        user = JiraUser.from_api_response(user_data)
+        assert user.username == "jdoe"
+        assert user.user_key == "JIRAUSER123"
+        assert user.display_name == "John Doe"
+
+    def test_from_api_response_cloud_no_name_key(self):
+        """Test JiraUser handles Cloud response without name/key fields."""
+        user_data = {
+            "accountId": "abc123",
+            "displayName": "John Doe",
+            "emailAddress": "jdoe@example.com",
+            "active": True,
+        }
+        user = JiraUser.from_api_response(user_data)
+        assert user.username is None
+        assert user.user_key is None
+        assert user.display_name == "John Doe"
+        assert user.account_id == "abc123"
+
+    def test_from_api_response_server_dc_name_only(self):
+        """Test JiraUser handles Server/DC response with name but no key."""
+        user_data = {
+            "name": "jdoe",
+            "displayName": "John Doe",
+            "active": True,
+        }
+        user = JiraUser.from_api_response(user_data)
+        assert user.username == "jdoe"
+        assert user.user_key is None
+        assert user.display_name == "John Doe"
+
+    def test_to_simplified_dict_server_dc_uses_username(self):
+        """Test to_simplified_dict returns login username, not display name."""
+        user = JiraUser(
+            display_name="John Doe",
+            username="jdoe",
+            user_key="JIRAUSER123",
+            email="jdoe@example.com",
+        )
+        simplified = user.to_simplified_dict()
+        assert simplified["name"] == "jdoe"
+        assert simplified["display_name"] == "John Doe"
+        assert simplified["key"] == "JIRAUSER123"
+
+    def test_to_simplified_dict_cloud_falls_back_to_display_name(self):
+        """Test to_simplified_dict falls back to display_name when no username."""
+        user = JiraUser(
+            account_id="abc123",
+            display_name="John Doe",
+            email="jdoe@example.com",
+        )
+        simplified = user.to_simplified_dict()
+        assert simplified["name"] == "John Doe"
+        assert simplified["display_name"] == "John Doe"
+        assert "key" not in simplified
+
 
 class TestJiraStatusCategory:
     """Tests for the JiraStatusCategory model."""
