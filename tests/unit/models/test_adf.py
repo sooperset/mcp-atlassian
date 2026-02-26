@@ -126,6 +126,21 @@ class TestAdfToText:
         node = {"type": "date"}
         assert adf_to_text(node) == ""
 
+    def test_date_node_overflow_timestamp(self):
+        """Regression test for #1033: overflow timestamps must not crash.
+
+        On Windows, datetime.fromtimestamp raises OverflowError for sentinel
+        timestamps (year 9999). adf_to_text should fall back to the raw string.
+        """
+        node = {"type": "date", "attrs": {"timestamp": "253402300799000"}}
+        mock_dt = MagicMock()
+        mock_dt.fromtimestamp.side_effect = OverflowError(
+            "timestamp too large to convert to C _PyTime_t"
+        )
+        with patch("src.mcp_atlassian.models.jira.adf.datetime", mock_dt):
+            result = adf_to_text(node)
+            assert result == "253402300799000"
+
     # Status node tests
 
     def test_status_node(self):
