@@ -16,6 +16,10 @@
     {
       "name": "PyPI",
       "url": "https://pypi.org/project/mcp-atlassian/"
+    },
+    {
+      "name": "Releases",
+      "url": "https://github.com/sooperset/mcp-atlassian/releases"
     }
   ],
   "anchors": [
@@ -47,9 +51,15 @@
             "group": "Usage",
             "pages": [
               "docs/configuration",
-              "docs/tools-reference",
-              "docs/http-transport",
-              "docs/compatibility"
+              "docs/tools-reference"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "docs/guides/jql-guide",
+              "docs/guides/cql-guide",
+              "docs/guides/common-workflows"
             ]
           },
           {
@@ -72,6 +82,15 @@
               "docs/tools/confluence-search",
               "docs/tools/confluence-attachments",
               "docs/tools/confluence-comments"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "docs/http-transport",
+              "docs/compatibility",
+              "docs/advanced/sla-metrics",
+              "docs/advanced/docker-production"
             ]
           },
           {
