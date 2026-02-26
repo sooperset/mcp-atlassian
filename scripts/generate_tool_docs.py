@@ -7,6 +7,9 @@ tool metadata, then renders per-category MDX pages via a Jinja2 template.
 Usage:
     python scripts/generate_tool_docs.py           # generate docs/tools/*.mdx
     python scripts/generate_tool_docs.py --check   # verify all tools are mapped
+
+CI usage:
+    python scripts/generate_tool_docs.py --check   # exits 1 if any tool is undocumented
 """
 
 from __future__ import annotations
