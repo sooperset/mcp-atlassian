@@ -41,6 +41,7 @@ def dc_env(dc_instance: DCInstanceInfo) -> dict[str, str]:
         "CONFLUENCE_USERNAME": dc_instance.admin_username,
         "CONFLUENCE_API_TOKEN": dc_instance.admin_password,
         "READ_ONLY_MODE": "false",
+        "TOOLSETS": "all",
     }
 
 

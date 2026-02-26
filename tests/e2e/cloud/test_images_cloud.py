@@ -41,6 +41,7 @@ def cloud_env(cloud_instance: CloudInstanceInfo) -> dict[str, str]:
         "CONFLUENCE_USERNAME": cloud_instance.username,
         "CONFLUENCE_API_TOKEN": cloud_instance.api_token,
         "READ_ONLY_MODE": "false",
+        "TOOLSETS": "all",
     }
 
 
