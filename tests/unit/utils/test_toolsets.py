@@ -18,9 +18,9 @@ class TestGetEnabledToolsets:
     @pytest.mark.parametrize(
         "env_value, expected",
         [
-            pytest.param(None, None, id="unset"),
-            pytest.param("", None, id="empty_string"),
-            pytest.param(" , , ", None, id="whitespace_and_commas"),
+            pytest.param(None, DEFAULT_TOOLSETS, id="unset_uses_defaults"),
+            pytest.param("", DEFAULT_TOOLSETS, id="empty_uses_defaults"),
+            pytest.param(" , , ", DEFAULT_TOOLSETS, id="whitespace_uses_defaults"),
             pytest.param("jira_agile", {"jira_agile"}, id="single_toolset"),
             pytest.param("typo_name", set(), id="unknown_name_fail_closed"),
         ],

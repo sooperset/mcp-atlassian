@@ -149,21 +149,23 @@ DEFAULT_TOOLSETS: set[str] = {
 }
 
 
-def get_enabled_toolsets() -> set[str] | None:
+def get_enabled_toolsets() -> set[str]:
     """Parse the TOOLSETS env var into a set of enabled toolset names.
 
     Supports keywords 'all' (all 21 toolsets) and 'default' (6 defaults),
     plus comma-separated specific toolset names. Case-insensitive for keywords.
 
+    When TOOLSETS is unset or empty, returns DEFAULT_TOOLSETS (6 core toolsets).
+    Use ``TOOLSETS=all`` to explicitly enable all toolsets.
+
     Returns:
-        None if TOOLSETS is unset or effectively empty (backwards compatible).
-        A set of valid toolset names otherwise. Unknown names are silently
-        dropped with a warning. If only unknown names are given, returns
-        an empty set (fail-closed).
+        A set of valid toolset names. Defaults to DEFAULT_TOOLSETS when unset.
+        Unknown names are silently dropped with a warning. If only unknown
+        names are given, returns an empty set (fail-closed).
 
     Examples:
-        TOOLSETS unset -> None
-        TOOLSETS="" -> None
+        TOOLSETS unset -> DEFAULT_TOOLSETS (6 defaults)
+        TOOLSETS="" -> DEFAULT_TOOLSETS (6 defaults)
         TOOLSETS="all" -> all 21 names
         TOOLSETS="default" -> 6 default names
         TOOLSETS="default,jira_agile" -> defaults + jira_agile
@@ -171,16 +173,16 @@ def get_enabled_toolsets() -> set[str] | None:
     """
     toolsets_str = os.getenv("TOOLSETS")
     if not toolsets_str:
-        logger.debug("TOOLSETS environment variable not set or empty.")
-        return None
+        logger.info("TOOLSETS not set — using default toolsets.")
+        return set(DEFAULT_TOOLSETS)
 
     # Split by comma and strip whitespace, filter empty tokens
     tokens = [t.strip() for t in toolsets_str.split(",")]
     tokens = [t for t in tokens if t]
 
     if not tokens:
-        logger.debug("TOOLSETS contained only whitespace/commas, treating as unset.")
-        return None
+        logger.info("TOOLSETS empty — using default toolsets.")
+        return set(DEFAULT_TOOLSETS)
 
     result: set[str] = set()
 

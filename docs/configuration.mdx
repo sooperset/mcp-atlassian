@@ -217,7 +217,7 @@ TOOLSETS=default
 # Core tools plus agile boards/sprints
 TOOLSETS=default,jira_agile
 
-# All toolsets (same as not setting TOOLSETS)
+# All toolsets (override default)
 TOOLSETS=all
 ```
 
@@ -230,7 +230,8 @@ uvx mcp-atlassian --toolsets "default,jira_agile"
 `jira_issues`, `jira_fields`, `jira_comments`, `jira_transitions`, `confluence_pages`, `confluence_comments`
 
 When both `TOOLSETS` and `ENABLED_TOOLS` are set, they intersect — a tool must pass
-both filters. If `TOOLSETS` is not set, all tools are available (backward compatible).
+both filters. If `TOOLSETS` is not set, default toolsets are enabled. Use `TOOLSETS=all`
+to enable all toolsets.
 
 <Note>
 Unknown toolset names are silently ignored. If **all** names are unknown, no tools are

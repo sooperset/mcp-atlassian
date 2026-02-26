@@ -1121,17 +1121,19 @@ class TestMCPProtocolIntegration:
             tool_names = [tool.name for tool in tools]
             assert tool_names == ["jira_get_issue"]
 
-    async def test_tool_filtering_toolsets_none_backward_compat(
+    async def test_tool_filtering_toolsets_default(
         self, atlassian_mcp_server, mock_jira_config, mock_confluence_config
     ):
-        """Test enabled_toolsets=None means all tools pass (backward compat)."""
+        """Test default toolsets only include default-tagged tools."""
+        from mcp_atlassian.utils.toolsets import DEFAULT_TOOLSETS
+
         with MockEnvironment.basic_auth_env():
             app_context = MainAppContext(
                 full_jira_config=mock_jira_config,
                 full_confluence_config=mock_confluence_config,
                 read_only=False,
                 enabled_tools=None,
-                enabled_toolsets=None,
+                enabled_toolsets=set(DEFAULT_TOOLSETS),
             )
 
             request_context = MagicMock()
@@ -1165,12 +1167,32 @@ class TestMCPProtocolIntegration:
 
             tools = await atlassian_mcp_server._list_tools_mcp()
 
-            # All tools pass when enabled_toolsets=None
+            # Only default toolset tools pass — jira_agile is not default
             tool_names = [tool.name for tool in tools]
             assert "jira_get_issue" in tool_names
-            assert "jira_get_agile_boards" in tool_names
+            assert "jira_get_agile_boards" not in tool_names
             assert "confluence_get_page" in tool_names
-            assert len(tools) == 3
+            assert len(tools) == 2
+
+    async def test_lifespan_toolsets_unset_uses_defaults(self):
+        """Test lifespan uses default toolsets when TOOLSETS env var is absent."""
+        from mcp_atlassian.utils.toolsets import DEFAULT_TOOLSETS
+
+        with MockEnvironment.basic_auth_env():
+            with patch.dict(os.environ, {}, clear=False):
+                # Ensure TOOLSETS is not set
+                os.environ.pop("TOOLSETS", None)
+                with patch(
+                    "mcp_atlassian.jira.config.JiraConfig.from_env"
+                ) as mock_jira_config:
+                    jira_config = MagicMock()
+                    jira_config.is_auth_configured.return_value = True
+                    mock_jira_config.return_value = jira_config
+
+                    app = MagicMock()
+                    async with main_lifespan(app) as context:
+                        app_context = context["app_lifespan_context"]
+                        assert app_context.enabled_toolsets == DEFAULT_TOOLSETS
 
     async def test_lifespan_with_toolsets(self):
         """Test lifespan parses TOOLSETS env var into MainAppContext.enabled_toolsets."""

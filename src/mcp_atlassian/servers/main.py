@@ -146,9 +146,7 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
     )
     logger.info(f"Read-only mode: {'ENABLED' if read_only else 'DISABLED'}")
     logger.info(f"Enabled tools filter: {enabled_tools or 'All tools enabled'}")
-    logger.info(
-        f"Enabled toolsets filter: {sorted(enabled_toolsets) if enabled_toolsets is not None else 'All toolsets enabled'}"
-    )
+    logger.info(f"Enabled toolsets filter: {sorted(enabled_toolsets)}")
 
     try:
         yield {"app_lifespan_context": app_context}
