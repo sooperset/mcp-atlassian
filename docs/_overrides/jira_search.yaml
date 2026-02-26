@@ -1,0 +1,6 @@
+example: |
+  {"jql": "project = PROJ AND status = 'In Progress' ORDER BY updated DESC", "limit": 20}
+tips: |
+  Always use `ORDER BY` for deterministic results. Use `fields` parameter to limit returned data for faster queries.
+platform_notes: |
+  Some JQL functions (e.g., `issueHistory()`) are Cloud-only.

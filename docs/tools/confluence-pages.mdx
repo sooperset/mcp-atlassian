@@ -16,6 +16,13 @@ Get content of a specific Confluence page by its ID, or by its title and space k
 | `space_key` | `string` | No | The key of the Confluence space where the page resides (e.g., 'DEV', 'TEAM'). Required if using 'title'. |
 | `include_metadata` | `boolean` | No | Whether to include page metadata such as creation date, last update, version, and labels. |
 | `convert_to_markdown` | `boolean` | No | Whether to convert page to markdown (true) or keep it in raw HTML format (false). Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: using HTML significantly increases token usage in AI responses. |
+**Example:**
+
+```json
+{"page_id": "12345678", "include_metadata": true}
+```
+<Tip>Content is returned in Markdown format (auto-converted from Confluence storage format). Use `include_metadata` for labels, version info, and last modified date.
+</Tip>
 
 ---
 
@@ -36,6 +43,13 @@ Create a new Confluence page.
 | `content_format` | `string` | No | (Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', or 'storage'. Wiki format uses Confluence wiki markup syntax |
 | `enable_heading_anchors` | `boolean` | No | (Optional) Whether to enable automatic heading anchor generation. Only applies when content_format is 'markdown' |
 | `emoji` | `string` | No | (Optional) Page title emoji (icon shown in navigation). Can be any emoji character like '📝', '🚀', '📚'. Set to null/None to remove. |
+**Example:**
+
+```json
+{"space_key": "DEV", "title": "Architecture Decision Record", "content": "## Context\n\nWe need to decide...", "parent_id": "98765432"}
+```
+<Tip>Use Markdown for content — it's auto-converted to Confluence storage format. Specify `parent_id` to create as a child page.
+</Tip>
 
 ---
 
@@ -58,6 +72,13 @@ Update an existing Confluence page.
 | `content_format` | `string` | No | (Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', or 'storage'. Wiki format uses Confluence wiki markup syntax |
 | `enable_heading_anchors` | `boolean` | No | (Optional) Whether to enable automatic heading anchor generation. Only applies when content_format is 'markdown' |
 | `emoji` | `string` | No | (Optional) Page title emoji (icon shown in navigation). Can be any emoji character like '📝', '🚀', '📚'. Set to null/None to remove. |
+**Example:**
+
+```json
+{"page_id": "12345678", "title": "Updated Title", "content": "## Updated Content\n\nNew information...", "is_minor_edit": true}
+```
+<Tip>Set `is_minor_edit: true` to skip notification emails. The page version is auto-incremented.
+</Tip>
 
 ---
 

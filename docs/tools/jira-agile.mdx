@@ -16,6 +16,13 @@ Get jira agile boards by name, project key, or type.
 | `board_type` | `string` | No | (Optional) The type of jira board (e.g., 'scrum', 'kanban') |
 | `start_at` | `integer` | No | Starting index for pagination (0-based) |
 | `limit` | `integer` | No | Maximum number of results (1-50) |
+**Example:**
+
+```json
+{"board_name": "Sprint Board", "project_key": "PROJ", "board_type": "scrum"}
+```
+<Tip>Supports fuzzy search by board name. Combine with `project_key` to narrow results.
+</Tip>
 
 ---
 
@@ -63,6 +70,13 @@ Get jira issues from sprint.
 | `fields` | `string` | No | Comma-separated fields to return in the results. Use '*all' for all fields, or specify individual fields like 'summary,status,assignee,priority' |
 | `start_at` | `integer` | No | Starting index for pagination (0-based) |
 | `limit` | `integer` | No | Maximum number of results (1-50) |
+**Example:**
+
+```json
+{"sprint_id": "42", "fields": "summary,status,assignee,story_points"}
+```
+<Tip>Get the sprint ID from `jira_get_sprints_from_board` first.
+</Tip>
 
 ---
 

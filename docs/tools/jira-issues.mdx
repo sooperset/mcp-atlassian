@@ -17,6 +17,15 @@ Get details of a specific Jira issue including its Epic links and relationship i
 | `comment_limit` | `integer` | No | Maximum number of comments to include (0 or null for no comments) |
 | `properties` | `string` | No | (Optional) A comma-separated list of issue properties to return |
 | `update_history` | `boolean` | No | Whether to update the issue view history for the requesting user |
+**Example:**
+
+```json
+{"issue_key": "PROJ-123", "fields": "summary,status,assignee", "comment_limit": 5}
+```
+<Tip>Use `fields: "*all"` to get all fields including custom ones. Use `expand: "renderedFields"` for rendered HTML content.
+</Tip>
+<Warning>Custom field IDs differ between Cloud and Server/DC. Use `jira_search_fields` to discover field IDs.
+</Warning>
 
 ---
 
@@ -37,6 +46,15 @@ Create a new Jira issue with optional Epic link or parent for subtasks.
 | `description` | `string` | No | Issue description in Markdown format |
 | `components` | `string` | No | (Optional) Comma-separated list of component names to assign (e.g., 'Frontend,API') |
 | `additional_fields` | `string` | No | (Optional) JSON string of additional fields to set. Examples: - Set priority: {"priority": {"name": "High"}} - Add labels: {"labels": ["frontend", "urgent"]} - Link to parent (for any issue type): {"parent": "PROJ-123"} - Link to epic: {"epicKey": "EPIC-123"} or {"epic_link": "EPIC-123"} - Set Fix Version/s: {"fixVersions": [{"id": "10020"}]} - Custom fields: {"customfield_10010": "value"} |
+**Example:**
+
+```json
+{"project_key": "PROJ", "issue_type": "Task", "summary": "Implement new feature", "description": "## Requirements\n\n- Feature A\n- Feature B"}
+```
+<Tip>Use Markdown in the description — it's automatically converted to ADF (Cloud) or wiki markup (Server/DC). For epics, provide `epic_name` parameter.
+</Tip>
+<Warning>Cloud uses ADF format internally (auto-converted from Markdown). Server/DC uses wiki markup.
+</Warning>
 
 ---
 
@@ -55,6 +73,13 @@ Update an existing Jira issue including changing status, adding Epic links, upda
 | `additional_fields` | `string` | No | (Optional) JSON string of additional fields to update. Use this for custom fields or more complex updates. Link to epic: {"epicKey": "EPIC-123"} or {"epic_link": "EPIC-123"}. |
 | `components` | `string` | No | (Optional) Comma-separated list of component names (e.g., 'Frontend,API') |
 | `attachments` | `string` | No | (Optional) JSON string array or comma-separated list of file paths to attach to the issue. Example: '/path/to/file1.txt,/path/to/file2.txt' or ['/path/to/file1.txt','/path/to/file2.txt'] |
+**Example:**
+
+```json
+{"issue_key": "PROJ-123", "summary": "Updated title", "description": "New description", "additional_fields": "{\"priority\": {\"name\": \"High\"}}"}
+```
+<Tip>Use `additional_fields` as a JSON string for any field not covered by explicit parameters. Find field IDs with `jira_search_fields`.
+</Tip>
 
 ---
 
@@ -101,6 +126,13 @@ Transition a Jira issue to a new status.
 | `transition_id` | `string` | Yes | ID of the transition to perform. Use the jira_get_transitions tool first to get the available transition IDs for the issue. Example values: '11', '21', '31' |
 | `fields` | `string` | No | (Optional) JSON string of fields to update during the transition. Some transitions require specific fields to be set (e.g., resolution). Example: '{"resolution": {"name": "Fixed"}}' |
 | `comment` | `string` | No | (Optional) Comment to add during the transition in Markdown format. This will be visible in the issue history. |
+**Example:**
+
+```json
+{"issue_key": "PROJ-123", "transition_name": "Done", "comment": "Closing as completed"}
+```
+<Tip>Use `jira_get_transitions` first to see available transitions for the current issue state.
+</Tip>
 
 ---
 

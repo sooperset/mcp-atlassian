@@ -1,0 +1,4 @@
+example: |
+  {"issue_key": "PROJ-123", "summary": "Updated title", "description": "New description", "additional_fields": "{\"priority\": {\"name\": \"High\"}}"}
+tips: |
+  Use `additional_fields` as a JSON string for any field not covered by explicit parameters. Find field IDs with `jira_search_fields`.

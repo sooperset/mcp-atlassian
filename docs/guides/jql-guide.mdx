@@ -1,0 +1,111 @@
+---
+title: "JQL Guide"
+description: "Master Jira Query Language for powerful issue searches with MCP Atlassian"
+---
+
+JQL (Jira Query Language) is the query language used by `jira_search` to find issues. This guide covers the most useful patterns.
+
+## Basic Syntax
+
+JQL queries follow the pattern: `field operator value`
+
+```
+project = "PROJ" AND status = "In Progress"
+```
+
+## Common Operators
+
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `=` | Exact match | `status = "Done"` |
+| `!=` | Not equal | `status != "Closed"` |
+| `~` | Contains text | `summary ~ "bug fix"` |
+| `!~` | Does not contain | `summary !~ "test"` |
+| `IN` | Match any in list | `status IN ("Open", "In Progress")` |
+| `NOT IN` | Not in list | `priority NOT IN ("Low", "Lowest")` |
+| `IS` | Null check | `assignee IS EMPTY` |
+| `IS NOT` | Not null | `assignee IS NOT EMPTY` |
+| `>`, `<`, `>=`, `<=` | Comparison | `created >= "2024-01-01"` |
+
+## Common Fields
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `project` | Project key | `project = "PROJ"` |
+| `status` | Issue status | `status = "In Progress"` |
+| `assignee` | Assigned user | `assignee = currentUser()` |
+| `reporter` | Issue creator | `reporter = "john.doe"` |
+| `priority` | Priority level | `priority = "High"` |
+| `type` / `issuetype` | Issue type | `type = "Bug"` |
+| `labels` | Issue labels | `labels = "frontend"` |
+| `sprint` | Sprint name | `sprint = "Sprint 42"` |
+| `created` | Creation date | `created >= "-7d"` |
+| `updated` | Last updated | `updated >= "-24h"` |
+| `resolved` | Resolution date | `resolved >= startOfMonth()` |
+
+## Useful Functions
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `currentUser()` | Logged-in user | `assignee = currentUser()` |
+| `startOfDay()` | Start of today | `created >= startOfDay()` |
+| `startOfWeek()` | Start of this week | `updated >= startOfWeek()` |
+| `startOfMonth()` | Start of this month | `resolved >= startOfMonth()` |
+| `endOfDay()` | End of today | `due <= endOfDay()` |
+| `now()` | Current time | `updated >= now("-1h")` |
+
+## Practical Patterns
+
+### My Open Issues
+```
+assignee = currentUser() AND resolution = EMPTY ORDER BY priority DESC
+```
+
+### Sprint Burndown
+```
+sprint = "Sprint 42" AND status != "Done" ORDER BY rank ASC
+```
+
+### Recent Bugs
+```
+type = "Bug" AND created >= "-7d" ORDER BY created DESC
+```
+
+### Unassigned High Priority
+```
+assignee IS EMPTY AND priority IN ("High", "Highest") ORDER BY created ASC
+```
+
+### Issues Updated Today
+```
+updated >= startOfDay() AND project = "PROJ" ORDER BY updated DESC
+```
+
+### Overdue Issues
+```
+due < now() AND resolution = EMPTY ORDER BY due ASC
+```
+
+### Cross-Project Search
+```
+project IN ("PROJ", "DEVOPS", "INFRA") AND status = "In Progress"
+```
+
+### Text Search Across Fields
+```
+text ~ "database migration" ORDER BY relevance DESC
+```
+
+## Tips
+
+<Tip>
+Always include `ORDER BY` in your queries for deterministic, predictable results.
+</Tip>
+
+<Tip>
+Use relative dates (`"-7d"`, `"-1w"`, `"-1M"`) instead of absolute dates for reusable queries.
+</Tip>
+
+<Warning>
+Some JQL functions like `issueHistory()` are Cloud-only. Check your Jira version's documentation for supported functions.
+</Warning>

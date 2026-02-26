@@ -1,0 +1,4 @@
+example: |
+  {"space_key": "DEV", "title": "Architecture Decision Record", "content": "## Context\n\nWe need to decide...", "parent_id": "98765432"}
+tips: |
+  Use Markdown for content — it's auto-converted to Confluence storage format. Specify `parent_id` to create as a child page.
