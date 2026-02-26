@@ -29,7 +29,7 @@ Create a link between two Jira issues.
 | `inward_issue_key` | `string` | Yes | The key of the inward issue (e.g., 'PROJ-123', 'ACV2-642') |
 | `outward_issue_key` | `string` | Yes | The key of the outward issue (e.g., 'PROJ-456') |
 | `comment` | `string` | No | (Optional) Comment to add to the link |
-| `comment_visibility` | `string` | No | (Optional) Visibility settings for the comment as JSON string (e.g. '{"type":"group","value":"jira-users"}') |
+| `comment_visibility` | `string` | No | (Optional) Visibility settings for the comment as JSON string (e.g. `'{"type":"group","value":"jira-users"}'`) |
 
 ---
 
@@ -134,6 +134,6 @@ Batch create multiple versions in a Jira project.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `project_key` | `string` | Yes | Jira project key (e.g., 'PROJ', 'ACV2') |
-| `versions` | `string` | Yes | JSON array of version objects. Each object should contain: - name (required): Name of the version - startDate (optional): Start date (YYYY-MM-DD) - releaseDate (optional): Release date (YYYY-MM-DD) - description (optional): Description of the version Example: [ {"name": "v1.0", "startDate": "2025-01-01", "releaseDate": "2025-02-01", "description": "First release"}, {"name": "v2.0"} ] |
+| `versions` | `string` | Yes | JSON array of version objects. Each object should contain: - name (required): Name of the version - startDate (optional): Start date (YYYY-MM-DD) - releaseDate (optional): Release date (YYYY-MM-DD) - description (optional): Description of the version Example: `[{"name": "v1.0", "startDate": "2025-01-01", "releaseDate": "2025-02-01", "description": "First release"}, {"name": "v2.0"}]` |
 
 ---
