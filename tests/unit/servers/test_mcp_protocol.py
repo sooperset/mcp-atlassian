@@ -973,6 +973,227 @@ class TestMCPProtocolIntegration:
         # UserTokenMiddleware should be added automatically
         assert any("UserTokenMiddleware" in str(m) for m in app.middleware)
 
+    async def test_tool_filtering_with_toolsets(
+        self, atlassian_mcp_server, mock_jira_config, mock_confluence_config
+    ):
+        """Test tool filtering when toolsets restrict which tools are visible."""
+        with MockEnvironment.basic_auth_env():
+            app_context = MainAppContext(
+                full_jira_config=mock_jira_config,
+                full_confluence_config=mock_confluence_config,
+                read_only=False,
+                enabled_tools=None,
+                enabled_toolsets={"jira_issues"},
+            )
+
+            request_context = MagicMock()
+            request_context.lifespan_context = {"app_lifespan_context": app_context}
+
+            atlassian_mcp_server._mcp_server = MagicMock()
+            atlassian_mcp_server._mcp_server.request_context = request_context
+
+            async def mock_get_tools():
+                tools = {}
+                tool_configs = [
+                    ("jira_get_issue", {"jira", "read", "toolset:jira_issues"}),
+                    ("jira_search_issues", {"jira", "read", "toolset:jira_issues"}),
+                    ("jira_get_agile_boards", {"jira", "read", "toolset:jira_agile"}),
+                    (
+                        "confluence_get_page",
+                        {"confluence", "read", "toolset:confluence_pages"},
+                    ),
+                ]
+                for tool_name, tags in tool_configs:
+                    tool = MagicMock(spec=FastMCPTool)
+                    tool.tags = tags
+                    tool.to_mcp_tool.return_value = MCPTool(
+                        name=tool_name,
+                        description=f"Tool {tool_name}",
+                        inputSchema={"type": "object", "properties": {}},
+                    )
+                    tools[tool_name] = tool
+                return tools
+
+            atlassian_mcp_server.get_tools = mock_get_tools
+
+            tools = await atlassian_mcp_server._list_tools_mcp()
+
+            tool_names = [tool.name for tool in tools]
+            assert "jira_get_issue" in tool_names
+            assert "jira_search_issues" in tool_names
+            assert "jira_get_agile_boards" not in tool_names
+            assert "confluence_get_page" not in tool_names
+            assert len(tools) == 2
+
+    async def test_tool_filtering_toolsets_and_enabled_tools(
+        self, atlassian_mcp_server, mock_jira_config, mock_confluence_config
+    ):
+        """Test toolsets + ENABLED_TOOLS results in intersection of both filters."""
+        with MockEnvironment.basic_auth_env():
+            app_context = MainAppContext(
+                full_jira_config=mock_jira_config,
+                full_confluence_config=mock_confluence_config,
+                read_only=False,
+                enabled_tools=["jira_get_issue", "jira_search_issues"],
+                enabled_toolsets={"jira_issues", "jira_agile"},
+            )
+
+            request_context = MagicMock()
+            request_context.lifespan_context = {"app_lifespan_context": app_context}
+
+            atlassian_mcp_server._mcp_server = MagicMock()
+            atlassian_mcp_server._mcp_server.request_context = request_context
+
+            async def mock_get_tools():
+                tools = {}
+                tool_configs = [
+                    ("jira_get_issue", {"jira", "read", "toolset:jira_issues"}),
+                    ("jira_search_issues", {"jira", "read", "toolset:jira_issues"}),
+                    ("jira_get_agile_boards", {"jira", "read", "toolset:jira_agile"}),
+                ]
+                for tool_name, tags in tool_configs:
+                    tool = MagicMock(spec=FastMCPTool)
+                    tool.tags = tags
+                    tool.to_mcp_tool.return_value = MCPTool(
+                        name=tool_name,
+                        description=f"Tool {tool_name}",
+                        inputSchema={"type": "object", "properties": {}},
+                    )
+                    tools[tool_name] = tool
+                return tools
+
+            atlassian_mcp_server.get_tools = mock_get_tools
+
+            tools = await atlassian_mcp_server._list_tools_mcp()
+
+            # Only jira_get_issue and jira_search_issues pass both filters
+            # jira_get_agile_boards passes toolsets but not enabled_tools
+            tool_names = [tool.name for tool in tools]
+            assert "jira_get_issue" in tool_names
+            assert "jira_search_issues" in tool_names
+            assert "jira_get_agile_boards" not in tool_names
+            assert len(tools) == 2
+
+    async def test_tool_filtering_toolsets_and_read_only(
+        self, atlassian_mcp_server, mock_jira_config, mock_confluence_config
+    ):
+        """Test toolsets + read_only mode compose correctly."""
+        with MockEnvironment.basic_auth_env():
+            app_context = MainAppContext(
+                full_jira_config=mock_jira_config,
+                full_confluence_config=mock_confluence_config,
+                read_only=True,
+                enabled_tools=None,
+                enabled_toolsets={"jira_issues"},
+            )
+
+            request_context = MagicMock()
+            request_context.lifespan_context = {"app_lifespan_context": app_context}
+
+            atlassian_mcp_server._mcp_server = MagicMock()
+            atlassian_mcp_server._mcp_server.request_context = request_context
+
+            async def mock_get_tools():
+                tools = {}
+                tool_configs = [
+                    ("jira_get_issue", {"jira", "read", "toolset:jira_issues"}),
+                    ("jira_create_issue", {"jira", "write", "toolset:jira_issues"}),
+                    ("jira_get_agile_boards", {"jira", "read", "toolset:jira_agile"}),
+                ]
+                for tool_name, tags in tool_configs:
+                    tool = MagicMock(spec=FastMCPTool)
+                    tool.tags = tags
+                    tool.to_mcp_tool.return_value = MCPTool(
+                        name=tool_name,
+                        description=f"Tool {tool_name}",
+                        inputSchema={"type": "object", "properties": {}},
+                    )
+                    tools[tool_name] = tool
+                return tools
+
+            atlassian_mcp_server.get_tools = mock_get_tools
+
+            tools = await atlassian_mcp_server._list_tools_mcp()
+
+            # jira_get_issue: passes toolset + read → included
+            # jira_create_issue: passes toolset but blocked by read_only → excluded
+            # jira_get_agile_boards: blocked by toolset → excluded
+            tool_names = [tool.name for tool in tools]
+            assert tool_names == ["jira_get_issue"]
+
+    async def test_tool_filtering_toolsets_none_backward_compat(
+        self, atlassian_mcp_server, mock_jira_config, mock_confluence_config
+    ):
+        """Test enabled_toolsets=None means all tools pass (backward compat)."""
+        with MockEnvironment.basic_auth_env():
+            app_context = MainAppContext(
+                full_jira_config=mock_jira_config,
+                full_confluence_config=mock_confluence_config,
+                read_only=False,
+                enabled_tools=None,
+                enabled_toolsets=None,
+            )
+
+            request_context = MagicMock()
+            request_context.lifespan_context = {"app_lifespan_context": app_context}
+
+            atlassian_mcp_server._mcp_server = MagicMock()
+            atlassian_mcp_server._mcp_server.request_context = request_context
+
+            async def mock_get_tools():
+                tools = {}
+                tool_configs = [
+                    ("jira_get_issue", {"jira", "read", "toolset:jira_issues"}),
+                    ("jira_get_agile_boards", {"jira", "read", "toolset:jira_agile"}),
+                    (
+                        "confluence_get_page",
+                        {"confluence", "read", "toolset:confluence_pages"},
+                    ),
+                ]
+                for tool_name, tags in tool_configs:
+                    tool = MagicMock(spec=FastMCPTool)
+                    tool.tags = tags
+                    tool.to_mcp_tool.return_value = MCPTool(
+                        name=tool_name,
+                        description=f"Tool {tool_name}",
+                        inputSchema={"type": "object", "properties": {}},
+                    )
+                    tools[tool_name] = tool
+                return tools
+
+            atlassian_mcp_server.get_tools = mock_get_tools
+
+            tools = await atlassian_mcp_server._list_tools_mcp()
+
+            # All tools pass when enabled_toolsets=None
+            tool_names = [tool.name for tool in tools]
+            assert "jira_get_issue" in tool_names
+            assert "jira_get_agile_boards" in tool_names
+            assert "confluence_get_page" in tool_names
+            assert len(tools) == 3
+
+    async def test_lifespan_with_toolsets(self):
+        """Test lifespan parses TOOLSETS env var into MainAppContext.enabled_toolsets."""
+        with MockEnvironment.basic_auth_env():
+            with patch.dict(
+                os.environ,
+                {"TOOLSETS": "default,jira_agile"},
+            ):
+                with patch(
+                    "mcp_atlassian.jira.config.JiraConfig.from_env"
+                ) as mock_jira_config:
+                    jira_config = MagicMock()
+                    jira_config.is_auth_configured.return_value = True
+                    mock_jira_config.return_value = jira_config
+
+                    app = MagicMock()
+                    async with main_lifespan(app) as context:
+                        app_context = context["app_lifespan_context"]
+                        assert app_context.enabled_toolsets is not None
+                        assert "jira_issues" in app_context.enabled_toolsets
+                        assert "jira_agile" in app_context.enabled_toolsets
+                        assert "jira_worklog" not in app_context.enabled_toolsets
+
     async def test_tool_execution_with_authentication_error(self, atlassian_mcp_server):
         """Test tool execution when authentication fails."""
         from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError

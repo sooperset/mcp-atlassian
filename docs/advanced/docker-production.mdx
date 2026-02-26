@@ -75,7 +75,7 @@ services:
     environment:
       - TRANSPORT=sse
       - PORT=8000
-      - ENABLED_TOOLS=jira_search,jira_get_issue,jira_create_issue,jira_update_issue
+      - TOOLSETS=jira_issues,jira_fields,jira_transitions
 
   confluence-mcp:
     image: ghcr.io/sooperset/mcp-atlassian:latest
@@ -85,7 +85,7 @@ services:
     environment:
       - TRANSPORT=sse
       - PORT=8000
-      - ENABLED_TOOLS=confluence_search,confluence_get_page,confluence_create_page
+      - TOOLSETS=confluence_pages,confluence_comments
 ```
 
 ## Environment File Pattern
@@ -113,6 +113,7 @@ For production environments where write operations should be disabled:
 ```yaml
 environment:
   - READ_ONLY_MODE=true
+  - TOOLSETS=default  # Optional: also limit to core toolsets
 ```
 
 This disables all create, update, and delete tools at the server level.

@@ -27,6 +27,10 @@ from mcp_atlassian.utils.environment import get_available_services
 from mcp_atlassian.utils.io import is_read_only_mode
 from mcp_atlassian.utils.logging import mask_sensitive
 from mcp_atlassian.utils.tools import get_enabled_tools, should_include_tool
+from mcp_atlassian.utils.toolsets import (
+    get_enabled_toolsets,
+    should_include_tool_by_toolset,
+)
 from mcp_atlassian.utils.urls import validate_url_for_ssrf
 
 from .confluence import confluence_mcp
@@ -98,6 +102,7 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
     services = get_available_services()
     read_only = is_read_only_mode()
     enabled_tools = get_enabled_tools()
+    enabled_toolsets = get_enabled_toolsets()
 
     loaded_jira_config: JiraConfig | None = None
     loaded_confluence_config: ConfluenceConfig | None = None
@@ -137,9 +142,13 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
         full_confluence_config=loaded_confluence_config,
         read_only=read_only,
         enabled_tools=enabled_tools,
+        enabled_toolsets=enabled_toolsets,
     )
     logger.info(f"Read-only mode: {'ENABLED' if read_only else 'DISABLED'}")
     logger.info(f"Enabled tools filter: {enabled_tools or 'All tools enabled'}")
+    logger.info(
+        f"Enabled toolsets filter: {enabled_toolsets or 'All toolsets enabled'}"
+    )
 
     try:
         yield {"app_lifespan_context": app_context}
@@ -205,6 +214,11 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             if app_lifespan_state
             else None
         )
+        enabled_toolsets_filter: set[str] | None = (
+            getattr(app_lifespan_state, "enabled_toolsets", None)
+            if app_lifespan_state
+            else None
+        )
 
         header_based_services = {"jira": False, "confluence": False}
         request = getattr(req_context, "request", None)
@@ -228,6 +242,12 @@ class AtlassianMCP(FastMCP[MainAppContext]):
         filtered_tools: list[MCPTool] = []
         for registered_name, tool_obj in all_tools.items():
             tool_tags = tool_obj.tags
+
+            if not should_include_tool_by_toolset(tool_tags, enabled_toolsets_filter):
+                logger.debug(
+                    f"Excluding tool '{registered_name}' (toolset not enabled)"
+                )
+                continue
 
             if not should_include_tool(registered_name, enabled_tools_filter):
                 logger.debug(f"Excluding tool '{registered_name}' (not enabled)")

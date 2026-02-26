@@ -136,6 +136,7 @@ This guide covers IDE integration, environment variables, and advanced configura
 | `JIRA_PROJECTS_FILTER` | Limit to specific Jira projects | `PROJ,DEV,SUPPORT` |
 | `CONFLUENCE_SPACES_FILTER` | Limit to specific Confluence spaces | `DEV,TEAM,DOC` |
 | `ENABLED_TOOLS` | Enable only specific tools | `confluence_search,jira_get_issue` |
+| `TOOLSETS` | Enable tool groups (see [Toolset Filtering](#toolset-filtering)) | `default`, `all`, `default,jira_agile` |
 
 ### Server Options
 
@@ -203,3 +204,37 @@ Command-line alternative:
 ```bash
 uvx mcp-atlassian --enabled-tools "confluence_search,jira_get_issue"
 ```
+
+### Toolset Filtering
+
+Toolsets provide group-level tool control. Instead of listing individual tool names,
+enable entire groups of related tools at once using the `TOOLSETS` environment variable.
+
+```bash
+# Only core tools (~23 tools across 6 default toolsets)
+TOOLSETS=default
+
+# Core tools plus agile boards/sprints
+TOOLSETS=default,jira_agile
+
+# All toolsets (same as not setting TOOLSETS)
+TOOLSETS=all
+```
+
+Command-line alternative:
+```bash
+uvx mcp-atlassian --toolsets "default,jira_agile"
+```
+
+**Default toolsets** (included with `TOOLSETS=default`):
+`jira_issues`, `jira_fields`, `jira_comments`, `jira_transitions`, `confluence_pages`, `confluence_comments`
+
+When both `TOOLSETS` and `ENABLED_TOOLS` are set, they intersect — a tool must pass
+both filters. If `TOOLSETS` is not set, all tools are available (backward compatible).
+
+<Note>
+Unknown toolset names are silently ignored. If **all** names are unknown, no tools are
+enabled (fail-closed behavior to prevent accidental exposure).
+</Note>
+
+See [Toolset Groups](/docs/tools-reference#toolset-groups) for the full list of available toolsets.

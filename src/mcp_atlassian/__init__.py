@@ -204,6 +204,10 @@ async def _run_stdio_with_stdin_guard(run_kwargs: dict[str, object]) -> None:
     help="Comma-separated list of tools to enable (enables all if not specified)",
 )
 @click.option(
+    "--toolsets",
+    help="Comma-separated toolset names to enable (all/default/specific names)",
+)
+@click.option(
     "--oauth-client-id",
     help="OAuth 2.0 client ID for Atlassian Cloud",
 )
@@ -251,6 +255,7 @@ def main(
     jira_projects_filter: str | None,
     read_only: bool,
     enabled_tools: str | None,
+    toolsets: str | None,
     oauth_client_id: str | None,
     oauth_client_secret: str | None,
     oauth_redirect_uri: str | None,
@@ -368,6 +373,8 @@ def main(
     # Set env vars for downstream config
     if click_ctx and was_option_provided(click_ctx, "enabled_tools"):
         os.environ["ENABLED_TOOLS"] = enabled_tools
+    if click_ctx and was_option_provided(click_ctx, "toolsets"):
+        os.environ["TOOLSETS"] = toolsets
     if click_ctx and was_option_provided(click_ctx, "confluence_url"):
         os.environ["CONFLUENCE_URL"] = confluence_url
     if click_ctx and was_option_provided(click_ctx, "confluence_username"):
