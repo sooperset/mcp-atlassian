@@ -12,5 +12,6 @@ __pycache__/
 src/
 tests/
 scripts/
+docs/_overrides/
 .github/
 .claude/

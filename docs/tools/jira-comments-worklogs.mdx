@@ -1,0 +1,94 @@
+---
+title: "Jira Comments & Worklogs"
+description: "Comments, worklogs, changelogs, and user profiles"
+---
+
+### Add Comment
+
+Add a comment to a Jira issue.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
+| `comment` | `string` | Yes | Comment text in Markdown format |
+| `visibility` | `string` | No | (Optional) Comment visibility as JSON string (e.g. '{"type":"group","value":"jira-users"}') |
+
+---
+
+### Edit Comment
+
+Edit an existing comment on a Jira issue.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
+| `comment_id` | `string` | Yes | The ID of the comment to edit |
+| `comment` | `string` | Yes | Updated comment text in Markdown format |
+| `visibility` | `string` | No | (Optional) Comment visibility as JSON string (e.g. '{"type":"group","value":"jira-users"}') |
+
+---
+
+### Get Worklog
+
+Get worklog entries for a Jira issue.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
+
+---
+
+### Add Worklog
+
+Add a worklog entry to a Jira issue.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
+| `time_spent` | `string` | Yes | Time spent in Jira format. Examples: '1h 30m' (1 hour and 30 minutes), '1d' (1 day), '30m' (30 minutes), '4h' (4 hours) |
+| `comment` | `string` | No | (Optional) Comment for the worklog in Markdown format |
+| `started` | `string` | No | (Optional) Start time in ISO format. If not provided, the current time will be used. Example: '2023-08-01T12:00:00.000+0000' |
+| `original_estimate` | `string` | No | (Optional) New value for the original estimate |
+| `remaining_estimate` | `string` | No | (Optional) New value for the remaining estimate |
+
+---
+
+### Batch Get Changelogs
+
+Get changelogs for multiple Jira issues (Cloud only).
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_ids_or_keys` | `string` | Yes | Comma-separated list of Jira issue IDs or keys (e.g. 'PROJ-123,PROJ-124') |
+| `fields` | `string` | No | (Optional) Comma-separated list of fields to filter changelogs by (e.g. 'status,assignee'). Default to None for all fields. |
+| `limit` | `integer` | No | Maximum number of changelogs to return in result for each issue. Default to -1 for all changelogs. Notice that it only limits the results in the response, the function will still fetch all the data. |
+
+---
+
+### Get User Profile
+
+Retrieve profile information for a specific Jira user.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `user_identifier` | `string` | Yes | Identifier for the user (e.g., email address 'user@example.com', username 'johndoe', account ID 'accountid:...', or key for Server/DC). |
+
+---

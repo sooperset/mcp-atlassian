@@ -52,7 +52,10 @@ dev = [
     "ruff>=0.3.0",
     "black>=24.2.0",
     "mypy>=1.8.0",
-    "mcp[cli]>=1.3.0"
+    "mcp[cli]>=1.3.0",
+    "jinja2>=3.1.0",
+    "pyyaml>=6.0",
+    "types-pyyaml>=6.0"
 ]
 
 [tool.pytest.ini_options]

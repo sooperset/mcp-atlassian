@@ -1,0 +1,143 @@
+---
+title: "Jira Issues"
+description: "Create, read, update, delete, and transition Jira issues"
+---
+
+### Get Issue
+
+Get details of a specific Jira issue including its Epic links and relationship information.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
+| `fields` | `string` | No | (Optional) Comma-separated list of fields to return (e.g., 'summary,status,customfield_10010'). You may also provide a single field as a string (e.g., 'duedate'). Use '*all' for all fields (including custom fields), or omit for essential fields only. |
+| `expand` | `string` | No | (Optional) Fields to expand. Examples: 'renderedFields' (for rendered content), 'transitions' (for available status transitions), 'changelog' (for history) |
+| `comment_limit` | `integer` | No | Maximum number of comments to include (0 or null for no comments) |
+| `properties` | `string` | No | (Optional) A comma-separated list of issue properties to return |
+| `update_history` | `boolean` | No | Whether to update the issue view history for the requesting user |
+
+---
+
+### Create Issue
+
+Create a new Jira issue with optional Epic link or parent for subtasks.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `project_key` | `string` | Yes | The JIRA project key (e.g. 'PROJ', 'DEV', 'ACV2'). This is the prefix of issue keys in your project. Never assume what it might be, always ask the user. |
+| `summary` | `string` | Yes | Summary/title of the issue |
+| `issue_type` | `string` | Yes | Issue type (e.g. 'Task', 'Bug', 'Story', 'Epic', 'Subtask'). The available types depend on your project configuration. For subtasks, use 'Subtask' (not 'Sub-task') and include parent in additional_fields. |
+| `assignee` | `string` | No | (Optional) Assignee's user identifier (string): Email, display name, or account ID (e.g., 'user@example.com', 'John Doe', 'accountid:...') |
+| `description` | `string` | No | Issue description in Markdown format |
+| `components` | `string` | No | (Optional) Comma-separated list of component names to assign (e.g., 'Frontend,API') |
+| `additional_fields` | `string` | No | (Optional) JSON string of additional fields to set. Examples: - Set priority: {"priority": {"name": "High"}} - Add labels: {"labels": ["frontend", "urgent"]} - Link to parent (for any issue type): {"parent": "PROJ-123"} - Link to epic: {"epicKey": "EPIC-123"} or {"epic_link": "EPIC-123"} - Set Fix Version/s: {"fixVersions": [{"id": "10020"}]} - Custom fields: {"customfield_10010": "value"} |
+
+---
+
+### Update Issue
+
+Update an existing Jira issue including changing status, adding Epic links, updating fields, etc.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
+| `fields` | `string` | Yes | JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). For 'description', provide text in Markdown format. Example: '{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\nMarkdown text"}' |
+| `additional_fields` | `string` | No | (Optional) JSON string of additional fields to update. Use this for custom fields or more complex updates. Link to epic: {"epicKey": "EPIC-123"} or {"epic_link": "EPIC-123"}. |
+| `components` | `string` | No | (Optional) Comma-separated list of component names (e.g., 'Frontend,API') |
+| `attachments` | `string` | No | (Optional) JSON string array or comma-separated list of file paths to attach to the issue. Example: '/path/to/file1.txt,/path/to/file2.txt' or ['/path/to/file1.txt','/path/to/file2.txt'] |
+
+---
+
+### Delete Issue
+
+Delete an existing Jira issue.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
+
+---
+
+### Batch Create Issues
+
+Create multiple Jira issues in a batch.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issues` | `string` | Yes | JSON array of issue objects. Each object should contain: - project_key (required): The project key (e.g., 'PROJ') - summary (required): Issue summary/title - issue_type (required): Type of issue (e.g., 'Task', 'Bug') - description (optional): Issue description in Markdown format - assignee (optional): Assignee username or email - components (optional): Array of component names Example: [ {"project_key": "PROJ", "summary": "Issue 1", "issue_type": "Task"}, {"project_key": "PROJ", "summary": "Issue 2", "issue_type": "Bug", "components": ["Frontend"]} ] |
+| `validate_only` | `boolean` | No | If true, only validates the issues without creating them |
+
+---
+
+### Transition Issue
+
+Transition a Jira issue to a new status.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
+| `transition_id` | `string` | Yes | ID of the transition to perform. Use the jira_get_transitions tool first to get the available transition IDs for the issue. Example values: '11', '21', '31' |
+| `fields` | `string` | No | (Optional) JSON string of fields to update during the transition. Some transitions require specific fields to be set (e.g., resolution). Example: '{"resolution": {"name": "Fixed"}}' |
+| `comment` | `string` | No | (Optional) Comment to add during the transition in Markdown format. This will be visible in the issue history. |
+
+---
+
+### Get Transitions
+
+Get available status transitions for a Jira issue.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
+
+---
+
+### Get All Projects
+
+Get all Jira projects accessible to the current user.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `include_archived` | `boolean` | No | Whether to include archived projects in the results |
+
+---
+
+### Get Project Issues
+
+Get all issues for a specific Jira project.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `project_key` | `string` | Yes | Jira project key (e.g., 'PROJ', 'ACV2') |
+| `limit` | `integer` | No | Maximum number of results (1-50) |
+| `start_at` | `integer` | No | Starting index for pagination (0-based) |
+
+---

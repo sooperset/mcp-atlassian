@@ -1,0 +1,28 @@
+---
+title: "Jira Attachments"
+description: "Download attachments and render issue images"
+---
+
+### Download Attachments
+
+Download attachments from a Jira issue.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
+
+---
+
+### Get Issue Images
+
+Get all images attached to a Jira issue as inline image content.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123'). Returns image attachments as inline ImageContent for LLM vision. |
+
+---
