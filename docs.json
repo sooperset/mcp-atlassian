@@ -2,6 +2,9 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
   "name": "MCP Atlassian",
+  "metadata": {
+    "og:description": "MCP server for Atlassian Jira and Confluence — 68 tools across 21 toolsets"
+  },
   "seo": {
     "indexHiddenPages": false
   },
