@@ -11,7 +11,6 @@ from typing import Any
 
 import pytest
 
-from mcp_atlassian.utils.env import is_env_truthy
 from tests.fixtures.confluence_mocks import (
     MOCK_COMMENTS_RESPONSE,
     MOCK_CQL_SEARCH_RESPONSE,
@@ -398,42 +397,6 @@ def confluence_model_serialization_cases():
 # ============================================================================
 # Real Data Integration Fixtures
 # ============================================================================
-
-
-@pytest.fixture
-def use_real_jira_data() -> bool:
-    """
-    Check if we should use real Jira data from the API.
-
-    This will only return True if:
-    1. The JIRA_URL, JIRA_USERNAME, and JIRA_API_TOKEN environment variables are set
-    2. The USE_REAL_DATA environment variable is set to "true"
-
-    Note: This fixture is maintained for backward compatibility.
-    """
-    required_vars = ["JIRA_URL", "JIRA_USERNAME", "JIRA_API_TOKEN"]
-    if not all(os.environ.get(var) for var in required_vars):
-        return False
-
-    return is_env_truthy("USE_REAL_DATA")
-
-
-@pytest.fixture
-def use_real_confluence_data() -> bool:
-    """
-    Check if we should use real Confluence data from the API.
-
-    This will only return True if:
-    1. The CONFLUENCE_URL, CONFLUENCE_USERNAME, and CONFLUENCE_API_TOKEN environment variables are set
-    2. The USE_REAL_DATA environment variable is set to "true"
-
-    Note: This fixture is maintained for backward compatibility.
-    """
-    required_vars = ["CONFLUENCE_URL", "CONFLUENCE_USERNAME", "CONFLUENCE_API_TOKEN"]
-    if not all(os.environ.get(var) for var in required_vars):
-        return False
-
-    return is_env_truthy("USE_REAL_DATA")
 
 
 @pytest.fixture
