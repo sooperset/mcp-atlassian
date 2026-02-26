@@ -28,12 +28,10 @@ from mcp_atlassian.utils.io import is_read_only_mode
 from mcp_atlassian.utils.logging import mask_sensitive
 from mcp_atlassian.utils.tools import get_enabled_tools, should_include_tool
 from mcp_atlassian.utils.urls import validate_url_for_ssrf
-from mcp_atlassian.zephyr.config import ZephyrConfig
 
 from .confluence import confluence_mcp
 from .context import MainAppContext
 from .jira import jira_mcp
-from .zephyr import zephyr_mcp
 
 logger = logging.getLogger("mcp-atlassian.server.main")
 
@@ -103,7 +101,6 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
 
     loaded_jira_config: JiraConfig | None = None
     loaded_confluence_config: ConfluenceConfig | None = None
-    loaded_zephyr_config: ZephyrConfig | None = None
 
     if services.get("jira"):
         try:
@@ -115,8 +112,7 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
                 )
             else:
                 logger.warning(
-                    "Jira URL found, but authentication is not fully configured. "
-                    "Jira tools will be unavailable."
+                    "Jira URL found, but authentication is not fully configured. Jira tools will be unavailable."
                 )
         except Exception as e:
             logger.error(f"Failed to load Jira configuration: {e}", exc_info=True)
@@ -131,32 +127,14 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
                 )
             else:
                 logger.warning(
-                    "Confluence URL found, but authentication is not fully configured. "
-                    "Confluence tools will be unavailable."
+                    "Confluence URL found, but authentication is not fully configured. Confluence tools will be unavailable."
                 )
         except Exception as e:
             logger.error(f"Failed to load Confluence configuration: {e}", exc_info=True)
 
-    if services.get("zephyr"):
-        try:
-            zephyr_config = ZephyrConfig.from_env()
-            if zephyr_config.is_auth_configured():
-                loaded_zephyr_config = zephyr_config
-                logger.info(
-                    "Zephyr configuration loaded and authentication is configured."
-                )
-            else:
-                logger.warning(
-                    "Zephyr URL found, but authentication is not fully configured. "
-                    "Zephyr tools will be unavailable."
-                )
-        except Exception as e:
-            logger.error(f"Failed to load Zephyr configuration: {e}", exc_info=True)
-
     app_context = MainAppContext(
         full_jira_config=loaded_jira_config,
         full_confluence_config=loaded_confluence_config,
-        full_zephyr_config=loaded_zephyr_config,
         read_only=read_only,
         enabled_tools=enabled_tools,
     )
@@ -177,8 +155,6 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
                 logger.debug("Cleaning up Jira resources...")
             if loaded_confluence_config:
                 logger.debug("Cleaning up Confluence resources...")
-            if loaded_zephyr_config:
-                logger.debug("Cleaning up Zephyr resources...")
         except Exception as e:
             logger.error(f"Error during cleanup: {e}", exc_info=True)
         logger.info("Main Atlassian MCP server lifespan shutdown complete.")
@@ -205,8 +181,7 @@ class AtlassianMCP(FastMCP[MainAppContext]):
         return self._normalize_http_path(fastmcp_settings.streamable_http_path)
 
     async def _list_tools_mcp(self) -> list[MCPTool]:
-        # Filter tools based on enabled_tools, read_only mode, and service
-        # configuration from the lifespan context.
+        # Filter tools based on enabled_tools, read_only mode, and service configuration from the lifespan context.
         req_context = self._mcp_server.request_context
         if req_context is None or req_context.lifespan_context is None:
             logger.warning(
@@ -231,7 +206,7 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             else None
         )
 
-        header_based_services = {"jira": False, "confluence": False, "zephyr": False}
+        header_based_services = {"jira": False, "confluence": False}
         request = getattr(req_context, "request", None)
         if request is not None:
             service_headers = getattr(request.state, "atlassian_service_headers", {})
@@ -242,15 +217,12 @@ class AtlassianMCP(FastMCP[MainAppContext]):
                 )
 
         logger.debug(
-            f"_list_tools_mcp: read_only={read_only}, "
-            f"enabled_tools_filter={enabled_tools_filter}, "
-            f"header_services={header_based_services}"
+            f"_list_tools_mcp: read_only={read_only}, enabled_tools_filter={enabled_tools_filter}, header_services={header_based_services}"
         )
 
         all_tools: dict[str, FastMCPTool] = await self.get_tools()
         logger.debug(
-            f"Aggregated {len(all_tools)} tools before filtering: "
-            f"{list(all_tools.keys())}"
+            f"Aggregated {len(all_tools)} tools before filtering: {list(all_tools.keys())}"
         )
 
         filtered_tools: list[MCPTool] = []
@@ -263,15 +235,13 @@ class AtlassianMCP(FastMCP[MainAppContext]):
 
             if tool_obj and read_only and "write" in tool_tags:
                 logger.debug(
-                    f"Excluding tool '{registered_name}' due to read-only mode "
-                    f"and 'write' tag"
+                    f"Excluding tool '{registered_name}' due to read-only mode and 'write' tag"
                 )
                 continue
 
-            # Exclude Jira/Confluence/Zephyr tools if config is not fully authenticated
+            # Exclude Jira/Confluence tools if config is not fully authenticated
             is_jira_tool = "jira" in tool_tags
             is_confluence_tool = "confluence" in tool_tags
-            is_zephyr_tool = "zephyr" in tool_tags
             service_configured_and_available = True
             if app_lifespan_state:
                 jira_available = (
@@ -280,52 +250,29 @@ class AtlassianMCP(FastMCP[MainAppContext]):
                 confluence_available = (
                     app_lifespan_state.full_confluence_config is not None
                 ) or header_based_services.get("confluence", False)
-                zephyr_available = (
-                    app_lifespan_state.full_zephyr_config is not None
-                ) or header_based_services.get("zephyr", False)
 
                 if is_jira_tool and not jira_available:
                     logger.debug(
-                        f"Excluding Jira tool '{registered_name}' as Jira "
-                        f"configuration/authentication is incomplete and no "
-                        f"header-based auth available."
+                        f"Excluding Jira tool '{registered_name}' as Jira configuration/authentication is incomplete and no header-based auth available."
                     )
                     service_configured_and_available = False
                 if is_confluence_tool and not confluence_available:
                     logger.debug(
-                        f"Excluding Confluence tool '{registered_name}' as Confluence "
-                        f"configuration/authentication is incomplete and no "
-                        f"header-based auth available."
+                        f"Excluding Confluence tool '{registered_name}' as Confluence configuration/authentication is incomplete and no header-based auth available."
                     )
                     service_configured_and_available = False
-                if is_zephyr_tool and not zephyr_available:
-                    logger.debug(
-                        f"Excluding Zephyr tool '{registered_name}' as Zephyr "
-                        f"configuration/authentication is incomplete and no "
-                        f"header-based auth available."
-                    )
-                    service_configured_and_available = False
-            elif is_jira_tool or is_confluence_tool or is_zephyr_tool:
+            elif is_jira_tool or is_confluence_tool:
                 jira_available = header_based_services.get("jira", False)
                 confluence_available = header_based_services.get("confluence", False)
-                zephyr_available = header_based_services.get("zephyr", False)
 
                 if is_jira_tool and not jira_available:
                     logger.debug(
-                        f"Excluding Jira tool '{registered_name}' as no Jira "
-                        f"authentication available."
+                        f"Excluding Jira tool '{registered_name}' as no Jira authentication available."
                     )
                     service_configured_and_available = False
                 if is_confluence_tool and not confluence_available:
                     logger.debug(
-                        f"Excluding Confluence tool '{registered_name}' as no "
-                        f"Confluence authentication available."
-                    )
-                    service_configured_and_available = False
-                if is_zephyr_tool and not zephyr_available:
-                    logger.debug(
-                        f"Excluding Zephyr tool '{registered_name}' as no Zephyr "
-                        f"authentication available."
+                        f"Excluding Confluence tool '{registered_name}' as no Confluence authentication available."
                     )
                     service_configured_and_available = False
 
@@ -409,10 +356,9 @@ class UserTokenMiddleware:
         if "state" not in scope_copy:
             scope_copy["state"] = {}
 
-        # Initialize default authentication state (only initialize fields that
-        # should always exist). Note: user_atlassian_token and
-        # user_atlassian_auth_type are NOT initialized. They are only set
-        # when present, so hasattr() checks work correctly
+        # Initialize default authentication state (only initialize fields that should always exist)
+        # Note: user_atlassian_token and user_atlassian_auth_type are NOT initialized
+        # They are only set when present, so hasattr() checks work correctly
         scope_copy["state"]["user_atlassian_email"] = None
         scope_copy["state"]["user_atlassian_cloud_id"] = None
         scope_copy["state"]["auth_validation_error"] = None
@@ -501,16 +447,13 @@ class UserTokenMiddleware:
                 cloud_id_header.decode("latin-1") if cloud_id_header else None
             )
 
-            # Extract additional Atlassian service headers for service
-            # availability detection
+            # Extract additional Atlassian service headers for service availability detection
             jira_token_header = headers.get(b"x-atlassian-jira-personal-token")
             jira_url_header = headers.get(b"x-atlassian-jira-url")
             confluence_token_header = headers.get(
                 b"x-atlassian-confluence-personal-token"
             )
             confluence_url_header = headers.get(b"x-atlassian-confluence-url")
-            zephyr_token_header = headers.get(b"x-atlassian-zephyr-personal-token")
-            zephyr_url_header = headers.get(b"x-atlassian-zephyr-url")
 
             # Convert service header bytes to strings
             jira_token_str = (
@@ -528,12 +471,6 @@ class UserTokenMiddleware:
                 confluence_url_header.decode("latin-1")
                 if confluence_url_header
                 else None
-            )
-            zephyr_token_str = (
-                zephyr_token_header.decode("latin-1") if zephyr_token_header else None
-            )
-            zephyr_url_str = (
-                zephyr_url_header.decode("latin-1") if zephyr_url_header else None
             )
 
             # Validate URLs to prevent SSRF
@@ -565,16 +502,11 @@ class UserTokenMiddleware:
                 )
             if confluence_url_str:
                 service_headers["X-Atlassian-Confluence-Url"] = confluence_url_str
-            if zephyr_token_str:
-                service_headers["X-Atlassian-Zephyr-Personal-Token"] = zephyr_token_str
-            if zephyr_url_str:
-                service_headers["X-Atlassian-Zephyr-Url"] = zephyr_url_str
 
             scope["state"]["atlassian_service_headers"] = service_headers
             if service_headers:
                 logger.debug(
-                    f"UserTokenMiddleware: Extracted service headers: "
-                    f"{list(service_headers.keys())}"
+                    f"UserTokenMiddleware: Extracted service headers: {list(service_headers.keys())}"
                 )
 
             # Log mcp-session-id for debugging
@@ -582,8 +514,7 @@ class UserTokenMiddleware:
             if mcp_session_id:
                 session_id_str = mcp_session_id.decode("latin-1")
                 logger.debug(
-                    f"UserTokenMiddleware: MCP-Session-ID header found: "
-                    f"{session_id_str}"
+                    f"UserTokenMiddleware: MCP-Session-ID header found: {session_id_str}"
                 )
 
             logger.debug(
@@ -604,18 +535,15 @@ class UserTokenMiddleware:
                 self._parse_auth_header(auth_header_str, scope)
             else:
                 logger.debug("UserTokenMiddleware: No Authorization header provided")
-                # If service headers are present without Authorization header,
-                # set PAT auth type
+                # If service headers are present without Authorization header, set PAT auth type
                 if service_headers and (
                     (jira_token_str and jira_url_str)
                     or (confluence_token_str and confluence_url_str)
-                    or (zephyr_token_str and zephyr_url_str)
                 ):
                     scope["state"]["user_atlassian_auth_type"] = "pat"
                     scope["state"]["user_atlassian_email"] = None
                     logger.debug(
-                        "UserTokenMiddleware: Header-based authentication detected. "
-                        "Setting PAT auth type."
+                        "UserTokenMiddleware: Header-based authentication detected. Setting PAT auth type."
                     )
 
         except Exception as e:
@@ -708,7 +636,6 @@ class UserTokenMiddleware:
 main_mcp = AtlassianMCP(name="Atlassian MCP", lifespan=main_lifespan)
 main_mcp.mount(jira_mcp, "jira")
 main_mcp.mount(confluence_mcp, "confluence")
-main_mcp.mount(zephyr_mcp, "zephyr")
 
 
 @main_mcp.custom_route("/healthz", methods=["GET"], include_in_schema=False)
