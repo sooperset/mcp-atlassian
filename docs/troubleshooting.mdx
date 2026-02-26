@@ -30,21 +30,6 @@ description: "Fix auth errors (401/403), field issues, rate limiting, SSL proble
     Ensure your Atlassian account has sufficient permissions to access the spaces/projects you're targeting.
   </Accordion>
 
-  <Accordion title="Python Version Issues">
-    Python 3.14 is not yet supported due to upstream pydantic-core/PyO3 limitations.
-
-    **Workaround with uvx:**
-    ```bash
-    uvx --python=3.12 mcp-atlassian
-    ```
-
-    **In IDE configuration:**
-    ```json
-    {
-      "args": ["--python=3.12", "mcp-atlassian"]
-    }
-    ```
-  </Accordion>
 </AccordionGroup>
 
 ## Debugging
