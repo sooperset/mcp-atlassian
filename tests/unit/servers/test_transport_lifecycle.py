@@ -1,4 +1,4 @@
-"""Integration tests for transport lifecycle behavior.
+"""Unit tests for transport lifecycle behavior.
 
 These tests ensure that:
 1. No stdin monitoring is used (preventing issues #519 and #524)
@@ -17,7 +17,6 @@ from mcp_atlassian import main
 from mcp_atlassian.utils.lifecycle import _shutdown_event
 
 
-@pytest.mark.integration
 class TestTransportLifecycleBehavior:
     """Test transport lifecycle behavior to prevent regression of issues #519 and #524."""
 
@@ -238,7 +237,6 @@ class TestTransportLifecycleBehavior:
                     )
 
 
-@pytest.mark.integration
 class TestRegressionPrevention:
     """Tests to prevent regression of specific issues."""
 

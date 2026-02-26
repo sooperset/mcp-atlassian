@@ -1,12 +1,13 @@
 """Tests for the Jira Issues mixin."""
 
-from unittest.mock import ANY, MagicMock, Mock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.issues import IssuesMixin, logger
 from mcp_atlassian.models.jira import JiraIssue
+from tests.utils.mocks import setup_api3_passthrough_mocks
 
 
 class TestIssuesMixin:
@@ -28,20 +29,7 @@ class TestIssuesMixin:
 
         # Cloud ADF paths delegate to _post_api3/_put_api3. Route back
         # to jira.create_issue / jira.update_issue so existing mocks work.
-        def _mock_post_api3(resource: str, data: dict) -> dict:
-            if resource == "issue":
-                return mixin.jira.create_issue(fields=data.get("fields", data))
-            return mixin.jira.post(resource, data=data)
-
-        def _mock_put_api3(resource: str, data: dict) -> dict:
-            if resource.startswith("issue/"):
-                return mixin.jira.update_issue(
-                    issue_key=resource.split("/")[1], update=data
-                )
-            return mixin.jira.put(resource, data=data)
-
-        mixin._post_api3 = Mock(side_effect=_mock_post_api3)
-        mixin._put_api3 = Mock(side_effect=_mock_put_api3)
+        setup_api3_passthrough_mocks(mixin)
 
         return mixin
 

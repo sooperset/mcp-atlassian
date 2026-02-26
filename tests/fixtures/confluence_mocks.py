@@ -382,6 +382,71 @@ MOCK_SPACES_RESPONSE = {
     },
 }
 
+# ============================================================================
+# Confluence Space / Content Type / Macro Definitions (used by unit test fixtures)
+# ============================================================================
+
+MOCK_CONFLUENCE_SPACES: list[dict] = [
+    {
+        "id": 12345,
+        "key": "TEST",
+        "name": "Test Space",
+        "type": "global",
+        "status": "current",
+        "description": {"plain": {"value": "Test space for unit tests"}},
+        "_links": {
+            "webui": "/spaces/TEST",
+            "self": "https://test.atlassian.net/wiki/rest/api/space/TEST",
+        },
+    },
+    {
+        "id": 12346,
+        "key": "DEMO",
+        "name": "Demo Space",
+        "type": "global",
+        "status": "current",
+        "description": {"plain": {"value": "Demo space for testing"}},
+        "_links": {
+            "webui": "/spaces/DEMO",
+            "self": "https://test.atlassian.net/wiki/rest/api/space/DEMO",
+        },
+    },
+    {
+        "id": 12347,
+        "key": "SAMPLE",
+        "name": "Sample Space",
+        "type": "personal",
+        "status": "current",
+        "description": {"plain": {"value": "Sample personal space"}},
+        "_links": {
+            "webui": "/spaces/SAMPLE",
+            "self": "https://test.atlassian.net/wiki/rest/api/space/SAMPLE",
+        },
+    },
+]
+
+MOCK_CONFLUENCE_CONTENT_TYPES: list[dict] = [
+    {"name": "page", "type": "content"},
+    {"name": "blogpost", "type": "content"},
+    {"name": "comment", "type": "content"},
+    {"name": "attachment", "type": "content"},
+    {"name": "space", "type": "space"},
+    {"name": "user", "type": "user"},
+]
+
+MOCK_CONFLUENCE_MACROS: list[dict] = [
+    {"name": "info", "hasBody": True, "bodyType": "rich-text"},
+    {"name": "warning", "hasBody": True, "bodyType": "rich-text"},
+    {"name": "note", "hasBody": True, "bodyType": "rich-text"},
+    {"name": "tip", "hasBody": True, "bodyType": "rich-text"},
+    {"name": "code", "hasBody": True, "bodyType": "plain-text"},
+    {"name": "toc", "hasBody": False},
+    {"name": "children", "hasBody": False},
+    {"name": "excerpt", "hasBody": True, "bodyType": "rich-text"},
+    {"name": "include", "hasBody": False},
+    {"name": "panel", "hasBody": True, "bodyType": "rich-text"},
+]
+
 MOCK_PAGES_FROM_SPACE_RESPONSE = [
     {
         "id": "123456789",

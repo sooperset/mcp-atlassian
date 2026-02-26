@@ -13,6 +13,11 @@ import pytest
 
 from mcp_atlassian.jira.client import JiraClient
 from mcp_atlassian.jira.config import JiraConfig
+from tests.fixtures.jira_mocks import (
+    MOCK_JIRA_FIELD_DEFINITIONS,
+    MOCK_JIRA_ISSUE_TYPES,
+    MOCK_JIRA_PROJECTS,
+)
 from tests.utils.factories import AuthConfigFactory, JiraIssueFactory
 from tests.utils.mocks import MockAtlassianClient
 
@@ -32,144 +37,7 @@ def session_jira_field_definitions():
     Returns:
         List[Dict[str, Any]]: Complete Jira field definitions
     """
-    return [
-        {"id": "summary", "name": "Summary", "schema": {"type": "string"}},
-        {"id": "description", "name": "Description", "schema": {"type": "string"}},
-        {"id": "issuetype", "name": "Issue Type", "schema": {"type": "issuetype"}},
-        {"id": "status", "name": "Status", "schema": {"type": "status"}},
-        {"id": "priority", "name": "Priority", "schema": {"type": "priority"}},
-        {
-            "id": "labels",
-            "name": "Labels",
-            "schema": {"type": "array", "items": "string"},
-        },
-        {"id": "assignee", "name": "Assignee", "schema": {"type": "user"}},
-        {"id": "reporter", "name": "Reporter", "schema": {"type": "user"}},
-        {"id": "created", "name": "Created", "schema": {"type": "datetime"}},
-        {"id": "updated", "name": "Updated", "schema": {"type": "datetime"}},
-        {
-            "id": "fixVersions",
-            "name": "Fix Version/s",
-            "schema": {"type": "array", "items": "version"},
-        },
-        {
-            "id": "customfield_10010",
-            "name": "Epic Link",
-            "schema": {
-                "type": "string",
-                "custom": "com.pyxis.greenhopper.jira:gh-epic-link",
-            },
-        },
-        {
-            "id": "customfield_10011",
-            "name": "Epic Name",
-            "schema": {
-                "type": "string",
-                "custom": "com.pyxis.greenhopper.jira:gh-epic-label",
-            },
-        },
-        {
-            "id": "customfield_10012",
-            "name": "Story Points",
-            "schema": {"type": "number"},
-        },
-        {
-            "id": "customfield_10013",
-            "name": "Sprint",
-            "schema": {"type": "array", "items": "string"},
-        },
-        {
-            "id": "components",
-            "name": "Component/s",
-            "schema": {"type": "array", "items": "component"},
-        },
-        {
-            "id": "duedate",
-            "name": "Due Date",
-            "schema": {"type": "date"},
-        },
-        # Cascading select
-        {
-            "id": "customfield_10020",
-            "name": "Region",
-            "schema": {"type": "option-with-child", "custom": "cascadingselect"},
-        },
-        # Multi-select (array of options)
-        {
-            "id": "customfield_10021",
-            "name": "Categories",
-            "schema": {"type": "array", "items": "option", "custom": "multiselect"},
-        },
-        # Custom user field
-        {
-            "id": "customfield_10022",
-            "name": "Reviewer",
-            "schema": {"type": "user", "custom": "userpicker"},
-        },
-        # Custom date field
-        {
-            "id": "customfield_10023",
-            "name": "Target Date",
-            "schema": {"type": "date"},
-        },
-        # Generic option (radio/select)
-        {
-            "id": "customfield_10024",
-            "name": "Severity",
-            "schema": {"type": "option", "custom": "radiobuttons"},
-        },
-        {
-            "id": "resolution",
-            "name": "Resolution",
-            "schema": {"type": "resolution"},
-        },
-        {
-            "id": "resolutiondate",
-            "name": "Resolved",
-            "schema": {"type": "datetime"},
-        },
-        {
-            "id": "workratio",
-            "name": "Work Ratio",
-            "schema": {"type": "number"},
-        },
-        {
-            "id": "timeestimate",
-            "name": "Remaining Estimate",
-            "schema": {"type": "timetracking"},
-        },
-        {
-            "id": "timespent",
-            "name": "Time Spent",
-            "schema": {"type": "timetracking"},
-        },
-        {
-            "id": "timeoriginalestimate",
-            "name": "Original Estimate",
-            "schema": {"type": "timetracking"},
-        },
-        # Checklist plugin (Okapya)
-        {
-            "id": "customfield_11003",
-            "name": "Definition of Done",
-            "schema": {
-                "type": "string",
-                "custom": "com.okapya.jira.checklist:checklist",
-                "customId": 11003,
-            },
-        },
-        # Checklist plugin (Okapya) — Server/DC array variant
-        {
-            "id": "customfield_11004",
-            "name": "Checklist",
-            "schema": {
-                "type": "array",
-                "items": "checklist-item",
-                "custom": "com.okapya.jira.checklist:checklist",
-                "customId": 11004,
-            },
-        },
-    ]
+    return MOCK_JIRA_FIELD_DEFINITIONS
 
 
 @pytest.fixture(scope="session")
@@ -180,32 +48,7 @@ def session_jira_projects():
     Returns:
         List[Dict[str, Any]]: Mock Jira project data
     """
-    return [
-        {
-            "id": "10000",
-            "key": "TEST",
-            "name": "Test Project",
-            "projectTypeKey": "software",
-            "lead": {"displayName": "Test Lead"},
-            "description": "Test project for unit tests",
-        },
-        {
-            "id": "10001",
-            "key": "DEMO",
-            "name": "Demo Project",
-            "projectTypeKey": "business",
-            "lead": {"displayName": "Demo Lead"},
-            "description": "Demo project for testing",
-        },
-        {
-            "id": "10002",
-            "key": "SAMPLE",
-            "name": "Sample Project",
-            "projectTypeKey": "service_desk",
-            "lead": {"displayName": "Sample Lead"},
-            "description": "Sample project with service desk",
-        },
-    ]
+    return MOCK_JIRA_PROJECTS
 
 
 @pytest.fixture(scope="session")
@@ -216,25 +59,7 @@ def session_jira_issue_types():
     Returns:
         List[Dict[str, Any]]: Mock Jira issue type data
     """
-    return [
-        {"id": "1", "name": "Bug", "iconUrl": "bug.png", "subtask": False},
-        {"id": "2", "name": "Task", "iconUrl": "task.png", "subtask": False},
-        {"id": "3", "name": "Story", "iconUrl": "story.png", "subtask": False},
-        {"id": "4", "name": "Epic", "iconUrl": "epic.png", "subtask": False},
-        {"id": "5", "name": "Sub-task", "iconUrl": "subtask.png", "subtask": True},
-        {
-            "id": "6",
-            "name": "Improvement",
-            "iconUrl": "improvement.png",
-            "subtask": False,
-        },
-        {
-            "id": "7",
-            "name": "New Feature",
-            "iconUrl": "newfeature.png",
-            "subtask": False,
-        },
-    ]
+    return MOCK_JIRA_ISSUE_TYPES
 
 
 # ============================================================================
