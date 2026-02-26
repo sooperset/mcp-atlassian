@@ -5,8 +5,29 @@ import sys
 import threading
 from importlib.metadata import PackageNotFoundError, version
 
+from dotenv import dotenv_values, load_dotenv
+
+# Inject truststore BEFORE any requests/urllib3 imports to ensure the
+# OS-native trust store (e.g. Windows Certificate Store) is used for
+# SSL verification instead of the bundled certifi CA certificates.
+# This must happen before 'requests.adapters' is imported because that
+# module creates a preloaded SSLContext at import time.
+# Read from .env via dotenv_values() since load_dotenv() hasn't run yet.
+if os.getenv(
+    "MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE",
+    dotenv_values().get("MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE", "true"),
+).lower() not in ("false", "0", "no"):
+    try:
+        import truststore
+
+        truststore.inject_into_ssl()
+    except Exception:
+        logging.getLogger("mcp-atlassian").warning(
+            "Failed to inject OS trust store; falling back to bundled certificates",
+            exc_info=True,
+        )
+
 import click
-from dotenv import load_dotenv
 from fastmcp import settings as fastmcp_settings
 
 # Fix high CPU usage on Windows - use SelectorEventLoop instead of ProactorEventLoop

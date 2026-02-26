@@ -18,11 +18,25 @@ description: "Fix auth errors (401/403), field issues, rate limiting, SSL proble
   </Accordion>
 
   <Accordion title="SSL Certificate Issues">
-    For Server/Data Center with self-signed certificates:
+    mcp-atlassian uses the OS native trust store by default (via
+    [truststore](https://truststore.readthedocs.io/)), so certificates
+    signed by enterprise CAs installed in Windows Certificate Store,
+    macOS Keychain, or the Linux system CA bundle are trusted
+    automatically.
+
+    If you still see SSL errors with **self-signed** certificates that
+    are **not** in the OS trust store, disable verification:
 
     ```bash
     JIRA_SSL_VERIFY=false
     CONFLUENCE_SSL_VERIFY=false
+    ```
+
+    To disable the OS trust store integration (fall back to the bundled
+    certifi CA bundle):
+
+    ```bash
+    MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE=false
     ```
   </Accordion>
 

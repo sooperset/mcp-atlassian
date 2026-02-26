@@ -58,7 +58,8 @@ CONFLUENCE_PERSONAL_TOKEN=your_personal_access_token
 ```
 
 <Note>
-For self-signed certificates, set `JIRA_SSL_VERIFY=false` and/or `CONFLUENCE_SSL_VERIFY=false`.
+Enterprise CA certificates in the OS trust store (Windows Certificate Store, macOS Keychain, Linux system CAs) are trusted automatically.
+For self-signed certificates not in the OS trust store, set `JIRA_SSL_VERIFY=false` and/or `CONFLUENCE_SSL_VERIFY=false`.
 </Note>
 
 ## OAuth 2.0 (Cloud) - Advanced
