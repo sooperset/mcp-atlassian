@@ -89,8 +89,8 @@ Toolsets group related tools for easier management via `TOOLSETS` env var or `--
 | `confluence_attachments` | No | `confluence_upload_attachment`, `confluence_upload_attachments`, `confluence_get_attachments`, `confluence_download_attachment`, `confluence_download_content_attachments`, `confluence_delete_attachment`, `confluence_get_page_images` |
 
 ```bash
-# Default toolsets are enabled when TOOLSETS is not set.
-# To explicitly add more toolsets on top of defaults:
+# All toolsets are enabled when TOOLSETS is not set.
+# To restrict to core toolsets plus specific extras:
 TOOLSETS=default,jira_agile,jira_attachments
 
 # Enable all toolsets (68 tools)

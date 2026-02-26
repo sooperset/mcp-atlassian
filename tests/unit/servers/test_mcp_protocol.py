@@ -1174,9 +1174,9 @@ class TestMCPProtocolIntegration:
             assert "confluence_get_page" in tool_names
             assert len(tools) == 2
 
-    async def test_lifespan_toolsets_unset_uses_defaults(self):
-        """Test lifespan uses default toolsets when TOOLSETS env var is absent."""
-        from mcp_atlassian.utils.toolsets import DEFAULT_TOOLSETS
+    async def test_lifespan_toolsets_unset_uses_all(self):
+        """Test lifespan uses all toolsets when TOOLSETS env var is absent."""
+        from mcp_atlassian.utils.toolsets import ALL_TOOLSETS
 
         with MockEnvironment.basic_auth_env():
             with patch.dict(os.environ, {}, clear=False):
@@ -1192,7 +1192,7 @@ class TestMCPProtocolIntegration:
                     app = MagicMock()
                     async with main_lifespan(app) as context:
                         app_context = context["app_lifespan_context"]
-                        assert app_context.enabled_toolsets == DEFAULT_TOOLSETS
+                        assert app_context.enabled_toolsets == set(ALL_TOOLSETS.keys())
 
     async def test_lifespan_with_toolsets(self):
         """Test lifespan parses TOOLSETS env var into MainAppContext.enabled_toolsets."""
