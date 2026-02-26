@@ -1,4 +1,4 @@
-"""Integration tests for cross-service functionality between Jira and Confluence."""
+"""Unit tests for cross-service functionality between Jira and Confluence."""
 
 import os
 from unittest.mock import MagicMock, patch
@@ -24,7 +24,6 @@ from tests.utils.factories import (
 from tests.utils.mocks import MockAtlassianClient, MockEnvironment, MockFastMCP
 
 
-@pytest.mark.integration
 class TestCrossServiceUserResolution:
     """Test user resolution across Jira and Confluence services."""
 
@@ -61,63 +60,79 @@ class TestCrossServiceUserResolution:
     async def test_user_context_propagation(self):
         """Test that user context is properly propagated between services."""
         with MockEnvironment.oauth_env() as env:
-            # Create configurations
-            jira_config = JiraConfig.from_env()
-            confluence_config = ConfluenceConfig.from_env()
+            with patch.dict(
+                os.environ,
+                {
+                    "JIRA_URL": "https://test.atlassian.net",
+                    "CONFLUENCE_URL": "https://test.atlassian.net/wiki",
+                },
+            ):
+                # Create configurations
+                jira_config = JiraConfig.from_env()
+                confluence_config = ConfluenceConfig.from_env()
 
-            # Create user-specific configurations
-            user_token = "test-user-token"
-            user_email = "test@example.com"
+                # Create user-specific configurations
+                user_token = "test-user-token"
+                user_email = "test@example.com"
 
-            credentials = {
-                "user_email_context": user_email,
-                "oauth_access_token": user_token,
-            }
+                credentials = {
+                    "user_email_context": user_email,
+                    "oauth_access_token": user_token,
+                }
 
-            # Create user configs for both services
-            user_jira_config = _create_user_config_for_fetcher(
-                base_config=jira_config, auth_type="oauth", credentials=credentials
-            )
+                # Create user configs for both services
+                user_jira_config = _create_user_config_for_fetcher(
+                    base_config=jira_config,
+                    auth_type="oauth",
+                    credentials=credentials,
+                )
 
-            user_confluence_config = _create_user_config_for_fetcher(
-                base_config=confluence_config,
-                auth_type="oauth",
-                credentials=credentials,
-            )
+                user_confluence_config = _create_user_config_for_fetcher(
+                    base_config=confluence_config,
+                    auth_type="oauth",
+                    credentials=credentials,
+                )
 
-            # Verify consistent OAuth configuration
-            assert user_jira_config.oauth_config.access_token == user_token
-            assert user_confluence_config.oauth_config.access_token == user_token
-            assert user_jira_config.username == user_email
-            assert user_confluence_config.username == user_email
+                # Verify consistent OAuth configuration
+                assert user_jira_config.oauth_config.access_token == user_token
+                assert user_confluence_config.oauth_config.access_token == user_token
+                assert user_jira_config.username == user_email
+                assert user_confluence_config.username == user_email
 
 
-@pytest.mark.integration
 class TestSharedAuthentication:
     """Test shared authentication context between services."""
 
     def test_oauth_shared_configuration(self):
         """Test that OAuth configuration is shared between services."""
         with MockEnvironment.oauth_env() as env:
-            # Both services should use the same OAuth configuration
-            jira_config = JiraConfig.from_env()
-            confluence_config = ConfluenceConfig.from_env()
+            with patch.dict(
+                os.environ,
+                {
+                    "JIRA_URL": "https://test.atlassian.net",
+                    "CONFLUENCE_URL": "https://test.atlassian.net/wiki",
+                },
+            ):
+                # Both services should use the same OAuth configuration
+                jira_config = JiraConfig.from_env()
+                confluence_config = ConfluenceConfig.from_env()
 
-            assert (
-                jira_config.oauth_config.client_id
-                == confluence_config.oauth_config.client_id
-            )
-            assert (
-                jira_config.oauth_config.client_secret
-                == confluence_config.oauth_config.client_secret
-            )
-            assert (
-                jira_config.oauth_config.cloud_id
-                == confluence_config.oauth_config.cloud_id
-            )
-            assert (
-                jira_config.oauth_config.scope == confluence_config.oauth_config.scope
-            )
+                assert (
+                    jira_config.oauth_config.client_id
+                    == confluence_config.oauth_config.client_id
+                )
+                assert (
+                    jira_config.oauth_config.client_secret
+                    == confluence_config.oauth_config.client_secret
+                )
+                assert (
+                    jira_config.oauth_config.cloud_id
+                    == confluence_config.oauth_config.cloud_id
+                )
+                assert (
+                    jira_config.oauth_config.scope
+                    == confluence_config.oauth_config.scope
+                )
 
     def test_basic_auth_shared_configuration(self):
         """Test that basic auth configuration can be shared between services."""
@@ -133,55 +148,58 @@ class TestSharedAuthentication:
     @pytest.mark.anyio
     async def test_authentication_context_in_request(self):
         """Test authentication context is properly maintained in request state."""
-        request = MockFastMCP.create_request()
-        request.state.user_atlassian_auth_type = "oauth"
-        request.state.user_atlassian_token = "test-oauth-token"
-        request.state.user_atlassian_email = "test@example.com"
+        with MockEnvironment.basic_auth_env():
+            request = MockFastMCP.create_request()
+            request.state.user_atlassian_auth_type = "oauth"
+            request.state.user_atlassian_token = "test-oauth-token"
+            request.state.user_atlassian_email = "test@example.com"
 
-        with patch(
-            "mcp_atlassian.servers.dependencies.get_http_request", return_value=request
-        ):
-            # Create mock context with lifespan data
-            ctx = MockFastMCP.create_context()
-            ctx.request_context = MagicMock()
-            ctx.request_context.lifespan_context = {
-                "app_lifespan_context": MainAppContext(
-                    full_jira_config=JiraConfig.from_env(),
-                    full_confluence_config=ConfluenceConfig.from_env(),
-                    read_only=False,
-                    enabled_tools=None,
-                )
-            }
-
-            # Mock the fetcher creation
-            with (
-                patch("mcp_atlassian.jira.JiraFetcher") as mock_jira_fetcher,
-                patch(
-                    "mcp_atlassian.confluence.ConfluenceFetcher"
-                ) as mock_confluence_fetcher,
+            with patch(
+                "mcp_atlassian.servers.dependencies.get_http_request",
+                return_value=request,
             ):
-                # Mock the current user validation
-                mock_jira_instance = MagicMock()
-                mock_jira_instance.get_current_user_account_id.return_value = "user123"
-                mock_jira_fetcher.return_value = mock_jira_instance
-
-                mock_confluence_instance = MagicMock()
-                mock_confluence_instance.get_current_user_info.return_value = {
-                    "email": "test@example.com",
-                    "displayName": "Test User",
+                # Create mock context with lifespan data
+                ctx = MockFastMCP.create_context()
+                ctx.request_context = MagicMock()
+                ctx.request_context.lifespan_context = {
+                    "app_lifespan_context": MainAppContext(
+                        full_jira_config=JiraConfig.from_env(),
+                        full_confluence_config=ConfluenceConfig.from_env(),
+                        read_only=False,
+                        enabled_tools=None,
+                    )
                 }
-                mock_confluence_fetcher.return_value = mock_confluence_instance
 
-                # Get fetchers - should use the same auth context
-                jira_fetcher = await get_jira_fetcher(ctx)
-                confluence_fetcher = await get_confluence_fetcher(ctx)
+                # Mock the fetcher creation
+                with (
+                    patch("mcp_atlassian.jira.JiraFetcher") as mock_jira_fetcher,
+                    patch(
+                        "mcp_atlassian.confluence.ConfluenceFetcher"
+                    ) as mock_confluence_fetcher,
+                ):
+                    # Mock the current user validation
+                    mock_jira_instance = MagicMock()
+                    mock_jira_instance.get_current_user_account_id.return_value = (
+                        "user123"
+                    )
+                    mock_jira_fetcher.return_value = mock_jira_instance
 
-                # Verify both fetchers were created with user-specific config
-                assert request.state.jira_fetcher is not None
-                assert request.state.confluence_fetcher is not None
+                    mock_confluence_instance = MagicMock()
+                    mock_confluence_instance.get_current_user_info.return_value = {
+                        "email": "test@example.com",
+                        "displayName": "Test User",
+                    }
+                    mock_confluence_fetcher.return_value = mock_confluence_instance
+
+                    # Get fetchers - should use the same auth context
+                    jira_fetcher = await get_jira_fetcher(ctx)
+                    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+                    # Verify both fetchers were created
+                    assert request.state.jira_fetcher is not None
+                    assert request.state.confluence_fetcher is not None
 
 
-@pytest.mark.integration
 class TestCrossServiceErrorHandling:
     """Test error handling and propagation across services."""
 
@@ -225,32 +243,32 @@ class TestCrossServiceErrorHandling:
 
     def test_error_propagation_in_user_config_creation(self):
         """Test error propagation when creating user-specific configurations."""
-        base_config = JiraConfig.from_env()
+        with MockEnvironment.basic_auth_env():
+            base_config = JiraConfig.from_env()
 
-        # Test missing OAuth token
-        with pytest.raises(ValueError, match="OAuth access token missing"):
-            _create_user_config_for_fetcher(
-                base_config=base_config,
-                auth_type="oauth",
-                credentials={"user_email_context": "test@example.com"},
-            )
+            # Test missing OAuth token
+            with pytest.raises(ValueError, match="OAuth access token missing"):
+                _create_user_config_for_fetcher(
+                    base_config=base_config,
+                    auth_type="oauth",
+                    credentials={"user_email_context": "test@example.com"},
+                )
 
-        # Test missing PAT token
-        with pytest.raises(ValueError, match="PAT missing"):
-            _create_user_config_for_fetcher(
-                base_config=base_config,
-                auth_type="pat",
-                credentials={"user_email_context": "test@example.com"},
-            )
+            # Test missing PAT token
+            with pytest.raises(ValueError, match="PAT missing"):
+                _create_user_config_for_fetcher(
+                    base_config=base_config,
+                    auth_type="pat",
+                    credentials={"user_email_context": "test@example.com"},
+                )
 
-        # Test invalid auth type
-        with pytest.raises(ValueError, match="Unsupported auth_type"):
-            _create_user_config_for_fetcher(
-                base_config=base_config, auth_type="invalid", credentials={}
-            )
+            # Test invalid auth type
+            with pytest.raises(ValueError, match="Unsupported auth_type"):
+                _create_user_config_for_fetcher(
+                    base_config=base_config, auth_type="invalid", credentials={}
+                )
 
 
-@pytest.mark.integration
 class TestSharedSSLProxyConfiguration:
     """Test shared SSL and proxy configuration between services."""
 
@@ -313,7 +331,6 @@ class TestSharedSSLProxyConfiguration:
                 assert confluence_config.no_proxy == proxy_config["NO_PROXY"]
 
 
-@pytest.mark.integration
 class TestConcurrentServiceInitialization:
     """Test concurrent initialization of both services."""
 
@@ -362,82 +379,87 @@ class TestConcurrentServiceInitialization:
     async def test_parallel_fetcher_creation(self):
         """Test that fetchers can be created in parallel for both services."""
         with MockEnvironment.oauth_env():
-            # Create mock request with user context
-            request = MockFastMCP.create_request()
-            request.state.user_atlassian_auth_type = "oauth"
-            request.state.user_atlassian_token = "test-token"
-            request.state.user_atlassian_email = "test@example.com"
-
-            # Create context
-            ctx = MockFastMCP.create_context()
-            ctx.request_context = MagicMock()
-            ctx.request_context.lifespan_context = {
-                "app_lifespan_context": MainAppContext(
-                    full_jira_config=JiraConfig.from_env(),
-                    full_confluence_config=ConfluenceConfig.from_env(),
-                    read_only=False,
-                    enabled_tools=None,
-                )
-            }
-
-            with (
-                patch(
-                    "mcp_atlassian.servers.dependencies.get_http_request",
-                    return_value=request,
-                ),
-                patch("mcp_atlassian.jira.JiraFetcher") as mock_jira_fetcher,
-                patch(
-                    "mcp_atlassian.confluence.ConfluenceFetcher"
-                ) as mock_confluence_fetcher,
+            with patch.dict(
+                os.environ,
+                {"ATLASSIAN_OAUTH_ENABLE": "true"},
             ):
-                # Mock fetcher instances
-                mock_jira_instance = MagicMock()
-                mock_jira_instance.get_current_user_account_id.return_value = "user123"
-                mock_jira_fetcher.return_value = mock_jira_instance
+                # Create mock request with user context
+                request = MockFastMCP.create_request()
+                request.state.user_atlassian_auth_type = "oauth"
+                request.state.user_atlassian_token = "test-token"
+                request.state.user_atlassian_email = "test@example.com"
 
-                mock_confluence_instance = MagicMock()
-                mock_confluence_instance.get_current_user_info.return_value = {
-                    "email": "test@example.com",
-                    "displayName": "Test User",
+                # Create context
+                ctx = MockFastMCP.create_context()
+                ctx.request_context = MagicMock()
+                ctx.request_context.lifespan_context = {
+                    "app_lifespan_context": MainAppContext(
+                        full_jira_config=JiraConfig.from_env(),
+                        full_confluence_config=ConfluenceConfig.from_env(),
+                        read_only=False,
+                        enabled_tools=None,
+                    )
                 }
-                mock_confluence_fetcher.return_value = mock_confluence_instance
 
-                # Create fetchers in parallel using anyio for backend compatibility
-                import anyio
+                with (
+                    patch(
+                        "mcp_atlassian.servers.dependencies.get_http_request",
+                        return_value=request,
+                    ),
+                    patch("mcp_atlassian.jira.JiraFetcher") as mock_jira_fetcher,
+                    patch(
+                        "mcp_atlassian.confluence.ConfluenceFetcher"
+                    ) as mock_confluence_fetcher,
+                ):
+                    # Mock fetcher instances
+                    mock_jira_instance = MagicMock()
+                    mock_jira_instance.get_current_user_account_id.return_value = (
+                        "user123"
+                    )
+                    mock_jira_fetcher.return_value = mock_jira_instance
 
-                async def fetch_jira():
-                    return await get_jira_fetcher(ctx)
+                    mock_confluence_instance = MagicMock()
+                    mock_confluence_instance.get_current_user_info.return_value = {
+                        "email": "test@example.com",
+                        "displayName": "Test User",
+                    }
+                    mock_confluence_fetcher.return_value = mock_confluence_instance
 
-                async def fetch_confluence():
-                    return await get_confluence_fetcher(ctx)
+                    # Create fetchers in parallel
+                    import anyio
 
-                # Wait for both using anyio task group
-                async with anyio.create_task_group() as tg:
-                    jira_future = None
-                    confluence_future = None
+                    async def fetch_jira():
+                        return await get_jira_fetcher(ctx)
 
-                    async def set_jira():
-                        nonlocal jira_future
-                        jira_future = await fetch_jira()
+                    async def fetch_confluence():
+                        return await get_confluence_fetcher(ctx)
 
-                    async def set_confluence():
-                        nonlocal confluence_future
-                        confluence_future = await fetch_confluence()
+                    # Wait for both using anyio task group
+                    async with anyio.create_task_group() as tg:
+                        jira_future = None
+                        confluence_future = None
 
-                    tg.start_soon(set_jira)
-                    tg.start_soon(set_confluence)
+                        async def set_jira():
+                            nonlocal jira_future
+                            jira_future = await fetch_jira()
 
-                jira_fetcher = jira_future
-                confluence_fetcher = confluence_future
+                        async def set_confluence():
+                            nonlocal confluence_future
+                            confluence_future = await fetch_confluence()
 
-                # Both should be created successfully
-                assert jira_fetcher is not None
-                assert confluence_fetcher is not None
-                assert request.state.jira_fetcher is jira_fetcher
-                assert request.state.confluence_fetcher is confluence_fetcher
+                        tg.start_soon(set_jira)
+                        tg.start_soon(set_confluence)
+
+                    jira_fetcher = jira_future
+                    confluence_fetcher = confluence_future
+
+                    # Both should be created successfully
+                    assert jira_fetcher is not None
+                    assert confluence_fetcher is not None
+                    assert request.state.jira_fetcher is jira_fetcher
+                    assert request.state.confluence_fetcher is confluence_fetcher
 
 
-@pytest.mark.integration
 class TestServiceAvailabilityDetection:
     """Test service availability detection and handling."""
 
@@ -557,7 +579,6 @@ class TestServiceAvailabilityDetection:
             assert confluence_config.oauth_config is not None
 
 
-@pytest.mark.integration
 class TestCrossServiceDataSharing:
     """Test data sharing and references between services."""
 

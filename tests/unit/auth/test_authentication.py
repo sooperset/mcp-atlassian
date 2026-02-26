@@ -1,8 +1,8 @@
-"""Integration tests for authentication functionality."""
+"""Unit tests for authentication functionality."""
 
 import json
 import time
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import ANY, MagicMock, Mock, patch
 
 import pytest
 import requests
@@ -17,7 +17,6 @@ from mcp_atlassian.utils.oauth import OAuthConfig, configure_oauth_session
 from tests.utils.mocks import MockEnvironment
 
 
-@pytest.mark.integration
 class TestOAuthTokenRefreshFlow:
     """Test OAuth token refresh flow with expiration handling."""
 
@@ -113,7 +112,6 @@ class TestOAuthTokenRefreshFlow:
             assert oauth_config.is_token_expired is False
 
 
-@pytest.mark.integration
 class TestBasicAuthValidation:
     """Test basic authentication validation against real endpoints."""
 
@@ -136,6 +134,7 @@ class TestBasicAuthValidation:
                 password=auth_env["JIRA_API_TOKEN"],
                 cloud=True,  # Assuming cloud by default
                 verify_ssl=True,
+                timeout=ANY,
             )
 
     @patch("mcp_atlassian.confluence.client.Confluence")
@@ -157,6 +156,7 @@ class TestBasicAuthValidation:
                 password=auth_env["CONFLUENCE_API_TOKEN"],
                 cloud=True,
                 verify_ssl=True,
+                timeout=ANY,
             )
 
     def test_basic_auth_with_invalid_credentials(self):
@@ -179,7 +179,6 @@ class TestBasicAuthValidation:
                         JiraClient(config)
 
 
-@pytest.mark.integration
 class TestPATTokenValidation:
     """Test Personal Access Token (PAT) validation and precedence."""
 
@@ -209,6 +208,7 @@ class TestPATTokenValidation:
                     token="test-personal-access-token",
                     cloud=False,  # Server instance
                     verify_ssl=True,
+                    timeout=ANY,
                 )
 
     @patch("mcp_atlassian.confluence.client.Confluence")
@@ -237,6 +237,7 @@ class TestPATTokenValidation:
                     token="test-personal-access-token",
                     cloud=False,  # Server instance
                     verify_ssl=True,
+                    timeout=ANY,
                 )
 
     def test_pat_token_precedence_over_basic_auth(self):
@@ -256,7 +257,6 @@ class TestPATTokenValidation:
                 assert config.personal_token == "personal-access-token"
 
 
-@pytest.mark.integration
 class TestAuthenticationFailureRecovery:
     """Test authentication failure recovery patterns."""
 
@@ -282,11 +282,11 @@ class TestAuthenticationFailureRecovery:
                         "JIRA_API_TOKEN": "api-token",
                     },
                 ):
-                    # Without cloud_id, OAuth config is incomplete and should fallback to basic
+                    # Even without cloud_id, OAuth env vars cause oauth auth_type
                     config = JiraConfig.from_env()
-                    assert config.auth_type == "basic"  # Falls back to basic auth
+                    assert config.auth_type == "oauth"
 
-                    # Now add cloud_id to complete OAuth config
+                    # Adding cloud_id keeps it as oauth
                     with patch.dict(
                         "os.environ", {"ATLASSIAN_OAUTH_CLOUD_ID": "test-cloud-id"}
                     ):
@@ -327,7 +327,6 @@ class TestAuthenticationFailureRecovery:
                 mock_refresh.assert_called_once()
 
 
-@pytest.mark.integration
 class TestTokenExpirationAndRetry:
     """Test token expiration and automatic retry."""
 
@@ -388,11 +387,22 @@ class TestTokenExpirationAndRetry:
             # Save tokens
             oauth_config._save_tokens()
 
-            # Verify keyring was called
-            mock_set.assert_called_once()
-            service_name, username, token_json = mock_set.call_args[0]
-            assert service_name == "mcp-atlassian-oauth"
-            assert username == f"oauth-{client_id}"
+            # Verify keyring was called (may be called multiple times for
+            # cloud_id-specific and generic keys)
+            assert mock_set.call_count >= 1
+            # Check that at least one call stores the expected data
+            found_expected_call = False
+            for call_args in mock_set.call_args_list:
+                service_name, username, token_json = call_args[0]
+                if (
+                    service_name == "mcp-atlassian-oauth"
+                    and username == f"oauth-{client_id}"
+                ):
+                    found_expected_call = True
+                    break
+            assert found_expected_call, (
+                f"Expected keyring call with username='oauth-{client_id}'"
+            )
 
             # Parse stored token data
             stored_data = json.loads(token_json)
@@ -407,7 +417,6 @@ class TestTokenExpirationAndRetry:
             assert loaded_data["refresh_token"] == "stored-refresh"
 
 
-@pytest.mark.integration
 class TestMixedAuthenticationScenarios:
     """Test mixed authentication scenarios and fallback patterns."""
 
@@ -510,7 +519,6 @@ class TestMixedAuthenticationScenarios:
                 assert config.is_cloud is False
 
 
-@pytest.mark.integration
 class TestJiraConfluenceAuthFlows:
     """Test authentication flows for both Jira and Confluence services."""
 
@@ -637,4 +645,5 @@ class TestJiraConfluenceAuthFlows:
                         password="api-token",
                         cloud=True,
                         verify_ssl=False,
+                        timeout=ANY,
                     )

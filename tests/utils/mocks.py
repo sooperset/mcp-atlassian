@@ -3,9 +3,36 @@
 import os
 from contextlib import contextmanager
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from .factories import AuthConfigFactory, ConfluencePageFactory, JiraIssueFactory
+
+
+def setup_api3_passthrough_mocks(mixin: Any) -> None:
+    """Set up _post_api3/_put_api3 passthrough mocks on a Jira mixin.
+
+    Cloud ADF paths delegate to _post_api3/_put_api3. This helper routes
+    those calls back to jira.create_issue / jira.update_issue so existing
+    mocks continue to work.
+
+    Args:
+        mixin: A JiraFetcher or mixin instance with a ``jira`` attribute.
+    """
+
+    def _mock_post_api3(resource: str, data: dict) -> dict:
+        if resource == "issue":
+            return mixin.jira.create_issue(fields=data.get("fields", data))
+        return mixin.jira.post(resource, data=data)
+
+    def _mock_put_api3(resource: str, data: dict) -> dict:
+        if resource.startswith("issue/"):
+            return mixin.jira.update_issue(
+                issue_key=resource.split("/")[1], update=data
+            )
+        return mixin.jira.put(resource, data=data)
+
+    mixin._post_api3 = Mock(side_effect=_mock_post_api3)
+    mixin._put_api3 = Mock(side_effect=_mock_put_api3)
 
 
 class MockEnvironment:

@@ -20,7 +20,6 @@ from tests.fixtures.confluence_mocks import (
 
 # Import mock data
 from tests.fixtures.jira_mocks import (
-    MOCK_JIRA_COMMENTS,
     MOCK_JIRA_ISSUE_RESPONSE,
     MOCK_JIRA_JQL_RESPONSE,
 )
@@ -122,16 +121,6 @@ def jira_search_data() -> dict[str, Any]:
     Note: This fixture is maintained for backward compatibility.
     """
     return MOCK_JIRA_JQL_RESPONSE
-
-
-@pytest.fixture
-def jira_comments_data() -> dict[str, Any]:
-    """
-    Return mock Jira comments data.
-
-    Note: This fixture is maintained for backward compatibility.
-    """
-    return MOCK_JIRA_COMMENTS
 
 
 @pytest.fixture

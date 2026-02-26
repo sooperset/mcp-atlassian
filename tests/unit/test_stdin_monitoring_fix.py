@@ -1,4 +1,4 @@
-"""Integration tests for transport stdin monitoring behavior."""
+"""Unit tests for transport stdin monitoring behavior."""
 
 import os
 import subprocess
@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.integration
 class TestStdinMonitoringFix:
     """Test that stdin monitoring is correctly disabled for HTTP transports."""
 
