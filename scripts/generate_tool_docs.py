@@ -388,6 +388,27 @@ def build_tool_docs(
 # ---------------------------------------------------------------------------
 
 
+def _escape_mdx_in_table(text: str) -> str:
+    """Escape characters that break MDX parsing inside Markdown table cells.
+
+    Curly braces are interpreted as JSX expressions by MDX. When they appear
+    in table-cell descriptions (outside fenced code blocks), Mintlify silently
+    fails to build the page. This wraps brace-containing segments in backticks
+    so they render as inline code instead of being parsed as JSX.
+    """
+    import re
+
+    if not text or "{" not in text:
+        return text
+    # Wrap JSON-like brace groups (including nested) in backticks.
+    # Matches: {"key": "value"} or [{"a": 1}] patterns not already in backticks.
+    return re.sub(
+        r"(?<!`)(\[?\{[^}]*\}]?)(?!`)",
+        r"`\1`",
+        text,
+    )
+
+
 def generate_pages(
     category_docs: dict[str, list[ToolDoc]],
     template_dir: Path,
@@ -401,6 +422,7 @@ def generate_pages(
         lstrip_blocks=True,
     )
     env.filters["escape_pipe"] = lambda s: s.replace("|", "\\|") if s else s
+    env.filters["escape_mdx"] = _escape_mdx_in_table
     template = env.get_template("tool_category.mdx.j2")
 
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -45,7 +45,7 @@ Create a new Jira issue with optional Epic link or parent for subtasks.
 | `assignee` | `string` | No | (Optional) Assignee's user identifier (string): Email, display name, or account ID (e.g., 'user@example.com', 'John Doe', 'accountid:...') |
 | `description` | `string` | No | Issue description in Markdown format |
 | `components` | `string` | No | (Optional) Comma-separated list of component names to assign (e.g., 'Frontend,API') |
-| `additional_fields` | `string` | No | (Optional) JSON string of additional fields to set. Examples: - Set priority: {"priority": {"name": "High"}} - Add labels: {"labels": ["frontend", "urgent"]} - Link to parent (for any issue type): {"parent": "PROJ-123"} - Link to epic: {"epicKey": "EPIC-123"} or {"epic_link": "EPIC-123"} - Set Fix Version/s: {"fixVersions": [{"id": "10020"}]} - Custom fields: {"customfield_10010": "value"} |
+| `additional_fields` | `string` | No | (Optional) JSON string of additional fields to set. Examples: - Set priority: `{"priority": {"name": "High"}}` - Add labels: `{"labels": ["frontend", "urgent"]}` - Link to parent (for any issue type): `{"parent": "PROJ-123"}` - Link to epic: `{"epicKey": "EPIC-123"}` or `{"epic_link": "EPIC-123"}` - Set Fix Version/s: `{"fixVersions": [{"id": "10020"}]}` - Custom fields: `{"customfield_10010": "value"}` |
 **Example:**
 
 ```json
@@ -69,8 +69,8 @@ Update an existing Jira issue including changing status, adding Epic links, upda
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
-| `fields` | `string` | Yes | JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). For 'description', provide text in Markdown format. Example: '{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\nMarkdown text"}' |
-| `additional_fields` | `string` | No | (Optional) JSON string of additional fields to update. Use this for custom fields or more complex updates. Link to epic: {"epicKey": "EPIC-123"} or {"epic_link": "EPIC-123"}. |
+| `fields` | `string` | Yes | JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). For 'description', provide text in Markdown format. Example: `'{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\nMarkdown text"}'` |
+| `additional_fields` | `string` | No | (Optional) JSON string of additional fields to update. Use this for custom fields or more complex updates. Link to epic: `{"epicKey": "EPIC-123"}` or `{"epic_link": "EPIC-123"}`. |
 | `components` | `string` | No | (Optional) Comma-separated list of component names (e.g., 'Frontend,API') |
 | `attachments` | `string` | No | (Optional) JSON string array or comma-separated list of file paths to attach to the issue. Example: '/path/to/file1.txt,/path/to/file2.txt' or ['/path/to/file1.txt','/path/to/file2.txt'] |
 **Example:**
@@ -107,7 +107,7 @@ Create multiple Jira issues in a batch.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `issues` | `string` | Yes | JSON array of issue objects. Each object should contain: - project_key (required): The project key (e.g., 'PROJ') - summary (required): Issue summary/title - issue_type (required): Type of issue (e.g., 'Task', 'Bug') - description (optional): Issue description in Markdown format - assignee (optional): Assignee username or email - components (optional): Array of component names Example: [ {"project_key": "PROJ", "summary": "Issue 1", "issue_type": "Task"}, {"project_key": "PROJ", "summary": "Issue 2", "issue_type": "Bug", "components": ["Frontend"]} ] |
+| `issues` | `string` | Yes | JSON array of issue objects. Each object should contain: - project_key (required): The project key (e.g., 'PROJ') - summary (required): Issue summary/title - issue_type (required): Type of issue (e.g., 'Task', 'Bug') - description (optional): Issue description in Markdown format - assignee (optional): Assignee username or email - components (optional): Array of component names Example: `[{"project_key": "PROJ", "summary": "Issue 1", "issue_type": "Task"}, {"project_key": "PROJ", "summary": "Issue 2", "issue_type": "Bug", "components": ["Frontend"]}]` |
 | `validate_only` | `boolean` | No | If true, only validates the issues without creating them |
 
 ---
@@ -124,7 +124,7 @@ Transition a Jira issue to a new status.
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
 | `transition_id` | `string` | Yes | ID of the transition to perform. Use the jira_get_transitions tool first to get the available transition IDs for the issue. Example values: '11', '21', '31' |
-| `fields` | `string` | No | (Optional) JSON string of fields to update during the transition. Some transitions require specific fields to be set (e.g., resolution). Example: '{"resolution": {"name": "Fixed"}}' |
+| `fields` | `string` | No | (Optional) JSON string of fields to update during the transition. Some transitions require specific fields to be set (e.g., resolution). Example: `'{"resolution": {"name": "Fixed"}}'` |
 | `comment` | `string` | No | (Optional) Comment to add during the transition in Markdown format. This will be visible in the issue history. |
 **Example:**
 

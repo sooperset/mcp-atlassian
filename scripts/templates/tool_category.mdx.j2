@@ -17,7 +17,7 @@ description: "{{ category.description }}"
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 {% for param in tool.parameters -%}
-| `{{ param.name }}` | `{{ param.type }}` | {{ "Yes" if param.required else "No" }} | {{ param.description | escape_pipe }} |
+| `{{ param.name }}` | `{{ param.type }}` | {{ "Yes" if param.required else "No" }} | {{ param.description | escape_pipe | escape_mdx }} |
 {% endfor %}
 {% if tool.override and tool.override.example %}
 **Example:**
