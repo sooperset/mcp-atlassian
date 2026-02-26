@@ -113,7 +113,7 @@ For production environments where write operations should be disabled:
 ```yaml
 environment:
   - READ_ONLY_MODE=true
-  - TOOLSETS=default  # Optional: also limit to core toolsets
+  - TOOLSETS=default  # Optional: restrict to core toolsets only
 ```
 
 This disables all create, update, and delete tools at the server level.
