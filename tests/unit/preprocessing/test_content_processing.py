@@ -1,10 +1,12 @@
-"""Integration tests for content processing functionality.
+"""Tests for content processing functionality.
 
 These tests validate HTML ↔ Markdown conversion, macro handling,
 special character preservation, and performance with large content.
 """
 
+import functools
 import time
+from typing import Any
 
 import pytest
 
@@ -21,16 +23,41 @@ def jira_preprocessor():
 
 @pytest.fixture
 def confluence_preprocessor():
-    """Create a ConfluencePreprocessor instance with mock client."""
-    return ConfluencePreprocessor(
+    """Create a ConfluencePreprocessor instance with mock client.
+
+    The mock client is bound as the default confluence_client for
+    process_html_content so user-mention resolution works in tests.
+    """
+    preprocessor = ConfluencePreprocessor(
         base_url="https://example.atlassian.net",
-        confluence_client=MockConfluenceClient(),
     )
+    mock_client = MockConfluenceClient()
+    original = preprocessor.process_html_content
+
+    @functools.wraps(original)
+    def _with_mock_client(
+        html_content: str,
+        space_key: str = "",
+        confluence_client: Any = None,
+        content_id: str = "",
+        attachments: list[dict[str, Any]] | None = None,
+    ) -> tuple[str, str]:
+        if confluence_client is None:
+            confluence_client = mock_client
+        return original(
+            html_content,
+            space_key=space_key,
+            confluence_client=confluence_client,
+            content_id=content_id,
+            attachments=attachments,
+        )
+
+    preprocessor.process_html_content = _with_mock_client  # type: ignore[assignment]
+    return preprocessor
 
 
-@pytest.mark.integration
 class TestJiraContentProcessing:
-    """Integration tests for Jira content processing."""
+    """Tests for Jira content processing."""
 
     def test_jira_markdown_roundtrip_simple(self, jira_preprocessor):
         """Test simple Jira markup to Markdown and back."""
@@ -338,9 +365,8 @@ inner code
         assert "inner code" in result
 
 
-@pytest.mark.integration
 class TestConfluenceContentProcessing:
-    """Integration tests for Confluence content processing."""
+    """Tests for Confluence content processing."""
 
     def test_confluence_macro_preservation(self, confluence_preprocessor):
         """Test preservation of Confluence macros during processing."""
@@ -739,7 +765,6 @@ def function_{i}():
         assert "😀" in processed_markdown  # Emoji from numeric entity
 
 
-@pytest.mark.integration
 class TestContentProcessingInteroperability:
     """Test interoperability between Jira and Confluence content processing."""
 
