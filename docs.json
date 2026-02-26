@@ -3,7 +3,7 @@
   "theme": "mint",
   "name": "MCP Atlassian",
   "metadata": {
-    "og:description": "MCP server for Atlassian Jira and Confluence — 68 tools across 21 toolsets"
+    "og:description": "MCP server for Atlassian Jira and Confluence — all 68 tools enabled by default"
   },
   "seo": {
     "indexHiddenPages": false
