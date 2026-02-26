@@ -170,10 +170,14 @@ CATEGORY_META: dict[str, dict[str, str]] = {
     },
 }
 
-# Build reverse lookup: tool_name -> category
+# Build reverse lookup: tool_name -> category (with duplicate detection)
 _TOOL_TO_CATEGORY: dict[str, str] = {}
 for _cat, _tools in CATEGORY_TOOLS.items():
     for _t in _tools:
+        if _t in _TOOL_TO_CATEGORY:
+            raise ValueError(
+                f"Tool '{_t}' is mapped to both '{_TOOL_TO_CATEGORY[_t]}' and '{_cat}'"
+            )
         _TOOL_TO_CATEGORY[_t] = _cat
 
 
@@ -393,6 +397,7 @@ def generate_pages(
         trim_blocks=True,
         lstrip_blocks=True,
     )
+    env.filters["escape_pipe"] = lambda s: s.replace("|", "\\|") if s else s
     template = env.get_template("tool_category.mdx.j2")
 
     output_dir.mkdir(parents=True, exist_ok=True)
