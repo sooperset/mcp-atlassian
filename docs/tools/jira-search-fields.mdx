@@ -17,6 +17,15 @@ Search Jira issues using JQL (Jira Query Language).
 | `start_at` | `integer` | No | Starting index for pagination (0-based) |
 | `projects_filter` | `string` | No | (Optional) Comma-separated list of project keys to filter results by. Overrides the environment variable JIRA_PROJECTS_FILTER if provided. |
 | `expand` | `string` | No | (Optional) fields to expand. Examples: 'renderedFields', 'transitions', 'changelog' |
+**Example:**
+
+```json
+{"jql": "project = PROJ AND status = 'In Progress' ORDER BY updated DESC", "limit": 20}
+```
+<Tip>Always use `ORDER BY` for deterministic results. Use `fields` parameter to limit returned data for faster queries.
+</Tip>
+<Warning>Some JQL functions (e.g., `issueHistory()`) are Cloud-only.
+</Warning>
 
 ---
 
@@ -31,6 +40,13 @@ Search Jira fields by keyword with fuzzy match.
 | `keyword` | `string` | No | Keyword for fuzzy search. If left empty, lists the first 'limit' available fields in their default order. |
 | `limit` | `integer` | No | Maximum number of results |
 | `refresh` | `boolean` | No | Whether to force refresh the field list |
+**Example:**
+
+```json
+{"keyword": "story points", "issue_type": "Story", "project_key": "PROJ"}
+```
+<Tip>Use this to discover custom field IDs before using them in `jira_create_issue` or `jira_update_issue`.
+</Tip>
 
 ---
 

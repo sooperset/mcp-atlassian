@@ -1,0 +1,135 @@
+---
+title: "Common Workflows"
+description: "Practical recipes for common Jira and Confluence tasks with MCP Atlassian"
+---
+
+This guide provides step-by-step workflows for common tasks using MCP Atlassian tools.
+
+## Jira Workflows
+
+### Triage New Issues
+
+1. **Find untriaged issues:**
+```json
+jira_search: {"jql": "project = PROJ AND status = 'Open' AND assignee IS EMPTY ORDER BY created DESC", "limit": 20}
+```
+
+2. **Review each issue** to understand the problem:
+```json
+jira_get_issue: {"issue_key": "PROJ-123", "comment_limit": 5}
+```
+
+3. **Assign and prioritize:**
+```json
+jira_update_issue: {"issue_key": "PROJ-123", "additional_fields": "{\"assignee\": {\"accountId\": \"user-id\"}, \"priority\": {\"name\": \"High\"}}"}
+```
+
+4. **Add a triage comment:**
+```json
+jira_add_comment: {"issue_key": "PROJ-123", "comment": "Triaged: High priority, assigned to backend team."}
+```
+
+### Sprint Planning
+
+1. **Get the board and active sprint:**
+```json
+jira_get_agile_boards: {"project_key": "PROJ", "board_type": "scrum"}
+```
+```json
+jira_get_sprints_from_board: {"board_id": "42", "state": "active,future"}
+```
+
+2. **Review current sprint progress:**
+```json
+jira_get_sprint_issues: {"sprint_id": "100", "fields": "summary,status,story_points,assignee"}
+```
+
+3. **Find backlog items for next sprint:**
+```json
+jira_search: {"jql": "project = PROJ AND sprint IS EMPTY AND status = 'Open' ORDER BY priority DESC, created ASC", "limit": 30}
+```
+
+### Bulk Issue Creation
+
+Create multiple related issues at once:
+```json
+jira_batch_create_issues: {
+  "project_key": "PROJ",
+  "issues": [
+    {"issue_type": "Task", "summary": "Set up CI pipeline", "description": "Configure GitHub Actions"},
+    {"issue_type": "Task", "summary": "Write unit tests", "description": "Add tests for core module"},
+    {"issue_type": "Task", "summary": "Update documentation", "description": "Document new API endpoints"}
+  ]
+}
+```
+
+### Track Issue Changes
+
+Monitor what changed across multiple issues:
+```json
+jira_batch_get_changelogs: {"issue_keys": ["PROJ-1", "PROJ-2", "PROJ-3"]}
+```
+
+<Note>Changelog tracking is only available on Jira Cloud.</Note>
+
+## Confluence Workflows
+
+### Create Documentation Structure
+
+1. **Create a parent page:**
+```json
+confluence_create_page: {"space_key": "DEV", "title": "Project Documentation", "content": "## Overview\n\nThis space contains all project docs."}
+```
+
+2. **Create child pages:**
+```json
+confluence_create_page: {"space_key": "DEV", "title": "API Reference", "content": "## API Endpoints\n\n...", "parent_id": "12345678"}
+```
+
+3. **Add labels for organization:**
+```json
+confluence_add_label: {"page_id": "12345678", "label": "api-docs"}
+```
+
+### Content Migration
+
+1. **Search for pages to migrate:**
+```json
+confluence_search: {"query": "space = OLD_SPACE AND label = 'migrate' ORDER BY title ASC"}
+```
+
+2. **Read each page's content:**
+```json
+confluence_get_page: {"page_id": "12345678", "include_metadata": true}
+```
+
+3. **Create in new space:**
+```json
+confluence_create_page: {"space_key": "NEW_SPACE", "title": "Migrated Page", "content": "...migrated content..."}
+```
+
+### Identify Stale Content
+
+Find pages that haven't been updated recently:
+```json
+confluence_search: {"query": "space = DEV AND type = page AND lastModified < '2024-01-01' ORDER BY lastModified ASC", "limit": 50}
+```
+
+Check page view analytics:
+```json
+confluence_get_page_views: {"page_id": "12345678"}
+```
+
+## Cross-Product Workflows
+
+### Link Jira Issues to Confluence Pages
+
+1. **Create a Confluence page with project context:**
+```json
+confluence_create_page: {"space_key": "DEV", "title": "Sprint 42 Retrospective", "content": "## Sprint 42\n\nSee PROJ-100 through PROJ-120 for completed work."}
+```
+
+2. **Add a remote link from Jira to Confluence:**
+```json
+jira_create_remote_issue_link: {"issue_key": "PROJ-100", "url": "https://your-instance.atlassian.net/wiki/spaces/DEV/pages/12345678", "title": "Sprint 42 Retro"}
+```

@@ -70,6 +70,13 @@ Calculate SLA metrics for a Jira issue.
 | `metrics` | `string` | No | Comma-separated list of SLA metrics to calculate. Available: cycle_time, lead_time, time_in_status, due_date_compliance, resolution_time, first_response_time. Defaults to configured metrics or 'cycle_time,time_in_status'. |
 | `working_hours_only` | `boolean` | No | Calculate using working hours only (excludes weekends/non-business hours). Defaults to value from JIRA_SLA_WORKING_HOURS_ONLY environment variable. |
 | `include_raw_dates` | `boolean` | No | Include raw date values in the response |
+**Example:**
+
+```json
+{"issue_key": "SD-456", "metrics": "cycle_time,time_in_status"}
+```
+<Tip>Configure SLA calculation via `JIRA_SLA_*` environment variables. Set `JIRA_SLA_WORKING_HOURS_ONLY=true` for business hours only.
+</Tip>
 
 ---
 

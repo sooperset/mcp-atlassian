@@ -1,0 +1,103 @@
+---
+title: "CQL Guide"
+description: "Master Confluence Query Language for searching content with MCP Atlassian"
+---
+
+CQL (Confluence Query Language) is used by `confluence_search` to find content. You can also use simple text queries that automatically use `siteSearch`.
+
+## Basic Syntax
+
+CQL queries follow the pattern: `field operator value`
+
+```
+type = page AND space = "DEV"
+```
+
+## Common Operators
+
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `=` | Exact match | `type = "page"` |
+| `!=` | Not equal | `type != "comment"` |
+| `~` | Contains text | `title ~ "meeting notes"` |
+| `IN` | Match any in list | `space IN ("DEV", "TEAM")` |
+| `>`, `<`, `>=`, `<=` | Comparison | `created >= "2024-01-01"` |
+
+## Common Fields
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `type` | Content type | `type = "page"` or `type = "blogpost"` |
+| `space` | Space key | `space = "DEV"` |
+| `title` | Page title | `title ~ "architecture"` |
+| `text` | Full text search | `text ~ "API documentation"` |
+| `label` | Content label | `label = "approved"` |
+| `creator` | Created by | `creator = "john.doe"` |
+| `created` | Creation date | `created >= "2024-01-01"` |
+| `lastModified` | Last modified | `lastModified >= "2024-06-01"` |
+| `ancestor` | Parent page ID | `ancestor = "12345678"` |
+| `parent` | Direct parent ID | `parent = "12345678"` |
+
+## Search Types
+
+### CQL Query
+Pass a CQL string directly:
+```
+type=page AND space=DEV AND title~"Meeting Notes"
+```
+
+### Simple Text Search
+Pass plain text — `confluence_search` auto-detects and uses `siteSearch`:
+```
+project documentation architecture
+```
+
+## Practical Patterns
+
+### Pages in a Space
+```
+type = page AND space = "DEV" ORDER BY lastModified DESC
+```
+
+### Recently Modified Content
+```
+type = page AND lastModified >= "2024-06-01" ORDER BY lastModified DESC
+```
+
+### Content with Specific Label
+```
+type = page AND label = "architecture" ORDER BY title ASC
+```
+
+### Personal Space Search
+```
+space = "~username" AND type = page
+```
+
+<Warning>
+Personal space keys starting with `~` must be quoted in CQL: `space = "~username"`
+</Warning>
+
+### Pages Under a Parent
+```
+ancestor = "12345678" AND type = page ORDER BY title ASC
+```
+
+### Full Text Search in Space
+```
+space = "DEV" AND text ~ "database migration" ORDER BY lastModified DESC
+```
+
+## Tips
+
+<Tip>
+For simple searches, just pass plain text to `confluence_search` — it uses `siteSearch` by default, which mimics the Confluence web UI search.
+</Tip>
+
+<Tip>
+Use `siteSearch` for relevance-ranked results: `siteSearch ~ "important concept"`
+</Tip>
+
+<Warning>
+CQL syntax can differ slightly between Cloud and Server/DC. Test your queries if migrating between platforms.
+</Warning>

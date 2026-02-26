@@ -15,6 +15,13 @@ Add a comment to a Confluence page.
 |-----------|------|----------|-------------|
 | `page_id` | `string` | Yes | The ID of the page to add a comment to |
 | `content` | `string` | Yes | The comment content in Markdown format |
+**Example:**
+
+```json
+{"page_id": "12345678", "body": "Great documentation! Consider adding examples for the API section."}
+```
+<Tip>Supports Markdown formatting. Comments are added to the page's comment section.
+</Tip>
 
 ---
 
@@ -67,5 +74,14 @@ Get view statistics for a Confluence page.
 |-----------|------|----------|-------------|
 | `page_id` | `string` | Yes | Confluence page ID (numeric ID, can be found in the page URL). For example, in 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', the page ID is '123456789'. |
 | `include_title` | `boolean` | No | Whether to fetch and include the page title |
+**Example:**
+
+```json
+{"page_id": "12345678", "period": "lastMonth"}
+```
+<Tip>Useful for identifying popular or stale content. Available periods depend on your Confluence analytics configuration.
+</Tip>
+<Warning>Analytics features may require additional permissions on Server/DC.
+</Warning>
 
 ---

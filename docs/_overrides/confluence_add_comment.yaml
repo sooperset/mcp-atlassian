@@ -1,0 +1,4 @@
+example: |
+  {"page_id": "12345678", "body": "Great documentation! Consider adding examples for the API section."}
+tips: |
+  Supports Markdown formatting. Comments are added to the page's comment section.

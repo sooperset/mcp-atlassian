@@ -1,0 +1,4 @@
+example: |
+  {"page_id": "12345678", "file_path": "/path/to/diagram.png", "comment": "Updated architecture diagram"}
+tips: |
+  Supports any file type. If an attachment with the same name exists, it's updated (new version created).

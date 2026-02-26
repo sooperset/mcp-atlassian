@@ -16,6 +16,13 @@ Add a comment to a Jira issue.
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
 | `comment` | `string` | Yes | Comment text in Markdown format |
 | `visibility` | `string` | No | (Optional) Comment visibility as JSON string (e.g. '{"type":"group","value":"jira-users"}') |
+**Example:**
+
+```json
+{"issue_key": "PROJ-123", "comment": "## Investigation\n\nFound the root cause in module X."}
+```
+<Tip>Supports Markdown formatting. Use `visibility` parameter for restricted comments (e.g., service desk internal notes).
+</Tip>
 
 ---
 
@@ -78,6 +85,15 @@ Get changelogs for multiple Jira issues (Cloud only).
 | `issue_ids_or_keys` | `string` | Yes | Comma-separated list of Jira issue IDs or keys (e.g. 'PROJ-123,PROJ-124') |
 | `fields` | `string` | No | (Optional) Comma-separated list of fields to filter changelogs by (e.g. 'status,assignee'). Default to None for all fields. |
 | `limit` | `integer` | No | Maximum number of changelogs to return in result for each issue. Default to -1 for all changelogs. Notice that it only limits the results in the response, the function will still fetch all the data. |
+**Example:**
+
+```json
+{"issue_keys": ["PROJ-1", "PROJ-2", "PROJ-3"]}
+```
+<Tip>Efficient for tracking field changes across multiple issues at once. Returns change history for each issue.
+</Tip>
+<Warning>Only available on Jira Cloud.
+</Warning>
 
 ---
 
