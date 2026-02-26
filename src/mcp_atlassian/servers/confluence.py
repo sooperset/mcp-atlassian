@@ -29,7 +29,7 @@ confluence_mcp = FastMCP(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read"},
+    tags={"confluence", "read", "toolset:confluence_pages"},
     annotations={"title": "Search Content", "readOnlyHint": True},
 )
 async def search(
@@ -121,7 +121,7 @@ async def search(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read"},
+    tags={"confluence", "read", "toolset:confluence_pages"},
     annotations={"title": "Get Page", "readOnlyHint": True},
 )
 async def get_page(
@@ -242,7 +242,7 @@ async def get_page(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read"},
+    tags={"confluence", "read", "toolset:confluence_pages"},
     annotations={"title": "Get Page Children", "readOnlyHint": True},
 )
 async def get_page_children(
@@ -342,7 +342,7 @@ async def get_page_children(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read"},
+    tags={"confluence", "read", "toolset:confluence_comments"},
     annotations={"title": "Get Comments", "readOnlyHint": True},
 )
 async def get_comments(
@@ -374,7 +374,7 @@ async def get_comments(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read"},
+    tags={"confluence", "read", "toolset:confluence_labels"},
     annotations={"title": "Get Labels", "readOnlyHint": True},
 )
 async def get_labels(
@@ -407,7 +407,7 @@ async def get_labels(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "write"},
+    tags={"confluence", "write", "toolset:confluence_labels"},
     annotations={"title": "Add Label", "destructiveHint": True},
 )
 @check_write_access
@@ -460,7 +460,7 @@ async def add_label(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "write"},
+    tags={"confluence", "write", "toolset:confluence_pages"},
     annotations={"title": "Create Page", "destructiveHint": True},
 )
 @check_write_access
@@ -564,7 +564,7 @@ async def create_page(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "write"},
+    tags={"confluence", "write", "toolset:confluence_pages"},
     annotations={"title": "Update Page", "destructiveHint": True},
 )
 @check_write_access
@@ -670,7 +670,7 @@ async def update_page(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "write"},
+    tags={"confluence", "write", "toolset:confluence_pages"},
     annotations={"title": "Delete Page", "destructiveHint": True},
 )
 @check_write_access
@@ -715,7 +715,7 @@ async def delete_page(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "write"},
+    tags={"confluence", "write", "toolset:confluence_comments"},
     annotations={"title": "Add Comment", "destructiveHint": True},
 )
 @check_write_access
@@ -768,7 +768,7 @@ async def add_comment(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read"},
+    tags={"confluence", "read", "toolset:confluence_users"},
     annotations={"title": "Search User", "readOnlyHint": True},
 )
 async def search_user(
@@ -841,7 +841,7 @@ async def search_user(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read"},
+    tags={"confluence", "read", "toolset:confluence_pages"},
     annotations={"title": "Get Page History", "readOnlyHint": True},
 )
 async def get_page_history(
@@ -921,7 +921,7 @@ async def get_page_history(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read", "analytics"},
+    tags={"confluence", "read", "analytics", "toolset:confluence_analytics"},
     annotations={"title": "Get Page Views", "readOnlyHint": True},
 )
 async def get_page_views(
@@ -991,7 +991,7 @@ async def get_page_views(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "write", "attachments"},
+    tags={"confluence", "write", "attachments", "toolset:confluence_attachments"},
     annotations={"title": "Upload Attachment", "destructiveHint": True},
 )
 @check_write_access
@@ -1073,7 +1073,7 @@ async def upload_attachment(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "write", "attachments"},
+    tags={"confluence", "write", "attachments", "toolset:confluence_attachments"},
     annotations={"title": "Upload Multiple Attachments", "destructiveHint": True},
 )
 @check_write_access
@@ -1162,7 +1162,7 @@ async def upload_attachments(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read", "attachments"},
+    tags={"confluence", "read", "attachments", "toolset:confluence_attachments"},
     annotations={"title": "Get Content Attachments", "readOnlyHint": True},
 )
 async def get_attachments(
@@ -1267,7 +1267,7 @@ async def get_attachments(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read", "attachments"},
+    tags={"confluence", "read", "attachments", "toolset:confluence_attachments"},
     annotations={"title": "Download Attachment", "readOnlyHint": True},
 )
 async def download_attachment(
@@ -1419,7 +1419,7 @@ async def download_attachment(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read", "attachments"},
+    tags={"confluence", "read", "attachments", "toolset:confluence_attachments"},
     annotations={"title": "Download All Content Attachments", "readOnlyHint": True},
 )
 async def download_content_attachments(
@@ -1577,7 +1577,7 @@ async def download_content_attachments(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "write", "attachments"},
+    tags={"confluence", "write", "attachments", "toolset:confluence_attachments"},
     annotations={"title": "Delete Attachment", "destructiveHint": True},
 )
 @check_write_access
@@ -1631,7 +1631,7 @@ async def delete_attachment(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read", "attachments"},
+    tags={"confluence", "read", "attachments", "toolset:confluence_attachments"},
     annotations={"title": "Get Page Images", "readOnlyHint": True},
 )
 async def get_page_images(

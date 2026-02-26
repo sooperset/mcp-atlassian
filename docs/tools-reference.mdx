@@ -1,9 +1,9 @@
 ---
 title: "Tools Reference"
-description: "Overview of all 65 MCP tools for Jira and Confluence — organized by category with quick links"
+description: "Overview of all 68 MCP tools for Jira and Confluence — organized by category with quick links"
 ---
 
-MCP Atlassian provides **65 tools** for interacting with Jira and Confluence. Tools are organized by category below.
+MCP Atlassian provides **68 tools** for interacting with Jira and Confluence. Tools are organized by category below.
 
 ## Jira Tools
 
@@ -52,6 +52,53 @@ MCP Atlassian provides **65 tools** for interacting with Jira and Confluence. To
 </CardGroup>
 
 ## Tool Access Control
+
+### Toolset Groups
+
+Toolsets group related tools for easier management via `TOOLSETS` env var or `--toolsets` flag.
+
+**Jira Toolsets (15):**
+
+| Toolset | Default | Tools |
+|---------|:-------:|-------|
+| `jira_issues` | Yes | `jira_get_issue`, `jira_search`, `jira_get_project_issues`, `jira_create_issue`, `jira_update_issue`, `jira_delete_issue`, `jira_batch_create_issues`, `jira_batch_get_changelogs` |
+| `jira_fields` | Yes | `jira_search_fields`, `jira_get_field_options` |
+| `jira_comments` | Yes | `jira_add_comment`, `jira_edit_comment` |
+| `jira_transitions` | Yes | `jira_get_transitions`, `jira_transition_issue` |
+| `jira_projects` | No | `jira_get_all_projects`, `jira_get_project_versions`, `jira_get_project_components`, `jira_create_version`, `jira_batch_create_versions` |
+| `jira_agile` | No | `jira_get_agile_boards`, `jira_get_board_issues`, `jira_get_sprints_from_board`, `jira_get_sprint_issues`, `jira_create_sprint`, `jira_update_sprint` |
+| `jira_links` | No | `jira_get_link_types`, `jira_link_to_epic`, `jira_create_issue_link`, `jira_create_remote_issue_link`, `jira_remove_issue_link` |
+| `jira_worklog` | No | `jira_get_worklog`, `jira_add_worklog` |
+| `jira_attachments` | No | `jira_download_attachments`, `jira_get_issue_images` |
+| `jira_users` | No | `jira_get_user_profile` |
+| `jira_watchers` | No | `jira_get_issue_watchers`, `jira_add_watcher`, `jira_remove_watcher` |
+| `jira_service_desk` | No | `jira_get_service_desk_for_project`, `jira_get_service_desk_queues`, `jira_get_queue_issues` |
+| `jira_forms` | No | `jira_get_issue_proforma_forms`, `jira_get_proforma_form_details`, `jira_update_proforma_form_answers` |
+| `jira_metrics` | No | `jira_get_issue_dates`, `jira_get_issue_sla` |
+| `jira_development` | No | `jira_get_issue_development_info`, `jira_get_issues_development_info` |
+
+**Confluence Toolsets (6):**
+
+| Toolset | Default | Tools |
+|---------|:-------:|-------|
+| `confluence_pages` | Yes | `confluence_search`, `confluence_get_page`, `confluence_get_page_children`, `confluence_get_page_history`, `confluence_create_page`, `confluence_update_page`, `confluence_delete_page` |
+| `confluence_comments` | Yes | `confluence_get_comments`, `confluence_add_comment` |
+| `confluence_labels` | No | `confluence_get_labels`, `confluence_add_label` |
+| `confluence_users` | No | `confluence_search_user` |
+| `confluence_analytics` | No | `confluence_get_page_views` |
+| `confluence_attachments` | No | `confluence_upload_attachment`, `confluence_upload_attachments`, `confluence_get_attachments`, `confluence_download_attachment`, `confluence_download_content_attachments`, `confluence_delete_attachment`, `confluence_get_page_images` |
+
+```bash
+# Default toolsets are enabled when TOOLSETS is not set.
+# To explicitly add more toolsets on top of defaults:
+TOOLSETS=default,jira_agile,jira_attachments
+
+# Enable all toolsets (68 tools)
+TOOLSETS=all
+
+# Command line
+uvx mcp-atlassian --toolsets "default,jira_agile"
+```
 
 ### Enable Specific Tools
 
