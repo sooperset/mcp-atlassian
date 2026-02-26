@@ -19,14 +19,12 @@ from mcp_atlassian.jira import JiraConfig, JiraFetcher
 from mcp_atlassian.servers.context import MainAppContext
 from mcp_atlassian.utils.oauth import OAuthConfig
 from mcp_atlassian.utils.urls import validate_url_for_ssrf
-from mcp_atlassian.zephyr import ZephyrConfig, ZephyrFetcher
 
 if TYPE_CHECKING:
     from mcp_atlassian.confluence.config import (
         ConfluenceConfig as UserConfluenceConfigType,
     )
     from mcp_atlassian.jira.config import JiraConfig as UserJiraConfigType
-    from mcp_atlassian.zephyr.config import ZephyrConfig as UserZephyrConfigType
 
 logger = logging.getLogger("mcp-atlassian.servers.dependencies")
 
@@ -107,21 +105,21 @@ def _resolve_bearer_auth_type(
 
 
 def _create_user_config_for_fetcher(
-    base_config: JiraConfig | ConfluenceConfig | ZephyrConfig,
+    base_config: JiraConfig | ConfluenceConfig,
     auth_type: str,
     credentials: dict[str, Any],
     cloud_id: str | None = None,
-) -> JiraConfig | ConfluenceConfig | ZephyrConfig:
-    """Create a user-specific configuration for Jira, Confluence, or Zephyr fetchers.
+) -> JiraConfig | ConfluenceConfig:
+    """Create a user-specific configuration for Jira or Confluence fetchers.
 
     Args:
-        base_config: The base JiraConfig, ConfluenceConfig, or ZephyrConfig to clone and modify.
+        base_config: The base JiraConfig or ConfluenceConfig to clone and modify.
         auth_type: The authentication type ('oauth', 'pat', or 'basic').
         credentials: Dictionary of credentials (token, email, etc).
         cloud_id: Optional cloud ID to override the base config cloud ID.
 
     Returns:
-        JiraConfig, ConfluenceConfig, or ZephyrConfig with user-specific credentials.
+        JiraConfig or ConfluenceConfig with user-specific credentials.
 
     Raises:
         ValueError: If required credentials are missing or auth_type is unsupported.
@@ -254,12 +252,6 @@ def _create_user_config_for_fetcher(
         )
         user_confluence_config.spaces_filter = base_config.spaces_filter
         return user_confluence_config
-    elif isinstance(base_config, ZephyrConfig):
-        user_zephyr_config: UserZephyrConfigType = dataclasses.replace(
-            base_config, **common_args
-        )
-        user_zephyr_config.project_key = base_config.project_key
-        return user_zephyr_config
     else:
         raise TypeError(f"Unsupported base_config type: {type(base_config)}")
 
@@ -718,143 +710,4 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
     logger.error("Confluence configuration could not be resolved.")
     raise ValueError(
         "Confluence client (fetcher) not available. Ensure server is configured correctly."
-    )
-
-
-async def get_zephyr_fetcher(ctx: Context) -> ZephyrFetcher:
-    """Returns a ZephyrFetcher instance appropriate for the current request context.
-
-    Args:
-        ctx: The FastMCP context.
-
-    Returns:
-        ZephyrFetcher instance for the current user or global config.
-
-    Raises:
-        ValueError: If configuration or credentials are invalid.
-    """
-    logger.debug(f"get_zephyr_fetcher: ENTERED. Context ID: {id(ctx)}")
-    try:
-        request: Request = get_http_request()
-        logger.debug(
-            f"get_zephyr_fetcher: In HTTP request context. Request URL: {request.url}. "
-            f"State.zephyr_fetcher exists: {hasattr(request.state, 'zephyr_fetcher') and request.state.zephyr_fetcher is not None}. "
-            f"State.user_auth_type: {getattr(request.state, 'user_atlassian_auth_type', 'N/A')}. "
-            f"State.user_token_present: {hasattr(request.state, 'user_atlassian_token') and request.state.user_atlassian_token is not None}."
-        )
-        if hasattr(request.state, "zephyr_fetcher") and request.state.zephyr_fetcher:
-            logger.debug(
-                "get_zephyr_fetcher: Returning ZephyrFetcher from request.state."
-            )
-            return request.state.zephyr_fetcher
-        user_auth_type = getattr(request.state, "user_atlassian_auth_type", None)
-        logger.debug(f"get_zephyr_fetcher: User auth type: {user_auth_type}")
-
-        service_headers = getattr(request.state, "atlassian_service_headers", {})
-        zephyr_url_header = service_headers.get("X-Atlassian-Zephyr-Url")
-        zephyr_token_header = service_headers.get("X-Atlassian-Zephyr-Personal-Token")
-
-        if (
-            user_auth_type == "pat"
-            and zephyr_url_header
-            and zephyr_token_header
-            and not hasattr(request.state, "user_atlassian_token")
-        ):
-            logger.info(
-                f"Creating header-based ZephyrFetcher with URL: {zephyr_url_header} and PAT token"
-            )
-            header_config = ZephyrConfig(
-                url=zephyr_url_header,
-                auth_type="pat",
-                personal_token=zephyr_token_header,
-                ssl_verify=True,
-                project_key=None,
-                http_proxy=None,
-                https_proxy=None,
-                no_proxy=None,
-                socks_proxy=None,
-                custom_headers=None,
-            )
-            try:
-                header_zephyr_fetcher = ZephyrFetcher(config=header_config)
-                logger.debug("get_zephyr_fetcher: Validated header-based Zephyr token")
-                request.state.zephyr_fetcher = header_zephyr_fetcher
-                return header_zephyr_fetcher
-            except Exception as e:
-                logger.error(
-                    f"get_zephyr_fetcher: Failed to create/validate header-based ZephyrFetcher: {e}",
-                    exc_info=True,
-                )
-                raise ValueError(
-                    f"Invalid header-based Zephyr token or configuration: {e}"
-                )
-
-        elif user_auth_type in ["oauth", "pat"] and hasattr(
-            request.state, "user_atlassian_token"
-        ):
-            user_token = getattr(request.state, "user_atlassian_token", None)
-            user_email = getattr(request.state, "user_atlassian_email", None)
-            user_cloud_id = getattr(request.state, "user_atlassian_cloud_id", None)
-
-            if not user_token:
-                raise ValueError("User Atlassian token found in state but is empty.")
-            credentials = {"user_email_context": user_email}
-            if user_auth_type == "oauth":
-                credentials["oauth_access_token"] = user_token
-            elif user_auth_type == "pat":
-                credentials["personal_access_token"] = user_token
-            lifespan_ctx_dict = ctx.request_context.lifespan_context  # type: ignore
-            app_lifespan_ctx: MainAppContext | None = (
-                lifespan_ctx_dict.get("app_lifespan_context")
-                if isinstance(lifespan_ctx_dict, dict)
-                else None
-            )
-            if not app_lifespan_ctx or not app_lifespan_ctx.full_zephyr_config:
-                raise ValueError(
-                    "Zephyr global configuration (URL, SSL) is not available from lifespan context."
-                )
-
-            cloud_id_info = f" with cloudId {user_cloud_id}" if user_cloud_id else ""
-            logger.info(
-                f"Creating user-specific ZephyrFetcher (type: {user_auth_type}) for user {user_email or 'unknown'} (token ...{str(user_token)[-8:]}){cloud_id_info}"
-            )
-            user_specific_config = _create_user_config_for_fetcher(
-                base_config=app_lifespan_ctx.full_zephyr_config,
-                auth_type=user_auth_type,
-                credentials=credentials,
-                cloud_id=user_cloud_id,
-            )
-            try:
-                user_zephyr_fetcher = ZephyrFetcher(config=user_specific_config)
-                logger.debug("get_zephyr_fetcher: Validated Zephyr token")
-                request.state.zephyr_fetcher = user_zephyr_fetcher
-                return user_zephyr_fetcher
-            except Exception as e:
-                logger.error(
-                    f"get_zephyr_fetcher: Failed to create/validate user-specific ZephyrFetcher: {e}"
-                )
-                raise ValueError(f"Invalid user Zephyr token or configuration: {e}")
-        else:
-            logger.debug(
-                f"get_zephyr_fetcher: No user-specific ZephyrFetcher. Auth type: {user_auth_type}. Token present: {hasattr(request.state, 'user_atlassian_token')}. Will use global fallback."
-            )
-    except RuntimeError:
-        logger.debug(
-            "Not in an HTTP request context. Attempting global ZephyrFetcher for non-HTTP."
-        )
-    lifespan_ctx_dict_global = ctx.request_context.lifespan_context  # type: ignore
-    app_lifespan_ctx_global: MainAppContext | None = (
-        lifespan_ctx_dict_global.get("app_lifespan_context")
-        if isinstance(lifespan_ctx_dict_global, dict)
-        else None
-    )
-    if app_lifespan_ctx_global and app_lifespan_ctx_global.full_zephyr_config:
-        logger.debug(
-            "get_zephyr_fetcher: Using global ZephyrFetcher from lifespan_context. "
-            f"Global config auth_type: {app_lifespan_ctx_global.full_zephyr_config.auth_type}"
-        )
-        return ZephyrFetcher(config=app_lifespan_ctx_global.full_zephyr_config)
-    logger.error("Zephyr configuration could not be resolved.")
-    raise ValueError(
-        "Zephyr client (fetcher) not available. Ensure server is configured correctly."
     )

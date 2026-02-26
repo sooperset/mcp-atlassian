@@ -42,7 +42,6 @@ def is_atlassian_cloud_url(url: str) -> bool:
         or "api.atlassian.com" in hostname
         or ".atlassian-us-gov-mod.net" in hostname  # US Gov Moderate (FedRAMP)
         or ".atlassian-us-gov.net" in hostname  # US Gov (FedRAMP)
-        or "zephyrscale.smartbear.com" in hostname
     )
 
 
