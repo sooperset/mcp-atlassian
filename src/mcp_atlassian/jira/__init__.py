@@ -29,6 +29,7 @@ from .search import SearchMixin
 from .sprints import SprintsMixin
 from .transitions import TransitionsMixin
 from .users import UsersMixin
+from .watchers import WatchersMixin
 from .worklog import WorklogMixin
 
 
@@ -45,6 +46,7 @@ class JiraFetcher(
     SearchMixin,
     IssuesMixin,
     UsersMixin,
+    WatchersMixin,
     BoardsMixin,
     SprintsMixin,
     QueuesMixin,
@@ -68,6 +70,7 @@ class JiraFetcher(
     - SearchMixin: Search operations
     - IssuesMixin: Issue operations
     - UsersMixin: User operations
+    - WatchersMixin: Watcher operations
     - BoardsMixin: Board operations
     - SprintsMixin: Sprint operations
     - AttachmentsMixin: Attachment download operations

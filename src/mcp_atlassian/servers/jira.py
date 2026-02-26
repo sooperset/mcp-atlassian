@@ -163,6 +163,125 @@ async def get_user_profile(
 
 @jira_mcp.tool(
     tags={"jira", "read"},
+    annotations={"title": "Get Issue Watchers", "readOnlyHint": True},
+)
+async def get_issue_watchers(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+) -> str:
+    """
+    Get the list of watchers for a Jira issue.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+
+    Returns:
+        JSON string with watcher count and list of watchers.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_issue_watchers(issue_key)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write"},
+    annotations={"title": "Add Watcher", "readOnlyHint": False},
+)
+async def add_watcher(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+    user_identifier: Annotated[
+        str,
+        Field(
+            description="User to add as watcher. For Jira Cloud, use the account ID. For Jira Server/DC, use the username.",
+        ),
+    ],
+) -> str:
+    """
+    Add a user as a watcher to a Jira issue.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+        user_identifier: The user to add (account ID for Cloud, username for Server/DC).
+
+    Returns:
+        JSON string with success confirmation.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.add_watcher(issue_key, user_identifier)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write"},
+    annotations={"title": "Remove Watcher", "readOnlyHint": False},
+)
+async def remove_watcher(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+    username: Annotated[
+        str | None,
+        Field(
+            description="Username to remove (for Jira Server/DC).",
+            default=None,
+        ),
+    ] = None,
+    account_id: Annotated[
+        str | None,
+        Field(
+            description="Account ID to remove (for Jira Cloud).",
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """
+    Remove a user from watching a Jira issue.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+        username: The username to remove (for Jira Server/DC).
+        account_id: The account ID to remove (for Jira Cloud).
+
+    Returns:
+        JSON string with success confirmation.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.remove_watcher(issue_key, username=username, account_id=account_id)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read"},
     annotations={"title": "Get Issue", "readOnlyHint": True},
 )
 async def get_issue(
