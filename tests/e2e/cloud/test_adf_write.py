@@ -267,7 +267,7 @@ class TestADFUpdateAndComment:
                 "jira_add_comment",
                 {
                     "issue_key": key,
-                    "comment": "**bold comment** with `code`",
+                    "body": "**bold comment** with `code`",
                 },
             )
             assert not comment_result.is_error

@@ -724,7 +724,7 @@ async def add_comment(
     page_id: Annotated[
         str, Field(description="The ID of the page to add a comment to")
     ],
-    content: Annotated[
+    body: Annotated[
         str, Field(description="The comment content in Markdown format")
     ],
 ) -> str:
@@ -733,7 +733,7 @@ async def add_comment(
     Args:
         ctx: The FastMCP context.
         page_id: The ID of the page to add a comment to.
-        content: The comment content in Markdown format.
+        body: The comment content in Markdown format.
 
     Returns:
         JSON string representing the created comment.
@@ -743,7 +743,7 @@ async def add_comment(
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
     try:
-        comment = confluence_fetcher.add_comment(page_id=page_id, content=content)
+        comment = confluence_fetcher.add_comment(page_id=page_id, content=body)
         if comment:
             comment_data = comment.to_simplified_dict()
             response = {

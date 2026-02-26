@@ -1612,7 +1612,7 @@ async def add_comment(
             pattern=ISSUE_KEY_PATTERN,
         ),
     ],
-    comment: Annotated[str, Field(description="Comment text in Markdown format")],
+    body: Annotated[str, Field(description="Comment text in Markdown format")],
     visibility: Annotated[
         str | None,
         Field(
@@ -1625,7 +1625,7 @@ async def add_comment(
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        comment: Comment text in Markdown.
+        body: Comment text in Markdown.
         visibility: (Optional) Comment visibility as JSON string.
 
     Returns:
@@ -1636,7 +1636,7 @@ async def add_comment(
     """
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
-    result = jira.add_comment(issue_key, comment, visibility_dict)
+    result = jira.add_comment(issue_key, body, visibility_dict)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
@@ -1655,7 +1655,7 @@ async def edit_comment(
         ),
     ],
     comment_id: Annotated[str, Field(description="The ID of the comment to edit")],
-    comment: Annotated[
+    body: Annotated[
         str, Field(description="Updated comment text in Markdown format")
     ],
     visibility: Annotated[
@@ -1671,7 +1671,7 @@ async def edit_comment(
         ctx: The FastMCP context.
         issue_key: Jira issue key.
         comment_id: The ID of the comment to edit.
-        comment: Updated comment text in Markdown.
+        body: Updated comment text in Markdown.
         visibility: (Optional) Comment visibility as JSON string.
 
     Returns:
@@ -1682,7 +1682,7 @@ async def edit_comment(
     """
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
-    result = jira.edit_comment(issue_key, comment_id, comment, visibility_dict)
+    result = jira.edit_comment(issue_key, comment_id, body, visibility_dict)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
@@ -2095,7 +2095,7 @@ async def transition_issue(
 async def create_sprint(
     ctx: Context,
     board_id: Annotated[str, Field(description="The id of board (e.g., '1000')")],
-    sprint_name: Annotated[
+    name: Annotated[
         str, Field(description="Name of the sprint (e.g., 'Sprint 1')")
     ],
     start_date: Annotated[
@@ -2113,7 +2113,7 @@ async def create_sprint(
     Args:
         ctx: The FastMCP context.
         board_id: Board ID.
-        sprint_name: Sprint name.
+        name: Sprint name.
         start_date: Start date (ISO format).
         end_date: End date (ISO format).
         goal: Optional sprint goal.
@@ -2127,7 +2127,7 @@ async def create_sprint(
     jira = await get_jira_fetcher(ctx)
     sprint = jira.create_sprint(
         board_id=board_id,
-        sprint_name=sprint_name,
+        sprint_name=name,
         start_date=start_date,
         end_date=end_date,
         goal=goal,
@@ -2143,7 +2143,7 @@ async def create_sprint(
 async def update_sprint(
     ctx: Context,
     sprint_id: Annotated[str, Field(description="The id of sprint (e.g., '10001')")],
-    sprint_name: Annotated[
+    name: Annotated[
         str | None, Field(description="(Optional) New name for the sprint")
     ] = None,
     state: Annotated[
@@ -2165,7 +2165,7 @@ async def update_sprint(
     Args:
         ctx: The FastMCP context.
         sprint_id: The ID of the sprint.
-        sprint_name: Optional new name.
+        name: Optional new name.
         state: Optional new state (future|active|closed).
         start_date: Optional new start date.
         end_date: Optional new end date.
@@ -2180,7 +2180,7 @@ async def update_sprint(
     jira = await get_jira_fetcher(ctx)
     sprint = jira.update_sprint(
         sprint_id=sprint_id,
-        sprint_name=sprint_name,
+        sprint_name=name,
         state=state,
         start_date=start_date,
         end_date=end_date,

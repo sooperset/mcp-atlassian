@@ -149,8 +149,8 @@ class WorklogMixin(JiraClient):
                 "created": str(parse_date(result.get("created", ""))),
                 "updated": str(parse_date(result.get("updated", ""))),
                 "started": str(parse_date(result.get("started", ""))),
-                "timeSpent": result.get("timeSpent", ""),
-                "timeSpentSeconds": result.get("timeSpentSeconds", 0),
+                "time_spent": result.get("timeSpent", ""),
+                "time_spent_seconds": result.get("timeSpentSeconds", 0),
                 "author": result.get("author", {}).get("displayName", "Unknown"),
                 "original_estimate_updated": original_estimate_updated,
                 "remaining_estimate_updated": remaining_estimate_updated,
@@ -225,8 +225,8 @@ class WorklogMixin(JiraClient):
                         "created": str(parse_date(worklog.get("created", ""))),
                         "updated": str(parse_date(worklog.get("updated", ""))),
                         "started": str(parse_date(worklog.get("started", ""))),
-                        "timeSpent": worklog.get("timeSpent", ""),
-                        "timeSpentSeconds": worklog.get("timeSpentSeconds", 0),
+                        "time_spent": worklog.get("timeSpent", ""),
+                        "time_spent_seconds": worklog.get("timeSpentSeconds", 0),
                         "author": worklog.get("author", {}).get(
                             "displayName", "Unknown"
                         ),
