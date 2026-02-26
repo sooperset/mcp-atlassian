@@ -1,0 +1,139 @@
+---
+title: "Jira Links & Versions"
+description: "Issue links, epic links, remote links, versions, and components"
+---
+
+### Get Link Types
+
+Get all available issue link types.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name_filter` | `string` | No | (Optional) Filter link types by name substring (case-insensitive) |
+
+---
+
+### Create Issue Link
+
+Create a link between two Jira issues.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `link_type` | `string` | Yes | The type of link to create (e.g., 'Duplicate', 'Blocks', 'Relates to') |
+| `inward_issue_key` | `string` | Yes | The key of the inward issue (e.g., 'PROJ-123', 'ACV2-642') |
+| `outward_issue_key` | `string` | Yes | The key of the outward issue (e.g., 'PROJ-456') |
+| `comment` | `string` | No | (Optional) Comment to add to the link |
+| `comment_visibility` | `string` | No | (Optional) Visibility settings for the comment as JSON string (e.g. '{"type":"group","value":"jira-users"}') |
+
+---
+
+### Remove Issue Link
+
+Remove a link between two Jira issues.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `link_id` | `string` | Yes | The ID of the link to remove |
+
+---
+
+### Link to Epic
+
+Link an existing issue to an epic.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | The key of the issue to link (e.g., 'PROJ-123', 'ACV2-642') |
+| `epic_key` | `string` | Yes | The key of the epic to link to (e.g., 'PROJ-456') |
+
+---
+
+### Create Remote Issue Link
+
+Create a remote issue link (web link or Confluence link) for a Jira issue.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | The key of the issue to add the link to (e.g., 'PROJ-123', 'ACV2-642') |
+| `url` | `string` | Yes | The URL to link to (e.g., 'https://example.com/page' or Confluence page URL) |
+| `title` | `string` | Yes | The title/name of the link (e.g., 'Documentation Page', 'Confluence Page') |
+| `summary` | `string` | No | (Optional) Description of the link |
+| `relationship` | `string` | No | (Optional) Relationship description (e.g., 'causes', 'relates to', 'documentation') |
+| `icon_url` | `string` | No | (Optional) URL to a 16x16 icon for the link |
+
+---
+
+### Get Project Versions
+
+Get all fix versions for a specific Jira project.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `project_key` | `string` | Yes | Jira project key (e.g., 'PROJ', 'ACV2') |
+
+---
+
+### Get Project Components
+
+Get all components for a specific Jira project.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `project_key` | `string` | Yes | Jira project key (e.g., 'PROJ', 'ACV2') |
+
+---
+
+### Create Version
+
+Create a new fix version in a Jira project.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `project_key` | `string` | Yes | Jira project key (e.g., 'PROJ', 'ACV2') |
+| `name` | `string` | Yes | Name of the version |
+| `start_date` | `string` | No | Start date (YYYY-MM-DD) |
+| `release_date` | `string` | No | Release date (YYYY-MM-DD) |
+| `description` | `string` | No | Description of the version |
+
+---
+
+### Batch Create Versions
+
+Batch create multiple versions in a Jira project.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `project_key` | `string` | Yes | Jira project key (e.g., 'PROJ', 'ACV2') |
+| `versions` | `string` | Yes | JSON array of version objects. Each object should contain: - name (required): Name of the version - startDate (optional): Start date (YYYY-MM-DD) - releaseDate (optional): Release date (YYYY-MM-DD) - description (optional): Description of the version Example: [ {"name": "v1.0", "startDate": "2025-01-01", "releaseDate": "2025-02-01", "description": "First release"}, {"name": "v2.0"} ] |
+
+---

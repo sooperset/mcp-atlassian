@@ -1,0 +1,102 @@
+---
+title: "Jira Forms & Metrics"
+description: "ProForma forms, SLA metrics, dates, and development info"
+---
+
+### Get Issue Forms
+
+Get all ProForma forms associated with a Jira issue.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123') |
+
+---
+
+### Get Form Details
+
+Get detailed information about a specific ProForma form.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123') |
+| `form_id` | `string` | Yes | ProForma form UUID (e.g., '1946b8b7-8f03-4dc0-ac2d-5fac0d960c6a') |
+
+---
+
+### Update Form Answers
+
+Update form field answers using the Jira Forms REST API.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123') |
+| `form_id` | `string` | Yes | ProForma form UUID (e.g., '1946b8b7-8f03-4dc0-ac2d-5fac0d960c6a') |
+| `answers` | `array` | Yes | List of answer objects. Each answer must have: questionId (string), type (TEXT/NUMBER/SELECT/etc), value (any) |
+
+---
+
+### Get Issue Dates
+
+Get date information and status transition history for a Jira issue.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
+| `include_status_changes` | `boolean` | No | Include status change history with timestamps and durations |
+| `include_status_summary` | `boolean` | No | Include aggregated time spent in each status |
+
+---
+
+### Get Issue SLA
+
+Calculate SLA metrics for a Jira issue.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
+| `metrics` | `string` | No | Comma-separated list of SLA metrics to calculate. Available: cycle_time, lead_time, time_in_status, due_date_compliance, resolution_time, first_response_time. Defaults to configured metrics or 'cycle_time,time_in_status'. |
+| `working_hours_only` | `boolean` | No | Calculate using working hours only (excludes weekends/non-business hours). Defaults to value from JIRA_SLA_WORKING_HOURS_ONLY environment variable. |
+| `include_raw_dates` | `boolean` | No | Include raw date values in the response |
+
+---
+
+### Get Issue Development Info
+
+Get development information (PRs, commits, branches) linked to a Jira issue.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123') |
+| `application_type` | `string` | No | (Optional) Filter by application type. Examples: 'stash' (Bitbucket Server), 'bitbucket', 'github', 'gitlab' |
+| `data_type` | `string` | No | (Optional) Filter by data type. Examples: 'pullrequest', 'branch', 'repository' |
+
+---
+
+### Get Issues Development Info
+
+Get development information for multiple Jira issues.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_keys` | `string` | Yes | Comma-separated list of Jira issue keys (e.g., 'PROJ-123,PROJ-456') |
+| `application_type` | `string` | No | (Optional) Filter by application type. Examples: 'stash' (Bitbucket Server), 'bitbucket', 'github', 'gitlab' |
+| `data_type` | `string` | No | (Optional) Filter by data type. Examples: 'pullrequest', 'branch', 'repository' |
+
+---

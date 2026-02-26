@@ -50,6 +50,7 @@ repos:
             'types-setuptools',
             'types-urllib3',
             'types-cachetools',
+            'types-PyYAML',
             'atlassian-python-api',
             'beautifulsoup4',
             'httpx',
