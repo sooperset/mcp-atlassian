@@ -102,7 +102,7 @@ Documentation is also available in [llms.txt format](https://llmstxt.org/), whic
 | Product       | Tool                                                   |
 |---------------|--------------------------------------------------------|
 | Jira          | `jira_search` - Search with JQL                        |
-| Jira          | `jira_get_issue` - Get issue details                   | 
+| Jira          | `jira_get_issue` - Get issue details                   |
 | Jira          | `jira_create_issue` - Create issues                    |
 | Jira          | `jira_update_issue` - Update issues                    |
 | Jira          | `jira_transition_issue` - Change status                |
