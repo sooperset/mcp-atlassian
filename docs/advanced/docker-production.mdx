@@ -52,7 +52,7 @@ services:
       - PORT=8000
       - HOST=0.0.0.0
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -151,13 +151,13 @@ spec:
             name: atlassian-credentials
         livenessProbe:
           httpGet:
-            path: /health
+            path: /healthz
             port: 8000
           initialDelaySeconds: 10
           periodSeconds: 30
         readinessProbe:
           httpGet:
-            path: /health
+            path: /healthz
             port: 8000
           initialDelaySeconds: 5
           periodSeconds: 10

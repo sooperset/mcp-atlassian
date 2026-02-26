@@ -119,9 +119,9 @@ MCP Atlassian supports both Atlassian Cloud and Server/Data Center deployments, 
 | Tool | Cloud | Server/DC | Notes |
 |------|-------|-----------|-------|
 | `jira_batch_get_changelogs` | Yes | No | Cloud-only changelog API |
-| `jira_get_issue_proforma_forms` | Yes | Yes | Requires ProForma app |
-| `jira_get_service_desk_queues` | Yes | Yes | Requires JSM |
-| `confluence_get_page_views` | Yes | Limited | Analytics may require additional Server/DC plugins |
+| `jira_get_issue_proforma_forms` | Yes | No | Cloud-only (requires cloud_id for Forms API) |
+| `jira_get_service_desk_queues` | Yes | Yes | Requires Jira Service Management |
+| `confluence_get_page_views` | Yes | No | Cloud-only analytics API |
 
 ### Content Format Differences
 
