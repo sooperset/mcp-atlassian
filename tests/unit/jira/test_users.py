@@ -648,10 +648,36 @@ class TestUsersMixin:
             # Must call user() with resolved username, NOT the raw email
             users_mixin.jira.user.assert_called_once_with(username="jnovak")
 
-    def test_get_user_profile_by_identifier_cloud_account_id(self, users_mixin):
-        """Test get_user_profile_by_identifier with Cloud and accountId."""
+    @pytest.mark.parametrize(
+        "is_cloud, id_key, identifier, api_kwarg",
+        [
+            pytest.param(
+                True,
+                "accountId",
+                "5b10ac8d82e05b22cc7d4ef5",
+                {"account_id": "5b10ac8d82e05b22cc7d4ef5"},
+                id="cloud-account-id",
+            ),
+            pytest.param(
+                False,
+                "name",
+                "server_user",
+                {"username": "server_user"},
+                id="server-username",
+            ),
+        ],
+    )
+    def test_get_user_profile_by_identifier_direct(
+        self,
+        users_mixin,
+        is_cloud: bool,
+        id_key: str,
+        identifier: str,
+        api_kwarg: dict,
+    ):
+        """Test get_user_profile_by_identifier with direct ID/username."""
         users_mixin.config = MagicMock(spec=JiraConfig)
-        users_mixin.config.is_cloud = True
+        users_mixin.config.is_cloud = is_cloud
 
         with patch(
             "src.mcp_atlassian.jira.users.JiraUser.from_api_response"
@@ -659,38 +685,15 @@ class TestUsersMixin:
             mock_user_instance = MagicMock()
             mock_from_api_response.return_value = mock_user_instance
             mock_response_data = {
-                "accountId": "5b10ac8d82e05b22cc7d4ef5",
-                "displayName": "Cloud User",
-                "emailAddress": "cloud@example.com",
+                id_key: identifier,
+                "displayName": "Test User",
+                "emailAddress": "user@example.com",
                 "active": True,
             }
             users_mixin.jira.user = MagicMock(return_value=mock_response_data)
-            test_account_id = "5b10ac8d82e05b22cc7d4ef5"
-            user = users_mixin.get_user_profile_by_identifier(test_account_id)
+            user = users_mixin.get_user_profile_by_identifier(identifier)
             assert user == mock_user_instance
-            users_mixin.jira.user.assert_called_once_with(account_id=test_account_id)
-            mock_from_api_response.assert_called_once_with(mock_response_data)
-
-    def test_get_user_profile_by_identifier_server_username(self, users_mixin):
-        """Test get_user_profile_by_identifier with Server/DC and username."""
-        users_mixin.config = MagicMock(spec=JiraConfig)
-        users_mixin.config.is_cloud = False
-
-        with patch(
-            "src.mcp_atlassian.jira.users.JiraUser.from_api_response"
-        ) as mock_from_api_response:
-            mock_user_instance = MagicMock()
-            mock_from_api_response.return_value = mock_user_instance
-            mock_response_data = {
-                "name": "server_user",
-                "displayName": "Server User",
-                "emailAddress": "server@example.com",
-                "active": True,
-            }
-            users_mixin.jira.user = MagicMock(return_value=mock_response_data)
-            user = users_mixin.get_user_profile_by_identifier("server_user")
-            assert user == mock_user_instance
-            users_mixin.jira.user.assert_called_once_with(username="server_user")
+            users_mixin.jira.user.assert_called_once_with(**api_kwarg)
             mock_from_api_response.assert_called_once_with(mock_response_data)
 
     def test_get_user_profile_by_identifier_cloud_email(self, users_mixin):

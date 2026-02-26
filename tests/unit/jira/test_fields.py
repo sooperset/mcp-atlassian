@@ -366,42 +366,32 @@ class TestFieldsMixin:
         # Test with standard field
         assert fields_mixin.is_custom_field("summary") is False
 
-    def test_format_field_value_user_field_cloud(
-        self, fields_mixin: FieldsMixin, mock_fields
+    @pytest.mark.parametrize(
+        "is_cloud, user_field, resolved_id",
+        [
+            pytest.param(True, "accountId", "account123", id="cloud"),
+            pytest.param(False, "name", "jdoe", id="server"),
+        ],
+    )
+    def test_format_field_value_user_field(
+        self,
+        fields_mixin: FieldsMixin,
+        mock_fields,
+        is_cloud: bool,
+        user_field: str,
+        resolved_id: str,
     ):
-        """Test format_field_value formats user fields correctly for Cloud."""
-        # Set up the mocks
+        """Test format_field_value formats user fields correctly."""
         fields_mixin.get_field_by_id = MagicMock(
             return_value=mock_fields[3]
         )  # The Assignee field
-        fields_mixin._get_account_id = MagicMock(return_value="account123")
+        fields_mixin._get_account_id = MagicMock(return_value=resolved_id)
         fields_mixin.config = MagicMock()
-        fields_mixin.config.is_cloud = True
+        fields_mixin.config.is_cloud = is_cloud
 
-        # Call the method with a user field and string value
         result = fields_mixin.format_field_value("assignee", "johndoe")
 
-        # Verify the result — Cloud uses accountId
-        assert result == {"accountId": "account123"}
-        fields_mixin._get_account_id.assert_called_once_with("johndoe")
-
-    def test_format_field_value_user_field_server(
-        self, fields_mixin: FieldsMixin, mock_fields
-    ):
-        """Test format_field_value formats user fields correctly for Server/DC."""
-        # Set up the mocks
-        fields_mixin.get_field_by_id = MagicMock(
-            return_value=mock_fields[3]
-        )  # The Assignee field
-        fields_mixin._get_account_id = MagicMock(return_value="jdoe")
-        fields_mixin.config = MagicMock()
-        fields_mixin.config.is_cloud = False
-
-        # Call the method with a user field and string value
-        result = fields_mixin.format_field_value("assignee", "johndoe")
-
-        # Verify the result — Server/DC uses name
-        assert result == {"name": "jdoe"}
+        assert result == {user_field: resolved_id}
         fields_mixin._get_account_id.assert_called_once_with("johndoe")
 
     def test_format_field_value_array_field(self, fields_mixin: FieldsMixin):
@@ -657,27 +647,42 @@ class TestFormatFieldValueForWrite:
 
     # -- Reporter (Cloud vs Server) --------------------------------------
 
-    def test_reporter_cloud(self, mixin):
-        mixin.config.is_cloud = True
-        mixin._get_account_id = MagicMock(return_value="cloud-acc-id")
+    @pytest.mark.parametrize(
+        "is_cloud, user_field, user_input, resolved_id",
+        [
+            pytest.param(
+                True,
+                "accountId",
+                "user@ex.com",
+                "cloud-acc-id",
+                id="cloud",
+            ),
+            pytest.param(
+                False,
+                "name",
+                "jdoe",
+                "jdoe",
+                id="server",
+            ),
+        ],
+    )
+    def test_reporter(
+        self,
+        mixin,
+        is_cloud: bool,
+        user_field: str,
+        user_input: str,
+        resolved_id: str,
+    ):
+        mixin.config.is_cloud = is_cloud
+        mixin._get_account_id = MagicMock(return_value=resolved_id)
         result = mixin._format_field_value_for_write(
             "reporter",
-            "user@ex.com",
+            user_input,
             {"name": "Reporter", "schema": {"type": "user"}},
         )
-        assert result == {"accountId": "cloud-acc-id"}
-        mixin._get_account_id.assert_called_once_with("user@ex.com")
-
-    def test_reporter_server(self, mixin):
-        mixin.config.is_cloud = False
-        mixin._get_account_id = MagicMock(return_value="jdoe")
-        result = mixin._format_field_value_for_write(
-            "reporter",
-            "jdoe",
-            {"name": "Reporter", "schema": {"type": "user"}},
-        )
-        assert result == {"name": "jdoe"}
-        mixin._get_account_id.assert_called_once_with("jdoe")
+        assert result == {user_field: resolved_id}
+        mixin._get_account_id.assert_called_once_with(user_input)
 
     # -- Duedate ---------------------------------------------------------
 
@@ -755,29 +760,43 @@ class TestFormatFieldValueForWrite:
 
     # -- Custom user field -----------------------------------------------
 
-    def test_custom_user_cloud(self, mixin):
-        mixin.config.is_cloud = True
-        mixin._get_account_id = MagicMock(return_value="cloud-acc-id")
+    @pytest.mark.parametrize(
+        "is_cloud, user_field, user_input, resolved_id",
+        [
+            pytest.param(
+                True,
+                "accountId",
+                "user@ex.com",
+                "cloud-acc-id",
+                id="cloud",
+            ),
+            pytest.param(
+                False,
+                "name",
+                "jdoe",
+                "jdoe",
+                id="server",
+            ),
+        ],
+    )
+    def test_custom_user(
+        self,
+        mixin,
+        is_cloud: bool,
+        user_field: str,
+        user_input: str,
+        resolved_id: str,
+    ):
+        mixin.config.is_cloud = is_cloud
+        mixin._get_account_id = MagicMock(return_value=resolved_id)
         field_def = {
             "name": "Reviewer",
             "schema": {"type": "user", "custom": "userpicker"},
         }
         result = mixin._format_field_value_for_write(
-            "customfield_10022", "user@ex.com", field_def
+            "customfield_10022", user_input, field_def
         )
-        assert result == {"accountId": "cloud-acc-id"}
-
-    def test_custom_user_server(self, mixin):
-        mixin.config.is_cloud = False
-        mixin._get_account_id = MagicMock(return_value="jdoe")
-        field_def = {
-            "name": "Reviewer",
-            "schema": {"type": "user", "custom": "userpicker"},
-        }
-        result = mixin._format_field_value_for_write(
-            "customfield_10022", "jdoe", field_def
-        )
-        assert result == {"name": "jdoe"}
+        assert result == {user_field: resolved_id}
 
     def test_custom_user_unresolvable(self, mixin):
         """Unresolvable custom user field returns None instead of raising."""

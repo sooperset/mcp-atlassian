@@ -15,14 +15,6 @@ class TestLinksMixin:
         mixin.jira = mock_atlassian_jira
         return mixin
 
-    @pytest.fixture
-    def links_mixin_server(self, jira_config_factory, mock_atlassian_jira):
-        """LinksMixin configured for Server/Data Center (non-cloud URL)."""
-        server_config = jira_config_factory(url="https://jira.example.com")
-        mixin = LinksMixin(config=server_config)
-        mixin.jira = mock_atlassian_jira
-        return mixin
-
     def test_get_issue_link_types_success(self, links_mixin):
         """Test successful retrieval of issue link types."""
         mock_response = {
@@ -105,7 +97,31 @@ class TestLinksMixin:
         with pytest.raises(MCPAtlassianAuthenticationError):
             links_mixin.create_issue_link(data)
 
-    def test_create_remote_issue_link_success_cloud(self, links_mixin):
+    @pytest.mark.parametrize(
+        "url, api_version",
+        [
+            pytest.param(
+                "https://test.atlassian.net",
+                "3",
+                id="cloud",
+            ),
+            pytest.param(
+                "https://jira.example.com",
+                "2",
+                id="server",
+            ),
+        ],
+    )
+    def test_create_remote_issue_link_success(
+        self,
+        jira_config_factory,
+        mock_atlassian_jira,
+        url: str,
+        api_version: str,
+    ):
+        config = jira_config_factory(url=url)
+        mixin = LinksMixin(config=config)
+        mixin.jira = mock_atlassian_jira
         issue_key = "PROJ-123"
         link_data = {
             "object": {
@@ -116,37 +132,16 @@ class TestLinksMixin:
             "relationship": "documentation",
         }
 
-        response = links_mixin.create_remote_issue_link(issue_key, link_data)
+        response = mixin.create_remote_issue_link(issue_key, link_data)
 
         assert response["success"] is True
         assert response["issue_key"] == issue_key
         assert response["link_title"] == "Example Page"
         assert response["link_url"] == "https://example.com/page"
         assert response["relationship"] == "documentation"
-        links_mixin.jira.post.assert_called_once_with(
-            "rest/api/3/issue/PROJ-123/remotelink", json=link_data
-        )
-
-    def test_create_remote_issue_link_success_server(self, links_mixin_server):
-        issue_key = "PROJ-123"
-        link_data = {
-            "object": {
-                "url": "https://example.com/page",
-                "title": "Example Page",
-                "summary": "A test page",
-            },
-            "relationship": "documentation",
-        }
-
-        response = links_mixin_server.create_remote_issue_link(issue_key, link_data)
-
-        assert response["success"] is True
-        assert response["issue_key"] == issue_key
-        assert response["link_title"] == "Example Page"
-        assert response["link_url"] == "https://example.com/page"
-        assert response["relationship"] == "documentation"
-        links_mixin_server.jira.post.assert_called_once_with(
-            "rest/api/2/issue/PROJ-123/remotelink", json=link_data
+        mixin.jira.post.assert_called_once_with(
+            f"rest/api/{api_version}/issue/PROJ-123/remotelink",
+            json=link_data,
         )
 
     def test_create_remote_issue_link_missing_issue_key(self, links_mixin):
