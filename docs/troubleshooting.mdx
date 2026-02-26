@@ -124,6 +124,146 @@ JIRA_CUSTOM_HEADERS=X-Custom = value1
 Header values containing sensitive information are automatically masked in logs.
 </Note>
 
+## Authentication Errors
+
+<AccordionGroup>
+  <Accordion title="401 Unauthorized — API Token">
+    **Cause:** Invalid or expired API token.
+
+    **Fix:**
+    1. Verify your API token at [id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens)
+    2. Ensure `JIRA_USERNAME` matches the email associated with the token
+    3. Check that the token hasn't been revoked
+
+    ```bash
+    # Test your credentials
+    curl -u "your.email@example.com:your_api_token" \
+      "https://your-instance.atlassian.net/rest/api/2/myself"
+    ```
+  </Accordion>
+
+  <Accordion title="401 Unauthorized — Personal Access Token (PAT)">
+    **Cause:** Invalid PAT or PAT doesn't have required permissions.
+
+    **Fix:**
+    1. Create a new PAT in your Jira/Confluence profile settings
+    2. Ensure the PAT has sufficient permissions for the operations you need
+    3. Note: Server/DC limits PAT count (max 10 per user)
+
+    ```bash
+    # Test PAT authentication
+    curl -H "Authorization: Bearer your_pat_token" \
+      "https://jira.your-company.com/rest/api/2/myself"
+    ```
+  </Accordion>
+
+  <Accordion title="403 Forbidden">
+    **Cause:** Your account doesn't have permission for the requested operation.
+
+    **Fix:**
+    - Verify your Jira/Confluence project permissions
+    - For write operations, ensure your account has edit permissions
+    - For admin-only fields, you may need project admin access
+    - Check if `READ_ONLY_MODE=true` is blocking write tools
+  </Accordion>
+
+  <Accordion title="OAuth Token Expired">
+    **Cause:** OAuth access token has expired and refresh failed.
+
+    **Fix:**
+    1. Re-run the OAuth setup: `mcp-atlassian --oauth-setup`
+    2. Ensure your app has `offline_access` scope for refresh tokens
+    3. Check if the OAuth app is still active in your Atlassian developer console
+  </Accordion>
+</AccordionGroup>
+
+## Field and Data Errors
+
+<AccordionGroup>
+  <Accordion title="Field 'customfield_XXXXX' not found">
+    **Cause:** Custom field ID doesn't exist or isn't available on the issue type.
+
+    **Fix:**
+    1. Use `jira_search_fields` to find the correct field ID
+    2. Check if the field is available on the target issue type's screen
+    3. Custom field IDs differ between Cloud and Server/DC instances
+
+    ```json
+    jira_search_fields: {"keyword": "story points", "project_key": "PROJ"}
+    ```
+  </Accordion>
+
+  <Accordion title="Issue type not found or not available">
+    **Cause:** The specified issue type doesn't exist in the project.
+
+    **Fix:**
+    - Use `jira_get_all_projects` to see available issue types per project
+    - Issue type names are case-sensitive
+    - Some issue types (e.g., "Epic") may require specific project configurations
+  </Accordion>
+
+  <Accordion title="Attachment too large">
+    **Cause:** File exceeds the 50MB attachment limit.
+
+    **Fix:**
+    - MCP Atlassian limits inline attachment downloads to 50MB
+    - For larger files, access attachments directly via the Jira/Confluence web UI
+    - Consider compressing files before uploading
+  </Accordion>
+</AccordionGroup>
+
+## Rate Limiting
+
+<AccordionGroup>
+  <Accordion title="429 Too Many Requests">
+    **Cause:** You've exceeded the Atlassian API rate limit.
+
+    **Fix:**
+    - Atlassian Cloud: ~100 requests per minute per user (varies)
+    - Server/DC: depends on instance configuration
+    - Add delays between bulk operations
+    - Use batch tools (`jira_batch_create_issues`, `jira_batch_get_changelogs`) instead of individual calls
+    - Consider using `ENABLED_TOOLS` to limit which tools are available
+  </Accordion>
+</AccordionGroup>
+
+## Connection Issues
+
+<AccordionGroup>
+  <Accordion title="SSL Certificate Verification Failed">
+    **Cause:** Server/DC instance uses a self-signed or internal CA certificate.
+
+    **Fix:**
+    ```bash
+    # Disable SSL verification (not recommended for production)
+    JIRA_SSL_VERIFY=false
+    CONFLUENCE_SSL_VERIFY=false
+    ```
+
+    For mTLS (mutual TLS) authentication:
+    ```bash
+    JIRA_CLIENT_CERT=/path/to/client-cert.pem
+    JIRA_CLIENT_KEY=/path/to/client-key.pem
+    ```
+  </Accordion>
+
+  <Accordion title="Connection Timeout">
+    **Cause:** Atlassian instance is unreachable or slow to respond.
+
+    **Fix:**
+    - Default timeout is 75 seconds
+    - Increase timeout for slow instances:
+    ```bash
+    JIRA_TIMEOUT=120
+    CONFLUENCE_TIMEOUT=120
+    ```
+    - Check if a proxy is required:
+    ```bash
+    HTTPS_PROXY=https://proxy.example.com:8443
+    ```
+  </Accordion>
+</AccordionGroup>
+
 ## Getting Help
 
 - Check [GitHub Issues](https://github.com/sooperset/mcp-atlassian/issues) for known problems

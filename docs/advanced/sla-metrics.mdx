@@ -1,0 +1,134 @@
+---
+title: "SLA Metrics"
+description: "Configure and use SLA metrics for Jira issues — cycle time, lead time, time-in-status, and more"
+---
+
+MCP Atlassian can calculate SLA metrics for Jira issues using the `jira_get_issue_sla` and `jira_get_issue_dates` tools. This guide covers configuration and usage.
+
+## Available Metrics
+
+| Metric | Description |
+|--------|-------------|
+| `cycle_time` | Time from first "In Progress" to resolution |
+| `lead_time` | Time from creation to resolution |
+| `time_in_status` | Breakdown of time spent in each status |
+| `due_date_compliance` | Whether issues were resolved before their due date |
+| `resolution_time` | Total time from creation to resolution |
+| `first_response_time` | Time from creation to first comment or status change |
+
+## Configuration
+
+Configure SLA calculation via environment variables:
+
+### Metrics Selection
+
+Choose which metrics to calculate (comma-separated):
+
+```bash
+JIRA_SLA_METRICS=cycle_time,time_in_status
+```
+
+Default: `cycle_time,time_in_status`
+
+### Working Hours
+
+Enable business-hours-only calculation:
+
+```bash
+# Enable working hours filtering
+JIRA_SLA_WORKING_HOURS_ONLY=true
+
+# Define business hours (24-hour format)
+JIRA_SLA_WORKING_HOURS_START=09:00
+JIRA_SLA_WORKING_HOURS_END=17:00
+
+# Working days (1=Monday, 7=Sunday)
+JIRA_SLA_WORKING_DAYS=1,2,3,4,5
+```
+
+### Timezone
+
+Set the timezone for SLA calculations:
+
+```bash
+JIRA_SLA_TIMEZONE=America/New_York
+```
+
+Uses IANA timezone identifiers. Default: `UTC`
+
+**Common timezones:**
+| Timezone | Identifier |
+|----------|------------|
+| US Eastern | `America/New_York` |
+| US Pacific | `America/Los_Angeles` |
+| UK | `Europe/London` |
+| Central Europe | `Europe/Berlin` |
+| Japan | `Asia/Tokyo` |
+| Australia Eastern | `Australia/Sydney` |
+
+## Usage
+
+### Get SLA Metrics for an Issue
+
+```json
+jira_get_issue_sla: {
+  "issue_key": "PROJ-123",
+  "metrics": "cycle_time,time_in_status,lead_time"
+}
+```
+
+### Get Key Dates
+
+```json
+jira_get_issue_dates: {
+  "issue_key": "PROJ-123"
+}
+```
+
+Returns creation date, resolution date, due date, and status transition timestamps.
+
+### Get Development Info
+
+Track linked branches, commits, and PRs:
+
+```json
+jira_get_issue_development_info: {
+  "issue_key": "PROJ-123"
+}
+```
+
+### Batch Development Info
+
+Get development info for multiple issues:
+
+```json
+jira_get_issues_development_info: {
+  "issue_keys": ["PROJ-1", "PROJ-2", "PROJ-3"]
+}
+```
+
+## Example Configuration
+
+A typical production SLA configuration:
+
+```bash
+# Calculate cycle time and time-in-status
+JIRA_SLA_METRICS=cycle_time,time_in_status,lead_time
+
+# Count only business hours
+JIRA_SLA_WORKING_HOURS_ONLY=true
+JIRA_SLA_WORKING_HOURS_START=09:00
+JIRA_SLA_WORKING_HOURS_END=17:00
+JIRA_SLA_WORKING_DAYS=1,2,3,4,5
+
+# US Eastern timezone
+JIRA_SLA_TIMEZONE=America/New_York
+```
+
+<Tip>
+Start with `cycle_time` and `time_in_status` — these are the most commonly useful metrics for sprint retrospectives and process improvement.
+</Tip>
+
+<Warning>
+SLA calculations use issue changelog data. For accurate metrics, ensure issues follow consistent status transitions in your workflow.
+</Warning>
