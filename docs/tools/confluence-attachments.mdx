@@ -22,8 +22,11 @@ Upload an attachment to Confluence content (page or blog post).
 ```json
 {"page_id": "12345678", "file_path": "/path/to/diagram.png", "comment": "Updated architecture diagram"}
 ```
-<Tip>Supports any file type. If an attachment with the same name exists, it's updated (new version created).
+
+<Tip>
+Supports any file type. If an attachment with the same name exists, it's updated (new version created).
 </Tip>
+
 
 ---
 
@@ -62,10 +65,16 @@ List all attachments for a Confluence content item (page or blog post).
 ```json
 {"content_id": "12345678", "media_type": "application/octet-stream"}
 ```
-<Tip>Use `media_type="application/octet-stream"` for binary files (Confluence returns this for most files including images). Use `filename` parameter for specific files.
+
+<Tip>
+Use `media_type="application/octet-stream"` for binary files (Confluence returns this for most files including images). Use `filename` parameter for specific files.
 </Tip>
-<Warning>Confluence API returns generic MIME types — use the `mediaTypeDescription` field for human-readable type info.
+
+
+<Warning>
+Confluence API returns generic MIME types — use the `mediaTypeDescription` field for human-readable type info.
 </Warning>
+
 
 ---
 

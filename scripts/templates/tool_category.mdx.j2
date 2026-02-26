@@ -26,10 +26,16 @@ description: "{{ category.description }}"
 {{ tool.override.example }}```
 {% endif %}
 {% if tool.override and tool.override.tips %}
-<Tip>{{ tool.override.tips }}</Tip>
+
+<Tip>
+{{ tool.override.tips | trim }}
+</Tip>
 {% endif %}
 {% if tool.override and tool.override.platform_notes %}
-<Warning>{{ tool.override.platform_notes }}</Warning>
+
+<Warning>
+{{ tool.override.platform_notes | trim }}
+</Warning>
 {% endif %}
 
 ---

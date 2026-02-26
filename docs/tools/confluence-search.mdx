@@ -19,10 +19,16 @@ Search Confluence content using simple terms or CQL.
 ```json
 {"query": "type=page AND space=DEV AND title~'Architecture'", "limit": 10}
 ```
-<Tip>Supports both CQL queries and simple text search. Simple text uses `siteSearch` by default with automatic fallback to `text` search.
+
+<Tip>
+Supports both CQL queries and simple text search. Simple text uses `siteSearch` by default with automatic fallback to `text` search.
 </Tip>
-<Warning>CQL syntax may differ slightly between Cloud and Server/DC. Personal spaces use `space="~username"` (quoted).
+
+
+<Warning>
+CQL syntax may differ slightly between Cloud and Server/DC. Personal spaces use `space="~username"` (quoted).
 </Warning>
+
 
 ---
 
