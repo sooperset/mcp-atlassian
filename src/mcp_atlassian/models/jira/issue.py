@@ -571,7 +571,7 @@ class JiraIssue(ApiModel, TimestampMixin):
         if self.components and should_include_field("components"):
             result["components"] = self.components
 
-        if self.fix_versions and should_include_field("fix_versions"):
+        if self.fix_versions and should_include_field("fixVersions"):
             result["fix_versions"] = self.fix_versions
 
         # Add epic fields if available and requested
