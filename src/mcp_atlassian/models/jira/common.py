@@ -31,6 +31,8 @@ class JiraUser(ApiModel):
     """
 
     account_id: str | None = None
+    username: str | None = None  # Jira API "name" field - login username for [~username] mentions
+    user_key: str | None = None  # Jira API "key" field - internal user key
     display_name: str = UNASSIGNED
     email: str | None = None
     active: bool = True
@@ -66,6 +68,8 @@ class JiraUser(ApiModel):
 
         return cls(
             account_id=data.get("accountId"),
+            username=data.get("name"),  # Jira API "name" field (login username)
+            user_key=data.get("key"),  # Jira API "key" field (internal user key)
             display_name=str(data.get("displayName", UNASSIGNED)),
             email=data.get("emailAddress"),
             active=bool(data.get("active", True)),
@@ -75,12 +79,15 @@ class JiraUser(ApiModel):
 
     def to_simplified_dict(self) -> dict[str, Any]:
         """Convert to simplified dictionary for API response."""
-        return {
+        result = {
             "display_name": self.display_name,
-            "name": self.display_name,  # Add name for backward compatibility
+            "name": self.username or self.display_name,  # Jira login username for [~name] mentions
             "email": self.email,
             "avatar_url": self.avatar_url,
         }
+        if self.user_key:
+            result["key"] = self.user_key
+        return result
 
 
 class JiraStatusCategory(ApiModel):
