@@ -56,3 +56,10 @@ def parse_date(date_str: str | int | None) -> datetime | None:
         msg = f"Invalid date format: {date_str}"
         logger.warning(f"Failed to parse date string '{date_str}': {e}.")
         raise ValueError(msg) from e
+    except (OverflowError, OSError) as e:
+        # On Windows, sentinel dates (year 9999) raise OverflowError/OSError
+        # because the timestamp exceeds C _PyTime_t limits
+        logger.warning(
+            f"Date '{date_str}' overflows platform limits: {e}. Returning None."
+        )
+        return None
