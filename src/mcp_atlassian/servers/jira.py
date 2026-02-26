@@ -1655,9 +1655,7 @@ async def edit_comment(
         ),
     ],
     comment_id: Annotated[str, Field(description="The ID of the comment to edit")],
-    body: Annotated[
-        str, Field(description="Updated comment text in Markdown format")
-    ],
+    body: Annotated[str, Field(description="Updated comment text in Markdown format")],
     visibility: Annotated[
         str | None,
         Field(
@@ -2095,9 +2093,7 @@ async def transition_issue(
 async def create_sprint(
     ctx: Context,
     board_id: Annotated[str, Field(description="The id of board (e.g., '1000')")],
-    name: Annotated[
-        str, Field(description="Name of the sprint (e.g., 'Sprint 1')")
-    ],
+    name: Annotated[str, Field(description="Name of the sprint (e.g., 'Sprint 1')")],
     start_date: Annotated[
         str, Field(description="Start time for sprint (ISO 8601 format)")
     ],

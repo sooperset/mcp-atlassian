@@ -724,9 +724,7 @@ async def add_comment(
     page_id: Annotated[
         str, Field(description="The ID of the page to add a comment to")
     ],
-    body: Annotated[
-        str, Field(description="The comment content in Markdown format")
-    ],
+    body: Annotated[str, Field(description="The comment content in Markdown format")],
 ) -> str:
     """Add a comment to a Confluence page.
 
