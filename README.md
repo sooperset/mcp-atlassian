@@ -99,24 +99,24 @@ Documentation is also available in [llms.txt format](https://llmstxt.org/), whic
 
 ## Key Tools
 
-| Product       | Tool                                                    |
-|---------------|---------------------------------------------------------|
-| Jira          | `jira_search` - Search with JQL                         |
-| Jira          | `jira_get_issue` - Get issue details                    | 
-| Jira          | `jira_create_issue` - Create issues                     |
-| Jira          | `jira_update_issue` - Update issues                     |
-| Jira          | `jira_transition_issue` - Change status                 |
-| Confluence    | `confluence_search` - Search with CQL                   |
-| Confluence    | `confluence_get_page` - Get page content                |
-| Confluence    | `confluence_create_page` - Create pages                 |
-| Confluence    | `confluence_update_page` - Update pages                 |
-| Confluence    | `confluence_add_comment` - Add comments                 |
-| Zephyr Scale  | `zephyr_search_test_cases` - Search test cases          |
-| Zephyr Scale  | `zephyr_create_test_case` - Create test cases           |
+| Product       | Tool                                                   |
+|---------------|--------------------------------------------------------|
+| Jira          | `jira_search` - Search with JQL                        |
+| Jira          | `jira_get_issue` - Get issue details                   | 
+| Jira          | `jira_create_issue` - Create issues                    |
+| Jira          | `jira_update_issue` - Update issues                    |
+| Jira          | `jira_transition_issue` - Change status                |
+| Confluence    | `confluence_search` - Search with CQL                  |
+| Confluence    | `confluence_get_page` - Get page content               |
+| Confluence    | `confluence_create_page` - Create pages                |
+| Confluence    | `confluence_update_page` - Update pages                |
+| Confluence    | `confluence_add_comment` - Add comments                |
+| Zephyr Scale  | `zephyr_search_test_cases` - Search test cases         |
+| Zephyr Scale  | `zephyr_create_test_case` - Create test cases          |
 | Zephyr Scale  | `zephyr_create_test_execution` - Create test executions |
-| Zephyr Squad  | `zephyr_squad_get_cycles` - Get test cycles             |
+| Zephyr Squad  | `zephyr_squad_get_cycles` - Get test cycles            |
 | Zephyr Squad  | `zephyr_squad_create_execution` - Create test execution |
-| Zephyr Squad  | `zephyr_squad_execute_test` - Execute test              |
+| Zephyr Squad  | `zephyr_squad_execute_test` - Execute test             |
 
 **65 tools total** — See [Tools Reference](https://mcp-atlassian.soomiles.com/docs/tools-reference) for the complete list.
 
