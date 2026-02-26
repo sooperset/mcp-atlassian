@@ -1485,6 +1485,8 @@ def test_issue_key_pattern_validation():
     assert re.match(ISSUE_KEY_PATTERN, "CMSV2-1")
     assert re.match(ISSUE_KEY_PATTERN, "AB-1")
     assert re.match(ISSUE_KEY_PATTERN, "ABCDEFGHIJ-99")
+    assert re.match(ISSUE_KEY_PATTERN, "D_DEV-123")
+    assert re.match(ISSUE_KEY_PATTERN, "MY_PROJECT-1")
     # Invalid issue keys
     assert not re.match(ISSUE_KEY_PATTERN, "a-1")
     assert not re.match(ISSUE_KEY_PATTERN, "PROJ")
@@ -1497,6 +1499,8 @@ def test_issue_key_pattern_validation():
     assert re.match(PROJECT_KEY_PATTERN, "CMSV2")
     assert re.match(PROJECT_KEY_PATTERN, "AB")
     assert re.match(PROJECT_KEY_PATTERN, "ABCDEFGHIJ")
+    assert re.match(PROJECT_KEY_PATTERN, "D_DEV")
+    assert re.match(PROJECT_KEY_PATTERN, "MY_PROJECT")
     # Invalid project keys
     assert not re.match(PROJECT_KEY_PATTERN, "a")
     assert not re.match(PROJECT_KEY_PATTERN, "2ABC")
