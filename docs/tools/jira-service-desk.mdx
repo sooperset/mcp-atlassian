@@ -1,0 +1,45 @@
+---
+title: "Jira Service Desk"
+description: "Service desk queues and queue issues"
+---
+
+### Get Service Desk For Project
+
+Get the Jira Service Desk associated with a project key.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `project_key` | `string` | Yes | Jira project key (e.g., 'SUP') |
+
+---
+
+### Get Service Desk Queues
+
+Get queues for a Jira Service Desk.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `service_desk_id` | `string` | Yes | Service desk ID (e.g., '4') |
+| `start_at` | `integer` | No | Starting index for pagination (0-based) |
+| `limit` | `integer` | No | Maximum number of results (1-50) |
+
+---
+
+### Get Queue Issues
+
+Get issues from a Jira Service Desk queue.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `service_desk_id` | `string` | Yes | Service desk ID (e.g., '4') |
+| `queue_id` | `string` | Yes | Queue ID (e.g., '47') |
+| `start_at` | `integer` | No | Starting index for pagination (0-based) |
+| `limit` | `integer` | No | Maximum number of results (1-50) |
+
+---

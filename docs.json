@@ -16,6 +16,10 @@
     {
       "name": "PyPI",
       "url": "https://pypi.org/project/mcp-atlassian/"
+    },
+    {
+      "name": "Releases",
+      "url": "https://github.com/sooperset/mcp-atlassian/releases"
     }
   ],
   "anchors": [
@@ -47,9 +51,46 @@
             "group": "Usage",
             "pages": [
               "docs/configuration",
-              "docs/tools-reference",
+              "docs/tools-reference"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "docs/guides/jql-guide",
+              "docs/guides/cql-guide",
+              "docs/guides/common-workflows"
+            ]
+          },
+          {
+            "group": "Jira Tools",
+            "pages": [
+              "docs/tools/jira-issues",
+              "docs/tools/jira-search-fields",
+              "docs/tools/jira-agile",
+              "docs/tools/jira-comments-worklogs",
+              "docs/tools/jira-links-versions",
+              "docs/tools/jira-attachments",
+              "docs/tools/jira-service-desk",
+              "docs/tools/jira-forms-metrics"
+            ]
+          },
+          {
+            "group": "Confluence Tools",
+            "pages": [
+              "docs/tools/confluence-pages",
+              "docs/tools/confluence-search",
+              "docs/tools/confluence-attachments",
+              "docs/tools/confluence-comments"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
               "docs/http-transport",
-              "docs/compatibility"
+              "docs/compatibility",
+              "docs/advanced/sla-metrics",
+              "docs/advanced/docker-production"
             ]
           },
           {

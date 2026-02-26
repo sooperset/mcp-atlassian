@@ -5,7 +5,7 @@
 ![PePy - Total Downloads](https://static.pepy.tech/personalized-badge/mcp-atlassian?period=total&units=international_system&left_color=grey&right_color=blue&left_text=Total%20Downloads)
 [![Run Tests](https://github.com/sooperset/mcp-atlassian/actions/workflows/tests.yml/badge.svg)](https://github.com/sooperset/mcp-atlassian/actions/workflows/tests.yml)
 ![License](https://img.shields.io/github/license/sooperset/mcp-atlassian)
-[![Docs](https://img.shields.io/badge/docs-mintlify-blue)](https://personal-1d37018d.mintlify.app)
+[![Docs](https://img.shields.io/badge/docs-mintlify-blue)](https://mcp-atlassian.soomiles.com)
 
 Model Context Protocol (MCP) server for Atlassian products (Jira, Confluence, Zephyr Scale, and Zephyr Squad). Supports both Cloud and Server/Data Center deployments.
 
@@ -24,7 +24,7 @@ https://github.com/user-attachments/assets/7fe9c488-ad0c-4876-9b54-120b666bb785
 
 Go to https://id.atlassian.com/manage-profile/security/api-tokens and create a token.
 
-> For Server/Data Center, use a Personal Access Token instead. See [Authentication](https://personal-1d37018d.mintlify.app/docs/authentication).
+> For Server/Data Center, use a Personal Access Token instead. See [Authentication](https://mcp-atlassian.soomiles.com/docs/authentication).
 
 ### 2. Configure Your IDE
 
@@ -51,7 +51,7 @@ Add to your Claude Desktop or Cursor MCP configuration:
 }
 ```
 
-> **Server/Data Center users**: Use `JIRA_PERSONAL_TOKEN` / `CONFLUENCE_PERSONAL_TOKEN` / `ZEPHYR_PERSONAL_TOKEN` instead of username + token combinations. See [Authentication](https://personal-1d37018d.mintlify.app/docs/authentication) for details.
+> **Server/Data Center users**: Use `JIRA_PERSONAL_TOKEN` instead of `JIRA_USERNAME` + `JIRA_API_TOKEN`. See [Authentication](https://mcp-atlassian.soomiles.com/docs/authentication) for details.
 
 ### 3. Start Using
 
@@ -70,20 +70,20 @@ Ask your AI assistant to:
 
 ## Documentation
 
-Full documentation is available at **[personal-1d37018d.mintlify.app](https://personal-1d37018d.mintlify.app)**.
+Full documentation is available at **[mcp-atlassian.soomiles.com](https://mcp-atlassian.soomiles.com)**.
 
 Documentation is also available in [llms.txt format](https://llmstxt.org/), which LLMs can consume easily:
-- [`llms.txt`](https://personal-1d37018d.mintlify.app/llms.txt) — documentation sitemap
-- [`llms-full.txt`](https://personal-1d37018d.mintlify.app/llms-full.txt) — complete documentation
+- [`llms.txt`](https://mcp-atlassian.soomiles.com/llms.txt) — documentation sitemap
+- [`llms-full.txt`](https://mcp-atlassian.soomiles.com/llms-full.txt) — complete documentation
 
 | Topic | Description |
 |-------|-------------|
-| [Installation](https://personal-1d37018d.mintlify.app/docs/installation) | uvx, Docker, pip, from source |
-| [Authentication](https://personal-1d37018d.mintlify.app/docs/authentication) | API tokens, PAT, OAuth 2.0 |
-| [Configuration](https://personal-1d37018d.mintlify.app/docs/configuration) | IDE setup, environment variables |
-| [HTTP Transport](https://personal-1d37018d.mintlify.app/docs/http-transport) | SSE, streamable-http, multi-user |
-| [Tools Reference](https://personal-1d37018d.mintlify.app/docs/tools-reference) | All Jira & Confluence tools |
-| [Troubleshooting](https://personal-1d37018d.mintlify.app/docs/troubleshooting) | Common issues & debugging |
+| [Installation](https://mcp-atlassian.soomiles.com/docs/installation) | uvx, Docker, pip, from source |
+| [Authentication](https://mcp-atlassian.soomiles.com/docs/authentication) | API tokens, PAT, OAuth 2.0 |
+| [Configuration](https://mcp-atlassian.soomiles.com/docs/configuration) | IDE setup, environment variables |
+| [HTTP Transport](https://mcp-atlassian.soomiles.com/docs/http-transport) | SSE, streamable-http, multi-user |
+| [Tools Reference](https://mcp-atlassian.soomiles.com/docs/tools-reference) | All Jira & Confluence tools |
+| [Troubleshooting](https://mcp-atlassian.soomiles.com/docs/troubleshooting) | Common issues & debugging |
 
 ## Compatibility
 
@@ -99,21 +99,26 @@ Documentation is also available in [llms.txt format](https://llmstxt.org/), whic
 
 ## Key Tools
 
-| Jira | Confluence | Zephyr                                                          |
-|------|------------|-----------------------------------------------------------------|
-| `jira_search` - Search with JQL | `confluence_search` - Search with CQL | **Scale**: `zephyr_search_test_cases` - Search test cases       |
-| `jira_get_issue` - Get issue details | `confluence_get_page` - Get page content | **Scale**: `zephyr_create_test_case` - Create test cases        |
-| `jira_create_issue` - Create issues | `confluence_create_page` - Create pages | **Scale**: `zephyr_create_test_execution` - Create test executions |
-| `jira_update_issue` - Update issues | `confluence_update_page` - Update pages | **Squad**: `zephyr_squad_get_cycles` - Get test cycles          |
-| `jira_transition_issue` - Change status | `confluence_add_comment` - Add comments | **Squad**: `zephyr_squad_create_execution` - Create test execution |
-| `jira_get_queue_issues` - Read JSM queue items | | |
-| `jira_get_issue_sla` - Calculate SLA metrics | `confluence_get_page_history` - Get historical page versions | **Squad**: `zephyr_squad_execute_test` - Execute test           |
-| `jira_get_issue_development_info` - Get linked PRs, branches, commits | `confluence_get_page_views` - Get page view stats (Cloud only) | |
-| `jira_get_issue_proforma_forms` - Get ProForma forms | | |
-| `jira_get_proforma_form_details` - Get form details | | |
-| `jira_update_proforma_form_answers` - Update form answers | | |
+| Product       | Tool                                                    |
+|---------------|---------------------------------------------------------|
+| Jira          | `jira_search` - Search with JQL                         |
+| Jira          | `jira_get_issue` - Get issue details                    | 
+| Jira          | `jira_create_issue` - Create issues                     |
+| Jira          | `jira_update_issue` - Update issues                     |
+| Jira          | `jira_transition_issue` - Change status                 |
+| Confluence    | `confluence_search` - Search with CQL                   |
+| Confluence    | `confluence_get_page` - Get page content                |
+| Confluence    | `confluence_create_page` - Create pages                 |
+| Confluence    | `confluence_update_page` - Update pages                 |
+| Confluence    | `confluence_add_comment` - Add comments                 |
+| Zephyr Scale  | `zephyr_search_test_cases` - Search test cases          |
+| Zephyr Scale  | `zephyr_create_test_case` - Create test cases           |
+| Zephyr Scale  | `zephyr_create_test_execution` - Create test executions |
+| Zephyr Squad  | `zephyr_squad_get_cycles` - Get test cycles             |
+| Zephyr Squad  | `zephyr_squad_create_execution` - Create test execution |
+| Zephyr Squad  | `zephyr_squad_execute_test` - Execute test              |
 
-See [Tools Reference](https://personal-1d37018d.mintlify.app/docs/tools-reference) for the complete list.
+**65 tools total** — See [Tools Reference](https://mcp-atlassian.soomiles.com/docs/tools-reference) for the complete list.
 
 ## Security
 

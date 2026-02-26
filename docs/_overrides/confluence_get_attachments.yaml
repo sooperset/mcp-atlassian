@@ -1,0 +1,6 @@
+example: |
+  {"content_id": "12345678", "media_type": "application/octet-stream"}
+tips: |
+  Use `media_type="application/octet-stream"` for binary files (Confluence returns this for most files including images). Use `filename` parameter for specific files.
+platform_notes: |
+  Confluence API returns generic MIME types — use the `mediaTypeDescription` field for human-readable type info.

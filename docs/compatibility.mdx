@@ -1,9 +1,7 @@
 ---
 title: "AI Platform Compatibility"
-description: "Compatibility status across AI platforms, clients, and gateways"
+description: "Platform compatibility matrix — Claude Desktop, Cursor, Cline, and Cloud vs Server/DC feature comparison"
 ---
-
-# AI Platform Compatibility
 
 MCP Atlassian works with any MCP-compatible client. This page documents platform-specific notes and known issues.
 
@@ -102,3 +100,52 @@ ChatGPT's MCP integration has reported vague "violates guidelines" errors. This 
 ## HTTP Transport
 
 For platforms that require HTTP transport (e.g., remote deployments, gateways), see the [HTTP Transport](/docs/http-transport) guide.
+
+## Cloud vs Server/Data Center
+
+MCP Atlassian supports both Atlassian Cloud and Server/Data Center deployments, but some features differ between platforms.
+
+### Authentication Methods
+
+| Method | Cloud | Server/DC |
+|--------|-------|-----------|
+| API Token (username + token) | Yes | Yes (username + password) |
+| Personal Access Token (PAT) | No | Yes |
+| OAuth 2.0 | Yes (3LO) | Yes (Application Links) |
+| BYOT (Bring Your Own Token) | Yes | Yes |
+
+### Tool Availability
+
+| Tool | Cloud | Server/DC | Notes |
+|------|-------|-----------|-------|
+| `jira_batch_get_changelogs` | Yes | No | Cloud-only changelog API |
+| `jira_get_issue_proforma_forms` | Yes | No | Cloud-only (requires cloud_id for Forms API) |
+| `jira_get_service_desk_queues` | Yes | Yes | Requires Jira Service Management |
+| `confluence_get_page_views` | Yes | No | Cloud-only analytics API |
+
+### Content Format Differences
+
+| Feature | Cloud | Server/DC |
+|---------|-------|-----------|
+| Issue descriptions | ADF (Atlassian Document Format) | Wiki markup |
+| Confluence pages | Storage format (XHTML) | Storage format (XHTML) |
+| Markdown input | Auto-converted to ADF | Auto-converted to wiki markup |
+| Rich text rendering | ADF JSON | Wiki markup |
+
+<Tip>
+MCP Atlassian handles format conversion automatically — you always write in Markdown regardless of platform. The tools convert to the appropriate format (ADF for Cloud, wiki markup for Server/DC).
+</Tip>
+
+### API Differences
+
+| Aspect | Cloud | Server/DC |
+|--------|-------|-----------|
+| Base URL | `*.atlassian.net` | Custom domain |
+| API version | REST API v2 + v3 | REST API v2 |
+| User identifiers | `accountId` | `username` or `userKey` |
+| Rate limiting | Enforced (~100 req/min) | Instance-dependent |
+| Webhooks | Cloud-managed | Self-managed |
+
+<Warning>
+When switching between Cloud and Server/DC, custom field IDs will be different. Use `jira_search_fields` to discover the correct field IDs for your instance.
+</Warning>

@@ -1,0 +1,124 @@
+---
+title: "Jira Agile"
+description: "Boards, sprints, and agile project management"
+---
+
+### Get Agile Boards
+
+Get jira agile boards by name, project key, or type.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `board_name` | `string` | No | (Optional) The name of board, support fuzzy search |
+| `project_key` | `string` | No | (Optional) Jira project key (e.g., 'PROJ', 'ACV2') |
+| `board_type` | `string` | No | (Optional) The type of jira board (e.g., 'scrum', 'kanban') |
+| `start_at` | `integer` | No | Starting index for pagination (0-based) |
+| `limit` | `integer` | No | Maximum number of results (1-50) |
+**Example:**
+
+```json
+{"board_name": "Sprint Board", "project_key": "PROJ", "board_type": "scrum"}
+```
+
+<Tip>
+Supports fuzzy search by board name. Combine with `project_key` to narrow results.
+</Tip>
+
+
+---
+
+### Get Board Issues
+
+Get all issues linked to a specific board filtered by JQL.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `board_id` | `string` | Yes | The id of the board (e.g., '1001') |
+| `jql` | `string` | Yes | JQL query string (Jira Query Language). Examples: - Find Epics: "issuetype = Epic AND project = PROJ" - Find issues in Epic: "parent = PROJ-123" - Find by status: "status = 'In Progress' AND project = PROJ" - Find by assignee: "assignee = currentUser()" - Find recently updated: "updated >= -7d AND project = PROJ" - Find by label: "labels = frontend AND project = PROJ" - Find by priority: "priority = High AND project = PROJ" |
+| `fields` | `string` | No | Comma-separated fields to return in the results. Use '*all' for all fields, or specify individual fields like 'summary,status,assignee,priority' |
+| `start_at` | `integer` | No | Starting index for pagination (0-based) |
+| `limit` | `integer` | No | Maximum number of results (1-50) |
+| `expand` | `string` | No | Optional fields to expand in the response (e.g., 'changelog'). |
+
+---
+
+### Get Sprints from Board
+
+Get jira sprints from board by state.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `board_id` | `string` | Yes | The id of board (e.g., '1000') |
+| `state` | `string` | No | Sprint state (e.g., 'active', 'future', 'closed') |
+| `start_at` | `integer` | No | Starting index for pagination (0-based) |
+| `limit` | `integer` | No | Maximum number of results (1-50) |
+
+---
+
+### Get Sprint Issues
+
+Get jira issues from sprint.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sprint_id` | `string` | Yes | The id of sprint (e.g., '10001') |
+| `fields` | `string` | No | Comma-separated fields to return in the results. Use '*all' for all fields, or specify individual fields like 'summary,status,assignee,priority' |
+| `start_at` | `integer` | No | Starting index for pagination (0-based) |
+| `limit` | `integer` | No | Maximum number of results (1-50) |
+**Example:**
+
+```json
+{"sprint_id": "42", "fields": "summary,status,assignee,story_points"}
+```
+
+<Tip>
+Get the sprint ID from `jira_get_sprints_from_board` first.
+</Tip>
+
+
+---
+
+### Create Sprint
+
+Create Jira sprint for a board.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `board_id` | `string` | Yes | The id of board (e.g., '1000') |
+| `sprint_name` | `string` | Yes | Name of the sprint (e.g., 'Sprint 1') |
+| `start_date` | `string` | Yes | Start time for sprint (ISO 8601 format) |
+| `end_date` | `string` | Yes | End time for sprint (ISO 8601 format) |
+| `goal` | `string` | No | (Optional) Goal of the sprint |
+
+---
+
+### Update Sprint
+
+Update jira sprint.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sprint_id` | `string` | Yes | The id of sprint (e.g., '10001') |
+| `sprint_name` | `string` | No | (Optional) New name for the sprint |
+| `state` | `string` | No | (Optional) New state for the sprint (future\|active\|closed) |
+| `start_date` | `string` | No | (Optional) New start date for the sprint |
+| `end_date` | `string` | No | (Optional) New end date for the sprint |
+| `goal` | `string` | No | (Optional) New goal for the sprint |
+
+---

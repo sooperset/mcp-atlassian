@@ -1,0 +1,183 @@
+---
+title: "Docker Deployment"
+description: "Deploy MCP Atlassian with Docker for production — Compose examples, health checks, and Kubernetes notes"
+---
+
+MCP Atlassian provides Docker images for production deployment. This guide covers Docker Compose setups, health checks, and orchestration patterns.
+
+## Quick Start
+
+```bash
+docker run -i --rm \
+  -e JIRA_URL=https://your-company.atlassian.net \
+  -e JIRA_USERNAME=your.email@example.com \
+  -e JIRA_API_TOKEN=your_api_token \
+  -e CONFLUENCE_URL=https://your-company.atlassian.net/wiki \
+  -e CONFLUENCE_USERNAME=your.email@example.com \
+  -e CONFLUENCE_API_TOKEN=your_api_token \
+  ghcr.io/sooperset/mcp-atlassian:latest
+```
+
+## Docker Compose
+
+### Basic Setup
+
+```yaml
+version: "3.8"
+services:
+  mcp-atlassian:
+    image: ghcr.io/sooperset/mcp-atlassian:latest
+    env_file: .env
+    ports:
+      - "8000:8000"
+    environment:
+      - TRANSPORT=sse
+      - PORT=8000
+      - HOST=0.0.0.0
+    restart: unless-stopped
+```
+
+### With Health Checks
+
+```yaml
+version: "3.8"
+services:
+  mcp-atlassian:
+    image: ghcr.io/sooperset/mcp-atlassian:latest
+    env_file: .env
+    ports:
+      - "8000:8000"
+    environment:
+      - TRANSPORT=sse
+      - PORT=8000
+      - HOST=0.0.0.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+```
+
+### Multi-Service Setup
+
+Run separate Jira and Confluence services:
+
+```yaml
+version: "3.8"
+services:
+  jira-mcp:
+    image: ghcr.io/sooperset/mcp-atlassian:latest
+    env_file: .env.jira
+    ports:
+      - "8001:8000"
+    environment:
+      - TRANSPORT=sse
+      - PORT=8000
+      - ENABLED_TOOLS=jira_search,jira_get_issue,jira_create_issue,jira_update_issue
+
+  confluence-mcp:
+    image: ghcr.io/sooperset/mcp-atlassian:latest
+    env_file: .env.confluence
+    ports:
+      - "8002:8000"
+    environment:
+      - TRANSPORT=sse
+      - PORT=8000
+      - ENABLED_TOOLS=confluence_search,confluence_get_page,confluence_create_page
+```
+
+## Environment File Pattern
+
+Use `.env` files for sensitive credentials:
+
+```bash
+# .env
+JIRA_URL=https://your-company.atlassian.net
+JIRA_USERNAME=your.email@example.com
+JIRA_API_TOKEN=your_api_token
+CONFLUENCE_URL=https://your-company.atlassian.net/wiki
+CONFLUENCE_USERNAME=your.email@example.com
+CONFLUENCE_API_TOKEN=your_api_token
+```
+
+<Warning>
+Never commit `.env` files to version control. Add `.env` to your `.gitignore`.
+</Warning>
+
+## Read-Only Mode
+
+For production environments where write operations should be disabled:
+
+```yaml
+environment:
+  - READ_ONLY_MODE=true
+```
+
+This disables all create, update, and delete tools at the server level.
+
+## Kubernetes Notes
+
+For Kubernetes deployments:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-atlassian
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-atlassian
+  template:
+    metadata:
+      labels:
+        app: mcp-atlassian
+    spec:
+      containers:
+      - name: mcp-atlassian
+        image: ghcr.io/sooperset/mcp-atlassian:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: TRANSPORT
+          value: "sse"
+        - name: PORT
+          value: "8000"
+        envFrom:
+        - secretRef:
+            name: atlassian-credentials
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-atlassian
+spec:
+  selector:
+    app: mcp-atlassian
+  ports:
+  - port: 8000
+    targetPort: 8000
+```
+
+<Tip>
+Use Kubernetes Secrets for credentials. Create with: `kubectl create secret generic atlassian-credentials --from-env-file=.env`
+</Tip>
+
+<Tip>
+For high availability, consider running separate deployments for Jira and Confluence services with different `ENABLED_TOOLS` configurations.
+</Tip>

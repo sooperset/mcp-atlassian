@@ -1,4 +1,4 @@
-"""Comprehensive MCP protocol integration tests for AtlassianMCP server."""
+"""Comprehensive MCP protocol unit tests for AtlassianMCP server."""
 
 import json
 import logging
@@ -11,7 +11,6 @@ from fastmcp.tools import Tool as FastMCPTool
 from mcp.types import Tool as MCPTool
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
-from starlette.responses import JSONResponse
 from starlette.testclient import TestClient
 
 from mcp_atlassian.confluence import ConfluenceFetcher
@@ -29,12 +28,11 @@ from tests.utils.factories import (
     ConfluencePageFactory,
     JiraIssueFactory,
 )
-from tests.utils.mocks import MockEnvironment, MockFastMCP
+from tests.utils.mocks import MockEnvironment
 
 logger = logging.getLogger(__name__)
 
 
-@pytest.mark.integration
 @pytest.mark.anyio
 class TestMCPProtocolIntegration:
     """Test suite for MCP protocol integration with AtlassianMCP server."""
@@ -339,9 +337,11 @@ class TestMCPProtocolIntegration:
                 enabled_tools=None,
             )
 
-            # Mock request context
+            # Mock request context (set request=None to prevent MagicMock
+            # auto-creating service_headers that falsely enable services)
             request_context = MagicMock()
             request_context.lifespan_context = {"app_lifespan_context": app_context}
+            request_context.request = None
 
             # Set up server context
             atlassian_mcp_server._mcp_server = MagicMock()
@@ -390,174 +390,244 @@ class TestMCPProtocolIntegration:
 
     async def test_middleware_oauth_token_processing(self):
         """Test UserTokenMiddleware OAuth token extraction and processing."""
-        # Create middleware instance
-        app = MagicMock()
-        mcp_server = MagicMock()
-        # Mock the settings attribute with proper structure
-        settings_mock = MagicMock()
-        settings_mock.streamable_http_path = "/mcp"
-        mcp_server.settings = settings_mock
-        middleware = UserTokenMiddleware(app, mcp_server_ref=mcp_server)
+        # Create mock mcp_server with get_streamable_http_path
+        mcp_server = MagicMock(spec=AtlassianMCP)
+        mcp_server.get_streamable_http_path.return_value = "/mcp"
 
-        # Create mock request with OAuth Bearer token
-        request = MockFastMCP.create_request()
-        request.url.path = "/mcp"
-        request.method = "POST"
-        request.headers = {"Authorization": "Bearer test-oauth-token-12345"}
+        # Track state passed to downstream app
+        captured_state = {}
 
-        # Mock call_next
-        async def mock_call_next(req):
-            # Verify request state was set
-            assert hasattr(req.state, "user_atlassian_token")
-            assert req.state.user_atlassian_token == "test-oauth-token-12345"
-            assert req.state.user_atlassian_auth_type == "oauth"
-            assert req.state.user_atlassian_email is None
-            return JSONResponse({"status": "ok"})
+        async def mock_app(scope, receive, send):
+            captured_state.update(scope.get("state", {}))
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"content-type", b"application/json")],
+                }
+            )
+            await send(
+                {
+                    "type": "http.response.body",
+                    "body": b'{"status":"ok"}',
+                }
+            )
 
-        # Process request
-        response = await middleware.dispatch(request, mock_call_next)
+        middleware = UserTokenMiddleware(mock_app, mcp_server_ref=mcp_server)
 
-        # Verify response
-        assert response.status_code == 200
+        # Build ASGI scope with Bearer token
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp",
+            "headers": [
+                (b"authorization", b"Bearer test-oauth-token-12345"),
+            ],
+            "state": {},
+        }
+
+        response_started = {}
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        async def send(message):
+            if message["type"] == "http.response.start":
+                response_started.update(message)
+
+        await middleware(scope, receive, send)
+
+        # Verify state was set correctly
+        assert captured_state.get("user_atlassian_token") == ("test-oauth-token-12345")
+        assert captured_state.get("user_atlassian_auth_type") == "oauth"
+        assert captured_state.get("user_atlassian_email") is None
+        assert response_started["status"] == 200
 
     async def test_middleware_pat_token_processing(self):
         """Test UserTokenMiddleware PAT token extraction and processing."""
-        # Create middleware instance
-        app = MagicMock()
-        mcp_server = MagicMock()
-        # Mock the settings attribute with proper structure
-        settings_mock = MagicMock()
-        settings_mock.streamable_http_path = "/mcp"
-        mcp_server.settings = settings_mock
-        middleware = UserTokenMiddleware(app, mcp_server_ref=mcp_server)
+        mcp_server = MagicMock(spec=AtlassianMCP)
+        mcp_server.get_streamable_http_path.return_value = "/mcp"
 
-        # Create mock request with PAT token
-        request = MockFastMCP.create_request()
-        request.url.path = "/mcp"
-        request.method = "POST"
-        request.headers = {"Authorization": "Token test-pat-token-67890"}
+        captured_state = {}
 
-        # Mock call_next
-        async def mock_call_next(req):
-            # Verify request state was set
-            assert hasattr(req.state, "user_atlassian_token")
-            assert req.state.user_atlassian_token == "test-pat-token-67890"
-            assert req.state.user_atlassian_auth_type == "pat"
-            assert req.state.user_atlassian_email is None
-            return JSONResponse({"status": "ok"})
+        async def mock_app(scope, receive, send):
+            captured_state.update(scope.get("state", {}))
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"content-type", b"application/json")],
+                }
+            )
+            await send(
+                {
+                    "type": "http.response.body",
+                    "body": b'{"status":"ok"}',
+                }
+            )
 
-        # Process request
-        response = await middleware.dispatch(request, mock_call_next)
+        middleware = UserTokenMiddleware(mock_app, mcp_server_ref=mcp_server)
 
-        # Verify response
-        assert response.status_code == 200
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp",
+            "headers": [
+                (b"authorization", b"Token test-pat-token-67890"),
+            ],
+            "state": {},
+        }
+
+        response_started = {}
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        async def send(message):
+            if message["type"] == "http.response.start":
+                response_started.update(message)
+
+        await middleware(scope, receive, send)
+
+        assert captured_state.get("user_atlassian_token") == ("test-pat-token-67890")
+        assert captured_state.get("user_atlassian_auth_type") == "pat"
+        assert captured_state.get("user_atlassian_email") is None
+        assert response_started["status"] == 200
 
     async def test_middleware_invalid_auth_header(self):
         """Test UserTokenMiddleware with invalid authorization header."""
-        # Create middleware instance
-        app = MagicMock()
-        mcp_server = MagicMock()
-        # Mock the settings attribute with proper structure
-        settings_mock = MagicMock()
-        settings_mock.streamable_http_path = "/mcp"
-        mcp_server.settings = settings_mock
-        middleware = UserTokenMiddleware(app, mcp_server_ref=mcp_server)
+        mcp_server = MagicMock(spec=AtlassianMCP)
+        mcp_server.get_streamable_http_path.return_value = "/mcp"
 
-        # Create mock request with invalid auth header
-        request = MockFastMCP.create_request()
-        request.url.path = "/mcp"
-        request.method = "POST"
-        request.headers = {
-            "Authorization": "Basic dXNlcjpwYXNz"
-        }  # Basic auth not supported
+        app_called = False
 
-        # Mock call_next (shouldn't be called)
-        async def mock_call_next(req):
-            pytest.fail("call_next should not be called for invalid auth")
+        async def mock_app(scope, receive, send):
+            nonlocal app_called
+            app_called = True
 
-        # Process request
-        response = await middleware.dispatch(request, mock_call_next)
+        middleware = UserTokenMiddleware(mock_app, mcp_server_ref=mcp_server)
 
-        # Verify error response
-        assert response.status_code == 401
-        body = json.loads(response.body)
+        # Use an unsupported auth type (not Bearer/Token/Basic)
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp",
+            "headers": [
+                (b"authorization", b"Digest username=test"),
+            ],
+            "state": {},
+        }
+
+        response_parts = []
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        async def send(message):
+            response_parts.append(message)
+
+        await middleware(scope, receive, send)
+
+        # App should not be called for invalid auth
+        assert not app_called
+
+        # Verify 401 error response
+        assert response_parts[0]["status"] == 401
+        body = json.loads(response_parts[1]["body"])
         assert "error" in body
-        assert (
-            "Only 'Bearer <OAuthToken>' or 'Token <PAT>' types are supported"
-            in body["error"]
-        )
+        assert "Bearer <OAuthToken>" in body["error"]
+        assert "Token <PAT>" in body["error"]
 
     async def test_middleware_empty_token(self):
         """Test UserTokenMiddleware with empty token."""
-        # Create middleware instance
-        app = MagicMock()
-        mcp_server = MagicMock()
-        # Mock the settings attribute with proper structure
-        settings_mock = MagicMock()
-        settings_mock.streamable_http_path = "/mcp"
-        mcp_server.settings = settings_mock
-        middleware = UserTokenMiddleware(app, mcp_server_ref=mcp_server)
+        mcp_server = MagicMock(spec=AtlassianMCP)
+        mcp_server.get_streamable_http_path.return_value = "/mcp"
 
-        # Create mock request with empty Bearer token
-        request = MockFastMCP.create_request()
-        request.url.path = "/mcp"
-        request.method = "POST"
-        request.headers = {"Authorization": "Bearer "}
+        app_called = False
 
-        # Mock call_next (shouldn't be called)
-        async def mock_call_next(req):
-            pytest.fail("call_next should not be called for empty token")
+        async def mock_app(scope, receive, send):
+            nonlocal app_called
+            app_called = True
 
-        # Process request
-        response = await middleware.dispatch(request, mock_call_next)
+        middleware = UserTokenMiddleware(mock_app, mcp_server_ref=mcp_server)
 
-        # Verify error response
-        assert response.status_code == 401
-        body = json.loads(response.body)
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp",
+            "headers": [
+                (b"authorization", b"Bearer "),
+            ],
+            "state": {},
+        }
+
+        response_parts = []
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        async def send(message):
+            response_parts.append(message)
+
+        await middleware(scope, receive, send)
+
+        # App should not be called for empty token
+        assert not app_called
+
+        # Verify 401 error response
+        assert response_parts[0]["status"] == 401
+        body = json.loads(response_parts[1]["body"])
         assert "error" in body
         assert "Empty Bearer token" in body["error"]
 
     async def test_middleware_non_mcp_path(self):
         """Test UserTokenMiddleware bypasses non-MCP paths."""
-        # Create middleware instance
-        app = MagicMock()
-        mcp_server = MagicMock()
-        # Mock the settings attribute with proper structure
-        settings_mock = MagicMock()
-        settings_mock.streamable_http_path = "/mcp"
-        mcp_server.settings = settings_mock
-        middleware = UserTokenMiddleware(app, mcp_server_ref=mcp_server)
+        mcp_server = MagicMock(spec=AtlassianMCP)
+        mcp_server.get_streamable_http_path.return_value = "/mcp"
 
-        # Create mock request for different path
-        request = MockFastMCP.create_request()
-        request.url.path = "/healthz"
-        request.method = "GET"
-        request.headers = {}
+        captured_state = {}
 
-        # Ensure state doesn't have user_atlassian_token initially
-        if hasattr(request.state, "user_atlassian_token"):
-            delattr(request.state, "user_atlassian_token")
-
-        # Mock call_next
-        async def mock_call_next(req):
-            # Should be called without modification
-            # Check that user_atlassian_token was not added
-            token_added = False
-            try:
-                _ = req.state.user_atlassian_token
-                token_added = True
-            except AttributeError:
-                token_added = False
-            assert not token_added, (
-                "user_atlassian_token should not be set for non-MCP paths"
+        async def mock_app(scope, receive, send):
+            captured_state.update(scope.get("state", {}))
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"content-type", b"application/json")],
+                }
             )
-            return JSONResponse({"status": "ok"})
+            await send(
+                {
+                    "type": "http.response.body",
+                    "body": b'{"status":"ok"}',
+                }
+            )
 
-        # Process request
-        response = await middleware.dispatch(request, mock_call_next)
+        middleware = UserTokenMiddleware(mock_app, mcp_server_ref=mcp_server)
 
-        # Verify response
-        assert response.status_code == 200
+        # Non-MCP path - auth should not be processed
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/healthz",
+            "headers": [],
+            "state": {},
+        }
+
+        response_started = {}
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        async def send(message):
+            if message["type"] == "http.response.start":
+                response_started.update(message)
+
+        await middleware(scope, receive, send)
+
+        # user_atlassian_token should not be set for non-MCP paths
+        assert "user_atlassian_token" not in captured_state
+        assert response_started["status"] == 200
 
     async def test_concurrent_tool_execution(
         self, atlassian_mcp_server, mock_jira_config, mock_confluence_config
@@ -643,30 +713,34 @@ class TestMCPProtocolIntegration:
 
     async def test_error_propagation_through_middleware(self):
         """Test error propagation through the middleware chain."""
-        # Create middleware instance
-        app = MagicMock()
-        mcp_server = MagicMock()
-        # Mock the settings attribute with proper structure
-        settings_mock = MagicMock()
-        settings_mock.streamable_http_path = "/mcp"
-        mcp_server.settings = settings_mock
-        middleware = UserTokenMiddleware(app, mcp_server_ref=mcp_server)
+        mcp_server = MagicMock(spec=AtlassianMCP)
+        mcp_server.get_streamable_http_path.return_value = "/mcp"
 
-        # Create mock request
-        request = MockFastMCP.create_request()
-        request.url.path = "/mcp"
-        request.method = "POST"
-        request.headers = {"Authorization": "Bearer valid-token"}
-
-        # Mock call_next to raise an exception
-        async def mock_call_next(req):
+        async def mock_app(scope, receive, send):
             raise ValueError("Test error from downstream")
 
-        # Process request
-        with pytest.raises(ValueError) as exc_info:
-            await middleware.dispatch(request, mock_call_next)
+        middleware = UserTokenMiddleware(mock_app, mcp_server_ref=mcp_server)
 
-        # Verify error propagated
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp",
+            "headers": [
+                (b"authorization", b"Bearer valid-token"),
+            ],
+            "state": {},
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        async def send(message):
+            pass
+
+        # Process request - error should propagate
+        with pytest.raises(ValueError) as exc_info:
+            await middleware(scope, receive, send)
+
         assert str(exc_info.value) == "Test error from downstream"
 
     async def test_lifespan_context_initialization(self):
@@ -812,9 +886,11 @@ class TestMCPProtocolIntegration:
                 ],  # Mix of tools
             )
 
-            # Mock request context
+            # Mock request context (set request=None to prevent MagicMock
+            # auto-creating service_headers that falsely enable services)
             request_context = MagicMock()
             request_context.lifespan_context = {"app_lifespan_context": app_context}
+            request_context.request = None
 
             # Set up server context
             atlassian_mcp_server._mcp_server = MagicMock()

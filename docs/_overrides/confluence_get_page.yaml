@@ -1,0 +1,4 @@
+example: |
+  {"page_id": "12345678", "include_metadata": true}
+tips: |
+  Content is returned in Markdown format (auto-converted from Confluence storage format). Use `include_metadata` for labels, version info, and last modified date.

@@ -1,0 +1,6 @@
+example: |
+  {"issue_keys": ["PROJ-1", "PROJ-2", "PROJ-3"]}
+tips: |
+  Efficient for tracking field changes across multiple issues at once. Returns change history for each issue.
+platform_notes: |
+  Only available on Jira Cloud.

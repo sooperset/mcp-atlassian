@@ -4,9 +4,9 @@ from unittest.mock import patch
 
 import pytest
 import requests
-from fixtures.confluence_mocks import MOCK_SPACES_RESPONSE
 
 from mcp_atlassian.confluence.spaces import SpacesMixin
+from tests.fixtures.confluence_mocks import MOCK_SPACES_RESPONSE
 
 
 class TestSpacesMixin:

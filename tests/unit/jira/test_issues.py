@@ -1,12 +1,13 @@
 """Tests for the Jira Issues mixin."""
 
-from unittest.mock import ANY, MagicMock, Mock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.issues import IssuesMixin, logger
 from mcp_atlassian.models.jira import JiraIssue
+from tests.utils.mocks import setup_api3_passthrough_mocks
 
 
 class TestIssuesMixin:
@@ -28,20 +29,7 @@ class TestIssuesMixin:
 
         # Cloud ADF paths delegate to _post_api3/_put_api3. Route back
         # to jira.create_issue / jira.update_issue so existing mocks work.
-        def _mock_post_api3(resource: str, data: dict) -> dict:
-            if resource == "issue":
-                return mixin.jira.create_issue(fields=data.get("fields", data))
-            return mixin.jira.post(resource, data=data)
-
-        def _mock_put_api3(resource: str, data: dict) -> dict:
-            if resource.startswith("issue/"):
-                return mixin.jira.update_issue(
-                    issue_key=resource.split("/")[1], update=data
-                )
-            return mixin.jira.put(resource, data=data)
-
-        mixin._post_api3 = Mock(side_effect=_mock_post_api3)
-        mixin._put_api3 = Mock(side_effect=_mock_put_api3)
+        setup_api3_passthrough_mocks(mixin)
 
         return mixin
 
@@ -498,23 +486,49 @@ class TestIssuesMixin:
         # Verify the components field was preserved with the explicit value
         assert fields["components"] == [{"name": "Explicit"}]
 
-    def test_create_issue_with_assignee_cloud(self, issues_mixin: IssuesMixin):
-        """Test creating an issue with an assignee in Jira Cloud."""
+    @pytest.mark.parametrize(
+        "is_cloud, user_field, user_id, issue_key",
+        [
+            pytest.param(
+                True,
+                "accountId",
+                "cloud-account-id",
+                "TEST-123",
+                id="cloud",
+            ),
+            pytest.param(
+                False,
+                "name",
+                "server-user",
+                "TEST-456",
+                id="server",
+            ),
+        ],
+    )
+    def test_create_issue_with_assignee(
+        self,
+        issues_mixin: IssuesMixin,
+        is_cloud: bool,
+        user_field: str,
+        user_id: str,
+        issue_key: str,
+    ):
+        """Test creating an issue with an assignee."""
         # Mock create_issue response
-        create_response = {"key": "TEST-123"}
+        create_response = {"key": issue_key}
         issues_mixin.jira.create_issue.return_value = create_response
 
         # Mock get_issue response
         issues_mixin.get_issue = MagicMock(
-            return_value=JiraIssue(key="TEST-123", description="", summary="Test Issue")
+            return_value=JiraIssue(key=issue_key, description="", summary="Test Issue")
         )
 
-        # Mock _get_account_id to return a Cloud account ID
-        issues_mixin._get_account_id = MagicMock(return_value="cloud-account-id")
+        # Mock _get_account_id to return the appropriate user ID
+        issues_mixin._get_account_id = MagicMock(return_value=user_id)
 
-        # Configure for Cloud
+        # Configure for Cloud or Server/DC
         issues_mixin.config = MagicMock()
-        issues_mixin.config.is_cloud = True
+        issues_mixin.config.is_cloud = is_cloud
 
         # Call the method
         issues_mixin.create_issue(
@@ -529,50 +543,10 @@ class TestIssuesMixin:
 
         # Verify assignee is in create fields (belt & suspenders)
         fields = issues_mixin.jira.create_issue.call_args[1]["fields"]
-        assert fields["assignee"] == {"accountId": "cloud-account-id"}
+        assert fields["assignee"] == {user_field: user_id}
 
-        # Verify assign_issue was also called post-creation as a safety net
-        issues_mixin.jira.assign_issue.assert_called_once_with(
-            "TEST-123", "cloud-account-id"
-        )
-
-    def test_create_issue_with_assignee_server(self, issues_mixin: IssuesMixin):
-        """Test creating an issue with an assignee in Jira Server/DC."""
-        # Mock create_issue response
-        create_response = {"key": "TEST-456"}
-        issues_mixin.jira.create_issue.return_value = create_response
-
-        # Mock get_issue response
-        issues_mixin.get_issue = MagicMock(
-            return_value=JiraIssue(key="TEST-456", description="", summary="Test Issue")
-        )
-
-        # Mock _get_account_id to return a Server user ID (typically username)
-        issues_mixin._get_account_id = MagicMock(return_value="server-user")
-
-        # Configure for Server/DC
-        issues_mixin.config = MagicMock()
-        issues_mixin.config.is_cloud = False
-
-        # Call the method
-        issues_mixin.create_issue(
-            project_key="TEST",
-            summary="Test Issue",
-            issue_type="Bug",
-            assignee="testuser",
-        )
-
-        # Verify _get_account_id was called with the correct username
-        issues_mixin._get_account_id.assert_called_once_with("testuser")
-
-        # Verify assignee is in create fields (belt & suspenders)
-        fields = issues_mixin.jira.create_issue.call_args[1]["fields"]
-        assert fields["assignee"] == {"name": "server-user"}
-
-        # Verify assign_issue was also called post-creation as a safety net
-        issues_mixin.jira.assign_issue.assert_called_once_with(
-            "TEST-456", "server-user"
-        )
+        # Verify assign_issue was also called post-creation
+        issues_mixin.jira.assign_issue.assert_called_once_with(issue_key, user_id)
 
     def test_create_epic(self, issues_mixin: IssuesMixin):
         """Test creating an epic."""
@@ -1254,35 +1228,28 @@ class TestIssuesMixin:
         assert components[0]["name"] == "Frontend"
         assert components[1]["name"] == "Backend"
 
-    def test_add_assignee_to_fields_cloud(self, issues_mixin: IssuesMixin):
-        """Test _add_assignee_to_fields for Cloud instance."""
-        # Set up cloud config
+    @pytest.mark.parametrize(
+        "is_cloud, user_field, user_id",
+        [
+            pytest.param(True, "accountId", "account-123", id="cloud"),
+            pytest.param(False, "name", "jdoe", id="server"),
+        ],
+    )
+    def test_add_assignee_to_fields(
+        self,
+        issues_mixin: IssuesMixin,
+        is_cloud: bool,
+        user_field: str,
+        user_id: str,
+    ):
+        """Test _add_assignee_to_fields for Cloud and Server/DC."""
         issues_mixin.config = MagicMock()
-        issues_mixin.config.is_cloud = True
+        issues_mixin.config.is_cloud = is_cloud
 
-        # Test fields dict
-        fields = {}
+        fields: dict = {}
+        issues_mixin._add_assignee_to_fields(fields, user_id)
 
-        # Call the method
-        issues_mixin._add_assignee_to_fields(fields, "account-123")
-
-        # Verify result
-        assert fields["assignee"] == {"accountId": "account-123"}
-
-    def test_add_assignee_to_fields_server_dc(self, issues_mixin: IssuesMixin):
-        """Test _add_assignee_to_fields for Server/Data Center instance."""
-        # Set up Server/DC config
-        issues_mixin.config = MagicMock()
-        issues_mixin.config.is_cloud = False
-
-        # Test fields dict
-        fields = {}
-
-        # Call the method
-        issues_mixin._add_assignee_to_fields(fields, "jdoe")
-
-        # Verify result
-        assert fields["assignee"] == {"name": "jdoe"}
+        assert fields["assignee"] == {user_field: user_id}
 
     def test_batch_get_changelogs_not_cloud(self, issues_mixin: IssuesMixin):
         """Test batch_get_changelogs method on non-cloud instance."""

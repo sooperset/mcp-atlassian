@@ -1,0 +1,96 @@
+---
+title: "Confluence Comments & Labels"
+description: "Comments, labels, and page analytics"
+---
+
+### Add Comment
+
+Add a comment to a Confluence page.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | Yes | The ID of the page to add a comment to |
+| `content` | `string` | Yes | The comment content in Markdown format |
+**Example:**
+
+```json
+{"page_id": "12345678", "body": "Great documentation! Consider adding examples for the API section."}
+```
+
+<Tip>
+Supports Markdown formatting. Comments are added to the page's comment section.
+</Tip>
+
+
+---
+
+### Get Comments
+
+Get comments for a specific Confluence page.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | Yes | Confluence page ID (numeric ID, can be parsed from URL, e.g. from 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title' -> '123456789') |
+
+---
+
+### Get Labels
+
+Get labels for Confluence content (pages, blog posts, or attachments).
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | Yes | Confluence content ID (page, blog post, or attachment). For pages: numeric ID from URL (e.g., '123456789'). For attachments: ID with 'att' prefix (e.g., 'att123456789'). Works with any Confluence content type that supports labels. |
+
+---
+
+### Add Label
+
+Add label to Confluence content (pages, blog posts, or attachments).
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | Yes | Confluence content ID to label. For pages/blogs: numeric ID (e.g., '123456789'). For attachments: ID with 'att' prefix (e.g., 'att123456789'). Use get_attachments to find attachment IDs. |
+| `name` | `string` | Yes | Label name to add (lowercase, no spaces). Examples: 'draft', 'reviewed', 'confidential', 'v1.0'. Labels help organize and categorize content. |
+
+---
+
+### Get Page Views
+
+Get view statistics for a Confluence page.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | Yes | Confluence page ID (numeric ID, can be found in the page URL). For example, in 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', the page ID is '123456789'. |
+| `include_title` | `boolean` | No | Whether to fetch and include the page title |
+**Example:**
+
+```json
+{"page_id": "12345678", "period": "lastMonth"}
+```
+
+<Tip>
+Useful for identifying popular or stale content. Available periods depend on your Confluence analytics configuration.
+</Tip>
+
+
+<Warning>
+Analytics features may require additional permissions on Server/DC.
+</Warning>
+
+
+---

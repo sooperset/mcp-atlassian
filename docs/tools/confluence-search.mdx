@@ -1,0 +1,46 @@
+---
+title: "Confluence Search"
+description: "Search content with CQL and find users"
+---
+
+### Search Content
+
+Search Confluence content using simple terms or CQL.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | `string` | Yes | Search query - can be either a simple text (e.g. 'project documentation') or a CQL query string. Simple queries use 'siteSearch' by default, to mimic the WebUI search, with an automatic fallback to 'text' search if not supported. Examples of CQL: - Basic search: 'type=page AND space=DEV' - Personal space search: 'space="~username"' (note: personal space keys starting with ~ must be quoted) - Search by title: 'title~"Meeting Notes"' - Use siteSearch: 'siteSearch ~ "important concept"' - Use text search: 'text ~ "important concept"' - Recent content: 'created >= "2023-01-01"' - Content with specific label: 'label=documentation' - Recently modified content: 'lastModified > startOfMonth("-1M")' - Content modified this year: 'creator = currentUser() AND lastModified > startOfYear()' - Content you contributed to recently: 'contributor = currentUser() AND lastModified > startOfWeek()' - Content watched by user: 'watcher = "user@domain.com" AND type = page' - Exact phrase in content: 'text ~ "\"Urgent Review Required\"" AND label = "pending-approval"' - Title wildcards: 'title ~ "Minutes*" AND (space = "HR" OR space = "Marketing")' Note: Special identifiers need proper quoting in CQL: personal space keys (e.g., "~username"), reserved words, numeric IDs, and identifiers with special characters. |
+| `limit` | `integer` | No | Maximum number of results (1-50) |
+| `spaces_filter` | `string` | No | (Optional) Comma-separated list of space keys to filter results by. Overrides the environment variable CONFLUENCE_SPACES_FILTER if provided. Use empty string to disable filtering. |
+**Example:**
+
+```json
+{"query": "type=page AND space=DEV AND title~'Architecture'", "limit": 10}
+```
+
+<Tip>
+Supports both CQL queries and simple text search. Simple text uses `siteSearch` by default with automatic fallback to `text` search.
+</Tip>
+
+
+<Warning>
+CQL syntax may differ slightly between Cloud and Server/DC. Personal spaces use `space="~username"` (quoted).
+</Warning>
+
+
+---
+
+### Search User
+
+Search Confluence users using CQL.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | `string` | Yes | Search query - a CQL query string for user search. Examples of CQL: - Basic user lookup by full name: 'user.fullname ~ "First Last"' Note: Special identifiers need proper quoting in CQL: personal space keys (e.g., "~username"), reserved words, numeric IDs, and identifiers with special characters. |
+| `limit` | `integer` | No | Maximum number of results (1-50) |
+
+---

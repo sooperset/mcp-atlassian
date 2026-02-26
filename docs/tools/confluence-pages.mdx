@@ -1,0 +1,138 @@
+---
+title: "Confluence Pages"
+description: "Create, read, update, delete pages, and navigate page trees"
+---
+
+### Get Page
+
+Get content of a specific Confluence page by its ID, or by its title and space key.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | No | Confluence page ID (numeric ID, can be found in the page URL). For example, in the URL 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', the page ID is '123456789'. Provide this OR both 'title' and 'space_key'. If page_id is provided, title and space_key will be ignored. |
+| `title` | `string` | No | The exact title of the Confluence page. Use this with 'space_key' if 'page_id' is not known. |
+| `space_key` | `string` | No | The key of the Confluence space where the page resides (e.g., 'DEV', 'TEAM'). Required if using 'title'. |
+| `include_metadata` | `boolean` | No | Whether to include page metadata such as creation date, last update, version, and labels. |
+| `convert_to_markdown` | `boolean` | No | Whether to convert page to markdown (true) or keep it in raw HTML format (false). Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: using HTML significantly increases token usage in AI responses. |
+**Example:**
+
+```json
+{"page_id": "12345678", "include_metadata": true}
+```
+
+<Tip>
+Content is returned in Markdown format (auto-converted from Confluence storage format). Use `include_metadata` for labels, version info, and last modified date.
+</Tip>
+
+
+---
+
+### Create Page
+
+Create a new Confluence page.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `space_key` | `string` | Yes | The key of the space to create the page in (usually a short uppercase code like 'DEV', 'TEAM', or 'DOC') |
+| `title` | `string` | Yes | The title of the page |
+| `content` | `string` | Yes | The content of the page. Format depends on content_format parameter. Can be Markdown (default), wiki markup, or storage format |
+| `parent_id` | `string` | No | (Optional) parent page ID. If provided, this page will be created as a child of the specified page |
+| `content_format` | `string` | No | (Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', or 'storage'. Wiki format uses Confluence wiki markup syntax |
+| `enable_heading_anchors` | `boolean` | No | (Optional) Whether to enable automatic heading anchor generation. Only applies when content_format is 'markdown' |
+| `emoji` | `string` | No | (Optional) Page title emoji (icon shown in navigation). Can be any emoji character like '📝', '🚀', '📚'. Set to null/None to remove. |
+**Example:**
+
+```json
+{"space_key": "DEV", "title": "Architecture Decision Record", "content": "## Context\n\nWe need to decide...", "parent_id": "98765432"}
+```
+
+<Tip>
+Use Markdown for content — it's auto-converted to Confluence storage format. Specify `parent_id` to create as a child page.
+</Tip>
+
+
+---
+
+### Update Page
+
+Update an existing Confluence page.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | Yes | The ID of the page to update |
+| `title` | `string` | Yes | The new title of the page |
+| `content` | `string` | Yes | The new content of the page. Format depends on content_format parameter |
+| `is_minor_edit` | `boolean` | No | Whether this is a minor edit |
+| `version_comment` | `string` | No | Optional comment for this version |
+| `parent_id` | `string` | No | Optional the new parent page ID |
+| `content_format` | `string` | No | (Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', or 'storage'. Wiki format uses Confluence wiki markup syntax |
+| `enable_heading_anchors` | `boolean` | No | (Optional) Whether to enable automatic heading anchor generation. Only applies when content_format is 'markdown' |
+| `emoji` | `string` | No | (Optional) Page title emoji (icon shown in navigation). Can be any emoji character like '📝', '🚀', '📚'. Set to null/None to remove. |
+**Example:**
+
+```json
+{"page_id": "12345678", "title": "Updated Title", "content": "## Updated Content\n\nNew information...", "is_minor_edit": true}
+```
+
+<Tip>
+Set `is_minor_edit: true` to skip notification emails. The page version is auto-incremented.
+</Tip>
+
+
+---
+
+### Delete Page
+
+Delete an existing Confluence page.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | Yes | The ID of the page to delete |
+
+---
+
+### Get Page Children
+
+Get child pages and folders of a specific Confluence page.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `parent_id` | `string` | Yes | The ID of the parent page whose children you want to retrieve |
+| `expand` | `string` | No | Fields to expand in the response (e.g., 'version', 'body.storage') |
+| `limit` | `integer` | No | Maximum number of child items to return (1-50) |
+| `include_content` | `boolean` | No | Whether to include the page content in the response |
+| `convert_to_markdown` | `boolean` | No | Whether to convert page content to markdown (true) or keep it in raw HTML format (false). Only relevant if include_content is true. |
+| `start` | `integer` | No | Starting index for pagination (0-based) |
+| `include_folders` | `boolean` | No | Whether to include child folders in addition to child pages |
+
+---
+
+### Get Page History
+
+Get a historical version of a specific Confluence page.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | Yes | Confluence page ID (numeric ID, can be found in the page URL). For example, in 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', the page ID is '123456789'. |
+| `version` | `integer` | Yes | The version number of the page to retrieve |
+| `convert_to_markdown` | `boolean` | No | Whether to convert page to markdown (true) or keep it in raw HTML format (false). Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: using HTML significantly increases token usage in AI responses. |
+
+---
