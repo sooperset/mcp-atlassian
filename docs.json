@@ -2,6 +2,9 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
   "name": "MCP Atlassian",
+  "seo": {
+    "indexHiddenPages": false
+  },
   "favicon": "/docs/favicon.svg",
   "colors": {
     "primary": "#0052CC",
