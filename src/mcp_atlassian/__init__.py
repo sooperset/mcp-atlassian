@@ -15,7 +15,7 @@ from dotenv import dotenv_values, load_dotenv
 # Read from .env via dotenv_values() since load_dotenv() hasn't run yet.
 if os.getenv(
     "MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE",
-    dotenv_values().get("MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE", "true"),
+    dotenv_values().get("MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE") or "true",
 ).lower() not in ("false", "0", "no"):
     try:
         import truststore
