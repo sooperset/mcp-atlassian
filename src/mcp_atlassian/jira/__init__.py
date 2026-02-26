@@ -31,6 +31,7 @@ from .transitions import TransitionsMixin
 from .users import UsersMixin
 from .watchers import WatchersMixin
 from .worklog import WorklogMixin
+from .zephyr_squad import ZephyrSquadMixin
 
 
 class JiraFetcher(
@@ -55,6 +56,7 @@ class JiraFetcher(
     MetricsMixin,
     SLAMixin,
     DevelopmentMixin,
+    ZephyrSquadMixin,
 ):
     """
     The main Jira client class providing access to all Jira operations.
@@ -78,6 +80,7 @@ class JiraFetcher(
     - MetricsMixin: Issue metrics and date operations
     - QueuesMixin: Service Desk queue read operations (Server/DC)
     - SLAMixin: SLA calculations
+    - ZephyrSquadMixin: Zephyr Squad (Jira plugin) test management operations
 
     The class structure is designed to maintain backward compatibility while
     improving code organization and maintainability.

@@ -11,7 +11,11 @@ logger = logging.getLogger("mcp-atlassian.utils.environment")
 def get_available_services(
     headers: dict[str, str] | None = None,
 ) -> dict[str, bool | None]:
-    """Determine which services are available based on environment variables and optional headers."""
+    """Determine which services are available based on environment variables.
+
+    Args:
+        headers: Optional service-specific headers for authentication.
+    """
     headers = headers or {}
     confluence_url = os.getenv("CONFLUENCE_URL")
     confluence_is_setup = False
@@ -81,7 +85,8 @@ def get_available_services(
             ):
                 confluence_is_setup = True
                 logger.info(
-                    "Using Confluence Server/Data Center authentication (PAT or Basic Auth)"
+                    "Using Confluence Server/Data Center authentication "
+                    "(PAT or Basic Auth)"
                 )
 
     if not confluence_is_setup and os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in (
@@ -194,11 +199,71 @@ def get_available_services(
 
     if not confluence_is_setup:
         logger.info(
-            "Confluence is not configured or required environment variables are missing."
+            "Confluence is not configured or required environment variables "
+            "are missing."
         )
     if not jira_is_setup:
         logger.info(
             "Jira is not configured or required environment variables are missing."
         )
 
-    return {"confluence": confluence_is_setup, "jira": jira_is_setup}
+    # Check Zephyr Scale configuration
+    zephyr_url = os.getenv("ZEPHYR_URL")
+    zephyr_is_setup = False
+    if zephyr_url:
+        is_cloud = is_atlassian_cloud_url(zephyr_url)
+        if all(
+            [
+                os.getenv("ATLASSIAN_OAUTH_CLIENT_ID"),
+                os.getenv("ATLASSIAN_OAUTH_CLIENT_SECRET"),
+                os.getenv("ATLASSIAN_OAUTH_REDIRECT_URI"),
+                os.getenv("ATLASSIAN_OAUTH_SCOPE"),
+                os.getenv("ATLASSIAN_OAUTH_CLOUD_ID"),
+            ]
+        ):
+            zephyr_is_setup = True
+            logger.info(
+                "Using Zephyr OAuth 2.0 (3LO) authentication (Cloud-only features)"
+            )
+        elif all(
+            [
+                os.getenv("ATLASSIAN_OAUTH_ACCESS_TOKEN"),
+                os.getenv("ATLASSIAN_OAUTH_CLOUD_ID"),
+            ]
+        ):
+            zephyr_is_setup = True
+            logger.info(
+                "Using Zephyr OAuth 2.0 (3LO) authentication (Cloud-only features) "
+                "with provided access token"
+            )
+        elif is_cloud:  # Cloud non-OAuth
+            if os.getenv("ZEPHYR_API_TOKEN"):
+                zephyr_is_setup = True
+                logger.info("Using Zephyr Cloud Bearer Token Authentication")
+        else:  # Server/Data Center non-OAuth
+            if os.getenv("ZEPHYR_PERSONAL_TOKEN") or (
+                os.getenv("ZEPHYR_USERNAME") and os.getenv("ZEPHYR_PASSWORD")
+            ):
+                zephyr_is_setup = True
+                logger.info(
+                    "Using Zephyr Server/Data Center authentication (PAT or Basic Auth)"
+                )
+
+    if not zephyr_is_setup:
+        zephyr_token = headers.get("X-Atlassian-Zephyr-Personal-Token")
+        zephyr_url_header = headers.get("X-Atlassian-Zephyr-Url")
+
+        if zephyr_token and zephyr_url_header:
+            zephyr_is_setup = True
+            logger.info("Using Zephyr authentication from header personal token")
+
+    if not zephyr_is_setup:
+        logger.info(
+            "Zephyr is not configured or required environment variables are missing."
+        )
+
+    return {
+        "confluence": confluence_is_setup,
+        "jira": jira_is_setup,
+        "zephyr": zephyr_is_setup,
+    }
