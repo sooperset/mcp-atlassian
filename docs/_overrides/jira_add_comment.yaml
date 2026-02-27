@@ -1,4 +1,4 @@
 example: |
-  {"issue_key": "PROJ-123", "comment": "## Investigation\n\nFound the root cause in module X."}
+  {"issue_key": "PROJ-123", "body": "## Investigation\n\nFound the root cause in module X."}
 tips: |
   Supports Markdown formatting. Use `visibility` parameter for restricted comments (e.g., service desk internal notes).

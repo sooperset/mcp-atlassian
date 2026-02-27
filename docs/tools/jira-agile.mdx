@@ -97,7 +97,7 @@ Create Jira sprint for a board.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `board_id` | `string` | Yes | The id of board (e.g., '1000') |
-| `sprint_name` | `string` | Yes | Name of the sprint (e.g., 'Sprint 1') |
+| `name` | `string` | Yes | Name of the sprint (e.g., 'Sprint 1') |
 | `start_date` | `string` | Yes | Start time for sprint (ISO 8601 format) |
 | `end_date` | `string` | Yes | End time for sprint (ISO 8601 format) |
 | `goal` | `string` | No | (Optional) Goal of the sprint |
@@ -115,7 +115,7 @@ Update jira sprint.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `sprint_id` | `string` | Yes | The id of sprint (e.g., '10001') |
-| `sprint_name` | `string` | No | (Optional) New name for the sprint |
+| `name` | `string` | No | (Optional) New name for the sprint |
 | `state` | `string` | No | (Optional) New state for the sprint (future\|active\|closed) |
 | `start_date` | `string` | No | (Optional) New start date for the sprint |
 | `end_date` | `string` | No | (Optional) New end date for the sprint |
