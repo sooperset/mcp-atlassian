@@ -1,8 +1,9 @@
 from unittest.mock import MagicMock
 
 import pytest
+from fastmcp.exceptions import ToolError
 
-from mcp_atlassian.utils.decorators import check_write_access
+from mcp_atlassian.utils.decorators import check_write_access, handle_tool_errors
 
 
 class DummyContext:
@@ -20,7 +21,7 @@ async def test_check_write_access_blocks_in_read_only():
         return x * 2
 
     ctx = DummyContext(read_only=True)
-    with pytest.raises(ValueError) as exc:
+    with pytest.raises(ToolError) as exc:
         await dummy_tool(ctx, 3)
     assert "read-only mode" in str(exc.value)
 
@@ -34,3 +35,35 @@ async def test_check_write_access_allows_in_writable():
     ctx = DummyContext(read_only=False)
     result = await dummy_tool(ctx, 4)
     assert result == 8
+
+
+@pytest.mark.asyncio
+async def test_handle_tool_errors_wraps_exception_as_tool_error():
+    @handle_tool_errors
+    async def failing_tool():
+        raise ValueError("something went wrong")
+
+    with pytest.raises(ToolError) as exc:
+        await failing_tool()
+    assert "something went wrong" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_handle_tool_errors_passes_through_tool_error():
+    @handle_tool_errors
+    async def tool_with_tool_error():
+        raise ToolError("explicit tool error")
+
+    with pytest.raises(ToolError) as exc:
+        await tool_with_tool_error()
+    assert "explicit tool error" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_handle_tool_errors_preserves_return_value():
+    @handle_tool_errors
+    async def good_tool():
+        return "success"
+
+    result = await good_tool()
+    assert result == "success"
