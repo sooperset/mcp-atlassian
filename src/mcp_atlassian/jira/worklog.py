@@ -127,10 +127,16 @@ class WorklogMixin(JiraClient):
                 remaining_estimate_updated = True
 
             # Step 4: Add the worklog with remaining estimate adjustment
-            base_url = self.jira.resource_url("issue")
-            url = f"{base_url}/{issue_key}/worklog"
-
-            result = self.jira.post(url, data=worklog_data, params=params)
+            if isinstance(worklog_data.get("comment"), dict) and self.config.is_cloud:
+                result = self._post_api3(
+                    f"issue/{issue_key}/worklog",
+                    data=worklog_data,
+                    params=params or None,
+                )
+            else:
+                base_url = self.jira.resource_url("issue")
+                url = f"{base_url}/{issue_key}/worklog"
+                result = self.jira.post(url, data=worklog_data, params=params)
             if not isinstance(result, dict):
                 msg = f"Unexpected return value type from `jira.post`: {type(result)}"
                 logger.error(msg)
