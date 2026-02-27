@@ -149,10 +149,14 @@ class CommentsMixin(JiraClient):
         try:
             url = f"rest/servicedeskapi/request/{issue_key}/comment"
             data = {"body": comment, "public": public}
+            headers = {
+                **self.jira.default_headers,
+                "X-ExperimentalApi": "opt-in",
+            }
             response = self.jira.post(
                 url,
                 data=data,
-                headers={"X-ExperimentalApi": "opt-in"},
+                headers=headers,
             )
             if not isinstance(response, dict):
                 msg = (

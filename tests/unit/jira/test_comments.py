@@ -477,6 +477,9 @@ class TestCommentsMixin:
             "body": "Test comment",
             "public": True,
         }
+        # Verify experimental header is included
+        headers = call_args[1]["headers"]
+        assert headers["X-ExperimentalApi"] == "opt-in"
         assert result["public"] is True
         assert result["id"] == "10001"
         assert result["author"] == "Test User"
