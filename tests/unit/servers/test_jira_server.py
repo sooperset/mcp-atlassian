@@ -1987,7 +1987,7 @@ async def test_add_comment(jira_client, mock_jira_fetcher):
     )
 
     mock_jira_fetcher.add_comment.assert_called_once_with(
-        "TEST-123", "Test comment body", None
+        "TEST-123", "Test comment body", None, public=None
     )
 
     result = json.loads(response.content[0].text)
