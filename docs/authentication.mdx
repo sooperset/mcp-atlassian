@@ -110,6 +110,25 @@ ATLASSIAN_OAUTH_SCOPE=read:jira-work write:jira-work read:confluence-content.all
 Include `offline_access` in your scope to allow automatic token refresh.
 </Warning>
 
+### MCP OAuth Proxy (DCR + Discovery)
+
+Enable this when running a remote MCP endpoint that should onboard MCP clients
+through the standard OAuth discovery/DCR flow (`401` challenge, `/.well-known/*`,
+`/register`, `/authorize`, `/token`, callback).
+
+```bash
+ATLASSIAN_OAUTH_PROXY_ENABLE=true
+PUBLIC_BASE_URL=https://mcp.example.com/mcp-atlassian
+ATLASSIAN_OAUTH_ALLOWED_CLIENT_REDIRECT_URIS=http://localhost:*,http://127.0.0.1:*,https://chatgpt.com/connector_platform_oauth_redirect
+ATLASSIAN_OAUTH_ALLOWED_GRANT_TYPES=authorization_code,refresh_token
+ATLASSIAN_OAUTH_REQUIRE_CONSENT=true
+```
+
+<Note>
+This mode is opt-in. Existing API token, PAT, and header-based OAuth flows continue
+to work without enabling the proxy.
+</Note>
+
 ### Bring Your Own Token (BYOT)
 
 If you manage OAuth tokens externally (e.g., through a central identity provider):

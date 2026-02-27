@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -585,6 +586,110 @@ class TestGetJiraFetcher:
         elif scenario["auth_type"] == "pat":
             assert called_config.personal_token == scenario["token"]
 
+    @patch("mcp_atlassian.servers.dependencies.get_access_token")
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_oauth_prefers_fastmcp_access_token(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_get_access_token,
+        mock_context,
+        mock_request,
+        config_factory,
+        auth_scenarios,
+    ):
+        """OAuth flow prefers FastMCP-resolved upstream access tokens."""
+        scenario = auth_scenarios["oauth"].copy()
+        scenario["token"] = "state-token"
+        _setup_mock_request_state(mock_request, scenario)
+        mock_get_http_request.return_value = mock_request
+        mock_get_access_token.return_value = SimpleNamespace(token="upstream-token")
+
+        app_context = config_factory.create_app_context(
+            jira_config=config_factory.create_jira_config(auth_type="oauth")
+        )
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(JiraFetcher)
+        mock_jira_fetcher_class.return_value = mock_fetcher
+
+        result = await get_jira_fetcher(mock_context)
+
+        assert result == mock_fetcher
+        called_config = mock_jira_fetcher_class.call_args[1]["config"]
+        assert called_config.oauth_config is not None
+        assert called_config.oauth_config.access_token == "upstream-token"
+
+    @patch("mcp_atlassian.servers.dependencies.get_access_token")
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_oauth_falls_back_to_request_state_token(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_get_access_token,
+        mock_context,
+        mock_request,
+        config_factory,
+        auth_scenarios,
+    ):
+        """If FastMCP access token is unavailable, request token is used."""
+        scenario = auth_scenarios["oauth"].copy()
+        scenario["token"] = "state-token"
+        _setup_mock_request_state(mock_request, scenario)
+        mock_get_http_request.return_value = mock_request
+        mock_get_access_token.side_effect = RuntimeError("no auth context")
+
+        app_context = config_factory.create_app_context(
+            jira_config=config_factory.create_jira_config(auth_type="oauth")
+        )
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(JiraFetcher)
+        mock_jira_fetcher_class.return_value = mock_fetcher
+
+        result = await get_jira_fetcher(mock_context)
+
+        assert result == mock_fetcher
+        called_config = mock_jira_fetcher_class.call_args[1]["config"]
+        assert called_config.oauth_config is not None
+        assert called_config.oauth_config.access_token == "state-token"
+
+    @patch("mcp_atlassian.servers.dependencies.get_access_token")
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_pat_flow_does_not_use_fastmcp_access_token(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_get_access_token,
+        mock_context,
+        mock_request,
+        config_factory,
+        auth_scenarios,
+    ):
+        """PAT path should not call FastMCP access-token dependency."""
+        scenario = auth_scenarios["pat"]
+        _setup_mock_request_state(mock_request, scenario)
+        mock_get_http_request.return_value = mock_request
+        mock_get_access_token.return_value = SimpleNamespace(token="unexpected-token")
+
+        app_context = config_factory.create_app_context(
+            jira_config=config_factory.create_jira_config(auth_type="pat")
+        )
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(JiraFetcher)
+        mock_jira_fetcher_class.return_value = mock_fetcher
+
+        result = await get_jira_fetcher(mock_context)
+
+        assert result == mock_fetcher
+        called_config = mock_jira_fetcher_class.call_args[1]["config"]
+        assert called_config.personal_token == scenario["token"]
+        mock_get_access_token.assert_not_called()
+
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
     async def test_global_fallback_scenarios(
@@ -853,6 +958,76 @@ class TestGetConfluenceFetcher:
             assert called_config.oauth_config.access_token == scenario["token"]
         elif scenario["auth_type"] == "pat":
             assert called_config.personal_token == scenario["token"]
+
+    @patch("mcp_atlassian.servers.dependencies.get_access_token")
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_oauth_prefers_fastmcp_access_token(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_get_access_token,
+        mock_context,
+        mock_request,
+        config_factory,
+        auth_scenarios,
+    ):
+        """OAuth flow prefers FastMCP-resolved upstream access tokens."""
+        scenario = auth_scenarios["oauth"].copy()
+        scenario["token"] = "state-token"
+        _setup_mock_request_state(mock_request, scenario)
+        mock_get_http_request.return_value = mock_request
+        mock_get_access_token.return_value = SimpleNamespace(token="upstream-token")
+
+        app_context = config_factory.create_app_context(
+            confluence_config=config_factory.create_confluence_config(auth_type="oauth")
+        )
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(ConfluenceFetcher)
+        mock_confluence_fetcher_class.return_value = mock_fetcher
+
+        result = await get_confluence_fetcher(mock_context)
+
+        assert result == mock_fetcher
+        called_config = mock_confluence_fetcher_class.call_args[1]["config"]
+        assert called_config.oauth_config is not None
+        assert called_config.oauth_config.access_token == "upstream-token"
+
+    @patch("mcp_atlassian.servers.dependencies.get_access_token")
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_oauth_falls_back_to_request_state_token(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_get_access_token,
+        mock_context,
+        mock_request,
+        config_factory,
+        auth_scenarios,
+    ):
+        """If FastMCP access token is unavailable, request token is used."""
+        scenario = auth_scenarios["oauth"].copy()
+        scenario["token"] = "state-token"
+        _setup_mock_request_state(mock_request, scenario)
+        mock_get_http_request.return_value = mock_request
+        mock_get_access_token.side_effect = RuntimeError("no auth context")
+
+        app_context = config_factory.create_app_context(
+            confluence_config=config_factory.create_confluence_config(auth_type="oauth")
+        )
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(ConfluenceFetcher)
+        mock_confluence_fetcher_class.return_value = mock_fetcher
+
+        result = await get_confluence_fetcher(mock_context)
+
+        assert result == mock_fetcher
+        called_config = mock_confluence_fetcher_class.call_args[1]["config"]
+        assert called_config.oauth_config is not None
+        assert called_config.oauth_config.access_token == "state-token"
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")

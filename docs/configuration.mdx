@@ -150,6 +150,11 @@ This guide covers IDE integration, environment variables, and advanced configura
 | `MCP_VERBOSE` | Enable verbose logging (`true`/`false`) |
 | `MCP_VERY_VERBOSE` | Enable debug logging (`true`/`false`) |
 | `MCP_LOGGING_STDOUT` | Log to stdout instead of stderr (`true`/`false`) |
+| `ATLASSIAN_OAUTH_PROXY_ENABLE` | Enable OAuth proxy + DCR + `/.well-known/*` routes (`true`/`false`) |
+| `PUBLIC_BASE_URL` | Public base URL for OAuth discovery metadata |
+| `ATLASSIAN_OAUTH_ALLOWED_CLIENT_REDIRECT_URIS` | Comma-separated allowed redirect URI patterns for DCR clients |
+| `ATLASSIAN_OAUTH_ALLOWED_GRANT_TYPES` | Comma-separated grant types allowed during DCR |
+| `ATLASSIAN_OAUTH_REQUIRE_CONSENT` | Require local consent page before upstream redirect (`true`/`false`) |
 
 See [.env.example](https://github.com/sooperset/mcp-atlassian/blob/main/.env.example) for all available options.
 
