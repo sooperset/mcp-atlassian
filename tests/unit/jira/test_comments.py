@@ -510,8 +510,15 @@ class TestCommentsMixin:
         comments_mixin.jira.post.assert_called_once()
         comments_mixin._post_api3.assert_not_called()
 
+    def test_add_comment_servicedesk_403(self, comments_mixin):
+        """public=True on non-JSM project gives clear 403 error."""
+        comments_mixin.jira.post.side_effect = Exception("403 Client Error: Forbidden")
+
+        with pytest.raises(Exception, match="not a JSM service desk issue"):
+            comments_mixin.add_comment("TEST-123", "Test", public=True)
+
     def test_add_comment_servicedesk_404(self, comments_mixin):
-        """public=True on non-JSM issue gives clear 404 error."""
+        """public=True on non-existent issue gives clear 404 error."""
         comments_mixin.jira.post.side_effect = Exception("404 Client Error: Not Found")
 
         with pytest.raises(Exception, match="not a JSM service desk issue"):

@@ -186,6 +186,12 @@ class CommentsMixin(JiraClient):
             }
         except Exception as e:
             error_msg = str(e)
+            if "403" in error_msg or "forbidden" in error_msg.lower():
+                raise Exception(
+                    f"Issue {issue_key} is not a JSM service "
+                    f"desk issue or you lack permission: "
+                    f"{error_msg}"
+                ) from e
             if "404" in error_msg or "not found" in error_msg.lower():
                 raise Exception(
                     f"Issue {issue_key} is not a JSM service "
