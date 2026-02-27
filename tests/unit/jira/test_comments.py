@@ -444,3 +444,103 @@ class TestCommentsMixin:
         comment_arg = call_args[0][2]
         assert isinstance(comment_arg, str)
         assert result["body"] == "h1. Updated"
+
+    # --- ServiceDesk API (internal/public comments) tests ---
+
+    SERVICEDESK_COMMENT_RESPONSE = {
+        "id": 10001,
+        "body": "Test comment",
+        "public": True,
+        "created": {
+            "iso8601": "2024-01-01T10:00:00.000+0000",
+            "jira": "2024-01-01T10:00:00.000+0000",
+            "friendly": "Today 10:00 AM",
+            "epochMillis": 1704099600000,
+        },
+        "author": {
+            "accountId": "test-id",
+            "displayName": "Test User",
+        },
+    }
+
+    def test_add_comment_servicedesk_public(self, comments_mixin):
+        """public=True routes through ServiceDesk API."""
+        response = {**self.SERVICEDESK_COMMENT_RESPONSE, "public": True}
+        comments_mixin.jira.post.return_value = response
+
+        result = comments_mixin.add_comment("TEST-123", "Test comment", public=True)
+
+        comments_mixin.jira.post.assert_called_once()
+        call_args = comments_mixin.jira.post.call_args
+        assert "rest/servicedeskapi/request/TEST-123/comment" in str(call_args)
+        assert call_args[1]["data"] == {
+            "body": "Test comment",
+            "public": True,
+        }
+        # Verify experimental header is included
+        headers = call_args[1]["headers"]
+        assert headers["X-ExperimentalApi"] == "opt-in"
+        assert result["public"] is True
+        assert result["id"] == "10001"
+        assert result["author"] == "Test User"
+
+    def test_add_comment_servicedesk_internal(self, comments_mixin):
+        """public=False routes through ServiceDesk API as internal."""
+        response = {**self.SERVICEDESK_COMMENT_RESPONSE, "public": False}
+        comments_mixin.jira.post.return_value = response
+
+        result = comments_mixin.add_comment("TEST-123", "Internal note", public=False)
+
+        call_args = comments_mixin.jira.post.call_args
+        assert call_args[1]["data"] == {
+            "body": "Internal note",
+            "public": False,
+        }
+        assert result["public"] is False
+
+    def test_add_comment_servicedesk_cloud(self, comments_mixin):
+        """public=True on Cloud uses ServiceDesk API, not ADF/v3."""
+        response = {**self.SERVICEDESK_COMMENT_RESPONSE}
+        comments_mixin.jira.post.return_value = response
+        comments_mixin._post_api3 = Mock()
+
+        comments_mixin.add_comment("TEST-123", "Test", public=True)
+
+        # ServiceDesk path should use jira.post, NOT _post_api3
+        comments_mixin.jira.post.assert_called_once()
+        comments_mixin._post_api3.assert_not_called()
+
+    def test_add_comment_servicedesk_404(self, comments_mixin):
+        """public=True on non-JSM issue gives clear 404 error."""
+        comments_mixin.jira.post.side_effect = Exception("404 Client Error: Not Found")
+
+        with pytest.raises(Exception, match="not a JSM service desk issue"):
+            comments_mixin.add_comment("TEST-123", "Test", public=True)
+
+    def test_add_comment_public_with_visibility_raises(self, comments_mixin):
+        """public + visibility together raises ValueError."""
+        with pytest.raises(ValueError, match="Cannot use both"):
+            comments_mixin.add_comment(
+                "TEST-123",
+                "Test",
+                visibility={"type": "group", "value": "jira-users"},
+                public=True,
+            )
+
+    def test_add_comment_public_none_uses_jira_api(self, comments_mixin):
+        """public=None (default) uses normal Jira API path."""
+        mock_response = {
+            "id": "10001",
+            "body": "Normal comment",
+            "created": "2024-01-01T10:00:00.000+0000",
+            "author": {"displayName": "John Doe"},
+        }
+        comments_mixin._post_api3 = Mock(return_value=mock_response)
+
+        result = comments_mixin.add_comment("TEST-123", "Normal comment")
+
+        # Should go through normal Jira path (ADF on Cloud)
+        comments_mixin._post_api3.assert_called_once()
+        # ServiceDesk post should NOT be called
+        comments_mixin.jira.post.assert_not_called()
+        assert result["id"] == "10001"

@@ -1616,7 +1616,23 @@ async def add_comment(
     visibility: Annotated[
         str | None,
         Field(
-            description='(Optional) Comment visibility as JSON string (e.g. \'{"type":"group","value":"jira-users"}\')'
+            description=(
+                "(Optional) Comment visibility as JSON string "
+                '(e.g. \'{"type":"group",'
+                '"value":"jira-users"}\')'
+            )
+        ),
+    ] = None,
+    public: Annotated[
+        bool | None,
+        Field(
+            description=(
+                "(Optional) For JSM/Service Desk issues only. "
+                "Set to true for customer-visible comment, "
+                "false for internal agent-only comment. "
+                "Uses the ServiceDesk API (plain text, not "
+                "Markdown). Cannot be combined with visibility."
+            )
         ),
     ] = None,
 ) -> str:
@@ -1627,6 +1643,8 @@ async def add_comment(
         issue_key: Jira issue key.
         body: Comment text in Markdown.
         visibility: (Optional) Comment visibility as JSON string.
+        public: (Optional) For JSM issues. True = customer-visible,
+            False = internal/agent-only. Uses ServiceDesk API.
 
     Returns:
         JSON string representing the added comment object.
@@ -1636,7 +1654,7 @@ async def add_comment(
     """
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
-    result = jira.add_comment(issue_key, body, visibility_dict)
+    result = jira.add_comment(issue_key, body, visibility_dict, public=public)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
