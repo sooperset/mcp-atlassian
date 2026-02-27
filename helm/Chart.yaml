@@ -1,0 +1,19 @@
+apiVersion: v2
+name: mcp-atlassian
+description: A Helm chart for deploying MCP Atlassian server - Model Context Protocol server for Jira and Confluence
+type: application
+version: 1.0.0
+appVersion: 0.13
+keywords:
+  - mcp
+  - atlassian
+  - jira
+  - confluence
+  - ai
+  - llm
+home: https://github.com/sooperset/mcp-atlassian
+sources:
+  - https://github.com/sooperset/mcp-atlassian
+maintainers:
+  - name: Ant Weiss
+    email: anton@otomato.io

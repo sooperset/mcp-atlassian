@@ -1,0 +1,215 @@
+# Default values for mcp-atlassian
+# This is a YAML-formatted file.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/sooperset/mcp-atlassian
+  pullPolicy: IfNotPresent
+  tag: "0.13"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Transport mode: "stdio", "sse", or "streamable-http"
+# For HTTP modes, service will be created automatically
+transport: "stdio"
+
+# Port for HTTP transport modes (sse or streamable-http)
+port: 9000
+
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: false
+
+service:
+  type: ClusterIP
+  port: 9000
+  targetPort: 9000
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: mcp-atlassian.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: mcp-atlassian-tls
+  #    hosts:
+  #      - mcp-atlassian.local
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+volumes: []
+volumeMounts: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# OAuth token persistence (only needed for OAuth flow with token refresh)
+persistence:
+  enabled: false
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 1Gi
+  # existingClaim: ""
+
+# Authentication Mode: "api-token", "personal-token", "oauth", or "byot" (bring your own token)
+authMode: "api-token"
+
+# Confluence Configuration
+confluence:
+  enabled: true
+  # For Cloud: https://your-company.atlassian.net/wiki
+  # For Server/DC: https://confluence.your-company.com
+  url: ""
+
+  # Cloud authentication (when authMode: api-token)
+  username: ""
+  apiToken: ""
+
+  # Server/DC authentication (when authMode: personal-token)
+  personalToken: ""
+
+  # SSL verification for Server/DC (set to false for self-signed certs)
+  sslVerify: "true"
+
+  # Space filter (comma-separated space keys)
+  spacesFilter: ""
+
+  # Custom headers (comma-separated key=value pairs)
+  customHeaders: ""
+
+# Jira Configuration
+jira:
+  enabled: true
+  # For Cloud: https://your-company.atlassian.net
+  # For Server/DC: https://jira.your-company.com
+  url: ""
+
+  # Cloud authentication (when authMode: api-token)
+  username: ""
+  apiToken: ""
+
+  # Server/DC authentication (when authMode: personal-token)
+  personalToken: ""
+
+  # SSL verification for Server/DC
+  sslVerify: "true"
+
+  # Project filter (comma-separated project keys)
+  projectsFilter: ""
+
+  # Custom headers (comma-separated key=value pairs)
+  customHeaders: ""
+
+# OAuth 2.0 Configuration (Cloud only)
+# Required when authMode: oauth or byot
+oauth:
+  # Cloud ID (from --oauth-setup wizard or known for your instance)
+  cloudId: ""
+
+  # For standard OAuth flow (authMode: oauth)
+  clientId: ""
+  clientSecret: ""
+  redirectUri: "http://localhost:8080/callback"
+  scope: "read:jira-work write:jira-work read:confluence-content.all write:confluence-content offline_access"
+
+  # For BYOT mode (authMode: byot)
+  # Provide pre-existing access token
+  accessToken: ""
+
+# Proxy Configuration
+proxy:
+  enabled: false
+  http: ""
+  https: ""
+  noProxy: "localhost,127.0.0.1"
+  socks: ""
+
+  # Service-specific proxy overrides
+  confluence:
+    http: ""
+    https: ""
+    noProxy: ""
+  jira:
+    http: ""
+    https: ""
+    noProxy: ""
+
+# Server Configuration
+config:
+  # Read-only mode (disables all write operations)
+  readOnlyMode: false
+
+  # Enable verbose logging
+  verbose: false
+
+  # Very verbose logging (includes debug info)
+  veryVerbose: false
+
+  # Log to stdout instead of stderr
+  loggingStdout: true
+
+  # Comma-separated list of enabled tools
+  # Leave empty to enable all tools
+  # Example: "confluence_search,jira_get_issue,jira_search"
+  enabledTools: ""
+
+# Additional environment variables
+extraEnv: []
+  # - name: CUSTOM_VAR
+  #   value: "custom-value"
+
+# Additional secrets to mount
+extraSecrets: []
+  # - name: custom-secret
+  #   mountPath: /etc/secrets
+  #   readOnly: true
