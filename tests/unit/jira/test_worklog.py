@@ -89,8 +89,8 @@ class TestWorklogMixin:
         assert len(result) == 1
         assert result[0]["id"] == "10001"
         assert result[0]["comment"] == "Work item 1"
-        assert result[0]["timeSpent"] == "1h"
-        assert result[0]["timeSpentSeconds"] == 3600
+        assert result[0]["time_spent"] == "1h"
+        assert result[0]["time_spent_seconds"] == 3600
         assert result[0]["author"] == "Test User"
 
     def test_get_worklogs_with_multiple_entries(self, worklog_mixin):
@@ -125,8 +125,8 @@ class TestWorklogMixin:
         assert len(result) == 2
         assert result[0]["id"] == "10001"
         assert result[1]["id"] == "10002"
-        assert result[0]["timeSpentSeconds"] == 3600
-        assert result[1]["timeSpentSeconds"] == 7200
+        assert result[0]["time_spent_seconds"] == 3600
+        assert result[1]["time_spent_seconds"] == 7200
 
     def test_get_worklogs_with_missing_fields(self, worklog_mixin):
         """Test get_worklogs with missing fields."""
@@ -150,8 +150,8 @@ class TestWorklogMixin:
         assert len(result) == 1
         assert result[0]["id"] == "10001"
         assert result[0]["comment"] == ""
-        assert result[0]["timeSpent"] == ""
-        assert result[0]["timeSpentSeconds"] == 0
+        assert result[0]["time_spent"] == ""
+        assert result[0]["time_spent_seconds"] == 0
         assert result[0]["author"] == "Unknown"
 
     def test_get_worklogs_with_empty_response(self, worklog_mixin):
@@ -205,8 +205,8 @@ class TestWorklogMixin:
         worklog_mixin.jira.post.assert_called_once()
         assert result["id"] == "10001"
         assert result["comment"] == "Added work"
-        assert result["timeSpent"] == "1h"
-        assert result["timeSpentSeconds"] == 3600
+        assert result["time_spent"] == "1h"
+        assert result["time_spent_seconds"] == 3600
         assert result["author"] == "Test User"
         assert result["original_estimate_updated"] is False
         assert result["remaining_estimate_updated"] is False

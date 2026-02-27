@@ -290,6 +290,59 @@ def mock_jira_fetcher():
         ],
     }
     mock_fetcher.get_queue_issues.return_value = mock_queue_issues
+
+    # Configure add_comment
+    mock_fetcher.add_comment.return_value = {
+        "id": "10001",
+        "body": "Test comment body",
+        "created": "2024-01-01 10:00:00+00:00",
+        "author": "Test User",
+    }
+
+    # Configure edit_comment
+    mock_fetcher.edit_comment.return_value = {
+        "id": "10001",
+        "body": "Updated comment body",
+        "updated": "2024-01-02 10:00:00+00:00",
+        "author": "Test User",
+    }
+
+    # Configure add_worklog
+    mock_fetcher.add_worklog.return_value = {
+        "id": "10100",
+        "comment": "Worked on feature",
+        "created": "2024-01-01 10:00:00+00:00",
+        "updated": "2024-01-01 10:00:00+00:00",
+        "started": "2024-01-01 09:00:00+00:00",
+        "time_spent": "1h 30m",
+        "time_spent_seconds": 5400,
+        "author": "Test User",
+        "original_estimate_updated": False,
+        "remaining_estimate_updated": False,
+    }
+
+    # Configure create_sprint
+    mock_sprint = MagicMock()
+    mock_sprint.to_simplified_dict.return_value = {
+        "id": "100",
+        "name": "Sprint 1",
+        "state": "future",
+        "start_date": "2024-01-01T00:00:00.000Z",
+        "end_date": "2024-01-14T00:00:00.000Z",
+    }
+    mock_fetcher.create_sprint.return_value = mock_sprint
+
+    # Configure update_sprint
+    mock_updated_sprint = MagicMock()
+    mock_updated_sprint.to_simplified_dict.return_value = {
+        "id": "100",
+        "name": "Sprint 1 - Renamed",
+        "state": "active",
+        "start_date": "2024-01-01T00:00:00.000Z",
+        "end_date": "2024-01-14T00:00:00.000Z",
+    }
+    mock_fetcher.update_sprint.return_value = mock_updated_sprint
+
     return mock_fetcher
 
 
@@ -334,8 +387,10 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         batch_get_changelogs,
         create_issue,
         create_issue_link,
+        create_sprint,
         delete_issue,
         download_attachments,
+        edit_comment,
         get_agile_boards,
         get_all_projects,
         get_board_issues,
@@ -389,11 +444,13 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(update_issue)
     jira_sub_mcp.add_tool(delete_issue)
     jira_sub_mcp.add_tool(add_comment)
+    jira_sub_mcp.add_tool(edit_comment)
     jira_sub_mcp.add_tool(add_worklog)
     jira_sub_mcp.add_tool(link_to_epic)
     jira_sub_mcp.add_tool(create_issue_link)
     jira_sub_mcp.add_tool(remove_issue_link)
     jira_sub_mcp.add_tool(transition_issue)
+    jira_sub_mcp.add_tool(create_sprint)
     jira_sub_mcp.add_tool(update_sprint)
     jira_sub_mcp.add_tool(batch_create_versions)
     test_mcp.mount(jira_sub_mcp, prefix="jira")
@@ -1916,3 +1973,118 @@ async def test_get_issue_images_fetch_failure(jira_client, mock_jira_fetcher):
     assert summary["downloaded"] == 0
     assert len(summary["failed"]) == 1
     assert "Fetch failed" in summary["failed"][0]["error"]
+
+
+# --- Tests for input/output parameter name alignment ---
+
+
+@pytest.mark.anyio
+async def test_add_comment(jira_client, mock_jira_fetcher):
+    """Test add_comment accepts 'body' parameter matching response field name."""
+    response = await jira_client.call_tool(
+        "jira_add_comment",
+        {"issue_key": "TEST-123", "body": "Test comment body"},
+    )
+
+    mock_jira_fetcher.add_comment.assert_called_once_with(
+        "TEST-123", "Test comment body", None
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["id"] == "10001"
+    assert result["body"] == "Test comment body"
+
+
+@pytest.mark.anyio
+async def test_edit_comment(jira_client, mock_jira_fetcher):
+    """Test edit_comment accepts 'body' parameter matching response field name."""
+    response = await jira_client.call_tool(
+        "jira_edit_comment",
+        {
+            "issue_key": "TEST-123",
+            "comment_id": "10001",
+            "body": "Updated comment body",
+        },
+    )
+
+    mock_jira_fetcher.edit_comment.assert_called_once_with(
+        "TEST-123", "10001", "Updated comment body", None
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["id"] == "10001"
+    assert result["body"] == "Updated comment body"
+
+
+@pytest.mark.anyio
+async def test_add_worklog(jira_client, mock_jira_fetcher):
+    """Test add_worklog accepts 'time_spent' matching response 'timeSpent' field."""
+    response = await jira_client.call_tool(
+        "jira_add_worklog",
+        {"issue_key": "TEST-123", "time_spent": "1h 30m"},
+    )
+
+    mock_jira_fetcher.add_worklog.assert_called_once_with(
+        issue_key="TEST-123",
+        time_spent="1h 30m",
+        comment=None,
+        started=None,
+        original_estimate=None,
+        remaining_estimate=None,
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["worklog"]["time_spent"] == "1h 30m"
+    assert result["worklog"]["time_spent_seconds"] == 5400
+
+
+@pytest.mark.anyio
+async def test_create_sprint(jira_client, mock_jira_fetcher):
+    """Test create_sprint accepts 'name' parameter matching response field name."""
+    response = await jira_client.call_tool(
+        "jira_create_sprint",
+        {
+            "board_id": "1000",
+            "name": "Sprint 1",
+            "start_date": "2024-01-01T00:00:00.000Z",
+            "end_date": "2024-01-14T00:00:00.000Z",
+        },
+    )
+
+    mock_jira_fetcher.create_sprint.assert_called_once_with(
+        board_id="1000",
+        sprint_name="Sprint 1",
+        start_date="2024-01-01T00:00:00.000Z",
+        end_date="2024-01-14T00:00:00.000Z",
+        goal=None,
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["name"] == "Sprint 1"
+    assert result["state"] == "future"
+
+
+@pytest.mark.anyio
+async def test_update_sprint(jira_client, mock_jira_fetcher):
+    """Test update_sprint accepts 'name' parameter matching response field name."""
+    response = await jira_client.call_tool(
+        "jira_update_sprint",
+        {
+            "sprint_id": "100",
+            "name": "Sprint 1 - Renamed",
+            "state": "active",
+        },
+    )
+
+    mock_jira_fetcher.update_sprint.assert_called_once_with(
+        sprint_id="100",
+        sprint_name="Sprint 1 - Renamed",
+        state="active",
+        start_date=None,
+        end_date=None,
+        goal=None,
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["name"] == "Sprint 1 - Renamed"
+    assert result["state"] == "active"

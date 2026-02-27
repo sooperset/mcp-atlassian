@@ -457,10 +457,10 @@ async def test_get_comments(client, mock_confluence_fetcher):
 
 @pytest.mark.anyio
 async def test_add_comment(client, mock_confluence_fetcher):
-    """Test adding a comment to a Confluence page."""
+    """Test add_comment accepts 'body' parameter matching response field name."""
     response = await client.call_tool(
         "confluence_add_comment",
-        {"page_id": "123456", "content": "Test comment content"},
+        {"page_id": "123456", "body": "Test comment content"},
     )
 
     mock_confluence_fetcher.add_comment.assert_called_once_with(
