@@ -6,7 +6,7 @@ replicaCount: 1
 image:
   repository: ghcr.io/sooperset/mcp-atlassian
   pullPolicy: IfNotPresent
-  tag: "0.13"
+  tag: "0.20.0"
 
 imagePullSecrets: []
 nameOverride: ""
@@ -24,6 +24,10 @@ serviceAccount:
   automount: true
   annotations: {}
   name: ""
+
+rbac:
+  # Whether to create RBAC resources
+  create: true
 
 podAnnotations: {}
 podLabels: {}
