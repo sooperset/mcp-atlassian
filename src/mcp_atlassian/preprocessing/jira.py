@@ -218,8 +218,50 @@ class JiraPreprocessor(BasePreprocessor):
         if self.disable_translation:
             return input_text
 
+        output = input_text
+
+        # Save code/noformat blocks to prevent downstream regex corruption
+        code_blocks: list[str] = []
+        inline_codes: list[str] = []
+
+        def save_code_block(match: re.Match) -> str:
+            lang = match.group(1) or ""
+            content = match.group(2)
+            md_block = f"```{lang}\n{content}\n```"
+            placeholder = f"\x00CODEBLOCK{len(code_blocks)}\x00"
+            code_blocks.append(md_block)
+            return placeholder
+
+        def save_noformat_block(match: re.Match) -> str:
+            content = match.group(1)
+            md_block = f"```\n{content}\n```"
+            placeholder = f"\x00CODEBLOCK{len(code_blocks)}\x00"
+            code_blocks.append(md_block)
+            return placeholder
+
+        def save_inline_code(match: re.Match) -> str:
+            content = match.group(1)
+            md_code = f"`{content}`"
+            placeholder = f"\x00INLINECODE{len(inline_codes)}\x00"
+            inline_codes.append(md_code)
+            return placeholder
+
+        # Extract BEFORE any other transformations
+        output = re.sub(
+            r"\{code(?::([a-z]+))?\}([\s\S]*?)\{code\}",
+            save_code_block,
+            output,
+            flags=re.MULTILINE,
+        )
+        output = re.sub(
+            r"\{noformat\}([\s\S]*?)\{noformat\}",
+            save_noformat_block,
+            output,
+        )
+        output = re.sub(r"\{\{([^}]+)\}\}", save_inline_code, output)
+
         # Block quotes
-        output = re.sub(r"^bq\.(.*?)$", r"> \1\n", input_text, flags=re.MULTILINE)
+        output = re.sub(r"^bq\.(.*?)$", r"> \1\n", output, flags=re.MULTILINE)
 
         # Text formatting (bold, italic)
         output = re.sub(
@@ -246,9 +288,6 @@ class JiraPreprocessor(BasePreprocessor):
             flags=re.MULTILINE,
         )
 
-        # Inline code
-        output = re.sub(r"\{\{([^}]+)\}\}", r"`\1`", output)
-
         # Citation (non-overlapping alternation to avoid catastrophic backtracking)
         output = re.sub(r"\?\?([^?]+(?:\?[^?]+)*)\?\?", r"<cite>\1</cite>", output)
 
@@ -263,17 +302,6 @@ class JiraPreprocessor(BasePreprocessor):
 
         # Strikethrough
         output = re.sub(r"-([^-]*)-", r"-\1-", output)
-
-        # Code blocks with optional language specification
-        output = re.sub(
-            r"\{code(?::([a-z]+))?\}([\s\S]*?)\{code\}",
-            r"```\1\n\2\n```",
-            output,
-            flags=re.MULTILINE,
-        )
-
-        # No format
-        output = re.sub(r"\{noformat\}([\s\S]*?)\{noformat\}", r"```\n\1\n```", output)
 
         # Quote blocks
         output = re.sub(
@@ -339,6 +367,12 @@ class JiraPreprocessor(BasePreprocessor):
 
         # Rejoin the lines
         output = "\n".join(lines)
+
+        # Restore code/noformat blocks and inline code from placeholders
+        for i in range(len(code_blocks) - 1, -1, -1):
+            output = output.replace(f"\x00CODEBLOCK{i}\x00", code_blocks[i])
+        for i in range(len(inline_codes) - 1, -1, -1):
+            output = output.replace(f"\x00INLINECODE{i}\x00", inline_codes[i])
 
         return output
 
@@ -412,7 +446,7 @@ class JiraPreprocessor(BasePreprocessor):
             if jira_lang:
                 code += ":" + jira_lang
             code += "}" + content + "{code}"
-            placeholder = f"\x00CODE_BLOCK_{len(code_blocks)}\x00"
+            placeholder = f"\x00CODEBLOCK{len(code_blocks)}\x00"
             code_blocks.append(code)
             return placeholder
 
@@ -429,7 +463,7 @@ class JiraPreprocessor(BasePreprocessor):
             """
             content = match.group(1)
             code = "{{" + content + "}}"
-            placeholder = f"\x00INLINE_CODE_{len(inline_codes)}\x00"
+            placeholder = f"\x00INLINECODE{len(inline_codes)}\x00"
             inline_codes.append(code)
             return placeholder
 
@@ -543,11 +577,11 @@ class JiraPreprocessor(BasePreprocessor):
 
         # Restore code blocks from placeholders
         for i, code in enumerate(code_blocks):
-            output = output.replace(f"\x00CODE_BLOCK_{i}\x00", code)
+            output = output.replace(f"\x00CODEBLOCK{i}\x00", code)
 
         # Restore inline code from placeholders
         for i, code in enumerate(inline_codes):
-            output = output.replace(f"\x00INLINE_CODE_{i}\x00", code)
+            output = output.replace(f"\x00INLINECODE{i}\x00", code)
 
         return output
 
