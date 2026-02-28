@@ -7,6 +7,8 @@ epic field extraction, and simplified dict conversion.
 
 import re
 
+import pytest
+
 from mcp_atlassian.models.constants import (
     EMPTY_STRING,
     JIRA_DEFAULT_ID,
@@ -647,3 +649,104 @@ class TestJiraIssue:
         simplified = issue.to_simplified_dict()
         assert "timetracking" in simplified
         assert simplified["timetracking"]["original_estimate"] == "1d"
+
+
+class TestProcessCustomFieldValue:
+    """Tests for _process_custom_field_value."""
+
+    @pytest.fixture()
+    def issue(self):
+        """Create a minimal JiraIssue for testing _process_custom_field_value."""
+        return JiraIssue(
+            id="1",
+            key="TEST-1",
+            summary="test",
+        )
+
+    @pytest.mark.parametrize(
+        ("field_value", "expected"),
+        [
+            pytest.param(None, None, id="none"),
+            pytest.param("text", "text", id="string"),
+            pytest.param(42, 42, id="integer"),
+            pytest.param(True, True, id="boolean"),
+            pytest.param(3.14, 3.14, id="float"),
+        ],
+    )
+    def test_primitives_unchanged(self, issue, field_value, expected):
+        """Primitive values pass through unchanged."""
+        assert issue._process_custom_field_value(field_value) == expected
+
+    def test_dict_with_value_key(self, issue):
+        """Dicts with 'value' key return that value (select options)."""
+        assert issue._process_custom_field_value({"value": "Option A"}) == "Option A"
+
+    def test_jira_reference_object_simplified(self, issue):
+        """Jira reference objects (with 'self' URL) simplify to name."""
+        ref = {
+            "name": "High",
+            "self": "https://jira.example.com/rest/api/2/priority/3",
+            "id": "3",
+        }
+        assert issue._process_custom_field_value(ref) == "High"
+
+    def test_plugin_data_object_preserved(self, issue):
+        """Plugin data objects (no 'self' key) are preserved in full."""
+        checklist_item = {"name": "Item A", "checked": True, "id": 1, "rank": 0}
+        result = issue._process_custom_field_value(checklist_item)
+        assert result == checklist_item
+
+    def test_list_of_plugin_data_preserved(self, issue):
+        """Lists of plugin data objects are preserved in full."""
+        items = [
+            {"name": "Item A", "checked": True, "id": 1, "rank": 0},
+            {"name": "Item B", "checked": False, "id": 2, "rank": 1, "isHeader": True},
+        ]
+        result = issue._process_custom_field_value(items)
+        assert result == items
+
+    def test_list_of_jira_references_simplified(self, issue):
+        """Lists of Jira reference objects simplify to names."""
+        refs = [
+            {
+                "name": "Group A",
+                "self": "https://jira.example.com/rest/api/2/group?name=A",
+            },
+            {
+                "name": "Group B",
+                "self": "https://jira.example.com/rest/api/2/group?name=B",
+            },
+        ]
+        result = issue._process_custom_field_value(refs)
+        assert result == ["Group A", "Group B"]
+
+    def test_dict_without_name_or_value_preserved(self, issue):
+        """Dicts without 'name' or 'value' keys are preserved as-is."""
+        data = {"foo": "bar", "baz": 42}
+        assert issue._process_custom_field_value(data) == data
+
+    def test_checklist_custom_field_end_to_end(self):
+        """End-to-end: checklist custom field preserved through from_api_response → to_simplified_dict."""
+        checklist_items = [
+            {"name": "Task 1", "checked": True, "id": 1, "rank": 0},
+            {"name": "Task 2", "checked": False, "id": 2, "rank": 1},
+            {"name": "Section", "checked": False, "id": 3, "rank": 2, "isHeader": True},
+        ]
+        api_data = {
+            "id": "99",
+            "key": "CHECK-1",
+            "fields": {
+                "summary": "Checklist issue",
+                "issuetype": {"name": "Task"},
+                "status": {"name": "Open", "statusCategory": {"name": "To Do"}},
+                "customfield_10200": checklist_items,
+            },
+            "names": {
+                "customfield_10200": "Okapya Checklist",
+            },
+        }
+        issue = JiraIssue.from_api_response(api_data, requested_fields="*all")
+        simplified = issue.to_simplified_dict()
+        field = simplified["customfield_10200"]
+        assert field["name"] == "Okapya Checklist"
+        assert field["value"] == checklist_items
