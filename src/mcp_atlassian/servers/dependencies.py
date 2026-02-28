@@ -33,7 +33,7 @@ def _resolve_oauth_access_token(fallback_token: str, service: str) -> str:
     """Resolve upstream OAuth token from FastMCP auth context with safe fallback."""
     try:
         access_token = get_access_token()
-    except Exception as e:
+    except (RuntimeError, LookupError) as e:
         logger.debug(
             "OAuth token resolution via FastMCP context failed for %s; "
             "using request token (%s)",

@@ -66,9 +66,7 @@ class HardenedOAuthProxy(OAuthProxy):
                     forced_scope,
                 )
 
-        if updates:
-            client_info = client_info.model_copy(update=updates)
-
+        client_info = client_info.model_copy(update=updates)
         await super().register_client(client_info)
 
 
