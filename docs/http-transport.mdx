@@ -158,9 +158,26 @@ Both transport types support per-request authentication where each user provides
     ATLASSIAN_OAUTH_REDIRECT_URI=http://localhost:8080/callback
     ATLASSIAN_OAUTH_SCOPE=read:jira-work write:jira-work read:confluence-content.all write:confluence-content offline_access
     ATLASSIAN_OAUTH_CLOUD_ID=your_cloud_id_from_setup_wizard
+    # Optional: enable MCP OAuth proxy + DCR/discovery endpoints
+    ATLASSIAN_OAUTH_PROXY_ENABLE=true
+    PUBLIC_BASE_URL=https://mcp.example.com/mcp-atlassian
     ```
   </Step>
 </Steps>
+
+### OAuth Discovery + DCR for MCP Clients
+
+When `ATLASSIAN_OAUTH_PROXY_ENABLE=true`, the HTTP service exposes OAuth discovery
+and DCR endpoints so MCP clients can onboard users through spec-aligned OAuth:
+
+- `/.well-known/oauth-protected-resource`
+- `/.well-known/oauth-authorization-server`
+- `POST /register`
+- `GET /authorize`
+- `POST /token`
+- callback route derived from `ATLASSIAN_OAUTH_REDIRECT_URI`
+
+Use this for remote clients like ChatGPT/Codex that expect discovery + DCR.
 
 ### Multi-Cloud Support
 

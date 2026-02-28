@@ -11,7 +11,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from fastmcp import Context
-from fastmcp.server.dependencies import get_http_request
+from fastmcp.server.dependencies import get_access_token, get_http_request
 from starlette.requests import Request
 
 from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
@@ -27,6 +27,29 @@ if TYPE_CHECKING:
     from mcp_atlassian.jira.config import JiraConfig as UserJiraConfigType
 
 logger = logging.getLogger("mcp-atlassian.servers.dependencies")
+
+
+def _resolve_oauth_access_token(fallback_token: str, service: str) -> str:
+    """Resolve upstream OAuth token from FastMCP auth context with safe fallback."""
+    try:
+        access_token = get_access_token()
+    except Exception as e:
+        logger.debug(
+            "OAuth token resolution via FastMCP context failed for %s; "
+            "using request token (%s)",
+            service,
+            e,
+        )
+        return fallback_token
+
+    if access_token and access_token.token:
+        if access_token.token != fallback_token:
+            logger.debug(
+                "Resolved upstream %s token from FastMCP auth context", service
+            )
+        return access_token.token
+
+    return fallback_token
 
 
 def _make_ssrf_safe_hook(
@@ -407,7 +430,9 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
 
             credentials = {"user_email_context": user_email}
             if resolved_auth_type == "oauth":
-                credentials["oauth_access_token"] = user_token
+                credentials["oauth_access_token"] = _resolve_oauth_access_token(
+                    user_token, "Jira"
+                )
             else:
                 credentials["personal_access_token"] = user_token
 
@@ -641,7 +666,9 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
 
             credentials = {"user_email_context": user_email}
             if resolved_auth_type == "oauth":
-                credentials["oauth_access_token"] = user_token
+                credentials["oauth_access_token"] = _resolve_oauth_access_token(
+                    user_token, "Confluence"
+                )
             else:
                 credentials["personal_access_token"] = user_token
 
