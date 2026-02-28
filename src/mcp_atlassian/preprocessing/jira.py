@@ -9,6 +9,19 @@ from .base import BasePreprocessor
 logger = logging.getLogger("mcp-atlassian")
 
 
+def _convert_panel(params: str | None, content: str) -> str:
+    """Convert a Jira {panel} block to markdown."""
+    title = ""
+    if params:
+        title_match = re.search(r"title=([^|}]+)", params)
+        if title_match:
+            title = title_match.group(1).strip()
+    content = content.strip()
+    if title:
+        return f"\n**{title}**\n{content}\n"
+    return f"\n{content}\n"
+
+
 class JiraPreprocessor(BasePreprocessor):
     """Handles text preprocessing for Jira content."""
 
@@ -272,6 +285,14 @@ class JiraPreprocessor(BasePreprocessor):
             flags=re.MULTILINE,
         )
 
+        # Panel blocks - extract content, optionally show title as bold
+        output = re.sub(
+            r"\{panel(?::([^}]*))?\}([\s\S]*?)\{panel\}",
+            lambda match: _convert_panel(match.group(1), match.group(2)),
+            output,
+            flags=re.MULTILINE,
+        )
+
         # Images with alt text
         output = re.sub(
             r"!([^|\n\s]+)\|([^\n!]*)alt=([^\n!\,]+?)(,([^\n!]*))?!",
@@ -287,7 +308,7 @@ class JiraPreprocessor(BasePreprocessor):
 
         # Links
         output = re.sub(r"\[([^|]+)\|(.+?)\]", r"[\1](\2)", output)
-        output = re.sub(r"\[(.+?)\]([^\(]+)", r"<\1>\2", output)
+        output = re.sub(r"\[(.+?)\]([^\(])", r"\1\2", output)
 
         # Colored text
         output = re.sub(
