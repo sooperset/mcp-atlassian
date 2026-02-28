@@ -1056,3 +1056,89 @@ class TestImageProcessing:
         html = "<p>Simple text</p>"
         processed_html, processed_markdown = preprocessor.process_html_content(html)
         assert "Simple text" in processed_markdown
+
+
+# Issue #1052 - {panel} blocks drop links during wiki-to-markdown conversion
+
+
+class TestPanelBlocks:
+    """Tests for {panel} block conversion and bare link handling."""
+
+    @pytest.fixture
+    def preprocessor(self):
+        return JiraPreprocessor(base_url="https://example.atlassian.net")
+
+    @pytest.mark.parametrize(
+        "test_id, input_text, expected_present, expected_absent",
+        [
+            pytest.param(
+                "panel-bare-url",
+                "{panel:title=Spec}[https://example.com]{panel}",
+                ["**Spec**", "https://example.com"],
+                ["{panel"],
+                id="panel-bare-url",
+            ),
+            pytest.param(
+                "panel-named-link",
+                "{panel:title=Spec}[Link Text|https://example.com]{panel}",
+                ["**Spec**", "[Link Text](https://example.com)"],
+                ["{panel"],
+                id="panel-named-link",
+            ),
+            pytest.param(
+                "panel-no-title",
+                "{panel}some content{panel}",
+                ["some content"],
+                ["{panel"],
+                id="panel-no-title",
+            ),
+            pytest.param(
+                "panel-extra-params",
+                "{panel:borderColor=#ccc|title=Info}text{panel}",
+                ["**Info**", "text"],
+                ["{panel"],
+                id="panel-extra-params",
+            ),
+            pytest.param(
+                "panel-multiline",
+                "{panel:title=Notes}line one\nline two{panel}",
+                ["line one", "line two"],
+                ["{panel"],
+                id="panel-multiline",
+            ),
+            pytest.param(
+                "multiple-panels",
+                "{panel:title=A}content A{panel}\n{panel:title=B}content B{panel}",
+                ["**A**", "content A", "**B**", "content B"],
+                ["{panel"],
+                id="multiple-panels",
+            ),
+        ],
+    )
+    def test_panel_conversion(
+        self,
+        preprocessor,
+        test_id: str,
+        input_text: str,
+        expected_present: list[str],
+        expected_absent: list[str],
+    ):
+        """Test {panel} block conversion to markdown."""
+        result = preprocessor.jira_to_markdown(input_text)
+        for expected in expected_present:
+            assert expected in result, f"[{test_id}] Expected '{expected}' in: {result}"
+        for absent in expected_absent:
+            assert absent not in result, (
+                f"[{test_id}] Unexpected '{absent}' in: {result}"
+            )
+
+    def test_panel_full_pipeline(self, preprocessor):
+        """Test panel with URL link through the full clean_jira_text pipeline (the reported bug)."""
+        input_text = "{panel:title=Spec}[https://example.com]{panel}"
+        result = preprocessor.clean_jira_text(input_text)
+        assert "https://example.com" in result, f"URL dropped in pipeline: {result}"
+
+    def test_bare_link_without_panel(self, preprocessor):
+        """Test bare [url] link is preserved outside panels too."""
+        result = preprocessor.jira_to_markdown("[https://example.com] more text")
+        assert "https://example.com" in result, f"URL dropped: {result}"
