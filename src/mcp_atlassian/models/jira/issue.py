@@ -695,7 +695,13 @@ class JiraIssue(ApiModel, TimestampMixin):
             if "value" in field_value:
                 return field_value["value"]
             elif "name" in field_value:
-                return field_value["name"]
+                # Standard Jira reference objects (priority, user, group) have a
+                # "self" URL key — simplify those to just the name. Plugin data
+                # objects (e.g. Okapya checklist items) don't have "self" and
+                # should be preserved in full to retain metadata like "checked".
+                if "self" in field_value:
+                    return field_value["name"]
+                return field_value
             return field_value
 
         if isinstance(field_value, list):
