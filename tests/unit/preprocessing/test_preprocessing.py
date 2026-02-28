@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
@@ -1142,3 +1144,75 @@ class TestPanelBlocks:
         """Test bare [url] link is preserved outside panels too."""
         result = preprocessor.jira_to_markdown("[https://example.com] more text")
         assert "https://example.com" in result, f"URL dropped: {result}"
+
+
+# Issue #1057 - jira_to_markdown() corrupts markup inside code blocks
+
+
+@pytest.mark.parametrize(
+    "test_id, input_text, expected_in_fence, description",
+    [
+        pytest.param(
+            "quote-in-code",
+            "{code}{quote}quoted{quote}{code}",
+            "{quote}quoted{quote}",
+            "Quote not converted inside code",
+            id="quote-in-code",
+        ),
+        pytest.param(
+            "color-in-code",
+            "{code}{color:red}text{color}{code}",
+            "{color:red}text{color}",
+            "Color not converted inside code",
+            id="color-in-code",
+        ),
+        pytest.param(
+            "panel-in-code",
+            "{code}{panel:title=X}content{panel}{code}",
+            "{panel:title=X}content{panel}",
+            "Panel not converted inside code",
+            id="panel-in-code",
+        ),
+        pytest.param(
+            "noformat-with-quote",
+            "{noformat}{quote}q{quote}{noformat}",
+            "{quote}q{quote}",
+            "Quote not converted inside noformat",
+            id="noformat-with-quote",
+        ),
+        pytest.param(
+            "code-with-lang",
+            "{code:python}{quote}q{quote}{code}",
+            "{quote}q{quote}",
+            "Language preserved, content literal",
+            id="code-with-lang",
+        ),
+        pytest.param(
+            "mixed-outside-inside",
+            "{quote}real quote{quote}\n{code}{quote}not a quote{quote}{code}",
+            "{quote}not a quote{quote}",
+            "Outside converted, inside preserved",
+            id="mixed-outside-inside",
+        ),
+    ],
+)
+def test_jira_to_markdown_code_block_preserves_content(
+    preprocessor_with_jira,
+    test_id: str,
+    input_text: str,
+    expected_in_fence: str,
+    description: str,
+):
+    """Test that markup inside {code}/{noformat} blocks is not converted (#1057)."""
+    result = preprocessor_with_jira.jira_to_markdown(input_text)
+    # The expected content should appear literally inside a code fence
+    assert "```" in result, f"[{test_id}] No code fence in: {result}"
+    # Extract content between fences
+    fence_pattern = r"```(?:\w*)\n([\s\S]*?)\n```"
+    fence_match = re.search(fence_pattern, result)
+    assert fence_match, f"[{test_id}] Could not extract fence content from: {result}"
+    fence_content = fence_match.group(1)
+    assert expected_in_fence in fence_content, (
+        f"[{test_id}] Expected '{expected_in_fence}' inside fence, "
+        f"got: '{fence_content}' (full: {result})"
+    )
