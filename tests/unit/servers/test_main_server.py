@@ -579,15 +579,13 @@ class TestUserTokenMiddleware:
 
     @pytest.mark.anyio
     async def test_ignore_header_auth_unset(
-        self, middleware, mock_scope, mock_receive, mock_send
+        self, middleware, mock_scope, mock_receive, mock_send, monkeypatch
     ):
         """Test that auth processing works normally when IGNORE_HEADER_AUTH is not set."""
         mock_scope["headers"] = [(b"authorization", b"Bearer valid-token")]
+        monkeypatch.delenv("IGNORE_HEADER_AUTH", raising=False)
 
-        with patch.dict(os.environ, {}, clear=False):
-            # Ensure IGNORE_HEADER_AUTH is not set
-            os.environ.pop("IGNORE_HEADER_AUTH", None)
-            await middleware(mock_scope, mock_receive, mock_send)
+        await middleware(mock_scope, mock_receive, mock_send)
 
         middleware.app.assert_called_once()
         passed_scope = middleware.app.call_args[0][0]
