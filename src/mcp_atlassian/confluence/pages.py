@@ -846,3 +846,59 @@ class PagesMixin(ConfluenceClient):
         except Exception as e:
             logger.error(f"Error getting page history for page {page_id}: {str(e)}")
             raise Exception(f"Error getting page history: {str(e)}") from e
+
+    @handle_auth_errors("Confluence API")
+    def move_page(
+        self,
+        page_id: str,
+        target_parent_id: str | None = None,
+        target_space_key: str | None = None,
+        position: str = "append",
+    ) -> ConfluencePage:
+        """Move a page to a new parent or space.
+
+        Args:
+            page_id: ID of the page to move.
+            target_parent_id: Target parent page ID. If omitted with
+                target_space_key, moves page to root of target space.
+            target_space_key: Target space key for cross-space moves.
+            position: Position relative to target ("append" or "prepend").
+
+        Returns:
+            Updated ConfluencePage after move.
+
+        Raises:
+            ValueError: If neither target_parent_id nor target_space_key
+                is provided.
+            MCPAtlassianAuthenticationError: If authentication fails.
+        """
+        if not target_parent_id and not target_space_key:
+            raise ValueError(
+                "At least one of target_parent_id or target_space_key must be provided."
+            )
+
+        try:
+            # Determine space_key for the move_page call
+            if target_space_key:
+                space_key = target_space_key
+            else:
+                # Look up the target parent's space key
+                target_page = self.confluence.get_page_by_id(target_parent_id)
+                space_key = target_page.get("space", {}).get("key", "")
+
+            self.confluence.move_page(
+                space_key,
+                page_id,
+                target_id=target_parent_id,
+                position=position,
+            )
+
+            # Re-fetch the page to return updated state
+            return self.get_page_content(page_id)
+        except HTTPError:
+            raise  # let decorator handle auth errors
+        except ValueError:
+            raise  # re-raise our own validation error
+        except Exception as e:
+            logger.error(f"Error moving page {page_id}: {str(e)}")
+            raise Exception(f"Failed to move page {page_id}: {str(e)}") from e

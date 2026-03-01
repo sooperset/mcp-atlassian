@@ -2066,3 +2066,174 @@ class TestPageEmojiOAuth:
 
             mock_v2_adapter.set_page_emoji.assert_called_once_with(page_id, None)
             assert result is True
+
+
+class TestMovePage:
+    """Tests for the move_page method."""
+
+    @pytest.fixture
+    def pages_mixin(self, confluence_client):
+        """Create a PagesMixin instance for testing."""
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = PagesMixin()
+            mixin.confluence = confluence_client.confluence
+            mixin.config = confluence_client.config
+            mixin.preprocessor = confluence_client.preprocessor
+            return mixin
+
+    def test_move_page_to_new_parent_same_space(self, pages_mixin):
+        """Test moving a page to a new parent within the same space."""
+        page_id = "111"
+        target_parent_id = "222"
+
+        # Mock get_page_by_id to return target page with space info
+        pages_mixin.confluence.get_page_by_id.return_value = {
+            "id": target_parent_id,
+            "title": "Target Parent",
+            "space": {"key": "PROJ", "name": "Project"},
+            "version": {"number": 1},
+            "body": {"storage": {"value": "<p>Parent content</p>"}},
+        }
+
+        # Mock move_page
+        pages_mixin.confluence.move_page.return_value = {"status": "ok"}
+
+        # Mock get_page_content for the re-fetch after move
+        mock_moved_page = ConfluencePage(
+            id=page_id,
+            title="Moved Page",
+            content="Moved content",
+            space={"key": "PROJ", "name": "Project"},
+            version={"number": 2},
+        )
+        with patch.object(
+            pages_mixin, "get_page_content", return_value=mock_moved_page
+        ):
+            result = pages_mixin.move_page(
+                page_id=page_id, target_parent_id=target_parent_id
+            )
+
+        # Verify move_page was called with the correct space_key from the target
+        pages_mixin.confluence.move_page.assert_called_once_with(
+            "PROJ", page_id, target_id=target_parent_id, position="append"
+        )
+        assert isinstance(result, ConfluencePage)
+        assert result.id == page_id
+
+    def test_move_page_to_different_space_root(self, pages_mixin):
+        """Test moving a page to the root of a different space."""
+        page_id = "111"
+        target_space_key = "NEWSPACE"
+
+        # Mock move_page
+        pages_mixin.confluence.move_page.return_value = {"status": "ok"}
+
+        # Mock get_page_content for the re-fetch after move
+        mock_moved_page = ConfluencePage(
+            id=page_id,
+            title="Moved Page",
+            content="Moved content",
+            space={"key": target_space_key, "name": "New Space"},
+            version={"number": 2},
+        )
+        with patch.object(
+            pages_mixin, "get_page_content", return_value=mock_moved_page
+        ):
+            result = pages_mixin.move_page(
+                page_id=page_id, target_space_key=target_space_key
+            )
+
+        # Verify move_page was called with target_space_key and no target_id
+        pages_mixin.confluence.move_page.assert_called_once_with(
+            target_space_key, page_id, target_id=None, position="append"
+        )
+        assert isinstance(result, ConfluencePage)
+        assert result.space.key == target_space_key
+
+    def test_move_page_with_both_parent_and_space(self, pages_mixin):
+        """Test moving a page with both target_parent_id and target_space_key."""
+        page_id = "111"
+        target_parent_id = "333"
+        target_space_key = "OTHERSPACE"
+
+        # Mock move_page
+        pages_mixin.confluence.move_page.return_value = {"status": "ok"}
+
+        # Mock get_page_content for the re-fetch after move
+        mock_moved_page = ConfluencePage(
+            id=page_id,
+            title="Cross-Space Moved",
+            content="Moved content",
+            space={"key": target_space_key, "name": "Other Space"},
+            version={"number": 2},
+        )
+        with patch.object(
+            pages_mixin, "get_page_content", return_value=mock_moved_page
+        ):
+            result = pages_mixin.move_page(
+                page_id=page_id,
+                target_parent_id=target_parent_id,
+                target_space_key=target_space_key,
+            )
+
+        # When both are given, use target_space_key directly (no need to look up)
+        pages_mixin.confluence.move_page.assert_called_once_with(
+            target_space_key, page_id, target_id=target_parent_id, position="append"
+        )
+        assert isinstance(result, ConfluencePage)
+        assert result.space.key == target_space_key
+
+    def test_move_page_validation_error_neither_provided(self, pages_mixin):
+        """Test that ValueError is raised when neither target is provided."""
+        with pytest.raises(ValueError, match="At least one of"):
+            pages_mixin.move_page(page_id="111")
+
+    def test_move_page_with_prepend_position(self, pages_mixin):
+        """Test moving a page with prepend position."""
+        page_id = "111"
+        target_parent_id = "222"
+
+        pages_mixin.confluence.get_page_by_id.return_value = {
+            "id": target_parent_id,
+            "title": "Target Parent",
+            "space": {"key": "PROJ", "name": "Project"},
+            "version": {"number": 1},
+            "body": {"storage": {"value": "<p>content</p>"}},
+        }
+        pages_mixin.confluence.move_page.return_value = {"status": "ok"}
+
+        mock_moved_page = ConfluencePage(
+            id=page_id,
+            title="Prepended Page",
+            content="Content",
+            space={"key": "PROJ", "name": "Project"},
+            version={"number": 2},
+        )
+        with patch.object(
+            pages_mixin, "get_page_content", return_value=mock_moved_page
+        ):
+            result = pages_mixin.move_page(
+                page_id=page_id,
+                target_parent_id=target_parent_id,
+                position="prepend",
+            )
+
+        pages_mixin.confluence.move_page.assert_called_once_with(
+            "PROJ", page_id, target_id=target_parent_id, position="prepend"
+        )
+        assert isinstance(result, ConfluencePage)
+
+    def test_move_page_api_error(self, pages_mixin):
+        """Test that API errors are propagated correctly."""
+        page_id = "111"
+        target_space_key = "BADSPACE"
+
+        pages_mixin.confluence.move_page.side_effect = Exception(
+            "API error: space not found"
+        )
+
+        with pytest.raises(Exception, match="Failed to move page"):
+            pages_mixin.move_page(page_id=page_id, target_space_key=target_space_key)
