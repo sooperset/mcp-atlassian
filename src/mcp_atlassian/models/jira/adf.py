@@ -217,6 +217,43 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
             doc["content"].append({"type": "orderedList", "content": items_ol})
             continue
 
+        # --- Table ---
+        if line.startswith("|") and "|" in line[1:]:
+            table_rows: list[str] = []
+            while i < len(lines) and lines[i].startswith("|"):
+                table_rows.append(lines[i])
+                i += 1
+
+            # Parse rows, skip separator (|---|---|)
+            data_rows: list[list[str]] = []
+            for row_line in table_rows:
+                cells = [c.strip() for c in row_line.strip("|").split("|")]
+                if all(re.match(r"^:?-+:?$", c) for c in cells if c):
+                    continue
+                data_rows.append(cells)
+
+            if data_rows:
+                adf_rows: list[dict[str, Any]] = []
+                for idx, cells in enumerate(data_rows):
+                    cell_type = "tableHeader" if idx == 0 else "tableCell"
+                    adf_cells = []
+                    for cell_text in cells:
+                        content = _parse_inline_formatting(cell_text)
+                        if not content:
+                            content = [{"type": "text", "text": ""}]
+                        adf_cells.append({
+                            "type": cell_type,
+                            "content": [{"type": "paragraph", "content": content}],
+                        })
+                    adf_rows.append({"type": "tableRow", "content": adf_cells})
+
+                doc["content"].append({
+                    "type": "table",
+                    "attrs": {"isNumberColumnEnabled": False, "layout": "default"},
+                    "content": adf_rows,
+                })
+            continue
+
         # --- Empty line (skip) ---
         if not stripped:
             i += 1
