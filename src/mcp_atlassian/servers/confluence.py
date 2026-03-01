@@ -928,13 +928,25 @@ async def search_user(
             le=50,
         ),
     ] = 10,
+    group_name: Annotated[
+        str,
+        Field(
+            description=(
+                "Group to search within on Server/DC instances "
+                "(default: 'confluence-users'). "
+                "Ignored on Cloud."
+            ),
+            default="confluence-users",
+        ),
+    ] = "confluence-users",
 ) -> str:
-    """Search Confluence users using CQL.
+    """Search Confluence users using CQL (Cloud) or group member API (Server/DC).
 
     Args:
         ctx: The FastMCP context.
         query: Search query - a CQL query string for user search.
         limit: Maximum number of results (1-50).
+        group_name: Group to search within on Server/DC.
 
     Returns:
         JSON string representing a list of simplified Confluence user search result objects.
@@ -950,7 +962,9 @@ async def search_user(
         logger.info(f"Converting simple search term to user CQL: {query}")
 
     try:
-        user_results = confluence_fetcher.search_user(query, limit=limit)
+        user_results = confluence_fetcher.search_user(
+            query, limit=limit, group_name=group_name
+        )
         search_results = [user.to_simplified_dict() for user in user_results]
         return json.dumps(search_results, indent=2, ensure_ascii=False)
     except MCPAtlassianAuthenticationError as e:

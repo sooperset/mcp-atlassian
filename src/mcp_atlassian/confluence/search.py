@@ -1,6 +1,8 @@
 """Module for Confluence search operations."""
 
 import logging
+import re
+from typing import Any
 
 from ..models.confluence import (
     ConfluencePage,
@@ -8,6 +10,7 @@ from ..models.confluence import (
     ConfluenceUserSearchResult,
     ConfluenceUserSearchResults,
 )
+from ..models.confluence.common import ConfluenceUser
 from ..utils.decorators import handle_atlassian_api_errors
 from .client import ConfluenceClient
 from .utils import quote_cql_identifier_if_needed
@@ -97,29 +100,89 @@ class SearchMixin(ConfluenceClient):
 
     @handle_atlassian_api_errors("Confluence API")
     def search_user(
-        self, cql: str, limit: int = 10
+        self,
+        cql: str,
+        limit: int = 10,
+        group_name: str = "confluence-users",
     ) -> list[ConfluenceUserSearchResult]:
         """
-        Search users using Confluence Query Language (CQL).
+        Search users using CQL (Cloud) or group member API (Server/DC).
 
         Args:
             cql: Confluence Query Language string for user search
             limit: Maximum number of results to return
+            group_name: Group to search within on Server/DC
+                (default: "confluence-users")
 
         Returns:
-            List of ConfluenceUserSearchResult models containing user search results
+            List of ConfluenceUserSearchResult models containing
+            user search results
 
         Raises:
-            MCPAtlassianAuthenticationError: If authentication fails with the
-                Confluence API (401/403)
+            MCPAtlassianAuthenticationError: If authentication fails
+                with the Confluence API (401/403)
         """
-        # Execute the user search query using the direct API endpoint
-        results = self.confluence.get(
-            "rest/api/search/user", params={"cql": cql, "limit": limit}
-        )
+        if self.config.is_cloud:
+            # Cloud: use CQL search endpoint
+            results = self.confluence.get(
+                "rest/api/search/user",
+                params={"cql": cql, "limit": limit},
+            )
+            search_result = ConfluenceUserSearchResults.from_api_response(results or {})
+            return search_result.results
 
-        # Convert the response to a user search result model
-        search_result = ConfluenceUserSearchResults.from_api_response(results or {})
+        # Server/DC: fall back to group member API
+        return self._search_user_server_dc(cql, group_name, limit)
 
-        # Return the list of user search results
-        return search_result.results
+    def _search_user_server_dc(
+        self,
+        cql: str,
+        group_name: str,
+        limit: int,
+    ) -> list[ConfluenceUserSearchResult]:
+        """Search users on Server/DC via group member API with pagination.
+
+        Args:
+            cql: CQL string or plain search term to fuzzy match.
+            group_name: Group to search within.
+            limit: Max results to return.
+
+        Returns:
+            List of matching ConfluenceUserSearchResult models.
+        """
+        # Extract search term from CQL if possible
+        match = re.search(r'user\.fullname\s*~\s*"([^"]*)"', cql)
+        search_term = match.group(1) if match else cql
+        search_lower = search_term.lower()
+
+        matches: list[ConfluenceUserSearchResult] = []
+        start = 0
+        page_size = 200
+
+        while len(matches) < limit:
+            response: dict[str, Any] = self.confluence.get(
+                f"rest/api/group/{group_name}/member",
+                params={"start": start, "limit": page_size},
+            )
+            members = response.get("results", [])
+
+            for member in members:
+                display = member.get("displayName", "")
+                username = member.get("username", "")
+                if search_lower in display.lower() or search_lower in username.lower():
+                    user = ConfluenceUser.from_api_response(member)
+                    result = ConfluenceUserSearchResult(
+                        user=user,
+                        title=display,
+                        entity_type="user",
+                    )
+                    matches.append(result)
+                    if len(matches) >= limit:
+                        break
+
+            # Stop when last page reached
+            if len(members) < page_size:
+                break
+            start += page_size
+
+        return matches[:limit]

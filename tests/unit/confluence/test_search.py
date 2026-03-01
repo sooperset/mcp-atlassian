@@ -1,6 +1,7 @@
 """Unit tests for the SearchMixin class."""
 
-from unittest.mock import MagicMock, patch
+import re
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 import requests
@@ -564,3 +565,325 @@ class TestSearchMixin:
         assert results[0].user.display_name == "Test User"
         assert results[0].title == "Test User"
         assert results[0].entity_type == "user"
+
+
+class TestSearchUserServerDC:
+    """Tests for Server/DC user search via group member API fallback."""
+
+    @pytest.fixture
+    def server_search_mixin(self, confluence_client):
+        """Create a SearchMixin configured as Server/DC."""
+        with patch(
+            "mcp_atlassian.confluence.search.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = SearchMixin()
+            mixin.confluence = confluence_client.confluence
+            mixin.config = MagicMock()
+            mixin.config.is_cloud = False
+            mixin.preprocessor = confluence_client.preprocessor
+            return mixin
+
+    @pytest.fixture
+    def cloud_search_mixin(self, confluence_client):
+        """Create a SearchMixin configured as Cloud."""
+        with patch(
+            "mcp_atlassian.confluence.search.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = SearchMixin()
+            mixin.confluence = confluence_client.confluence
+            mixin.config = MagicMock()
+            mixin.config.is_cloud = True
+            mixin.preprocessor = confluence_client.preprocessor
+            return mixin
+
+    def test_cloud_path_uses_cql_endpoint(self, cloud_search_mixin):
+        """Cloud path should still use CQL rest/api/search/user."""
+        cloud_search_mixin.confluence.get.return_value = {
+            "results": [],
+            "start": 0,
+            "limit": 10,
+            "size": 0,
+            "totalSize": 0,
+        }
+
+        cloud_search_mixin.search_user('user.fullname ~ "Test"')
+
+        cloud_search_mixin.confluence.get.assert_called_once_with(
+            "rest/api/search/user",
+            params={"cql": 'user.fullname ~ "Test"', "limit": 10},
+        )
+
+    def test_server_dc_calls_group_member_api(self, server_search_mixin):
+        """Server/DC should call group member API instead of CQL."""
+        server_search_mixin.confluence.get.return_value = {
+            "results": [
+                {
+                    "type": "known",
+                    "username": "jdoe",
+                    "displayName": "John Doe",
+                    "userKey": "abc123",
+                }
+            ],
+            "start": 0,
+            "limit": 200,
+            "size": 1,
+        }
+
+        results = server_search_mixin.search_user('user.fullname ~ "John"')
+
+        # Should have called the group member API
+        server_search_mixin.confluence.get.assert_called_with(
+            "rest/api/group/confluence-users/member",
+            params={"start": 0, "limit": 200},
+        )
+        assert len(results) == 1
+        assert results[0].user is not None
+        assert results[0].user.display_name == "John Doe"
+
+    def test_server_dc_fuzzy_match_case_insensitive(self, server_search_mixin):
+        """Fuzzy matching should be case-insensitive substring match."""
+        server_search_mixin.confluence.get.return_value = {
+            "results": [
+                {
+                    "type": "known",
+                    "username": "jdoe",
+                    "displayName": "John Doe",
+                    "userKey": "abc123",
+                },
+                {
+                    "type": "known",
+                    "username": "asmith",
+                    "displayName": "Alice Smith",
+                    "userKey": "def456",
+                },
+                {
+                    "type": "known",
+                    "username": "bjohnson",
+                    "displayName": "Bob Johnson",
+                    "userKey": "ghi789",
+                },
+            ],
+            "start": 0,
+            "limit": 200,
+            "size": 3,
+        }
+
+        results = server_search_mixin.search_user('user.fullname ~ "john"')
+
+        # Should match "John Doe" (displayName) and "bjohnson" (username)
+        assert len(results) == 2
+        display_names = {r.user.display_name for r in results}
+        assert "John Doe" in display_names
+        assert "Bob Johnson" in display_names
+
+    def test_server_dc_pagination(self, server_search_mixin):
+        """Should paginate through group members when page is full."""
+        # First page: 200 results (full page)
+        page1_members = [
+            {
+                "type": "known",
+                "username": f"user{i}",
+                "displayName": f"User {i}",
+                "userKey": f"key{i}",
+            }
+            for i in range(200)
+        ]
+        # Second page: fewer than 200 (last page), contains a match
+        page2_members = [
+            {
+                "type": "known",
+                "username": "targetuser",
+                "displayName": "Target User",
+                "userKey": "targetkey",
+            }
+        ]
+
+        server_search_mixin.confluence.get.side_effect = [
+            {"results": page1_members, "start": 0, "limit": 200, "size": 200},
+            {"results": page2_members, "start": 200, "limit": 200, "size": 1},
+        ]
+
+        results = server_search_mixin.search_user('user.fullname ~ "Target"')
+
+        # Should have called twice for pagination
+        assert server_search_mixin.confluence.get.call_count == 2
+        calls = server_search_mixin.confluence.get.call_args_list
+        assert calls[0] == call(
+            "rest/api/group/confluence-users/member",
+            params={"start": 0, "limit": 200},
+        )
+        assert calls[1] == call(
+            "rest/api/group/confluence-users/member",
+            params={"start": 200, "limit": 200},
+        )
+        assert len(results) == 1
+        assert results[0].user.display_name == "Target User"
+
+    @pytest.mark.parametrize(
+        "cql,expected_term",
+        [
+            ('user.fullname ~ "John Doe"', "John Doe"),
+            ('user.fullname~"Jane"', "Jane"),
+            ('user.fullname ~ "Test"', "Test"),
+            ("plain search term", "plain search term"),
+            ("", ""),
+        ],
+    )
+    def test_cql_term_extraction(self, cql, expected_term):
+        """CQL term extraction regex should work correctly."""
+        match = re.search(r'user\.fullname\s*~\s*"([^"]*)"', cql)
+        extracted = match.group(1) if match else cql
+        assert extracted == expected_term
+
+    def test_server_dc_no_matches(self, server_search_mixin):
+        """Should return empty list when no users match."""
+        server_search_mixin.confluence.get.return_value = {
+            "results": [
+                {
+                    "type": "known",
+                    "username": "asmith",
+                    "displayName": "Alice Smith",
+                    "userKey": "def456",
+                }
+            ],
+            "start": 0,
+            "limit": 200,
+            "size": 1,
+        }
+
+        results = server_search_mixin.search_user('user.fullname ~ "Nonexistent"')
+
+        assert len(results) == 0
+
+    def test_server_dc_custom_group_name(self, server_search_mixin):
+        """Should use the provided group_name parameter."""
+        server_search_mixin.confluence.get.return_value = {
+            "results": [
+                {
+                    "type": "known",
+                    "username": "jdoe",
+                    "displayName": "John Doe",
+                    "userKey": "abc123",
+                }
+            ],
+            "start": 0,
+            "limit": 200,
+            "size": 1,
+        }
+
+        server_search_mixin.search_user(
+            'user.fullname ~ "John"',
+            group_name="custom-group",
+        )
+
+        server_search_mixin.confluence.get.assert_called_with(
+            "rest/api/group/custom-group/member",
+            params={"start": 0, "limit": 200},
+        )
+
+    def test_server_dc_respects_limit(self, server_search_mixin):
+        """Should return at most `limit` results."""
+        members = [
+            {
+                "type": "known",
+                "username": f"john{i}",
+                "displayName": f"John User {i}",
+                "userKey": f"key{i}",
+            }
+            for i in range(10)
+        ]
+        server_search_mixin.confluence.get.return_value = {
+            "results": members,
+            "start": 0,
+            "limit": 200,
+            "size": 10,
+        }
+
+        results = server_search_mixin.search_user('user.fullname ~ "John"', limit=3)
+
+        assert len(results) == 3
+
+    def test_server_dc_stops_pagination_when_limit_reached(self, server_search_mixin):
+        """Should stop paginating once enough matches are found."""
+        # All 200 members match, limit is 5 -> should not fetch page 2
+        page1_members = [
+            {
+                "type": "known",
+                "username": f"john{i}",
+                "displayName": f"John {i}",
+                "userKey": f"key{i}",
+            }
+            for i in range(200)
+        ]
+
+        server_search_mixin.confluence.get.return_value = {
+            "results": page1_members,
+            "start": 0,
+            "limit": 200,
+            "size": 200,
+        }
+
+        results = server_search_mixin.search_user('user.fullname ~ "John"', limit=5)
+
+        # Should only call once since we have enough matches
+        assert server_search_mixin.confluence.get.call_count == 1
+        assert len(results) == 5
+
+    def test_server_dc_matches_on_username(self, server_search_mixin):
+        """Should match on username field too, not just displayName."""
+        server_search_mixin.confluence.get.return_value = {
+            "results": [
+                {
+                    "type": "known",
+                    "username": "john.doe",
+                    "displayName": "J. Doe",
+                    "userKey": "abc123",
+                }
+            ],
+            "start": 0,
+            "limit": 200,
+            "size": 1,
+        }
+
+        results = server_search_mixin.search_user('user.fullname ~ "john"')
+
+        # Should match because "john" is in the username "john.doe"
+        assert len(results) == 1
+        assert results[0].user.display_name == "J. Doe"
+
+    def test_server_dc_result_model_structure(self, server_search_mixin):
+        """Results should be valid ConfluenceUserSearchResult models."""
+        server_search_mixin.confluence.get.return_value = {
+            "results": [
+                {
+                    "type": "known",
+                    "username": "jdoe",
+                    "displayName": "John Doe",
+                    "userKey": "abc123",
+                    "profilePicture": {
+                        "path": "/avatar/jdoe",
+                        "width": 48,
+                        "height": 48,
+                        "isDefault": False,
+                    },
+                }
+            ],
+            "start": 0,
+            "limit": 200,
+            "size": 1,
+        }
+
+        results = server_search_mixin.search_user('user.fullname ~ "John"')
+
+        assert len(results) == 1
+        result = results[0]
+        assert result.user is not None
+        assert result.user.display_name == "John Doe"
+        assert result.title == "John Doe"
+        assert result.entity_type == "user"
+        # to_simplified_dict should work
+        simplified = result.to_simplified_dict()
+        assert simplified["title"] == "John Doe"
+        assert simplified["user"]["display_name"] == "John Doe"
