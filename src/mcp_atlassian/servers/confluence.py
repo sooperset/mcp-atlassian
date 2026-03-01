@@ -719,6 +719,85 @@ async def delete_page(
 
 
 @confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_pages"},
+    annotations={"title": "Move Page", "destructiveHint": True},
+)
+@check_write_access
+async def move_page(
+    ctx: Context,
+    page_id: Annotated[str, Field(description="ID of the page to move")],
+    target_parent_id: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Target parent page ID. If omitted with target_space_key, "
+                "moves to space root."
+            ),
+            default=None,
+        ),
+    ] = None,
+    target_space_key: Annotated[
+        str | None,
+        Field(
+            description="Target space key for cross-space moves",
+            default=None,
+        ),
+    ] = None,
+    position: Annotated[
+        str,
+        Field(
+            description=(
+                "Position: 'append' (default, move as child of target), "
+                "'above' (move before target as sibling), "
+                "or 'below' (move after target as sibling)"
+            ),
+            default="append",
+        ),
+    ] = "append",
+) -> str:
+    """Move a Confluence page to a new parent or space.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page to move.
+        target_parent_id: Target parent page ID.
+        target_space_key: Target space key for cross-space moves.
+        position: Position relative to target ('append', 'above', or 'below').
+
+    Returns:
+        JSON string representing the moved page object.
+
+    Raises:
+        ValueError: If neither target_parent_id nor target_space_key
+            is provided, or if Confluence client is not configured.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        moved_page = confluence_fetcher.move_page(
+            page_id=page_id,
+            target_parent_id=target_parent_id,
+            target_space_key=target_space_key,
+            position=position,
+        )
+        page_data = moved_page.to_simplified_dict()
+        return json.dumps(
+            {"message": "Page moved successfully", "page": page_data},
+            indent=2,
+            ensure_ascii=False,
+        )
+    except ValueError:
+        raise
+    except Exception as e:
+        logger.error(f"Error moving Confluence page {page_id}: {str(e)}")
+        response = {
+            "success": False,
+            "message": f"Error moving page {page_id}",
+            "error": str(e),
+        }
+        return json.dumps(response, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
     tags={"confluence", "write", "toolset:confluence_comments"},
     annotations={"title": "Add Comment", "destructiveHint": True},
 )
