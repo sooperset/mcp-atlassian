@@ -2325,6 +2325,43 @@ async def update_sprint(
 
 
 @jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_agile"},
+    annotations={"title": "Add Issues to Sprint", "readOnlyHint": False},
+)
+@check_write_access
+async def add_issues_to_sprint(
+    ctx: Context,
+    sprint_id: Annotated[str, Field(description="Sprint ID to add issues to")],
+    issue_keys: Annotated[
+        str,
+        Field(description="Comma-separated issue keys (e.g., 'PROJ-1,PROJ-2')"),
+    ],
+) -> str:
+    """Add issues to a Jira sprint.
+
+    Args:
+        ctx: The FastMCP context.
+        sprint_id: The ID of the sprint.
+        issue_keys: Comma-separated issue keys.
+
+    Returns:
+        JSON string with success message.
+
+    Raises:
+        ValueError: If in read-only mode or Jira client unavailable.
+    """
+    jira = await get_jira_fetcher(ctx)
+    keys_list = [k.strip() for k in issue_keys.split(",") if k.strip()]
+    jira.add_issues_to_sprint(sprint_id, keys_list)
+    result = {
+        "message": f"Successfully added {len(keys_list)} issue(s) to sprint",
+        "sprint_id": sprint_id,
+        "issue_keys": keys_list,
+    }
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
     tags={"jira", "read", "toolset:jira_projects"},
     annotations={"title": "Get Project Versions", "readOnlyHint": True},
 )
