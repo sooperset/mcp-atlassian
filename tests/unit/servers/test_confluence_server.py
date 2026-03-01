@@ -509,7 +509,7 @@ async def test_search_user(client, mock_confluence_fetcher):
     )
 
     mock_confluence_fetcher.search_user.assert_called_once_with(
-        'user.fullname ~ "First Last"', limit=10
+        'user.fullname ~ "First Last"', limit=10, group_name="confluence-users"
     )
 
     result_data = json.loads(response.content[0].text)
