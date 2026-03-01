@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -538,3 +539,54 @@ class TestUserTokenMiddleware:
             )
             is True
         )
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "env_value,should_skip",
+        [
+            ("true", True),
+            ("True", True),
+            ("TRUE", True),
+            ("1", True),
+            ("yes", True),
+            ("Yes", True),
+            ("false", False),
+            ("0", False),
+            ("no", False),
+            ("", False),
+        ],
+    )
+    async def test_ignore_header_auth_env_var(
+        self, middleware, mock_scope, mock_receive, mock_send, env_value, should_skip
+    ):
+        """Test IGNORE_HEADER_AUTH env var controls auth header processing."""
+        mock_scope["headers"] = [(b"authorization", b"Bearer some-proxy-token")]
+
+        with patch.dict(os.environ, {"IGNORE_HEADER_AUTH": env_value}):
+            await middleware(mock_scope, mock_receive, mock_send)
+
+        # App should always be called (request proceeds)
+        middleware.app.assert_called_once()
+        passed_scope = middleware.app.call_args[0][0]
+
+        if should_skip:
+            # Auth headers should NOT be processed — state stays at defaults
+            assert passed_scope["state"].get("user_atlassian_token") is None
+            assert passed_scope["state"]["user_atlassian_email"] is None
+        else:
+            # Auth headers SHOULD be processed — token extracted
+            assert passed_scope["state"]["user_atlassian_token"] == "some-proxy-token"
+
+    @pytest.mark.anyio
+    async def test_ignore_header_auth_unset(
+        self, middleware, mock_scope, mock_receive, mock_send, monkeypatch
+    ):
+        """Test that auth processing works normally when IGNORE_HEADER_AUTH is not set."""
+        mock_scope["headers"] = [(b"authorization", b"Bearer valid-token")]
+        monkeypatch.delenv("IGNORE_HEADER_AUTH", raising=False)
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        middleware.app.assert_called_once()
+        passed_scope = middleware.app.call_args[0][0]
+        assert passed_scope["state"]["user_atlassian_token"] == "valid-token"
