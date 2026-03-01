@@ -43,6 +43,7 @@ from mcp_atlassian.utils.toolsets import (
 )
 from mcp_atlassian.utils.urls import is_atlassian_cloud_url, validate_url_for_ssrf
 
+from .client_storage import build_oauth_client_storage_from_env
 from .confluence import confluence_mcp
 from .context import MainAppContext
 from .jira import jira_mcp
@@ -804,6 +805,7 @@ def _build_auth_provider() -> HardenedOAuthProxy | None:
         extra_authorize_params=(
             {"audience": "api.atlassian.com", "prompt": "consent"} if is_cloud else None
         ),
+        client_storage=build_oauth_client_storage_from_env(),
         require_authorization_consent=require_consent,
     )
 
