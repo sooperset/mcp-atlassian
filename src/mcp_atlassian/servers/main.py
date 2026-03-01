@@ -407,8 +407,16 @@ class UserTokenMiddleware:
             f"{scope_copy.get('path', 'UNKNOWN')}"
         )
 
+        # Skip auth header processing if IGNORE_HEADER_AUTH is set
+        # (useful for GCP Cloud Run / AWS ALB that inject Authorization headers)
+        ignore_header_auth = is_env_truthy("IGNORE_HEADER_AUTH")
+
         # Only process authentication for our MCP endpoint
-        if self.mcp_server_ref and self._should_process_auth(scope_copy):
+        if (
+            not ignore_header_auth
+            and self.mcp_server_ref
+            and self._should_process_auth(scope_copy)
+        ):
             self._process_authentication_headers(scope_copy)
 
         # Create wrapped send function to handle client disconnections gracefully
