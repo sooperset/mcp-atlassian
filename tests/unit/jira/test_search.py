@@ -1049,3 +1049,110 @@ class TestSearchMixin:
         assert "project" in jql.lower()
         # The original query should still be present
         assert "status = Open" in jql
+
+    def test_search_issues_cloud_with_page_token(
+        self,
+        search_mixin: SearchMixin,
+        mock_issues_response,
+    ):
+        """Test that page_token is used as the initial nextPageToken on Cloud."""
+        search_mixin.config.is_cloud = True
+        search_mixin.config.projects_filter = None
+        search_mixin.config.url = "https://test.example.com"
+
+        # Return issues without nextPageToken (single page)
+        search_mixin.jira.post = MagicMock(return_value=mock_issues_response)
+
+        result = search_mixin.search_issues(
+            "project = TEST", limit=10, page_token="initial_token_abc"
+        )
+
+        # Verify v3 API was called with the page token
+        assert isinstance(result, JiraSearchResult)
+        call_args = search_mixin.jira.post.call_args
+        request_body = call_args[1]["json"]
+        assert request_body["nextPageToken"] == "initial_token_abc"
+
+    def test_search_issues_cloud_exposes_remaining_token(
+        self,
+        search_mixin: SearchMixin,
+    ):
+        """Test that remaining nextPageToken is exposed in the result on Cloud."""
+        search_mixin.config.is_cloud = True
+        search_mixin.config.projects_filter = None
+        search_mixin.config.url = "https://test.example.com"
+
+        # First response returns issues + a nextPageToken.
+        # The loop should stop because we reach the limit (2 issues >= limit of 2).
+        response_page = {
+            "issues": [
+                {
+                    "id": "10001",
+                    "key": "TEST-1",
+                    "fields": {"summary": "Issue 1", "status": {"name": "Open"}},
+                },
+                {
+                    "id": "10002",
+                    "key": "TEST-2",
+                    "fields": {"summary": "Issue 2", "status": {"name": "Open"}},
+                },
+            ],
+            "nextPageToken": "remaining_token_xyz",
+        }
+        search_mixin.jira.post = MagicMock(return_value=response_page)
+
+        result = search_mixin.search_issues("project = TEST", limit=2)
+
+        assert isinstance(result, JiraSearchResult)
+        assert result.next_page_token == "remaining_token_xyz"
+        assert len(result.issues) == 2
+
+    def test_search_issues_cloud_no_remaining_token(
+        self,
+        search_mixin: SearchMixin,
+    ):
+        """Test that next_page_token is None when no more pages on Cloud."""
+        search_mixin.config.is_cloud = True
+        search_mixin.config.projects_filter = None
+        search_mixin.config.url = "https://test.example.com"
+
+        # Response without nextPageToken → end of results
+        response_page = {
+            "issues": [
+                {
+                    "id": "10001",
+                    "key": "TEST-1",
+                    "fields": {"summary": "Issue 1", "status": {"name": "Open"}},
+                },
+            ],
+        }
+        search_mixin.jira.post = MagicMock(return_value=response_page)
+
+        result = search_mixin.search_issues("project = TEST", limit=10)
+
+        assert isinstance(result, JiraSearchResult)
+        assert result.next_page_token is None
+
+    def test_search_issues_server_ignores_page_token(
+        self,
+        search_mixin: SearchMixin,
+        mock_issues_response,
+    ):
+        """Test that page_token is ignored on Server/DC."""
+        search_mixin.config.is_cloud = False
+        search_mixin.config.projects_filter = None
+        search_mixin.config.url = "https://test.example.com"
+
+        search_mixin.jira.jql = MagicMock(return_value=mock_issues_response)
+
+        result = search_mixin.search_issues(
+            "project = TEST", limit=10, page_token="should_be_ignored"
+        )
+
+        # Should use jql (v2 API), not post (v3 API)
+        assert isinstance(result, JiraSearchResult)
+        search_mixin.jira.jql.assert_called_once_with(
+            "project = TEST", fields=ANY, start=0, limit=10, expand=None
+        )
+        # The result should not have a next_page_token from Server/DC
+        assert result.next_page_token is None

@@ -441,6 +441,16 @@ async def search(
             default=None,
         ),
     ] = None,
+    page_token: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Pagination token from a previous search result. "
+                "Cloud only — Server/DC uses start_at for pagination."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Search Jira issues using JQL (Jira Query Language).
 
@@ -452,6 +462,7 @@ async def search(
         start_at: Starting index for pagination.
         projects_filter: Comma-separated list of project keys to filter by.
         expand: Optional fields to expand.
+        page_token: Pagination token from a previous search result (Cloud only).
 
     Returns:
         JSON string representing the search results including pagination info.
@@ -468,6 +479,7 @@ async def search(
         start=start_at,
         expand=expand,
         projects_filter=projects_filter,
+        page_token=page_token,
     )
     result = search_result.to_simplified_dict()
     return json.dumps(result, indent=2, ensure_ascii=False)

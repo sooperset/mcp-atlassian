@@ -136,3 +136,74 @@ class TestJiraSearchResult:
         assert simplified["issues"][0]["summary"] == "First Issue"
         assert simplified["issues"][1]["key"] == "PROJ-124"
         assert simplified["issues"][1]["summary"] == "Second Issue"
+
+    def test_from_api_response_with_next_page_token(self):
+        """Test from_api_response extracts nextPageToken from API data."""
+        mock_data = {
+            "total": -1,
+            "startAt": 0,
+            "maxResults": 10,
+            "nextPageToken": "eyJhbGciOiJIUzI1NiJ9.abc123",
+            "issues": [
+                {
+                    "id": "12345",
+                    "key": "PROJ-123",
+                    "fields": {
+                        "summary": "Test Issue",
+                        "status": {"name": "Open"},
+                    },
+                }
+            ],
+        }
+
+        result = JiraSearchResult.from_api_response(mock_data)
+        assert result.next_page_token == "eyJhbGciOiJIUzI1NiJ9.abc123"
+
+    def test_from_api_response_without_next_page_token(self):
+        """Test from_api_response sets next_page_token to None when absent."""
+        mock_data = {
+            "total": 1,
+            "startAt": 0,
+            "maxResults": 10,
+            "issues": [
+                {
+                    "id": "12345",
+                    "key": "PROJ-123",
+                    "fields": {
+                        "summary": "Test Issue",
+                        "status": {"name": "Open"},
+                    },
+                }
+            ],
+        }
+
+        result = JiraSearchResult.from_api_response(mock_data)
+        assert result.next_page_token is None
+
+    def test_to_simplified_dict_includes_next_page_token_when_present(self):
+        """Test to_simplified_dict includes next_page_token when not None."""
+        mock_data = {
+            "total": -1,
+            "startAt": 0,
+            "maxResults": 10,
+            "nextPageToken": "token_abc_123",
+            "issues": [],
+        }
+
+        result = JiraSearchResult.from_api_response(mock_data)
+        simplified = result.to_simplified_dict()
+        assert "next_page_token" in simplified
+        assert simplified["next_page_token"] == "token_abc_123"
+
+    def test_to_simplified_dict_excludes_next_page_token_when_none(self):
+        """Test to_simplified_dict excludes next_page_token when None."""
+        mock_data = {
+            "total": 1,
+            "startAt": 0,
+            "maxResults": 10,
+            "issues": [],
+        }
+
+        result = JiraSearchResult.from_api_response(mock_data)
+        simplified = result.to_simplified_dict()
+        assert "next_page_token" not in simplified
