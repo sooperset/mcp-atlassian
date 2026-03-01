@@ -1,5 +1,6 @@
 """Tests for the Jira Search mixin."""
 
+from typing import Any
 from unittest.mock import ANY, MagicMock
 
 import pytest
@@ -1132,6 +1133,53 @@ class TestSearchMixin:
 
         assert isinstance(result, JiraSearchResult)
         assert result.next_page_token is None
+
+    def test_search_issues_cloud_multipage_maxresults_alignment(
+        self,
+        search_mixin: SearchMixin,
+    ):
+        """Test that maxResults shrinks on subsequent pages to avoid over-fetching.
+
+        With limit=150 and API max of 100, the second request should ask for
+        only 50 (150-100) so the returned nextPageToken aligns with the last
+        issue actually returned to the caller.
+        """
+        search_mixin.config.is_cloud = True
+        search_mixin.config.projects_filter = None
+        search_mixin.config.url = "https://test.example.com"
+
+        def make_issues(start: int, count: int) -> list[dict[str, Any]]:
+            return [
+                {
+                    "id": str(start + i),
+                    "key": f"TEST-{start + i}",
+                    "fields": {
+                        "summary": f"Issue {start + i}",
+                        "status": {"name": "Open"},
+                    },
+                }
+                for i in range(count)
+            ]
+
+        page1 = {"issues": make_issues(1, 100), "nextPageToken": "token_page2"}
+        page2 = {"issues": make_issues(101, 50), "nextPageToken": "token_page3"}
+
+        # Capture maxResults at call time since request_body dict is mutated
+        captured_max_results: list[int] = []
+
+        def capture_post(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            captured_max_results.append(kwargs["json"]["maxResults"])
+            return [page1, page2][len(captured_max_results) - 1]
+
+        search_mixin.jira.post = MagicMock(side_effect=capture_post)
+
+        result = search_mixin.search_issues("project = TEST", limit=150)
+
+        assert len(result.issues) == 150
+        assert result.next_page_token == "token_page3"
+
+        # Verify maxResults per request: first=100, second=50
+        assert captured_max_results == [100, 50]
 
     def test_search_issues_server_ignores_page_token(
         self,

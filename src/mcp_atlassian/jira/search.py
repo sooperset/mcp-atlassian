@@ -126,7 +126,6 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                 fields_list = fields_param.split(",") if fields_param else ["id", "key"]
                 request_body: dict[str, Any] = {
                     "jql": jql,
-                    "maxResults": min(limit, 100),  # v3 API max is 100 per request
                     "fields": fields_list,
                 }
                 # Note: v3 API uses 'expand' as a comma-separated string, not an array
@@ -138,6 +137,12 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                 next_page_token: str | None = page_token
 
                 while len(all_issues) < limit:
+                    # Only request the remaining count to avoid over-fetching.
+                    # This ensures the returned nextPageToken aligns with
+                    # the last issue we actually return to the caller.
+                    remaining = limit - len(all_issues)
+                    request_body["maxResults"] = min(remaining, 100)
+
                     if next_page_token:
                         request_body["nextPageToken"] = next_page_token
 
