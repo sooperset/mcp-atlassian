@@ -3,6 +3,7 @@
 import logging
 import re
 from typing import Any
+from urllib.parse import quote
 
 from ..models.confluence import (
     ConfluencePage,
@@ -158,10 +159,11 @@ class SearchMixin(ConfluenceClient):
         matches: list[ConfluenceUserSearchResult] = []
         start = 0
         page_size = 200
+        encoded_group = quote(group_name, safe="")
 
         while len(matches) < limit:
             response: dict[str, Any] = self.confluence.get(
-                f"rest/api/group/{group_name}/member",
+                f"rest/api/group/{encoded_group}/member",
                 params={"start": start, "limit": page_size},
             )
             members = response.get("results", [])
@@ -171,6 +173,10 @@ class SearchMixin(ConfluenceClient):
                 username = member.get("username", "")
                 if search_lower in display.lower() or search_lower in username.lower():
                     user = ConfluenceUser.from_api_response(member)
+                    # Server/DC responses lack accountStatus;
+                    # default to active for group members
+                    if member.get("accountStatus") is None:
+                        user.is_active = True
                     result = ConfluenceUserSearchResult(
                         user=user,
                         title=display,
@@ -180,9 +186,10 @@ class SearchMixin(ConfluenceClient):
                     if len(matches) >= limit:
                         break
 
-            # Stop when last page reached
-            if len(members) < page_size:
+            # Stop when no more pages available
+            has_next = "_links" in response and "next" in response.get("_links", {})
+            if not has_next or not members:
                 break
-            start += page_size
+            start += len(members)
 
         return matches[:limit]

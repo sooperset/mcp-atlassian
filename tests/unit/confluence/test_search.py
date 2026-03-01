@@ -679,8 +679,8 @@ class TestSearchUserServerDC:
         assert "Bob Johnson" in display_names
 
     def test_server_dc_pagination(self, server_search_mixin):
-        """Should paginate through group members when page is full."""
-        # First page: 200 results (full page)
+        """Should paginate through group members when _links.next is present."""
+        # First page: 200 results with _links.next indicating more pages
         page1_members = [
             {
                 "type": "known",
@@ -690,7 +690,7 @@ class TestSearchUserServerDC:
             }
             for i in range(200)
         ]
-        # Second page: fewer than 200 (last page), contains a match
+        # Second page: no _links.next (last page), contains a match
         page2_members = [
             {
                 "type": "known",
@@ -701,8 +701,19 @@ class TestSearchUserServerDC:
         ]
 
         server_search_mixin.confluence.get.side_effect = [
-            {"results": page1_members, "start": 0, "limit": 200, "size": 200},
-            {"results": page2_members, "start": 200, "limit": 200, "size": 1},
+            {
+                "results": page1_members,
+                "start": 0,
+                "limit": 200,
+                "size": 200,
+                "_links": {"next": "/rest/api/group/confluence-users/member?start=200"},
+            },
+            {
+                "results": page2_members,
+                "start": 200,
+                "limit": 200,
+                "size": 1,
+            },
         ]
 
         results = server_search_mixin.search_user('user.fullname ~ "Target"')
@@ -823,6 +834,7 @@ class TestSearchUserServerDC:
             "start": 0,
             "limit": 200,
             "size": 200,
+            "_links": {"next": "/rest/api/group/confluence-users/member?start=200"},
         }
 
         results = server_search_mixin.search_user('user.fullname ~ "John"', limit=5)
@@ -887,3 +899,69 @@ class TestSearchUserServerDC:
         simplified = result.to_simplified_dict()
         assert simplified["title"] == "John Doe"
         assert simplified["user"]["display_name"] == "John Doe"
+
+    def test_server_dc_user_is_active_defaults_true(self, server_search_mixin):
+        """Server/DC users without accountStatus should default to active."""
+        server_search_mixin.confluence.get.return_value = {
+            "results": [
+                {
+                    "type": "known",
+                    "username": "jdoe",
+                    "displayName": "John Doe",
+                    "userKey": "abc123",
+                }
+            ],
+            "start": 0,
+            "limit": 200,
+            "size": 1,
+        }
+
+        results = server_search_mixin.search_user('user.fullname ~ "John"')
+
+        assert len(results) == 1
+        assert results[0].user.is_active is True
+
+    def test_server_dc_url_encodes_group_name(self, server_search_mixin):
+        """Group names with special characters should be URL-encoded."""
+        server_search_mixin.confluence.get.return_value = {
+            "results": [],
+            "start": 0,
+            "limit": 200,
+            "size": 0,
+        }
+
+        server_search_mixin.search_user(
+            'user.fullname ~ "John"',
+            group_name="my group/team",
+        )
+
+        server_search_mixin.confluence.get.assert_called_with(
+            "rest/api/group/my%20group%2Fteam/member",
+            params={"start": 0, "limit": 200},
+        )
+
+    def test_server_dc_stops_without_links_next(self, server_search_mixin):
+        """Should stop pagination when response lacks _links.next."""
+        # Even with exactly page_size results, stop if no _links.next
+        members = [
+            {
+                "type": "known",
+                "username": f"user{i}",
+                "displayName": f"User {i}",
+                "userKey": f"key{i}",
+            }
+            for i in range(200)
+        ]
+
+        server_search_mixin.confluence.get.return_value = {
+            "results": members,
+            "start": 0,
+            "limit": 200,
+            "size": 200,
+            # No _links.next -> last page
+        }
+
+        server_search_mixin.search_user('user.fullname ~ "User"', limit=300)
+
+        # Should only call once since there's no _links.next
+        assert server_search_mixin.confluence.get.call_count == 1
