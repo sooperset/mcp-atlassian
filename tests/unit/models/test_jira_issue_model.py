@@ -16,6 +16,7 @@ from mcp_atlassian.models.constants import (
 from mcp_atlassian.models.jira import (
     JiraIssue,
     JiraIssueLink,
+    JiraIssueType,
     JiraProject,
     JiraResolution,
     JiraTimetracking,
@@ -649,6 +650,28 @@ class TestJiraIssue:
         simplified = issue.to_simplified_dict()
         assert "timetracking" in simplified
         assert simplified["timetracking"]["original_estimate"] == "1d"
+
+    @pytest.mark.parametrize(
+        ("requested_field", "expected_key"),
+        [
+            ("fixVersions", "fix_versions"),
+            ("issuetype", "issue_type"),
+        ],
+    )
+    def test_to_simplified_dict_with_api_field_names(
+        self, requested_field, expected_key
+    ):
+        """Regression: should_include_field must match Jira API field names."""
+        issue = JiraIssue(
+            id="1",
+            key="TEST-1",
+            summary="Test",
+            issue_type=JiraIssueType(id="1", name="Task"),
+            fix_versions=["1.0"],
+            requested_fields=[requested_field],
+        )
+        result = issue.to_simplified_dict()
+        assert expected_key in result
 
 
 class TestProcessCustomFieldValue:
