@@ -2,7 +2,17 @@
 
 import pytest
 
-from mcp_atlassian.utils.media import is_image_attachment
+from mcp_atlassian.utils.media import ATTACHMENT_MAX_BYTES, is_image_attachment
+
+
+def test_attachment_max_bytes_type() -> None:
+    """ATTACHMENT_MAX_BYTES must be an integer."""
+    assert isinstance(ATTACHMENT_MAX_BYTES, int)
+
+
+def test_attachment_max_bytes_value() -> None:
+    """ATTACHMENT_MAX_BYTES must equal 50 MB (50 * 1024 * 1024)."""
+    assert ATTACHMENT_MAX_BYTES == 50 * 1024 * 1024
 
 
 @pytest.mark.parametrize(

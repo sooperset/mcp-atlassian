@@ -7,6 +7,7 @@ from typing import Any
 
 from ..models.confluence import ConfluenceAttachment
 from ..utils.io import validate_safe_path
+from ..utils.urls import resolve_relative_url
 from .client import ConfluenceClient
 from .protocols import AttachmentsOperationsProto
 from .v2_adapter import ConfluenceV2Adapter
@@ -321,10 +322,9 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             file_path = target_path / safe_filename
 
             # Prepend base URL if download URL is relative
-            download_url = attachment.download_url
-            if download_url.startswith("/"):
-                base_url = self.config.url.rstrip("/")
-                download_url = f"{base_url}{download_url}"
+            download_url = resolve_relative_url(
+                attachment.download_url, self.config.url
+            )
 
             # Download the attachment
             success = self.download_attachment(download_url, str(file_path))

@@ -8,14 +8,12 @@ from typing import Any
 
 from ..models.jira import JiraAttachment
 from ..utils.io import validate_safe_path
+from ..utils.media import ATTACHMENT_MAX_BYTES
 from .client import JiraClient
 from .protocols import AttachmentsOperationsProto
 
 # Configure logging
 logger = logging.getLogger("mcp-jira")
-
-# Maximum attachment size for in-memory download (50 MB)
-_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024
 
 
 class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
@@ -205,7 +203,7 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
                 )
                 continue
 
-            if attachment.size > _ATTACHMENT_MAX_BYTES:
+            if attachment.size > ATTACHMENT_MAX_BYTES:
                 logger.warning(
                     f"Skipping attachment {attachment.filename}: "
                     f"{attachment.size} bytes exceeds 50 MB limit"
