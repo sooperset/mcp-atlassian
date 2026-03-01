@@ -2378,3 +2378,203 @@ class TestGetPageVersionDiff:
         assert "-Old line 2" in diff
         assert "+New line 1" in diff
         assert "+New line 2" in diff
+
+
+class TestPageWidth:
+    """Tests for page layout width functionality."""
+
+    @pytest.fixture
+    def pages_mixin(self, confluence_client):
+        """Create a PagesMixin instance for testing."""
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = PagesMixin()
+            mixin.confluence = confluence_client.confluence
+            mixin.config = confluence_client.config
+            mixin.preprocessor = confluence_client.preprocessor
+            return mixin
+
+    def test_get_page_width_full_width(self, pages_mixin):
+        """Test getting full-width page layout."""
+        page_id = "page_full_width_123"
+
+        mock_properties = {
+            "results": [{"key": "content-appearance-published", "value": "full-width"}]
+        }
+
+        with patch.object(pages_mixin.confluence, "get_page_properties") as mock_get:
+            mock_get.return_value = mock_properties
+
+            result = pages_mixin._get_page_width(page_id)
+
+            mock_get.assert_called_once_with(page_id)
+            assert result == "full-width"
+
+    def test_get_page_width_fixed_width(self, pages_mixin):
+        """Test getting max page layout."""
+        page_id = "page_fixed_width_123"
+
+        mock_properties = {
+            "results": [{"key": "content-appearance-draft", "value": "max"}]
+        }
+
+        with patch.object(pages_mixin.confluence, "get_page_properties") as mock_get:
+            mock_get.return_value = mock_properties
+
+            result = pages_mixin._get_page_width(page_id)
+
+            mock_get.assert_called_once_with(page_id)
+            assert result == "max"
+
+    def test_get_page_width_not_set(self, pages_mixin):
+        """Test getting page width when no property is set."""
+        page_id = "page_no_width_123"
+
+        mock_properties = {"results": [{"key": "other-property", "value": "value"}]}
+
+        with patch.object(pages_mixin.confluence, "get_page_properties") as mock_get:
+            mock_get.return_value = mock_properties
+
+            result = pages_mixin._get_page_width(page_id)
+
+            assert result is None
+
+    def test_set_page_width_full_width_new_property(self, pages_mixin):
+        """Test setting page to full-width when property doesn't exist yet."""
+        page_id = "page_set_full_123"
+
+        with (
+            patch.object(
+                pages_mixin.confluence,
+                "get_page_property",
+                side_effect=Exception("Not found"),
+            ),
+            patch.object(pages_mixin.confluence, "set_page_property") as mock_set,
+        ):
+            result = pages_mixin._set_page_width(page_id, "full-width")
+
+            assert mock_set.call_count == 2
+            calls = mock_set.call_args_list
+            assert calls[0][0][0] == page_id
+            assert calls[0][0][1]["key"] == "content-appearance-published"
+            assert calls[0][0][1]["value"] == "full-width"
+            assert "version" not in calls[0][0][1]
+            assert calls[1][0][1]["key"] == "content-appearance-draft"
+            assert result is True
+
+    def test_set_page_width_full_width_existing_property(self, pages_mixin):
+        """Test setting page to full-width when property already exists."""
+        page_id = "page_set_full_existing_123"
+
+        existing_property = {
+            "key": "content-appearance-published",
+            "value": "default",
+            "version": {"number": 3},
+        }
+
+        with (
+            patch.object(
+                pages_mixin.confluence,
+                "get_page_property",
+                return_value=existing_property,
+            ),
+            patch.object(pages_mixin.confluence, "update_page_property") as mock_update,
+        ):
+            result = pages_mixin._set_page_width(page_id, "full-width")
+
+            assert mock_update.call_count == 2
+            calls = mock_update.call_args_list
+            assert calls[0][0][0] == page_id
+            assert calls[0][0][1]["key"] == "content-appearance-published"
+            assert calls[0][0][1]["value"] == "full-width"
+            assert calls[0][0][1]["version"] == {"number": 4}
+            assert result is True
+
+    def test_set_page_width_max(self, pages_mixin):
+        """Test setting page to max."""
+        page_id = "page_set_max_123"
+
+        with (
+            patch.object(
+                pages_mixin.confluence,
+                "get_page_property",
+                side_effect=Exception("Not found"),
+            ),
+            patch.object(pages_mixin.confluence, "set_page_property") as mock_set,
+        ):
+            result = pages_mixin._set_page_width(page_id, "max")
+
+            assert mock_set.call_count == 2
+            calls = mock_set.call_args_list
+            assert calls[0][0][1]["value"] == "max"
+            assert result is True
+
+    def test_set_page_width_default(self, pages_mixin):
+        """Test setting page to default width."""
+        page_id = "page_set_default_123"
+
+        with (
+            patch.object(
+                pages_mixin.confluence,
+                "get_page_property",
+                side_effect=Exception("Not found"),
+            ),
+            patch.object(pages_mixin.confluence, "set_page_property") as mock_set,
+        ):
+            result = pages_mixin._set_page_width(page_id, "default")
+
+            assert mock_set.call_count == 2
+            calls = mock_set.call_args_list
+            assert calls[0][0][1]["value"] == "default"
+            assert calls[1][0][1]["value"] == "default"
+            assert result is True
+
+    def test_set_page_width_invalid_value(self, pages_mixin):
+        """Test that invalid width values are rejected."""
+        page_id = "page_invalid_width_123"
+
+        result = pages_mixin._set_page_width(page_id, "invalid-width")
+
+        assert result is False
+
+    def test_set_page_width_remove(self, pages_mixin):
+        """Test removing page width (reset to default)."""
+        page_id = "page_remove_width_123"
+
+        with patch.object(
+            pages_mixin.confluence, "delete_page_property"
+        ) as mock_delete:
+            result = pages_mixin._set_page_width(page_id, None)
+
+            assert mock_delete.call_count == 2
+            assert result is True
+
+    def test_get_page_content_includes_width(self, pages_mixin):
+        """Test that get_page_content includes page width."""
+        page_id = "page_with_width_123"
+
+        with (
+            patch.object(pages_mixin.confluence, "get_page_by_id") as mock_get,
+            patch.object(pages_mixin, "_get_page_emoji") as mock_emoji,
+            patch.object(pages_mixin, "_get_page_width") as mock_width,
+            patch.object(
+                pages_mixin.preprocessor, "process_html_content"
+            ) as mock_process,
+        ):
+            mock_get.return_value = {
+                "id": page_id,
+                "title": "Test Page",
+                "body": {"storage": {"value": "<p>Content</p>"}},
+                "version": {"number": 1},
+                "space": {"key": "TEST"},
+            }
+            mock_emoji.return_value = "\U0001f4c4"
+            mock_width.return_value = "full-width"
+            mock_process.return_value = ("<p>Content</p>", "Content")
+
+            page = pages_mixin.get_page_content(page_id)
+
+            mock_width.assert_called_once_with(page_id)
+            assert page.page_width == "full-width"
