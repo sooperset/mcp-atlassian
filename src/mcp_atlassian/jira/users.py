@@ -8,8 +8,8 @@ import requests
 from requests.exceptions import HTTPError
 from unidecode import unidecode
 
-from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.models.jira.common import JiraUser
+from mcp_atlassian.utils.decorators import handle_auth_errors
 
 from .client import JiraClient
 
@@ -366,19 +366,23 @@ class UsersMixin(JiraClient):
 
         return api_kwargs
 
+    @handle_auth_errors("Jira API")
     def get_user_profile_by_identifier(self, identifier: str) -> "JiraUser":
         """
         Retrieve Jira user profile information by identifier.
 
         Args:
-            identifier (str): User identifier (accountId, username, key, or email).
+            identifier: User identifier (accountId, username,
+                key, or email).
 
         Returns:
-            JiraUser: JiraUser model with profile information.
+            JiraUser model with profile information.
 
         Raises:
-            ValueError: If the user cannot be found or identifier cannot be resolved.
-            MCPAtlassianAuthenticationError: If authentication fails.
+            ValueError: If the user cannot be found or
+                identifier cannot be resolved.
+            MCPAtlassianAuthenticationError: If authentication
+                fails.
             Exception: For other API errors.
         """
         api_kwargs = self._determine_user_api_params(identifier)
@@ -388,37 +392,17 @@ class UsersMixin(JiraClient):
             user_data = self.jira.user(**api_kwargs)
             if not isinstance(user_data, dict):
                 logger.error(
-                    f"User lookup for '{identifier}' returned unexpected type: {type(user_data)}. Data: {user_data}"
+                    f"User lookup for '{identifier}'"
+                    " returned unexpected type:"
+                    f" {type(user_data)}."
+                    f" Data: {user_data}"
                 )
                 raise ValueError(f"User '{identifier}' not found or lookup failed.")
             return JiraUser.from_api_response(user_data)
         except HTTPError as http_err:
-            if http_err.response is not None:
-                response_text = http_err.response.text[:200]
-                status_code = http_err.response.status_code
-                if status_code == 404:
-                    raise ValueError(f"User '{identifier}' not found.") from http_err
-                elif status_code in [401, 403]:
-                    logger.error(
-                        f"Authentication/Permission error for '{identifier}': {status_code}"
-                    )
-                    raise MCPAtlassianAuthenticationError(
-                        f"Permission denied accessing user '{identifier}'."
-                    ) from http_err
-                else:
-                    logger.error(
-                        f"HTTP error {status_code} for '{identifier}': {http_err}. Response: {response_text}"
-                    )
-                    raise Exception(
-                        f"API error getting user profile for '{identifier}': {http_err}"
-                    ) from http_err
-            else:
-                logger.error(
-                    f"Network or unknown HTTP error (no response object) for '{identifier}': {http_err}"
-                )
-                raise Exception(
-                    f"Network error getting user profile for '{identifier}': {http_err}"
-                ) from http_err
+            if http_err.response is not None and http_err.response.status_code == 404:
+                raise ValueError(f"User '{identifier}' not found.") from http_err
+            raise  # decorator handles 401/403
         except Exception as e:
             logger.exception(
                 f"Unexpected error getting/processing user profile for '{identifier}':"
