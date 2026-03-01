@@ -252,6 +252,7 @@ class TestConfluenceV2AdapterComments:
         # Verify the result is in v1-compatible format with body.view
         assert result["id"] == "222333444"
         assert result["body"]["view"]["value"] == "<p>Reply content</p>"
+        assert result["extensions"]["location"] == "footer"
 
     def test_create_footer_comment_top_level(self, v2_adapter, mock_session):
         """Create top-level comment with pageId sends correct payload."""

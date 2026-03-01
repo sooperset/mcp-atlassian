@@ -527,9 +527,12 @@ class ConfluenceV2Adapter:
         if author := v2_response.get("author"):
             v1_compatible["author"] = author
 
-        # Map parentCommentId to container format for model compatibility
+        # Map parentCommentId for model compatibility
         if parent_id := v2_response.get("parentCommentId"):
             v1_compatible["parentCommentId"] = parent_id
+
+        # v2 footer-comments endpoint always returns footer comments
+        v1_compatible["extensions"] = {"location": "footer"}
 
         return v1_compatible
 

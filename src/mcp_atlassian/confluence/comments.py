@@ -218,7 +218,7 @@ class CommentsMixin(ConfluenceClient):
         Returns:
             Processed ConfluenceComment instance
         """
-        processed_html, processed_markdown = self.preprocessor.process_html_content(
+        _, processed_markdown = self.preprocessor.process_html_content(
             response.get("body", {}).get("view", {}).get("value", ""),
             space_key=space_key,
             confluence_client=self.confluence,

@@ -13,23 +13,22 @@ from tests.fixtures.confluence_mocks import (
 )
 
 
+@pytest.fixture
+def comments_mixin(confluence_client):
+    """Create a CommentsMixin instance for testing."""
+    with patch(
+        "mcp_atlassian.confluence.comments.ConfluenceClient.__init__"
+    ) as mock_init:
+        mock_init.return_value = None
+        mixin = CommentsMixin()
+        mixin.confluence = confluence_client.confluence
+        mixin.config = confluence_client.config
+        mixin.preprocessor = confluence_client.preprocessor
+        return mixin
+
+
 class TestCommentsMixin:
     """Tests for the CommentsMixin class."""
-
-    @pytest.fixture
-    def comments_mixin(self, confluence_client):
-        """Create a CommentsMixin instance for testing."""
-        # CommentsMixin inherits from ConfluenceClient, so we need to create it properly
-        with patch(
-            "mcp_atlassian.confluence.comments.ConfluenceClient.__init__"
-        ) as mock_init:
-            mock_init.return_value = None
-            mixin = CommentsMixin()
-            # Copy the necessary attributes from our mocked client
-            mixin.confluence = confluence_client.confluence
-            mixin.config = confluence_client.config
-            mixin.preprocessor = confluence_client.preprocessor
-            return mixin
 
     def test_get_page_comments_success(self, comments_mixin):
         """Test get_page_comments with success response."""
@@ -275,19 +274,6 @@ class TestCommentsMixin:
 class TestReplyToComment:
     """Tests for reply_to_comment method."""
 
-    @pytest.fixture
-    def comments_mixin(self, confluence_client):
-        """Create a CommentsMixin instance for testing."""
-        with patch(
-            "mcp_atlassian.confluence.comments.ConfluenceClient.__init__"
-        ) as mock_init:
-            mock_init.return_value = None
-            mixin = CommentsMixin()
-            mixin.confluence = confluence_client.confluence
-            mixin.config = confluence_client.config
-            mixin.preprocessor = confluence_client.preprocessor
-            return mixin
-
     def test_reply_to_comment_v1_success(self, comments_mixin):
         """T1: reply_to_comment v1 success - parent_comment_id set."""
         # Mock the POST call for v1 API
@@ -327,6 +313,7 @@ class TestReplyToComment:
                     "representation": "view",
                 },
             },
+            "extensions": {"location": "footer"},
             "version": {"number": 1},
             "_links": {},
         }
@@ -393,19 +380,6 @@ class TestReplyToComment:
 class TestAddCommentV2Routing:
     """Tests for add_comment v2 routing for OAuth Cloud."""
 
-    @pytest.fixture
-    def comments_mixin(self, confluence_client):
-        """Create a CommentsMixin instance for testing."""
-        with patch(
-            "mcp_atlassian.confluence.comments.ConfluenceClient.__init__"
-        ) as mock_init:
-            mock_init.return_value = None
-            mixin = CommentsMixin()
-            mixin.confluence = confluence_client.confluence
-            mixin.config = confluence_client.config
-            mixin.preprocessor = confluence_client.preprocessor
-            return mixin
-
     def test_add_comment_v2_routing_for_oauth_cloud(self, comments_mixin):
         """T10: add_comment routes through v2 adapter for OAuth Cloud."""
         comments_mixin.config.auth_type = "oauth"
@@ -423,6 +397,7 @@ class TestAddCommentV2Routing:
                     "representation": "view",
                 },
             },
+            "extensions": {"location": "footer"},
             "version": {"number": 1},
             "_links": {},
         }
