@@ -2191,8 +2191,8 @@ class TestMovePage:
         with pytest.raises(ValueError, match="At least one of"):
             pages_mixin.move_page(page_id="111")
 
-    def test_move_page_with_prepend_position(self, pages_mixin):
-        """Test moving a page with prepend position."""
+    def test_move_page_with_above_position(self, pages_mixin):
+        """Test moving a page with 'above' position (sibling ordering)."""
         page_id = "111"
         target_parent_id = "222"
 
@@ -2207,7 +2207,7 @@ class TestMovePage:
 
         mock_moved_page = ConfluencePage(
             id=page_id,
-            title="Prepended Page",
+            title="Moved Above Page",
             content="Content",
             space={"key": "PROJ", "name": "Project"},
             version={"number": 2},
@@ -2218,11 +2218,11 @@ class TestMovePage:
             result = pages_mixin.move_page(
                 page_id=page_id,
                 target_parent_id=target_parent_id,
-                position="prepend",
+                position="above",
             )
 
         pages_mixin.confluence.move_page.assert_called_once_with(
-            "PROJ", page_id, target_id=target_parent_id, position="prepend"
+            "PROJ", page_id, target_id=target_parent_id, position="above"
         )
         assert isinstance(result, ConfluencePage)
 
@@ -2237,3 +2237,41 @@ class TestMovePage:
 
         with pytest.raises(Exception, match="Failed to move page"):
             pages_mixin.move_page(page_id=page_id, target_space_key=target_space_key)
+
+    def test_move_page_uses_v2_adapter_for_oauth(self, pages_mixin):
+        """Test that move_page uses v2 adapter for OAuth authentication."""
+        page_id = "111"
+        target_parent_id = "222"
+
+        mock_v2_adapter = MagicMock()
+        mock_v2_adapter.move_page.return_value = None
+
+        mock_moved_page = ConfluencePage(
+            id=page_id,
+            title="OAuth Moved Page",
+            content="Content",
+            space={"key": "PROJ", "name": "Project"},
+            version={"number": 2},
+        )
+
+        with (
+            patch.object(
+                type(pages_mixin),
+                "_v2_adapter",
+                new_callable=lambda: property(lambda self: mock_v2_adapter),
+            ),
+            patch.object(pages_mixin, "get_page_content", return_value=mock_moved_page),
+        ):
+            result = pages_mixin.move_page(
+                page_id=page_id,
+                target_parent_id=target_parent_id,
+            )
+
+        # v2 adapter should be called instead of confluence.move_page
+        mock_v2_adapter.move_page.assert_called_once_with(
+            page_id=page_id,
+            position="append",
+            target_id=target_parent_id,
+        )
+        pages_mixin.confluence.move_page.assert_not_called()
+        assert isinstance(result, ConfluencePage)

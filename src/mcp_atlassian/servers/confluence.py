@@ -720,7 +720,7 @@ async def delete_page(
 
 @confluence_mcp.tool(
     tags={"confluence", "write", "toolset:confluence_pages"},
-    annotations={"title": "Move Page", "readOnlyHint": False},
+    annotations={"title": "Move Page", "destructiveHint": True},
 )
 @check_write_access
 async def move_page(
@@ -746,7 +746,11 @@ async def move_page(
     position: Annotated[
         str,
         Field(
-            description="Position: 'append' (default) or 'prepend'",
+            description=(
+                "Position: 'append' (default, move as child of target), "
+                "'above' (move before target as sibling), "
+                "or 'below' (move after target as sibling)"
+            ),
             default="append",
         ),
     ] = "append",
@@ -758,7 +762,7 @@ async def move_page(
         page_id: The ID of the page to move.
         target_parent_id: Target parent page ID.
         target_space_key: Target space key for cross-space moves.
-        position: Position relative to target ('append' or 'prepend').
+        position: Position relative to target ('append', 'above', or 'below').
 
     Returns:
         JSON string representing the moved page object.
@@ -781,8 +785,8 @@ async def move_page(
             indent=2,
             ensure_ascii=False,
         )
-    except ValueError as e:
-        raise ValueError(str(e)) from e
+    except ValueError:
+        raise
     except Exception as e:
         logger.error(f"Error moving Confluence page {page_id}: {str(e)}")
         response = {

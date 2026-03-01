@@ -536,6 +536,59 @@ class ConfluenceV2Adapter:
 
         return v1_compatible
 
+    def move_page(
+        self,
+        page_id: str,
+        position: str = "append",
+        target_id: str | None = None,
+    ) -> None:
+        """Move a page using the v1 REST API.
+
+        Uses PUT /wiki/rest/api/content/{id}/move/{position}/{targetId}
+        which works with OAuth authentication (unlike movepage.action).
+
+        Args:
+            page_id: The ID of the page to move.
+            position: Position relative to target. Valid values:
+                - "append": Move as child of target (default).
+                - "before": Move before target as sibling.
+                - "after": Move after target as sibling.
+            target_id: Target page ID. Required for "append", "before",
+                and "after" positions.
+
+        Raises:
+            ValueError: If move fails.
+            HTTPError: If the API request fails (propagates 401/403).
+        """
+        try:
+            if target_id:
+                url = (
+                    f"{self.base_url}/rest/api/content/{page_id}"
+                    f"/move/{position}/{target_id}"
+                )
+            else:
+                # Move to space root (no target ID)
+                url = f"{self.base_url}/rest/api/content/{page_id}/move/{position}"
+
+            response = self.session.put(url)
+            response.raise_for_status()
+
+            logger.debug(
+                f"Successfully moved page '{page_id}' "
+                f"(position={position}, target={target_id})"
+            )
+
+        except HTTPError as e:
+            if e.response is not None and e.response.status_code in [401, 403]:
+                raise
+            logger.error(f"HTTP error moving page '{page_id}': {e}")
+            if e.response is not None:
+                logger.error(f"Response: {e.response.text}")
+            raise ValueError(f"Failed to move page '{page_id}': {e}") from e
+        except Exception as e:
+            logger.error(f"Error moving page '{page_id}': {e}")
+            raise ValueError(f"Failed to move page '{page_id}': {e}") from e
+
     def get_page_emoji(self, page_id: str) -> str | None:
         """Get the page title emoji from content properties using v2 API.
 

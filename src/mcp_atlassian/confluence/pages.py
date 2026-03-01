@@ -862,7 +862,8 @@ class PagesMixin(ConfluenceClient):
             target_parent_id: Target parent page ID. If omitted with
                 target_space_key, moves page to root of target space.
             target_space_key: Target space key for cross-space moves.
-            position: Position relative to target ("append" or "prepend").
+            position: Position relative to target ("append", "above",
+                or "below").
 
         Returns:
             Updated ConfluencePage after move.
@@ -878,20 +879,32 @@ class PagesMixin(ConfluenceClient):
             )
 
         try:
-            # Determine space_key for the move_page call
-            if target_space_key:
-                space_key = target_space_key
+            # Use v2 adapter for OAuth authentication
+            v2_adapter = self._v2_adapter
+            if v2_adapter:
+                logger.debug(
+                    f"Using REST API for OAuth authentication to move page '{page_id}'"
+                )
+                v2_adapter.move_page(
+                    page_id=page_id,
+                    position=position,
+                    target_id=target_parent_id,
+                )
             else:
-                # Look up the target parent's space key
-                target_page = self.confluence.get_page_by_id(target_parent_id)
-                space_key = target_page.get("space", {}).get("key", "")
+                # Determine space_key for the move_page call
+                if target_space_key:
+                    space_key = target_space_key
+                else:
+                    # Look up the target parent's space key
+                    target_page = self.confluence.get_page_by_id(target_parent_id)
+                    space_key = target_page.get("space", {}).get("key", "")
 
-            self.confluence.move_page(
-                space_key,
-                page_id,
-                target_id=target_parent_id,
-                position=position,
-            )
+                self.confluence.move_page(
+                    space_key,
+                    page_id,
+                    target_id=target_parent_id,
+                    position=position,
+                )
 
             # Re-fetch the page to return updated state
             return self.get_page_content(page_id)
