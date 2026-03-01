@@ -2,6 +2,10 @@
 
 import mimetypes
 
+# Maximum attachment size for inline download (50 MB).
+# Used by both Jira and Confluence server tools to gate in-memory transfers.
+ATTACHMENT_MAX_BYTES: int = 50 * 1024 * 1024
+
 _IMAGE_MIME_TYPES = frozenset(
     {
         "image/png",

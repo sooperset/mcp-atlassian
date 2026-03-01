@@ -7,6 +7,24 @@ import socket
 from urllib.parse import urlparse
 
 
+def resolve_relative_url(url: str, base_url: str) -> str:
+    """Resolve a relative URL against a base URL.
+
+    Only modifies URLs that start with '/'. Absolute URLs are returned as-is.
+
+    Args:
+        url: The URL to resolve (may be relative or absolute).
+        base_url: The base URL to prepend for relative URLs.
+
+    Returns:
+        The resolved absolute URL.
+    """
+    if url.startswith("/"):
+        # Strip trailing slash from base_url to avoid double slashes
+        return base_url.rstrip("/") + url
+    return url
+
+
 def is_atlassian_cloud_url(url: str) -> bool:
     """Determine if a URL belongs to Atlassian Cloud or Server/Data Center.
 

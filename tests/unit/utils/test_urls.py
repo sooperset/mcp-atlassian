@@ -4,7 +4,63 @@ import os
 import socket
 from unittest.mock import patch
 
-from mcp_atlassian.utils.urls import is_atlassian_cloud_url, validate_url_for_ssrf
+import pytest
+
+from mcp_atlassian.utils.urls import (
+    is_atlassian_cloud_url,
+    resolve_relative_url,
+    validate_url_for_ssrf,
+)
+
+
+class TestResolveRelativeUrl:
+    """Tests for resolve_relative_url."""
+
+    @pytest.mark.parametrize(
+        ("url", "base_url", "expected"),
+        [
+            # Relative URL gets base prepended
+            (
+                "/download/attachments/123/file.pdf",
+                "https://confluence.example.com",
+                "https://confluence.example.com/download/attachments/123/file.pdf",
+            ),
+            # Absolute URL passes through unchanged
+            (
+                "https://other.example.com/file.pdf",
+                "https://confluence.example.com",
+                "https://other.example.com/file.pdf",
+            ),
+            # Base URL with trailing slash — no double slash
+            (
+                "/download/file.pdf",
+                "https://confluence.example.com/",
+                "https://confluence.example.com/download/file.pdf",
+            ),
+            # Base URL with multiple trailing slashes stripped
+            (
+                "/path/to/file",
+                "https://confluence.example.com//",
+                "https://confluence.example.com/path/to/file",
+            ),
+            # Non-slash relative URL (e.g. bare filename) passes through
+            (
+                "file.pdf",
+                "https://confluence.example.com",
+                "file.pdf",
+            ),
+        ],
+        ids=[
+            "relative-url-prepended",
+            "absolute-url-unchanged",
+            "trailing-slash-stripped",
+            "multiple-trailing-slashes-stripped",
+            "non-slash-relative-unchanged",
+        ],
+    )
+    def test_resolve_relative_url(self, url: str, base_url: str, expected: str) -> None:
+        """Parametrized test for resolve_relative_url."""
+        assert resolve_relative_url(url, base_url) == expected
 
 
 def test_is_atlassian_cloud_url_empty():

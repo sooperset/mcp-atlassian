@@ -16,11 +16,10 @@ from mcp_atlassian.servers.dependencies import get_confluence_fetcher
 from mcp_atlassian.utils.decorators import (
     check_write_access,
 )
-from mcp_atlassian.utils.media import is_image_attachment
+from mcp_atlassian.utils.media import ATTACHMENT_MAX_BYTES, is_image_attachment
+from mcp_atlassian.utils.urls import resolve_relative_url
 
 logger = logging.getLogger(__name__)
-
-_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024  # 50 MB
 
 confluence_mcp = FastMCP(
     name="Confluence MCP Service",
@@ -1327,9 +1326,7 @@ async def download_attachment(
                 ),
             )
 
-        if download_url.startswith("/"):
-            base_url = confluence_fetcher.config.url.rstrip("/")
-            download_url = f"{base_url}{download_url}"
+        download_url = resolve_relative_url(download_url, confluence_fetcher.config.url)
 
         filename = attachment_data.get("title") or attachment_id
         mime_type = (
@@ -1339,7 +1336,7 @@ async def download_attachment(
         )
         file_size = attachment_data.get("extensions", {}).get("fileSize")
 
-        if file_size is not None and file_size > _ATTACHMENT_MAX_BYTES:
+        if file_size is not None and file_size > ATTACHMENT_MAX_BYTES:
             return TextContent(
                 type="text",
                 text=json.dumps(
@@ -1372,7 +1369,7 @@ async def download_attachment(
                 ),
             )
 
-        if len(data_bytes) > _ATTACHMENT_MAX_BYTES:
+        if len(data_bytes) > ATTACHMENT_MAX_BYTES:
             return TextContent(
                 type="text",
                 text=json.dumps(
@@ -1509,7 +1506,7 @@ async def download_content_attachments(
 
         if (
             attachment.file_size is not None
-            and attachment.file_size > _ATTACHMENT_MAX_BYTES
+            and attachment.file_size > ATTACHMENT_MAX_BYTES
         ):
             failed.append(
                 {
@@ -1522,17 +1519,16 @@ async def download_content_attachments(
             )
             continue
 
-        download_url = attachment.download_url
-        if download_url.startswith("/"):
-            base_url = confluence_fetcher.config.url.rstrip("/")
-            download_url = f"{base_url}{download_url}"
+        download_url = resolve_relative_url(
+            attachment.download_url, confluence_fetcher.config.url
+        )
 
         data_bytes = confluence_fetcher.fetch_attachment_content(download_url)
         if data_bytes is None:
             failed.append({"filename": filename, "error": "Fetch failed"})
             continue
 
-        if len(data_bytes) > _ATTACHMENT_MAX_BYTES:
+        if len(data_bytes) > ATTACHMENT_MAX_BYTES:
             failed.append(
                 {
                     "filename": filename,
@@ -1720,7 +1716,7 @@ async def get_page_images(
 
         if (
             attachment.file_size is not None
-            and attachment.file_size > _ATTACHMENT_MAX_BYTES
+            and attachment.file_size > ATTACHMENT_MAX_BYTES
         ):
             failed.append(
                 {
@@ -1738,16 +1734,14 @@ async def get_page_images(
             failed.append({"filename": filename, "error": "No download URL"})
             continue
 
-        if download_url.startswith("/"):
-            base_url = confluence_fetcher.config.url.rstrip("/")
-            download_url = f"{base_url}{download_url}"
+        download_url = resolve_relative_url(download_url, confluence_fetcher.config.url)
 
         data_bytes = confluence_fetcher.fetch_attachment_content(download_url)
         if data_bytes is None:
             failed.append({"filename": filename, "error": "Fetch failed"})
             continue
 
-        if len(data_bytes) > _ATTACHMENT_MAX_BYTES:
+        if len(data_bytes) > ATTACHMENT_MAX_BYTES:
             failed.append(
                 {
                     "filename": filename,
