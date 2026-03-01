@@ -2,6 +2,7 @@
 
 import logging
 import re
+from collections.abc import Callable
 from typing import Any
 
 from .base import BasePreprocessor
@@ -20,6 +21,56 @@ def _convert_panel(params: str | None, content: str) -> str:
     if title:
         return f"\n**{title}**\n{content}\n"
     return f"\n{content}\n"
+
+
+def _extract_blocks(
+    text: str,
+    pattern: str,
+    transform_fn: Callable[[re.Match[str]], str],
+    storage: list[str],
+    prefix: str,
+    flags: int = 0,
+) -> str:
+    """Extract blocks matching pattern, transform, store, and replace with placeholders.
+
+    Args:
+        text: Input text to process.
+        pattern: Regex pattern to match blocks.
+        transform_fn: Function to transform the match into the target format.
+        storage: List to store transformed blocks.
+        prefix: Placeholder prefix (e.g., "CODEBLOCK").
+        flags: Regex flags to pass to ``re.sub``.
+
+    Returns:
+        Text with blocks replaced by placeholders.
+    """
+
+    def _replacer(match: re.Match[str]) -> str:
+        transformed = transform_fn(match)
+        placeholder = f"\x00{prefix}{len(storage)}\x00"
+        storage.append(transformed)
+        return placeholder
+
+    return re.sub(pattern, _replacer, text, flags=flags)
+
+
+def _restore_blocks(text: str, storage: list[str], prefix: str) -> str:
+    """Restore blocks from placeholders.
+
+    Replaces in reverse order (highest index first) to avoid
+    index collisions when placeholder text contains digits.
+
+    Args:
+        text: Text with placeholders.
+        storage: List of stored blocks.
+        prefix: Placeholder prefix used during extraction.
+
+    Returns:
+        Text with placeholders replaced by stored blocks.
+    """
+    for i in range(len(storage) - 1, -1, -1):
+        text = text.replace(f"\x00{prefix}{i}\x00", storage[i])
+    return text
 
 
 class JiraPreprocessor(BasePreprocessor):
@@ -220,45 +271,38 @@ class JiraPreprocessor(BasePreprocessor):
 
         output = input_text
 
-        # Save code/noformat blocks to prevent downstream regex corruption
+        # Protect code/noformat/inline-code blocks from downstream
+        # transformations by replacing them with placeholders.
         code_blocks: list[str] = []
         inline_codes: list[str] = []
 
-        def save_code_block(match: re.Match) -> str:
+        def _jira_code_to_md(match: re.Match[str]) -> str:
             lang = match.group(1) or ""
             content = match.group(2)
-            md_block = f"```{lang}\n{content}\n```"
-            placeholder = f"\x00CODEBLOCK{len(code_blocks)}\x00"
-            code_blocks.append(md_block)
-            return placeholder
+            return f"```{lang}\n{content}\n```"
 
-        def save_noformat_block(match: re.Match) -> str:
-            content = match.group(1)
-            md_block = f"```\n{content}\n```"
-            placeholder = f"\x00CODEBLOCK{len(code_blocks)}\x00"
-            code_blocks.append(md_block)
-            return placeholder
-
-        def save_inline_code(match: re.Match) -> str:
-            content = match.group(1)
-            md_code = f"`{content}`"
-            placeholder = f"\x00INLINECODE{len(inline_codes)}\x00"
-            inline_codes.append(md_code)
-            return placeholder
-
-        # Extract BEFORE any other transformations
-        output = re.sub(
-            r"\{code(?::([a-z]+))?\}([\s\S]*?)\{code\}",
-            save_code_block,
+        output = _extract_blocks(
             output,
+            r"\{code(?::([a-z]+))?\}([\s\S]*?)\{code\}",
+            _jira_code_to_md,
+            code_blocks,
+            "CODEBLOCK",
             flags=re.MULTILINE,
         )
-        output = re.sub(
-            r"\{noformat\}([\s\S]*?)\{noformat\}",
-            save_noformat_block,
+        output = _extract_blocks(
             output,
+            r"\{noformat\}([\s\S]*?)\{noformat\}",
+            lambda m: f"```\n{m.group(1)}\n```",
+            code_blocks,
+            "CODEBLOCK",
         )
-        output = re.sub(r"\{\{([^}]+)\}\}", save_inline_code, output)
+        output = _extract_blocks(
+            output,
+            r"\{\{([^}]+)\}\}",
+            lambda m: f"`{m.group(1)}`",
+            inline_codes,
+            "INLINECODE",
+        )
 
         # Block quotes
         output = re.sub(r"^bq\.(.*?)$", r"> \1\n", output, flags=re.MULTILINE)
@@ -289,7 +333,11 @@ class JiraPreprocessor(BasePreprocessor):
         )
 
         # Citation (non-overlapping alternation to avoid catastrophic backtracking)
-        output = re.sub(r"\?\?([^?]+(?:\?[^?]+)*)\?\?", r"<cite>\1</cite>", output)
+        output = re.sub(
+            r"\?\?([^?]+(?:\?[^?]+)*)\?\?",
+            r"<cite>\1</cite>",
+            output,
+        )
 
         # Inserted text
         output = re.sub(r"\+([^+]*)\+", r"<ins>\1</ins>", output)
@@ -323,7 +371,8 @@ class JiraPreprocessor(BasePreprocessor):
 
         # Images with alt text
         output = re.sub(
-            r"!([^|\n\s]+)\|([^\n!]*)alt=([^\n!\,]+?)(,([^\n!]*))?!",
+            r"!([^|\n\s]+)\|([^\n!]*)alt=([^\n!\,]+?)"
+            r"(,([^\n!]*))?!",
             r"![\3](\1)",
             output,
         )
@@ -361,18 +410,16 @@ class JiraPreprocessor(BasePreprocessor):
                 if header_cells > 0:
                     separator_line = "|" + "---|" * header_cells
                     lines.insert(i + 1, separator_line)
-                    i += 1  # Skip the newly inserted line in next iteration
+                    i += 1
 
             i += 1
 
         # Rejoin the lines
         output = "\n".join(lines)
 
-        # Restore code/noformat blocks and inline code from placeholders
-        for i in range(len(code_blocks) - 1, -1, -1):
-            output = output.replace(f"\x00CODEBLOCK{i}\x00", code_blocks[i])
-        for i in range(len(inline_codes) - 1, -1, -1):
-            output = output.replace(f"\x00INLINECODE{i}\x00", inline_codes[i])
+        # Restore code/noformat blocks and inline code
+        output = _restore_blocks(output, code_blocks, "CODEBLOCK")
+        output = _restore_blocks(output, inline_codes, "INLINECODE")
 
         return output
 
@@ -420,67 +467,53 @@ class JiraPreprocessor(BasePreprocessor):
         if self.disable_translation:
             return input_text
 
-        # Save code blocks to prevent them from being processed by other transformations
         code_blocks: list[str] = []
         inline_codes: list[str] = []
 
-        # Extract code blocks and replace with placeholders
-        def save_code_block(match: re.Match) -> str:
-            """
-            Process and save a code block, returning a placeholder.
-
-            Args:
-                match: Regex match object containing the code block
-
-            Returns:
-                Placeholder string to be replaced later
-            """
+        def _md_code_to_jira(match: re.Match[str]) -> str:
             syntax = match.group(1) or ""
             content = match.group(2)
-
-            # Normalize the language to a JIRA-supported one
             jira_lang = self._normalize_code_language(syntax)
-
-            # Build JIRA code block: {code:lang}...{code} or {code}...{code}
             code = "{code"
             if jira_lang:
                 code += ":" + jira_lang
             code += "}" + content + "{code}"
-            placeholder = f"\x00CODEBLOCK{len(code_blocks)}\x00"
-            code_blocks.append(code)
-            return placeholder
+            return code
 
-        # Extract inline code and replace with placeholders
-        def save_inline_code(match: re.Match) -> str:
-            """
-            Process and save inline code, returning a placeholder.
+        def _md_inline_to_jira(
+            match: re.Match[str],
+        ) -> str:
+            return "{{" + match.group(1) + "}}"
 
-            Args:
-                match: Regex match object containing the inline code
-
-            Returns:
-                Placeholder string to be replaced later
-            """
-            content = match.group(1)
-            code = "{{" + content + "}}"
-            placeholder = f"\x00INLINECODE{len(inline_codes)}\x00"
-            inline_codes.append(code)
-            return placeholder
-
-        # Replace code sections with placeholders
-        output = re.sub(r"```(\w*)\n([\s\S]+?)```", save_code_block, input_text)
-        output = re.sub(r"`([^`]+)`", save_inline_code, output)
+        # Extract code blocks and inline code before
+        # any other transformations.
+        output = _extract_blocks(
+            input_text,
+            r"```(\w*)\n([\s\S]+?)```",
+            _md_code_to_jira,
+            code_blocks,
+            "CODEBLOCK",
+        )
+        output = _extract_blocks(
+            output,
+            r"`([^`]+)`",
+            _md_inline_to_jira,
+            inline_codes,
+            "INLINECODE",
+        )
 
         # Headers with = or - underlines
         output = re.sub(
             r"^(.*?)\n([=-])+$",
-            lambda match: f"h{1 if match.group(2)[0] == '=' else 2}. {match.group(1)}",
+            lambda match: (
+                f"h{1 if match.group(2)[0] == '=' else 2}. {match.group(1)}"
+            ),
             output,
             flags=re.MULTILINE,
         )
 
-        # Headers with # prefix - require space after # to distinguish from Jira lists
-        # Fixes issue #786: #item should not become h1.item (it's a Jira numbered list)
+        # Headers with # prefix - require space after #
+        # to distinguish from Jira lists (issue #786)
         output = re.sub(
             r"^([#]+) (.*)$",
             lambda match: f"h{len(match.group(1))}. " + match.group(2),
@@ -488,13 +521,11 @@ class JiraPreprocessor(BasePreprocessor):
             flags=re.MULTILINE,
         )
 
-        # Bold and italic - skip lines starting with asterisks+space (Jira list syntax)
-        # Fixes issue #786: ** item should not be converted (it's a Jira nested list)
+        # Bold and italic - skip lines starting with
+        # asterisks+space (Jira list syntax, issue #786)
         def convert_bold_italic_line(line: str) -> str:
-            # Skip if line starts with asterisks/underscores followed by space (list syntax)
             if re.match(r"^[*_]+\s", line):
                 return line
-            # Apply bold/italic conversion
             return re.sub(
                 r"([*_]+)(.*?)\1",
                 lambda m: ("_" if len(m.group(1)) == 1 else "*")
@@ -507,7 +538,7 @@ class JiraPreprocessor(BasePreprocessor):
         output = "\n".join(convert_bold_italic_line(line) for line in lines)
 
         # Multi-level bulleted list
-        def bulleted_list_fn(match: re.Match) -> str:
+        def bulleted_list_fn(match: re.Match[str]) -> str:
             ident = len(match.group(1)) if match.group(1) else 0
             level = ident // 2 + 1
             return str("*" * level + " " + match.group(2))
@@ -520,7 +551,9 @@ class JiraPreprocessor(BasePreprocessor):
         )
 
         # Multi-level numbered list
-        def numbered_list_fn(match: re.Match) -> str:
+        def numbered_list_fn(
+            match: re.Match[str],
+        ) -> str:
             ident = len(match.group(1)) if match.group(1) else 0
             level = ident // 2 + 1
             return str("#" * level + " " + match.group(2))
@@ -533,16 +566,25 @@ class JiraPreprocessor(BasePreprocessor):
         )
 
         # HTML formatting tags to Jira markup
-        tag_map = {"cite": "??", "del": "-", "ins": "+", "sup": "^", "sub": "~"}
+        tag_map = {
+            "cite": "??",
+            "del": "-",
+            "ins": "+",
+            "sup": "^",
+            "sub": "~",
+        }
 
         for tag, replacement in tag_map.items():
             output = re.sub(
-                rf"<{tag}>(.*?)<\/{tag}>", rf"{replacement}\1{replacement}", output
+                rf"<{tag}>(.*?)<\/{tag}>",
+                rf"{replacement}\1{replacement}",
+                output,
             )
 
         # Colored text
         output = re.sub(
-            r"<span style=\"color:(#[^\"]+)\">([\s\S]*?)</span>",
+            r"<span style=\"color:(#[^\"]+)\">"
+            r"([\s\S]*?)</span>",
             r"{color:\1}\2{color}",
             output,
             flags=re.MULTILINE,
@@ -555,7 +597,11 @@ class JiraPreprocessor(BasePreprocessor):
         output = re.sub(r"!\[\]\(([^)\n\s]+)\)", r"!\1!", output)
 
         # Images with alt text
-        output = re.sub(r"!\[([^\]\n]+)\]\(([^)\n\s]+)\)", r"!\2|alt=\1!", output)
+        output = re.sub(
+            r"!\[([^\]\n]+)\]\(([^)\n\s]+)\)",
+            r"!\2|alt=\1!",
+            output,
+        )
 
         # Links
         output = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"[\1|\2]", output)
@@ -566,22 +612,16 @@ class JiraPreprocessor(BasePreprocessor):
         i = 0
         while i < len(lines):
             if i < len(lines) - 1 and re.match(r"\|[-\s|]+\|", lines[i + 1]):
-                # Convert header row to Jira format
                 lines[i] = lines[i].replace("|", "||")
-                # Remove the separator line
                 lines.pop(i + 1)
             i += 1
 
         # Rejoin the lines
         output = "\n".join(lines)
 
-        # Restore code blocks from placeholders
-        for i, code in enumerate(code_blocks):
-            output = output.replace(f"\x00CODEBLOCK{i}\x00", code)
-
-        # Restore inline code from placeholders
-        for i, code in enumerate(inline_codes):
-            output = output.replace(f"\x00INLINECODE{i}\x00", code)
+        # Restore code blocks and inline code
+        output = _restore_blocks(output, code_blocks, "CODEBLOCK")
+        output = _restore_blocks(output, inline_codes, "INLINECODE")
 
         return output
 
