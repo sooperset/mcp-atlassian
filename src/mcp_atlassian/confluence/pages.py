@@ -1,6 +1,8 @@
 """Module for Confluence page operations."""
 
+import difflib
 import logging
+from typing import Any
 
 import requests
 from requests.exceptions import HTTPError
@@ -915,3 +917,47 @@ class PagesMixin(ConfluenceClient):
         except Exception as e:
             logger.error(f"Error moving page {page_id}: {str(e)}")
             raise Exception(f"Failed to move page {page_id}: {str(e)}") from e
+
+    @handle_auth_errors("Confluence API")
+    def get_page_version_diff(
+        self,
+        page_id: str,
+        from_version: int,
+        to_version: int,
+    ) -> dict[str, Any]:
+        """Get unified diff between two versions of a page.
+
+        Args:
+            page_id: Page ID.
+            from_version: Source version number.
+            to_version: Target version number.
+
+        Returns:
+            Dict with page_id, title, from_version, to_version,
+            and diff string.
+
+        Raises:
+            MCPAtlassianAuthenticationError: If authentication fails.
+        """
+        from_page = self.get_page_history(page_id=page_id, version=from_version)
+        to_page = self.get_page_history(page_id=page_id, version=to_version)
+
+        from_lines = (from_page.content or "").splitlines()
+        to_lines = (to_page.content or "").splitlines()
+
+        diff_lines = difflib.unified_diff(
+            from_lines,
+            to_lines,
+            fromfile=f"v{from_version}",
+            tofile=f"v{to_version}",
+            lineterm="",
+        )
+        diff_string = "\n".join(diff_lines)
+
+        return {
+            "page_id": page_id,
+            "title": to_page.title,
+            "from_version": from_version,
+            "to_version": to_version,
+            "diff": diff_string,
+        }

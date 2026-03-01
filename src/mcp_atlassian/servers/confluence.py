@@ -1055,6 +1055,83 @@ async def get_page_history(
 
 
 @confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_pages"},
+    annotations={"title": "Get Page Version Diff", "readOnlyHint": True},
+)
+async def get_page_diff(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(
+            description=(
+                "Confluence page ID (numeric ID, can be found in the page URL). "
+                "For example, in 'https://example.atlassian.net/wiki/spaces/TEAM/"
+                "pages/123456789/Page+Title', the page ID is '123456789'."
+            )
+        ),
+    ],
+    from_version: Annotated[
+        int,
+        Field(
+            description="Source version number",
+            ge=1,
+        ),
+    ],
+    to_version: Annotated[
+        int,
+        Field(
+            description="Target version number",
+            ge=1,
+        ),
+    ],
+) -> str:
+    """Get a unified diff between two versions of a Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: Confluence page ID.
+        from_version: Source version number.
+        to_version: Target version number.
+
+    Returns:
+        JSON string with page info and unified diff.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        result = confluence_fetcher.get_page_version_diff(
+            page_id=page_id,
+            from_version=from_version,
+            to_version=to_version,
+        )
+        return json.dumps(result, indent=2, ensure_ascii=False)
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error getting page diff: {e}")
+        return json.dumps(
+            {
+                "error": "Authentication failed. Please check your credentials.",
+                "details": str(e),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(
+            f"Error getting diff for page {page_id} "
+            f"(v{from_version} -> v{to_version}): {e}"
+        )
+        return json.dumps(
+            {
+                "error": f"Failed to get page diff: {e}",
+                "page_id": page_id,
+                "from_version": from_version,
+                "to_version": to_version,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+
+
+@confluence_mcp.tool(
     tags={"confluence", "read", "analytics", "toolset:confluence_analytics"},
     annotations={"title": "Get Page Views", "readOnlyHint": True},
 )
