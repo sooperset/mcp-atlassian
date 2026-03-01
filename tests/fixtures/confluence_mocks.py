@@ -533,3 +533,68 @@ MOCK_PAGES_FROM_SPACE_RESPONSE = [
         },
     },
 ]
+
+# ============================================================================
+# Comment Reply Mock Data
+# ============================================================================
+
+MOCK_COMMENT_REPLY_V1_RESPONSE = {
+    "id": "111222333",
+    "type": "comment",
+    "status": "current",
+    "title": "Re: Original Comment",
+    "container": {
+        "id": "456789123",
+        "type": "comment",
+        "status": "current",
+        "title": "Original Comment",
+    },
+    "body": {
+        "view": {
+            "value": "<p>This is a reply</p>",
+            "representation": "view",
+        },
+    },
+    "version": {
+        "by": {
+            "type": "known",
+            "accountId": "user123",
+            "displayName": "Test User",
+        },
+        "when": "2024-01-02T10:00:00.000Z",
+        "number": 1,
+    },
+    "extensions": {
+        "location": "footer",
+    },
+    "_links": {
+        "webui": "/spaces/TEST/pages/12345?focusedCommentId=111222333",
+        "self": "https://example.atlassian.net/wiki/rest/api/content/111222333",
+    },
+}
+
+MOCK_COMMENT_REPLY_V2_RESPONSE = {
+    "id": "222333444",
+    "status": "current",
+    "title": "Re: Original Comment",
+    "parentCommentId": "456789123",
+    "pageId": "12345",
+    "body": {
+        "storage": {
+            "value": "<p>This is a v2 reply</p>",
+            "representation": "storage",
+        },
+    },
+    "version": {
+        "number": 1,
+        "createdAt": "2024-01-02T10:00:00.000Z",
+    },
+    "author": {
+        "type": "known",
+        "accountId": "user123",
+        "displayName": "Test User",
+    },
+    "_links": {
+        "webui": "/spaces/TEST/pages/12345?focusedCommentId=222333444",
+    },
+}

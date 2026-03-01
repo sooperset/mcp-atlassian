@@ -182,3 +182,106 @@ class TestConfluenceV2Adapter:
 
         assert "/wiki/wiki/" not in url, f"Double /wiki in URL: {url}"
         assert url.endswith(expected_path), f"Expected {expected_path}, got {url}"
+
+
+class TestConfluenceV2AdapterComments:
+    """Tests for v2 adapter comment operations."""
+
+    @pytest.fixture
+    def mock_session(self):
+        """Create a mock session."""
+        return MagicMock(spec=requests.Session)
+
+    @pytest.fixture
+    def v2_adapter(self, mock_session):
+        """Create a ConfluenceV2Adapter instance."""
+        return ConfluenceV2Adapter(
+            session=mock_session, base_url="https://example.atlassian.net/wiki"
+        )
+
+    def test_create_footer_comment_both_params_raises(self, v2_adapter):
+        """T11a: Passing both page_id and parent_comment_id raises ValueError."""
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            v2_adapter.create_footer_comment(
+                page_id="12345",
+                parent_comment_id="67890",
+                body="<p>Test</p>",
+            )
+
+    def test_create_footer_comment_neither_param_raises(self, v2_adapter):
+        """T11b: Passing neither page_id nor parent_comment_id raises ValueError."""
+        with pytest.raises(ValueError, match="Either"):
+            v2_adapter.create_footer_comment(body="<p>Test</p>")
+
+    def test_create_footer_comment_reply(self, v2_adapter, mock_session):
+        """T12: Create reply with parentCommentId sends correct POST payload."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "id": "222333444",
+            "status": "current",
+            "title": "Re: Comment",
+            "parentCommentId": "456789123",
+            "pageId": "12345",
+            "body": {
+                "storage": {
+                    "value": "<p>Reply content</p>",
+                    "representation": "storage",
+                },
+            },
+            "version": {"number": 1},
+            "_links": {},
+        }
+        mock_session.post.return_value = mock_response
+
+        result = v2_adapter.create_footer_comment(
+            parent_comment_id="456789123",
+            body="<p>Reply content</p>",
+        )
+
+        # Verify POST was called with correct URL and payload
+        mock_session.post.assert_called_once()
+        call_args = mock_session.post.call_args
+        assert call_args[0][0] == (
+            "https://example.atlassian.net/wiki/api/v2/footer-comments"
+        )
+        payload = call_args[1]["json"]
+        assert payload["parentCommentId"] == "456789123"
+        assert "pageId" not in payload
+
+        # Verify the result is in v1-compatible format with body.view
+        assert result["id"] == "222333444"
+        assert result["body"]["view"]["value"] == "<p>Reply content</p>"
+        assert result["extensions"]["location"] == "footer"
+
+    def test_create_footer_comment_top_level(self, v2_adapter, mock_session):
+        """Create top-level comment with pageId sends correct payload."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "id": "333444555",
+            "status": "current",
+            "title": "New Comment",
+            "pageId": "12345",
+            "body": {
+                "storage": {
+                    "value": "<p>Top-level comment</p>",
+                    "representation": "storage",
+                },
+            },
+            "version": {"number": 1},
+            "_links": {},
+        }
+        mock_session.post.return_value = mock_response
+
+        result = v2_adapter.create_footer_comment(
+            page_id="12345",
+            body="<p>Top-level comment</p>",
+        )
+
+        # Verify payload
+        call_args = mock_session.post.call_args
+        payload = call_args[1]["json"]
+        assert payload["pageId"] == "12345"
+        assert "parentCommentId" not in payload
+        assert result["id"] == "333444555"

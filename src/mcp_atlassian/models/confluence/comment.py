@@ -30,6 +30,8 @@ class ConfluenceComment(ApiModel, TimestampMixin):
     updated: str = EMPTY_STRING
     author: ConfluenceUser | None = None
     type: str = "comment"  # "comment", "page", etc.
+    parent_comment_id: str | None = None
+    location: str | None = None  # "inline", "footer", or None
 
     @classmethod
     def from_api_response(
@@ -61,6 +63,16 @@ class ConfluenceComment(ApiModel, TimestampMixin):
         if not title and container:
             title = container.get("title")
 
+        # Extract parent comment ID from v2 or v1 format
+        parent_comment_id: str | None = None
+        if v2_parent := data.get("parentCommentId"):
+            parent_comment_id = str(v2_parent)
+        elif container and container.get("type") == "comment":
+            parent_comment_id = str(container.get("id", ""))
+
+        # Extract location from extensions (v1 API)
+        location = data.get("extensions", {}).get("location")
+
         return cls(
             id=str(data.get("id", CONFLUENCE_DEFAULT_ID)),
             title=title,
@@ -69,6 +81,8 @@ class ConfluenceComment(ApiModel, TimestampMixin):
             updated=data.get("updated", EMPTY_STRING),
             author=author,
             type=data.get("type", "comment"),
+            parent_comment_id=parent_comment_id,
+            location=location,
         )
 
     def to_simplified_dict(self) -> dict[str, Any]:
@@ -85,5 +99,11 @@ class ConfluenceComment(ApiModel, TimestampMixin):
 
         if self.author:
             result["author"] = self.author.display_name
+
+        if self.parent_comment_id:
+            result["parent_comment_id"] = self.parent_comment_id
+
+        if self.location:
+            result["location"] = self.location
 
         return result

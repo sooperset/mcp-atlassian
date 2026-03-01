@@ -770,6 +770,59 @@ async def add_comment(
 
 
 @confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_comments"},
+    annotations={"title": "Reply to Comment", "destructiveHint": True},
+)
+@check_write_access
+async def reply_to_comment(
+    ctx: Context,
+    comment_id: Annotated[
+        str, Field(description="The ID of the parent comment to reply to")
+    ],
+    body: Annotated[str, Field(description="The reply content in Markdown format")],
+) -> str:
+    """Reply to an existing comment thread on a Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        comment_id: The ID of the parent comment to reply to.
+        body: The reply content in Markdown format.
+
+    Returns:
+        JSON string representing the created reply comment.
+
+    Raises:
+        ValueError: If in read-only mode or Confluence client is unavailable.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        comment = confluence_fetcher.reply_to_comment(
+            comment_id=comment_id, content=body
+        )
+        if comment:
+            comment_data = comment.to_simplified_dict()
+            response = {
+                "success": True,
+                "message": "Reply added successfully",
+                "comment": comment_data,
+            }
+        else:
+            response = {
+                "success": False,
+                "message": f"Unable to reply to comment {comment_id}. API request completed but reply creation unsuccessful.",
+            }
+    except Exception as e:
+        logger.error(f"Error replying to comment {comment_id}: {str(e)}")
+        response = {
+            "success": False,
+            "message": f"Error replying to comment {comment_id}",
+            "error": str(e),
+        }
+
+    return json.dumps(response, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
     tags={"confluence", "read", "toolset:confluence_users"},
     annotations={"title": "Search User", "readOnlyHint": True},
 )

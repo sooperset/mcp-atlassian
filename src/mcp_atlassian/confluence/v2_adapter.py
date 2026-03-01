@@ -434,6 +434,108 @@ class ConfluenceV2Adapter:
 
         return v1_compatible
 
+    def create_footer_comment(
+        self,
+        *,
+        page_id: str | None = None,
+        parent_comment_id: str | None = None,
+        body: str,
+        representation: str = "storage",
+    ) -> dict[str, Any]:
+        """Create a footer comment using the v2 API.
+
+        Either page_id (for top-level comments) or parent_comment_id (for replies)
+        must be provided, but not both.
+
+        Args:
+            page_id: The page ID for top-level comments
+            parent_comment_id: The parent comment ID for replies
+            body: The comment content
+            representation: Content representation format (default: "storage")
+
+        Returns:
+            The created comment data in v1-compatible format
+
+        Raises:
+            ValueError: If both or neither params provided, or if creation fails
+        """
+        if page_id and parent_comment_id:
+            raise ValueError("page_id and parent_comment_id are mutually exclusive")
+        if not page_id and not parent_comment_id:
+            raise ValueError("Either page_id or parent_comment_id must be provided")
+
+        try:
+            data: dict[str, Any] = {
+                "body": {
+                    "representation": representation,
+                    "value": body,
+                },
+            }
+
+            if page_id:
+                data["pageId"] = page_id
+            else:
+                data["parentCommentId"] = parent_comment_id
+
+            url = f"{self.base_url}/api/v2/footer-comments"
+            response = self.session.post(url, json=data)
+            response.raise_for_status()
+
+            result = response.json()
+            logger.debug("Successfully created footer comment with v2 API")
+
+            return self._convert_v2_comment_to_v1_format(result)
+
+        except Exception as e:
+            if isinstance(e, ValueError | HTTPError):
+                raise
+            logger.error(f"Error creating footer comment: {e}")
+            raise ValueError(f"Failed to create footer comment: {e}") from e
+
+    def _convert_v2_comment_to_v1_format(
+        self, v2_response: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Convert v2 comment response to v1-compatible format.
+
+        Maps body.storage.value → body.view.value since
+        ConfluenceComment.from_api_response reads from body.view.value.
+
+        Args:
+            v2_response: The response from v2 API
+
+        Returns:
+            Response formatted like v1 API for compatibility
+        """
+        body_value = v2_response.get("body", {}).get("storage", {}).get("value", "")
+
+        v1_compatible: dict[str, Any] = {
+            "id": v2_response.get("id"),
+            "type": "comment",
+            "status": v2_response.get("status"),
+            "title": v2_response.get("title"),
+            "body": {
+                "view": {
+                    "value": body_value,
+                    "representation": "view",
+                },
+            },
+            "version": v2_response.get("version", {}),
+            "_links": v2_response.get("_links", {}),
+        }
+
+        # Map v2 author to v1 format
+        if author := v2_response.get("author"):
+            v1_compatible["author"] = author
+
+        # Map parentCommentId for model compatibility
+        if parent_id := v2_response.get("parentCommentId"):
+            v1_compatible["parentCommentId"] = parent_id
+
+        # v2 footer-comments endpoint always returns footer comments
+        v1_compatible["extensions"] = {"location": "footer"}
+
+        return v1_compatible
+
     def get_page_emoji(self, page_id: str) -> str | None:
         """Get the page title emoji from content properties using v2 API.
 
