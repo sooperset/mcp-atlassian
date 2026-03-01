@@ -6,7 +6,11 @@ from unittest.mock import patch
 
 import pytest
 
-from mcp_atlassian.utils.io import is_read_only_mode, validate_safe_path
+from mcp_atlassian.utils.io import (
+    is_delete_tools_allowed,
+    is_read_only_mode,
+    validate_safe_path,
+)
 
 
 def test_is_read_only_mode_default():
@@ -84,6 +88,36 @@ def test_is_read_only_mode_false():
 
         # Assert
         assert result is False
+
+
+# --- is_delete_tools_allowed tests ---
+
+
+class TestIsDeleteToolsAllowed:
+    """Tests for is_delete_tools_allowed()."""
+
+    def test_default_is_false(self):
+        """Delete tools are blocked by default when env var is unset."""
+        with patch.dict(os.environ, clear=True):
+            assert is_delete_tools_allowed() is False
+
+    @pytest.mark.parametrize(
+        "value",
+        ["true", "True", "TRUE", "1", "yes", "YES", "y", "on"],
+    )
+    def test_truthy_values(self, value: str):
+        """Delete tools are allowed for standard truthy values."""
+        with patch.dict(os.environ, {"ALLOW_DELETE_TOOLS": value}):
+            assert is_delete_tools_allowed() is True
+
+    @pytest.mark.parametrize(
+        "value",
+        ["false", "False", "0", "no", "off", "", "random"],
+    )
+    def test_falsy_values(self, value: str):
+        """Delete tools are blocked for non-truthy values."""
+        with patch.dict(os.environ, {"ALLOW_DELETE_TOOLS": value}):
+            assert is_delete_tools_allowed() is False
 
 
 # --- validate_safe_path tests ---

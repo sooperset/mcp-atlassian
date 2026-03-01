@@ -674,7 +674,7 @@ async def update_page(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "write", "toolset:confluence_pages"},
+    tags={"confluence", "write", "delete", "toolset:confluence_pages"},
     annotations={"title": "Delete Page", "destructiveHint": True},
 )
 @check_write_access
@@ -1793,7 +1793,13 @@ async def download_content_attachments(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "write", "attachments", "toolset:confluence_attachments"},
+    tags={
+        "confluence",
+        "write",
+        "delete",
+        "attachments",
+        "toolset:confluence_attachments",
+    },
     annotations={"title": "Delete Attachment", "destructiveHint": True},
 )
 @check_write_access

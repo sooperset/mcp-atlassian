@@ -247,6 +247,17 @@ class TestToolsetTagCompleteness:
                     f"'{toolset_name}' (not in ALL_TOOLSETS)"
                 )
 
+    def test_delete_tools_have_delete_tag(self, jira_tools, confluence_tools):
+        """Every tool whose function name contains 'delete' must have the 'delete' tag."""
+        all_tools = {**jira_tools, **confluence_tools}
+        for name, tool in all_tools.items():
+            if "delete" in name.lower():
+                tags = tool.tags if hasattr(tool, "tags") else set()
+                assert "delete" in tags, (
+                    f"Tool '{name}' looks like a delete tool but is missing "
+                    f"the 'delete' tag (tags: {tags})"
+                )
+
     def test_jira_tool_count(self, jira_tools):
         """Verify expected number of Jira tools."""
         assert len(jira_tools) == 49, f"Expected 49 Jira tools, got {len(jira_tools)}"

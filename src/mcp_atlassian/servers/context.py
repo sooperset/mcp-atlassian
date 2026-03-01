@@ -19,5 +19,6 @@ class MainAppContext:
     full_jira_config: JiraConfig | None = None
     full_confluence_config: ConfluenceConfig | None = None
     read_only: bool = False
+    allow_delete: bool = False
     enabled_tools: list[str] | None = None
     enabled_toolsets: set[str] | None = None

@@ -6,6 +6,21 @@ from pathlib import Path
 from mcp_atlassian.utils.env import is_env_extended_truthy
 
 
+def is_delete_tools_allowed() -> bool:
+    """Check if delete tools are allowed.
+
+    When disabled (the default), tools tagged with ``"delete"`` are hidden
+    from the tool listing, preventing destructive operations such as
+    deleting issues or pages.  Set the ``ALLOW_DELETE_TOOLS`` environment
+    variable to a truthy value (``true``, ``1``, ``yes``, ``y``, ``on``)
+    to expose these tools.
+
+    Returns:
+        True if ALLOW_DELETE_TOOLS env var is set to a truthy value.
+    """
+    return is_env_extended_truthy("ALLOW_DELETE_TOOLS", "false")
+
+
 def is_read_only_mode() -> bool:
     """Check if the server is running in read-only mode.
 
