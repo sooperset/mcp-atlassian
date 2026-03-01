@@ -4,7 +4,7 @@ import base64
 import json
 import logging
 import mimetypes
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from fastmcp import Context, FastMCP
 from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
@@ -23,7 +23,73 @@ from mcp_atlassian.utils.media import (
 )
 from mcp_atlassian.utils.urls import resolve_relative_url
 
+if TYPE_CHECKING:
+    from mcp_atlassian.confluence import ConfluenceFetcher
+
 logger = logging.getLogger(__name__)
+
+
+def _try_correct_space_key(
+    space_key: str,
+    fetcher: "ConfluenceFetcher",
+) -> tuple[str, str | None]:
+    """Attempt to correct an invalid space key.
+
+    Args:
+        space_key: The space key to validate/correct.
+        fetcher: A ConfluenceFetcher instance.
+
+    Returns:
+        Tuple of (space_key, correction_note). If the space key was corrected,
+        correction_note describes the change. If no correction was possible,
+        returns the original space_key and None.
+    """
+    from mcp_atlassian.utils.suggestions import suggest_spaces
+
+    suggestions = suggest_spaces(space_key, fetcher)
+    if len(suggestions) == 1 and suggestions[0].lower() == space_key.lower():
+        corrected = suggestions[0]
+        return corrected, f"Corrected space_key '{space_key}' to '{corrected}'"
+    return space_key, None
+
+
+def _space_key_error_response(
+    space_key: str,
+    fetcher: "ConfluenceFetcher",
+    base_error: str,
+) -> str:
+    """Build an error response with space key suggestions.
+
+    Args:
+        space_key: The invalid space key.
+        fetcher: A ConfluenceFetcher instance.
+        base_error: The base error message.
+
+    Returns:
+        JSON string with error, suggestions, and/or hints.
+    """
+    from mcp_atlassian.utils.suggestions import format_suggestions, suggest_spaces
+
+    suggestions = suggest_spaces(space_key, fetcher)
+    if suggestions:
+        return json.dumps(
+            format_suggestions(
+                base_error,
+                suggestions,
+                hint="Space keys are case-sensitive uppercase. "
+                "Try one of the suggestions.",
+            ),
+            indent=2,
+            ensure_ascii=False,
+        )
+    return json.dumps(
+        {
+            "error": base_error,
+            "hint": "Use the list_spaces tool to discover available space keys.",
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
 
 
 confluence_mcp = FastMCP(
@@ -96,6 +162,21 @@ async def search(
         JSON string representing a list of simplified Confluence page objects.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    # Attempt to correct each space key in spaces_filter
+    correction_notes: list[str] = []
+    if spaces_filter:
+        corrected_keys: list[str] = []
+        for key in spaces_filter.split(","):
+            key = key.strip()
+            if not key:
+                continue
+            corrected, note = _try_correct_space_key(key, confluence_fetcher)
+            corrected_keys.append(corrected)
+            if note:
+                correction_notes.append(note)
+        spaces_filter = ",".join(corrected_keys)
+
     # Check if the query is a simple search term or already a CQL query
     if query and not any(
         x in query for x in ["=", "~", ">", "<", " AND ", " OR ", "currentUser()"]
@@ -121,6 +202,12 @@ async def search(
             query, limit=limit, spaces_filter=spaces_filter
         )
     search_results = [page.to_simplified_dict() for page in pages]
+    if correction_notes:
+        return json.dumps(
+            {"results": search_results, "notes": correction_notes},
+            indent=2,
+            ensure_ascii=False,
+        )
     return json.dumps(search_results, indent=2, ensure_ascii=False)
 
 
@@ -218,12 +305,74 @@ async def get_page(
             space_key, title, convert_to_markdown=convert_to_markdown
         )
         if not page_object:
-            return json.dumps(
-                {
-                    "error": f"Page with title '{title}' not found in space '{space_key}'."
-                },
-                indent=2,
-                ensure_ascii=False,
+            # Phase 2: Try title recovery (search for similar titles)
+            from mcp_atlassian.utils.suggestions import (
+                format_suggestions,
+                fuzzy_match,
+            )
+
+            try:
+                search_results = confluence_fetcher.search(
+                    f'title ~ "{title}" AND space = "{space_key}"',
+                    limit=5,
+                )
+                similar_titles = [p.title for p in search_results if p.title]
+            except Exception:
+                similar_titles = []
+
+            if similar_titles:
+                matches = fuzzy_match(title, similar_titles)
+                if len(matches) == 1:
+                    # Auto-correct: fetch the matched page
+                    page_object = confluence_fetcher.get_page_by_title(
+                        space_key,
+                        matches[0],
+                        convert_to_markdown=convert_to_markdown,
+                    )
+                    if page_object:
+                        if include_metadata:
+                            result: dict[str, object] = {
+                                "metadata": page_object.to_simplified_dict()
+                            }
+                        else:
+                            result = {"content": {"value": page_object.content}}
+                        result["note"] = f"Corrected title '{title}' to '{matches[0]}'"
+                        return json.dumps(result, indent=2, ensure_ascii=False)
+
+                if matches:
+                    return json.dumps(
+                        format_suggestions(
+                            f"Page with title '{title}' not found "
+                            f"in space '{space_key}'.",
+                            matches,
+                            hint="Similar page titles found. "
+                            "Try one of the suggestions.",
+                        ),
+                        indent=2,
+                        ensure_ascii=False,
+                    )
+
+            # Phase 1: Attempt space key recovery
+            corrected_key, correction_note = _try_correct_space_key(
+                space_key, confluence_fetcher
+            )
+            if correction_note:
+                page_object = confluence_fetcher.get_page_by_title(
+                    corrected_key, title, convert_to_markdown=convert_to_markdown
+                )
+                if page_object:
+                    if include_metadata:
+                        result = {"metadata": page_object.to_simplified_dict()}
+                    else:
+                        result = {"content": {"value": page_object.content}}
+                    result["note"] = correction_note
+                    return json.dumps(result, indent=2, ensure_ascii=False)
+
+            # Could not auto-correct — return error with suggestions
+            return _space_key_error_response(
+                space_key,
+                confluence_fetcher,
+                f"Page with title '{title}' not found in space '{space_key}'.",
             )
     else:
         raise ValueError(
@@ -547,24 +696,39 @@ async def create_page(
         is_markdown = False
         content_representation = content_format  # Pass 'wiki' or 'storage' directly
 
-    page = confluence_fetcher.create_page(
-        space_key=space_key,
-        title=title,
-        body=content,
-        parent_id=parent_id,
-        is_markdown=is_markdown,
-        enable_heading_anchors=enable_heading_anchors
-        if content_format == "markdown"
-        else False,
-        content_representation=content_representation,
-        emoji=emoji,
+    # Attempt space key correction before calling the API
+    corrected_key, correction_note = _try_correct_space_key(
+        space_key, confluence_fetcher
     )
-    result = page.to_simplified_dict()
-    return json.dumps(
-        {"message": "Page created successfully", "page": result},
-        indent=2,
-        ensure_ascii=False,
-    )
+    space_key = corrected_key
+
+    try:
+        page = confluence_fetcher.create_page(
+            space_key=space_key,
+            title=title,
+            body=content,
+            parent_id=parent_id,
+            is_markdown=is_markdown,
+            enable_heading_anchors=enable_heading_anchors
+            if content_format == "markdown"
+            else False,
+            content_representation=content_representation,
+            emoji=emoji,
+        )
+    except Exception as e:
+        return _space_key_error_response(
+            space_key,
+            confluence_fetcher,
+            f"Failed to create page in space '{space_key}': {e}",
+        )
+
+    result: dict[str, object] = {
+        "message": "Page created successfully",
+        "page": page.to_simplified_dict(),
+    }
+    if correction_note:
+        result["note"] = correction_note
+    return json.dumps(result, indent=2, ensure_ascii=False)
 
 
 @confluence_mcp.tool(

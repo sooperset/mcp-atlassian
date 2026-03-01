@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from cachetools import TTLCache
 from fastmcp import FastMCP
 from fastmcp import settings as fastmcp_settings
+from fastmcp.exceptions import NotFoundError
 from fastmcp.server.event_store import EventStore
 from fastmcp.server.http import StarletteWithLifespan
 from fastmcp.tools import Tool as FastMCPTool
@@ -38,6 +39,7 @@ from mcp_atlassian.utils.oauth import (
 from mcp_atlassian.utils.token_verifier import AtlassianOpaqueTokenVerifier
 from mcp_atlassian.utils.tools import get_enabled_tools, should_include_tool
 from mcp_atlassian.utils.toolsets import (
+    find_tool_toolset_from_registry,
     get_enabled_toolsets,
     should_include_tool_by_toolset,
 )
@@ -326,6 +328,75 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             f"_list_tools_mcp: Total tools after filtering: {len(filtered_tools)}"
         )
         return filtered_tools
+
+    async def _call_tool_mcp(self, key: str, arguments: dict[str, Any]) -> Any:
+        """Override to provide toolset-aware error messages for filtered tools.
+
+        When a tool exists but was filtered out (by toolset, read-only mode),
+        the error message explains why and how to enable it. Truly unknown
+        tools get a standard "Unknown tool" error.
+
+        Args:
+            key: The tool name to call.
+            arguments: Arguments to pass to the tool.
+
+        Returns:
+            The tool result from the base class.
+
+        Raises:
+            NotFoundError: With a helpful message when the tool is filtered.
+        """
+        # Check if lifespan context with app state is available for filtering
+        req_context = self._mcp_server.request_context
+        lifespan_ctx = req_context.lifespan_context if req_context is not None else None
+        app_state = (
+            lifespan_ctx.get("app_lifespan_context")
+            if isinstance(lifespan_ctx, dict)
+            else None
+        )
+        if app_state is None:
+            # No app lifespan state — delegate to base class
+            return await super()._call_tool_mcp(key, arguments)
+
+        # Get the filtered tools list to check if this tool is available
+        filtered_tool_names = {t.name for t in await self._list_tools_mcp()}
+
+        if key in filtered_tool_names:
+            # Tool is available, proceed normally
+            return await super()._call_tool_mcp(key, arguments)
+
+        # Tool not in filtered list — check if it exists at all
+        all_tools: dict[str, FastMCPTool] = await self.get_tools()
+
+        if key not in all_tools:
+            # Tool truly doesn't exist
+            raise NotFoundError(f"Unknown tool: '{key}'")
+
+        # Tool exists but was filtered out — explain why
+        tool_obj = all_tools[key]
+        tool_tags: set[str] = tool_obj.tags
+
+        # Check read-only blocking (write tools filtered when read-only)
+        if "write" in tool_tags:
+            raise NotFoundError(
+                f"Tool '{key}' is not available. "
+                f"It requires write access, but READ_ONLY_MODE is enabled. "
+                f"Set READ_ONLY_MODE=false to enable write tools."
+            )
+
+        # Check toolset filtering
+        toolset_name = find_tool_toolset_from_registry(key, all_tools)
+        if toolset_name:
+            raise NotFoundError(
+                f"Tool '{key}' is not available. "
+                f"It belongs to the '{toolset_name}' toolset "
+                f"which is not enabled. "
+                f"Set TOOLSETS=default,{toolset_name} to enable it."
+            )
+
+        raise NotFoundError(
+            f"Tool '{key}' is not available in the current configuration."
+        )
 
     def http_app(
         self,

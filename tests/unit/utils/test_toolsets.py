@@ -6,6 +6,7 @@ from mcp_atlassian.utils.toolsets import (
     ALL_TOOLSETS,
     DEFAULT_TOOLSETS,
     TOOLSET_TAG_PREFIX,
+    find_tool_toolset_from_registry,
     get_enabled_toolsets,
     get_toolset_tag,
     should_include_tool_by_toolset,
@@ -156,6 +157,35 @@ class TestShouldIncludeToolByToolset:
         tool_tags = {"jira", "read", "toolset:jira_worklog"}
         enabled = {"jira_issues", "jira_agile", "jira_fields"}
         assert should_include_tool_by_toolset(tool_tags, enabled) is False
+
+
+class TestFindToolToolsetFromRegistry:
+    """Tests for find_tool_toolset_from_registry() helper."""
+
+    def test_finds_toolset_for_known_tool(self):
+        """Return the toolset name when a tool has a toolset tag."""
+        from unittest.mock import MagicMock
+
+        tool = MagicMock()
+        tool.tags = {"jira", "read", "toolset:jira_agile"}
+        result = find_tool_toolset_from_registry(
+            "jira_get_board", {"jira_get_board": tool}
+        )
+        assert result == "jira_agile"
+
+    def test_returns_none_for_missing_tool(self):
+        """Return None when the tool is not in the registry."""
+        result = find_tool_toolset_from_registry("no_such", {})
+        assert result is None
+
+    def test_returns_none_when_no_toolset_tag(self):
+        """Return None when the tool exists but has no toolset tag."""
+        from unittest.mock import MagicMock
+
+        tool = MagicMock()
+        tool.tags = {"jira", "read"}
+        result = find_tool_toolset_from_registry("jira_foo", {"jira_foo": tool})
+        assert result is None
 
 
 class TestGetToolsetTag:

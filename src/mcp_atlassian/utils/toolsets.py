@@ -246,6 +246,26 @@ def should_include_tool_by_toolset(
     return toolset_name in enabled_toolsets
 
 
+def find_tool_toolset_from_registry(
+    tool_name: str,
+    all_tools: dict[str, object],
+) -> str | None:
+    """Find which toolset a tool belongs to by checking its tags.
+
+    Args:
+        tool_name: The tool name to look up.
+        all_tools: Dict of all registered tools (from get_tools()).
+
+    Returns:
+        Toolset name if found, None otherwise.
+    """
+    tool = all_tools.get(tool_name)
+    if tool is None:
+        return None
+    tags: set[str] = getattr(tool, "tags", set())
+    return get_toolset_tag(tags)
+
+
 def get_toolset_tag(tags: set[str]) -> str | None:
     """Extract the toolset name from a tool's tag set.
 
