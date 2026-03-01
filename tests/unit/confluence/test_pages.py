@@ -2275,3 +2275,106 @@ class TestMovePage:
         )
         pages_mixin.confluence.move_page.assert_not_called()
         assert isinstance(result, ConfluencePage)
+
+
+class TestGetPageVersionDiff:
+    """Tests for the get_page_version_diff method."""
+
+    @pytest.fixture
+    def pages_mixin(self, confluence_client):
+        """Create a PagesMixin instance for testing."""
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = PagesMixin()
+            mixin.confluence = confluence_client.confluence
+            mixin.config = confluence_client.config
+            mixin.preprocessor = confluence_client.preprocessor
+            return mixin
+
+    def _make_page(self, content: str, title: str = "Test Page") -> ConfluencePage:
+        """Create a ConfluencePage with given content."""
+        return ConfluencePage(
+            id="12345",
+            title=title,
+            content=content,
+        )
+
+    def test_diff_shows_additions_and_removals(self, pages_mixin):
+        """Test that diff output contains expected additions and removals."""
+        old_content = "Line 1\nLine 2\nLine 3"
+        new_content = "Line 1\nLine 2 modified\nLine 3\nLine 4"
+
+        pages_mixin.get_page_history = MagicMock(
+            side_effect=lambda page_id, version, convert_to_markdown=True: (
+                self._make_page(old_content)
+                if version == 1
+                else self._make_page(new_content)
+            )
+        )
+
+        result = pages_mixin.get_page_version_diff(
+            page_id="12345", from_version=1, to_version=2
+        )
+
+        assert result["page_id"] == "12345"
+        assert result["title"] == "Test Page"
+        assert result["from_version"] == 1
+        assert result["to_version"] == 2
+        diff = result["diff"]
+        assert "-Line 2" in diff
+        assert "+Line 2 modified" in diff
+        assert "+Line 4" in diff
+
+    def test_diff_identical_content(self, pages_mixin):
+        """Test that identical content produces empty diff."""
+        content = "Same content\nOn multiple lines"
+
+        pages_mixin.get_page_history = MagicMock(return_value=self._make_page(content))
+
+        result = pages_mixin.get_page_version_diff(
+            page_id="12345", from_version=1, to_version=2
+        )
+
+        assert result["page_id"] == "12345"
+        assert result["from_version"] == 1
+        assert result["to_version"] == 2
+        assert result["diff"] == ""
+
+    def test_versions_passed_correctly(self, pages_mixin):
+        """Test that from_version and to_version are passed to get_page_history."""
+        content = "Some content"
+        pages_mixin.get_page_history = MagicMock(return_value=self._make_page(content))
+
+        pages_mixin.get_page_version_diff(page_id="99999", from_version=3, to_version=7)
+
+        calls = pages_mixin.get_page_history.call_args_list
+        assert len(calls) == 2
+        assert calls[0].kwargs["page_id"] == "99999"
+        assert calls[0].kwargs["version"] == 3
+        assert calls[1].kwargs["page_id"] == "99999"
+        assert calls[1].kwargs["version"] == 7
+
+    def test_diff_complete_replacement(self, pages_mixin):
+        """Test diff when content is completely different."""
+        old_content = "Old line 1\nOld line 2"
+        new_content = "New line 1\nNew line 2"
+
+        pages_mixin.get_page_history = MagicMock(
+            side_effect=lambda page_id, version, convert_to_markdown=True: (
+                self._make_page(old_content)
+                if version == 1
+                else self._make_page(new_content)
+            )
+        )
+
+        result = pages_mixin.get_page_version_diff(
+            page_id="12345", from_version=1, to_version=2
+        )
+
+        diff = result["diff"]
+        assert "-Old line 1" in diff
+        assert "-Old line 2" in diff
+        assert "+New line 1" in diff
+        assert "+New line 2" in diff
