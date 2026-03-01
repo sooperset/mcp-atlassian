@@ -16,10 +16,15 @@ from mcp_atlassian.servers.dependencies import get_confluence_fetcher
 from mcp_atlassian.utils.decorators import (
     check_write_access,
 )
-from mcp_atlassian.utils.media import ATTACHMENT_MAX_BYTES, is_image_attachment
+from mcp_atlassian.utils.media import (
+    ATTACHMENT_MAX_BYTES,
+    fetch_and_encode_attachment,
+    is_image_attachment,
+)
 from mcp_atlassian.utils.urls import resolve_relative_url
 
 logger = logging.getLogger(__name__)
+
 
 confluence_mcp = FastMCP(
     name="Confluence MCP Service",
@@ -1498,11 +1503,6 @@ async def download_content_attachments(
             continue
 
         filename = attachment.title or "unknown"
-        mime_type = (
-            attachment.media_type
-            or mimetypes.guess_type(filename)[0]
-            or "application/octet-stream"
-        )
 
         if (
             attachment.file_size is not None
@@ -1512,8 +1512,8 @@ async def download_content_attachments(
                 {
                     "filename": filename,
                     "error": (
-                        f"File is {attachment.file_size} bytes which exceeds "
-                        "the 50 MB inline limit."
+                        f"File is {attachment.file_size} bytes "
+                        "which exceeds the 50 MB inline limit."
                     ),
                 }
             )
@@ -1523,25 +1523,18 @@ async def download_content_attachments(
             attachment.download_url, confluence_fetcher.config.url
         )
 
-        data_bytes = confluence_fetcher.fetch_attachment_content(download_url)
-        if data_bytes is None:
+        result = fetch_and_encode_attachment(
+            fetch_fn=confluence_fetcher.fetch_attachment_content,
+            url=download_url,
+            filename=filename,
+            mime_type=attachment.media_type,
+        )
+        if result is None:
             failed.append({"filename": filename, "error": "Fetch failed"})
             continue
 
-        if len(data_bytes) > ATTACHMENT_MAX_BYTES:
-            failed.append(
-                {
-                    "filename": filename,
-                    "error": (
-                        f"Downloaded size {len(data_bytes)} bytes exceeds "
-                        "the 50 MB inline limit."
-                    ),
-                }
-            )
-            continue
-
-        encoded = base64.b64encode(data_bytes).decode("ascii")
-        fetched.append({"filename": filename, "size": len(data_bytes)})
+        encoded, mime_type = result
+        fetched.append({"filename": filename})
         contents.append(
             EmbeddedResource(
                 type="resource",
@@ -1736,25 +1729,18 @@ async def get_page_images(
 
         download_url = resolve_relative_url(download_url, confluence_fetcher.config.url)
 
-        data_bytes = confluence_fetcher.fetch_attachment_content(download_url)
-        if data_bytes is None:
+        result = fetch_and_encode_attachment(
+            fetch_fn=confluence_fetcher.fetch_attachment_content,
+            url=download_url,
+            filename=filename,
+            mime_type=resolved_mime,
+        )
+        if result is None:
             failed.append({"filename": filename, "error": "Fetch failed"})
             continue
 
-        if len(data_bytes) > ATTACHMENT_MAX_BYTES:
-            failed.append(
-                {
-                    "filename": filename,
-                    "error": (
-                        f"Downloaded size {len(data_bytes)} bytes "
-                        "exceeds the 50 MB inline limit."
-                    ),
-                }
-            )
-            continue
-
-        encoded = base64.b64encode(data_bytes).decode("ascii")
-        fetched.append({"filename": filename, "size": len(data_bytes)})
+        encoded, _ = result
+        fetched.append({"filename": filename})
         contents.append(
             ImageContent(
                 type="image",

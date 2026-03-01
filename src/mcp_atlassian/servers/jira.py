@@ -17,9 +17,14 @@ from mcp_atlassian.models.jira import JiraAttachment
 from mcp_atlassian.models.jira.common import JiraUser
 from mcp_atlassian.servers.dependencies import get_jira_fetcher
 from mcp_atlassian.utils.decorators import check_write_access
-from mcp_atlassian.utils.media import ATTACHMENT_MAX_BYTES, is_image_attachment
+from mcp_atlassian.utils.media import (
+    ATTACHMENT_MAX_BYTES,
+    fetch_and_encode_attachment,
+    is_image_attachment,
+)
 
 logger = logging.getLogger(__name__)
+
 
 # Regex patterns for Jira key validation.
 # Per Atlassian docs, Cloud project keys are 2-10 chars. Server/Data Center
@@ -864,25 +869,18 @@ async def get_issue_images(
             failed.append({"filename": filename, "error": "No download URL"})
             continue
 
-        data_bytes = jira.fetch_attachment_content(att.url)
-        if data_bytes is None:
+        result = fetch_and_encode_attachment(
+            fetch_fn=jira.fetch_attachment_content,
+            url=att.url,
+            filename=filename,
+            mime_type=resolved_mime,
+        )
+        if result is None:
             failed.append({"filename": filename, "error": "Fetch failed"})
             continue
 
-        if len(data_bytes) > ATTACHMENT_MAX_BYTES:
-            failed.append(
-                {
-                    "filename": filename,
-                    "error": (
-                        f"Downloaded size {len(data_bytes)} bytes "
-                        "exceeds the 50 MB inline limit."
-                    ),
-                }
-            )
-            continue
-
-        encoded = base64.b64encode(data_bytes).decode("ascii")
-        fetched.append({"filename": filename, "size": len(data_bytes)})
+        encoded, _ = result
+        fetched.append({"filename": filename})
         contents.append(
             ImageContent(
                 type="image",
