@@ -1246,3 +1246,31 @@ class TestCodeBlockProtection:
         assert "{code:python}" in jira_output
         assert "# comment" in jira_output
         assert "print('hi')" in jira_output
+
+    def test_quote_wrapping_code_loses_blockquote_on_inner_lines(
+        self,
+        preprocessor,
+    ):
+        """Document trade-off: {quote} around {code} loses blockquote context.
+
+        Placeholder extraction protects code content from markup
+        corruption, but the {quote} handler cannot reach inside the
+        already-extracted block.  The opening fence line may carry
+        "> " while inner code lines do not.  This is the expected
+        (intentional) behavior.
+        """
+        result = preprocessor.jira_to_markdown("{quote}{code}x = 1{code}{quote}")
+        # Code content is preserved literally
+        assert "x = 1" in result
+        # Code fence is present
+        assert "```" in result
+        # The opening fence gets blockquote prefix from {quote}
+        assert "> ```" in result
+        # Inner code line does NOT get blockquote prefix -- this
+        # is the known trade-off of placeholder-based protection.
+        lines = result.strip().splitlines()
+        code_lines = [ln for ln in lines if ln.strip() and "```" not in ln]
+        for ln in code_lines:
+            assert not ln.startswith("> "), (
+                f"Inner code line unexpectedly blockquoted: {ln!r}"
+            )

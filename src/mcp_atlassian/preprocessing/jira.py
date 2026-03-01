@@ -273,6 +273,16 @@ class JiraPreprocessor(BasePreprocessor):
 
         # Protect code/noformat/inline-code blocks from downstream
         # transformations by replacing them with placeholders.
+        #
+        # Trade-off: when {quote} wraps a {code} block, the code
+        # content is extracted *before* the {quote} handler runs.
+        # The {quote} handler prefixes each remaining line with
+        # "> " but cannot reach inside the already-extracted block.
+        # After restoration the opening fence line may carry "> "
+        # while inner code lines do not, breaking blockquote
+        # continuity.  This is intentional: protecting code content
+        # from markup corruption is more important than preserving
+        # blockquote indentation around code fences.
         code_blocks: list[str] = []
         inline_codes: list[str] = []
 
