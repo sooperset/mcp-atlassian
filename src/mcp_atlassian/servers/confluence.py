@@ -1523,18 +1523,24 @@ async def download_content_attachments(
             attachment.download_url, confluence_fetcher.config.url
         )
 
-        result = fetch_and_encode_attachment(
+        encoded, mime_type, fetched_bytes = fetch_and_encode_attachment(
             fetch_fn=confluence_fetcher.fetch_attachment_content,
             url=download_url,
             filename=filename,
             mime_type=attachment.media_type,
         )
-        if result is None:
-            failed.append({"filename": filename, "error": "Fetch failed"})
+        if encoded is None:
+            if fetched_bytes > 0:
+                error_msg = (
+                    f"Downloaded size {fetched_bytes} bytes "
+                    "exceeds the 50 MB inline limit."
+                )
+            else:
+                error_msg = "Fetch failed"
+            failed.append({"filename": filename, "error": error_msg})
             continue
 
-        encoded, mime_type = result
-        fetched.append({"filename": filename})
+        fetched.append({"filename": filename, "size": fetched_bytes})
         contents.append(
             EmbeddedResource(
                 type="resource",
@@ -1729,18 +1735,24 @@ async def get_page_images(
 
         download_url = resolve_relative_url(download_url, confluence_fetcher.config.url)
 
-        result = fetch_and_encode_attachment(
+        encoded, _, fetched_bytes = fetch_and_encode_attachment(
             fetch_fn=confluence_fetcher.fetch_attachment_content,
             url=download_url,
             filename=filename,
             mime_type=resolved_mime,
         )
-        if result is None:
-            failed.append({"filename": filename, "error": "Fetch failed"})
+        if encoded is None:
+            if fetched_bytes > 0:
+                error_msg = (
+                    f"Downloaded size {fetched_bytes} bytes "
+                    "exceeds the 50 MB inline limit."
+                )
+            else:
+                error_msg = "Fetch failed"
+            failed.append({"filename": filename, "error": error_msg})
             continue
 
-        encoded, _ = result
-        fetched.append({"filename": filename})
+        fetched.append({"filename": filename, "size": fetched_bytes})
         contents.append(
             ImageContent(
                 type="image",

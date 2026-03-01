@@ -62,12 +62,11 @@ def fetch_and_encode_attachment(
     filename: str,
     mime_type: str | None = None,
     max_bytes: int = ATTACHMENT_MAX_BYTES,
-    declared_size: int | None = None,
-) -> tuple[str, str] | None:
+) -> tuple[str | None, str | None, int]:
     """Fetch and base64-encode an attachment.
 
-    Handles size-limit checks (both declared and actual), fetching,
-    encoding, and MIME type resolution in one place.
+    Handles size-limit checks, fetching, encoding, and MIME type
+    resolution in one place.
 
     Args:
         fetch_fn: Callable that takes a URL and returns raw bytes,
@@ -78,22 +77,20 @@ def fetch_and_encode_attachment(
             from *filename* with ``application/octet-stream`` as the
             fallback.
         max_bytes: Maximum allowed file size in bytes.
-        declared_size: Pre-declared file size; when provided and it
-            exceeds *max_bytes* the fetch is skipped entirely.
 
     Returns:
-        Tuple of (base64_data, resolved_mime_type) on success,
-        or None on failure (size exceeded, fetch error, etc.).
-    """
-    if declared_size is not None and declared_size > max_bytes:
-        logger.warning(
-            "Attachment '%s' declared size %d exceeds limit %d",
-            filename,
-            declared_size,
-            max_bytes,
-        )
-        return None
+        A 3-tuple ``(base64_data, resolved_mime_type, fetched_bytes)``.
 
+        On success all three fields are populated.  On failure the
+        first two are ``None`` and *fetched_bytes* distinguishes
+        the failure mode:
+
+        * ``fetched_bytes == 0`` -- fetch returned ``None`` or
+          raised an exception.
+        * ``fetched_bytes > 0``  -- downloaded data exceeded
+          *max_bytes* (the actual size is returned so callers can
+          report it).
+    """
     try:
         data_bytes = fetch_fn(url)
     except Exception:
@@ -103,27 +100,29 @@ def fetch_and_encode_attachment(
             url,
             exc_info=True,
         )
-        return None
+        return None, None, 0
 
     if data_bytes is None:
         logger.warning(
             "Fetch returned None for attachment '%s'",
             filename,
         )
-        return None
+        return None, None, 0
 
-    if len(data_bytes) > max_bytes:
+    actual_size = len(data_bytes)
+
+    if actual_size > max_bytes:
         logger.warning(
             "Attachment '%s' fetched size %d exceeds limit %d",
             filename,
-            len(data_bytes),
+            actual_size,
             max_bytes,
         )
-        return None
+        return None, None, actual_size
 
     encoded = base64.b64encode(data_bytes).decode("ascii")
 
     if mime_type is None:
         mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
 
-    return encoded, mime_type
+    return encoded, mime_type, actual_size
