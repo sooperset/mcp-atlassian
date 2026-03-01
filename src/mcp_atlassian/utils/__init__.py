@@ -12,7 +12,11 @@ from .lifecycle import (
     setup_signal_handlers,
 )
 from .logging import setup_logging
-from .media import ATTACHMENT_MAX_BYTES, is_image_attachment
+from .media import (
+    ATTACHMENT_MAX_BYTES,
+    fetch_and_encode_attachment,
+    is_image_attachment,
+)
 
 # Export OAuth utilities
 from .oauth import OAuthConfig, configure_oauth_session
@@ -36,5 +40,6 @@ __all__ = [
     "resolve_relative_url",
     "setup_signal_handlers",
     "ensure_clean_exit",
+    "fetch_and_encode_attachment",
     "validate_url_for_ssrf",
 ]
