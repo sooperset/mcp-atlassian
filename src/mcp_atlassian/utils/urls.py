@@ -52,14 +52,16 @@ def is_atlassian_cloud_url(url: str) -> bool:
         return False
 
     # The standard check for Atlassian cloud domains
+    # Use endswith() to prevent URL validation bypass via substring matching
     # Includes US Government cloud domains (FedRAMP Moderate/High)
     return (
-        ".atlassian.net" in hostname
-        or ".jira.com" in hostname
-        or ".jira-dev.com" in hostname
-        or "api.atlassian.com" in hostname
-        or ".atlassian-us-gov-mod.net" in hostname  # US Gov Moderate (FedRAMP)
-        or ".atlassian-us-gov.net" in hostname  # US Gov (FedRAMP)
+        hostname.endswith(".atlassian.net")
+        or hostname.endswith(".jira.com")
+        or hostname.endswith(".jira-dev.com")
+        or hostname == "api.atlassian.com"
+        or hostname.endswith(".atlassian.com")
+        or hostname.endswith(".atlassian-us-gov-mod.net")  # US Gov Moderate (FedRAMP)
+        or hostname.endswith(".atlassian-us-gov.net")  # US Gov (FedRAMP)
     )
 
 
