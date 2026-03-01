@@ -394,6 +394,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         get_agile_boards,
         get_all_projects,
         get_board_issues,
+        get_field_options,
         get_issue,
         get_issue_images,
         get_link_types,
@@ -432,6 +433,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(get_worklog)
     jira_sub_mcp.add_tool(download_attachments)
     jira_sub_mcp.add_tool(get_issue_images)
+    jira_sub_mcp.add_tool(get_field_options)
     jira_sub_mcp.add_tool(get_agile_boards)
     jira_sub_mcp.add_tool(get_board_issues)
     jira_sub_mcp.add_tool(get_sprints_from_board)
@@ -2088,3 +2090,298 @@ async def test_update_sprint(jira_client, mock_jira_fetcher):
     result = json.loads(response.content[0].text)
     assert result["name"] == "Sprint 1 - Renamed"
     assert result["state"] == "active"
+
+
+# ============================================================================
+# Field Options Filtering Tests
+# ============================================================================
+
+
+class TestMatchesContains:
+    """Tests for _matches_contains helper function."""
+
+    @pytest.mark.parametrize(
+        "option, needle, expected",
+        [
+            pytest.param(
+                {"value": "High Priority"},
+                "high",
+                True,
+                id="parent_match",
+            ),
+            pytest.param(
+                {"value": "High Priority"},
+                "low",
+                False,
+                id="no_match",
+            ),
+            pytest.param(
+                {
+                    "value": "Parent",
+                    "child_options": [
+                        {"value": "Child Alpha"},
+                        {"value": "Child Beta"},
+                    ],
+                },
+                "alpha",
+                True,
+                id="child_match",
+            ),
+            pytest.param(
+                {"value": "MiXeD CaSe"},
+                "mixed case",
+                True,
+                id="case_insensitive",
+            ),
+            pytest.param({}, "test", False, id="empty_option"),
+            pytest.param({"value": 123}, "123", False, id="non_string_value"),
+            pytest.param(
+                {"value": "Simple"},
+                "simple",
+                True,
+                id="no_children_key",
+            ),
+        ],
+    )
+    def test_matches_contains(self, option, needle, expected):
+        from src.mcp_atlassian.servers.jira import _matches_contains
+
+        assert _matches_contains(option, needle) is expected
+
+
+class TestApplyOptionFilters:
+    """Tests for _apply_option_filters helper function."""
+
+    @pytest.mark.parametrize(
+        "options, contains, return_limit, expected_values",
+        [
+            pytest.param(
+                [{"value": "High"}, {"value": "Medium"}, {"value": "Low"}],
+                "high",
+                None,
+                ["High"],
+                id="contains_filter",
+            ),
+            pytest.param(
+                [{"value": "A"}, {"value": "B"}, {"value": "C"}],
+                None,
+                2,
+                ["A", "B"],
+                id="return_limit",
+            ),
+            pytest.param(
+                [
+                    {"value": "Alpha"},
+                    {"value": "Beta"},
+                    {"value": "Gamma"},
+                    {"value": "Alpha Two"},
+                ],
+                "alpha",
+                1,
+                ["Alpha"],
+                id="contains_then_limit",
+            ),
+            pytest.param(
+                [{"value": "A"}, {"value": "B"}],
+                None,
+                None,
+                ["A", "B"],
+                id="no_filters",
+            ),
+            pytest.param([], "test", 5, [], id="empty_options"),
+        ],
+    )
+    def test_apply_option_filters(
+        self, options, contains, return_limit, expected_values
+    ):
+        from src.mcp_atlassian.servers.jira import _apply_option_filters
+
+        result = _apply_option_filters(options, contains, return_limit)
+        assert [opt["value"] for opt in result] == expected_values
+
+
+class TestToValuesOnlyPayload:
+    """Tests for _to_values_only_payload helper function."""
+
+    @pytest.mark.parametrize(
+        "options, expected",
+        [
+            pytest.param(
+                [
+                    {"id": "1", "value": "High"},
+                    {"id": "2", "value": "Medium"},
+                    {"id": "3", "value": "Low"},
+                ],
+                ["High", "Medium", "Low"],
+                id="simple_options",
+            ),
+            pytest.param(
+                [
+                    {
+                        "id": "1",
+                        "value": "Parent",
+                        "child_options": [
+                            {"id": "2", "value": "Child A"},
+                            {"id": "3", "value": "Child B"},
+                        ],
+                    },
+                ],
+                [{"value": "Parent", "children": ["Child A", "Child B"]}],
+                id="cascading_options",
+            ),
+            pytest.param(
+                [
+                    {"id": "1", "value": "Simple"},
+                    {
+                        "id": "2",
+                        "value": "Cascading",
+                        "child_options": [{"id": "3", "value": "Child"}],
+                    },
+                ],
+                ["Simple", {"value": "Cascading", "children": ["Child"]}],
+                id="mixed_options",
+            ),
+            pytest.param([], [], id="empty_options"),
+        ],
+    )
+    def test_to_values_only_payload(self, options, expected):
+        from src.mcp_atlassian.servers.jira import _to_values_only_payload
+
+        assert _to_values_only_payload(options) == expected
+
+
+# ============================================================================
+# Field Options Tool Integration Tests
+# ============================================================================
+
+
+def _make_mock_field_options():
+    """Create mock FieldOption objects for testing."""
+    opt1 = MagicMock()
+    opt1.to_simplified_dict.return_value = {"id": "1", "value": "High"}
+
+    opt2 = MagicMock()
+    opt2.to_simplified_dict.return_value = {"id": "2", "value": "Medium"}
+
+    opt3 = MagicMock()
+    opt3.to_simplified_dict.return_value = {"id": "3", "value": "Low"}
+
+    opt4 = MagicMock()
+    opt4.to_simplified_dict.return_value = {
+        "id": "4",
+        "value": "Parent",
+        "child_options": [
+            {"id": "5", "value": "High Child"},
+            {"id": "6", "value": "Low Child"},
+        ],
+    }
+
+    return [opt1, opt2, opt3, opt4]
+
+
+@pytest.mark.anyio
+async def test_get_field_options_default(jira_client, mock_jira_fetcher):
+    """Test get_field_options with no filtering params (default behavior)."""
+    mock_jira_fetcher.get_field_options.return_value = _make_mock_field_options()
+
+    response = await jira_client.call_tool(
+        "jira_get_field_options",
+        {"field_id": "customfield_10001"},
+    )
+
+    assert hasattr(response, "content")
+    result = json.loads(response.content[0].text)
+    assert len(result) == 4
+    assert result[0]["value"] == "High"
+    assert result[3]["value"] == "Parent"
+
+
+@pytest.mark.anyio
+async def test_get_field_options_contains(jira_client, mock_jira_fetcher):
+    """Test get_field_options with contains filter."""
+    mock_jira_fetcher.get_field_options.return_value = _make_mock_field_options()
+
+    response = await jira_client.call_tool(
+        "jira_get_field_options",
+        {"field_id": "customfield_10001", "contains": "high"},
+    )
+
+    result = json.loads(response.content[0].text)
+    # Should match "High" (parent) and "Parent" (has "High Child" child)
+    assert len(result) == 2
+    values = [opt["value"] for opt in result]
+    assert "High" in values
+    assert "Parent" in values
+
+
+@pytest.mark.anyio
+async def test_get_field_options_return_limit(jira_client, mock_jira_fetcher):
+    """Test get_field_options with return_limit."""
+    mock_jira_fetcher.get_field_options.return_value = _make_mock_field_options()
+
+    response = await jira_client.call_tool(
+        "jira_get_field_options",
+        {"field_id": "customfield_10001", "return_limit": 2},
+    )
+
+    result = json.loads(response.content[0].text)
+    assert len(result) == 2
+    assert result[0]["value"] == "High"
+    assert result[1]["value"] == "Medium"
+
+
+@pytest.mark.anyio
+async def test_get_field_options_values_only(jira_client, mock_jira_fetcher):
+    """Test get_field_options with values_only=True."""
+    mock_options = _make_mock_field_options()[:3]  # Simple options only
+    mock_jira_fetcher.get_field_options.return_value = mock_options
+
+    response = await jira_client.call_tool(
+        "jira_get_field_options",
+        {"field_id": "customfield_10001", "values_only": True},
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result == ["High", "Medium", "Low"]
+
+
+@pytest.mark.anyio
+async def test_get_field_options_values_only_cascading(jira_client, mock_jira_fetcher):
+    """Test get_field_options with values_only=True for cascading options."""
+    mock_jira_fetcher.get_field_options.return_value = _make_mock_field_options()
+
+    response = await jira_client.call_tool(
+        "jira_get_field_options",
+        {"field_id": "customfield_10001", "values_only": True},
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result[0] == "High"
+    assert result[1] == "Medium"
+    assert result[2] == "Low"
+    assert result[3] == {
+        "value": "Parent",
+        "children": ["High Child", "Low Child"],
+    }
+
+
+@pytest.mark.anyio
+async def test_get_field_options_combined(jira_client, mock_jira_fetcher):
+    """Test get_field_options with contains + return_limit + values_only."""
+    mock_jira_fetcher.get_field_options.return_value = _make_mock_field_options()
+
+    response = await jira_client.call_tool(
+        "jira_get_field_options",
+        {
+            "field_id": "customfield_10001",
+            "contains": "high",
+            "return_limit": 1,
+            "values_only": True,
+        },
+    )
+
+    result = json.loads(response.content[0].text)
+    # "High" matches directly, "Parent" matches via child "High Child"
+    # return_limit=1 caps to first match
+    assert len(result) == 1
+    assert result[0] == "High"
