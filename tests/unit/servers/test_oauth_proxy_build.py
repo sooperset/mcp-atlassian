@@ -16,6 +16,27 @@ def _set_required_oauth_env(monkeypatch, *, redirect_uri: str) -> None:
     monkeypatch.setenv("ATLASSIAN_OAUTH_REDIRECT_URI", redirect_uri)
 
 
+class _DummyProviderStorage:
+    def __init__(self, config=None):
+        self.factory_config = config
+
+    async def get(self, *args, **kwargs):
+        _ = args, kwargs
+        return None
+
+    async def put(self, *args, **kwargs):
+        _ = args, kwargs
+        return None
+
+    async def delete(self, *args, **kwargs):
+        _ = args, kwargs
+        return True
+
+
+def _dummy_provider_storage_factory(config=None):
+    return _DummyProviderStorage(config=config)
+
+
 def test_build_auth_provider_disabled_by_default(monkeypatch):
     monkeypatch.setenv("JIRA_URL", "https://jira.example.com")
     monkeypatch.setenv("ATLASSIAN_OAUTH_CLIENT_ID", "client-id")
@@ -207,6 +228,29 @@ def test_build_auth_provider_exposes_discovery_and_dcr_routes(monkeypatch):
     assert "/.well-known/oauth-authorization-server" in route_paths
     assert "/.well-known/oauth-protected-resource/mcp" in route_paths
     assert "/callback" in route_paths
+
+
+def test_build_auth_provider_supports_custom_client_storage_factory(monkeypatch):
+    monkeypatch.setenv("JIRA_URL", "https://jira.example.com")
+    _set_required_oauth_env(monkeypatch, redirect_uri="http://localhost:3000/callback")
+    monkeypatch.setenv("ATLASSIAN_OAUTH_CLIENT_STORAGE_MODE", "factory")
+    monkeypatch.setenv(
+        "ATLASSIAN_OAUTH_CLIENT_STORAGE_FACTORY",
+        "tests.unit.servers.test_oauth_proxy_build:_dummy_provider_storage_factory",
+    )
+    monkeypatch.setenv(
+        "ATLASSIAN_OAUTH_CLIENT_STORAGE_CONFIG_JSON", '{"collection":"registrations"}'
+    )
+
+    provider = _build_auth_provider()
+
+    assert provider is not None
+    assert provider._client_storage is not None
+    assert provider._client_storage.__class__.__name__ == "_DummyProviderStorage"
+    assert callable(getattr(provider._client_storage, "get", None))
+    assert callable(getattr(provider._client_storage, "put", None))
+    assert callable(getattr(provider._client_storage, "delete", None))
+    assert provider._client_storage.factory_config == {"collection": "registrations"}
 
 
 @pytest.mark.anyio
