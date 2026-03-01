@@ -241,17 +241,21 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
                         content = _parse_inline_formatting(cell_text)
                         if not content:
                             content = [{"type": "text", "text": ""}]
-                        adf_cells.append({
-                            "type": cell_type,
-                            "content": [{"type": "paragraph", "content": content}],
-                        })
+                        adf_cells.append(
+                            {
+                                "type": cell_type,
+                                "content": [{"type": "paragraph", "content": content}],
+                            }
+                        )
                     adf_rows.append({"type": "tableRow", "content": adf_cells})
 
-                doc["content"].append({
-                    "type": "table",
-                    "attrs": {"isNumberColumnEnabled": False, "layout": "default"},
-                    "content": adf_rows,
-                })
+                doc["content"].append(
+                    {
+                        "type": "table",
+                        "attrs": {"isNumberColumnEnabled": False, "layout": "default"},
+                        "content": adf_rows,
+                    }
+                )
             continue
 
         # --- Empty line (skip) ---

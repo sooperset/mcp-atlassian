@@ -548,9 +548,7 @@ class TestMarkdownToAdf:
             assert all(c["type"] == "tableCell" for c in data_row["content"])
 
         # Verify data values
-        data_texts = [
-            c["content"][0]["content"][0]["text"] for c in rows[1]["content"]
-        ]
+        data_texts = [c["content"][0]["content"][0]["text"] for c in rows[1]["content"]]
         assert data_texts == ["Alice", "30"]
 
     def test_table_with_inline_formatting(self):
@@ -563,7 +561,8 @@ class TestMarkdownToAdf:
         # First cell should have bold
         first_cell_content = data_row["content"][0]["content"][0]["content"]
         bold_nodes = [
-            n for n in first_cell_content
+            n
+            for n in first_cell_content
             if any(m["type"] == "strong" for m in n.get("marks", []))
         ]
         assert len(bold_nodes) == 1
@@ -572,7 +571,8 @@ class TestMarkdownToAdf:
         # Second cell should have code
         second_cell_content = data_row["content"][1]["content"][0]["content"]
         code_nodes = [
-            n for n in second_cell_content
+            n
+            for n in second_cell_content
             if any(m["type"] == "code" for m in n.get("marks", []))
         ]
         assert len(code_nodes) == 1
