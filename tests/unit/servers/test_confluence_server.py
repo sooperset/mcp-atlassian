@@ -43,6 +43,20 @@ def mock_confluence_fetcher():
     mock_fetcher.search.return_value = [mock_page]
     mock_fetcher.get_page_content.return_value = mock_page
     mock_fetcher.get_page_children.return_value = [mock_page]
+    mock_fetcher.get_space_page_tree.return_value = {
+        "space_key": "TEST",
+        "total_pages": 1,
+        "has_more": False,
+        "pages": [
+            {
+                "id": "123456",
+                "title": "Test Page Mock Title",
+                "parent_id": None,
+                "position": 0,
+                "depth": 0,
+            }
+        ],
+    }
     mock_fetcher.create_page.return_value = mock_page
     mock_fetcher.update_page.return_value = mock_page
     mock_fetcher.delete_page.return_value = True
@@ -186,6 +200,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_page,
         get_page_children,
         get_page_images,
+        get_space_page_tree,
         search,
         search_user,
         update_page,
@@ -213,6 +228,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(search)
     confluence_sub_mcp.add_tool(get_page)
     confluence_sub_mcp.add_tool(get_page_children)
+    confluence_sub_mcp.add_tool(get_space_page_tree)
     confluence_sub_mcp.add_tool(get_comments)
     confluence_sub_mcp.add_tool(add_comment)
     confluence_sub_mcp.add_tool(get_labels)
@@ -253,6 +269,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         get_page,
         get_page_children,
         get_page_images,
+        get_space_page_tree,
         search,
         search_user,
         update_page,
@@ -282,6 +299,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.add_tool(search)
     confluence_sub_mcp.add_tool(get_page)
     confluence_sub_mcp.add_tool(get_page_children)
+    confluence_sub_mcp.add_tool(get_space_page_tree)
     confluence_sub_mcp.add_tool(get_comments)
     confluence_sub_mcp.add_tool(add_comment)
     confluence_sub_mcp.add_tool(get_labels)
@@ -440,6 +458,56 @@ async def test_get_page_children(client, mock_confluence_fetcher):
     assert "results" in result_data
     assert len(result_data["results"]) > 0
     assert result_data["results"][0]["title"] == "Test Page Mock Title"
+
+
+@pytest.mark.anyio
+async def test_get_space_page_tree(client, mock_confluence_fetcher):
+    """Test the get_space_page_tree tool."""
+    response = await client.call_tool(
+        "confluence_get_space_page_tree", {"space_key": "TEST"}
+    )
+
+    mock_confluence_fetcher.get_space_page_tree.assert_called_once()
+    call_kwargs = mock_confluence_fetcher.get_space_page_tree.call_args.kwargs
+    assert call_kwargs["space_key"] == "TEST"
+    assert call_kwargs["limit"] == 100
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["space_key"] == "TEST"
+    assert result_data["total_pages"] == 1
+    assert len(result_data["pages"]) == 1
+    assert result_data["pages"][0]["title"] == "Test Page Mock Title"
+    assert result_data["has_more"] is False
+    assert "hint" not in result_data
+
+
+@pytest.mark.anyio
+async def test_get_space_page_tree_has_more(client, mock_confluence_fetcher):
+    """Test that has_more=True adds a hint to the response."""
+    mock_confluence_fetcher.get_space_page_tree.return_value = {
+        "space_key": "BIG",
+        "total_pages": 100,
+        "has_more": True,
+        "pages": [
+            {
+                "id": str(i),
+                "title": f"Page {i}",
+                "parent_id": None,
+                "position": i,
+                "depth": 0,
+            }
+            for i in range(100)
+        ],
+    }
+
+    response = await client.call_tool(
+        "confluence_get_space_page_tree", {"space_key": "BIG"}
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["has_more"] is True
+    assert "hint" in result_data
+    assert "truncated" in result_data["hint"].lower()
 
 
 @pytest.mark.anyio
