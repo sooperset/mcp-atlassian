@@ -61,11 +61,14 @@ class ConfluenceV2Adapter:
 
             return space_id
 
-        except HTTPError as e:
-            logger.error(f"HTTP error getting space ID for '{space_key}': {e}")
-            raise ValueError(f"Failed to get space ID for '{space_key}': {e}") from e
         except Exception as e:
-            logger.error(f"Error getting space ID for '{space_key}': {e}")
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting space ID for '{space_key}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting space ID for '{space_key}': {e}")
             raise ValueError(f"Failed to get space ID for '{space_key}': {e}") from e
 
     def create_page(
@@ -123,13 +126,14 @@ class ConfluenceV2Adapter:
             # Convert v2 response to v1-compatible format for consistency
             return self._convert_v2_to_v1_format(result, space_key)
 
-        except HTTPError as e:
-            logger.error(f"HTTP error creating page '{title}': {e}")
-            if e.response is not None:
-                logger.error(f"Response content: {e.response.text}")
-            raise ValueError(f"Failed to create page '{title}': {e}") from e
         except Exception as e:
-            logger.error(f"Error creating page '{title}': {e}")
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error creating page '{title}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error creating page '{title}': {e}")
             raise ValueError(f"Failed to create page '{title}': {e}") from e
 
     def _get_page_version(self, page_id: str) -> int:
@@ -159,11 +163,14 @@ class ConfluenceV2Adapter:
 
             return version_number
 
-        except HTTPError as e:
-            logger.error(f"HTTP error getting page version for '{page_id}': {e}")
-            raise ValueError(f"Failed to get page version for '{page_id}': {e}") from e
         except Exception as e:
-            logger.error(f"Error getting page version for '{page_id}': {e}")
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting page version for '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting page version for '{page_id}': {e}")
             raise ValueError(f"Failed to get page version for '{page_id}': {e}") from e
 
     def update_page(
@@ -229,13 +236,14 @@ class ConfluenceV2Adapter:
 
             return self._convert_v2_to_v1_format(result, space_key)
 
-        except HTTPError as e:
-            logger.error(f"HTTP error updating page '{page_id}': {e}")
-            if e.response is not None:
-                logger.error(f"Response content: {e.response.text}")
-            raise ValueError(f"Failed to update page '{page_id}': {e}") from e
         except Exception as e:
-            logger.error(f"Error updating page '{page_id}': {e}")
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error updating page '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error updating page '{page_id}': {e}")
             raise ValueError(f"Failed to update page '{page_id}': {e}") from e
 
     def _get_space_key_from_id(self, space_id: str) -> str:
@@ -265,12 +273,14 @@ class ConfluenceV2Adapter:
 
             return space_key
 
-        except HTTPError as e:
-            logger.error(f"HTTP error getting space key for ID '{space_id}': {e}")
-            # Return the space_id as fallback
-            return space_id
         except Exception as e:
-            logger.error(f"Error getting space key for ID '{space_id}': {e}")
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting space key for ID '{space_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting space key for ID '{space_id}': {e}")
             # Return the space_id as fallback
             return space_id
 
@@ -333,13 +343,14 @@ class ConfluenceV2Adapter:
 
             return v1_compatible
 
-        except HTTPError as e:
-            logger.error(f"HTTP error getting page '{page_id}': {e}")
-            if e.response is not None:
-                logger.error(f"Response content: {e.response.text}")
-            raise ValueError(f"Failed to get page '{page_id}': {e}") from e
         except Exception as e:
-            logger.error(f"Error getting page '{page_id}': {e}")
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting page '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting page '{page_id}': {e}")
             raise ValueError(f"Failed to get page '{page_id}': {e}") from e
 
     def delete_page(self, page_id: str) -> bool:
@@ -372,13 +383,14 @@ class ConfluenceV2Adapter:
             )
             return True
 
-        except HTTPError as e:
-            logger.error(f"HTTP error deleting page '{page_id}': {e}")
-            if e.response is not None:
-                logger.error(f"Response content: {e.response.text}")
-            raise ValueError(f"Failed to delete page '{page_id}': {e}") from e
         except Exception as e:
-            logger.error(f"Error deleting page '{page_id}': {e}")
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error deleting page '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error deleting page '{page_id}': {e}")
             raise ValueError(f"Failed to delete page '{page_id}': {e}") from e
 
     def _convert_v2_to_v1_format(
@@ -453,11 +465,14 @@ class ConfluenceV2Adapter:
 
             return None
 
-        except HTTPError as e:
-            logger.debug(f"HTTP error getting emoji for page '{page_id}': {e}")
-            return None
         except Exception as e:
-            logger.debug(f"Error getting emoji for page '{page_id}': {e}")
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.debug(
+                    f"HTTP error getting emoji for page '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.debug(f"Error getting emoji for page '{page_id}': {e}")
             return None
 
     def _set_page_property(
@@ -510,15 +525,16 @@ class ConfluenceV2Adapter:
             response.raise_for_status()
             return True
 
-        except HTTPError as e:
-            logger.debug(
-                f"HTTP error setting property '{property_key}' for page '{page_id}': {e}"
-            )
-            return False
         except Exception as e:
-            logger.debug(
-                f"Error setting property '{property_key}' for page '{page_id}': {e}"
-            )
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.debug(
+                    f"HTTP error setting property '{property_key}' for page "
+                    f"'{page_id}': {e}\nResponse: {e.response.text}"
+                )
+            else:
+                logger.debug(
+                    f"Error setting property '{property_key}' for page '{page_id}': {e}"
+                )
             return False
 
     def set_page_emoji(self, page_id: str, emoji: str | None) -> bool:
@@ -605,15 +621,14 @@ class ConfluenceV2Adapter:
 
             return versions
 
-        except HTTPError as e:
-            logger.error(f"HTTP error getting versions list for page '{page_id}': {e}")
-            if e.response is not None:
-                logger.error(f"Response content: {e.response.text}")
-            raise ValueError(
-                f"Failed to get versions list for page '{page_id}': {e}"
-            ) from e
         except Exception as e:
-            logger.error(f"Error getting versions list for page '{page_id}': {e}")
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting versions list for page '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting versions list for page '{page_id}': {e}")
             raise ValueError(
                 f"Failed to get versions list for page '{page_id}': {e}"
             ) from e
@@ -707,15 +722,14 @@ class ConfluenceV2Adapter:
 
             return v1_compatible
 
-        except HTTPError as e:
-            logger.error(f"HTTP error getting page '{page_id}' version {version}: {e}")
-            if e.response is not None:
-                logger.error(f"Response content: {e.response.text}")
-            raise ValueError(
-                f"Failed to get page '{page_id}' version {version}: {e}"
-            ) from e
         except Exception as e:
-            logger.error(f"Error getting page '{page_id}' version {version}: {e}")
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting page '{page_id}' version {version}: {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting page '{page_id}' version {version}: {e}")
             raise ValueError(
                 f"Failed to get page '{page_id}' version {version}: {e}"
             ) from e
