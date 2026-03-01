@@ -27,6 +27,7 @@ class _DummyStorage:
     async def delete(self, *args: Any, **kwargs: Any) -> bool:
         return True
 
+
 def _dummy_storage_factory(config: dict[str, Any] | None = None) -> _DummyStorage:
     return _DummyStorage(config=config)
 
@@ -36,7 +37,9 @@ def _invalid_storage_factory(config: dict[str, Any] | None = None) -> object:
     return object()
 
 
-def test_storage_builder_default_mode_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_storage_builder_default_mode_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv(CLIENT_STORAGE_MODE_ENV, raising=False)
     monkeypatch.delenv(CLIENT_STORAGE_FACTORY_ENV, raising=False)
     monkeypatch.delenv(CLIENT_STORAGE_CONFIG_JSON_ENV, raising=False)

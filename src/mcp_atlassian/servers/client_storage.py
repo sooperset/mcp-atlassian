@@ -67,7 +67,11 @@ def _parse_factory_config(raw_json: str) -> dict[str, Any] | None:
 def _validate_storage_candidate(storage: Any) -> None:
     # Keep validation lightweight and interface-oriented.
     required_methods = ("get", "put", "delete")
-    missing = [method for method in required_methods if not callable(getattr(storage, method, None))]
+    missing = [
+        method
+        for method in required_methods
+        if not callable(getattr(storage, method, None))
+    ]
     if missing:
         raise ValueError(
             "OAuth client storage factory returned an incompatible object. "
@@ -123,4 +127,3 @@ def build_oauth_client_storage_from_env() -> Any | None:
         CLIENT_STORAGE_FACTORY_ENV,
     )
     return storage
-
