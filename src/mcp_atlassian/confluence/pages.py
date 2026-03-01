@@ -942,16 +942,17 @@ class PagesMixin(ConfluenceClient):
         from_page = self.get_page_history(page_id=page_id, version=from_version)
         to_page = self.get_page_history(page_id=page_id, version=to_version)
 
-        from_lines = (from_page.content or "").splitlines(keepends=True)
-        to_lines = (to_page.content or "").splitlines(keepends=True)
+        from_lines = (from_page.content or "").splitlines()
+        to_lines = (to_page.content or "").splitlines()
 
         diff_lines = difflib.unified_diff(
             from_lines,
             to_lines,
             fromfile=f"v{from_version}",
             tofile=f"v{to_version}",
+            lineterm="",
         )
-        diff_string = "".join(diff_lines)
+        diff_string = "\n".join(diff_lines)
 
         return {
             "page_id": page_id,
