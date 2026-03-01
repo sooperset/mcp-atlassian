@@ -381,6 +381,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     )
     from src.mcp_atlassian.servers.jira import (
         add_comment,
+        add_issues_to_sprint,
         add_worklog,
         batch_create_issues,
         batch_create_versions,
@@ -454,6 +455,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(transition_issue)
     jira_sub_mcp.add_tool(create_sprint)
     jira_sub_mcp.add_tool(update_sprint)
+    jira_sub_mcp.add_tool(add_issues_to_sprint)
     jira_sub_mcp.add_tool(batch_create_versions)
     test_mcp.mount(jira_sub_mcp, prefix="jira")
     return test_mcp
@@ -2090,6 +2092,48 @@ async def test_update_sprint(jira_client, mock_jira_fetcher):
     result = json.loads(response.content[0].text)
     assert result["name"] == "Sprint 1 - Renamed"
     assert result["state"] == "active"
+
+
+@pytest.mark.anyio
+async def test_add_issues_to_sprint(jira_client, mock_jira_fetcher):
+    """Test add_issues_to_sprint splits comma-separated keys and calls mixin."""
+    mock_jira_fetcher.add_issues_to_sprint.return_value = True
+
+    response = await jira_client.call_tool(
+        "jira_add_issues_to_sprint",
+        {
+            "sprint_id": "100",
+            "issue_keys": "PROJ-1, PROJ-2, PROJ-3",
+        },
+    )
+
+    mock_jira_fetcher.add_issues_to_sprint.assert_called_once_with(
+        "100", ["PROJ-1", "PROJ-2", "PROJ-3"]
+    )
+
+    result = json.loads(response.content[0].text)
+    assert "3" in result["message"]
+    assert result["sprint_id"] == "100"
+
+
+@pytest.mark.anyio
+async def test_add_issues_to_sprint_single_key(jira_client, mock_jira_fetcher):
+    """Test add_issues_to_sprint with a single key (no commas)."""
+    mock_jira_fetcher.add_issues_to_sprint.return_value = True
+
+    response = await jira_client.call_tool(
+        "jira_add_issues_to_sprint",
+        {
+            "sprint_id": "200",
+            "issue_keys": "PROJ-42",
+        },
+    )
+
+    mock_jira_fetcher.add_issues_to_sprint.assert_called_once_with("200", ["PROJ-42"])
+
+    result = json.loads(response.content[0].text)
+    assert "1" in result["message"]
+    assert result["sprint_id"] == "200"
 
 
 # ============================================================================
