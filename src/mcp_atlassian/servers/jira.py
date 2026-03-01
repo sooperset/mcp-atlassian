@@ -510,6 +510,84 @@ async def search_fields(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
+def _matches_contains(option: dict[str, Any], needle: str) -> bool:
+    """Check if option value contains needle (case-insensitive).
+
+    Checks both the parent option value and any child option values
+    (for cascading select fields).
+
+    Args:
+        option: Simplified option dict with 'value' and optional
+            'child_options' keys.
+        needle: Substring to search for (case-insensitive).
+
+    Returns:
+        True if the needle is found in the option or its children.
+    """
+    lower_needle = needle.lower()
+    value = option.get("value", "")
+    if isinstance(value, str) and lower_needle in value.lower():
+        return True
+    # Check children for cascading selects
+    for child in option.get("child_options", []):
+        child_value = child.get("value", "")
+        if isinstance(child_value, str) and lower_needle in child_value.lower():
+            return True
+    return False
+
+
+def _apply_option_filters(
+    options: list[dict[str, Any]],
+    contains: str | None,
+    return_limit: int | None,
+) -> list[dict[str, Any]]:
+    """Apply contains filter and limit to option list.
+
+    Args:
+        options: List of simplified option dicts.
+        contains: Case-insensitive substring filter (or None to skip).
+        return_limit: Maximum number of results (or None for no limit).
+
+    Returns:
+        Filtered and/or limited list of option dicts.
+    """
+    result = options
+    if contains:
+        result = [opt for opt in result if _matches_contains(opt, contains)]
+    if return_limit is not None:
+        result = result[:return_limit]
+    return result
+
+
+def _to_values_only_payload(options: list[dict[str, Any]]) -> list[Any]:
+    """Extract values only from options, preserving cascading structure.
+
+    For simple options: returns ``["value1", "value2"]``
+    For cascading: returns
+    ``[{"value": "parent", "children": ["child1", "child2"]}]``
+
+    Args:
+        options: List of simplified option dicts.
+
+    Returns:
+        Compact list of values or value/children structures.
+    """
+    result: list[Any] = []
+    for opt in options:
+        value = opt.get("value", "")
+        children = opt.get("child_options", [])
+        if children:
+            result.append(
+                {
+                    "value": value,
+                    "children": [c.get("value", "") for c in children],
+                }
+            )
+        else:
+            result.append(value)
+    return result
+
+
 @jira_mcp.tool(
     tags={"jira", "read", "toolset:jira_fields"},
     annotations={"title": "Get Field Options", "readOnlyHint": True},
@@ -545,6 +623,31 @@ async def get_field_options(
             default=None,
         ),
     ] = None,
+    contains: Annotated[
+        str | None,
+        Field(
+            description="Case-insensitive substring filter on option "
+            "values. Also matches child values in cascading selects.",
+            default=None,
+        ),
+    ] = None,
+    return_limit: Annotated[
+        int | None,
+        Field(
+            description="Maximum number of results to return "
+            "(applied after filtering).",
+            default=None,
+            ge=1,
+        ),
+    ] = None,
+    values_only: Annotated[
+        bool,
+        Field(
+            description="If true, return only value strings in a "
+            "compact JSON format instead of full option objects.",
+            default=False,
+        ),
+    ] = False,
 ) -> str:
     """Get allowed option values for a custom field.
 
@@ -563,6 +666,9 @@ async def get_field_options(
         context_id: Field context ID (Cloud only, auto-resolved if omitted).
         project_key: Project key (required for Server/DC).
         issue_type: Issue type name (required for Server/DC).
+        contains: Case-insensitive substring filter on option values.
+        return_limit: Cap on number of results after filtering.
+        values_only: Return compact format with only value strings.
 
     Returns:
         JSON string with the list of available options.
@@ -575,6 +681,13 @@ async def get_field_options(
         issue_type=issue_type,
     )
     result = [opt.to_simplified_dict() for opt in options]
+    result = _apply_option_filters(result, contains, return_limit)
+    if values_only:
+        return json.dumps(
+            _to_values_only_payload(result),
+            indent=2,
+            ensure_ascii=False,
+        )
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
