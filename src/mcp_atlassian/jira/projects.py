@@ -439,9 +439,9 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
         self,
         project_key: str,
         name: str,
-        start_date: str = None,
-        release_date: str = None,
-        description: str = None,
+        start_date: str | None = None,
+        release_date: str | None = None,
+        description: str | None = None,
     ) -> dict[str, Any]:
         """
         Create a new version in the specified Jira project.

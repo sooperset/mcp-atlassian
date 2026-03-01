@@ -371,7 +371,9 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
         return False
 
 
-def _prompt_for_input(prompt: str, env_var: str = None, is_secret: bool = False) -> str:
+def _prompt_for_input(
+    prompt: str, env_var: str | None = None, is_secret: bool = False
+) -> str:
     """Prompt the user for input with sanitization for Windows line endings and whitespace."""
     value = os.getenv(env_var, "") if env_var else ""
     if value:

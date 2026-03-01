@@ -587,7 +587,7 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
                         return {"accountId": identifier}
                     else:
                         return {"name": identifier}
-                except (ValueError, Exception) as e:
+                except Exception as e:
                     logger.warning(f"Could not resolve user for field {field_id}: {e}")
                     return None
             return value

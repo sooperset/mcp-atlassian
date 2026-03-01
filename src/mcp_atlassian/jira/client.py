@@ -357,9 +357,9 @@ class JiraClient:
         self,
         project: str,
         name: str,
-        start_date: str = None,
-        release_date: str = None,
-        description: str = None,
+        start_date: str | None = None,
+        release_date: str | None = None,
+        description: str | None = None,
     ) -> dict[str, Any]:
         """
         Create a new version in a Jira project.

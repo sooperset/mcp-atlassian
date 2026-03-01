@@ -1085,10 +1085,7 @@ class IssuesMixin(
 
                 elif key == "attachments":
                     # Handle attachments separately - they're not part of fields update
-                    if value and isinstance(value, list | tuple):
-                        # We'll process attachments after updating fields
-                        pass
-                    else:
+                    if not value or not isinstance(value, list | tuple):
                         logger.warning(f"Invalid attachments value: {value}")
 
                 elif key == "assignee":
