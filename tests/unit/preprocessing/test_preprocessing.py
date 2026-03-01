@@ -1146,73 +1146,131 @@ class TestPanelBlocks:
         assert "https://example.com" in result, f"URL dropped: {result}"
 
 
-# Issue #1057 - jira_to_markdown() corrupts markup inside code blocks
+# Code block placeholder protection tests
 
 
-@pytest.mark.parametrize(
-    "test_id, input_text, expected_in_fence, description",
-    [
-        pytest.param(
-            "quote-in-code",
-            "{code}{quote}quoted{quote}{code}",
-            "{quote}quoted{quote}",
-            "Quote not converted inside code",
-            id="quote-in-code",
-        ),
-        pytest.param(
-            "color-in-code",
-            "{code}{color:red}text{color}{code}",
-            "{color:red}text{color}",
-            "Color not converted inside code",
-            id="color-in-code",
-        ),
-        pytest.param(
-            "panel-in-code",
-            "{code}{panel:title=X}content{panel}{code}",
-            "{panel:title=X}content{panel}",
-            "Panel not converted inside code",
-            id="panel-in-code",
-        ),
-        pytest.param(
-            "noformat-with-quote",
-            "{noformat}{quote}q{quote}{noformat}",
-            "{quote}q{quote}",
-            "Quote not converted inside noformat",
-            id="noformat-with-quote",
-        ),
-        pytest.param(
-            "code-with-lang",
-            "{code:python}{quote}q{quote}{code}",
-            "{quote}q{quote}",
-            "Language preserved, content literal",
-            id="code-with-lang",
-        ),
-        pytest.param(
-            "mixed-outside-inside",
-            "{quote}real quote{quote}\n{code}{quote}not a quote{quote}{code}",
-            "{quote}not a quote{quote}",
-            "Outside converted, inside preserved",
-            id="mixed-outside-inside",
-        ),
-    ],
-)
-def test_jira_to_markdown_code_block_preserves_content(
-    preprocessor_with_jira,
-    test_id: str,
-    input_text: str,
-    expected_in_fence: str,
-    description: str,
-):
-    """Test that markup inside {code}/{noformat} blocks is not converted (#1057)."""
-    result = preprocessor_with_jira.jira_to_markdown(input_text)
-    # The expected content should appear literally inside a code fence
-    assert "```" in result, f"[{test_id}] No code fence in: {result}"
-    # Extract content between fences
-    fence_pattern = r"```(?:\w*)\n([\s\S]*?)\n```"
-    fence_match = re.search(fence_pattern, result)
-    assert fence_match, f"[{test_id}] Could not extract fence content from: {result}"
-    fence_content = fence_match.group(1)
-    assert expected_in_fence in fence_content, (
-        f"[{test_id}] Expected '{expected_in_fence}' inside fence, "
-        f"got: '{fence_content}' (full: {result})"
+class TestCodeBlockProtection:
+    """Tests for code block content protection via placeholder extraction."""
+
+    @pytest.fixture
+    def preprocessor(self):
+        return JiraPreprocessor(base_url="https://example.atlassian.net")
+
+    @pytest.mark.parametrize(
+        "test_id, input_text, expected_in_fence, description",
+        [
+            pytest.param(
+                "quote-in-code",
+                "{code}{quote}quoted{quote}{code}",
+                "{quote}quoted{quote}",
+                "Quote not converted inside code",
+                id="quote-in-code",
+            ),
+            pytest.param(
+                "color-in-code",
+                "{code}{color:red}text{color}{code}",
+                "{color:red}text{color}",
+                "Color not converted inside code",
+                id="color-in-code",
+            ),
+            pytest.param(
+                "panel-in-code",
+                "{code}{panel:title=X}content{panel}{code}",
+                "{panel:title=X}content{panel}",
+                "Panel not converted inside code",
+                id="panel-in-code",
+            ),
+            pytest.param(
+                "noformat-with-quote",
+                "{noformat}{quote}q{quote}{noformat}",
+                "{quote}q{quote}",
+                "Quote not converted inside noformat",
+                id="noformat-with-quote",
+            ),
+            pytest.param(
+                "code-with-lang",
+                "{code:python}{quote}q{quote}{code}",
+                "{quote}q{quote}",
+                "Language preserved, content literal",
+                id="code-with-lang",
+            ),
+            pytest.param(
+                "mixed-outside-inside",
+                "{quote}real quote{quote}\n{code}{quote}not a quote{quote}{code}",
+                "{quote}not a quote{quote}",
+                "Outside converted, inside preserved",
+                id="mixed-outside-inside",
+            ),
+        ],
     )
+    def test_jira_to_markdown_code_block_preserves_content(
+        self,
+        preprocessor,
+        test_id: str,
+        input_text: str,
+        expected_in_fence: str,
+        description: str,
+    ):
+        """Test that markup inside {code}/{noformat} is not converted."""
+        result = preprocessor.jira_to_markdown(input_text)
+        assert "```" in result, f"[{test_id}] No code fence in: {result}"
+        fence_pattern = r"```(?:\w*)\n([\s\S]*?)\n```"
+        fence_match = re.search(fence_pattern, result)
+        assert fence_match, (
+            f"[{test_id}] Could not extract fence content from: {result}"
+        )
+        fence_content = fence_match.group(1)
+        assert expected_in_fence in fence_content, (
+            f"[{test_id}] Expected '{expected_in_fence}' "
+            f"inside fence, got: '{fence_content}'"
+        )
+
+    def test_inline_code_inside_code_block_preserved(self, preprocessor):
+        """Test that {{inline}} inside {code} blocks is preserved."""
+        input_text = "{code}use {{var}} here{code}"
+        result = preprocessor.jira_to_markdown(input_text)
+        assert "```" in result
+        # The {{var}} should appear as literal text, not
+        # converted to backtick inline code
+        fence_match = re.search(r"```\n([\s\S]*?)\n```", result)
+        assert fence_match
+        assert "{{var}}" in fence_match.group(1)
+
+    def test_round_trip_preserves_code_block(self, preprocessor):
+        """Test jira->md->jira round-trip preserves code content."""
+        jira_input = "{code:python}# comment\nprint('hi'){code}"
+        md = preprocessor.jira_to_markdown(jira_input)
+        assert "```python" in md
+        assert "# comment" in md
+        jira_output = preprocessor.markdown_to_jira(md)
+        assert "{code:python}" in jira_output
+        assert "# comment" in jira_output
+        assert "print('hi')" in jira_output
+
+    def test_quote_wrapping_code_loses_blockquote_on_inner_lines(
+        self,
+        preprocessor,
+    ):
+        """Document trade-off: {quote} around {code} loses blockquote context.
+
+        Placeholder extraction protects code content from markup
+        corruption, but the {quote} handler cannot reach inside the
+        already-extracted block.  The opening fence line may carry
+        "> " while inner code lines do not.  This is the expected
+        (intentional) behavior.
+        """
+        result = preprocessor.jira_to_markdown("{quote}{code}x = 1{code}{quote}")
+        # Code content is preserved literally
+        assert "x = 1" in result
+        # Code fence is present
+        assert "```" in result
+        # The opening fence gets blockquote prefix from {quote}
+        assert "> ```" in result
+        # Inner code line does NOT get blockquote prefix -- this
+        # is the known trade-off of placeholder-based protection.
+        lines = result.strip().splitlines()
+        code_lines = [ln for ln in lines if ln.strip() and "```" not in ln]
+        for ln in code_lines:
+            assert not ln.startswith("> "), (
+                f"Inner code line unexpectedly blockquoted: {ln!r}"
+            )
