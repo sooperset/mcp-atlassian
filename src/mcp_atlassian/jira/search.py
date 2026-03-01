@@ -29,6 +29,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
         limit: int = 50,
         expand: str | None = None,
         projects_filter: str | None = None,
+        page_token: str | None = None,
     ) -> JiraSearchResult:
         """
         Search for issues using JQL (Jira Query Language).
@@ -42,6 +43,8 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             limit: Maximum issues to return
             expand: Optional items to expand (comma-separated)
             projects_filter: Optional comma-separated list of project keys to filter by, overrides config
+            page_token: Optional pagination token from a previous search result.
+                  Cloud only — Server/DC uses start for pagination.
 
         Returns:
             JiraSearchResult object containing issues and metadata (total, start_at, max_results)
@@ -123,7 +126,6 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                 fields_list = fields_param.split(",") if fields_param else ["id", "key"]
                 request_body: dict[str, Any] = {
                     "jql": jql,
-                    "maxResults": min(limit, 100),  # v3 API max is 100 per request
                     "fields": fields_list,
                 }
                 # Note: v3 API uses 'expand' as a comma-separated string, not an array
@@ -132,9 +134,15 @@ class SearchMixin(JiraClient, IssueOperationsProto):
 
                 # Fetch issues using v3 API with nextPageToken pagination
                 all_issues: list[dict[str, Any]] = []
-                next_page_token: str | None = None
+                next_page_token: str | None = page_token
 
                 while len(all_issues) < limit:
+                    # Only request the remaining count to avoid over-fetching.
+                    # This ensures the returned nextPageToken aligns with
+                    # the last issue we actually return to the caller.
+                    remaining = limit - len(all_issues)
+                    request_body["maxResults"] = min(remaining, 100)
+
                     if next_page_token:
                         request_body["nextPageToken"] = next_page_token
 
@@ -163,6 +171,8 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                     "startAt": 0,
                     "maxResults": limit,
                 }
+                if next_page_token:
+                    response_dict["nextPageToken"] = next_page_token
 
                 search_result = JiraSearchResult.from_api_response(
                     response_dict,

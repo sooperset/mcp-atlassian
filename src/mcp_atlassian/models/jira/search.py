@@ -24,6 +24,7 @@ class JiraSearchResult(ApiModel):
     start_at: int = 0
     max_results: int = 0
     issues: list[JiraIssue] = Field(default_factory=list)
+    next_page_token: str | None = None
 
     @classmethod
     def from_api_response(
@@ -77,11 +78,14 @@ class JiraSearchResult(ApiModel):
         except (ValueError, TypeError):
             max_results = -1
 
+        next_page_token = data.get("nextPageToken")
+
         return cls(
             total=total,
             start_at=start_at,
             max_results=max_results,
             issues=issues,
+            next_page_token=next_page_token,
         )
 
     @model_validator(mode="after")
@@ -99,9 +103,12 @@ class JiraSearchResult(ApiModel):
 
     def to_simplified_dict(self) -> dict[str, Any]:
         """Convert to simplified dictionary for API response."""
-        return {
+        result: dict[str, Any] = {
             "total": self.total,
             "start_at": self.start_at,
             "max_results": self.max_results,
             "issues": [issue.to_simplified_dict() for issue in self.issues],
         }
+        if self.next_page_token is not None:
+            result["next_page_token"] = self.next_page_token
+        return result

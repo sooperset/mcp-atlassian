@@ -582,8 +582,9 @@ async def test_search(jira_client, mock_jira_fetcher):
         fields=["summary", "status"],
         limit=10,
         start=0,
-        projects_filter=None,
         expand=None,
+        projects_filter=None,
+        page_token=None,
     )
 
 
