@@ -74,6 +74,45 @@ def check_write_access(func: F) -> F:
     return wrapper  # type: ignore
 
 
+def handle_auth_errors(
+    service_name: str = "Atlassian API",
+) -> Callable:
+    """Decorator to handle 401/403 HTTPError as auth errors.
+
+    Only catches HTTPError with 401/403 status codes and raises
+    MCPAtlassianAuthenticationError. All other exceptions pass
+    through unmodified.
+
+    Args:
+        service_name: Name of the service for error messages.
+    """
+
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+            try:
+                return func(self, *args, **kwargs)
+            except HTTPError as http_err:
+                if http_err.response is not None and http_err.response.status_code in [
+                    401,
+                    403,
+                ]:
+                    error_msg = (
+                        f"Authentication failed for "
+                        f"{service_name} "
+                        f"({http_err.response.status_code}). "
+                        "Token may be expired or invalid. "
+                        "Please verify credentials."
+                    )
+                    logger.error(error_msg)
+                    raise MCPAtlassianAuthenticationError(error_msg) from http_err
+                raise  # re-raise non-auth HTTPError
+
+        return wrapper
+
+    return decorator
+
+
 def handle_atlassian_api_errors(service_name: str = "Atlassian API") -> Callable:
     """
     Decorator to handle common Atlassian API exceptions (Jira, Confluence, etc.).

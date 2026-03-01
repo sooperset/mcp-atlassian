@@ -5,8 +5,8 @@ import logging
 import requests
 from requests.exceptions import HTTPError
 
-from ..exceptions import MCPAtlassianAuthenticationError
 from ..models.confluence import ConfluencePage
+from ..utils.decorators import handle_auth_errors
 from .client import ConfluenceClient
 from .utils import emoji_to_hex_id, extract_emoji_from_property
 from .v2_adapter import ConfluenceV2Adapter
@@ -30,6 +30,7 @@ class PagesMixin(ConfluenceClient):
             )
         return None
 
+    @handle_auth_errors("Confluence API")
     def get_page_content(
         self, page_id: str, *, convert_to_markdown: bool = True
     ) -> ConfluencePage:
@@ -38,18 +39,21 @@ class PagesMixin(ConfluenceClient):
 
         Args:
             page_id: The ID of the page to retrieve
-            convert_to_markdown: When True, returns content in markdown format,
-                               otherwise returns raw HTML (keyword-only)
+            convert_to_markdown: When True, returns content in
+                markdown format, otherwise returns raw HTML
+                (keyword-only)
 
         Returns:
-            ConfluencePage model containing the page content and metadata
+            ConfluencePage model containing the page content and
+            metadata
 
         Raises:
-            MCPAtlassianAuthenticationError: If authentication fails with the Confluence API (401/403)
+            MCPAtlassianAuthenticationError: If authentication fails
+                with the Confluence API (401/403)
             Exception: If there is an error retrieving the page
         """
         try:
-            # Use v2 API for OAuth authentication, v1 API for token/basic auth
+            # Use v2 API for OAuth, v1 API for token/basic auth
             v2_adapter = self._v2_adapter
             if v2_adapter:
                 logger.debug(
@@ -61,14 +65,15 @@ class PagesMixin(ConfluenceClient):
                 )
             else:
                 logger.debug(
-                    f"Using v1 API for token/basic authentication to get page '{page_id}'"
+                    "Using v1 API for token/basic"
+                    f" authentication to get page '{page_id}'"
                 )
                 page = self.confluence.get_page_by_id(
                     page_id=page_id,
                     expand="body.storage,version,space,children.attachment",
                 )
 
-            # Check if API returned an error string instead of a dict
+            # Check if API returned an error string
             if isinstance(page, str):
                 error_msg = f"API returned error response: {page[:500]}"
                 raise Exception(error_msg)
@@ -93,43 +98,29 @@ class PagesMixin(ConfluenceClient):
                 attachments=page_attachments,
             )
 
-            # Use the appropriate content format based on the convert_to_markdown flag
             page_content = processed_markdown if convert_to_markdown else processed_html
 
             # Fetch page emoji from content properties
             emoji = self._get_page_emoji(page_id)
 
-            # Create and return the ConfluencePage model
             return ConfluencePage.from_api_response(
                 page,
                 base_url=self.config.url,
                 include_body=True,
-                # Override content with our processed version
                 content_override=page_content,
-                content_format="storage" if not convert_to_markdown else "markdown",
+                content_format=("storage" if not convert_to_markdown else "markdown"),
                 is_cloud=self.config.is_cloud,
                 emoji=emoji,
             )
-        except HTTPError as http_err:
-            if http_err.response is not None and http_err.response.status_code in [
-                401,
-                403,
-            ]:
-                error_msg = (
-                    f"Authentication failed for Confluence API ({http_err.response.status_code}). "
-                    "Token may be expired or invalid. Please verify credentials."
-                )
-                logger.error(error_msg)
-                raise MCPAtlassianAuthenticationError(error_msg) from http_err
-            else:
-                logger.error(f"HTTP error during API call: {http_err}", exc_info=False)
-                raise http_err
+        except HTTPError:
+            raise  # let decorator handle auth errors
         except Exception as e:
             logger.error(
                 f"Error retrieving page content for page ID {page_id}: {str(e)}"
             )
             raise Exception(f"Error retrieving page content: {str(e)}") from e
 
+    @handle_auth_errors("Confluence API")
     def get_page_ancestors(self, page_id: str) -> list[ConfluencePage]:
         """
         Get ancestors (parent pages) of a specific page.
@@ -138,20 +129,19 @@ class PagesMixin(ConfluenceClient):
             page_id: The ID of the page to get ancestors for
 
         Returns:
-            List of ConfluencePage models representing the ancestors in hierarchical order
-                (immediate parent first, root ancestor last)
+            List of ConfluencePage models representing the
+            ancestors in hierarchical order (immediate parent
+            first, root ancestor last)
 
         Raises:
-            MCPAtlassianAuthenticationError: If authentication fails with the Confluence API (401/403)
+            MCPAtlassianAuthenticationError: If authentication
+                fails with the Confluence API (401/403)
         """
         try:
-            # Use the Atlassian Python API to get ancestors
             ancestors = self.confluence.get_page_ancestors(page_id)
 
-            # Process each ancestor
             ancestor_models = []
             for ancestor in ancestors:
-                # Create the page model without fetching content
                 page_model = ConfluencePage.from_api_response(
                     ancestor,
                     base_url=self.config.url,
@@ -160,20 +150,8 @@ class PagesMixin(ConfluenceClient):
                 ancestor_models.append(page_model)
 
             return ancestor_models
-        except HTTPError as http_err:
-            if http_err.response is not None and http_err.response.status_code in [
-                401,
-                403,
-            ]:
-                error_msg = (
-                    f"Authentication failed for Confluence API ({http_err.response.status_code}). "
-                    "Token may be expired or invalid. Please verify credentials."
-                )
-                logger.error(error_msg)
-                raise MCPAtlassianAuthenticationError(error_msg) from http_err
-            else:
-                logger.error(f"HTTP error during API call: {http_err}", exc_info=False)
-                raise http_err
+        except HTTPError:
+            raise  # let decorator handle auth errors
         except Exception as e:
             logger.error(f"Error fetching ancestors for page {page_id}: {str(e)}")
             logger.debug("Full exception details:", exc_info=True)
@@ -777,8 +755,12 @@ class PagesMixin(ConfluenceClient):
             logger.error(f"Error deleting page {page_id}: {str(e)}")
             raise Exception(f"Failed to delete page {page_id}: {str(e)}") from e
 
+    @handle_auth_errors("Confluence API")
     def get_page_history(
-        self, page_id: str, version: int, convert_to_markdown: bool = True
+        self,
+        page_id: str,
+        version: int,
+        convert_to_markdown: bool = True,
     ) -> ConfluencePage:
         """
         Get the history of a specific page.
@@ -786,29 +768,36 @@ class PagesMixin(ConfluenceClient):
         Args:
             page_id: The ID of the page to get history for
             version: The version to get history for
+            convert_to_markdown: When True, returns content in
+                markdown format
 
         Returns:
             ConfluencePage model containing the page history
-        """
 
+        Raises:
+            MCPAtlassianAuthenticationError: If authentication
+                fails with the Confluence API (401/403)
+            Exception: If there is an error getting page history
+        """
         try:
-            # Use v2 API for OAuth authentication, v1 API for token/basic auth
             v2_adapter = self._v2_adapter
             if v2_adapter:
                 logger.debug(
-                    f"Using v2 API for OAuth authentication to get page history for '{page_id}' version {version}"
+                    "Using v2 API for OAuth authentication"
+                    " to get page history for"
+                    f" '{page_id}' version {version}"
                 )
                 page = v2_adapter.get_page_by_version(
                     page_id=page_id,
                     version=version,
                     expand="body.storage,version,space,children.attachment",
                 )
-
             else:
                 logger.debug(
-                    f"Using v1 API for token/basic authentication to get page history for '{page_id}'"
+                    "Using v1 API for token/basic"
+                    " authentication to get page history"
+                    f" for '{page_id}'"
                 )
-
                 page = self.confluence.get_page_by_id(
                     page_id=page_id,
                     status="historical",
@@ -822,7 +811,6 @@ class PagesMixin(ConfluenceClient):
 
             try:
                 content = page["body"]["storage"]["value"]
-
             except (KeyError, TypeError) as e:
                 logger.warning(
                     f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
@@ -849,24 +837,12 @@ class PagesMixin(ConfluenceClient):
                 base_url=self.config.url,
                 include_body=True,
                 content_override=page_content,
-                content_format="markdown" if convert_to_markdown else "storage",
+                content_format=("markdown" if convert_to_markdown else "storage"),
                 is_cloud=self.config.is_cloud,
                 emoji=emoji,
             )
-        except HTTPError as http_err:
-            if http_err.response is not None and http_err.response.status_code in [
-                401,
-                403,
-            ]:
-                error_msg = (
-                    f"Authentication failed for Confluence API ({http_err.response.status_code}). "
-                    "Token may be expired or invalid. Please verify credentials."
-                )
-                logger.error(error_msg)
-                raise MCPAtlassianAuthenticationError(error_msg) from http_err
-            else:
-                logger.error(f"HTTP error during API call: {http_err}", exc_info=False)
-                raise http_err
+        except HTTPError:
+            raise  # let decorator handle auth errors
         except Exception as e:
             logger.error(f"Error getting page history for page {page_id}: {str(e)}")
             raise Exception(f"Error getting page history: {str(e)}") from e

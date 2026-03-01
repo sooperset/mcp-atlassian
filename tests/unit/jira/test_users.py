@@ -752,7 +752,7 @@ class TestUsersMixin:
 
         with pytest.raises(
             MCPAtlassianAuthenticationError,
-            match="Permission denied accessing user 'restricted_user'.",
+            match="Authentication failed for Jira API",
         ):
             users_mixin.get_user_profile_by_identifier("restricted_user")
 

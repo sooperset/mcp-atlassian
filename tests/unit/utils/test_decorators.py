@@ -2,8 +2,14 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastmcp.exceptions import ToolError
+from requests.exceptions import HTTPError
 
-from mcp_atlassian.utils.decorators import check_write_access, handle_tool_errors
+from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
+from mcp_atlassian.utils.decorators import (
+    check_write_access,
+    handle_auth_errors,
+    handle_tool_errors,
+)
 
 
 class DummyContext:
@@ -67,3 +73,71 @@ async def test_handle_tool_errors_preserves_return_value():
 
     result = await good_tool()
     assert result == "success"
+
+
+# --- handle_auth_errors tests ---
+
+
+def _make_http_error(status_code: int) -> HTTPError:
+    """Create an HTTPError with a mocked response."""
+    response = MagicMock()
+    response.status_code = status_code
+    err = HTTPError(response=response)
+    return err
+
+
+class _FakeService:
+    """Dummy class to test the self-bound decorator."""
+
+    @handle_auth_errors("Test API")
+    def do_work(self, value: str) -> str:
+        return f"ok:{value}"
+
+    @handle_auth_errors("Test API")
+    def raise_http_error(self, status_code: int) -> None:
+        raise _make_http_error(status_code)
+
+    @handle_auth_errors("Test API")
+    def raise_value_error(self) -> None:
+        raise ValueError("bad input")
+
+
+def test_handle_auth_errors_returns_value():
+    svc = _FakeService()
+    assert svc.do_work("hello") == "ok:hello"
+
+
+@pytest.mark.parametrize("status_code", [401, 403])
+def test_handle_auth_errors_catches_auth_errors(
+    status_code: int,
+) -> None:
+    svc = _FakeService()
+    with pytest.raises(MCPAtlassianAuthenticationError) as exc:
+        svc.raise_http_error(status_code)
+    assert "Authentication failed" in str(exc.value)
+    assert str(status_code) in str(exc.value)
+
+
+def test_handle_auth_errors_passes_through_404():
+    svc = _FakeService()
+    with pytest.raises(HTTPError) as exc:
+        svc.raise_http_error(404)
+    assert exc.value.response.status_code == 404
+
+
+def test_handle_auth_errors_passes_through_non_http_error():
+    svc = _FakeService()
+    with pytest.raises(ValueError, match="bad input"):
+        svc.raise_value_error()
+
+
+def test_handle_auth_errors_passes_through_no_response():
+    """HTTPError with response=None should re-raise."""
+
+    class Svc:
+        @handle_auth_errors("Test API")
+        def fail(self) -> None:
+            raise HTTPError(response=None)
+
+    with pytest.raises(HTTPError):
+        Svc().fail()
