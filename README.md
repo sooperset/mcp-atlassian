@@ -6,6 +6,7 @@
 [![Run Tests](https://github.com/sooperset/mcp-atlassian/actions/workflows/tests.yml/badge.svg)](https://github.com/sooperset/mcp-atlassian/actions/workflows/tests.yml)
 ![License](https://img.shields.io/github/license/sooperset/mcp-atlassian)
 [![Docs](https://img.shields.io/badge/docs-mintlify-blue)](https://mcp-atlassian.soomiles.com)
+[![DeepWiki](https://img.shields.io/badge/DeepWiki-AI%20Docs-purple)](https://deepwiki.com/sooperset/mcp-atlassian)
 
 Model Context Protocol (MCP) server for Atlassian products (Confluence and Jira). Supports both Cloud and Server/Data Center deployments.
 
