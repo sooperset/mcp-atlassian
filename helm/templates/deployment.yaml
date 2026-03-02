@@ -189,6 +189,38 @@ spec:
         {{- end }}
         {{- end }}
 
+        # OAuth Proxy + DCR Configuration
+        - name: ATLASSIAN_OAUTH_PROXY_ENABLE
+          value: {{ ternary "true" "false" .Values.oauthProxy.enabled | quote }}
+        - name: ATLASSIAN_OAUTH_REQUIRE_CONSENT
+          value: {{ ternary "true" "false" .Values.oauthProxy.requireConsent | quote }}
+        {{- if .Values.oauthProxy.allowedClientRedirectUris }}
+        - name: ATLASSIAN_OAUTH_ALLOWED_CLIENT_REDIRECT_URIS
+          value: {{ .Values.oauthProxy.allowedClientRedirectUris | quote }}
+        {{- end }}
+        {{- if .Values.oauthProxy.allowedGrantTypes }}
+        - name: ATLASSIAN_OAUTH_ALLOWED_GRANT_TYPES
+          value: {{ .Values.oauthProxy.allowedGrantTypes | quote }}
+        {{- end }}
+
+        # OAuth proxy client storage backend
+        - name: ATLASSIAN_OAUTH_CLIENT_STORAGE_MODE
+          value: {{ .Values.oauthClientStorage.mode | quote }}
+        {{- if eq .Values.oauthClientStorage.mode "factory" }}
+        - name: ATLASSIAN_OAUTH_CLIENT_STORAGE_FACTORY
+          value: {{ .Values.oauthClientStorage.factory.importPath | quote }}
+        {{- if .Values.oauthClientStorage.factory.configJsonSecret.name }}
+        - name: ATLASSIAN_OAUTH_CLIENT_STORAGE_CONFIG_JSON
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.oauthClientStorage.factory.configJsonSecret.name | quote }}
+              key: {{ .Values.oauthClientStorage.factory.configJsonSecret.key | quote }}
+        {{- else if .Values.oauthClientStorage.factory.configJson }}
+        - name: ATLASSIAN_OAUTH_CLIENT_STORAGE_CONFIG_JSON
+          value: {{ .Values.oauthClientStorage.factory.configJson | quote }}
+        {{- end }}
+        {{- end }}
+
         # Proxy Configuration
         {{- if .Values.proxy.enabled }}
         {{- if .Values.proxy.http }}
