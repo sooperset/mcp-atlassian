@@ -523,6 +523,77 @@ class TestMarkdownToAdf:
         assert bold[0]["text"] == "bold"
         assert italic[0]["text"] == "italic"
 
+    # -- Tables -------------------------------------------------------------
+
+    def test_table_basic(self):
+        """Pipe-delimited table produces table > tableRow > tableHeader/tableCell."""
+        md = "| Name | Age |\n|---|---|\n| Alice | 30 |\n| Bob | 25 |"
+        result = markdown_to_adf(md)
+        table = next(n for n in result["content"] if n["type"] == "table")
+        rows = table["content"]
+        assert len(rows) == 3  # header + 2 data rows
+
+        # First row is header
+        header_row = rows[0]
+        assert header_row["type"] == "tableRow"
+        assert all(c["type"] == "tableHeader" for c in header_row["content"])
+        header_texts = [
+            c["content"][0]["content"][0]["text"] for c in header_row["content"]
+        ]
+        assert header_texts == ["Name", "Age"]
+
+        # Remaining rows are data cells
+        for data_row in rows[1:]:
+            assert data_row["type"] == "tableRow"
+            assert all(c["type"] == "tableCell" for c in data_row["content"])
+
+        # Verify data values
+        data_texts = [c["content"][0]["content"][0]["text"] for c in rows[1]["content"]]
+        assert data_texts == ["Alice", "30"]
+
+    def test_table_with_inline_formatting(self):
+        """Table cells preserve inline formatting (bold, code)."""
+        md = "| Feature | Status |\n|---|---|\n| **Auth** | `done` |"
+        result = markdown_to_adf(md)
+        table = next(n for n in result["content"] if n["type"] == "table")
+        data_row = table["content"][1]  # skip header
+
+        # First cell should have bold
+        first_cell_content = data_row["content"][0]["content"][0]["content"]
+        bold_nodes = [
+            n
+            for n in first_cell_content
+            if any(m["type"] == "strong" for m in n.get("marks", []))
+        ]
+        assert len(bold_nodes) == 1
+        assert bold_nodes[0]["text"] == "Auth"
+
+        # Second cell should have code
+        second_cell_content = data_row["content"][1]["content"][0]["content"]
+        code_nodes = [
+            n
+            for n in second_cell_content
+            if any(m["type"] == "code" for m in n.get("marks", []))
+        ]
+        assert len(code_nodes) == 1
+        assert code_nodes[0]["text"] == "done"
+
+    def test_table_attrs(self):
+        """Table node has required ADF attrs (isNumberColumnEnabled, layout)."""
+        md = "| A |\n|---|\n| B |"
+        result = markdown_to_adf(md)
+        table = next(n for n in result["content"] if n["type"] == "table")
+        assert table["attrs"]["isNumberColumnEnabled"] is False
+        assert table["attrs"]["layout"] == "default"
+
+    def test_table_alignment_separator(self):
+        """Alignment separators (:---|:---:|---:) are skipped correctly."""
+        md = "| Left | Center | Right |\n|:---|:---:|---:|\n| a | b | c |"
+        result = markdown_to_adf(md)
+        table = next(n for n in result["content"] if n["type"] == "table")
+        # Should have 2 rows: header + 1 data (separator skipped)
+        assert len(table["content"]) == 2
+
     # -- Roundtrip ----------------------------------------------------------
 
     def test_roundtrip(self):
