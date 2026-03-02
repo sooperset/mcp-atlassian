@@ -148,8 +148,8 @@ Move a Confluence page to a new parent or space.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `page_id` | `string` | Yes | ID of the page to move |
-| `target_parent_id` | `string` | No | Target parent page ID. If omitted with `target_space_key`, moves to space root. |
-| `target_space_key` | `string` | No | Target space key for cross-space moves |
+| `target_parent_id` | `string` | No* | Target parent page ID. If omitted with `target_space_key`, moves to space root. |
+| `target_space_key` | `string` | No* | Target space key for cross-space moves |
 | `position` | `string` | No | Position: 'append' (default, move as child of target), 'above' (move before target as sibling), or 'below' (move after target as sibling) |
 
 **Example:**
@@ -157,6 +157,10 @@ Move a Confluence page to a new parent or space.
 ```json
 {"page_id": "12345678", "target_parent_id": "98765432"}
 ```
+
+<Warning>
+At least one of `target_parent_id` or `target_space_key` must be provided.
+</Warning>
 
 <Tip>
 Use `target_space_key` to move pages between spaces. Omit `target_parent_id` with a space key to move to the space root.
