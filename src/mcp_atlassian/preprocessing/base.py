@@ -4,12 +4,63 @@ import logging
 import re
 import urllib.parse
 import warnings
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from bs4 import BeautifulSoup, Tag
 from markdownify import markdownify as md
 
 logger = logging.getLogger("mcp-atlassian")
+
+
+def _extract_blocks(
+    text: str,
+    pattern: str,
+    transform_fn: Callable[[re.Match[str]], str],
+    storage: list[str],
+    prefix: str,
+    flags: int = 0,
+) -> str:
+    """Extract blocks matching pattern, transform, store, and replace with placeholders.
+
+    Args:
+        text: Input text to process.
+        pattern: Regex pattern to match blocks.
+        transform_fn: Function to transform the match into the target format.
+        storage: List to store transformed blocks.
+        prefix: Placeholder prefix (e.g., "CODEBLOCK").
+        flags: Regex flags to pass to ``re.sub``.
+
+    Returns:
+        Text with blocks replaced by placeholders.
+    """
+
+    def _replacer(match: re.Match[str]) -> str:
+        transformed = transform_fn(match)
+        placeholder = f"\x00{prefix}{len(storage)}\x00"
+        storage.append(transformed)
+        return placeholder
+
+    return re.sub(pattern, _replacer, text, flags=flags)
+
+
+def _restore_blocks(text: str, storage: list[str], prefix: str) -> str:
+    """Restore blocks from placeholders.
+
+    Replaces in reverse order (highest index first) to avoid
+    index collisions when placeholder text contains digits.
+
+    Args:
+        text: Text with placeholders.
+        storage: List of stored blocks.
+        prefix: Placeholder prefix used during extraction.
+
+    Returns:
+        Text with placeholders replaced by stored blocks.
+    """
+    for i in range(len(storage) - 1, -1, -1):
+        text = text.replace(f"\x00{prefix}{i}\x00", storage[i])
+    return text
 
 
 class ConfluenceClient(Protocol):
@@ -326,7 +377,30 @@ class BasePreprocessor:
             ac_image.replace_with(img_tag)
 
     def _convert_html_to_markdown(self, text: str) -> str:
-        """Convert HTML content to markdown if needed."""
+        """Convert HTML content to markdown if needed.
+
+        Protects markdown code spans (fenced and inline) from being
+        interpreted as HTML by BeautifulSoup before conversion.
+        """
+        # Protect fenced code blocks and inline code from HTML parsing
+        code_blocks: list[str] = []
+        inline_codes: list[str] = []
+
+        text = _extract_blocks(
+            text,
+            r"```[^\n]*\n[\s\S]*?\n```",
+            lambda m: m.group(0),
+            code_blocks,
+            "HTMLCVTBLOCK",
+        )
+        text = _extract_blocks(
+            text,
+            r"`[^`]+`",
+            lambda m: m.group(0),
+            inline_codes,
+            "HTMLCVTINLINE",
+        )
+
         if re.search(r"<[^>]+>", text):
             try:
                 with warnings.catch_warnings():
@@ -336,4 +410,8 @@ class BasePreprocessor:
                     text = md(html)
             except Exception as e:
                 logger.warning(f"Error converting HTML to markdown: {str(e)}")
+
+        # Restore in reverse order: inline first, then blocks
+        text = _restore_blocks(text, inline_codes, "HTMLCVTINLINE")
+        text = _restore_blocks(text, code_blocks, "HTMLCVTBLOCK")
         return text

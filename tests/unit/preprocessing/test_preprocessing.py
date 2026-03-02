@@ -1274,3 +1274,141 @@ class TestCodeBlockProtection:
             assert not ln.startswith("> "), (
                 f"Inner code line unexpectedly blockquoted: {ln!r}"
             )
+
+
+class TestHtmlConversionCodeProtection:
+    """Tests that _convert_html_to_markdown protects code spans from HTML parsing.
+
+    When markdown code spans contain angle brackets (e.g. `<script>`),
+    BeautifulSoup must not interpret them as HTML tags.
+    """
+
+    @pytest.fixture
+    def preprocessor(self):
+        return JiraPreprocessor(base_url="https://example.atlassian.net")
+
+    # --- End-to-end tests via clean_jira_text (Jira markup → markdown) ---
+
+    @pytest.mark.parametrize(
+        "test_id, jira_input, expected_substr, description",
+        [
+            pytest.param(
+                "inline-script-tag",
+                "{{npm run <script>}}",
+                "`npm run <script>`",
+                "Angle brackets in inline code preserved",
+                id="inline-script-tag",
+            ),
+            pytest.param(
+                "inline-div-tag",
+                "{{<div>content</div>}}",
+                "`<div>content</div>`",
+                "HTML div tags in inline code preserved",
+                id="inline-div-tag",
+            ),
+            pytest.param(
+                "inline-generic",
+                "{{List<String>}}",
+                "`List<String>`",
+                "Java generic type in inline code preserved",
+                id="inline-generic",
+            ),
+            pytest.param(
+                "fenced-html",
+                "{code:html}\n<script>alert(1)</script>\n{code}",
+                "<script>alert(1)</script>",
+                "HTML inside fenced code block preserved",
+                id="fenced-html",
+            ),
+            pytest.param(
+                "mixed-code-and-html",
+                "{{<b>not bold</b>}} and <b>real bold</b>",
+                "`<b>not bold</b>`",
+                "Code protected while real HTML converted",
+                id="mixed-code-and-html",
+            ),
+            pytest.param(
+                "multiple-inline",
+                "{{<Tag>}} and {{<Elem>}}",
+                "`<Tag>`",
+                "Multiple inline code spans with angle brackets",
+                id="multiple-inline",
+            ),
+            pytest.param(
+                "text-after-preserved",
+                "{{npm run <script>}} entries in {{package.json}}. More content.",
+                "More content",
+                "Text after code spans not truncated",
+                id="text-after-preserved",
+            ),
+        ],
+    )
+    def test_clean_jira_text_preserves_code_with_angle_brackets(
+        self,
+        preprocessor,
+        test_id: str,
+        jira_input: str,
+        expected_substr: str,
+        description: str,
+    ):
+        """End-to-end: Jira markup with angle brackets in code spans."""
+        result = preprocessor.clean_jira_text(jira_input)
+        assert expected_substr in result, (
+            f"[{test_id}] Expected '{expected_substr}' in: {result!r}"
+        )
+
+    def test_mixed_code_and_html_converts_real_html(self, preprocessor):
+        """Real HTML outside code spans should still be converted."""
+        result = preprocessor.clean_jira_text(
+            "{{<b>not bold</b>}} and <b>real bold</b>"
+        )
+        assert "**real bold**" in result
+
+    # --- Direct _convert_html_to_markdown tests (markdown input) ---
+
+    @pytest.mark.parametrize(
+        "test_id, md_input, expected_substr, description",
+        [
+            pytest.param(
+                "backtick-script",
+                "`npm run <script>`",
+                "`npm run <script>`",
+                "Inline code with angle brackets survives HTML conversion",
+                id="backtick-script",
+            ),
+            pytest.param(
+                "fenced-block-script",
+                "```html\n<script>alert(1)</script>\n```",
+                "<script>alert(1)</script>",
+                "Fenced code block content survives HTML conversion",
+                id="fenced-block-script",
+            ),
+            pytest.param(
+                "fenced-plus-real-html",
+                "```\n<b>code</b>\n```\n<b>bold</b>",
+                "<b>code</b>",
+                "Fenced code protected, real HTML converted",
+                id="fenced-plus-real-html",
+            ),
+            pytest.param(
+                "no-code-html-still-converted",
+                "Hello <b>world</b>",
+                "**world**",
+                "Plain HTML without code spans still converted",
+                id="no-code-html-still-converted",
+            ),
+        ],
+    )
+    def test_convert_html_to_markdown_protects_code(
+        self,
+        preprocessor,
+        test_id: str,
+        md_input: str,
+        expected_substr: str,
+        description: str,
+    ):
+        """Direct test of _convert_html_to_markdown with markdown code spans."""
+        result = preprocessor._convert_html_to_markdown(md_input)
+        assert expected_substr in result, (
+            f"[{test_id}] Expected '{expected_substr}' in: {result!r}"
+        )
