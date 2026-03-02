@@ -122,3 +122,29 @@ Update jira sprint.
 | `goal` | `string` | No | (Optional) New goal for the sprint |
 
 ---
+
+### Add Issues to Sprint
+
+Add issues to a Jira sprint.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sprint_id` | `string` | Yes | Sprint ID to add issues to |
+| `issue_keys` | `string` | Yes | Comma-separated issue keys (e.g., 'PROJ-1,PROJ-2') |
+
+**Example:**
+
+```json
+{"sprint_id": "42", "issue_keys": "PROJ-1,PROJ-2,PROJ-3"}
+```
+
+<Tip>
+Get sprint IDs from `jira_get_sprints_from_board`. Issue keys are validated server-side — invalid keys will cause an error.
+</Tip>
+
+
+---

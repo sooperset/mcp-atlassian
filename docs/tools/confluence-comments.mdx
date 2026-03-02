@@ -28,6 +28,32 @@ Supports Markdown formatting. Comments are added to the page's comment section.
 
 ---
 
+### Reply to Comment
+
+Reply to an existing comment thread on a Confluence page.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `comment_id` | `string` | Yes | The ID of the parent comment to reply to |
+| `body` | `string` | Yes | The reply content in Markdown format |
+
+**Example:**
+
+```json
+{"comment_id": "67890", "body": "Thanks for the feedback! I've updated the section."}
+```
+
+<Tip>
+Get comment IDs from `confluence_get_comments`. Replies are threaded under the parent comment.
+</Tip>
+
+
+---
+
 ### Get Comments
 
 Get comments for a specific Confluence page.

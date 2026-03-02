@@ -136,3 +136,56 @@ Get a historical version of a specific Confluence page.
 | `convert_to_markdown` | `boolean` | No | Whether to convert page to markdown (true) or keep it in raw HTML format (false). Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: using HTML significantly increases token usage in AI responses. |
 
 ---
+
+### Move Page
+
+Move a Confluence page to a new parent or space.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | Yes | ID of the page to move |
+| `target_parent_id` | `string` | No | Target parent page ID. If omitted with `target_space_key`, moves to space root. |
+| `target_space_key` | `string` | No | Target space key for cross-space moves |
+| `position` | `string` | No | Position: 'append' (default, move as child of target), 'above' (move before target as sibling), or 'below' (move after target as sibling) |
+
+**Example:**
+
+```json
+{"page_id": "12345678", "target_parent_id": "98765432"}
+```
+
+<Tip>
+Use `target_space_key` to move pages between spaces. Omit `target_parent_id` with a space key to move to the space root.
+</Tip>
+
+
+---
+
+### Get Page Diff
+
+Get a unified diff between two versions of a Confluence page.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | Yes | Confluence page ID (numeric ID, can be found in the page URL). For example, in 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', the page ID is '123456789'. |
+| `from_version` | `integer` | Yes | Source version number (>=1) |
+| `to_version` | `integer` | Yes | Target version number (>=1) |
+
+**Example:**
+
+```json
+{"page_id": "12345678", "from_version": 1, "to_version": 3}
+```
+
+<Tip>
+Use `confluence_get_page_history` to discover available version numbers. The diff is in unified format, showing additions and removals between versions.
+</Tip>
+
+
+---
