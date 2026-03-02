@@ -1274,3 +1274,111 @@ class TestCodeBlockProtection:
             assert not ln.startswith("> "), (
                 f"Inner code line unexpectedly blockquoted: {ln!r}"
             )
+
+
+class TestHtmlConversionCodeProtection:
+    """Tests that _convert_html_to_markdown protects code spans from HTML parsing.
+
+    When markdown code spans contain angle brackets (e.g. `<script>`),
+    BeautifulSoup must not interpret them as HTML tags.
+    """
+
+    @pytest.fixture
+    def preprocessor(self):
+        return JiraPreprocessor(base_url="https://example.atlassian.net")
+
+    # --- End-to-end tests via clean_jira_text (Jira markup → markdown) ---
+
+    @pytest.mark.parametrize(
+        "jira_input, expected_substr",
+        [
+            pytest.param(
+                "{{npm run <script>}}",
+                "`npm run <script>`",
+                id="inline-script-tag",
+            ),
+            pytest.param(
+                "{{<div>content</div>}}",
+                "`<div>content</div>`",
+                id="inline-div-tag",
+            ),
+            pytest.param(
+                "{{List<String>}}",
+                "`List<String>`",
+                id="inline-generic",
+            ),
+            pytest.param(
+                "{code:html}\n<script>alert(1)</script>\n{code}",
+                "<script>alert(1)</script>",
+                id="fenced-html",
+            ),
+            pytest.param(
+                "{{<b>not bold</b>}} and <b>real bold</b>",
+                "`<b>not bold</b>`",
+                id="mixed-code-and-html",
+            ),
+            pytest.param(
+                "{{<Tag>}} and {{<Elem>}}",
+                "`<Tag>`",
+                id="multiple-inline",
+            ),
+            pytest.param(
+                "{{npm run <script>}} entries in {{package.json}}. More content.",
+                "More content",
+                id="text-after-preserved",
+            ),
+        ],
+    )
+    def test_clean_jira_text_preserves_code_with_angle_brackets(
+        self,
+        preprocessor,
+        jira_input: str,
+        expected_substr: str,
+    ):
+        """End-to-end: Jira markup with angle brackets in code spans."""
+        result = preprocessor.clean_jira_text(jira_input)
+        assert expected_substr in result, f"Expected '{expected_substr}' in: {result!r}"
+
+    def test_mixed_code_and_html_converts_real_html(self, preprocessor):
+        """Real HTML outside code spans should still be converted."""
+        result = preprocessor.clean_jira_text(
+            "{{<b>not bold</b>}} and <b>real bold</b>"
+        )
+        assert "**real bold**" in result
+
+    # --- Direct _convert_html_to_markdown tests (markdown input) ---
+
+    @pytest.mark.parametrize(
+        "md_input, expected_substr",
+        [
+            pytest.param(
+                "`npm run <script>`",
+                "`npm run <script>`",
+                id="backtick-script",
+            ),
+            pytest.param(
+                "```html\n<script>alert(1)</script>\n```",
+                "<script>alert(1)</script>",
+                id="fenced-block-script",
+            ),
+            pytest.param(
+                "```\n<b>code</b>\n```\n<b>bold</b>",
+                "<b>code</b>",
+                id="fenced-plus-real-html",
+            ),
+            pytest.param(
+                "Hello <b>world</b>",
+                "**world**",
+                id="no-code-html-still-converted",
+            ),
+        ],
+    )
+    def test_convert_html_to_markdown_protects_code(
+        self,
+        preprocessor,
+        md_input: str,
+        expected_substr: str,
+    ):
+        """Direct test of _convert_html_to_markdown with markdown code spans."""
+        result = preprocessor._convert_html_to_markdown(md_input)
+        assert expected_substr in result, f"Expected '{expected_substr}' in: {result!r}"

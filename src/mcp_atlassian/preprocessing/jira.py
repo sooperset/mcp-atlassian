@@ -2,10 +2,9 @@
 
 import logging
 import re
-from collections.abc import Callable
 from typing import Any
 
-from .base import BasePreprocessor
+from .base import BasePreprocessor, _extract_blocks, _restore_blocks
 
 logger = logging.getLogger("mcp-atlassian")
 
@@ -21,56 +20,6 @@ def _convert_panel(params: str | None, content: str) -> str:
     if title:
         return f"\n**{title}**\n{content}\n"
     return f"\n{content}\n"
-
-
-def _extract_blocks(
-    text: str,
-    pattern: str,
-    transform_fn: Callable[[re.Match[str]], str],
-    storage: list[str],
-    prefix: str,
-    flags: int = 0,
-) -> str:
-    """Extract blocks matching pattern, transform, store, and replace with placeholders.
-
-    Args:
-        text: Input text to process.
-        pattern: Regex pattern to match blocks.
-        transform_fn: Function to transform the match into the target format.
-        storage: List to store transformed blocks.
-        prefix: Placeholder prefix (e.g., "CODEBLOCK").
-        flags: Regex flags to pass to ``re.sub``.
-
-    Returns:
-        Text with blocks replaced by placeholders.
-    """
-
-    def _replacer(match: re.Match[str]) -> str:
-        transformed = transform_fn(match)
-        placeholder = f"\x00{prefix}{len(storage)}\x00"
-        storage.append(transformed)
-        return placeholder
-
-    return re.sub(pattern, _replacer, text, flags=flags)
-
-
-def _restore_blocks(text: str, storage: list[str], prefix: str) -> str:
-    """Restore blocks from placeholders.
-
-    Replaces in reverse order (highest index first) to avoid
-    index collisions when placeholder text contains digits.
-
-    Args:
-        text: Text with placeholders.
-        storage: List of stored blocks.
-        prefix: Placeholder prefix used during extraction.
-
-    Returns:
-        Text with placeholders replaced by stored blocks.
-    """
-    for i in range(len(storage) - 1, -1, -1):
-        text = text.replace(f"\x00{prefix}{i}\x00", storage[i])
-    return text
 
 
 class JiraPreprocessor(BasePreprocessor):
