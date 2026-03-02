@@ -636,6 +636,26 @@ async def test_create_page_with_string_parent_id(client, mock_confluence_fetcher
     result_data = json.loads(response.content[0].text)
     assert result_data["message"] == "Page created successfully"
     assert result_data["page"]["title"] == "Test Page Mock Title"
+    assert "content" not in result_data["page"]
+
+
+@pytest.mark.anyio
+async def test_create_page_include_content(client, mock_confluence_fetcher):
+    """Test create_page can include content when requested."""
+    response = await client.call_tool(
+        "confluence_create_page",
+        {
+            "space_key": "TEST",
+            "title": "Test Page",
+            "content": "Test content",
+            "include_content": True,
+        },
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["message"] == "Page created successfully"
+    assert result_data["page"]["title"] == "Test Page Mock Title"
+    assert "content" in result_data["page"]
 
 
 @pytest.mark.anyio
@@ -684,6 +704,26 @@ async def test_update_page_with_string_parent_id(client, mock_confluence_fetcher
     result_data = json.loads(response.content[0].text)
     assert result_data["message"] == "Page updated successfully"
     assert result_data["page"]["title"] == "Test Page Mock Title"
+    assert "content" not in result_data["page"]
+
+
+@pytest.mark.anyio
+async def test_update_page_include_content(client, mock_confluence_fetcher):
+    """Test update_page can include content when requested."""
+    response = await client.call_tool(
+        "confluence_update_page",
+        {
+            "page_id": "999999",
+            "title": "Updated Page",
+            "content": "Updated content",
+            "include_content": True,
+        },
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["message"] == "Page updated successfully"
+    assert result_data["page"]["title"] == "Test Page Mock Title"
+    assert "content" in result_data["page"]
 
 
 @pytest.mark.anyio

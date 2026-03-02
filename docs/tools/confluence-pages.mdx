@@ -45,6 +45,7 @@ Create a new Confluence page.
 | `parent_id` | `string` | No | (Optional) parent page ID. If provided, this page will be created as a child of the specified page |
 | `content_format` | `string` | No | (Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', or 'storage'. Wiki format uses Confluence wiki markup syntax |
 | `enable_heading_anchors` | `boolean` | No | (Optional) Whether to enable automatic heading anchor generation. Only applies when content_format is 'markdown' |
+| `include_content` | `boolean` | No | (Optional) Whether to include page content in the response. Defaults to false since callers already have the content at create time. |
 | `emoji` | `string` | No | (Optional) Page title emoji (icon shown in navigation). Can be any emoji character like '📝', '🚀', '📚'. Set to null/None to remove. |
 **Example:**
 
@@ -77,6 +78,7 @@ Update an existing Confluence page.
 | `parent_id` | `string` | No | Optional the new parent page ID |
 | `content_format` | `string` | No | (Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', or 'storage'. Wiki format uses Confluence wiki markup syntax |
 | `enable_heading_anchors` | `boolean` | No | (Optional) Whether to enable automatic heading anchor generation. Only applies when content_format is 'markdown' |
+| `include_content` | `boolean` | No | (Optional) Whether to include page content in the response. Defaults to false since callers already have the content at update time. |
 | `emoji` | `string` | No | (Optional) Page title emoji (icon shown in navigation). Can be any emoji character like '📝', '🚀', '📚'. Set to null/None to remove. |
 **Example:**
 

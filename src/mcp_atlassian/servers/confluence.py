@@ -557,6 +557,13 @@ async def create_page(
             default=False,
         ),
     ] = False,
+    include_content: Annotated[
+        bool,
+        Field(
+            description="(Optional) Whether to include page content in the response",
+            default=False,
+        ),
+    ] = False,
     emoji: Annotated[
         str | None,
         Field(
@@ -575,6 +582,7 @@ async def create_page(
         parent_id: Optional parent page ID.
         content_format: The format of the content ('markdown', 'wiki', or 'storage').
         enable_heading_anchors: Whether to enable heading anchors (markdown only).
+        include_content: Whether to include page content in the response.
         emoji: Optional page title emoji (icon shown in navigation).
 
     Returns:
@@ -612,6 +620,8 @@ async def create_page(
         emoji=emoji,
     )
     result = page.to_simplified_dict()
+    if not include_content:
+        result.pop("content", None)
     return json.dumps(
         {"message": "Page created successfully", "page": result},
         indent=2,
@@ -659,6 +669,13 @@ async def update_page(
             default=False,
         ),
     ] = False,
+    include_content: Annotated[
+        bool,
+        Field(
+            description="(Optional) Whether to include page content in the response",
+            default=False,
+        ),
+    ] = False,
     emoji: Annotated[
         str | None,
         Field(
@@ -679,6 +696,7 @@ async def update_page(
         parent_id: Optional new parent page ID.
         content_format: The format of the content ('markdown', 'wiki', or 'storage').
         enable_heading_anchors: Whether to enable heading anchors (markdown only).
+        include_content: Whether to include page content in the response.
         emoji: Optional page title emoji (icon shown in navigation).
 
     Returns:
@@ -718,6 +736,8 @@ async def update_page(
         emoji=emoji,
     )
     page_data = updated_page.to_simplified_dict()
+    if not include_content:
+        page_data.pop("content", None)
     return json.dumps(
         {"message": "Page updated successfully", "page": page_data},
         indent=2,
