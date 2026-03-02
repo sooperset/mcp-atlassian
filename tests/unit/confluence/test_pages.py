@@ -2578,3 +2578,369 @@ class TestPageWidth:
 
             mock_width.assert_called_once_with(page_id)
             assert page.page_width == "full-width"
+
+
+class TestPageHierarchy:
+    """Tests for page hierarchy and navigation methods."""
+
+    @pytest.fixture
+    def pages_mixin(self, confluence_client):
+        """Create a PagesMixin instance for testing."""
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = PagesMixin()
+            mixin.confluence = confluence_client.confluence
+            mixin.config = confluence_client.config
+            mixin.preprocessor = confluence_client.preprocessor
+            return mixin
+
+    @staticmethod
+    def _raw_response(pages: list[dict], next_link: str | None = None) -> dict:
+        """Build a mock get_all_pages_from_space_raw response."""
+        resp: dict = {"results": pages}
+        if next_link:
+            resp["_links"] = {"next": next_link}
+        return resp
+
+    def test_get_space_page_tree_empty(self, pages_mixin):
+        """Test get_space_page_tree with no pages."""
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            return_value=self._raw_response([])
+        )
+
+        result = pages_mixin.get_space_page_tree("EMPTY")
+
+        assert isinstance(result, dict)
+        assert result["space_key"] == "EMPTY"
+        assert result["total_pages"] == 0
+        assert result["has_more"] is False
+        assert result["pages"] == []
+
+    def test_get_space_page_tree_single_root(self, pages_mixin):
+        """Test get_space_page_tree with single root page."""
+        mock_page = {
+            "id": "123",
+            "title": "Root Page",
+            "ancestors": [],
+            "extensions": {"position": 0},
+        }
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            return_value=self._raw_response([mock_page])
+        )
+
+        result = pages_mixin.get_space_page_tree("TEST")
+
+        assert result["space_key"] == "TEST"
+        assert result["total_pages"] == 1
+        assert result["has_more"] is False
+        assert len(result["pages"]) == 1
+        page = result["pages"][0]
+        assert page["id"] == "123"
+        assert page["title"] == "Root Page"
+        assert page["parent_id"] is None
+        assert page["depth"] == 0
+        assert page["position"] == 0
+
+    def test_get_space_page_tree_with_children(self, pages_mixin):
+        """Test get_space_page_tree returns parent_id and depth correctly."""
+        mock_pages = [
+            {
+                "id": "123",
+                "title": "Parent Page",
+                "ancestors": [],
+                "extensions": {"position": 0},
+            },
+            {
+                "id": "456",
+                "title": "Child Page",
+                "ancestors": [{"id": "123"}],
+                "extensions": {"position": 0},
+            },
+        ]
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            return_value=self._raw_response(mock_pages)
+        )
+
+        result = pages_mixin.get_space_page_tree("TEST")
+
+        assert result["total_pages"] == 2
+        pages = result["pages"]
+
+        parent = next(p for p in pages if p["id"] == "123")
+        child = next(p for p in pages if p["id"] == "456")
+
+        assert parent["parent_id"] is None
+        assert parent["depth"] == 0
+        assert child["parent_id"] == "123"
+        assert child["depth"] == 1
+
+        parent_idx = pages.index(parent)
+        child_idx = pages.index(child)
+        assert parent_idx < child_idx
+
+    def test_get_space_page_tree_sorting(self, pages_mixin):
+        """Test that pages are sorted by depth then position."""
+        mock_pages = [
+            {
+                "id": "789",
+                "title": "Third Page",
+                "ancestors": [],
+                "extensions": {"position": 2},
+            },
+            {
+                "id": "123",
+                "title": "First Page",
+                "ancestors": [],
+                "extensions": {"position": 0},
+            },
+            {
+                "id": "456",
+                "title": "Second Page",
+                "ancestors": [],
+                "extensions": {"position": 1},
+            },
+        ]
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            return_value=self._raw_response(mock_pages)
+        )
+
+        result = pages_mixin.get_space_page_tree("TEST")
+
+        pages = result["pages"]
+        assert pages[0]["id"] == "123"  # position 0
+        assert pages[1]["id"] == "456"  # position 1
+        assert pages[2]["id"] == "789"  # position 2
+
+    def test_pagination_multiple_batches(self, pages_mixin):
+        """Test that pagination fetches across multiple API batches."""
+        batch1 = [
+            {
+                "id": str(i),
+                "title": f"Page {i}",
+                "ancestors": [],
+                "extensions": {"position": i},
+            }
+            for i in range(3)
+        ]
+        batch2 = [
+            {
+                "id": str(i),
+                "title": f"Page {i}",
+                "ancestors": [],
+                "extensions": {"position": i},
+            }
+            for i in range(3, 5)
+        ]
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            side_effect=[
+                self._raw_response(batch1, next_link="/rest/api/content?start=3"),
+                self._raw_response(batch2),  # no next link = last batch
+            ]
+        )
+
+        result = pages_mixin.get_space_page_tree("TEST", limit=500)
+
+        assert result["total_pages"] == 5
+        assert result["has_more"] is False
+        assert pages_mixin.confluence.get_all_pages_from_space_raw.call_count == 2
+
+        # Verify correct start offsets were passed to each batch
+        calls = pages_mixin.confluence.get_all_pages_from_space_raw.call_args_list
+        assert calls[0].kwargs["start"] == 0
+        assert calls[1].kwargs["start"] == 3
+
+    def test_pagination_respects_limit_ceiling(self, pages_mixin):
+        """Test has_more=True when limit reached but more pages exist."""
+        # 3 pages in batch, limit=3, and next_link exists
+        batch = [
+            {
+                "id": str(i),
+                "title": f"Page {i}",
+                "ancestors": [],
+                "extensions": {"position": i},
+            }
+            for i in range(3)
+        ]
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            return_value=self._raw_response(
+                batch, next_link="/rest/api/content?start=3"
+            )
+        )
+
+        result = pages_mixin.get_space_page_tree("TEST", limit=3)
+
+        assert result["total_pages"] == 3
+        assert result["has_more"] is True
+        assert result["next_start"] == 3
+
+    def test_pagination_exhausted_before_limit(self, pages_mixin):
+        """Test has_more=False when all pages fetched before hitting limit."""
+        batch = [
+            {
+                "id": "1",
+                "title": "Only Page",
+                "ancestors": [],
+                "extensions": {"position": 0},
+            }
+        ]
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            return_value=self._raw_response(batch)  # no next link
+        )
+
+        result = pages_mixin.get_space_page_tree("TEST", limit=500)
+
+        assert result["total_pages"] == 1
+        assert result["has_more"] is False
+        assert "next_start" not in result
+
+    def test_pagination_stops_on_empty_batch(self, pages_mixin):
+        """Test that pagination terminates when API returns empty results."""
+        batch1 = [
+            {
+                "id": "1",
+                "title": "Page 1",
+                "ancestors": [],
+                "extensions": {"position": 0},
+            }
+        ]
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            side_effect=[
+                self._raw_response(batch1, next_link="/rest/api/content?start=1"),
+                self._raw_response([]),  # empty batch
+            ]
+        )
+
+        result = pages_mixin.get_space_page_tree("TEST", limit=500)
+
+        assert result["total_pages"] == 1
+        assert result["has_more"] is False
+
+    def test_pagination_api_cap_smaller_than_limit(self, pages_mixin):
+        """Test correct pagination when API caps below requested limit.
+
+        Simulates Confluence's ~200 result server-side cap: even though
+        we request more, each batch returns at most the cap amount.
+        """
+        # Simulate: limit=500, API caps at 3 per batch, space has 7 pages
+        batches = [
+            [
+                {
+                    "id": str(i),
+                    "title": f"Page {i}",
+                    "ancestors": [],
+                    "extensions": {"position": i},
+                }
+                for i in range(0, 3)
+            ],
+            [
+                {
+                    "id": str(i),
+                    "title": f"Page {i}",
+                    "ancestors": [],
+                    "extensions": {"position": i},
+                }
+                for i in range(3, 6)
+            ],
+            [
+                {
+                    "id": "6",
+                    "title": "Page 6",
+                    "ancestors": [],
+                    "extensions": {"position": 6},
+                }
+            ],
+        ]
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            side_effect=[
+                self._raw_response(batches[0], next_link="/rest/api/content?start=3"),
+                self._raw_response(batches[1], next_link="/rest/api/content?start=6"),
+                self._raw_response(batches[2]),  # last batch, no next
+            ]
+        )
+
+        result = pages_mixin.get_space_page_tree("TEST", limit=500)
+
+        assert result["total_pages"] == 7
+        assert result["has_more"] is False
+        assert pages_mixin.confluence.get_all_pages_from_space_raw.call_count == 3
+
+    def test_pagination_missing_links_treated_as_last_page(self, pages_mixin):
+        """Test that missing _links in response is treated as no more pages."""
+        batch = [
+            {
+                "id": "1",
+                "title": "Page 1",
+                "ancestors": [],
+                "extensions": {"position": 0},
+            }
+        ]
+        # Response has no _links key at all
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            return_value={"results": batch}
+        )
+
+        result = pages_mixin.get_space_page_tree("TEST", limit=500)
+
+        assert result["total_pages"] == 1
+        assert result["has_more"] is False
+
+    def test_expand_uses_ancestors_only(self, pages_mixin):
+        """Test that the API call uses only 'ancestors' expand parameter."""
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            return_value=self._raw_response([])
+        )
+
+        pages_mixin.get_space_page_tree("TEST")
+
+        call_kwargs = pages_mixin.confluence.get_all_pages_from_space_raw.call_args
+        assert call_kwargs.kwargs.get("expand") == "ancestors"
+
+    def test_pagination_limit_one(self, pages_mixin):
+        """Test degenerate limit=1 boundary case."""
+        batch = [
+            {
+                "id": "1",
+                "title": "Page 1",
+                "ancestors": [],
+                "extensions": {"position": 0},
+            }
+        ]
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            return_value=self._raw_response(
+                batch, next_link="/rest/api/content?start=1"
+            )
+        )
+
+        result = pages_mixin.get_space_page_tree("TEST", limit=1)
+
+        assert result["total_pages"] == 1
+        assert result["has_more"] is True
+        assert result["next_start"] == 1
+        # Should request exactly 1 page
+        call_kwargs = pages_mixin.confluence.get_all_pages_from_space_raw.call_args
+        assert call_kwargs.kwargs["limit"] == 1
+
+    def test_pagination_links_without_next_key(self, pages_mixin):
+        """Test response where _links exists but next is absent."""
+        batch = [
+            {
+                "id": "1",
+                "title": "Page 1",
+                "ancestors": [],
+                "extensions": {"position": 0},
+            }
+        ]
+        # _links present with 'self' but no 'next'
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            return_value={
+                "results": batch,
+                "_links": {"self": "/rest/api/content?spaceKey=TEST"},
+            }
+        )
+
+        result = pages_mixin.get_space_page_tree("TEST", limit=500)
+
+        assert result["total_pages"] == 1
+        assert result["has_more"] is False
