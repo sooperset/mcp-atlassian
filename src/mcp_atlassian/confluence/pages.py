@@ -937,6 +937,8 @@ class PagesMixin(ConfluenceClient):
                 result["next_start"] = start
             return result
 
+        except HTTPError:
+            raise  # let @handle_auth_errors decorator handle auth errors
         except Exception as e:
             logger.error(f"Error fetching page tree for space '{space_key}': {e}")
             raise Exception(f"Failed to fetch page tree: {e}") from e
