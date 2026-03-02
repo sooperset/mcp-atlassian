@@ -612,6 +612,7 @@ async def test_create_page_with_numeric_parent_id(client, mock_confluence_fetche
     result_data = json.loads(response.content[0].text)
     assert result_data["message"] == "Page created successfully"
     assert result_data["page"]["title"] == "Test Page Mock Title"
+    assert "content" not in result_data["page"]
 
 
 @pytest.mark.anyio
@@ -680,6 +681,7 @@ async def test_update_page_with_numeric_parent_id(client, mock_confluence_fetche
     result_data = json.loads(response.content[0].text)
     assert result_data["message"] == "Page updated successfully"
     assert result_data["page"]["title"] == "Test Page Mock Title"
+    assert "content" not in result_data["page"]
 
 
 @pytest.mark.anyio
