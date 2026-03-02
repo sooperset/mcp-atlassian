@@ -32,6 +32,26 @@ class _DummyProviderStorage:
         _ = args, kwargs
         return True
 
+    async def ttl(self, *args, **kwargs):
+        _ = args, kwargs
+        return None
+
+    async def get_many(self, *args, **kwargs):
+        _ = args, kwargs
+        return {}
+
+    async def put_many(self, *args, **kwargs):
+        _ = args, kwargs
+        return None
+
+    async def delete_many(self, *args, **kwargs):
+        _ = args, kwargs
+        return 0
+
+    async def ttl_many(self, *args, **kwargs):
+        _ = args, kwargs
+        return {}
+
 
 def _dummy_provider_storage_factory(config=None):
     return _DummyProviderStorage(config=config)
@@ -250,6 +270,11 @@ def test_build_auth_provider_supports_custom_client_storage_factory(monkeypatch)
     assert callable(getattr(provider._client_storage, "get", None))
     assert callable(getattr(provider._client_storage, "put", None))
     assert callable(getattr(provider._client_storage, "delete", None))
+    assert callable(getattr(provider._client_storage, "ttl", None))
+    assert callable(getattr(provider._client_storage, "get_many", None))
+    assert callable(getattr(provider._client_storage, "put_many", None))
+    assert callable(getattr(provider._client_storage, "delete_many", None))
+    assert callable(getattr(provider._client_storage, "ttl_many", None))
     assert provider._client_storage.factory_config == {"collection": "registrations"}
 
 
