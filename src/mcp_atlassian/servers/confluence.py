@@ -560,7 +560,7 @@ async def create_page(
     include_content: Annotated[
         bool,
         Field(
-            description="(Optional) Whether to include page content in the response",
+            description="(Optional) Whether to include page content in the response. Defaults to false since callers already have the content at create time",
             default=False,
         ),
     ] = False,
@@ -672,7 +672,7 @@ async def update_page(
     include_content: Annotated[
         bool,
         Field(
-            description="(Optional) Whether to include page content in the response",
+            description="(Optional) Whether to include page content in the response. Defaults to false since callers already have the content at update time",
             default=False,
         ),
     ] = False,
