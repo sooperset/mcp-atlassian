@@ -42,5 +42,10 @@ Search Confluence users using CQL.
 |-----------|------|----------|-------------|
 | `query` | `string` | Yes | Search query - a CQL query string for user search. Examples of CQL: - Basic user lookup by full name: 'user.fullname ~ "First Last"' Note: Special identifiers need proper quoting in CQL: personal space keys (e.g., "~username"), reserved words, numeric IDs, and identifiers with special characters. |
 | `limit` | `integer` | No | Maximum number of results (1-50) |
+| `group_name` | `string` | No | Group to search within on Server/DC instances (default: 'confluence-users'). Ignored on Cloud. |
+
+<Tip>
+On Server/DC, user search falls back to group member enumeration. Use `group_name` to search within a specific group if the default 'confluence-users' doesn't include all users.
+</Tip>
 
 ---

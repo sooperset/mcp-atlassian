@@ -1,9 +1,9 @@
 ---
 title: "Tools Reference"
-description: "Overview of all 68 MCP tools for Jira and Confluence — organized by category with quick links"
+description: "Overview of all 72 MCP tools for Jira and Confluence — organized by category with quick links"
 ---
 
-MCP Atlassian provides **68 tools** for interacting with Jira and Confluence. Tools are organized by category below.
+MCP Atlassian provides **72 tools** for interacting with Jira and Confluence. Tools are organized by category below.
 
 ## Jira Tools
 
@@ -66,7 +66,7 @@ Toolsets group related tools for easier management via `TOOLSETS` env var or `--
 | `jira_comments` | Yes | `jira_add_comment`, `jira_edit_comment` |
 | `jira_transitions` | Yes | `jira_get_transitions`, `jira_transition_issue` |
 | `jira_projects` | No | `jira_get_all_projects`, `jira_get_project_versions`, `jira_get_project_components`, `jira_create_version`, `jira_batch_create_versions` |
-| `jira_agile` | No | `jira_get_agile_boards`, `jira_get_board_issues`, `jira_get_sprints_from_board`, `jira_get_sprint_issues`, `jira_create_sprint`, `jira_update_sprint` |
+| `jira_agile` | No | `jira_get_agile_boards`, `jira_get_board_issues`, `jira_get_sprints_from_board`, `jira_get_sprint_issues`, `jira_create_sprint`, `jira_update_sprint`, `jira_add_issues_to_sprint` |
 | `jira_links` | No | `jira_get_link_types`, `jira_link_to_epic`, `jira_create_issue_link`, `jira_create_remote_issue_link`, `jira_remove_issue_link` |
 | `jira_worklog` | No | `jira_get_worklog`, `jira_add_worklog` |
 | `jira_attachments` | No | `jira_download_attachments`, `jira_get_issue_images` |
@@ -81,8 +81,8 @@ Toolsets group related tools for easier management via `TOOLSETS` env var or `--
 
 | Toolset | Core | Tools |
 |---------|:----:|-------|
-| `confluence_pages` | Yes | `confluence_search`, `confluence_get_page`, `confluence_get_page_children`, `confluence_get_page_history`, `confluence_create_page`, `confluence_update_page`, `confluence_delete_page` |
-| `confluence_comments` | Yes | `confluence_get_comments`, `confluence_add_comment` |
+| `confluence_pages` | Yes | `confluence_search`, `confluence_get_page`, `confluence_get_page_children`, `confluence_get_page_history`, `confluence_create_page`, `confluence_update_page`, `confluence_delete_page`, `confluence_move_page`, `confluence_get_page_diff` |
+| `confluence_comments` | Yes | `confluence_get_comments`, `confluence_add_comment`, `confluence_reply_to_comment` |
 | `confluence_labels` | No | `confluence_get_labels`, `confluence_add_label` |
 | `confluence_users` | No | `confluence_search_user` |
 | `confluence_analytics` | No | `confluence_get_page_views` |
@@ -93,7 +93,7 @@ Toolsets group related tools for easier management via `TOOLSETS` env var or `--
 # To restrict to core toolsets plus specific extras:
 TOOLSETS=default,jira_agile,jira_attachments
 
-# Enable all toolsets (68 tools)
+# Enable all toolsets (72 tools)
 TOOLSETS=all
 
 # Command line

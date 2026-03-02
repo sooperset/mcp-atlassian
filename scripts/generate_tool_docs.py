@@ -52,6 +52,7 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_get_sprint_issues",
         "jira_create_sprint",
         "jira_update_sprint",
+        "jira_add_issues_to_sprint",
     ],
     "jira-comments-worklogs": [
         "jira_add_comment",
@@ -60,6 +61,9 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_add_worklog",
         "jira_batch_get_changelogs",
         "jira_get_user_profile",
+        "jira_get_issue_watchers",
+        "jira_add_watcher",
+        "jira_remove_watcher",
     ],
     "jira-links-versions": [
         "jira_get_link_types",
@@ -97,6 +101,8 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "confluence_delete_page",
         "confluence_get_page_children",
         "confluence_get_page_history",
+        "confluence_move_page",
+        "confluence_get_page_diff",
     ],
     "confluence-search": [
         "confluence_search",
@@ -114,6 +120,7 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
     "confluence-comments": [
         "confluence_add_comment",
         "confluence_get_comments",
+        "confluence_reply_to_comment",
         "confluence_get_labels",
         "confluence_add_label",
         "confluence_get_page_views",
