@@ -13,7 +13,11 @@ from fastmcp import Context
 from fastmcp.server.dependencies import get_http_request
 from starlette.requests import Request
 
+import os
+
 from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
+from mcp_atlassian.utils.env import is_env_ssl_verify
+from mcp_atlassian.utils.urls import is_atlassian_cloud_url
 from mcp_atlassian.jira import JiraConfig, JiraFetcher
 from mcp_atlassian.servers.context import MainAppContext
 from mcp_atlassian.utils.oauth import OAuthConfig
@@ -337,28 +341,55 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
         confluence_token_header = service_headers.get(
             "X-Atlassian-Confluence-Personal-Token"
         )
-
+        confluence_email_header = service_headers.get("X-Atlassian-Confluence-Email")
         if (
             user_auth_type == "pat"
             and confluence_url_header
             and confluence_token_header
             and not hasattr(request.state, "user_atlassian_token")
         ):
-            logger.info(
-                f"Creating header-based ConfluenceFetcher with URL: {confluence_url_header} and PAT token"
-            )
-            header_config = ConfluenceConfig(
-                url=confluence_url_header,
-                auth_type="pat",
-                personal_token=confluence_token_header,
-                ssl_verify=True,
-                spaces_filter=None,
-                http_proxy=None,
-                https_proxy=None,
-                no_proxy=None,
-                socks_proxy=None,
-                custom_headers=None,
-            )
+            # Detect if the URL is a Cloud instance (atlassian.net)
+            _is_cloud = is_atlassian_cloud_url(confluence_url_header)
+            _ssl_verify = is_env_ssl_verify("CONFLUENCE_SSL_VERIFY")
+            _http_proxy = os.getenv("CONFLUENCE_HTTP_PROXY", os.getenv("HTTP_PROXY"))
+            _https_proxy = os.getenv("CONFLUENCE_HTTPS_PROXY", os.getenv("HTTPS_PROXY"))
+            _no_proxy = os.getenv("CONFLUENCE_NO_PROXY", os.getenv("NO_PROXY"))
+
+            if _is_cloud and confluence_email_header:
+                # Cloud uses Basic auth (email + API token)
+                logger.info(
+                    f"Creating header-based ConfluenceFetcher (Cloud Basic auth) with URL: {confluence_url_header} and email: {confluence_email_header}"
+                )
+                header_config = ConfluenceConfig(
+                    url=confluence_url_header,
+                    auth_type="basic",
+                    username=confluence_email_header,
+                    api_token=confluence_token_header,
+                    ssl_verify=_ssl_verify,
+                    spaces_filter=None,
+                    http_proxy=_http_proxy,
+                    https_proxy=_https_proxy,
+                    no_proxy=_no_proxy,
+                    socks_proxy=None,
+                    custom_headers=None,
+                )
+            else:
+                # Server/DC uses PAT auth (Bearer token)
+                logger.info(
+                    f"Creating header-based ConfluenceFetcher (PAT auth) with URL: {confluence_url_header}"
+                )
+                header_config = ConfluenceConfig(
+                    url=confluence_url_header,
+                    auth_type="pat",
+                    personal_token=confluence_token_header,
+                    ssl_verify=_ssl_verify,
+                    spaces_filter=None,
+                    http_proxy=_http_proxy,
+                    https_proxy=_https_proxy,
+                    no_proxy=_no_proxy,
+                    socks_proxy=None,
+                    custom_headers=None,
+                )
             try:
                 header_confluence_fetcher = ConfluenceFetcher(config=header_config)
                 current_user_data = header_confluence_fetcher.get_current_user_info()

@@ -372,7 +372,7 @@ class UserTokenMiddleware:
                 b"x-atlassian-confluence-personal-token"
             )
             confluence_url_header = headers.get(b"x-atlassian-confluence-url")
-
+            confluence_email_header = headers.get(b"x-atlassian-confluence-email")
             # Convert service header bytes to strings
             jira_token_str = (
                 jira_token_header.decode("latin-1") if jira_token_header else None
@@ -390,7 +390,11 @@ class UserTokenMiddleware:
                 if confluence_url_header
                 else None
             )
-
+            confluence_email_str = (
+                confluence_email_header.decode("latin-1")
+                if confluence_email_header
+                else None
+            )
             # Build service headers dict
             service_headers = {}
             if jira_token_str:
@@ -403,7 +407,8 @@ class UserTokenMiddleware:
                 )
             if confluence_url_str:
                 service_headers["X-Atlassian-Confluence-Url"] = confluence_url_str
-
+            if confluence_email_str:
+                service_headers["X-Atlassian-Confluence-Email"] = confluence_email_str
             scope["state"]["atlassian_service_headers"] = service_headers
             if service_headers:
                 logger.debug(
