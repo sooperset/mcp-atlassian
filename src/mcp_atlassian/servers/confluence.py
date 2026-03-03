@@ -25,6 +25,29 @@ from mcp_atlassian.utils.media import (
 logger = logging.getLogger(__name__)
 
 
+_GET_PAGE_INCLUDE_SECTIONS = frozenset({"comments", "labels", "views"})
+
+
+def _parse_get_page_include(include: str | None) -> set[str]:
+    """Parse confluence_get_page include sections."""
+    if not include:
+        return set()
+
+    sections: set[str] = set()
+    for raw_section in include.split(","):
+        section = raw_section.strip().lower()
+        if not section:
+            continue
+        if section in _GET_PAGE_INCLUDE_SECTIONS:
+            sections.add(section)
+        else:
+            logger.warning(
+                "Ignoring unsupported confluence_get_page include section: %s",
+                raw_section.strip(),
+            )
+    return sections
+
+
 confluence_mcp = FastMCP(
     name="Confluence MCP Service",
     instructions="Provides tools for interacting with Atlassian Confluence.",
@@ -178,6 +201,17 @@ async def get_page(
             default=True,
         ),
     ] = True,
+    include: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Comma-separated sections to inline in the response, "
+                "avoiding extra tool calls. Supported: "
+                "comments, labels, views"
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Get content of a specific Confluence page by its ID, or by its title and space key.
 
@@ -188,9 +222,11 @@ async def get_page(
         space_key: The key of the space. Must be used with 'title'.
         include_metadata: Whether to include page metadata.
         convert_to_markdown: Convert content to markdown (true) or keep raw HTML (false).
+        include: Comma-separated enrichments to inline (comments, labels, views).
 
     Returns:
-        JSON string representing the page content and/or metadata, or an error if not found or parameters are invalid.
+        JSON string representing the page content and/or metadata, or an error
+        if not found or parameters are invalid.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
     page_object = None
@@ -236,10 +272,56 @@ async def get_page(
             ensure_ascii=False,
         )
 
+    result: dict[str, object]
     if include_metadata:
         result = {"metadata": page_object.to_simplified_dict()}
     else:
         result = {"content": {"value": page_object.content}}
+
+    # Inline requested enrichments to avoid extra tool calls
+    sections = _parse_get_page_include(include)
+    if sections:
+        resolved_page_id = str(page_object.id)
+
+        if "comments" in sections:
+            try:
+                comments = confluence_fetcher.get_page_comments(
+                    resolved_page_id,
+                )
+                result["comments"] = [
+                    comment.to_simplified_dict() for comment in comments
+                ]
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Failed to inline comments for page %s",
+                    resolved_page_id,
+                )
+                result["comments"] = []
+
+        if "labels" in sections:
+            try:
+                labels = confluence_fetcher.get_page_labels(resolved_page_id)
+                result["labels"] = [label.to_simplified_dict() for label in labels]
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Failed to inline labels for page %s",
+                    resolved_page_id,
+                )
+                result["labels"] = []
+
+        if "views" in sections:
+            try:
+                views = confluence_fetcher.get_page_views(
+                    page_id=resolved_page_id, include_title=False
+                )
+                result["views"] = views.to_simplified_dict()
+            except Exception:  # noqa: BLE001
+                # Graceful degradation for Server/DC (analytics API unavailable)
+                logger.debug(
+                    "Views unavailable for page %s (expected on Server/DC)",
+                    resolved_page_id,
+                )
+                result["views"] = {}
 
     return json.dumps(result, indent=2, ensure_ascii=False)
 
