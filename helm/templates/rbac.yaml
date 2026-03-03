@@ -1,0 +1,24 @@
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "mcp-atlassian.fullname" . }}
+  labels:
+    {{- include "mcp-atlassian.labels" . | nindent 4 }}
+rules: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "mcp-atlassian.fullname" . }}
+  labels:
+    {{- include "mcp-atlassian.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "mcp-atlassian.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "mcp-atlassian.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

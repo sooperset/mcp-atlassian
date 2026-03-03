@@ -332,3 +332,54 @@ def test_update_sprint_exception(sprints_mixin):
 
     assert result is None
     sprints_mixin.jira.update_partially_sprint.assert_called_once()
+
+
+# ============================================================================
+# add_issues_to_sprint tests
+# ============================================================================
+
+
+def test_add_issues_to_sprint_single_key(sprints_mixin):
+    """Test add_issues_to_sprint with a single issue key."""
+    sprints_mixin.jira.post.return_value = None
+
+    result = sprints_mixin.add_issues_to_sprint("100", ["PROJ-1"])
+
+    assert result is True
+    sprints_mixin.jira.post.assert_called_once_with(
+        "rest/agile/1.0/sprint/100/issue",
+        data={"issues": ["PROJ-1"]},
+    )
+
+
+def test_add_issues_to_sprint_multiple_keys(sprints_mixin):
+    """Test add_issues_to_sprint with multiple issue keys."""
+    sprints_mixin.jira.post.return_value = None
+
+    result = sprints_mixin.add_issues_to_sprint("200", ["PROJ-1", "PROJ-2", "PROJ-3"])
+
+    assert result is True
+    sprints_mixin.jira.post.assert_called_once_with(
+        "rest/agile/1.0/sprint/200/issue",
+        data={"issues": ["PROJ-1", "PROJ-2", "PROJ-3"]},
+    )
+
+
+def test_add_issues_to_sprint_http_error(sprints_mixin):
+    """Test add_issues_to_sprint propagates HTTPError."""
+    sprints_mixin.jira.post.side_effect = requests.HTTPError(
+        response=MagicMock(content="Sprint not found")
+    )
+
+    with pytest.raises(requests.HTTPError):
+        sprints_mixin.add_issues_to_sprint("999", ["PROJ-1"])
+
+    sprints_mixin.jira.post.assert_called_once()
+
+
+def test_add_issues_to_sprint_generic_exception(sprints_mixin):
+    """Test add_issues_to_sprint propagates generic exceptions."""
+    sprints_mixin.jira.post.side_effect = Exception("Connection error")
+
+    with pytest.raises(Exception, match="Connection error"):
+        sprints_mixin.add_issues_to_sprint("100", ["PROJ-1"])

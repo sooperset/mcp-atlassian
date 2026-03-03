@@ -1,0 +1,6 @@
+example: |
+  {"project_key": "PROJ", "issue_type": "Task", "summary": "Implement new feature", "description": "## Requirements\n\n- Feature A\n- Feature B"}
+tips: |
+  Use Markdown in the description — it's automatically converted to ADF (Cloud) or wiki markup (Server/DC). For epics, provide `epic_name` parameter.
+platform_notes: |
+  Cloud uses ADF format internally (auto-converted from Markdown). Server/DC uses wiki markup.

@@ -15,7 +15,7 @@ class UsersMixin(ConfluenceClient):
     """Mixin for Confluence user operations."""
 
     def get_user_details_by_accountid(
-        self, account_id: str, expand: str = None
+        self, account_id: str, expand: str | None = None
     ) -> dict[str, Any]:
         """Get user details by account ID.
 
@@ -32,7 +32,7 @@ class UsersMixin(ConfluenceClient):
         return self.confluence.get_user_details_by_accountid(account_id, expand)
 
     def get_user_details_by_username(
-        self, username: str, expand: str = None
+        self, username: str, expand: str | None = None
     ) -> dict[str, Any]:
         """Get user details by username.
 

@@ -1,0 +1,6 @@
+example: |
+  {"issue_key": "PROJ-123", "fields": "summary,status,assignee", "comment_limit": 5}
+tips: |
+  Use `fields: "*all"` to get all fields including custom ones. Use `expand: "renderedFields"` for rendered HTML content.
+platform_notes: |
+  Custom field IDs differ between Cloud and Server/DC. Use `jira_search_fields` to discover field IDs.

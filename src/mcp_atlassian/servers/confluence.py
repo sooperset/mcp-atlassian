@@ -7,7 +7,7 @@ import mimetypes
 from typing import Annotated
 
 from fastmcp import Context, FastMCP
-from mcp.types import BlobResourceContents, EmbeddedResource, TextContent
+from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
 from pydantic import BeforeValidator, Field
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
@@ -16,10 +16,15 @@ from mcp_atlassian.servers.dependencies import get_confluence_fetcher
 from mcp_atlassian.utils.decorators import (
     check_write_access,
 )
+from mcp_atlassian.utils.media import (
+    ATTACHMENT_MAX_BYTES,
+    fetch_and_encode_attachment,
+    is_image_attachment,
+)
+from mcp_atlassian.utils.urls import resolve_relative_url
 
 logger = logging.getLogger(__name__)
 
-_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024  # 50 MB
 
 confluence_mcp = FastMCP(
     name="Confluence MCP Service",
@@ -28,7 +33,7 @@ confluence_mcp = FastMCP(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read"},
+    tags={"confluence", "read", "toolset:confluence_pages"},
     annotations={"title": "Search Content", "readOnlyHint": True},
 )
 async def search(
@@ -120,7 +125,7 @@ async def search(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read"},
+    tags={"confluence", "read", "toolset:confluence_pages"},
     annotations={"title": "Get Page", "readOnlyHint": True},
 )
 async def get_page(
@@ -241,7 +246,7 @@ async def get_page(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read"},
+    tags={"confluence", "read", "toolset:confluence_pages"},
     annotations={"title": "Get Page Children", "readOnlyHint": True},
 )
 async def get_page_children(
@@ -341,7 +346,59 @@ async def get_page_children(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read"},
+    tags={"confluence", "read", "toolset:confluence_pages"},
+    annotations={"title": "Get Space Page Tree", "readOnlyHint": True},
+)
+async def get_space_page_tree(
+    ctx: Context,
+    space_key: Annotated[
+        str,
+        Field(description="Space key"),
+    ],
+    limit: Annotated[
+        int,
+        Field(
+            description="Max pages to fetch",
+            default=100,
+            ge=1,
+            le=1000,
+        ),
+    ] = 100,
+) -> str:
+    """Get page hierarchy for a Confluence space as a flat list.
+
+    Returns pages with parent_id and depth attributes for token-efficient
+    processing. Filter by depth to focus on relevant sections, or find
+    pages by title. Much more efficient than rendering full ASCII trees.
+
+    Use this to understand space organization before creating/moving pages.
+
+    Args:
+        ctx: The FastMCP context.
+        space_key: Space key identifier.
+        limit: Maximum pages to fetch (start with 100 for faster results).
+
+    Returns:
+        JSON with space_key, total_pages, and pages array containing
+        {id, title, parent_id, position, depth} for each page.
+        Root pages have parent_id: null and depth: 0.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    tree_data = confluence_fetcher.get_space_page_tree(space_key=space_key, limit=limit)
+
+    result: dict[str, object] = dict(tree_data)
+
+    # has_more is computed by the fetcher from the API's _links.next signal
+    if tree_data.get("has_more"):
+        result["hint"] = (
+            f"Results truncated at {limit} pages. Increase limit to see more."
+        )
+
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_comments"},
     annotations={"title": "Get Comments", "readOnlyHint": True},
 )
 async def get_comments(
@@ -373,7 +430,7 @@ async def get_comments(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read"},
+    tags={"confluence", "read", "toolset:confluence_labels"},
     annotations={"title": "Get Labels", "readOnlyHint": True},
 )
 async def get_labels(
@@ -406,7 +463,7 @@ async def get_labels(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "write"},
+    tags={"confluence", "write", "toolset:confluence_labels"},
     annotations={"title": "Add Label", "destructiveHint": True},
 )
 @check_write_access
@@ -459,7 +516,7 @@ async def add_label(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "write"},
+    tags={"confluence", "write", "toolset:confluence_pages"},
     annotations={"title": "Create Page", "destructiveHint": True},
 )
 @check_write_access
@@ -500,6 +557,13 @@ async def create_page(
             default=False,
         ),
     ] = False,
+    include_content: Annotated[
+        bool,
+        Field(
+            description="(Optional) Whether to include page content in the response. Defaults to false since callers already have the content at create time",
+            default=False,
+        ),
+    ] = False,
     emoji: Annotated[
         str | None,
         Field(
@@ -518,6 +582,7 @@ async def create_page(
         parent_id: Optional parent page ID.
         content_format: The format of the content ('markdown', 'wiki', or 'storage').
         enable_heading_anchors: Whether to enable heading anchors (markdown only).
+        include_content: Whether to include page content in the response.
         emoji: Optional page title emoji (icon shown in navigation).
 
     Returns:
@@ -555,6 +620,8 @@ async def create_page(
         emoji=emoji,
     )
     result = page.to_simplified_dict()
+    if not include_content:
+        result.pop("content", None)
     return json.dumps(
         {"message": "Page created successfully", "page": result},
         indent=2,
@@ -563,7 +630,7 @@ async def create_page(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "write"},
+    tags={"confluence", "write", "toolset:confluence_pages"},
     annotations={"title": "Update Page", "destructiveHint": True},
 )
 @check_write_access
@@ -602,6 +669,13 @@ async def update_page(
             default=False,
         ),
     ] = False,
+    include_content: Annotated[
+        bool,
+        Field(
+            description="(Optional) Whether to include page content in the response. Defaults to false since callers already have the content at update time",
+            default=False,
+        ),
+    ] = False,
     emoji: Annotated[
         str | None,
         Field(
@@ -622,6 +696,7 @@ async def update_page(
         parent_id: Optional new parent page ID.
         content_format: The format of the content ('markdown', 'wiki', or 'storage').
         enable_heading_anchors: Whether to enable heading anchors (markdown only).
+        include_content: Whether to include page content in the response.
         emoji: Optional page title emoji (icon shown in navigation).
 
     Returns:
@@ -661,6 +736,8 @@ async def update_page(
         emoji=emoji,
     )
     page_data = updated_page.to_simplified_dict()
+    if not include_content:
+        page_data.pop("content", None)
     return json.dumps(
         {"message": "Page updated successfully", "page": page_data},
         indent=2,
@@ -669,7 +746,7 @@ async def update_page(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "write"},
+    tags={"confluence", "write", "toolset:confluence_pages"},
     annotations={"title": "Delete Page", "destructiveHint": True},
 )
 @check_write_access
@@ -714,7 +791,86 @@ async def delete_page(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "write"},
+    tags={"confluence", "write", "toolset:confluence_pages"},
+    annotations={"title": "Move Page", "destructiveHint": True},
+)
+@check_write_access
+async def move_page(
+    ctx: Context,
+    page_id: Annotated[str, Field(description="ID of the page to move")],
+    target_parent_id: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Target parent page ID. If omitted with target_space_key, "
+                "moves to space root."
+            ),
+            default=None,
+        ),
+    ] = None,
+    target_space_key: Annotated[
+        str | None,
+        Field(
+            description="Target space key for cross-space moves",
+            default=None,
+        ),
+    ] = None,
+    position: Annotated[
+        str,
+        Field(
+            description=(
+                "Position: 'append' (default, move as child of target), "
+                "'above' (move before target as sibling), "
+                "or 'below' (move after target as sibling)"
+            ),
+            default="append",
+        ),
+    ] = "append",
+) -> str:
+    """Move a Confluence page to a new parent or space.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page to move.
+        target_parent_id: Target parent page ID.
+        target_space_key: Target space key for cross-space moves.
+        position: Position relative to target ('append', 'above', or 'below').
+
+    Returns:
+        JSON string representing the moved page object.
+
+    Raises:
+        ValueError: If neither target_parent_id nor target_space_key
+            is provided, or if Confluence client is not configured.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        moved_page = confluence_fetcher.move_page(
+            page_id=page_id,
+            target_parent_id=target_parent_id,
+            target_space_key=target_space_key,
+            position=position,
+        )
+        page_data = moved_page.to_simplified_dict()
+        return json.dumps(
+            {"message": "Page moved successfully", "page": page_data},
+            indent=2,
+            ensure_ascii=False,
+        )
+    except ValueError:
+        raise
+    except Exception as e:
+        logger.error(f"Error moving Confluence page {page_id}: {str(e)}")
+        response = {
+            "success": False,
+            "message": f"Error moving page {page_id}",
+            "error": str(e),
+        }
+        return json.dumps(response, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_comments"},
     annotations={"title": "Add Comment", "destructiveHint": True},
 )
 @check_write_access
@@ -723,16 +879,14 @@ async def add_comment(
     page_id: Annotated[
         str, Field(description="The ID of the page to add a comment to")
     ],
-    content: Annotated[
-        str, Field(description="The comment content in Markdown format")
-    ],
+    body: Annotated[str, Field(description="The comment content in Markdown format")],
 ) -> str:
     """Add a comment to a Confluence page.
 
     Args:
         ctx: The FastMCP context.
         page_id: The ID of the page to add a comment to.
-        content: The comment content in Markdown format.
+        body: The comment content in Markdown format.
 
     Returns:
         JSON string representing the created comment.
@@ -742,7 +896,7 @@ async def add_comment(
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
     try:
-        comment = confluence_fetcher.add_comment(page_id=page_id, content=content)
+        comment = confluence_fetcher.add_comment(page_id=page_id, content=body)
         if comment:
             comment_data = comment.to_simplified_dict()
             response = {
@@ -767,7 +921,60 @@ async def add_comment(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read"},
+    tags={"confluence", "write", "toolset:confluence_comments"},
+    annotations={"title": "Reply to Comment", "destructiveHint": True},
+)
+@check_write_access
+async def reply_to_comment(
+    ctx: Context,
+    comment_id: Annotated[
+        str, Field(description="The ID of the parent comment to reply to")
+    ],
+    body: Annotated[str, Field(description="The reply content in Markdown format")],
+) -> str:
+    """Reply to an existing comment thread on a Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        comment_id: The ID of the parent comment to reply to.
+        body: The reply content in Markdown format.
+
+    Returns:
+        JSON string representing the created reply comment.
+
+    Raises:
+        ValueError: If in read-only mode or Confluence client is unavailable.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        comment = confluence_fetcher.reply_to_comment(
+            comment_id=comment_id, content=body
+        )
+        if comment:
+            comment_data = comment.to_simplified_dict()
+            response = {
+                "success": True,
+                "message": "Reply added successfully",
+                "comment": comment_data,
+            }
+        else:
+            response = {
+                "success": False,
+                "message": f"Unable to reply to comment {comment_id}. API request completed but reply creation unsuccessful.",
+            }
+    except Exception as e:
+        logger.error(f"Error replying to comment {comment_id}: {str(e)}")
+        response = {
+            "success": False,
+            "message": f"Error replying to comment {comment_id}",
+            "error": str(e),
+        }
+
+    return json.dumps(response, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_users"},
     annotations={"title": "Search User", "readOnlyHint": True},
 )
 async def search_user(
@@ -793,13 +1000,25 @@ async def search_user(
             le=50,
         ),
     ] = 10,
+    group_name: Annotated[
+        str,
+        Field(
+            description=(
+                "Group to search within on Server/DC instances "
+                "(default: 'confluence-users'). "
+                "Ignored on Cloud."
+            ),
+            default="confluence-users",
+        ),
+    ] = "confluence-users",
 ) -> str:
-    """Search Confluence users using CQL.
+    """Search Confluence users using CQL (Cloud) or group member API (Server/DC).
 
     Args:
         ctx: The FastMCP context.
         query: Search query - a CQL query string for user search.
         limit: Maximum number of results (1-50).
+        group_name: Group to search within on Server/DC.
 
     Returns:
         JSON string representing a list of simplified Confluence user search result objects.
@@ -815,7 +1034,9 @@ async def search_user(
         logger.info(f"Converting simple search term to user CQL: {query}")
 
     try:
-        user_results = confluence_fetcher.search_user(query, limit=limit)
+        user_results = confluence_fetcher.search_user(
+            query, limit=limit, group_name=group_name
+        )
         search_results = [user.to_simplified_dict() for user in user_results]
         return json.dumps(search_results, indent=2, ensure_ascii=False)
     except MCPAtlassianAuthenticationError as e:
@@ -840,7 +1061,7 @@ async def search_user(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read"},
+    tags={"confluence", "read", "toolset:confluence_pages"},
     annotations={"title": "Get Page History", "readOnlyHint": True},
 )
 async def get_page_history(
@@ -920,7 +1141,84 @@ async def get_page_history(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read", "analytics"},
+    tags={"confluence", "read", "toolset:confluence_pages"},
+    annotations={"title": "Get Page Version Diff", "readOnlyHint": True},
+)
+async def get_page_diff(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(
+            description=(
+                "Confluence page ID (numeric ID, can be found in the page URL). "
+                "For example, in 'https://example.atlassian.net/wiki/spaces/TEAM/"
+                "pages/123456789/Page+Title', the page ID is '123456789'."
+            )
+        ),
+    ],
+    from_version: Annotated[
+        int,
+        Field(
+            description="Source version number",
+            ge=1,
+        ),
+    ],
+    to_version: Annotated[
+        int,
+        Field(
+            description="Target version number",
+            ge=1,
+        ),
+    ],
+) -> str:
+    """Get a unified diff between two versions of a Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: Confluence page ID.
+        from_version: Source version number.
+        to_version: Target version number.
+
+    Returns:
+        JSON string with page info and unified diff.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        result = confluence_fetcher.get_page_version_diff(
+            page_id=page_id,
+            from_version=from_version,
+            to_version=to_version,
+        )
+        return json.dumps(result, indent=2, ensure_ascii=False)
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error getting page diff: {e}")
+        return json.dumps(
+            {
+                "error": "Authentication failed. Please check your credentials.",
+                "details": str(e),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(
+            f"Error getting diff for page {page_id} "
+            f"(v{from_version} -> v{to_version}): {e}"
+        )
+        return json.dumps(
+            {
+                "error": f"Failed to get page diff: {e}",
+                "page_id": page_id,
+                "from_version": from_version,
+                "to_version": to_version,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "analytics", "toolset:confluence_analytics"},
     annotations={"title": "Get Page Views", "readOnlyHint": True},
 )
 async def get_page_views(
@@ -990,7 +1288,7 @@ async def get_page_views(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "write", "attachments"},
+    tags={"confluence", "write", "attachments", "toolset:confluence_attachments"},
     annotations={"title": "Upload Attachment", "destructiveHint": True},
 )
 @check_write_access
@@ -1072,7 +1370,7 @@ async def upload_attachment(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "write", "attachments"},
+    tags={"confluence", "write", "attachments", "toolset:confluence_attachments"},
     annotations={"title": "Upload Multiple Attachments", "destructiveHint": True},
 )
 @check_write_access
@@ -1089,11 +1387,11 @@ async def upload_attachments(
         ),
     ],
     file_paths: Annotated[
-        list[str],
+        str,
         Field(
             description=(
-                "List of file paths to upload. Can be absolute or relative paths. "
-                "Examples: ['./file1.pdf', './file2.png'], ['C:\\\\docs\\\\report.docx', 'D:\\\\image.jpg']. "
+                "Comma-separated list of file paths to upload. Can be absolute or relative paths. "
+                "Examples: './file1.pdf,./file2.png' or 'C:\\docs\\report.docx,D:\\image.jpg'. "
                 "All files uploaded with same comment/minor_edit settings."
             )
         ),
@@ -1141,9 +1439,11 @@ async def upload_attachments(
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
+    paths_list = [p.strip() for p in file_paths.split(",") if p.strip()]
+
     results = confluence_fetcher.upload_attachments(
         content_id=content_id,
-        file_paths=file_paths,
+        file_paths=paths_list,
         comment=comment,
         minor_edit=minor_edit,
     )
@@ -1159,7 +1459,7 @@ async def upload_attachments(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read", "attachments"},
+    tags={"confluence", "read", "attachments", "toolset:confluence_attachments"},
     annotations={"title": "Get Content Attachments", "readOnlyHint": True},
 )
 async def get_attachments(
@@ -1264,7 +1564,7 @@ async def get_attachments(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read", "attachments"},
+    tags={"confluence", "read", "attachments", "toolset:confluence_attachments"},
     annotations={"title": "Download Attachment", "readOnlyHint": True},
 )
 async def download_attachment(
@@ -1326,9 +1626,7 @@ async def download_attachment(
                 ),
             )
 
-        if download_url.startswith("/"):
-            base_url = confluence_fetcher.config.url.rstrip("/")
-            download_url = f"{base_url}{download_url}"
+        download_url = resolve_relative_url(download_url, confluence_fetcher.config.url)
 
         filename = attachment_data.get("title") or attachment_id
         mime_type = (
@@ -1338,7 +1636,7 @@ async def download_attachment(
         )
         file_size = attachment_data.get("extensions", {}).get("fileSize")
 
-        if file_size is not None and file_size > _ATTACHMENT_MAX_BYTES:
+        if file_size is not None and file_size > ATTACHMENT_MAX_BYTES:
             return TextContent(
                 type="text",
                 text=json.dumps(
@@ -1357,11 +1655,21 @@ async def download_attachment(
                 ),
             )
 
-        resp = confluence_fetcher.confluence._session.get(download_url, stream=True)
-        resp.raise_for_status()
-        data_bytes = b"".join(resp.iter_content(chunk_size=8192))
+        data_bytes = confluence_fetcher.fetch_attachment_content(download_url)
+        if data_bytes is None:
+            return TextContent(
+                type="text",
+                text=json.dumps(
+                    {
+                        "success": False,
+                        "error": (f"Failed to download attachment {attachment_id}"),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+            )
 
-        if len(data_bytes) > _ATTACHMENT_MAX_BYTES:
+        if len(data_bytes) > ATTACHMENT_MAX_BYTES:
             return TextContent(
                 type="text",
                 text=json.dumps(
@@ -1406,7 +1714,7 @@ async def download_attachment(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read", "attachments"},
+    tags={"confluence", "read", "attachments", "toolset:confluence_attachments"},
     annotations={"title": "Download All Content Attachments", "readOnlyHint": True},
 )
 async def download_content_attachments(
@@ -1490,54 +1798,44 @@ async def download_content_attachments(
             continue
 
         filename = attachment.title or "unknown"
-        mime_type = (
-            attachment.media_type
-            or mimetypes.guess_type(filename)[0]
-            or "application/octet-stream"
-        )
 
         if (
             attachment.file_size is not None
-            and attachment.file_size > _ATTACHMENT_MAX_BYTES
+            and attachment.file_size > ATTACHMENT_MAX_BYTES
         ):
             failed.append(
                 {
                     "filename": filename,
                     "error": (
-                        f"File is {attachment.file_size} bytes which exceeds "
-                        "the 50 MB inline limit."
+                        f"File is {attachment.file_size} bytes "
+                        "which exceeds the 50 MB inline limit."
                     ),
                 }
             )
             continue
 
-        download_url = attachment.download_url
-        if download_url.startswith("/"):
-            base_url = confluence_fetcher.config.url.rstrip("/")
-            download_url = f"{base_url}{download_url}"
+        download_url = resolve_relative_url(
+            attachment.download_url, confluence_fetcher.config.url
+        )
 
-        try:
-            resp = confluence_fetcher.confluence._session.get(download_url, stream=True)
-            resp.raise_for_status()
-            data_bytes = b"".join(resp.iter_content(chunk_size=8192))
-        except Exception as exc:
-            failed.append({"filename": filename, "error": str(exc)})
+        encoded, mime_type, fetched_bytes = fetch_and_encode_attachment(
+            fetch_fn=confluence_fetcher.fetch_attachment_content,
+            url=download_url,
+            filename=filename,
+            mime_type=attachment.media_type,
+        )
+        if encoded is None:
+            if fetched_bytes > 0:
+                error_msg = (
+                    f"Downloaded size {fetched_bytes} bytes "
+                    "exceeds the 50 MB inline limit."
+                )
+            else:
+                error_msg = "Fetch failed"
+            failed.append({"filename": filename, "error": error_msg})
             continue
 
-        if len(data_bytes) > _ATTACHMENT_MAX_BYTES:
-            failed.append(
-                {
-                    "filename": filename,
-                    "error": (
-                        f"Downloaded size {len(data_bytes)} bytes exceeds "
-                        "the 50 MB inline limit."
-                    ),
-                }
-            )
-            continue
-
-        encoded = base64.b64encode(data_bytes).decode("ascii")
-        fetched.append({"filename": filename, "size": len(data_bytes)})
+        fetched.append({"filename": filename, "size": fetched_bytes})
         contents.append(
             EmbeddedResource(
                 type="resource",
@@ -1567,7 +1865,7 @@ async def download_content_attachments(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "write", "attachments"},
+    tags={"confluence", "write", "attachments", "toolset:confluence_attachments"},
     annotations={"title": "Delete Attachment", "destructiveHint": True},
 )
 @check_write_access
@@ -1618,3 +1916,158 @@ async def delete_attachment(
         indent=2,
         ensure_ascii=False,
     )
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "attachments", "toolset:confluence_attachments"},
+    annotations={"title": "Get Page Images", "readOnlyHint": True},
+)
+async def get_page_images(
+    ctx: Context,
+    content_id: Annotated[
+        str,
+        Field(
+            description=(
+                "The ID of the Confluence page or blog post to retrieve "
+                "images from. Example: '123456789'"
+            )
+        ),
+    ],
+) -> list[TextContent | ImageContent]:
+    """Get all images attached to a Confluence page as inline image content.
+
+    Filters attachments to images only (PNG, JPEG, GIF, WebP, SVG, BMP)
+    and returns them as base64-encoded ImageContent that clients can
+    render directly. Non-image attachments are excluded.
+
+    Files with ambiguous MIME types (application/octet-stream) are
+    detected by filename extension as a fallback. Images larger than
+    50 MB are skipped with an error entry in the summary.
+
+    Args:
+        ctx: The FastMCP context.
+        content_id: The ID of the content.
+
+    Returns:
+        A list with a text summary followed by one ImageContent per
+        successfully downloaded image.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    contents: list[TextContent | ImageContent] = []
+
+    attachments_result = confluence_fetcher.get_content_attachments(content_id)
+
+    if not attachments_result.get("success"):
+        contents.append(
+            TextContent(
+                type="text",
+                text=json.dumps(attachments_result, indent=2, ensure_ascii=False),
+            )
+        )
+        return contents
+
+    attachment_data = attachments_result.get("attachments", [])
+
+    # Filter to image attachments
+    image_attachments: list[tuple[dict[str, object], str]] = []
+    for att_dict in attachment_data:
+        if not isinstance(att_dict, dict):
+            continue
+        media_type = att_dict.get("extensions", {}).get("mediaType") or att_dict.get(
+            "metadata", {}
+        ).get("mediaType")
+        filename = att_dict.get("title")
+        is_img, resolved_mime = is_image_attachment(media_type, filename)
+        if is_img:
+            image_attachments.append((att_dict, resolved_mime))
+
+    if not image_attachments:
+        contents.append(
+            TextContent(
+                type="text",
+                text=json.dumps(
+                    {
+                        "success": True,
+                        "content_id": content_id,
+                        "total_images": 0,
+                        "downloaded": 0,
+                        "failed": [],
+                        "message": "No image attachments found",
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+            )
+        )
+        return contents
+
+    fetched: list[dict[str, object]] = []
+    failed: list[dict[str, object]] = []
+
+    for att_dict, resolved_mime in image_attachments:
+        attachment = ConfluenceAttachment.from_api_response(att_dict)
+        filename = attachment.title or "unknown"
+
+        if (
+            attachment.file_size is not None
+            and attachment.file_size > ATTACHMENT_MAX_BYTES
+        ):
+            failed.append(
+                {
+                    "filename": filename,
+                    "error": (
+                        f"Image is {attachment.file_size} bytes "
+                        "which exceeds the 50 MB inline limit."
+                    ),
+                }
+            )
+            continue
+
+        download_url = attachment.download_url or ""
+        if not download_url:
+            failed.append({"filename": filename, "error": "No download URL"})
+            continue
+
+        download_url = resolve_relative_url(download_url, confluence_fetcher.config.url)
+
+        encoded, _, fetched_bytes = fetch_and_encode_attachment(
+            fetch_fn=confluence_fetcher.fetch_attachment_content,
+            url=download_url,
+            filename=filename,
+            mime_type=resolved_mime,
+        )
+        if encoded is None:
+            if fetched_bytes > 0:
+                error_msg = (
+                    f"Downloaded size {fetched_bytes} bytes "
+                    "exceeds the 50 MB inline limit."
+                )
+            else:
+                error_msg = "Fetch failed"
+            failed.append({"filename": filename, "error": error_msg})
+            continue
+
+        fetched.append({"filename": filename, "size": fetched_bytes})
+        contents.append(
+            ImageContent(
+                type="image",
+                data=encoded,
+                mimeType=resolved_mime,
+            )
+        )
+
+    summary: dict[str, object] = {
+        "success": True,
+        "content_id": content_id,
+        "total_images": len(image_attachments),
+        "downloaded": len(fetched),
+        "failed": failed,
+    }
+    contents.insert(
+        0,
+        TextContent(
+            type="text",
+            text=json.dumps(summary, indent=2, ensure_ascii=False),
+        ),
+    )
+    return contents

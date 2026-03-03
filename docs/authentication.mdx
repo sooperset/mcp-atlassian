@@ -1,9 +1,7 @@
 ---
 title: "Authentication"
-description: "Configure authentication for MCP Atlassian - API tokens, PATs, and OAuth 2.0"
+description: "Configure authentication for MCP Atlassian — API tokens, PATs, and OAuth 2.0"
 ---
-
-# Authentication
 
 MCP Atlassian supports three authentication methods depending on your Atlassian deployment type.
 
@@ -60,7 +58,8 @@ CONFLUENCE_PERSONAL_TOKEN=your_personal_access_token
 ```
 
 <Note>
-For self-signed certificates, set `JIRA_SSL_VERIFY=false` and/or `CONFLUENCE_SSL_VERIFY=false`.
+Enterprise CA certificates in the OS trust store (Windows Certificate Store, macOS Keychain, Linux system CAs) are trusted automatically.
+For self-signed certificates not in the OS trust store, set `JIRA_SSL_VERIFY=false` and/or `CONFLUENCE_SSL_VERIFY=false`.
 </Note>
 
 ## OAuth 2.0 (Cloud) - Advanced
@@ -111,6 +110,25 @@ ATLASSIAN_OAUTH_SCOPE=read:jira-work write:jira-work read:confluence-content.all
 Include `offline_access` in your scope to allow automatic token refresh.
 </Warning>
 
+### MCP OAuth Proxy (DCR + Discovery)
+
+Enable this when running a remote MCP endpoint that should onboard MCP clients
+through the standard OAuth discovery/DCR flow (`401` challenge, `/.well-known/*`,
+`/register`, `/authorize`, `/token`, callback).
+
+```bash
+ATLASSIAN_OAUTH_PROXY_ENABLE=true
+PUBLIC_BASE_URL=https://mcp.example.com/mcp-atlassian
+ATLASSIAN_OAUTH_ALLOWED_CLIENT_REDIRECT_URIS=http://localhost:*,http://127.0.0.1:*,https://chatgpt.com/connector_platform_oauth_redirect
+ATLASSIAN_OAUTH_ALLOWED_GRANT_TYPES=authorization_code,refresh_token
+ATLASSIAN_OAUTH_REQUIRE_CONSENT=true
+```
+
+<Note>
+This mode is opt-in. Existing API token, PAT, and header-based OAuth flows continue
+to work without enabling the proxy.
+</Note>
+
 ### Bring Your Own Token (BYOT)
 
 If you manage OAuth tokens externally (e.g., through a central identity provider):
@@ -143,4 +161,4 @@ For multi-tenant applications where users provide their own OAuth tokens:
    - `Authorization: Bearer <user_oauth_token>`
    - `X-Atlassian-Cloud-Id: <user_cloud_id>`
 
-See [HTTP Transport](/http-transport) for more details on multi-user authentication.
+See [HTTP Transport](/docs/http-transport) for more details on multi-user authentication.

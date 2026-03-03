@@ -1,6 +1,6 @@
 """Tests for the Jira Worklog mixin."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
@@ -89,8 +89,8 @@ class TestWorklogMixin:
         assert len(result) == 1
         assert result[0]["id"] == "10001"
         assert result[0]["comment"] == "Work item 1"
-        assert result[0]["timeSpent"] == "1h"
-        assert result[0]["timeSpentSeconds"] == 3600
+        assert result[0]["time_spent"] == "1h"
+        assert result[0]["time_spent_seconds"] == 3600
         assert result[0]["author"] == "Test User"
 
     def test_get_worklogs_with_multiple_entries(self, worklog_mixin):
@@ -125,8 +125,8 @@ class TestWorklogMixin:
         assert len(result) == 2
         assert result[0]["id"] == "10001"
         assert result[1]["id"] == "10002"
-        assert result[0]["timeSpentSeconds"] == 3600
-        assert result[1]["timeSpentSeconds"] == 7200
+        assert result[0]["time_spent_seconds"] == 3600
+        assert result[1]["time_spent_seconds"] == 7200
 
     def test_get_worklogs_with_missing_fields(self, worklog_mixin):
         """Test get_worklogs with missing fields."""
@@ -150,8 +150,8 @@ class TestWorklogMixin:
         assert len(result) == 1
         assert result[0]["id"] == "10001"
         assert result[0]["comment"] == ""
-        assert result[0]["timeSpent"] == ""
-        assert result[0]["timeSpentSeconds"] == 0
+        assert result[0]["time_spent"] == ""
+        assert result[0]["time_spent_seconds"] == 0
         assert result[0]["author"] == "Unknown"
 
     def test_get_worklogs_with_empty_response(self, worklog_mixin):
@@ -196,6 +196,8 @@ class TestWorklogMixin:
         worklog_mixin.jira.resource_url.return_value = (
             "https://jira.example.com/rest/api/2/issue"
         )
+        # Mock _markdown_to_jira to return plain string (v2 path)
+        worklog_mixin._markdown_to_jira = MagicMock(return_value="Added work")
 
         # Call the method
         result = worklog_mixin.add_worklog("TEST-123", "1h", comment="Added work")
@@ -205,8 +207,8 @@ class TestWorklogMixin:
         worklog_mixin.jira.post.assert_called_once()
         assert result["id"] == "10001"
         assert result["comment"] == "Added work"
-        assert result["timeSpent"] == "1h"
-        assert result["timeSpentSeconds"] == 3600
+        assert result["time_spent"] == "1h"
+        assert result["time_spent_seconds"] == 3600
         assert result["author"] == "Test User"
         assert result["original_estimate_updated"] is False
         assert result["remaining_estimate_updated"] is False
@@ -353,3 +355,113 @@ class TestWorklogMixin:
         # Verify post was still called (worklog added despite estimate error)
         worklog_mixin.jira.post.assert_called_once()
         assert result["original_estimate_updated"] is False
+
+    # --- ADF routing tests (Cloud v3 vs Server/DC v2) ---
+
+    @pytest.fixture
+    def server_worklog_mixin(self, jira_config_factory):
+        """Create a WorklogMixin configured for Server/DC."""
+        config = jira_config_factory(url="https://jira.example.com")
+        mixin = WorklogMixin(config=config)
+        mixin.jira = MagicMock()
+        mixin._clean_text = MagicMock(side_effect=lambda text: text if text else "")
+        mixin._markdown_to_jira = MagicMock(return_value="wiki markup comment")
+        return mixin
+
+    def test_add_worklog_cloud_adf_uses_v3_api(self, worklog_mixin):
+        """Cloud + ADF dict comment routes through _post_api3."""
+        adf_comment = {
+            "type": "doc",
+            "version": 1,
+            "content": [],
+        }
+        mock_result = {
+            "id": "10001",
+            "comment": adf_comment,
+            "created": "2024-01-01T10:00:00.000+0000",
+            "updated": "2024-01-01T10:00:00.000+0000",
+            "started": "2024-01-01T09:00:00.000+0000",
+            "timeSpent": "1h",
+            "timeSpentSeconds": 3600,
+            "author": {"displayName": "Test User"},
+        }
+        worklog_mixin._markdown_to_jira = Mock(return_value=adf_comment)
+        worklog_mixin._post_api3 = Mock(return_value=mock_result)
+
+        result = worklog_mixin.add_worklog("TEST-123", "1h", comment="test")
+
+        worklog_mixin._post_api3.assert_called_once_with(
+            "issue/TEST-123/worklog",
+            data={
+                "timeSpentSeconds": 3600,
+                "comment": adf_comment,
+            },
+            params=None,
+        )
+        worklog_mixin.jira.post.assert_not_called()
+        assert result["id"] == "10001"
+
+    def test_add_worklog_cloud_adf_with_remaining_estimate(self, worklog_mixin):
+        """Cloud + ADF + remaining_estimate passes params to v3."""
+        adf_comment = {
+            "type": "doc",
+            "version": 1,
+            "content": [],
+        }
+        mock_result = {
+            "id": "10002",
+            "comment": adf_comment,
+            "created": "2024-01-01T10:00:00.000+0000",
+            "updated": "2024-01-01T10:00:00.000+0000",
+            "started": "2024-01-01T09:00:00.000+0000",
+            "timeSpent": "1h",
+            "timeSpentSeconds": 3600,
+            "author": {"displayName": "Test User"},
+        }
+        worklog_mixin._markdown_to_jira = Mock(return_value=adf_comment)
+        worklog_mixin._post_api3 = Mock(return_value=mock_result)
+
+        result = worklog_mixin.add_worklog(
+            "TEST-123",
+            "1h",
+            comment="test",
+            remaining_estimate="3h",
+        )
+
+        worklog_mixin._post_api3.assert_called_once_with(
+            "issue/TEST-123/worklog",
+            data={
+                "timeSpentSeconds": 3600,
+                "comment": adf_comment,
+            },
+            params={
+                "adjustEstimate": "new",
+                "newEstimate": "3h",
+            },
+        )
+        assert result["remaining_estimate_updated"] is True
+
+    def test_add_worklog_server_uses_v2_api(self, server_worklog_mixin):
+        """Server/DC + wiki string routes through jira.post (v2)."""
+        mock_result = {
+            "id": "10003",
+            "comment": "wiki markup comment",
+            "created": "2024-01-01T10:00:00.000+0000",
+            "updated": "2024-01-01T10:00:00.000+0000",
+            "started": "2024-01-01T09:00:00.000+0000",
+            "timeSpent": "1h",
+            "timeSpentSeconds": 3600,
+            "author": {"displayName": "Test User"},
+        }
+        server_worklog_mixin.jira.post.return_value = mock_result
+        server_worklog_mixin.jira.resource_url.return_value = (
+            "https://jira.example.com/rest/api/2/issue"
+        )
+        server_worklog_mixin._post_api3 = Mock()
+
+        result = server_worklog_mixin.add_worklog("TEST-123", "1h", comment="test")
+
+        server_worklog_mixin.jira.post.assert_called_once()
+        server_worklog_mixin.jira.resource_url.assert_called_with("issue")
+        server_worklog_mixin._post_api3.assert_not_called()
+        assert result["id"] == "10003"

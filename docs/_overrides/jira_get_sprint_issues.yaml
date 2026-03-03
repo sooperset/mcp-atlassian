@@ -1,0 +1,4 @@
+example: |
+  {"sprint_id": "42", "fields": "summary,status,assignee,story_points"}
+tips: |
+  Get the sprint ID from `jira_get_sprints_from_board` first.

@@ -1,0 +1,4 @@
+example: |
+  {"issue_key": "SD-456", "metrics": "cycle_time,time_in_status"}
+tips: |
+  Configure SLA calculation via `JIRA_SLA_*` environment variables. Set `JIRA_SLA_WORKING_HOURS_ONLY=true` for business hours only.

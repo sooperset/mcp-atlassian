@@ -1,6 +1,6 @@
 # MCP Atlassian - Development Guide
 
-Model Context Protocol (MCP) server for Atlassian products (Jira & Confluence). Python ≥3.10, <3.14.
+Model Context Protocol (MCP) server for Atlassian products (Jira & Confluence). Python ≥3.10.
 
 ## Build, Test, and Lint
 

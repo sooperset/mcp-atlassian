@@ -26,7 +26,7 @@
 - **FastMCP servers**: `servers/main.py` → lifespan → dependency injection via `get_jira_fetcher(ctx)` / `get_confluence_fetcher(ctx)`.
 - **Tool naming**: `{service}_{action}_{target}` (e.g., `jira_create_issue`, `confluence_get_page`).
 - **Config**: Environment-based `from_env()` factory on `JiraConfig` / `ConfluenceConfig` dataclasses.
-- **Auth**: Basic (Cloud), PAT (Server/DC), OAuth 2.0 (Cloud) — with multi-tenant header support.
+- **Auth**: Basic (Cloud + Server/DC), PAT (Server/DC), OAuth 2.0 (Cloud + Server/DC) — with multi-tenant header support.
 - **Models**: All extend `ApiModel` → `from_api_response()` + `to_simplified_dict()`.
 
 ---
@@ -73,7 +73,7 @@ uv run pytest --cov=src/mcp_atlassian --cov-report=term-missing  # coverage
 ## Gotchas
 
 - **Cloud vs Server/DC**: API endpoints, field names, and auth methods differ. Always check `is_cloud` before assuming behavior.
-- **OAuth = Cloud only**, PAT = Server/DC only. Basic auth (user + API token) works on Cloud.
+- **OAuth 2.0**: Supported on both Cloud and Server/Data Center. PAT is also available for Server/DC. Basic auth (user + API token) works on both Cloud and Server/DC.
 - **Read-only mode**: `READ_ONLY_MODE=true` blocks all write tools at server level.
 - **Type checking**: pre-commit runs **mypy** (strict mode).
 - **Environment**: See `.env.example` for all configuration options (auth, proxy, SLA, filtering).

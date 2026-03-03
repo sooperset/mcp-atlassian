@@ -29,6 +29,7 @@ MANIFEST
 # Environments
 .env
 .env.*
+!tests/e2e/docker/.env.example
 .venv
 env/
 venv/
@@ -74,4 +75,8 @@ playground/
 .cursor*
 
 # Claude
-.claude/
+.claude/worktrees/
+.claude/settings.local.json
+
+# Dev docs (local task documents)
+dev/

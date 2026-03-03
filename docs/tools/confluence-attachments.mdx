@@ -1,0 +1,129 @@
+---
+title: "Confluence Attachments"
+description: "Upload, download, list, and manage page attachments"
+---
+
+### Upload Attachment
+
+Upload an attachment to Confluence content (page or blog post).
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `content_id` | `string` | Yes | The ID of the Confluence content (page or blog post) to attach the file to. Page IDs can be found in the page URL or by using the search/get_page tools. Example: '123456789' |
+| `file_path` | `string` | Yes | Full path to the file to upload. Can be absolute (e.g., '/home/user/document.pdf' or 'C:\Users\name\file.docx') or relative to the current working directory (e.g., './uploads/document.pdf'). If a file with the same name already exists, a new version will be created. |
+| `comment` | `string` | No | (Optional) A comment describing this attachment or version. Visible in the attachment history. Example: 'Updated Q4 2024 figures' |
+| `minor_edit` | `boolean` | No | (Optional) Whether this is a minor edit. If true, watchers are not notified. Default is false. |
+**Example:**
+
+```json
+{"page_id": "12345678", "file_path": "/path/to/diagram.png", "comment": "Updated architecture diagram"}
+```
+
+<Tip>
+Supports any file type. If an attachment with the same name exists, it's updated (new version created).
+</Tip>
+
+
+---
+
+### Upload Multiple Attachments
+
+Upload multiple attachments to Confluence content in a single operation.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `content_id` | `string` | Yes | The ID of the Confluence content (page or blog post) to attach files to. Example: '123456789'. If uploading multiple files with the same names, new versions will be created automatically. |
+| `file_paths` | `string` | Yes | Comma-separated list of file paths to upload. Can be absolute or relative paths. Examples: './file1.pdf,./file2.png' or 'C:\docs\report.docx,D:\image.jpg'. All files uploaded with same comment/minor_edit settings. |
+| `comment` | `string` | No | (Optional) Comment for all uploaded attachments. Visible in version history. Example: 'Q4 2024 batch upload' |
+| `minor_edit` | `boolean` | No | (Optional) Whether this is a minor edit. If true, watchers are not notified. Default is false. |
+
+---
+
+### Get Content Attachments
+
+List all attachments for a Confluence content item (page or blog post).
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `content_id` | `string` | Yes | The ID of the Confluence content (page or blog post) to list attachments for. Example: '123456789' |
+| `start` | `integer` | No | (Optional) Starting index for pagination. Use 0 for the first page. To get the next page, add the 'limit' value to 'start'. Default: 0 |
+| `limit` | `integer` | No | (Optional) Maximum number of attachments to return per request (1-100). Use pagination (start/limit) for large attachment lists. Default: 50 |
+| `filename` | `string` | No | (Optional) Filter results to only attachments matching this filename. Exact match only. Example: 'report.pdf' |
+| `media_type` | `string` | No | (Optional) Filter by MIME type. **Note**: Confluence API returns 'application/octet-stream' for most binary files (PNG, JPG, PDF) instead of specific MIME types like 'image/png'. For more reliable filtering, use the 'filename' parameter. Examples: 'application/octet-stream' (binary files), 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' (for .docx) |
+**Example:**
+
+```json
+{"content_id": "12345678", "media_type": "application/octet-stream"}
+```
+
+<Tip>
+Use `media_type="application/octet-stream"` for binary files (Confluence returns this for most files including images). Use `filename` parameter for specific files.
+</Tip>
+
+
+<Warning>
+Confluence API returns generic MIME types — use the `mediaTypeDescription` field for human-readable type info.
+</Warning>
+
+
+---
+
+### Download Attachment
+
+Download an attachment from Confluence as an embedded resource.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `attachment_id` | `string` | Yes | The ID of the attachment to download (e.g., 'att123456789'). Find attachment IDs using get_attachments tool. Example workflow: get_attachments(content_id) → use returned ID here. |
+
+---
+
+### Download All Content Attachments
+
+Download all attachments for a Confluence content item as embedded resources.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `content_id` | `string` | Yes | The ID of the Confluence content (page or blog post) to download attachments from. Example: '123456789' |
+
+---
+
+### Delete Attachment
+
+Permanently delete an attachment from Confluence.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `attachment_id` | `string` | Yes | The ID of the attachment to delete. Attachment IDs can be found using the get_attachments tool. Example: 'att123456789'. **Warning**: This permanently deletes the attachment and all its versions. |
+
+---
+
+### Get Page Images
+
+Get all images attached to a Confluence page as inline image content.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `content_id` | `string` | Yes | The ID of the Confluence page or blog post to retrieve images from. Example: '123456789' |
+
+---

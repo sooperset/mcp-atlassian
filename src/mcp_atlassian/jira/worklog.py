@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 from ..models import JiraWorklog
+from ..models.jira.adf import adf_to_text
 from ..utils import parse_date
 from .client import JiraClient
 
@@ -93,9 +94,7 @@ class WorklogMixin(JiraClient):
 
             # Convert Markdown comment to Jira format if provided
             if comment:
-                # Check if _markdown_to_jira is available (from CommentsMixin)
-                if hasattr(self, "_markdown_to_jira"):
-                    comment = self._markdown_to_jira(comment)
+                comment = self._markdown_to_jira(comment)
 
             # Step 1: Update original estimate if provided (separate API call)
             original_estimate_updated = False
@@ -128,24 +127,36 @@ class WorklogMixin(JiraClient):
                 remaining_estimate_updated = True
 
             # Step 4: Add the worklog with remaining estimate adjustment
-            base_url = self.jira.resource_url("issue")
-            url = f"{base_url}/{issue_key}/worklog"
-
-            result = self.jira.post(url, data=worklog_data, params=params)
+            if isinstance(worklog_data.get("comment"), dict) and self.config.is_cloud:
+                result = self._post_api3(
+                    f"issue/{issue_key}/worklog",
+                    data=worklog_data,
+                    params=params or None,
+                )
+            else:
+                base_url = self.jira.resource_url("issue")
+                url = f"{base_url}/{issue_key}/worklog"
+                result = self.jira.post(url, data=worklog_data, params=params)
             if not isinstance(result, dict):
                 msg = f"Unexpected return value type from `jira.post`: {type(result)}"
                 logger.error(msg)
                 raise TypeError(msg)
 
             # Format and return the result
+            comment_raw = result.get("comment", "")
+            comment_text = (
+                adf_to_text(comment_raw)
+                if isinstance(comment_raw, dict)
+                else comment_raw
+            )
             return {
                 "id": result.get("id"),
-                "comment": self._clean_text(result.get("comment", "")),
+                "comment": self._clean_text(comment_text or ""),
                 "created": str(parse_date(result.get("created", ""))),
                 "updated": str(parse_date(result.get("updated", ""))),
                 "started": str(parse_date(result.get("started", ""))),
-                "timeSpent": result.get("timeSpent", ""),
-                "timeSpentSeconds": result.get("timeSpentSeconds", 0),
+                "time_spent": result.get("timeSpent", ""),
+                "time_spent_seconds": result.get("timeSpentSeconds", 0),
                 "author": result.get("author", {}).get("displayName", "Unknown"),
                 "original_estimate_updated": original_estimate_updated,
                 "remaining_estimate_updated": remaining_estimate_updated,
@@ -220,8 +231,8 @@ class WorklogMixin(JiraClient):
                         "created": str(parse_date(worklog.get("created", ""))),
                         "updated": str(parse_date(worklog.get("updated", ""))),
                         "started": str(parse_date(worklog.get("started", ""))),
-                        "timeSpent": worklog.get("timeSpent", ""),
-                        "timeSpentSeconds": worklog.get("timeSpentSeconds", 0),
+                        "time_spent": worklog.get("timeSpent", ""),
+                        "time_spent_seconds": worklog.get("timeSpentSeconds", 0),
                         "author": worklog.get("author", {}).get(
                             "displayName", "Unknown"
                         ),
