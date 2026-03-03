@@ -115,7 +115,7 @@ class EpicsMixin(
         fields: dict[str, Any],
         summary: str,
         kwargs: dict[str, Any],
-        project_key: str = None,
+        project_key: str | None = None,
     ) -> None:
         """
         Prepare epic-specific fields for issue creation.

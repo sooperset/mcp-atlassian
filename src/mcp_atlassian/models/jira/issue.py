@@ -517,7 +517,7 @@ class JiraIssue(ApiModel, TimestampMixin):
             result["status"] = self.status.to_simplified_dict()
 
         # Add issue type if available and requested
-        if self.issue_type and should_include_field("issue_type"):
+        if self.issue_type and should_include_field("issuetype"):
             result["issue_type"] = self.issue_type.to_simplified_dict()
 
         # Add priority if available and requested
@@ -571,7 +571,7 @@ class JiraIssue(ApiModel, TimestampMixin):
         if self.components and should_include_field("components"):
             result["components"] = self.components
 
-        if self.fix_versions and should_include_field("fix_versions"):
+        if self.fix_versions and should_include_field("fixVersions"):
             result["fix_versions"] = self.fix_versions
 
         # Add epic fields if available and requested
@@ -695,7 +695,13 @@ class JiraIssue(ApiModel, TimestampMixin):
             if "value" in field_value:
                 return field_value["value"]
             elif "name" in field_value:
-                return field_value["name"]
+                # Standard Jira reference objects (priority, user, group) have a
+                # "self" URL key — simplify those to just the name. Plugin data
+                # objects (e.g. Okapya checklist items) don't have "self" and
+                # should be preserved in full to retain metadata like "checked".
+                if "self" in field_value:
+                    return field_value["name"]
+                return field_value
             return field_value
 
         if isinstance(field_value, list):

@@ -5,8 +5,29 @@ import sys
 import threading
 from importlib.metadata import PackageNotFoundError, version
 
+from dotenv import dotenv_values, load_dotenv
+
+# Inject truststore BEFORE any requests/urllib3 imports to ensure the
+# OS-native trust store (e.g. Windows Certificate Store) is used for
+# SSL verification instead of the bundled certifi CA certificates.
+# This must happen before 'requests.adapters' is imported because that
+# module creates a preloaded SSLContext at import time.
+# Read from .env via dotenv_values() since load_dotenv() hasn't run yet.
+if os.getenv(
+    "MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE",
+    dotenv_values().get("MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE") or "true",
+).lower() not in ("false", "0", "no"):
+    try:
+        import truststore
+
+        truststore.inject_into_ssl()
+    except Exception:
+        logging.getLogger("mcp-atlassian").warning(
+            "Failed to inject OS trust store; falling back to bundled certificates",
+            exc_info=True,
+        )
+
 import click
-from dotenv import load_dotenv
 from fastmcp import settings as fastmcp_settings
 
 # Fix high CPU usage on Windows - use SelectorEventLoop instead of ProactorEventLoop
@@ -183,6 +204,10 @@ async def _run_stdio_with_stdin_guard(run_kwargs: dict[str, object]) -> None:
     help="Comma-separated list of tools to enable (enables all if not specified)",
 )
 @click.option(
+    "--toolsets",
+    help="Comma-separated toolset names to enable (all/default/specific names)",
+)
+@click.option(
     "--oauth-client-id",
     help="OAuth 2.0 client ID for Atlassian Cloud",
 )
@@ -230,6 +255,7 @@ def main(
     jira_projects_filter: str | None,
     read_only: bool,
     enabled_tools: str | None,
+    toolsets: str | None,
     oauth_client_id: str | None,
     oauth_client_secret: str | None,
     oauth_redirect_uri: str | None,
@@ -241,9 +267,9 @@ def main(
 
     Supports both Atlassian Cloud and Jira Server/Data Center deployments.
     Authentication methods supported:
-    - Username and API token (Cloud)
+    - Username and API token (Cloud and Server/Data Center)
     - Personal Access Token (Server/Data Center)
-    - OAuth 2.0 (Cloud only)
+    - OAuth 2.0 (Cloud and Data Center)
     """
     # Logging level logic
     if verbose == 1:
@@ -347,6 +373,8 @@ def main(
     # Set env vars for downstream config
     if click_ctx and was_option_provided(click_ctx, "enabled_tools"):
         os.environ["ENABLED_TOOLS"] = enabled_tools
+    if click_ctx and was_option_provided(click_ctx, "toolsets"):
+        os.environ["TOOLSETS"] = toolsets
     if click_ctx and was_option_provided(click_ctx, "confluence_url"):
         os.environ["CONFLUENCE_URL"] = confluence_url
     if click_ctx and was_option_provided(click_ctx, "confluence_username"):
@@ -409,7 +437,7 @@ def main(
             else:
                 log_display_path = fastmcp_settings.streamable_http_path or "/mcp"
 
-        fastmcp_settings.stateless_http = final_stateless
+        run_kwargs["stateless_http"] = final_stateless
 
         logger.info(
             f"Starting server with {final_transport.upper()} transport on http://{final_host}:{final_port}{log_display_path}"

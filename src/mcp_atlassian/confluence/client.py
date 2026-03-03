@@ -35,8 +35,17 @@ class ConfluenceClient:
 
         # Initialize the Confluence client based on auth type
         if self.config.auth_type == "oauth":
-            if not self.config.oauth_config or not self.config.oauth_config.cloud_id:
-                error_msg = "OAuth authentication requires a valid cloud_id"
+            if not self.config.oauth_config:
+                error_msg = "OAuth authentication requires oauth_config"
+                raise ValueError(error_msg)
+
+            # Determine Cloud vs Data Center OAuth
+            is_dc_oauth = (
+                getattr(self.config.oauth_config, "is_data_center", False) is True
+            )
+
+            if not is_dc_oauth and not self.config.oauth_config.cloud_id:
+                error_msg = "Cloud OAuth authentication requires a valid cloud_id"
                 raise ValueError(error_msg)
 
             # Create a session for OAuth
@@ -47,15 +56,22 @@ class ConfluenceClient:
                 error_msg = "Failed to configure OAuth session"
                 raise MCPAtlassianAuthenticationError(error_msg)
 
-            # The Confluence API URL with OAuth is different
-            api_url = f"https://api.atlassian.com/ex/confluence/{self.config.oauth_config.cloud_id}"
+            if is_dc_oauth:
+                # Data Center: use the instance URL directly
+                api_url = self.config.url
+                is_cloud = False
+            else:
+                # Cloud: use the Atlassian Cloud API URL
+                api_url = f"https://api.atlassian.com/ex/confluence/{self.config.oauth_config.cloud_id}"
+                is_cloud = True
 
             # Initialize Confluence with the session
             self.confluence = Confluence(
                 url=api_url,
                 session=session,
-                cloud=True,  # OAuth is only for Cloud
+                cloud=is_cloud,
                 verify_ssl=self.config.ssl_verify,
+                timeout=self.config.timeout,
             )
         elif self.config.auth_type == "pat":
             logger.debug(
@@ -68,6 +84,7 @@ class ConfluenceClient:
                 token=self.config.personal_token,
                 cloud=self.config.is_cloud,
                 verify_ssl=self.config.ssl_verify,
+                timeout=self.config.timeout,
             )
         else:  # basic auth
             logger.debug(
@@ -82,12 +99,18 @@ class ConfluenceClient:
                 password=self.config.api_token,  # API token is used as password
                 cloud=self.config.is_cloud,
                 verify_ssl=self.config.ssl_verify,
+                timeout=self.config.timeout,
             )
             logger.debug(
                 f"Confluence client initialized. "
                 f"Session headers (Authorization masked): "
                 f"{get_masked_session_headers(dict(self.confluence._session.headers))}"
             )
+
+        # Disable trust_env for PAT and OAuth to prevent .netrc from overriding
+        # explicit credentials (#860). Basic auth can safely use .netrc.
+        if self.config.auth_type in ("pat", "oauth"):
+            self.confluence._session.trust_env = False
 
         # Configure SSL verification using the shared utility
         configure_ssl_verification(

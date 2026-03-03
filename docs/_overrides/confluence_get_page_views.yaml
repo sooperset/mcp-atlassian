@@ -1,0 +1,6 @@
+example: |
+  {"page_id": "12345678", "period": "lastMonth"}
+tips: |
+  Useful for identifying popular or stale content. Available periods depend on your Confluence analytics configuration.
+platform_notes: |
+  Analytics features may require additional permissions on Server/DC.

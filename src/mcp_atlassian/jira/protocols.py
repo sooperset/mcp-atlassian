@@ -127,7 +127,7 @@ class EpicOperationsProto(Protocol):
         fields: dict[str, Any],
         summary: str,
         kwargs: dict[str, Any],
-        project_key: str = None,
+        project_key: str | None = None,
     ) -> None:
         """
         Prepare epic-specific fields for issue creation.
@@ -167,6 +167,21 @@ class FieldsOperationsProto(Protocol):
 
         Returns:
             A dictionary mapping lowercase field names and field IDs to actual field IDs.
+        """
+
+    @abstractmethod
+    def _format_field_value_for_write(
+        self, field_id: str, value: Any, field_definition: dict | None
+    ) -> Any:
+        """Format field values for the Jira API.
+
+        Args:
+            field_id: The Jira field ID
+            value: The raw value to format
+            field_definition: Field definition dict, or None
+
+        Returns:
+            Formatted value suitable for the Jira API
         """
 
     @abstractmethod

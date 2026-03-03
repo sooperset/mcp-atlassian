@@ -7,11 +7,12 @@ from typing import Any
 import requests
 from requests.exceptions import HTTPError
 
-from ..exceptions import MCPAtlassianAuthenticationError
 from ..models.jira import JiraSearchResult
+from ..utils.decorators import handle_auth_errors
 from .client import JiraClient
 from .constants import DEFAULT_READ_JIRA_FIELDS
 from .protocols import IssueOperationsProto
+from .utils import quote_jql_identifier_if_needed, sanitize_jql_reserved_words
 
 logger = logging.getLogger("mcp-jira")
 
@@ -19,6 +20,7 @@ logger = logging.getLogger("mcp-jira")
 class SearchMixin(JiraClient, IssueOperationsProto):
     """Mixin for Jira search operations."""
 
+    @handle_auth_errors("Jira API")
     def search_issues(
         self,
         jql: str,
@@ -27,6 +29,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
         limit: int = 50,
         expand: str | None = None,
         projects_filter: str | None = None,
+        page_token: str | None = None,
     ) -> JiraSearchResult:
         """
         Search for issues using JQL (Jira Query Language).
@@ -40,6 +43,8 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             limit: Maximum issues to return
             expand: Optional items to expand (comma-separated)
             projects_filter: Optional comma-separated list of project keys to filter by, overrides config
+            page_token: Optional pagination token from a previous search result.
+                  Cloud only — Server/DC uses start for pagination.
 
         Returns:
             JiraSearchResult object containing issues and metadata (total, start_at, max_results)
@@ -49,6 +54,9 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             Exception: If there is an error searching for issues
         """
         try:
+            # Sanitize JQL reserved words in project key values
+            jql = sanitize_jql_reserved_words(jql)
+
             # Use projects_filter parameter if provided, otherwise fall back to config
             filter_to_use = projects_filter or self.config.projects_filter
 
@@ -58,10 +66,19 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                 projects = [p.strip() for p in filter_to_use.split(",")]
 
                 # Build the project filter query part
+                # Sanitize project names to prevent JQL injection
+                # Escape backslashes before double-quotes to prevent bypass
+                projects = [
+                    p.replace("\\", "\\\\").replace('"', '\\"') for p in projects
+                ]
+
                 if len(projects) == 1:
-                    project_query = f'project = "{projects[0]}"'
+                    quoted = quote_jql_identifier_if_needed(projects[0])
+                    project_query = f"project = {quoted}"
                 else:
-                    quoted_projects = [f'"{p}"' for p in projects]
+                    quoted_projects = [
+                        quote_jql_identifier_if_needed(p) for p in projects
+                    ]
                     projects_list = ", ".join(quoted_projects)
                     project_query = f"project IN ({projects_list})"
 
@@ -109,7 +126,6 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                 fields_list = fields_param.split(",") if fields_param else ["id", "key"]
                 request_body: dict[str, Any] = {
                     "jql": jql,
-                    "maxResults": min(limit, 100),  # v3 API max is 100 per request
                     "fields": fields_list,
                 }
                 # Note: v3 API uses 'expand' as a comma-separated string, not an array
@@ -118,9 +134,15 @@ class SearchMixin(JiraClient, IssueOperationsProto):
 
                 # Fetch issues using v3 API with nextPageToken pagination
                 all_issues: list[dict[str, Any]] = []
-                next_page_token: str | None = None
+                next_page_token: str | None = page_token
 
                 while len(all_issues) < limit:
+                    # Only request the remaining count to avoid over-fetching.
+                    # This ensures the returned nextPageToken aligns with
+                    # the last issue we actually return to the caller.
+                    remaining = limit - len(all_issues)
+                    request_body["maxResults"] = min(remaining, 100)
+
                     if next_page_token:
                         request_body["nextPageToken"] = next_page_token
 
@@ -149,6 +171,8 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                     "startAt": 0,
                     "maxResults": limit,
                 }
+                if next_page_token:
+                    response_dict["nextPageToken"] = next_page_token
 
                 search_result = JiraSearchResult.from_api_response(
                     response_dict,
@@ -175,20 +199,8 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                 # Return the full search result object
                 return search_result
 
-        except HTTPError as http_err:
-            if http_err.response is not None and http_err.response.status_code in [
-                401,
-                403,
-            ]:
-                error_msg = (
-                    f"Authentication failed for Jira API ({http_err.response.status_code}). "
-                    "Token may be expired or invalid. Please verify credentials."
-                )
-                logger.error(error_msg)
-                raise MCPAtlassianAuthenticationError(error_msg) from http_err
-            else:
-                logger.error(f"HTTP error during API call: {http_err}", exc_info=False)
-                raise http_err
+        except HTTPError:
+            raise  # let decorator handle auth errors
         except Exception as e:
             logger.error(f"Error searching issues with JQL '{jql}': {str(e)}")
             raise Exception(f"Error searching issues: {str(e)}") from e
@@ -220,6 +232,9 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             Exception: If there is an error getting board issues
         """
         try:
+            # Sanitize JQL reserved words in project key values
+            jql = sanitize_jql_reserved_words(jql) or jql
+
             # Determine fields_param
             fields_param = fields
             if fields_param is None:

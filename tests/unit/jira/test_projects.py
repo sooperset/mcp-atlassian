@@ -419,11 +419,13 @@ def test_get_project_notification_scheme_exception(projects_mixin: ProjectsMixin
 def test_get_project_issue_types(
     projects_mixin: ProjectsMixin, mock_issue_types: list[dict]
 ):
-    """Test get_project_issue_types method."""
+    """Test get_project_issue_types with new paginated values format."""
     createmeta = {
-        "projects": [
-            {"key": "PROJ1", "name": "Project One", "issuetypes": mock_issue_types}
-        ]
+        "maxResults": 50,
+        "startAt": 0,
+        "total": len(mock_issue_types),
+        "isLast": True,
+        "values": mock_issue_types,
     }
     projects_mixin.jira.issue_createmeta_issuetypes.return_value = createmeta
 
@@ -434,20 +436,36 @@ def test_get_project_issue_types(
     )
 
 
+def test_get_project_issue_types_old_format(
+    projects_mixin: ProjectsMixin, mock_issue_types: list[dict]
+):
+    """Test get_project_issue_types falls back to old projects format."""
+    createmeta = {
+        "projects": [
+            {"key": "PROJ1", "name": "Project One", "issuetypes": mock_issue_types}
+        ]
+    }
+    projects_mixin.jira.issue_createmeta_issuetypes.return_value = createmeta
+
+    result = projects_mixin.get_project_issue_types("PROJ1")
+    assert result == mock_issue_types
+
+
 def test_get_project_issue_types_empty_response(projects_mixin: ProjectsMixin):
     """Test get_project_issue_types method with empty response."""
-    # Empty projects list
-    projects_mixin.jira.issue_createmeta_issuetypes.return_value = {"projects": []}
+    # Empty values list
+    projects_mixin.jira.issue_createmeta_issuetypes.return_value = {
+        "values": [],
+        "total": 0,
+    }
 
     result = projects_mixin.get_project_issue_types("PROJ1")
     assert result == []
     projects_mixin.jira.issue_createmeta_issuetypes.assert_called_once()
 
-    # No issuetypes field
+    # Empty old format fallback
     projects_mixin.jira.issue_createmeta_issuetypes.reset_mock()
-    projects_mixin.jira.issue_createmeta_issuetypes.return_value = {
-        "projects": [{"key": "PROJ1", "name": "Project One"}]
-    }
+    projects_mixin.jira.issue_createmeta_issuetypes.return_value = {"projects": []}
 
     result = projects_mixin.get_project_issue_types("PROJ1")
     assert result == []

@@ -61,11 +61,14 @@ class ConfluenceV2Adapter:
 
             return space_id
 
-        except HTTPError as e:
-            logger.error(f"HTTP error getting space ID for '{space_key}': {e}")
-            raise ValueError(f"Failed to get space ID for '{space_key}': {e}") from e
         except Exception as e:
-            logger.error(f"Error getting space ID for '{space_key}': {e}")
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting space ID for '{space_key}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting space ID for '{space_key}': {e}")
             raise ValueError(f"Failed to get space ID for '{space_key}': {e}") from e
 
     def create_page(
@@ -123,13 +126,14 @@ class ConfluenceV2Adapter:
             # Convert v2 response to v1-compatible format for consistency
             return self._convert_v2_to_v1_format(result, space_key)
 
-        except HTTPError as e:
-            logger.error(f"HTTP error creating page '{title}': {e}")
-            if e.response is not None:
-                logger.error(f"Response content: {e.response.text}")
-            raise ValueError(f"Failed to create page '{title}': {e}") from e
         except Exception as e:
-            logger.error(f"Error creating page '{title}': {e}")
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error creating page '{title}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error creating page '{title}': {e}")
             raise ValueError(f"Failed to create page '{title}': {e}") from e
 
     def _get_page_version(self, page_id: str) -> int:
@@ -159,11 +163,14 @@ class ConfluenceV2Adapter:
 
             return version_number
 
-        except HTTPError as e:
-            logger.error(f"HTTP error getting page version for '{page_id}': {e}")
-            raise ValueError(f"Failed to get page version for '{page_id}': {e}") from e
         except Exception as e:
-            logger.error(f"Error getting page version for '{page_id}': {e}")
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting page version for '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting page version for '{page_id}': {e}")
             raise ValueError(f"Failed to get page version for '{page_id}': {e}") from e
 
     def update_page(
@@ -229,13 +236,14 @@ class ConfluenceV2Adapter:
 
             return self._convert_v2_to_v1_format(result, space_key)
 
-        except HTTPError as e:
-            logger.error(f"HTTP error updating page '{page_id}': {e}")
-            if e.response is not None:
-                logger.error(f"Response content: {e.response.text}")
-            raise ValueError(f"Failed to update page '{page_id}': {e}") from e
         except Exception as e:
-            logger.error(f"Error updating page '{page_id}': {e}")
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error updating page '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error updating page '{page_id}': {e}")
             raise ValueError(f"Failed to update page '{page_id}': {e}") from e
 
     def _get_space_key_from_id(self, space_id: str) -> str:
@@ -265,12 +273,14 @@ class ConfluenceV2Adapter:
 
             return space_key
 
-        except HTTPError as e:
-            logger.error(f"HTTP error getting space key for ID '{space_id}': {e}")
-            # Return the space_id as fallback
-            return space_id
         except Exception as e:
-            logger.error(f"Error getting space key for ID '{space_id}': {e}")
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting space key for ID '{space_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting space key for ID '{space_id}': {e}")
             # Return the space_id as fallback
             return space_id
 
@@ -333,13 +343,14 @@ class ConfluenceV2Adapter:
 
             return v1_compatible
 
-        except HTTPError as e:
-            logger.error(f"HTTP error getting page '{page_id}': {e}")
-            if e.response is not None:
-                logger.error(f"Response content: {e.response.text}")
-            raise ValueError(f"Failed to get page '{page_id}': {e}") from e
         except Exception as e:
-            logger.error(f"Error getting page '{page_id}': {e}")
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting page '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting page '{page_id}': {e}")
             raise ValueError(f"Failed to get page '{page_id}': {e}") from e
 
     def delete_page(self, page_id: str) -> bool:
@@ -372,13 +383,14 @@ class ConfluenceV2Adapter:
             )
             return True
 
-        except HTTPError as e:
-            logger.error(f"HTTP error deleting page '{page_id}': {e}")
-            if e.response is not None:
-                logger.error(f"Response content: {e.response.text}")
-            raise ValueError(f"Failed to delete page '{page_id}': {e}") from e
         except Exception as e:
-            logger.error(f"Error deleting page '{page_id}': {e}")
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error deleting page '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error deleting page '{page_id}': {e}")
             raise ValueError(f"Failed to delete page '{page_id}': {e}") from e
 
     def _convert_v2_to_v1_format(
@@ -422,6 +434,161 @@ class ConfluenceV2Adapter:
 
         return v1_compatible
 
+    def create_footer_comment(
+        self,
+        *,
+        page_id: str | None = None,
+        parent_comment_id: str | None = None,
+        body: str,
+        representation: str = "storage",
+    ) -> dict[str, Any]:
+        """Create a footer comment using the v2 API.
+
+        Either page_id (for top-level comments) or parent_comment_id (for replies)
+        must be provided, but not both.
+
+        Args:
+            page_id: The page ID for top-level comments
+            parent_comment_id: The parent comment ID for replies
+            body: The comment content
+            representation: Content representation format (default: "storage")
+
+        Returns:
+            The created comment data in v1-compatible format
+
+        Raises:
+            ValueError: If both or neither params provided, or if creation fails
+        """
+        if page_id and parent_comment_id:
+            raise ValueError("page_id and parent_comment_id are mutually exclusive")
+        if not page_id and not parent_comment_id:
+            raise ValueError("Either page_id or parent_comment_id must be provided")
+
+        try:
+            data: dict[str, Any] = {
+                "body": {
+                    "representation": representation,
+                    "value": body,
+                },
+            }
+
+            if page_id:
+                data["pageId"] = page_id
+            else:
+                data["parentCommentId"] = parent_comment_id
+
+            url = f"{self.base_url}/api/v2/footer-comments"
+            response = self.session.post(url, json=data)
+            response.raise_for_status()
+
+            result = response.json()
+            logger.debug("Successfully created footer comment with v2 API")
+
+            return self._convert_v2_comment_to_v1_format(result)
+
+        except Exception as e:
+            if isinstance(e, ValueError | HTTPError):
+                raise
+            logger.error(f"Error creating footer comment: {e}")
+            raise ValueError(f"Failed to create footer comment: {e}") from e
+
+    def _convert_v2_comment_to_v1_format(
+        self, v2_response: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Convert v2 comment response to v1-compatible format.
+
+        Maps body.storage.value → body.view.value since
+        ConfluenceComment.from_api_response reads from body.view.value.
+
+        Args:
+            v2_response: The response from v2 API
+
+        Returns:
+            Response formatted like v1 API for compatibility
+        """
+        body_value = v2_response.get("body", {}).get("storage", {}).get("value", "")
+
+        v1_compatible: dict[str, Any] = {
+            "id": v2_response.get("id"),
+            "type": "comment",
+            "status": v2_response.get("status"),
+            "title": v2_response.get("title"),
+            "body": {
+                "view": {
+                    "value": body_value,
+                    "representation": "view",
+                },
+            },
+            "version": v2_response.get("version", {}),
+            "_links": v2_response.get("_links", {}),
+        }
+
+        # Map v2 author to v1 format
+        if author := v2_response.get("author"):
+            v1_compatible["author"] = author
+
+        # Map parentCommentId for model compatibility
+        if parent_id := v2_response.get("parentCommentId"):
+            v1_compatible["parentCommentId"] = parent_id
+
+        # v2 footer-comments endpoint always returns footer comments
+        v1_compatible["extensions"] = {"location": "footer"}
+
+        return v1_compatible
+
+    def move_page(
+        self,
+        page_id: str,
+        position: str = "append",
+        target_id: str | None = None,
+    ) -> None:
+        """Move a page using the v1 REST API.
+
+        Uses PUT /wiki/rest/api/content/{id}/move/{position}/{targetId}
+        which works with OAuth authentication (unlike movepage.action).
+
+        Args:
+            page_id: The ID of the page to move.
+            position: Position relative to target. Valid values:
+                - "append": Move as child of target (default).
+                - "before": Move before target as sibling.
+                - "after": Move after target as sibling.
+            target_id: Target page ID. Required for "append", "before",
+                and "after" positions.
+
+        Raises:
+            ValueError: If move fails.
+            HTTPError: If the API request fails (propagates 401/403).
+        """
+        try:
+            if target_id:
+                url = (
+                    f"{self.base_url}/rest/api/content/{page_id}"
+                    f"/move/{position}/{target_id}"
+                )
+            else:
+                # Move to space root (no target ID)
+                url = f"{self.base_url}/rest/api/content/{page_id}/move/{position}"
+
+            response = self.session.put(url)
+            response.raise_for_status()
+
+            logger.debug(
+                f"Successfully moved page '{page_id}' "
+                f"(position={position}, target={target_id})"
+            )
+
+        except HTTPError as e:
+            if e.response is not None and e.response.status_code in [401, 403]:
+                raise
+            logger.error(f"HTTP error moving page '{page_id}': {e}")
+            if e.response is not None:
+                logger.error(f"Response: {e.response.text}")
+            raise ValueError(f"Failed to move page '{page_id}': {e}") from e
+        except Exception as e:
+            logger.error(f"Error moving page '{page_id}': {e}")
+            raise ValueError(f"Failed to move page '{page_id}': {e}") from e
+
     def get_page_emoji(self, page_id: str) -> str | None:
         """Get the page title emoji from content properties using v2 API.
 
@@ -453,11 +620,14 @@ class ConfluenceV2Adapter:
 
             return None
 
-        except HTTPError as e:
-            logger.debug(f"HTTP error getting emoji for page '{page_id}': {e}")
-            return None
         except Exception as e:
-            logger.debug(f"Error getting emoji for page '{page_id}': {e}")
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.debug(
+                    f"HTTP error getting emoji for page '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.debug(f"Error getting emoji for page '{page_id}': {e}")
             return None
 
     def _set_page_property(
@@ -510,15 +680,16 @@ class ConfluenceV2Adapter:
             response.raise_for_status()
             return True
 
-        except HTTPError as e:
-            logger.debug(
-                f"HTTP error setting property '{property_key}' for page '{page_id}': {e}"
-            )
-            return False
         except Exception as e:
-            logger.debug(
-                f"Error setting property '{property_key}' for page '{page_id}': {e}"
-            )
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.debug(
+                    f"HTTP error setting property '{property_key}' for page "
+                    f"'{page_id}': {e}\nResponse: {e.response.text}"
+                )
+            else:
+                logger.debug(
+                    f"Error setting property '{property_key}' for page '{page_id}': {e}"
+                )
             return False
 
     def set_page_emoji(self, page_id: str, emoji: str | None) -> bool:
@@ -605,15 +776,14 @@ class ConfluenceV2Adapter:
 
             return versions
 
-        except HTTPError as e:
-            logger.error(f"HTTP error getting versions list for page '{page_id}': {e}")
-            if e.response is not None:
-                logger.error(f"Response content: {e.response.text}")
-            raise ValueError(
-                f"Failed to get versions list for page '{page_id}': {e}"
-            ) from e
         except Exception as e:
-            logger.error(f"Error getting versions list for page '{page_id}': {e}")
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting versions list for page '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting versions list for page '{page_id}': {e}")
             raise ValueError(
                 f"Failed to get versions list for page '{page_id}': {e}"
             ) from e
@@ -707,15 +877,14 @@ class ConfluenceV2Adapter:
 
             return v1_compatible
 
-        except HTTPError as e:
-            logger.error(f"HTTP error getting page '{page_id}' version {version}: {e}")
-            if e.response is not None:
-                logger.error(f"Response content: {e.response.text}")
-            raise ValueError(
-                f"Failed to get page '{page_id}' version {version}: {e}"
-            ) from e
         except Exception as e:
-            logger.error(f"Error getting page '{page_id}' version {version}: {e}")
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting page '{page_id}' version {version}: {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting page '{page_id}' version {version}: {e}")
             raise ValueError(
                 f"Failed to get page '{page_id}' version {version}: {e}"
             ) from e
@@ -739,7 +908,7 @@ class ConfluenceV2Adapter:
         """
         try:
             # Use the Analytics API endpoint
-            url = f"{self.base_url}/wiki/rest/api/analytics/content/{page_id}/views"
+            url = f"{self.base_url}/rest/api/analytics/content/{page_id}/views"
 
             response = self.session.get(url)
             response.raise_for_status()
@@ -795,7 +964,7 @@ class ConfluenceV2Adapter:
             ValueError: If page not found or other errors
         """
         try:
-            url = f"{self.base_url}/wiki/api/v2/pages/{page_id}/attachments"
+            url = f"{self.base_url}/api/v2/pages/{page_id}/attachments"
             params: dict[str, Any] = {"start": start, "limit": limit}
 
             if filename:
@@ -847,7 +1016,7 @@ class ConfluenceV2Adapter:
             ValueError: If attachment not found or other errors
         """
         try:
-            url = f"{self.base_url}/wiki/api/v2/attachments/{attachment_id}"
+            url = f"{self.base_url}/api/v2/attachments/{attachment_id}"
 
             response = self.session.get(url)
             response.raise_for_status()
@@ -883,7 +1052,7 @@ class ConfluenceV2Adapter:
             ValueError: If attachment not found or deletion fails
         """
         try:
-            url = f"{self.base_url}/wiki/api/v2/attachments/{attachment_id}"
+            url = f"{self.base_url}/api/v2/attachments/{attachment_id}"
 
             response = self.session.delete(url)
             response.raise_for_status()

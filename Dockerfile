@@ -1,5 +1,5 @@
 # Use a Python image with uv pre-installed
-FROM ghcr.io/astral-sh/uv:python3.10-alpine AS uv
+FROM ghcr.io/astral-sh/uv:python3.13-alpine AS uv
 
 # Install the project into `/app`
 WORKDIR /app
@@ -34,7 +34,7 @@ RUN find /app/.venv -name '__pycache__' -type d -exec rm -rf {} + && \
     echo "Cleaned up .venv"
 
 # Final stage
-FROM python:3.10-alpine
+FROM python:3.13-alpine
 
 # Create a non-root user 'app'
 RUN adduser -D -h /home/app -s /bin/sh app

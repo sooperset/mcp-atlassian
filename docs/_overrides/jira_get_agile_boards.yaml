@@ -1,0 +1,4 @@
+example: |
+  {"board_name": "Sprint Board", "project_key": "PROJ", "board_type": "scrum"}
+tips: |
+  Supports fuzzy search by board name. Combine with `project_key` to narrow results.

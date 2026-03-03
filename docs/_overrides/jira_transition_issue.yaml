@@ -1,0 +1,4 @@
+example: |
+  {"issue_key": "PROJ-123", "transition_name": "Done", "comment": "Closing as completed"}
+tips: |
+  Use `jira_get_transitions` first to see available transitions for the current issue state.

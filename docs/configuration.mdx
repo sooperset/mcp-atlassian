@@ -1,9 +1,7 @@
 ---
 title: "Configuration"
-description: "IDE integration, environment variables, and advanced configuration options"
+description: "Configure MCP Atlassian for Claude Desktop, Cursor, Windsurf, and VS Code with environment variables"
 ---
-
-# Configuration
 
 This guide covers IDE integration, environment variables, and advanced configuration options.
 
@@ -129,6 +127,7 @@ This guide covers IDE integration, environment variables, and advanced configura
 | `CONFLUENCE_API_TOKEN` | Confluence API token (Cloud) |
 | `CONFLUENCE_PERSONAL_TOKEN` | Confluence Personal Access Token (Server/DC) |
 | `CONFLUENCE_SSL_VERIFY` | SSL verification (`true`/`false`) |
+| `MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE` | Use OS native trust store (`true`/`false`, default: `true`) |
 
 ### Filtering Options
 
@@ -137,6 +136,7 @@ This guide covers IDE integration, environment variables, and advanced configura
 | `JIRA_PROJECTS_FILTER` | Limit to specific Jira projects | `PROJ,DEV,SUPPORT` |
 | `CONFLUENCE_SPACES_FILTER` | Limit to specific Confluence spaces | `DEV,TEAM,DOC` |
 | `ENABLED_TOOLS` | Enable only specific tools | `confluence_search,jira_get_issue` |
+| `TOOLSETS` | Enable tool groups (see [Toolset Filtering](#toolset-filtering)) | `default`, `all`, `default,jira_agile` |
 
 ### Server Options
 
@@ -150,6 +150,12 @@ This guide covers IDE integration, environment variables, and advanced configura
 | `MCP_VERBOSE` | Enable verbose logging (`true`/`false`) |
 | `MCP_VERY_VERBOSE` | Enable debug logging (`true`/`false`) |
 | `MCP_LOGGING_STDOUT` | Log to stdout instead of stderr (`true`/`false`) |
+| `ATLASSIAN_OAUTH_PROXY_ENABLE` | Enable OAuth proxy + DCR + `/.well-known/*` routes (`true`/`false`) |
+| `PUBLIC_BASE_URL` | Public base URL for OAuth discovery metadata |
+| `ATLASSIAN_OAUTH_ALLOWED_CLIENT_REDIRECT_URIS` | Comma-separated allowed redirect URI patterns for DCR clients |
+| `ATLASSIAN_OAUTH_ALLOWED_GRANT_TYPES` | Comma-separated grant types allowed during DCR |
+| `ATLASSIAN_OAUTH_REQUIRE_CONSENT` | Require local consent page before upstream redirect (`true`/`false`) |
+| `IGNORE_HEADER_AUTH` | Bypass proxy-injected auth headers. For GCP Cloud Run, AWS ALB deployments where load balancers inject Authorization headers (`true`/`false`) |
 
 See [.env.example](https://github.com/sooperset/mcp-atlassian/blob/main/.env.example) for all available options.
 
@@ -204,3 +210,42 @@ Command-line alternative:
 ```bash
 uvx mcp-atlassian --enabled-tools "confluence_search,jira_get_issue"
 ```
+
+### Toolset Filtering
+
+Toolsets provide group-level tool control. Instead of listing individual tool names,
+enable entire groups of related tools at once using the `TOOLSETS` environment variable.
+
+```bash
+# Restrict to core tools only (~23 tools across 6 core toolsets)
+TOOLSETS=default
+
+# Core tools plus agile boards/sprints
+TOOLSETS=default,jira_agile
+
+# All toolsets (same as current default when TOOLSETS is unset)
+TOOLSETS=all
+```
+
+Command-line alternative:
+```bash
+uvx mcp-atlassian --toolsets "default,jira_agile"
+```
+
+**Core toolsets** (included with `TOOLSETS=default`):
+`jira_issues`, `jira_fields`, `jira_comments`, `jira_transitions`, `confluence_pages`, `confluence_comments`
+
+When both `TOOLSETS` and `ENABLED_TOOLS` are set, they intersect — a tool must pass
+both filters. If `TOOLSETS` is not set, all toolsets are currently enabled.
+
+<Warning>
+In v0.22.0, the default will change from all toolsets to 6 core toolsets only.
+Set `TOOLSETS=all` explicitly to preserve current behavior.
+</Warning>
+
+<Note>
+Unknown toolset names are silently ignored. If **all** names are unknown, no tools are
+enabled (fail-closed behavior to prevent accidental exposure).
+</Note>
+
+See [Toolset Groups](/docs/tools-reference#toolset-groups) for the full list of available toolsets.

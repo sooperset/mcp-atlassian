@@ -1,0 +1,6 @@
+example: |
+  {"query": "type=page AND space=DEV AND title~'Architecture'", "limit": 10}
+tips: |
+  Supports both CQL queries and simple text search. Simple text uses `siteSearch` by default with automatic fallback to `text` search.
+platform_notes: |
+  CQL syntax may differ slightly between Cloud and Server/DC. Personal spaces use `space="~username"` (quoted).

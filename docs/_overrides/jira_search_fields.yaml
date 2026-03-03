@@ -1,0 +1,4 @@
+example: |
+  {"keyword": "story points", "issue_type": "Story", "project_key": "PROJ"}
+tips: |
+  Use this to discover custom field IDs before using them in `jira_create_issue` or `jira_update_issue`.

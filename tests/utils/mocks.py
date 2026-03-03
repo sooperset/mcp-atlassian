@@ -3,9 +3,36 @@
 import os
 from contextlib import contextmanager
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from .factories import AuthConfigFactory, ConfluencePageFactory, JiraIssueFactory
+
+
+def setup_api3_passthrough_mocks(mixin: Any) -> None:
+    """Set up _post_api3/_put_api3 passthrough mocks on a Jira mixin.
+
+    Cloud ADF paths delegate to _post_api3/_put_api3. This helper routes
+    those calls back to jira.create_issue / jira.update_issue so existing
+    mocks continue to work.
+
+    Args:
+        mixin: A JiraFetcher or mixin instance with a ``jira`` attribute.
+    """
+
+    def _mock_post_api3(resource: str, data: dict) -> dict:
+        if resource == "issue":
+            return mixin.jira.create_issue(fields=data.get("fields", data))
+        return mixin.jira.post(resource, data=data)
+
+    def _mock_put_api3(resource: str, data: dict) -> dict:
+        if resource.startswith("issue/"):
+            return mixin.jira.update_issue(
+                issue_key=resource.split("/")[1], update=data
+            )
+        return mixin.jira.put(resource, data=data)
+
+    mixin._post_api3 = Mock(side_effect=_mock_post_api3)
+    mixin._put_api3 = Mock(side_effect=_mock_put_api3)
 
 
 class MockEnvironment:
@@ -193,3 +220,27 @@ class MockPreprocessor:
         preprocessor = MagicMock()
         preprocessor.process.return_value = "<h1>HTML Content</h1>"
         return preprocessor
+
+
+class MockConfluenceClient:
+    """Mock Confluence client for testing user lookups.
+
+    Provides both Cloud (account ID) and Server/DC (username) user
+    detail methods so tests can exercise either code path.
+    """
+
+    def get_user_details_by_accountid(self, account_id: str) -> dict[str, str]:
+        """Mock user details by account ID (Cloud)."""
+        return {
+            "displayName": f"Test User {account_id}",
+            "accountType": "atlassian",
+            "accountStatus": "active",
+        }
+
+    def get_user_details_by_username(self, username: str) -> dict[str, str]:
+        """Mock user details by username (Server/DC)."""
+        return {
+            "displayName": f"Test User {username}",
+            "accountType": "atlassian",
+            "accountStatus": "active",
+        }

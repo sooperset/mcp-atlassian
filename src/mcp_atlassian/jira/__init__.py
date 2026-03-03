@@ -15,6 +15,7 @@ from .comments import CommentsMixin
 from .config import JiraConfig
 from .development import DevelopmentMixin
 from .epics import EpicsMixin
+from .field_options import FieldOptionsMixin
 from .fields import FieldsMixin
 from .forms_api import FormsApiMixin  # Forms REST API
 from .formatting import FormattingMixin
@@ -22,17 +23,20 @@ from .issues import IssuesMixin
 from .links import LinksMixin
 from .metrics import MetricsMixin
 from .projects import ProjectsMixin
+from .queues import QueuesMixin
 from .sla import SLAMixin
 from .search import SearchMixin
 from .sprints import SprintsMixin
 from .transitions import TransitionsMixin
 from .users import UsersMixin
+from .watchers import WatchersMixin
 from .worklog import WorklogMixin
 
 
 class JiraFetcher(
     ProjectsMixin,
     FieldsMixin,
+    FieldOptionsMixin,
     FormsApiMixin,  # Use new Forms REST API instead of FormsMixin
     FormattingMixin,
     TransitionsMixin,
@@ -42,8 +46,10 @@ class JiraFetcher(
     SearchMixin,
     IssuesMixin,
     UsersMixin,
+    WatchersMixin,
     BoardsMixin,
     SprintsMixin,
+    QueuesMixin,
     AttachmentsMixin,
     LinksMixin,
     MetricsMixin,
@@ -64,11 +70,13 @@ class JiraFetcher(
     - SearchMixin: Search operations
     - IssuesMixin: Issue operations
     - UsersMixin: User operations
+    - WatchersMixin: Watcher operations
     - BoardsMixin: Board operations
     - SprintsMixin: Sprint operations
     - AttachmentsMixin: Attachment download operations
     - LinksMixin: Issue link operations
     - MetricsMixin: Issue metrics and date operations
+    - QueuesMixin: Service Desk queue read operations (Server/DC)
     - SLAMixin: SLA calculations
 
     The class structure is designed to maintain backward compatibility while

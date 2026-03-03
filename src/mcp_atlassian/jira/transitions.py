@@ -5,8 +5,8 @@ from typing import Any
 
 from requests.exceptions import HTTPError
 
-from ..exceptions import MCPAtlassianAuthenticationError
 from ..models import JiraIssue, JiraTransition
+from ..utils.decorators import handle_auth_errors
 from .client import JiraClient
 from .protocols import IssueOperationsProto, UsersOperationsProto
 
@@ -16,6 +16,7 @@ logger = logging.getLogger("mcp-jira")
 class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
     """Mixin for Jira transition operations."""
 
+    @handle_auth_errors("Jira API")
     def get_available_transitions(self, issue_key: str) -> list[dict[str, Any]]:
         """
         Get the available status transitions for an issue.
@@ -24,10 +25,12 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             issue_key: The issue key (e.g. 'PROJ-123')
 
         Returns:
-            List of available transitions with id, name, and to status details
+            List of available transitions with id, name,
+            and to status details
 
         Raises:
-            MCPAtlassianAuthenticationError: If authentication fails with the Jira API (401/403)
+            MCPAtlassianAuthenticationError: If authentication fails
+                with the Jira API (401/403)
             Exception: If there is an error getting transitions
         """
         try:
@@ -53,7 +56,7 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
                 # Option 2: 'to_status' field directly
                 elif "to_status" in transition:
                     to_status = transition.get("to_status")
-                # Option 3: 'status' field directly (sometimes used in tests)
+                # Option 3: 'status' field directly
                 elif "status" in transition:
                     to_status = transition.get("status")
 
@@ -64,20 +67,8 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
                 result.append(transition_info)
 
             return result
-        except HTTPError as http_err:
-            if http_err.response is not None and http_err.response.status_code in [
-                401,
-                403,
-            ]:
-                error_msg = (
-                    f"Authentication failed for Jira API ({http_err.response.status_code}). "
-                    "Token may be expired or invalid. Please verify credentials."
-                )
-                logger.error(error_msg)
-                raise MCPAtlassianAuthenticationError(error_msg) from http_err
-            else:
-                logger.error(f"HTTP error during API call: {http_err}", exc_info=False)
-                raise http_err
+        except HTTPError:
+            raise  # let decorator handle auth errors
         except Exception as e:
             error_msg = f"Error getting transitions for {issue_key}: {str(e)}"
             logger.error(error_msg)
@@ -121,6 +112,7 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
 
         return result
 
+    @handle_auth_errors("Jira API")
     def transition_issue(
         self,
         issue_key: str,
@@ -133,7 +125,8 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
 
         Args:
             issue_key: The key of the issue to transition
-            transition_id: The ID of the transition to perform (integer preferred, string accepted)
+            transition_id: The ID of the transition to perform
+                (integer preferred, string accepted)
             fields: Optional fields to set during the transition
             comment: Optional comment to add during the transition
 
@@ -141,18 +134,19 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             JiraIssue model representing the transitioned issue
 
         Raises:
-            MCPAtlassianAuthenticationError: If authentication fails with the Jira API (401/403)
+            MCPAtlassianAuthenticationError: If authentication fails
+                with the Jira API (401/403)
             ValueError: If there is an error transitioning the issue
         """
         try:
-            # Normalize transition_id to an integer when possible, or string otherwise
+            # Normalize transition_id to int when possible
             normalized_transition_id = self._normalize_transition_id(transition_id)
 
             # Validate that this is a valid transition ID
             valid_transitions = self.get_transitions_models(issue_key)
             valid_ids = [t.id for t in valid_transitions]
 
-            # Convert string IDs to integers for proper comparison if normalized_transition_id is an integer
+            # Convert string IDs to integers for proper comparison
             if isinstance(normalized_transition_id, int):
                 valid_ids = [
                     int(id_val)
@@ -161,18 +155,20 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
                     for id_val in valid_ids
                 ]
 
-            # Check if the normalized_transition_id is in the list of valid IDs
+            # Check if normalized_transition_id is valid
             id_to_check = normalized_transition_id
             if id_to_check not in valid_ids:
                 available_transitions = ", ".join(
                     f"{t.id} ({t.name})" for t in valid_transitions
                 )
                 logger.warning(
-                    f"Transition ID {id_to_check} not in available transitions: {available_transitions}"
+                    f"Transition ID {id_to_check} not in"
+                    " available transitions:"
+                    f" {available_transitions}"
                 )
                 # Continue anyway as Jira will validate
 
-            # Find the target status name corresponding to the transition ID
+            # Find the target status name for the transition ID
             target_status_name = None
             for transition in valid_transitions:
                 if str(transition.id) == str(normalized_transition_id):
@@ -190,20 +186,19 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             # Prepare update data for comments if provided
             update_for_api = None
             if comment:
-                # Create a temporary dict to hold the transition data
-                temp_transition_data = {}
+                temp_transition_data: dict[str, Any] = {}
                 self._add_comment_to_transition_data(temp_transition_data, comment)
                 update_for_api = temp_transition_data.get("update")
 
             # Log the transition request for debugging
             logger.info(
-                f"Transitioning issue {issue_key} with transition ID {normalized_transition_id}"
+                f"Transitioning issue {issue_key} with"
+                f" transition ID {normalized_transition_id}"
             )
             logger.debug(f"Fields: {fields_for_api}, Update: {update_for_api}")
 
-            # Attempt to transition the issue using the appropriate method
+            # Transition using the appropriate method
             if target_status_name:
-                # If we have a status name, use set_issue_status
                 logger.info(f"Using status name '{target_status_name}' for transition")
                 self.jira.set_issue_status(
                     issue_key=issue_key,
@@ -212,23 +207,19 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
                     update=update_for_api,
                 )
             else:
-                # If no status name is found, try direct transition ID method
-                # Note: This fallback should rarely be hit now that get_transitions()
-                # uses get_issue_transitions_full() which returns complete 'to' objects
                 logger.info(f"Using direct transition ID {normalized_transition_id}")
-                # Convert to integer if it's a string that looks like an integer
                 if (
                     isinstance(normalized_transition_id, str)
                     and normalized_transition_id.isdigit()
                 ):
                     normalized_transition_id = int(normalized_transition_id)
 
-                # Use set_issue_status_by_transition_id for direct ID transition
                 self.jira.set_issue_status_by_transition_id(
-                    issue_key=issue_key, transition_id=normalized_transition_id
+                    issue_key=issue_key,
+                    transition_id=normalized_transition_id,
                 )
 
-                # Apply fields and comments separately if needed
+                # Apply fields and comments separately
                 if fields_for_api or update_for_api:
                     payload: dict[str, Any] = {
                         "transition": {"id": str(normalized_transition_id)},
@@ -245,27 +236,16 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
 
             # Return the updated issue
             return self.get_issue(issue_key)
-        except HTTPError as http_err:
-            if http_err.response is not None and http_err.response.status_code in [
-                401,
-                403,
-            ]:
-                error_msg = (
-                    f"Authentication failed for Jira API ({http_err.response.status_code}). "
-                    "Token may be expired or invalid. Please verify credentials."
-                )
-                logger.error(error_msg)
-                raise MCPAtlassianAuthenticationError(error_msg) from http_err
-            else:
-                logger.error(f"HTTP error during API call: {http_err}", exc_info=False)
-                raise http_err
         except ValueError as e:
             logger.error(f"Value error transitioning issue {issue_key}: {str(e)}")
             raise
+        except HTTPError:
+            raise  # let decorator handle auth errors
         except Exception as e:
             error_msg = (
-                f"Error transitioning issue {issue_key} with transition ID "
-                f"{transition_id}: {str(e)}"
+                f"Error transitioning issue {issue_key}"
+                f" with transition ID"
+                f" {transition_id}: {str(e)}"
             )
             logger.error(error_msg)
             raise ValueError(error_msg) from e

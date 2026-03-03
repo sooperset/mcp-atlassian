@@ -1,0 +1,85 @@
+services:
+  jira-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: jira
+      POSTGRES_USER: jira
+      POSTGRES_PASSWORD: ${JIRA_DB_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--lc-collate=C --lc-ctype=C"
+    volumes:
+      - jira-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jira"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  confluence-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: confluence
+      POSTGRES_USER: confluence
+      POSTGRES_PASSWORD: ${CONFLUENCE_DB_PASSWORD}
+    volumes:
+      - confluence-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U confluence"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  jira:
+    image: atlassian/jira-software:${JIRA_VERSION}
+    ports:
+      - "8080:8080"
+    environment:
+      ATL_JDBC_URL: jdbc:postgresql://jira-db:5432/jira
+      ATL_JDBC_USER: jira
+      ATL_JDBC_PASSWORD: ${JIRA_DB_PASSWORD}
+      ATL_DB_DRIVER: org.postgresql.Driver
+      ATL_DB_TYPE: postgres72
+      JVM_MINIMUM_MEMORY: 1024m
+      JVM_MAXIMUM_MEMORY: 2048m
+      CLUSTERED: "false"
+    volumes:
+      - jira-data:/var/atlassian/application-data/jira
+    depends_on:
+      jira-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+
+  confluence:
+    image: atlassian/confluence:${CONFLUENCE_VERSION}
+    ports:
+      - "8090:8090"
+    environment:
+      ATL_JDBC_URL: jdbc:postgresql://confluence-db:5432/confluence
+      ATL_JDBC_USER: confluence
+      ATL_JDBC_PASSWORD: ${CONFLUENCE_DB_PASSWORD}
+      ATL_DB_DRIVER: org.postgresql.Driver
+      ATL_DB_TYPE: postgresql
+      JVM_MINIMUM_MEMORY: 1024m
+      JVM_MAXIMUM_MEMORY: 2048m
+      CLUSTERED: "false"
+    volumes:
+      - confluence-data:/var/atlassian/application-data/confluence
+    depends_on:
+      confluence-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8090/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+
+volumes:
+  jira-db-data:
+  confluence-db-data:
+  jira-data:
+  confluence-data:

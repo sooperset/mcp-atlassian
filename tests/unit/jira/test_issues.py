@@ -7,6 +7,7 @@ import pytest
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.issues import IssuesMixin, logger
 from mcp_atlassian.models.jira import JiraIssue
+from tests.utils.mocks import setup_api3_passthrough_mocks
 
 
 class TestIssuesMixin:
@@ -25,6 +26,10 @@ class TestIssuesMixin:
         mixin.transition_issue = MagicMock(
             return_value=JiraIssue(id="123", key="TEST-123", summary="Test Issue")
         )
+
+        # Cloud ADF paths delegate to _post_api3/_put_api3. Route back
+        # to jira.create_issue / jira.update_issue so existing mocks work.
+        setup_api3_passthrough_mocks(mixin)
 
         return mixin
 
@@ -272,14 +277,12 @@ class TestIssuesMixin:
             description="This is a test issue",
         )
 
-        # Verify API calls
-        expected_fields = {
-            "project": {"key": "TEST"},
-            "summary": "Test Issue",
-            "issuetype": {"name": "Bug"},
-            "description": "This is a test issue",
-        }
-        issues_mixin.jira.create_issue.assert_called_once_with(fields=expected_fields)
+        # On Cloud, ADF is routed through _post_api3 which delegates to
+        # jira.create_issue via the fixture mock
+        issues_mixin.jira.create_issue.assert_called_once()
+        sent = issues_mixin.jira.create_issue.call_args[1]["fields"]["description"]
+        assert isinstance(sent, dict)
+        assert sent["version"] == 1
         issues_mixin.jira.get_issue.assert_called_once_with("TEST-123")
 
         # Verify issue
@@ -306,14 +309,15 @@ class TestIssuesMixin:
             components=None,
         )
 
-        # Verify API calls
-        expected_fields = {
-            "project": {"key": "TEST"},
-            "summary": "Test Issue",
-            "issuetype": {"name": "Bug"},
-            "description": "This is a test issue",
-        }
-        issues_mixin.jira.create_issue.assert_called_once_with(fields=expected_fields)
+        # Verify API calls — description is ADF on Cloud
+        issues_mixin.jira.create_issue.assert_called_once_with(
+            fields={
+                "project": {"key": "TEST"},
+                "summary": "Test Issue",
+                "issuetype": {"name": "Bug"},
+                "description": ANY,
+            }
+        )
 
         # Verify 'components' is not in the fields
         assert "components" not in issues_mixin.jira.create_issue.call_args[1]["fields"]
@@ -340,15 +344,16 @@ class TestIssuesMixin:
             components=["UI"],
         )
 
-        # Verify API calls
-        expected_fields = {
-            "project": {"key": "TEST"},
-            "summary": "Test Issue",
-            "issuetype": {"name": "Bug"},
-            "description": "This is a test issue",
-            "components": [{"name": "UI"}],
-        }
-        issues_mixin.jira.create_issue.assert_called_once_with(fields=expected_fields)
+        # Verify API calls — description is ADF on Cloud
+        issues_mixin.jira.create_issue.assert_called_once_with(
+            fields={
+                "project": {"key": "TEST"},
+                "summary": "Test Issue",
+                "issuetype": {"name": "Bug"},
+                "description": ANY,
+                "components": [{"name": "UI"}],
+            }
+        )
 
         # Verify the components field was passed correctly
         assert issues_mixin.jira.create_issue.call_args[1]["fields"]["components"] == [
@@ -377,15 +382,16 @@ class TestIssuesMixin:
             components=["UI", "API"],
         )
 
-        # Verify API calls
-        expected_fields = {
-            "project": {"key": "TEST"},
-            "summary": "Test Issue",
-            "issuetype": {"name": "Bug"},
-            "description": "This is a test issue",
-            "components": [{"name": "UI"}, {"name": "API"}],
-        }
-        issues_mixin.jira.create_issue.assert_called_once_with(fields=expected_fields)
+        # Verify API calls — description is ADF on Cloud
+        issues_mixin.jira.create_issue.assert_called_once_with(
+            fields={
+                "project": {"key": "TEST"},
+                "summary": "Test Issue",
+                "issuetype": {"name": "Bug"},
+                "description": ANY,
+                "components": [{"name": "UI"}, {"name": "API"}],
+            }
+        )
 
         # Verify the components field was passed correctly
         assert issues_mixin.jira.create_issue.call_args[1]["fields"]["components"] == [
@@ -415,15 +421,16 @@ class TestIssuesMixin:
             components=["Valid", "", None, "  Backend  "],
         )
 
-        # Verify API calls
-        expected_fields = {
-            "project": {"key": "TEST"},
-            "summary": "Test Issue",
-            "issuetype": {"name": "Bug"},
-            "description": "This is a test issue",
-            "components": [{"name": "Valid"}, {"name": "Backend"}],
-        }
-        issues_mixin.jira.create_issue.assert_called_once_with(fields=expected_fields)
+        # Verify API calls — description is ADF on Cloud
+        issues_mixin.jira.create_issue.assert_called_once_with(
+            fields={
+                "project": {"key": "TEST"},
+                "summary": "Test Issue",
+                "issuetype": {"name": "Bug"},
+                "description": ANY,
+                "components": [{"name": "Valid"}, {"name": "Backend"}],
+            }
+        )
 
         # Verify the components field was passed correctly, with invalid entries filtered out
         assert issues_mixin.jira.create_issue.call_args[1]["fields"]["components"] == [
@@ -479,23 +486,49 @@ class TestIssuesMixin:
         # Verify the components field was preserved with the explicit value
         assert fields["components"] == [{"name": "Explicit"}]
 
-    def test_create_issue_with_assignee_cloud(self, issues_mixin: IssuesMixin):
-        """Test creating an issue with an assignee in Jira Cloud."""
+    @pytest.mark.parametrize(
+        "is_cloud, user_field, user_id, issue_key",
+        [
+            pytest.param(
+                True,
+                "accountId",
+                "cloud-account-id",
+                "TEST-123",
+                id="cloud",
+            ),
+            pytest.param(
+                False,
+                "name",
+                "server-user",
+                "TEST-456",
+                id="server",
+            ),
+        ],
+    )
+    def test_create_issue_with_assignee(
+        self,
+        issues_mixin: IssuesMixin,
+        is_cloud: bool,
+        user_field: str,
+        user_id: str,
+        issue_key: str,
+    ):
+        """Test creating an issue with an assignee."""
         # Mock create_issue response
-        create_response = {"key": "TEST-123"}
+        create_response = {"key": issue_key}
         issues_mixin.jira.create_issue.return_value = create_response
 
         # Mock get_issue response
         issues_mixin.get_issue = MagicMock(
-            return_value=JiraIssue(key="TEST-123", description="", summary="Test Issue")
+            return_value=JiraIssue(key=issue_key, description="", summary="Test Issue")
         )
 
-        # Mock _get_account_id to return a Cloud account ID
-        issues_mixin._get_account_id = MagicMock(return_value="cloud-account-id")
+        # Mock _get_account_id to return the appropriate user ID
+        issues_mixin._get_account_id = MagicMock(return_value=user_id)
 
-        # Configure for Cloud
+        # Configure for Cloud or Server/DC
         issues_mixin.config = MagicMock()
-        issues_mixin.config.is_cloud = True
+        issues_mixin.config.is_cloud = is_cloud
 
         # Call the method
         issues_mixin.create_issue(
@@ -510,50 +543,10 @@ class TestIssuesMixin:
 
         # Verify assignee is in create fields (belt & suspenders)
         fields = issues_mixin.jira.create_issue.call_args[1]["fields"]
-        assert fields["assignee"] == {"accountId": "cloud-account-id"}
+        assert fields["assignee"] == {user_field: user_id}
 
-        # Verify assign_issue was also called post-creation as a safety net
-        issues_mixin.jira.assign_issue.assert_called_once_with(
-            "TEST-123", "cloud-account-id"
-        )
-
-    def test_create_issue_with_assignee_server(self, issues_mixin: IssuesMixin):
-        """Test creating an issue with an assignee in Jira Server/DC."""
-        # Mock create_issue response
-        create_response = {"key": "TEST-456"}
-        issues_mixin.jira.create_issue.return_value = create_response
-
-        # Mock get_issue response
-        issues_mixin.get_issue = MagicMock(
-            return_value=JiraIssue(key="TEST-456", description="", summary="Test Issue")
-        )
-
-        # Mock _get_account_id to return a Server user ID (typically username)
-        issues_mixin._get_account_id = MagicMock(return_value="server-user")
-
-        # Configure for Server/DC
-        issues_mixin.config = MagicMock()
-        issues_mixin.config.is_cloud = False
-
-        # Call the method
-        issues_mixin.create_issue(
-            project_key="TEST",
-            summary="Test Issue",
-            issue_type="Bug",
-            assignee="testuser",
-        )
-
-        # Verify _get_account_id was called with the correct username
-        issues_mixin._get_account_id.assert_called_once_with("testuser")
-
-        # Verify assignee is in create fields (belt & suspenders)
-        fields = issues_mixin.jira.create_issue.call_args[1]["fields"]
-        assert fields["assignee"] == {"name": "server-user"}
-
-        # Verify assign_issue was also called post-creation as a safety net
-        issues_mixin.jira.assign_issue.assert_called_once_with(
-            "TEST-456", "server-user"
-        )
+        # Verify assign_issue was also called post-creation
+        issues_mixin.jira.assign_issue.assert_called_once_with(issue_key, user_id)
 
     def test_create_epic(self, issues_mixin: IssuesMixin):
         """Test creating an epic."""
@@ -897,7 +890,9 @@ class TestIssuesMixin:
         assert fields["project"]["key"] == "TEST"
         assert fields["summary"] == "Test Issue"
         assert fields["issuetype"]["name"] == "Bug"
-        assert fields["description"] == "This is a test issue"
+        # Description is ADF dict on Cloud
+        assert isinstance(fields["description"], dict)
+        assert fields["description"]["version"] == 1
         assert "fixVersions" in fields
         assert fields["fixVersions"] == [{"name": "1.0.0"}]
 
@@ -1233,35 +1228,28 @@ class TestIssuesMixin:
         assert components[0]["name"] == "Frontend"
         assert components[1]["name"] == "Backend"
 
-    def test_add_assignee_to_fields_cloud(self, issues_mixin: IssuesMixin):
-        """Test _add_assignee_to_fields for Cloud instance."""
-        # Set up cloud config
+    @pytest.mark.parametrize(
+        "is_cloud, user_field, user_id",
+        [
+            pytest.param(True, "accountId", "account-123", id="cloud"),
+            pytest.param(False, "name", "jdoe", id="server"),
+        ],
+    )
+    def test_add_assignee_to_fields(
+        self,
+        issues_mixin: IssuesMixin,
+        is_cloud: bool,
+        user_field: str,
+        user_id: str,
+    ):
+        """Test _add_assignee_to_fields for Cloud and Server/DC."""
         issues_mixin.config = MagicMock()
-        issues_mixin.config.is_cloud = True
+        issues_mixin.config.is_cloud = is_cloud
 
-        # Test fields dict
-        fields = {}
+        fields: dict = {}
+        issues_mixin._add_assignee_to_fields(fields, user_id)
 
-        # Call the method
-        issues_mixin._add_assignee_to_fields(fields, "account-123")
-
-        # Verify result
-        assert fields["assignee"] == {"accountId": "account-123"}
-
-    def test_add_assignee_to_fields_server_dc(self, issues_mixin: IssuesMixin):
-        """Test _add_assignee_to_fields for Server/Data Center instance."""
-        # Set up Server/DC config
-        issues_mixin.config = MagicMock()
-        issues_mixin.config.is_cloud = False
-
-        # Test fields dict
-        fields = {}
-
-        # Call the method
-        issues_mixin._add_assignee_to_fields(fields, "jdoe")
-
-        # Verify result
-        assert fields["assignee"] == {"name": "jdoe"}
+        assert fields["assignee"] == {user_field: user_id}
 
     def test_batch_get_changelogs_not_cloud(self, issues_mixin: IssuesMixin):
         """Test batch_get_changelogs method on non-cloud instance."""
@@ -1669,6 +1657,56 @@ class TestIssuesMixin:
         assert isinstance(result, JiraIssue)
         assert result.key == "PROD-123"
         assert result.summary == "Production issue"
+
+    def test_create_issue_with_cascading_select(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Test create_issue with a cascading select custom field via kwargs."""
+        create_response = {"id": "12345", "key": "TEST-123"}
+        issues_mixin.jira.create_issue.return_value = create_response
+        issues_mixin.jira.get_issue.return_value = make_issue_data()
+
+        result = issues_mixin.create_issue(
+            project_key="TEST",
+            summary="Test Issue",
+            issue_type="Bug",
+            customfield_10020=("NA", "US"),
+        )
+
+        # Verify the create API was called
+        issues_mixin.jira.create_issue.assert_called_once()
+        fields = issues_mixin.jira.create_issue.call_args[1]["fields"]
+        # Cascading select should be formatted as {value, child}
+        assert fields["customfield_10020"] == {
+            "value": "NA",
+            "child": {"value": "US"},
+        }
+        assert result.key == "TEST-123"
+
+    def test_create_issue_with_multiselect(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Test create_issue with a multi-select custom field via kwargs."""
+        create_response = {"id": "12345", "key": "TEST-123"}
+        issues_mixin.jira.create_issue.return_value = create_response
+        issues_mixin.jira.get_issue.return_value = make_issue_data()
+
+        result = issues_mixin.create_issue(
+            project_key="TEST",
+            summary="Test Issue",
+            issue_type="Bug",
+            customfield_10021=["opt1", "opt2"],
+        )
+
+        # Verify the create API was called
+        issues_mixin.jira.create_issue.assert_called_once()
+        fields = issues_mixin.jira.create_issue.call_args[1]["fields"]
+        # Multi-select strings should be wrapped in {value: ...}
+        assert fields["customfield_10021"] == [
+            {"value": "opt1"},
+            {"value": "opt2"},
+        ]
+        assert result.key == "TEST-123"
 
     def test_get_issue_with_whitespace_in_projects_filter(
         self, issues_mixin: IssuesMixin, make_issue_data

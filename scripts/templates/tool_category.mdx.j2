@@ -1,0 +1,42 @@
+---
+title: "{{ category.title }}"
+description: "{{ category.description }}"
+---
+{% for tool in tools %}
+
+### {{ tool.display_name }}
+
+{{ tool.description }}
+{% if tool.is_write %}
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+{% endif %}
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+{% for param in tool.parameters -%}
+| `{{ param.name }}` | `{{ param.type }}` | {{ "Yes" if param.required else "No" }} | {{ param.description | escape_pipe | escape_mdx }} |
+{% endfor %}
+{% if tool.override and tool.override.example %}
+**Example:**
+
+```json
+{{ tool.override.example }}```
+{% endif %}
+{% if tool.override and tool.override.tips %}
+
+<Tip>
+{{ tool.override.tips | trim }}
+</Tip>
+{% endif %}
+{% if tool.override and tool.override.platform_notes %}
+
+<Warning>
+{{ tool.override.platform_notes | trim }}
+</Warning>
+{% endif %}
+
+---
+{% endfor %}
