@@ -59,6 +59,54 @@ Ask your AI assistant to:
 - **"Create a bug ticket for the login issue"**
 - **"Update the status of PROJ-123 to Done"**
 
+## Quick Setup (Our Org)
+
+> **For teammates on the fernandezdarwin17 Atlassian instance.**
+> Full setup walkthrough: [Confluence Setup Guide](https://fernandezdarwin17.atlassian.net/wiki/spaces/AHD/pages/9732097)
+
+### 1. Clone this fork and install
+
+```bash
+git clone https://github.com/Fernandezdarwin17/mcp-atlassian.git
+cd mcp-atlassian
+uv sync
+```
+
+### 2. Configure `.mcp.json`
+
+Copy the example and fill in your credentials:
+
+```bash
+cp .mcp.json.example .mcp.json
+```
+
+Then edit `.mcp.json` — replace the placeholders:
+- `YOUR_EMAIL@example.com` → your Atlassian account email
+- `YOUR_API_TOKEN` → your API token from https://id.atlassian.com/manage-profile/security/api-tokens
+- `/ABSOLUTE/PATH/TO/mcp-atlassian` → the actual path to this repo on your machine
+
+> **Note:** The same email and API token work for both Jira and Confluence.
+
+### 3. Restart Claude Code
+
+After saving `.mcp.json`, restart Claude Code (`/quit` then relaunch) so it picks up the new MCP server.
+
+### Our Projects & Spaces
+
+| Service    | Key     | Description          |
+|------------|---------|----------------------|
+| Jira       | `SLACK` | Slack integration project |
+| Confluence | `AHD`   | Atlassian Help Desk space |
+
+### Common Pitfalls
+
+- **`.mcp.json` must be in the project root** where you launch Claude Code, not inside `mcp-atlassian/`.
+- **Use `uv run` with `--directory`** — the example file is already set up this way. Do not use `uvx` unless you're running the published PyPI version.
+- **Don't commit `.mcp.json`** — it contains your credentials. It's already in `.gitignore`.
+- **Restart Claude Code** after any `.mcp.json` change; it doesn't hot-reload MCP configs.
+
+---
+
 ## Documentation
 
 Full documentation is available at **[mcp-atlassian.soomiles.com](https://mcp-atlassian.soomiles.com)**.

@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/ABSOLUTE/PATH/TO/mcp-atlassian",
+        "mcp-atlassian"
+      ],
+      "env": {
+        "JIRA_URL": "https://fernandezdarwin17.atlassian.net",
+        "JIRA_USERNAME": "YOUR_EMAIL@example.com",
+        "JIRA_API_TOKEN": "YOUR_API_TOKEN",
+        "CONFLUENCE_URL": "https://fernandezdarwin17.atlassian.net/wiki",
+        "CONFLUENCE_USERNAME": "YOUR_EMAIL@example.com",
+        "CONFLUENCE_API_TOKEN": "YOUR_API_TOKEN"
+      }
+    }
+  }
+}
