@@ -185,6 +185,41 @@ class LinksMixin(JiraClient):
             raise Exception(f"Error creating remote issue link: {error_msg}") from e
 
     @handle_auth_errors("Jira API")
+    def get_remote_issue_links(self, issue_key: str) -> list[dict[str, Any]]:
+        """Get remote links (web links, Confluence links) for an issue.
+
+        Args:
+            issue_key: The issue key (e.g., 'PROJ-123')
+
+        Returns:
+            List of remote link data dictionaries
+
+        Raises:
+            MCPAtlassianAuthenticationError: If authentication fails
+        """
+        try:
+            if self.config.is_cloud:
+                endpoint = f"rest/api/3/issue/{issue_key}/remotelink"
+            else:
+                endpoint = f"rest/api/2/issue/{issue_key}/remotelink"
+            result = self.jira.get(endpoint)
+            if isinstance(result, list):
+                return result
+            if isinstance(result, dict):
+                return result.get("remoteLinks", [result])
+            return []
+        except HTTPError:
+            raise  # let decorator handle auth errors
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(
+                f"Error getting remote links for {issue_key}: {error_msg}",
+                exc_info=True,
+            )
+            msg = f"Error getting remote links for {issue_key}: {error_msg}"
+            raise Exception(msg) from e
+
+    @handle_auth_errors("Jira API")
     def remove_issue_link(self, link_id: str) -> dict[str, Any]:
         """
         Remove a link between two issues.

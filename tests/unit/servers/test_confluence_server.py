@@ -37,6 +37,7 @@ def mock_confluence_fetcher():
             "format": "markdown",
         },
     }
+    mock_page.id = "123456"
     mock_page.content = "This is a test page content in Markdown"
 
     # Set up mock responses for each method
@@ -741,6 +742,126 @@ async def test_get_page_with_numeric_id(client, mock_confluence_fetcher):
     result_data = json.loads(response.content[0].text)
     assert "metadata" in result_data
     assert result_data["metadata"]["id"] == "123456"
+
+
+# --- get_page include enrichment tests (issue #1103) ---
+
+
+@pytest.mark.anyio
+async def test_get_page_include_comments(client, mock_confluence_fetcher):
+    """Test get_page with include='comments' inlines comment data."""
+    response = await client.call_tool(
+        "confluence_get_page", {"page_id": "123456", "include": "comments"}
+    )
+
+    mock_confluence_fetcher.get_page_content.assert_called_once_with(
+        "123456", convert_to_markdown=True
+    )
+    mock_confluence_fetcher.get_page_comments.assert_called_once_with("123456")
+
+    result_data = json.loads(response.content[0].text)
+    assert "metadata" in result_data
+    assert "comments" in result_data
+    assert len(result_data["comments"]) == 1
+    assert result_data["comments"][0]["id"] == "789"
+
+
+@pytest.mark.anyio
+async def test_get_page_include_labels(client, mock_confluence_fetcher):
+    """Test get_page with include='labels' inlines label data."""
+    response = await client.call_tool(
+        "confluence_get_page", {"page_id": "123456", "include": "labels"}
+    )
+
+    mock_confluence_fetcher.get_page_labels.assert_called_once_with("123456")
+
+    result_data = json.loads(response.content[0].text)
+    assert "metadata" in result_data
+    assert "labels" in result_data
+    assert len(result_data["labels"]) == 1
+    assert result_data["labels"][0]["name"] == "test-label"
+
+
+@pytest.mark.anyio
+async def test_get_page_include_views(client, mock_confluence_fetcher):
+    """Test get_page with include='views' inlines view statistics."""
+    from src.mcp_atlassian.models.confluence.analytics import PageViews
+
+    mock_confluence_fetcher.get_page_views.return_value = PageViews(
+        page_id="123456", total_views=42
+    )
+
+    response = await client.call_tool(
+        "confluence_get_page", {"page_id": "123456", "include": "views"}
+    )
+
+    mock_confluence_fetcher.get_page_views.assert_called_once_with(
+        page_id="123456", include_title=False
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert "metadata" in result_data
+    assert "views" in result_data
+    assert result_data["views"]["total_views"] == 42
+
+
+@pytest.mark.anyio
+async def test_get_page_include_multiple(client, mock_confluence_fetcher):
+    """Test get_page with include='comments, labels, views' inlines all three."""
+    from src.mcp_atlassian.models.confluence.analytics import PageViews
+
+    mock_confluence_fetcher.get_page_views.return_value = PageViews(
+        page_id="123456", total_views=10
+    )
+
+    response = await client.call_tool(
+        "confluence_get_page",
+        {"page_id": "123456", "include": "comments, labels, views"},
+    )
+
+    mock_confluence_fetcher.get_page_comments.assert_called_once_with("123456")
+    mock_confluence_fetcher.get_page_labels.assert_called_once_with("123456")
+    mock_confluence_fetcher.get_page_views.assert_called_once_with(
+        page_id="123456", include_title=False
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert "comments" in result_data
+    assert "labels" in result_data
+    assert "views" in result_data
+
+
+@pytest.mark.anyio
+async def test_get_page_include_views_graceful_degradation(
+    client, mock_confluence_fetcher
+):
+    """Test get_page with include='views' degrades gracefully on Server/DC."""
+    mock_confluence_fetcher.get_page_views.side_effect = ValueError(
+        "Page view analytics is only available for Confluence Cloud."
+    )
+
+    response = await client.call_tool(
+        "confluence_get_page", {"page_id": "123456", "include": "views"}
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert "metadata" in result_data
+    assert "views" in result_data
+    assert result_data["views"] == {}
+
+
+@pytest.mark.anyio
+async def test_get_page_include_none_no_enrichments(client, mock_confluence_fetcher):
+    """Test get_page without include param does not call enrichment methods."""
+    response = await client.call_tool("confluence_get_page", {"page_id": "123456"})
+
+    mock_confluence_fetcher.get_page_comments.assert_not_called()
+
+    result_data = json.loads(response.content[0].text)
+    assert "metadata" in result_data
+    assert "comments" not in result_data
+    assert "labels" not in result_data
+    assert "views" not in result_data
 
 
 # Phase 5: MCP Attachment Tools Tests (TDD RED Phase)

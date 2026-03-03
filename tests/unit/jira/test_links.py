@@ -204,3 +204,93 @@ class TestLinksMixin:
 
         with pytest.raises(MCPAtlassianAuthenticationError):
             links_mixin.remove_issue_link(link_id)
+
+    @pytest.mark.parametrize(
+        "url, api_version",
+        [
+            pytest.param("https://test.atlassian.net", "3", id="cloud"),
+            pytest.param("https://jira.example.com", "2", id="server"),
+        ],
+    )
+    def test_get_remote_issue_links_success(
+        self,
+        jira_config_factory,
+        mock_atlassian_jira,
+        url: str,
+        api_version: str,
+    ):
+        """Test successful retrieval of remote issue links."""
+        config = jira_config_factory(url=url)
+        mixin = LinksMixin(config=config)
+        mixin.jira = mock_atlassian_jira
+        mock_links = [
+            {
+                "id": 1,
+                "object": {
+                    "url": "https://example.com",
+                    "title": "Link 1",
+                },
+            },
+            {
+                "id": 2,
+                "object": {
+                    "url": "https://example.org",
+                    "title": "Link 2",
+                },
+            },
+        ]
+        mixin.jira.get.return_value = mock_links
+
+        result = mixin.get_remote_issue_links("PROJ-123")
+
+        assert result == mock_links
+        mixin.jira.get.assert_called_once_with(
+            f"rest/api/{api_version}/issue/PROJ-123/remotelink"
+        )
+
+    def test_get_remote_issue_links_dict_response(self, links_mixin):
+        """Test dict responses are unwrapped correctly."""
+        inner = [
+            {
+                "id": 1,
+                "object": {
+                    "url": "https://example.com",
+                    "title": "A",
+                },
+            }
+        ]
+        links_mixin.jira.get.return_value = {"remoteLinks": inner}
+
+        result = links_mixin.get_remote_issue_links("PROJ-123")
+
+        assert result == inner
+
+    def test_get_remote_issue_links_dict_without_key(self, links_mixin):
+        """Dict without remoteLinks wraps as single-element list."""
+        single = {
+            "id": 1,
+            "object": {
+                "url": "https://example.com",
+                "title": "A",
+            },
+        }
+        links_mixin.jira.get.return_value = single
+
+        result = links_mixin.get_remote_issue_links("PROJ-123")
+
+        assert result == [single]
+
+    def test_get_remote_issue_links_empty(self, links_mixin):
+        """Test empty list response."""
+        links_mixin.jira.get.return_value = []
+
+        result = links_mixin.get_remote_issue_links("PROJ-123")
+
+        assert result == []
+
+    def test_get_remote_issue_links_auth_error(self, links_mixin):
+        """Test authentication error is raised correctly."""
+        links_mixin.jira.get.side_effect = HTTPError(response=Mock(status_code=401))
+
+        with pytest.raises(MCPAtlassianAuthenticationError):
+            links_mixin.get_remote_issue_links("PROJ-123")
