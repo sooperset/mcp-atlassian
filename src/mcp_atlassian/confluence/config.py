@@ -40,6 +40,7 @@ class ConfluenceConfig:
     client_key: str | None = None  # Client private key file path (.pem)
     client_key_password: str | None = None  # Password for encrypted private key
     timeout: int = 75  # Connection timeout in seconds
+    cookie: str | None = None  # Raw cookie string to attach to all requests
 
     @property
     def is_cloud(self) -> bool:
@@ -187,6 +188,9 @@ class ConfluenceConfig:
         ):
             timeout = int(os.getenv("CONFLUENCE_TIMEOUT", "75"))
 
+        # Cookie configuration
+        cookie = os.getenv("CONFLUENCE_COOKIE")
+
         return cls(
             url=url or "",
             auth_type=auth_type,
@@ -205,6 +209,7 @@ class ConfluenceConfig:
             client_key=client_key,
             client_key_password=client_key_password,
             timeout=timeout,
+            cookie=cookie,
         )
 
     def is_auth_configured(self) -> bool:
