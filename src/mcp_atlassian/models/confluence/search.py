@@ -50,9 +50,15 @@ class ConfluenceSearchResult(ApiModel, TimestampMixin):
         # Convert search results to ConfluencePage models
         results = []
         for item in data.get("results", []):
-            # In Confluence search, the content is nested inside the result item
-            if content := item.get("content"):
+            # Try to get content from nested field (Cloud) or top-level (Server/DC)
+            content = item.get("content")
+
+            if content:
+                # Cloud format: metadata is at top level, page data in "content"
                 results.append(ConfluencePage.from_api_response(content, **kwargs))
+            elif "id" in item and "title" in item:
+                # Server/DC format: page data is directly in the result item
+                results.append(ConfluencePage.from_api_response(item, **kwargs))
 
         return cls(
             total_size=data.get("totalSize", 0),

@@ -62,11 +62,17 @@ class ConfluenceClient:
                 f"URL: {self.config.url}, "
                 f"Token (masked): {mask_sensitive(str(self.config.personal_token))}"
             )
+            # Try both token= and password= for maximum compatibility with DC PATs
             self.confluence = Confluence(
                 url=self.config.url,
                 token=self.config.personal_token,
+                password=self.config.personal_token,
                 cloud=self.config.is_cloud,
                 verify_ssl=self.config.ssl_verify,
+            )
+            # Explicitly set Bearer token header for Server/DC PATs
+            self.confluence._session.headers["Authorization"] = (
+                f"Bearer {self.config.personal_token}"
             )
         else:  # basic auth
             logger.debug(
