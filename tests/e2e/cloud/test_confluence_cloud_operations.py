@@ -137,3 +137,38 @@ class TestConfluenceCloudComments:
 
         comments = confluence_fetcher.get_page_comments(page.id)
         assert len(comments) > 0
+
+
+class TestConfluenceDateMacro:
+    """Date macros in storage format are preserved in page content.
+
+    Regression for https://github.com/sooperset/mcp-atlassian/issues/897
+    """
+
+    def test_date_macro_preserved_in_page_content(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        cloud_instance: CloudInstanceInfo,
+        resource_tracker: CloudResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        storage_body = (
+            "<p>Meeting date: "
+            '<ac:structured-macro ac:name="date">'
+            '<ac:parameter ac:name="date">2026-02-04</ac:parameter>'
+            "</ac:structured-macro>"
+            "</p>"
+        )
+        page = confluence_fetcher.create_page(
+            space_key=cloud_instance.space_key,
+            title=f"Cloud E2E Date Macro Test {uid}",
+            body=storage_body,
+            is_markdown=False,
+            content_representation="storage",
+        )
+        resource_tracker.add_confluence_page(page.id)
+        fetched = confluence_fetcher.get_page_content(page.id)
+        content = fetched.content or ""
+        assert "2026-02-04" in content or "Feb" in content or "February" in content, (
+            f"Date macro value missing from content. Got: {content[:500]}"
+        )
