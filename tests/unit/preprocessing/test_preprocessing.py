@@ -729,6 +729,88 @@ Here's some code:
     assert "# This is a comment" in result
 
 
+# Issue #904 regression tests - Jira ordered list items converted to headings
+
+
+def test_jira_ordered_list_not_converted_to_heading(preprocessor_with_jira):
+    """Jira wiki ordered list items (# item) must not become h1. headings.
+
+    When input already contains Jira wiki markup (h1.-h6. headings), the
+    converter must recognise it as Jira wiki format and leave '# item' alone
+    instead of converting it to 'h1. item'.
+    """
+    jira_wiki = "h3. Next Steps\n\n# Wait for mirrors\n# Apply patch\n# Retry build"
+    result = preprocessor_with_jira.markdown_to_jira(jira_wiki)
+
+    assert "# Wait for mirrors" in result
+    assert "# Apply patch" in result
+    assert "# Retry build" in result
+    assert "h3. Next Steps" in result
+    assert "h1." not in result
+    assert "h2." not in result
+
+
+def test_jira_nested_ordered_list_not_converted_to_heading(preprocessor_with_jira):
+    """Nested Jira ordered list items (## sub) must not become h2. headings."""
+    jira_wiki = "h2. Steps\n\n# Step one\n## Sub-step A\n## Sub-step B\n# Step two"
+    result = preprocessor_with_jira.markdown_to_jira(jira_wiki)
+
+    assert "# Step one" in result
+    assert "## Sub-step A" in result
+    assert "## Sub-step B" in result
+    assert "# Step two" in result
+    assert "h1." not in result
+    # only the original h2. heading should remain
+    assert result.count("h2.") == 1
+
+
+def test_jira_ordered_list_only_no_heading_marker(preprocessor_with_jira):
+    """Pure Jira ordered list without any heading marker is ambiguous - the
+    existing behaviour (treat as Markdown heading) is preserved here because
+    there is no reliable signal that the input is Jira wiki format."""
+    # This is an explicit documentation of the known limitation:
+    # "# Item" alone cannot be distinguished from a Markdown H1 heading.
+    result = preprocessor_with_jira.markdown_to_jira("# Item")
+    assert result == "h1. Item"
+
+
+def test_markdown_headings_still_convert_without_jira_markers(preprocessor_with_jira):
+    """Pure Markdown headings (no Jira wiki markers present) must still convert."""
+    result = preprocessor_with_jira.markdown_to_jira("# Title\n## Section\n### Sub")
+    assert result == "h1. Title\nh2. Section\nh3. Sub"
+
+
+def test_markdown_numbered_list_with_jira_heading_marker(preprocessor_with_jira):
+    """Markdown numbered list alongside a Jira heading marker must survive.
+
+    If input mixes Jira wiki headings with Markdown numbered lists (a common
+    LLM mistake), the numbered list conversion (1. -> #) must still work and
+    the resulting '# item' must NOT be re-converted to 'h1. item'.
+    """
+    mixed = "h3. Overview\n\n1. First step\n2. Second step"
+    result = preprocessor_with_jira.markdown_to_jira(mixed)
+
+    assert "h3. Overview" in result
+    assert "# First step" in result
+    assert "# Second step" in result
+    assert "h1." not in result
+
+
+def test_markdown_heading_not_suppressed_by_inline_jira_code_at_line_start(
+    preprocessor_with_jira,
+):
+    """{{template}} at line start must NOT suppress Markdown heading conversion.
+
+    '{{variable}}' is valid in Markdown template docs and must not be mistaken
+    for a Jira wiki marker.  Heading conversion should still happen.
+    """
+    md = "{{variable}} should be configured first\n\n# My Heading\n## Sub-section"
+    result = preprocessor_with_jira.markdown_to_jira(md)
+
+    assert "h1. My Heading" in result
+    assert "h2. Sub-section" in result
+
+
 # Language mapping tests for code blocks (issue #669)
 
 

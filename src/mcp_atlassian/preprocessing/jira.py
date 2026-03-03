@@ -107,6 +107,13 @@ class JiraPreprocessor(BasePreprocessor):
         "cmake": "bash",
     }
 
+    # Regex that detects Jira wiki markup markers unambiguous enough to conclude
+    # the input is Jira wiki format rather than Markdown.  Used to skip the
+    # "# heading" → "h1. heading" conversion when the # is a Jira ordered list.
+    _JIRA_WIKI_MARKER_RE = re.compile(
+        r"(?:^h[1-6]\.\s|^\{code|^\{noformat|^\{panel)", re.MULTILINE
+    )
+
     def __init__(
         self, base_url: str = "", disable_translation: bool = False, **kwargs: Any
     ) -> None:
@@ -471,14 +478,20 @@ class JiraPreprocessor(BasePreprocessor):
             flags=re.MULTILINE,
         )
 
-        # Headers with # prefix - require space after #
-        # to distinguish from Jira lists (issue #786)
-        output = re.sub(
-            r"^([#]+) (.*)$",
-            lambda match: f"h{len(match.group(1))}. " + match.group(2),
-            output,
-            flags=re.MULTILINE,
-        )
+        # Headers with # prefix - only convert when input looks like Markdown, not
+        # Jira wiki markup.  Jira wiki uses "h1. Heading" for headings and "# Item"
+        # for ordered lists.  If the (code-stripped) text already contains a Jira
+        # heading marker (h1.-h6.) or a Jira macro opening brace, the caller is
+        # sending Jira wiki markup and "# Item" should be treated as an ordered-list
+        # entry, not converted to "h1. Item".
+        # Fixes issue #904: # item must not become h1. when Jira wiki markers present
+        if not self._JIRA_WIKI_MARKER_RE.search(output):
+            output = re.sub(
+                r"^([#]+) (.*)$",
+                lambda match: f"h{len(match.group(1))}. " + match.group(2),
+                output,
+                flags=re.MULTILINE,
+            )
 
         # Bold and italic - skip lines starting with
         # asterisks+space (Jira list syntax, issue #786)
