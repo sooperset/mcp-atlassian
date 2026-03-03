@@ -344,33 +344,71 @@ async def get_issue(
     update_history: Annotated[
         bool,
         Field(
-            description="Whether to update the issue view history for the requesting user",
+            description=(
+                "Whether to update the issue view history for the requesting user"
+            ),
             default=True,
         ),
     ] = True,
+    include: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Comma-separated sections to inline "
+                "in the response, avoiding extra tool calls. "
+                "Supported: remote_links, transitions, "
+                "watchers, changelog"
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
-    """Get details of a specific Jira issue including its Epic links and relationship information.
+    """Get details of a specific Jira issue.
+
+    Includes Epic links and relationship information. Use the
+    ``include`` parameter to inline enrichments (remote_links,
+    transitions, watchers, changelog) so that separate tool calls
+    are not needed.
 
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        fields: Comma-separated list of fields to return (e.g., 'summary,status,customfield_10010'), a single field as a string (e.g., 'duedate'), '*all' for all fields, or omitted for essentials.
+        fields: Comma-separated fields to return.
         expand: Optional fields to expand.
         comment_limit: Maximum number of comments.
         properties: Issue properties to return.
         update_history: Whether to update issue view history.
+        include: Comma-separated enrichment sections to inline.
 
     Returns:
         JSON string representing the Jira issue object.
 
     Raises:
-        ValueError: If the Jira client is not configured or available.
+        ValueError: If the Jira client is not configured.
     """
     jira = await get_jira_fetcher(ctx)
     fields_list: str | list[str] | None = fields
     if fields and fields != "*all":
         fields_list = [f.strip() for f in fields.split(",")]
 
+    # Parse include sections
+    include_sections: set[str] = set()
+    if include:
+        include_sections = {s.strip().lower() for s in include.split(",")}
+
+    # Some enrichments piggyback on Jira's expand mechanism
+    if include_sections & {"transitions", "changelog"}:
+        expand_additions = []
+        if "transitions" in include_sections:
+            expand_additions.append("transitions")
+        if "changelog" in include_sections:
+            expand_additions.append("changelog")
+        if expand:
+            expand = f"{expand},{','.join(expand_additions)}"
+        else:
+            expand = ",".join(expand_additions)
+
+    # Fetch the issue (with augmented expand)
     issue = jira.get_issue(
         issue_key=issue_key,
         fields=fields_list,
@@ -380,6 +418,20 @@ async def get_issue(
         update_history=update_history,
     )
     result = issue.to_simplified_dict()
+
+    # Enrichments that require separate API calls
+    if "remote_links" in include_sections:
+        try:
+            result["remote_links"] = jira.get_remote_issue_links(issue_key)
+        except Exception:  # noqa: BLE001
+            result["remote_links"] = []
+
+    if "watchers" in include_sections:
+        try:
+            result["watchers"] = jira.get_issue_watchers(issue_key)
+        except Exception:  # noqa: BLE001
+            result["watchers"] = {}
+
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 

@@ -1042,8 +1042,8 @@ async def test_get_all_projects_tool(jira_client, mock_jira_fetcher):
     ]
     # Reset the mock and set specific return value for this test
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        mock_projects
     )
 
     # Test with default parameters (include_archived=False)
@@ -1091,8 +1091,8 @@ async def test_get_all_projects_tool_with_archived(jira_client, mock_jira_fetche
     ]
     # Reset the mock and set specific return value for this test
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        mock_projects
     )
 
     # Test with include_archived=True
@@ -1145,8 +1145,8 @@ async def test_get_all_projects_tool_with_projects_filter(
 
     # Set up the mock to return all projects
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: all_mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        all_mock_projects
     )
 
     # Set up the projects filter in the config
@@ -1199,8 +1199,8 @@ async def test_get_all_projects_tool_no_projects_filter(jira_client, mock_jira_f
 
     # Set up the mock to return all projects
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: all_mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        all_mock_projects
     )
 
     # Ensure no projects filter is set
@@ -1260,8 +1260,8 @@ async def test_get_all_projects_tool_case_insensitive_filter(
 
     # Set up the mock to return all projects
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: all_mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        all_mock_projects
     )
 
     # Set up projects filter with mixed case and whitespace
@@ -2430,3 +2430,125 @@ async def test_get_field_options_combined(jira_client, mock_jira_fetcher):
     # return_limit=1 caps to first match
     assert len(result) == 1
     assert result[0] == "High"
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_remote_links(jira_client, mock_jira_fetcher):
+    """get_issue with include=remote_links fetches remote links."""
+    mock_jira_fetcher.get_remote_issue_links.return_value = [
+        {
+            "id": 1,
+            "object": {
+                "url": "https://example.com",
+                "title": "Link",
+            },
+        }
+    ]
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123", "include": "remote_links"},
+    )
+    content = json.loads(response.content[0].text)
+    assert "remote_links" in content
+    assert len(content["remote_links"]) == 1
+    mock_jira_fetcher.get_remote_issue_links.assert_called_once_with("TEST-123")
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_watchers(jira_client, mock_jira_fetcher):
+    """get_issue with include=watchers fetches watchers."""
+    mock_jira_fetcher.get_issue_watchers.return_value = {
+        "watchCount": 1,
+        "watchers": [{"name": "user1"}],
+    }
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123", "include": "watchers"},
+    )
+    content = json.loads(response.content[0].text)
+    assert "watchers" in content
+    assert content["watchers"]["watchCount"] == 1
+    mock_jira_fetcher.get_issue_watchers.assert_called_once_with("TEST-123")
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_transitions_adds_expand(
+    jira_client, mock_jira_fetcher
+):
+    """get_issue with include=transitions adds to expand."""
+    await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123", "include": "transitions"},
+    )
+    call_args = mock_jira_fetcher.get_issue.call_args
+    expand_val = call_args.kwargs.get("expand", "")
+    assert "transitions" in expand_val
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_changelog_adds_expand(jira_client, mock_jira_fetcher):
+    """get_issue with include=changelog adds to expand."""
+    await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123", "include": "changelog"},
+    )
+    call_args = mock_jira_fetcher.get_issue.call_args
+    expand_val = call_args.kwargs.get("expand", "")
+    assert "changelog" in expand_val
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_multiple(jira_client, mock_jira_fetcher):
+    """get_issue with multiple include sections."""
+    mock_jira_fetcher.get_remote_issue_links.return_value = []
+    mock_jira_fetcher.get_issue_watchers.return_value = {
+        "watchCount": 0,
+    }
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {
+            "issue_key": "TEST-123",
+            "include": "remote_links,watchers,transitions,changelog",
+        },
+    )
+    content = json.loads(response.content[0].text)
+    assert "remote_links" in content
+    assert "watchers" in content
+    call_args = mock_jira_fetcher.get_issue.call_args
+    expand_val = call_args.kwargs.get("expand", "")
+    assert "transitions" in expand_val
+    assert "changelog" in expand_val
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_preserves_existing_expand(
+    jira_client, mock_jira_fetcher
+):
+    """include merges with an existing expand parameter."""
+    await jira_client.call_tool(
+        "jira_get_issue",
+        {
+            "issue_key": "TEST-123",
+            "expand": "renderedFields",
+            "include": "transitions",
+        },
+    )
+    call_args = mock_jira_fetcher.get_issue.call_args
+    expand_val = call_args.kwargs.get("expand", "")
+    assert "renderedFields" in expand_val
+    assert "transitions" in expand_val
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_none_no_enrichments(jira_client, mock_jira_fetcher):
+    """Omitting include produces no enrichment keys."""
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123"},
+    )
+    content = json.loads(response.content[0].text)
+    assert "remote_links" not in content
+    assert "watchers" not in content
