@@ -87,6 +87,23 @@ def mock_confluence_fetcher():
     }
     mock_fetcher.add_comment.return_value = mock_comment
 
+    # Mock get_user_details methods
+    mock_fetcher.get_current_user_info.return_value = {
+        "accountId": "current-user-id",
+        "displayName": "Current User",
+        "email": "current@example.com",
+    }
+    mock_fetcher.get_user_details_by_accountid.return_value = {
+        "accountId": "a031248587011jasoidf9832jd8j1",
+        "displayName": "First Last",
+        "email": "first.last@foo.com",
+    }
+    mock_fetcher.get_user_details_by_username.return_value = {
+        "username": "firstlast",
+        "displayName": "First Last",
+        "email": "first.last@foo.com",
+    }
+
     # Mock search_user method
     mock_user_search_result = MagicMock()
     mock_user_search_result.to_simplified_dict.return_value = {
@@ -201,6 +218,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_page_children,
         get_page_images,
         get_space_page_tree,
+        get_user_details,
         search,
         search_user,
         update_page,
@@ -237,6 +255,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(update_page)
     confluence_sub_mcp.add_tool(delete_page)
     confluence_sub_mcp.add_tool(search_user)
+    confluence_sub_mcp.add_tool(get_user_details)
     confluence_sub_mcp.add_tool(upload_attachment)
     confluence_sub_mcp.add_tool(upload_attachments)
     confluence_sub_mcp.add_tool(get_attachments)
@@ -963,3 +982,62 @@ async def test_get_page_images_fetch_failure(client, mock_confluence_fetcher):
     summary = json.loads(response.content[0].text)
     assert summary["downloaded"] == 0
     assert len(summary["failed"]) == 1
+
+
+@pytest.mark.anyio
+async def test_get_user_details_me(client, mock_confluence_fetcher):
+    """Test get_user_details with 'me' identifier returns current user."""
+    response = await client.call_tool(
+        "confluence_get_user_details", {"identifier": "me"}
+    )
+
+    mock_confluence_fetcher.get_current_user_info.assert_called_once()
+    result_data = json.loads(response.content[0].text)
+    assert result_data["accountId"] == "current-user-id"
+    assert result_data["displayName"] == "Current User"
+
+
+@pytest.mark.anyio
+async def test_get_user_details_me_case_insensitive(client, mock_confluence_fetcher):
+    """Test get_user_details with 'ME' identifier (case-insensitive)."""
+    response = await client.call_tool(
+        "confluence_get_user_details", {"identifier": "ME"}
+    )
+
+    mock_confluence_fetcher.get_current_user_info.assert_called_once()
+    result_data = json.loads(response.content[0].text)
+    assert result_data["accountId"] == "current-user-id"
+
+
+@pytest.mark.anyio
+async def test_get_user_details_cloud_account_id(client, mock_confluence_fetcher):
+    """Test get_user_details on Cloud routes to get_user_details_by_accountid."""
+    mock_confluence_fetcher.config.is_cloud = True
+
+    response = await client.call_tool(
+        "confluence_get_user_details", {"identifier": "a031248587011jasoidf9832jd8j1"}
+    )
+
+    mock_confluence_fetcher.get_user_details_by_accountid.assert_called_once_with(
+        "a031248587011jasoidf9832jd8j1"
+    )
+    result_data = json.loads(response.content[0].text)
+    assert result_data["accountId"] == "a031248587011jasoidf9832jd8j1"
+    assert result_data["displayName"] == "First Last"
+
+
+@pytest.mark.anyio
+async def test_get_user_details_server_username(client, mock_confluence_fetcher):
+    """Test get_user_details on Server/DC routes to get_user_details_by_username."""
+    mock_confluence_fetcher.config.is_cloud = False
+
+    response = await client.call_tool(
+        "confluence_get_user_details", {"identifier": "firstlast"}
+    )
+
+    mock_confluence_fetcher.get_user_details_by_username.assert_called_once_with(
+        "firstlast"
+    )
+    result_data = json.loads(response.content[0].text)
+    assert result_data["username"] == "firstlast"
+    assert result_data["displayName"] == "First Last"
