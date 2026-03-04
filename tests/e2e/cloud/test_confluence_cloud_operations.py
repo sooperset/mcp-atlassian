@@ -178,3 +178,17 @@ class TestConfluencePageAncestors:
         assert parent.id in parent_ids, (
             f"parent {parent.id} not in ancestors: {parent_ids}"
         )
+
+        # Verify to_simplified_dict() — this is what the MCP tool returns
+        simplified = fetched.to_simplified_dict()
+        assert "ancestors" in simplified, (
+            "ancestors missing from to_simplified_dict() output"
+        )
+        simplified_parent_ids = [a["id"] for a in simplified["ancestors"]]
+        assert parent.id in simplified_parent_ids, (
+            f"parent {parent.id} not in simplified ancestors: {simplified['ancestors']}"
+        )
+        # Each ancestor should have id and title
+        for ancestor in simplified["ancestors"]:
+            assert "id" in ancestor, f"ancestor missing 'id': {ancestor}"
+            assert "title" in ancestor, f"ancestor missing 'title': {ancestor}"

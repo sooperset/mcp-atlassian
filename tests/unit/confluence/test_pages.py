@@ -68,6 +68,42 @@ class TestPagesMixin:
         assert result.attachments[0].id is not None
         assert result.attachments[1].id is not None
 
+    def test_get_page_content_includes_ancestors_in_response(self, pages_mixin):
+        """Ancestors in API response flow through to ConfluencePage model.
+
+        Regression for https://github.com/sooperset/mcp-atlassian/issues/1131
+        Verifies the full path: API response → model → to_simplified_dict().
+        """
+        # Arrange — build a page response with ancestors included
+        import copy
+
+        from tests.fixtures.confluence_mocks import MOCK_PAGE_RESPONSE
+
+        page_with_ancestors = copy.deepcopy(MOCK_PAGE_RESPONSE)
+        page_with_ancestors["ancestors"] = [
+            {"id": "111", "title": "Grandparent Page", "type": "page"},
+            {"id": "222", "title": "Parent Page", "type": "page"},
+        ]
+        pages_mixin.confluence.get_page_by_id.return_value = page_with_ancestors
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        # Act
+        result = pages_mixin.get_page_content("987654321", convert_to_markdown=True)
+
+        # Assert — ancestors populated on model
+        assert len(result.ancestors) == 2
+        assert result.ancestors[0]["id"] == "111"
+        assert result.ancestors[0]["title"] == "Grandparent Page"
+        assert result.ancestors[1]["id"] == "222"
+        assert result.ancestors[1]["title"] == "Parent Page"
+
+        # Assert — ancestors included in simplified dict (MCP tool output)
+        simplified = result.to_simplified_dict()
+        assert "ancestors" in simplified
+        assert len(simplified["ancestors"]) == 2
+        assert simplified["ancestors"][0] == {"id": "111", "title": "Grandparent Page"}
+        assert simplified["ancestors"][1] == {"id": "222", "title": "Parent Page"}
+
     def test_get_page_ancestors(self, pages_mixin):
         """Test getting page ancestors (parent pages)."""
         # Arrange
