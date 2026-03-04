@@ -137,3 +137,44 @@ class TestConfluenceCloudComments:
 
         comments = confluence_fetcher.get_page_comments(page.id)
         assert len(comments) > 0
+
+
+class TestConfluencePageAncestors:
+    """get_page_content should populate the ancestors field.
+
+    Regression for https://github.com/sooperset/mcp-atlassian/issues/1131
+    Root cause: 'ancestors' not included in expand params in get_page_content().
+    """
+
+    def test_child_page_has_ancestors(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        cloud_instance: CloudInstanceInfo,
+        resource_tracker: CloudResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        parent = confluence_fetcher.create_page(
+            space_key=cloud_instance.space_key,
+            title=f"Ancestor Parent {uid}",
+            body="<p>Parent page.</p>",
+            is_markdown=False,
+        )
+        resource_tracker.add_confluence_page(parent.id)
+
+        child = confluence_fetcher.create_page(
+            space_key=cloud_instance.space_key,
+            title=f"Ancestor Child {uid}",
+            body="<p>Child page.</p>",
+            is_markdown=False,
+            parent_id=parent.id,
+        )
+        resource_tracker.add_confluence_page(child.id)
+
+        fetched = confluence_fetcher.get_page_content(child.id)
+        assert len(fetched.ancestors) > 0, (
+            "ancestors is empty — 'ancestors' missing from expand params"
+        )
+        parent_ids = [a.get("id") for a in fetched.ancestors]
+        assert parent.id in parent_ids, (
+            f"parent {parent.id} not in ancestors: {parent_ids}"
+        )
