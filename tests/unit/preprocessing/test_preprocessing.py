@@ -12,18 +12,26 @@ from tests.utils.mocks import MockConfluenceClient
 @pytest.fixture
 def preprocessor_with_jira():
     return JiraPreprocessor(base_url="https://example.atlassian.net")
+
+
 @pytest.fixture
 def preprocessor_with_jira_markup_translation_disabled():
     return JiraPreprocessor(
         base_url="https://example.atlassian.net", disable_translation=True
     )
+
+
 @pytest.fixture
 def preprocessor_with_confluence():
     return ConfluencePreprocessor(base_url="https://example.atlassian.net")
+
+
 def test_init():
     """Test JiraPreprocessor initialization."""
     processor = JiraPreprocessor("https://example.atlassian.net/")
     assert processor.base_url == "https://example.atlassian.net"
+
+
 def test_process_confluence_page_content(preprocessor_with_confluence):
     """Test processing Confluence page content using mock data."""
     html_content = MOCK_PAGE_RESPONSE["body"]["storage"]["value"]
@@ -40,6 +48,8 @@ def test_process_confluence_page_content(preprocessor_with_confluence):
     assert "Date" in processed_markdown
     assert "Goals" in processed_markdown
     assert "Example goal" in processed_markdown
+
+
 def test_process_confluence_comment_content(preprocessor_with_confluence):
     """Test processing Confluence comment content using mock data."""
     html_content = MOCK_COMMENTS_RESPONSE["results"][0]["body"]["view"]["value"]
@@ -50,6 +60,8 @@ def test_process_confluence_comment_content(preprocessor_with_confluence):
     )
 
     assert "Comment content here" in processed_markdown
+
+
 def test_clean_jira_issue_content(preprocessor_with_jira):
     """Test cleaning Jira issue content using mock data."""
     description = MOCK_JIRA_ISSUE_RESPONSE["fields"]["description"]
@@ -62,6 +74,8 @@ def test_clean_jira_issue_content(preprocessor_with_jira):
     cleaned_comment = preprocessor_with_jira.clean_jira_text(comment)
 
     assert "test comment" in cleaned_comment.lower()
+
+
 def test_process_html_content_basic(preprocessor_with_confluence):
     """Test basic HTML content processing."""
     html = "<p>Simple text</p>"
@@ -73,6 +87,8 @@ def test_process_html_content_basic(preprocessor_with_confluence):
 
     assert processed_html == "<p>Simple text</p>"
     assert processed_markdown.strip() == "Simple text"
+
+
 def test_process_html_content_with_user_mentions(preprocessor_with_confluence):
     """Test HTML content processing with user mentions."""
     html = """
@@ -89,15 +105,21 @@ def test_process_html_content_with_user_mentions(preprocessor_with_confluence):
 
     assert "@Test User 123456" in processed_html
     assert "@Test User 123456" in processed_markdown
+
+
 def test_clean_jira_text_empty(preprocessor_with_jira):
     """Test cleaning empty Jira text."""
     assert preprocessor_with_jira.clean_jira_text("") == ""
     assert preprocessor_with_jira.clean_jira_text(None) == ""
+
+
 def test_clean_jira_text_user_mentions(preprocessor_with_jira):
     """Test cleaning Jira text with user mentions."""
     text = "Hello [~accountid:123456]!"
     cleaned = preprocessor_with_jira.clean_jira_text(text)
     assert cleaned == "Hello User:123456!"
+
+
 def test_clean_jira_text_smart_links(preprocessor_with_jira):
     """Test cleaning Jira text with smart links."""
     base_url = "https://example.atlassian.net"
@@ -115,11 +137,15 @@ def test_clean_jira_text_smart_links(preprocessor_with_jira):
     text = f"[Meeting Notes|{confluence_url}|smart-link]"
     cleaned = preprocessor_with_jira.clean_jira_text(text)
     assert cleaned == f"[Example Meeting Notes]({processed_url})"
+
+
 def test_clean_jira_text_html_content(preprocessor_with_jira):
     """Test cleaning Jira text with HTML content."""
     text = "<p>This is <b>bold</b> text</p>"
     cleaned = preprocessor_with_jira.clean_jira_text(text)
     assert cleaned.strip() == "This is **bold** text"
+
+
 def test_clean_jira_text_combined(preprocessor_with_jira):
     """Test cleaning Jira text with multiple elements."""
     base_url = "https://example.atlassian.net"
@@ -130,22 +156,30 @@ def test_clean_jira_text_combined(preprocessor_with_jira):
     cleaned = preprocessor_with_jira.clean_jira_text(text)
     assert "Hello User:123456!" in cleaned
     assert f"[PROJ-123]({base_url}/browse/PROJ-123)" in cleaned
+
+
 def test_process_html_content_error_handling(preprocessor_with_confluence):
     """Test error handling in process_html_content."""
     with pytest.raises(Exception):
         preprocessor_with_confluence.process_html_content(
             None, confluence_client=MockConfluenceClient()
         )
+
+
 def test_clean_jira_text_with_invalid_html(preprocessor_with_jira):
     """Test cleaning Jira text with invalid HTML."""
     text = "<p>Unclosed paragraph with <b>bold</b"
     cleaned = preprocessor_with_jira.clean_jira_text(text)
     assert "Unclosed paragraph with **bold**" in cleaned
+
+
 def test_process_mentions_error_handling(preprocessor_with_jira):
     """Test error handling in _process_mentions."""
     text = "[~accountid:invalid]"
     processed = preprocessor_with_jira._process_mentions(text, r"\[~accountid:(.*?)\]")
     assert "User:invalid" in processed
+
+
 def test_jira_to_markdown(preprocessor_with_jira):
     """Test conversion of Jira markup to Markdown."""
     # Test headers
@@ -197,6 +231,8 @@ For more information, see [our website|https://example.com].
     assert "- Feature 1" in converted
     assert "```python" in converted
     assert "[our website](https://example.com)" in converted
+
+
 def test_jira_to_markdown_citation(preprocessor_with_jira):
     """Test citation markup conversion and that unmatched ?? does not cause ReDoS."""
     # Matched citation
@@ -212,6 +248,8 @@ def test_jira_to_markdown_citation(preprocessor_with_jira):
     text = "* (??) Some weird formatting"
     result = preprocessor_with_jira.jira_to_markdown(text)
     assert "<cite>" not in result
+
+
 def test_jira_to_markdown_citation_no_redos(preprocessor_with_jira):
     """Regression test: complex Jira wiki markup with unmatched ?? must not hang."""
     description = (
@@ -229,6 +267,8 @@ def test_jira_to_markdown_citation_no_redos(preprocessor_with_jira):
     result = preprocessor_with_jira.jira_to_markdown(description)
     assert "Known limitations" in result
     assert "retry-handler" in result
+
+
 def test_markdown_to_jira(preprocessor_with_jira):
     """Test conversion of Markdown to Jira markup."""
     # Test headers
@@ -284,18 +324,24 @@ For more information, see [our website](https://example.com).
     assert "* Feature 1" in converted
     assert "{code:python}" in converted
     assert "[our website|https://example.com]" in converted
+
+
 def test_markdown_nested_bullet_list_2space(preprocessor_with_jira):
     """Test that 2-space indented bullet lists convert correctly to Jira format."""
     markdown = "* Item A\n  * Sub-item A.1\n    * Sub-sub A.1.1\n* Item B"
     expected = "* Item A\n** Sub-item A.1\n*** Sub-sub A.1.1\n* Item B"
     result = preprocessor_with_jira.markdown_to_jira(markdown)
     assert result == expected
+
+
 def test_markdown_nested_numbered_list_2space(preprocessor_with_jira):
     """Test that 2-space indented numbered lists convert correctly to Jira format."""
     markdown = "1. Item A\n  1. Sub-item A.1\n    1. Sub-sub A.1.1\n2. Item B"
     expected = "# Item A\n## Sub-item A.1\n### Sub-sub A.1.1\n# Item B"
     result = preprocessor_with_jira.markdown_to_jira(markdown)
     assert result == expected
+
+
 def test_jira_markup_translation_disabled(
     preprocessor_with_jira_markup_translation_disabled,
 ):
@@ -323,6 +369,8 @@ def test_jira_markup_translation_disabled(
     assert "h1. Jira Heading" in result
     assert "**markdown bold**" in result
     assert "{{jira code}}" in result
+
+
 def test_markdown_to_confluence_storage(preprocessor_with_confluence):
     """Test conversion of Markdown to Confluence storage format."""
     markdown = """# Heading 1
@@ -347,6 +395,8 @@ This is some **bold** and *italic* text.
     assert "<em>" in storage_format or "<i>" in storage_format  # Italic
     assert "<a href=" in storage_format.lower()  # Link
     assert "example.com" in storage_format
+
+
 def test_process_confluence_profile_macro(preprocessor_with_confluence):
     """Test processing Confluence User Profile Macro in page content."""
     html_content = MOCK_PAGE_RESPONSE["body"]["storage"]["value"]
@@ -358,6 +408,8 @@ def test_process_confluence_profile_macro(preprocessor_with_confluence):
     # Should replace macro with @Test User user123
     assert "@Test User user123" in processed_html
     assert "@Test User user123" in processed_markdown
+
+
 def test_process_confluence_profile_macro_malformed(preprocessor_with_confluence):
     """Test processing malformed User Profile Macro (missing user param and ri:user)."""
     # Macro missing ac:parameter
@@ -379,6 +431,8 @@ def test_process_confluence_profile_macro_malformed(preprocessor_with_confluence
     )
     assert "[User Profile Macro (Malformed)]" in processed_html
     assert "[User Profile Macro (Malformed)]" in processed_markdown
+
+
 def test_process_confluence_profile_macro_fallback():
     """Test fallback when confluence_client is None."""
     from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
@@ -396,6 +450,8 @@ def test_process_confluence_profile_macro_fallback():
     )
     assert "[User Profile: user999]" in processed_html
     assert "[User Profile: user999]" in processed_markdown
+
+
 def test_process_user_profile_macro_multiple():
     """Test processing multiple User Profile Macros with account-id and userkey."""
     from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
@@ -439,6 +495,8 @@ def test_process_user_profile_macro_multiple():
     assert "@Test User Two" in processed_html
     assert "@Test User One" in processed_markdown
     assert "@Test User Two" in processed_markdown
+
+
 def test_markdown_to_confluence_no_automatic_anchors():
     """Test that heading_anchors=False prevents automatic anchor generation (regression for issue #488)."""
     from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
@@ -466,6 +524,8 @@ Final content.
     assert "<h1>Main Title</h1>" in result
     assert "<h2>Subsection</h2>" in result
     assert "<h3>Deep Section</h3>" in result
+
+
 def test_markdown_to_confluence_style_preservation():
     """Test that styled content is preserved during conversion."""
     from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
@@ -499,6 +559,8 @@ def hello():
     assert "ac:structured-macro" in result  # Code block macro
     assert 'ac:name="code"' in result
     assert "python" in result
+
+
 def test_markdown_to_confluence_optional_anchor_generation():
     """Test that enable_heading_anchors parameter controls anchor generation."""
     from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
@@ -528,6 +590,8 @@ More content.
     # Note: md2conf may use different anchor formats, so we check for presence of id attributes
     assert "<h1>" in result_with_anchors
     assert "<h2>" in result_with_anchors
+
+
 # Issue #786 regression tests - Wiki Markup Corruption
 def test_markdown_to_jira_header_requires_space(preprocessor_with_jira):
     """Test that # requires space to be converted to heading (issue #786)."""
@@ -540,6 +604,8 @@ def test_markdown_to_jira_header_requires_space(preprocessor_with_jira):
     assert preprocessor_with_jira.markdown_to_jira("#item") == "#item"
     assert preprocessor_with_jira.markdown_to_jira("##nested") == "##nested"
     assert preprocessor_with_jira.markdown_to_jira("###deep") == "###deep"
+
+
 def test_markdown_to_jira_preserves_jira_list_syntax(preprocessor_with_jira):
     """Test that Jira list syntax (asterisks + space) is preserved (issue #786)."""
     # Jira nested bullets - should NOT be converted to bold
@@ -550,6 +616,8 @@ def test_markdown_to_jira_preserves_jira_list_syntax(preprocessor_with_jira):
 
     # Single Jira bullet should also be preserved
     assert preprocessor_with_jira.markdown_to_jira("* Item") == "* Item"
+
+
 def test_markdown_to_jira_inline_bold_still_converts(preprocessor_with_jira):
     """Test that inline Markdown bold/italic still converts (issue #786)."""
     # Inline bold should still work
@@ -561,14 +629,20 @@ def test_markdown_to_jira_inline_bold_still_converts(preprocessor_with_jira):
         preprocessor_with_jira.markdown_to_jira("text *italic* text")
         == "text _italic_ text"
     )
+
+
 def test_markdown_to_jira_bold_without_space_still_converts(preprocessor_with_jira):
     """Test that Markdown bold (no space after **) still converts (issue #786)."""
     # These should still be converted (existing behavior preserved)
     assert preprocessor_with_jira.markdown_to_jira("**bold text**") == "*bold text*"
     assert preprocessor_with_jira.markdown_to_jira("*italic text*") == "_italic text_"
+
+
 def test_converts_markdown_underscore_bold(preprocessor_with_jira):
     """__bold__ (double-underscore) converts to *bold* same as **bold**."""
     assert preprocessor_with_jira.markdown_to_jira("__bold text__") == "*bold text*"
+
+
 def test_converts_markdown_bold_italic(preprocessor_with_jira):
     """All four Markdown bold+italic variants convert to *_text_* Jira syntax.
 
@@ -581,11 +655,15 @@ def test_converts_markdown_bold_italic(preprocessor_with_jira):
     assert preprocessor_with_jira.markdown_to_jira("___really important___") == expected
     assert preprocessor_with_jira.markdown_to_jira("__*really important*__") == expected
     assert preprocessor_with_jira.markdown_to_jira("**_really important_**") == expected
+
+
 def test_md2conf_elements_from_string_available():
     """Test that elements_from_string is importable with fallback (issue #817)."""
     from mcp_atlassian.preprocessing.confluence import elements_from_string
 
     assert callable(elements_from_string)
+
+
 # Issue #893 regression tests - Code Block Content Corruption
 def test_markdown_to_jira_code_block_preserves_hash(preprocessor_with_jira):
     """Test that # characters inside code blocks are preserved (issue #893)."""
@@ -603,6 +681,8 @@ echo "hello"
     assert "#!/bin/bash" in result
     assert "# This is a comment" in result
     assert "h1." not in result  # Should NOT have heading conversion
+
+
 def test_markdown_to_jira_code_block_with_language_preserves_hash(
     preprocessor_with_jira,
 ):
@@ -616,6 +696,8 @@ def hello():
 
     assert "# Python comment" in result
     assert "h1." not in result
+
+
 def test_markdown_to_jira_code_block_multiple_hash_lines(preprocessor_with_jira):
     """Test multiple # lines in code block are all preserved (issue #893)."""
     markdown = """```bash
@@ -630,6 +712,8 @@ echo "test"
     assert "# Second comment" in result
     assert "# Third comment" in result
     assert result.count("h1.") == 0
+
+
 def test_markdown_to_jira_inline_code_preserves_hash(preprocessor_with_jira):
     """Test that # in inline code is preserved (issue #893)."""
     markdown = "The shebang line is `#!/bin/bash` in shell scripts."
@@ -637,6 +721,8 @@ def test_markdown_to_jira_inline_code_preserves_hash(preprocessor_with_jira):
 
     assert "#!/bin/bash" in result
     assert "h1." not in result
+
+
 def test_markdown_to_jira_mixed_code_and_headers(preprocessor_with_jira):
     """Test that headers outside code blocks still convert while code is preserved."""
     markdown = """# Real Heading
@@ -656,8 +742,11 @@ Here's some code:
 
     # Code block content should be preserved
     assert "# This is a comment" in result
+
+
 # Issue #904 regression tests - Jira ordered list items converted to headings
 # --- passthrough: Jira wiki input returned unchanged (Option A) ---
+
 
 def test_passthrough_jira_heading_marker_preserves_ordered_list(preprocessor_with_jira):
     """Jira wiki input with h[1-6]. marker is returned unchanged (Option A).
@@ -669,6 +758,7 @@ def test_passthrough_jira_heading_marker_preserves_ordered_list(preprocessor_wit
 
     assert result == jira_wiki
 
+
 def test_passthrough_jira_heading_marker_preserves_nested_list(preprocessor_with_jira):
     """Jira wiki input with h[1-6]. marker is returned unchanged (Option A).
 
@@ -679,6 +769,7 @@ def test_passthrough_jira_heading_marker_preserves_nested_list(preprocessor_with
 
     assert result == jira_wiki
 
+
 def test_passthrough_jira_heading_marker_preserves_md_numbered_list(
     preprocessor_with_jira,
 ):
@@ -688,12 +779,14 @@ def test_passthrough_jira_heading_marker_preserves_md_numbered_list(
 
     assert result == mixed
 
+
 def test_passthrough_jira_code_marker(preprocessor_with_jira):
     """{code} marker triggers Option A early return - input returned unchanged."""
     jira_wiki = "{code:python}\nprint('hello')\n{code}"
     result = preprocessor_with_jira.markdown_to_jira(jira_wiki)
 
     assert result == jira_wiki
+
 
 def test_passthrough_jira_noformat_marker(preprocessor_with_jira):
     """{noformat} marker triggers Option A early return - input returned unchanged."""
@@ -702,6 +795,7 @@ def test_passthrough_jira_noformat_marker(preprocessor_with_jira):
 
     assert result == jira_wiki
 
+
 def test_passthrough_jira_panel_marker(preprocessor_with_jira):
     """{panel} marker triggers Option A early return - input returned unchanged."""
     jira_wiki = "{panel:title=Note}\nSome content\n{panel}"
@@ -709,7 +803,9 @@ def test_passthrough_jira_panel_marker(preprocessor_with_jira):
 
     assert result == jira_wiki
 
+
 # --- ambiguous: no Jira marker, best-effort conversion ---
+
 
 def test_ambiguous_bare_ordered_list_converted_as_heading(preprocessor_with_jira):
     """'# Item' without any Jira marker is indistinguishable from Markdown H1.
@@ -720,12 +816,15 @@ def test_ambiguous_bare_ordered_list_converted_as_heading(preprocessor_with_jira
     result = preprocessor_with_jira.markdown_to_jira("# Item")
     assert result == "h1. Item"
 
+
 # --- converts: Markdown in, Jira wiki out ---
+
 
 def test_converts_markdown_headings(preprocessor_with_jira):
     """Pure Markdown headings convert to h1.-h3. without Jira markers present."""
     result = preprocessor_with_jira.markdown_to_jira("# Title\n## Section\n### Sub")
     assert result == "h1. Title\nh2. Section\nh3. Sub"
+
 
 def test_converts_markdown_headings_with_horizontal_rule(preprocessor_with_jira):
     """'---' horizontal rule must not suppress Markdown heading conversion.
@@ -741,6 +840,7 @@ def test_converts_markdown_headings_with_horizontal_rule(preprocessor_with_jira)
     assert "## Background" not in result
     assert "## Scope" not in result
 
+
 def test_converts_markdown_headings_with_template_variable(preprocessor_with_jira):
     """{{variable}} at line start must NOT suppress Markdown heading conversion.
 
@@ -752,16 +852,19 @@ def test_converts_markdown_headings_with_template_variable(preprocessor_with_jir
     assert "h1. My Heading" in result
     assert "h2. Sub-section" in result
 
+
 def test_converts_markdown_underline_heading(preprocessor_with_jira):
     """Setext-style headings (underline with = or -) convert to h1./h2."""
     assert preprocessor_with_jira.markdown_to_jira("Title\n=====") == "h1. Title"
     assert preprocessor_with_jira.markdown_to_jira("Title\n-----") == "h2. Title"
+
 
 def test_converts_markdown_horizontal_rule(preprocessor_with_jira):
     """Standalone --- converts to Jira horizontal rule ----."""
     assert preprocessor_with_jira.markdown_to_jira("---") == "----"
     assert preprocessor_with_jira.markdown_to_jira("***") == "----"
     assert preprocessor_with_jira.markdown_to_jira("___") == "----"
+
 
 def test_converts_markdown_horizontal_rule_does_not_corrupt_setext(
     preprocessor_with_jira,
@@ -771,35 +874,46 @@ def test_converts_markdown_horizontal_rule_does_not_corrupt_setext(
     assert "----" in result
     assert "h2." not in result
 
+
 def test_converts_markdown_numbered_list(preprocessor_with_jira):
     """Markdown numbered list items convert to Jira ordered list syntax."""
     result = preprocessor_with_jira.markdown_to_jira("1. First\n2. Second\n3. Third")
     assert result == "# First\n# Second\n# Third"
+
 
 def test_converts_markdown_strikethrough(preprocessor_with_jira):
     """~~text~~ converts to -text- Jira strikethrough."""
     result = preprocessor_with_jira.markdown_to_jira("~~deleted~~")
     assert result == "-deleted-"
 
+
 def test_converts_markdown_link(preprocessor_with_jira):
     """[text](url) converts to [text|url] Jira link syntax."""
-    result = preprocessor_with_jira.markdown_to_jira("[Atlassian](https://atlassian.com)")
+    result = preprocessor_with_jira.markdown_to_jira(
+        "[Atlassian](https://atlassian.com)"
+    )
     assert result == "[Atlassian|https://atlassian.com]"
+
 
 def test_converts_markdown_bare_link(preprocessor_with_jira):
     """<url> bare link converts to [url] Jira link syntax."""
     result = preprocessor_with_jira.markdown_to_jira("<https://atlassian.com>")
     assert result == "[https://atlassian.com]"
 
+
 def test_converts_markdown_image_no_alt(preprocessor_with_jira):
     """![](url) image without alt text converts to !url! Jira syntax."""
     result = preprocessor_with_jira.markdown_to_jira("![](https://example.com/img.png)")
     assert result == "!https://example.com/img.png!"
 
+
 def test_converts_markdown_image_with_alt(preprocessor_with_jira):
     """![alt](url) image with alt text converts to !url|alt=alt! Jira syntax."""
-    result = preprocessor_with_jira.markdown_to_jira("![logo](https://example.com/img.png)")
+    result = preprocessor_with_jira.markdown_to_jira(
+        "![logo](https://example.com/img.png)"
+    )
     assert result == "!https://example.com/img.png|alt=logo!"
+
 
 def test_converts_html_color_span(preprocessor_with_jira):
     """<span style='color:#hex'> converts to {color:#hex}text{color} Jira syntax."""
@@ -808,6 +922,7 @@ def test_converts_html_color_span(preprocessor_with_jira):
     )
     assert result == "{color:#ff0000}red text{color}"
 
+
 def test_converts_markdown_table(preprocessor_with_jira):
     """Markdown table header row converts to Jira double-pipe header syntax."""
     md = "| Col A | Col B |\n|-------|-------|\n| val 1 | val 2 |"
@@ -815,10 +930,12 @@ def test_converts_markdown_table(preprocessor_with_jira):
     assert "|| Col A || Col B ||" in result
     assert "| val 1 | val 2 |" in result
 
+
 def test_converts_markdown_blockquote(preprocessor_with_jira):
     """'> text' blockquote converts to {quote} block."""
     result = preprocessor_with_jira.markdown_to_jira("> This is a quote")
     assert result == "{quote}\nThis is a quote\n{quote}"
+
 
 def test_converts_markdown_blockquote_multiline(preprocessor_with_jira):
     """Consecutive '> lines' are collected into a single {quote} block."""
@@ -826,11 +943,13 @@ def test_converts_markdown_blockquote_multiline(preprocessor_with_jira):
     result = preprocessor_with_jira.markdown_to_jira(md)
     assert result == "{quote}\nFirst line\nSecond line\n{quote}"
 
+
 def test_converts_markdown_blockquote_multi_paragraph(preprocessor_with_jira):
     """Multi-paragraph blockquote (bare '>' separator) converts to {quote} block."""
     md = "> First paragraph.\n>\n> Second paragraph."
     result = preprocessor_with_jira.markdown_to_jira(md)
     assert result == "{quote}\nFirst paragraph.\n\nSecond paragraph.\n{quote}"
+
 
 # Language mapping tests for code blocks (issue #669)
 def test_normalize_code_language_valid_jira_languages(preprocessor_with_jira):
@@ -847,12 +966,16 @@ def test_normalize_code_language_valid_jira_languages(preprocessor_with_jira):
     assert preprocessor_with_jira._normalize_code_language("go") == "go"
     assert preprocessor_with_jira._normalize_code_language("ruby") == "ruby"
     assert preprocessor_with_jira._normalize_code_language("none") == "none"
+
+
 def test_normalize_code_language_case_insensitive(preprocessor_with_jira):
     """Test that language normalization is case-insensitive."""
     assert preprocessor_with_jira._normalize_code_language("Python") == "python"
     assert preprocessor_with_jira._normalize_code_language("JAVA") == "java"
     assert preprocessor_with_jira._normalize_code_language("JavaScript") == "javascript"
     assert preprocessor_with_jira._normalize_code_language("BASH") == "bash"
+
+
 def test_normalize_code_language_mapped_languages(preprocessor_with_jira):
     """Test that unsupported languages map to their closest JIRA equivalent."""
     # Dockerfile → bash (similar syntax)
@@ -872,6 +995,8 @@ def test_normalize_code_language_mapped_languages(preprocessor_with_jira):
     # Build files → bash
     assert preprocessor_with_jira._normalize_code_language("makefile") == "bash"
     assert preprocessor_with_jira._normalize_code_language("make") == "bash"
+
+
 def test_normalize_code_language_unmapped_returns_none(preprocessor_with_jira):
     """Test that unmapped languages return None for plain {code} blocks."""
     # Languages with no good JIRA alternative should return None
@@ -880,10 +1005,14 @@ def test_normalize_code_language_unmapped_returns_none(preprocessor_with_jira):
     assert preprocessor_with_jira._normalize_code_language("markdown") is None
     assert preprocessor_with_jira._normalize_code_language("unknownlang") is None
     assert preprocessor_with_jira._normalize_code_language("zig") is None
+
+
 def test_normalize_code_language_empty_input(preprocessor_with_jira):
     """Test that empty/None language returns None."""
     assert preprocessor_with_jira._normalize_code_language("") is None
     assert preprocessor_with_jira._normalize_code_language(None) is None
+
+
 def test_markdown_to_jira_code_block_valid_language(preprocessor_with_jira):
     """Test code block conversion with valid JIRA language."""
     markdown = """```python
@@ -894,6 +1023,8 @@ def hello():
     assert "{code:python}" in result
     assert "def hello():" in result
     assert "{code}" in result
+
+
 def test_markdown_to_jira_code_block_dockerfile_maps_to_bash(preprocessor_with_jira):
     """Test that dockerfile code blocks map to bash (issue #669)."""
     markdown = """```dockerfile
@@ -905,6 +1036,8 @@ CMD ["/bin/bash"]
     assert "{code:bash}" in result
     assert "FROM ubuntu:22.04" in result
     assert "{code}" in result
+
+
 def test_markdown_to_jira_code_block_typescript_maps_to_javascript(
     preprocessor_with_jira,
 ):
@@ -918,6 +1051,8 @@ interface User {
     result = preprocessor_with_jira.markdown_to_jira(markdown)
     assert "{code:javascript}" in result
     assert "interface User" in result
+
+
 def test_markdown_to_jira_code_block_jsx_maps_to_javascript(preprocessor_with_jira):
     """Test that jsx code blocks map to javascript (issue #669)."""
     markdown = """```jsx
@@ -928,6 +1063,8 @@ const Component = () => {
     result = preprocessor_with_jira.markdown_to_jira(markdown)
     assert "{code:javascript}" in result
     assert "const Component" in result
+
+
 def test_markdown_to_jira_code_block_unmapped_language_plain(preprocessor_with_jira):
     """Test that unmapped languages produce plain {code} blocks."""
     markdown = """```rust
@@ -940,6 +1077,8 @@ fn main() {
     assert "{code}" in result
     assert "{code:rust}" not in result
     assert "fn main()" in result
+
+
 def test_markdown_to_jira_code_block_no_language_plain(preprocessor_with_jira):
     """Test that code blocks without language produce plain {code}."""
     markdown = """```
@@ -951,6 +1090,8 @@ no syntax highlighting
     # Should not have any language specifier
     assert "{code:" not in result
     assert "plain text code" in result
+
+
 def test_markdown_to_jira_multiple_code_blocks_mixed_languages(preprocessor_with_jira):
     """Test multiple code blocks with different language mappings."""
     markdown = """
@@ -975,6 +1116,8 @@ some code
     assert 'print("hello")' in result
     assert "FROM alpine" in result
     assert "some code" in result
+
+
 # Confluence ac:image tag processing tests
 class TestImageProcessing:
     """Tests for Confluence ac:image tag processing."""
@@ -1133,6 +1276,8 @@ class TestImageProcessing:
         html = "<p>Simple text</p>"
         processed_html, processed_markdown = preprocessor.process_html_content(html)
         assert "Simple text" in processed_markdown
+
+
 # Issue #1052 - {panel} blocks drop links during wiki-to-markdown conversion
 class TestPanelBlocks:
     """Tests for {panel} block conversion and bare link handling."""
@@ -1215,6 +1360,8 @@ class TestPanelBlocks:
         """Test bare [url] link is preserved outside panels too."""
         result = preprocessor.jira_to_markdown("[https://example.com] more text")
         assert "https://example.com" in result, f"URL dropped: {result}"
+
+
 # Code block placeholder protection tests
 class TestCodeBlockProtection:
     """Tests for code block content protection via placeholder extraction."""
@@ -1341,6 +1488,8 @@ class TestCodeBlockProtection:
             assert not ln.startswith("> "), (
                 f"Inner code line unexpectedly blockquoted: {ln!r}"
             )
+
+
 class TestHtmlConversionCodeProtection:
     """Tests that _convert_html_to_markdown protects code spans from HTML parsing.
 
