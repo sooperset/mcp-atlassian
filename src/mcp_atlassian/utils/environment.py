@@ -63,10 +63,13 @@ def get_available_services(
                     "Using Confluence Server/Data Center authentication (PAT or Basic Auth)"
                 )
     elif os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in ("true", "1", "yes"):
-        confluence_is_setup = True
-        logger.info(
-            "Using Confluence minimal OAuth configuration - expecting user-provided tokens via headers"
-        )
+        # Only enable Confluence in minimal OAuth mode if CONFLUENCE_URL is set,
+        # or if no service-specific URLs are set at all (pure header-based mode)
+        if os.getenv("CONFLUENCE_URL") or not os.getenv("JIRA_URL"):
+            confluence_is_setup = True
+            logger.info(
+                "Using Confluence minimal OAuth configuration - expecting user-provided tokens via headers"
+            )
 
     if not confluence_is_setup:
         confluence_token = headers.get("X-Atlassian-Confluence-Personal-Token")
@@ -122,10 +125,13 @@ def get_available_services(
                     "Using Jira Server/Data Center authentication (PAT or Basic Auth)"
                 )
     elif os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in ("true", "1", "yes"):
-        jira_is_setup = True
-        logger.info(
-            "Using Jira minimal OAuth configuration - expecting user-provided tokens via headers"
-        )
+        # Only enable Jira in minimal OAuth mode if JIRA_URL is set,
+        # or if no service-specific URLs are set at all (pure header-based mode)
+        if os.getenv("JIRA_URL") or not os.getenv("CONFLUENCE_URL"):
+            jira_is_setup = True
+            logger.info(
+                "Using Jira minimal OAuth configuration - expecting user-provided tokens via headers"
+            )
 
     if not jira_is_setup:
         jira_token = headers.get("X-Atlassian-Jira-Personal-Token")
