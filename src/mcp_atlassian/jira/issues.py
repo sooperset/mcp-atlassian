@@ -986,6 +986,14 @@ class IssuesMixin(
                 logger.debug(f"Identified field '{key}' as standard system field ID.")
 
             if api_field_id:
+                # Allow None values to pass through for clearing fields
+                if value is None:
+                    fields[api_field_id] = None
+                    logger.debug(
+                        f"Setting field '{api_field_id}' to None from kwarg '{key}' (clearing field)."
+                    )
+                    continue
+
                 # Get the full field definition for formatting context if needed
                 field_definition = self.get_field_by_id(
                     api_field_id

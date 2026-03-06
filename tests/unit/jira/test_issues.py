@@ -814,6 +814,44 @@ class TestIssuesMixin:
         assert "fixVersions" in fields
         assert fields["fixVersions"] == [{"name": "TestRelease"}]
 
+    def test_process_additional_fields_none_clears_field(
+        self, issues_mixin: IssuesMixin
+    ):
+        """Test _process_additional_fields passes None through to clear fields."""
+        fields = {}
+        kwargs = {"customfield_10013": None}  # Sprint field, set to null
+
+        issues_mixin._process_additional_fields(fields, kwargs)
+
+        # None must be preserved — it tells Jira API to clear the field
+        assert "customfield_10013" in fields
+        assert fields["customfield_10013"] is None
+
+    def test_process_additional_fields_none_clears_named_field(
+        self, issues_mixin: IssuesMixin
+    ):
+        """Test _process_additional_fields passes None through for named fields."""
+        fields = {}
+        kwargs = {"priority": None}
+
+        issues_mixin._process_additional_fields(fields, kwargs)
+
+        # priority=None should clear the priority field
+        assert "priority" in fields
+        assert fields["priority"] is None
+
+    def test_process_additional_fields_invalid_value_still_skipped(
+        self, issues_mixin: IssuesMixin
+    ):
+        """Test _process_additional_fields still skips fields with invalid format."""
+        fields = {}
+        kwargs = {"priority": 12345}  # Invalid: priority expects string or dict
+
+        issues_mixin._process_additional_fields(fields, kwargs)
+
+        # Invalid value should NOT be added to fields
+        assert "priority" not in fields
+
     def test_create_issue_with_parent_for_task(
         self, issues_mixin: IssuesMixin, make_issue_data
     ):
