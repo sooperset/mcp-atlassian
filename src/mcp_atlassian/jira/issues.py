@@ -1058,6 +1058,7 @@ class IssuesMixin(
                 - assignee: New assignee for the issue
                 - parent: Parent issue key (str or {"key": "..."} dict)
                 - epicKey/epic_link/epicLink: Epic link alias
+                Pass None to clear a field (e.g., priority=None).
 
         Returns:
             JiraIssue model representing the updated issue

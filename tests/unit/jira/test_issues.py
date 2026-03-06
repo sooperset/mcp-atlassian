@@ -779,6 +779,29 @@ class TestIssuesMixin:
         )
         assert document.key == "TEST-123"
 
+    def test_update_issue_clears_field_with_none(self, issues_mixin: IssuesMixin):
+        """Test update_issue passes None through kwargs to clear a field."""
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test Issue",
+                "description": "This is a test",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Bug"},
+            },
+        }
+        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+
+        issues_mixin.update_issue(issue_key="TEST-123", priority=None)
+
+        issues_mixin.jira.update_issue.assert_called_once()
+        call_kwargs = issues_mixin.jira.update_issue.call_args
+        fields = call_kwargs[1]["update"]["fields"]
+        assert "priority" in fields
+        assert fields["priority"] is None
+
     def test_delete_issue(self, issues_mixin: IssuesMixin):
         """Test deleting an issue."""
         # Call the method
