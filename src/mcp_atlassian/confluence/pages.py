@@ -782,7 +782,10 @@ class PagesMixin(ConfluenceClient):
         heading_tags = ["h1", "h2", "h3", "h4", "h5", "h6"]
         target_heading: Tag | None = None
         for tag in soup.find_all(heading_tags):
-            if isinstance(tag, Tag) and tag.get_text(strip=True) == heading_text.strip():
+            if (
+                isinstance(tag, Tag)
+                and tag.get_text(strip=True) == heading_text.strip()
+            ):
                 target_heading = tag
                 break
 
@@ -805,17 +808,27 @@ class PagesMixin(ConfluenceClient):
             siblings_to_remove.append(current)  # type: ignore[arg-type]
             current = current.next_sibling
 
-        # 5. Remove old section body nodes.
+        # 5. (old nodes removed in step 6 below)
+
+        # 6. Remove old nodes then do string-based insertion so we avoid
+        # moving nodes between BS4 trees (which causes type and mutation issues).
+        # Capture the heading HTML string before extracting siblings.
+        heading_html = str(target_heading)
         for node in siblings_to_remove:
             node.extract()
 
-        # 6. Parse and insert the new section body after the heading.
-        new_fragment_soup = BeautifulSoup(new_storage_fragment, "html.parser")
-        insert_after = target_heading
-        for child in list(new_fragment_soup.contents):
-            child_copy = child.__copy__()
-            insert_after.insert_after(child_copy)
-            insert_after = child_copy
+        # Rebuild: find the heading in the now-pruned HTML and splice in the
+        # new fragment immediately after it.
+        pruned_html = str(soup)
+        heading_pos = pruned_html.find(heading_html)
+        if heading_pos == -1:
+            raise ValueError(
+                f"Could not relocate heading '{heading_text}' after pruning page HTML."
+            )
+        insert_at = heading_pos + len(heading_html)
+        final_html = (
+            pruned_html[:insert_at] + new_storage_fragment + pruned_html[insert_at:]
+        )
 
         # 7. Write the full modified storage XML back — no format conversion,
         #    so every macro and element outside the section is untouched.
@@ -826,7 +839,7 @@ class PagesMixin(ConfluenceClient):
         return self.update_page(
             page_id=page_id,
             title=page.title or "",
-            body=str(soup),
+            body=final_html,
             is_markdown=False,
             content_representation="storage",
             is_minor_edit=is_minor_edit,
