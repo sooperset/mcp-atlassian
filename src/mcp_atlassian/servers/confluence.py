@@ -745,7 +745,6 @@ async def update_page(
     )
 
 
-
 @confluence_mcp.tool(
     tags={"confluence", "write", "toolset:confluence_pages"},
     annotations={"title": "Update Page Section", "destructiveHint": True},
@@ -842,6 +841,7 @@ async def update_page_section(
         indent=2,
         ensure_ascii=False,
     )
+
 
 @confluence_mcp.tool(
     tags={"confluence", "write", "toolset:confluence_pages"},

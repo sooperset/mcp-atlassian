@@ -2987,7 +2987,9 @@ class TestUpdatePageSection:
 
         with (
             patch.object(pages_mixin, "get_page_content", return_value=raw_page),
-            patch.object(pages_mixin, "update_page", return_value=updated_page) as mock_update,
+            patch.object(
+                pages_mixin, "update_page", return_value=updated_page
+            ) as mock_update,
         ):
             result = pages_mixin.update_page_section(
                 page_id="123",
@@ -3026,7 +3028,9 @@ class TestUpdatePageSection:
 
         with (
             patch.object(pages_mixin, "get_page_content", return_value=raw_page),
-            patch.object(pages_mixin, "update_page", return_value=updated_page) as mock_update,
+            patch.object(
+                pages_mixin, "update_page", return_value=updated_page
+            ) as mock_update,
         ):
             pages_mixin.update_page_section("1", "Section B", "new b")
 
@@ -3062,11 +3066,7 @@ class TestUpdatePageSection:
             '<ac:parameter ac:name="maxLevel">3</ac:parameter>'
             "</ac:structured-macro>"
         )
-        storage = (
-            f"{macro}"
-            "<h2>Section</h2><p>old</p>"
-            "<h2>Other</h2><p>other</p>"
-        )
+        storage = f"{macro}<h2>Section</h2><p>old</p><h2>Other</h2><p>other</p>"
         raw_page = self._make_page("1", "P", storage)
         updated_page = self._make_page("1", "P", "")
 
@@ -3076,7 +3076,9 @@ class TestUpdatePageSection:
 
         with (
             patch.object(pages_mixin, "get_page_content", return_value=raw_page),
-            patch.object(pages_mixin, "update_page", return_value=updated_page) as mock_update,
+            patch.object(
+                pages_mixin, "update_page", return_value=updated_page
+            ) as mock_update,
         ):
             pages_mixin.update_page_section("1", "Section", "new")
 
@@ -3085,9 +3087,7 @@ class TestUpdatePageSection:
 
     def test_storage_format_content_not_converted(self, pages_mixin):
         """When content_format='storage', markdown_to_confluence_storage is not called."""
-        raw_page = self._make_page(
-            "1", "P", "<h2>Section</h2><p>old</p>"
-        )
+        raw_page = self._make_page("1", "P", "<h2>Section</h2><p>old</p>")
         updated_page = self._make_page("1", "P", "")
 
         with (
