@@ -5,6 +5,7 @@ import logging
 from typing import Any
 
 import requests
+from bs4 import BeautifulSoup, Tag
 from requests.exceptions import HTTPError
 
 from ..models.confluence import ConfluencePage
@@ -716,6 +717,121 @@ class PagesMixin(ConfluenceClient):
         except Exception as e:
             logger.error(f"Error updating page {page_id}: {str(e)}")
             raise Exception(f"Failed to update page {page_id}: {str(e)}") from e
+
+    def update_page_section(
+        self,
+        page_id: str,
+        heading_text: str,
+        new_content: str,
+        *,
+        content_format: str = "markdown",
+        is_minor_edit: bool = False,
+        version_comment: str = "",
+    ) -> ConfluencePage:
+        """Update a single section of a Confluence page without affecting the rest.
+
+        Fetches the page in raw storage format, locates the section identified by
+        its heading text, replaces only the content between that heading and the
+        next heading of the same or higher level, and writes the modified storage
+        XML back. This is lossless: macros, layouts, mentions, and all other
+        Confluence-specific elements outside the target section are preserved.
+
+        Args:
+            page_id: The ID of the page to update.
+            heading_text: Exact text of the heading that starts the section to
+                replace. Matching is case-sensitive and whitespace-normalised.
+            new_content: Replacement content for the section body (excluding the
+                heading itself).
+            content_format: Format of new_content — ``'markdown'`` (default) or
+                ``'storage'``. When ``'markdown'``, the content is
+                converted to Confluence storage format before insertion.
+                (keyword-only)
+            is_minor_edit: Whether to flag the page version as a minor edit.
+                (keyword-only)
+            version_comment: Optional version comment. (keyword-only)
+
+        Returns:
+            Updated ``ConfluencePage`` with the section replaced.
+
+        Raises:
+            ValueError: If ``heading_text`` is not found on the page, or if
+                ``content_format`` is not one of the accepted values.
+            Exception: If retrieving or updating the page fails.
+        """
+        if content_format not in ("markdown", "storage"):
+            raise ValueError(
+                f"Invalid content_format '{content_format}'. "
+                "Must be 'markdown' or 'storage'."
+            )
+
+        # 1. Fetch raw storage XML — no markdown conversion so nothing is lost.
+        page = self.get_page_content(page_id, convert_to_markdown=False)
+        raw_storage = page.content or ""
+
+        # 2. Convert new_content to storage format when necessary.
+        if content_format == "markdown":
+            new_storage_fragment = self.preprocessor.markdown_to_confluence_storage(
+                new_content
+            )
+        else:
+            new_storage_fragment = new_content
+
+        # 3. Parse the full storage XML with BeautifulSoup.
+        soup = BeautifulSoup(raw_storage, "html.parser")
+
+        heading_tags = ["h1", "h2", "h3", "h4", "h5", "h6"]
+        target_heading: Tag | None = None
+        for tag in soup.find_all(heading_tags):
+            if isinstance(tag, Tag) and tag.get_text(strip=True) == heading_text.strip():
+                target_heading = tag
+                break
+
+        if target_heading is None:
+            raise ValueError(
+                f"Heading '{heading_text}' not found in page {page_id}. "
+                "Heading text must match exactly (case-sensitive)."
+            )
+
+        heading_level = int(target_heading.name[1])  # e.g. "h2" → 2
+
+        # 4. Collect all sibling nodes that belong to this section (between
+        #    this heading and the next heading of the same or higher level).
+        siblings_to_remove: list[Tag] = []
+        current = target_heading.next_sibling
+        while current is not None:
+            if isinstance(current, Tag) and current.name in heading_tags:
+                if int(current.name[1]) <= heading_level:
+                    break
+            siblings_to_remove.append(current)  # type: ignore[arg-type]
+            current = current.next_sibling
+
+        # 5. Remove old section body nodes.
+        for node in siblings_to_remove:
+            node.extract()
+
+        # 6. Parse and insert the new section body after the heading.
+        new_fragment_soup = BeautifulSoup(new_storage_fragment, "html.parser")
+        insert_after = target_heading
+        for child in list(new_fragment_soup.contents):
+            child_copy = child.__copy__()
+            insert_after.insert_after(child_copy)
+            insert_after = child_copy
+
+        # 7. Write the full modified storage XML back — no format conversion,
+        #    so every macro and element outside the section is untouched.
+        logger.debug(
+            f"Updating section '{heading_text}' on page {page_id} "
+            "using lossless storage-format write-back."
+        )
+        return self.update_page(
+            page_id=page_id,
+            title=page.title or "",
+            body=str(soup),
+            is_markdown=False,
+            content_representation="storage",
+            is_minor_edit=is_minor_edit,
+            version_comment=version_comment,
+        )
 
     def get_page_children(
         self,
