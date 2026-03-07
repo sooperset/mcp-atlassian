@@ -791,7 +791,7 @@ class PagesMixin(ConfluenceClient):
 
         if target_heading is None:
             raise ValueError(
-                f"Heading '{heading_text}' not found in page {page_id}. "
+                f"Heading '{heading_text.strip()}' not found in page {page_id}. "
                 "Heading text must match exactly (case-sensitive)."
             )
 
@@ -799,31 +799,32 @@ class PagesMixin(ConfluenceClient):
 
         # 4. Collect all sibling nodes that belong to this section (between
         #    this heading and the next heading of the same or higher level).
-        siblings_to_remove: list[Tag] = []
+        #    NavigableString nodes (whitespace, text) are included alongside
+        #    Tag nodes, so we type the list broadly.
+        siblings_to_remove: list = []
         current = target_heading.next_sibling
         while current is not None:
             if isinstance(current, Tag) and current.name in heading_tags:
                 if int(current.name[1]) <= heading_level:
                     break
-            siblings_to_remove.append(current)  # type: ignore[arg-type]
+            siblings_to_remove.append(current)
             current = current.next_sibling
 
-        # 5. (old nodes removed in step 6 below)
-
-        # 6. Remove old nodes then do string-based insertion so we avoid
-        # moving nodes between BS4 trees (which causes type and mutation issues).
-        # Capture the heading HTML string before extracting siblings.
+        # 5. Capture heading HTML, remove old section nodes, then splice in the
+        #    new fragment via string operations — avoids moving nodes between
+        #    BS4 trees which causes type and mutation issues.
         heading_html = str(target_heading)
         for node in siblings_to_remove:
             node.extract()
 
-        # Rebuild: find the heading in the now-pruned HTML and splice in the
-        # new fragment immediately after it.
         pruned_html = str(soup)
         heading_pos = pruned_html.find(heading_html)
         if heading_pos == -1:
+            # Should not happen: heading was found by BS4 and serialised above.
+            # Guard against unexpected BS4 serialisation edge cases.
             raise ValueError(
-                f"Could not relocate heading '{heading_text}' after pruning page HTML."
+                f"Internal error: could not locate heading '{heading_text.strip()}' "
+                "in serialised page HTML. Please report this as a bug."
             )
         insert_at = heading_pos + len(heading_html)
         final_html = (
