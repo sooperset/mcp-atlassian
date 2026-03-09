@@ -1,7 +1,8 @@
 """
 OAuth 2.0 Authorization Flow Helper for MCP Atlassian
 
-This module helps with the OAuth 2.0 (3LO) authorization flow for Atlassian Cloud:
+This module helps with the OAuth 2.0 (3LO) authorization flow for Atlassian Cloud
+and Server/Data Center:
 1. Opens a browser to the authorization URL
 2. Starts a local server to receive the callback with the authorization code
 3. Exchanges the authorization code for access and refresh tokens
@@ -19,6 +20,7 @@ import webbrowser
 from dataclasses import dataclass
 
 from ..utils.oauth import OAuthConfig
+from ..utils.urls import is_atlassian_cloud_url
 
 # Configure logging
 logger = logging.getLogger("mcp-atlassian.oauth-setup")
@@ -205,6 +207,7 @@ class OAuthSetupArgs:
     client_secret: str
     redirect_uri: str
     scope: str
+    base_url: str | None = None
 
 
 def run_oauth_flow(args: OAuthSetupArgs) -> bool:
@@ -222,6 +225,7 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
         client_secret=args.client_secret,
         redirect_uri=args.redirect_uri,
         scope=args.scope,
+        base_url=args.base_url,
     )
 
     # Generate a random state for CSRF protection
@@ -270,94 +274,18 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
     if oauth_config.exchange_code_for_tokens(authorization_code):
         logger.info("✅ OAuth authorization successful!")
         logger.info("Access token obtained successfully.")
-        logger.info("Refresh token saved successfully.")
-
-        if oauth_config.cloud_id:
-            logger.info(f"Cloud ID: {oauth_config.cloud_id}")
-
-            # Print environment variable information more clearly
-            logger.info("\n=== IMPORTANT: ENVIRONMENT VARIABLES ===")
-            logger.info(
-                "Your tokens have been securely stored in your system keyring and backup file."
-            )
-            logger.info(
-                "However, to use them in your application, you need these environment variables:"
-            )
-            logger.info("")
-            logger.info(
-                "Add the following to your .env file or set as environment variables:"
-            )
-            logger.info("------------------------------------------------------------")
-            logger.info(f"ATLASSIAN_OAUTH_CLIENT_ID={oauth_config.client_id}")
-            logger.info("ATLASSIAN_OAUTH_CLIENT_SECRET=<redacted>")
-            logger.info(f"ATLASSIAN_OAUTH_REDIRECT_URI={oauth_config.redirect_uri}")
-            logger.info(f"ATLASSIAN_OAUTH_SCOPE={oauth_config.scope}")
-            logger.info(f"ATLASSIAN_OAUTH_CLOUD_ID={oauth_config.cloud_id}")
-            logger.info("------------------------------------------------------------")
-            logger.info("")
-            logger.info(
-                "Note: The tokens themselves are not set as environment variables for security reasons."
-            )
-            logger.info(
-                "They are stored securely in your system keyring and will be loaded automatically."
-            )
-            logger.info(
-                f"Token storage location (backup): ~/.mcp-atlassian/oauth-{oauth_config.client_id}.json"
+        if oauth_config.refresh_token:
+            logger.info("Refresh token saved successfully.")
+        elif oauth_config.is_data_center:
+            logger.warning(
+                "No refresh token received. DC tokens may expire "
+                "and require re-authentication."
             )
 
-            # Generate VS Code configuration JSON snippet
-            import json
-
-            vscode_config = {
-                "mcpServers": {
-                    "mcp-atlassian": {
-                        "command": "docker",
-                        "args": [
-                            "run",
-                            "--rm",
-                            "-i",
-                            "-p",
-                            "8080:8080",
-                            "-e",
-                            "CONFLUENCE_URL",
-                            "-e",
-                            "JIRA_URL",
-                            "-e",
-                            "ATLASSIAN_OAUTH_CLIENT_ID",
-                            "-e",
-                            "ATLASSIAN_OAUTH_CLIENT_SECRET",
-                            "-e",
-                            "ATLASSIAN_OAUTH_REDIRECT_URI",
-                            "-e",
-                            "ATLASSIAN_OAUTH_SCOPE",
-                            "-e",
-                            "ATLASSIAN_OAUTH_CLOUD_ID",
-                            "ghcr.io/sooperset/mcp-atlassian:latest",
-                        ],
-                        "env": {
-                            "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
-                            "JIRA_URL": "https://your-company.atlassian.net",
-                            "ATLASSIAN_OAUTH_CLIENT_ID": oauth_config.client_id,
-                            "ATLASSIAN_OAUTH_CLIENT_SECRET": "<redacted - set via environment variable>",
-                            "ATLASSIAN_OAUTH_REDIRECT_URI": oauth_config.redirect_uri,
-                            "ATLASSIAN_OAUTH_SCOPE": oauth_config.scope,
-                            "ATLASSIAN_OAUTH_CLOUD_ID": oauth_config.cloud_id,
-                        },
-                    }
-                }
-            }
-
-            # Pretty print the VS Code configuration JSON
-            vscode_json = json.dumps(vscode_config, indent=4)
-
-            logger.info("\n=== VS CODE CONFIGURATION ===")
-            logger.info("Add the following to your VS Code settings.json file:")
-            logger.info("------------------------------------------------------------")
-            logger.info(vscode_json)
-            logger.info("------------------------------------------------------------")
-            logger.info(
-                "\nNote: If you already have an 'mcp' configuration in settings.json, merge this with your existing configuration."
-            )
+        if oauth_config.is_data_center:
+            _log_dc_success(oauth_config)
+        elif oauth_config.cloud_id:
+            _log_cloud_success(oauth_config)
         else:
             logger.error("Failed to obtain cloud ID!")
 
@@ -369,6 +297,184 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
         if httpd:
             httpd.shutdown()
         return False
+
+
+def _log_cloud_success(oauth_config: OAuthConfig) -> None:
+    """Log success output for Cloud OAuth flows."""
+    import json
+
+    logger.info(f"Cloud ID: {oauth_config.cloud_id}")
+
+    logger.info("\n=== IMPORTANT: ENVIRONMENT VARIABLES ===")
+    logger.info(
+        "Your tokens have been securely stored in your system keyring and backup file."
+    )
+    logger.info(
+        "However, to use them in your application, you need "
+        "these environment variables:"
+    )
+    logger.info("")
+    logger.info("Add the following to your .env file or set as environment variables:")
+    logger.info("------------------------------------------------------------")
+    logger.info(f"ATLASSIAN_OAUTH_CLIENT_ID={oauth_config.client_id}")
+    logger.info("ATLASSIAN_OAUTH_CLIENT_SECRET=<redacted>")
+    logger.info(f"ATLASSIAN_OAUTH_REDIRECT_URI={oauth_config.redirect_uri}")
+    logger.info(f"ATLASSIAN_OAUTH_SCOPE={oauth_config.scope}")
+    logger.info(f"ATLASSIAN_OAUTH_CLOUD_ID={oauth_config.cloud_id}")
+    logger.info("------------------------------------------------------------")
+    logger.info("")
+    logger.info(
+        "Note: The tokens themselves are not set as environment variables "
+        "for security reasons."
+    )
+    logger.info(
+        "They are stored securely in your system keyring and will be "
+        "loaded automatically."
+    )
+    logger.info(
+        f"Token storage location (backup): "
+        f"~/.mcp-atlassian/oauth-{oauth_config.client_id}.json"
+    )
+
+    vscode_config = {
+        "mcpServers": {
+            "mcp-atlassian": {
+                "command": "docker",
+                "args": [
+                    "run",
+                    "--rm",
+                    "-i",
+                    "-p",
+                    "8080:8080",
+                    "-e",
+                    "CONFLUENCE_URL",
+                    "-e",
+                    "JIRA_URL",
+                    "-e",
+                    "ATLASSIAN_OAUTH_CLIENT_ID",
+                    "-e",
+                    "ATLASSIAN_OAUTH_CLIENT_SECRET",
+                    "-e",
+                    "ATLASSIAN_OAUTH_REDIRECT_URI",
+                    "-e",
+                    "ATLASSIAN_OAUTH_SCOPE",
+                    "-e",
+                    "ATLASSIAN_OAUTH_CLOUD_ID",
+                    "ghcr.io/sooperset/mcp-atlassian:latest",
+                ],
+                "env": {
+                    "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
+                    "JIRA_URL": "https://your-company.atlassian.net",
+                    "ATLASSIAN_OAUTH_CLIENT_ID": oauth_config.client_id,
+                    "ATLASSIAN_OAUTH_CLIENT_SECRET": (
+                        "<redacted - set via environment variable>"
+                    ),
+                    "ATLASSIAN_OAUTH_REDIRECT_URI": oauth_config.redirect_uri,
+                    "ATLASSIAN_OAUTH_SCOPE": oauth_config.scope,
+                    "ATLASSIAN_OAUTH_CLOUD_ID": oauth_config.cloud_id,
+                },
+            }
+        }
+    }
+
+    vscode_json = json.dumps(vscode_config, indent=4)
+
+    logger.info("\n=== VS CODE CONFIGURATION ===")
+    logger.info("Add the following to your VS Code settings.json file:")
+    logger.info("------------------------------------------------------------")
+    logger.info(vscode_json)
+    logger.info("------------------------------------------------------------")
+    logger.info(
+        "\nNote: If you already have an 'mcp' configuration in settings.json, "
+        "merge this with your existing configuration."
+    )
+
+
+def _log_dc_success(oauth_config: OAuthConfig) -> None:
+    """Log success output for Data Center OAuth flows."""
+    import json
+
+    base_url = oauth_config.base_url or ""
+
+    logger.info(f"Instance URL: {base_url}")
+
+    logger.info("\n=== IMPORTANT: ENVIRONMENT VARIABLES ===")
+    logger.info(
+        "Your tokens have been securely stored in your system keyring and backup file."
+    )
+    logger.info(
+        "However, to use them in your application, you need these "
+        "environment variables:"
+    )
+    logger.info("")
+    logger.info("Add the following to your .env file or set as environment variables:")
+    logger.info("------------------------------------------------------------")
+    logger.info(f"JIRA_URL={base_url}")
+    logger.info(f"JIRA_OAUTH_CLIENT_ID={oauth_config.client_id}")
+    logger.info("JIRA_OAUTH_CLIENT_SECRET=<redacted>")
+    logger.info(f"ATLASSIAN_OAUTH_REDIRECT_URI={oauth_config.redirect_uri}")
+    logger.info(f"ATLASSIAN_OAUTH_SCOPE={oauth_config.scope}")
+    logger.info("------------------------------------------------------------")
+    logger.info("")
+    logger.info(
+        "Note: The tokens themselves are not set as environment variables "
+        "for security reasons."
+    )
+    logger.info(
+        "They are stored securely in your system keyring and will be "
+        "loaded automatically."
+    )
+    logger.info(
+        f"Token storage location (backup): "
+        f"~/.mcp-atlassian/oauth-{oauth_config.client_id}.json"
+    )
+
+    vscode_config = {
+        "mcpServers": {
+            "mcp-atlassian": {
+                "command": "docker",
+                "args": [
+                    "run",
+                    "--rm",
+                    "-i",
+                    "-p",
+                    "8080:8080",
+                    "-e",
+                    "JIRA_URL",
+                    "-e",
+                    "JIRA_OAUTH_CLIENT_ID",
+                    "-e",
+                    "JIRA_OAUTH_CLIENT_SECRET",
+                    "-e",
+                    "ATLASSIAN_OAUTH_REDIRECT_URI",
+                    "-e",
+                    "ATLASSIAN_OAUTH_SCOPE",
+                    "ghcr.io/sooperset/mcp-atlassian:latest",
+                ],
+                "env": {
+                    "JIRA_URL": base_url,
+                    "JIRA_OAUTH_CLIENT_ID": oauth_config.client_id,
+                    "JIRA_OAUTH_CLIENT_SECRET": (
+                        "<redacted - set via environment variable>"
+                    ),
+                    "ATLASSIAN_OAUTH_REDIRECT_URI": oauth_config.redirect_uri,
+                    "ATLASSIAN_OAUTH_SCOPE": oauth_config.scope,
+                },
+            }
+        }
+    }
+
+    vscode_json = json.dumps(vscode_config, indent=4)
+
+    logger.info("\n=== VS CODE CONFIGURATION ===")
+    logger.info("Add the following to your VS Code settings.json file:")
+    logger.info("------------------------------------------------------------")
+    logger.info(vscode_json)
+    logger.info("------------------------------------------------------------")
+    logger.info(
+        "\nNote: If you already have an 'mcp' configuration in settings.json, "
+        "merge this with your existing configuration."
+    )
 
 
 def _prompt_for_input(
@@ -394,20 +500,64 @@ def _prompt_for_input(
 
 
 def run_oauth_setup() -> int:
-    """Run the OAuth 2.0 setup wizard interactively."""
+    """Run the OAuth 2.0 setup wizard interactively.
+
+    Supports both Atlassian Cloud and Server/Data Center instances.
+    The wizard auto-detects Cloud vs DC based on the instance URL provided.
+    """
     print("\n=== Atlassian OAuth 2.0 Setup Wizard ===")
     print(
-        "This wizard will guide you through setting up OAuth 2.0 authentication for MCP Atlassian."
+        "This wizard will guide you through setting up OAuth 2.0 "
+        "authentication for MCP Atlassian."
     )
-    print("\nYou need to have created an OAuth 2.0 app in your Atlassian account.")
-    print("You can create one at: https://developer.atlassian.com/console/myapps/")
+    print("\nSupported platforms: Atlassian Cloud and Server/Data Center")
+
+    # Determine instance URL to detect Cloud vs DC
+    instance_url = _prompt_for_input(
+        "Instance URL (e.g. https://company.atlassian.net or "
+        "https://jira.local.example.com)",
+        "JIRA_URL",
+    )
+
+    is_dc = bool(instance_url) and not is_atlassian_cloud_url(instance_url)
+    base_url: str | None = instance_url if is_dc else None
+
+    if is_dc:
+        print(f"\nDetected Server/Data Center instance: {instance_url}")
+        print(
+            "You need to configure an Application Link (OAuth 2.0) in your "
+            "Jira instance."
+        )
+        print(
+            "Go to: Administration > Application Links > Create link "
+            "(Incoming) with OAuth 2.0"
+        )
+    else:
+        print("\nDetected Atlassian Cloud instance.")
+        print("You need to have created an OAuth 2.0 app in your Atlassian account.")
+        print("You can create one at: https://developer.atlassian.com/console/myapps/")
+
     print("\nPlease provide the following information:\n")
 
-    # Check for environment variables first
-    client_id = _prompt_for_input("OAuth Client ID", "ATLASSIAN_OAUTH_CLIENT_ID")
+    # For DC, prefer service-specific env vars, fall back to global ones
+    client_id_env = "ATLASSIAN_OAUTH_CLIENT_ID"
+    client_secret_env = "ATLASSIAN_OAUTH_CLIENT_SECRET"  # noqa: S105
+    if is_dc:
+        client_id_env = (
+            "JIRA_OAUTH_CLIENT_ID"
+            if os.getenv("JIRA_OAUTH_CLIENT_ID")
+            else "ATLASSIAN_OAUTH_CLIENT_ID"
+        )
+        client_secret_env = (
+            "JIRA_OAUTH_CLIENT_SECRET"
+            if os.getenv("JIRA_OAUTH_CLIENT_SECRET")
+            else "ATLASSIAN_OAUTH_CLIENT_SECRET"
+        )
+
+    client_id = _prompt_for_input("OAuth Client ID", client_id_env)
 
     client_secret = _prompt_for_input(
-        "OAuth Client Secret", "ATLASSIAN_OAUTH_CLIENT_SECRET", is_secret=True
+        "OAuth Client Secret", client_secret_env, is_secret=True
     )
 
     default_redirect = os.getenv(
@@ -418,9 +568,13 @@ def run_oauth_setup() -> int:
         or default_redirect
     )
 
+    dc_default_scope = "WRITE"
+    cloud_default_scope = (
+        "read:jira-work write:jira-work read:confluence-space.summary offline_access"
+    )
     default_scope = os.getenv(
         "ATLASSIAN_OAUTH_SCOPE",
-        "read:jira-work write:jira-work read:confluence-space.summary offline_access",
+        dc_default_scope if is_dc else cloud_default_scope,
     )
     scope = (
         _prompt_for_input("OAuth Scopes (space-separated)", "ATLASSIAN_OAUTH_SCOPE")
@@ -441,6 +595,7 @@ def run_oauth_setup() -> int:
         client_secret=client_secret,
         redirect_uri=redirect_uri,
         scope=scope,
+        base_url=base_url,
     )
 
     success = run_oauth_flow(args)

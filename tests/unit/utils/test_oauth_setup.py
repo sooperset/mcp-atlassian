@@ -1,6 +1,7 @@
 """Tests for the OAuth setup utilities."""
 
 import json
+import os
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
@@ -8,6 +9,8 @@ import pytest
 
 from mcp_atlassian.utils.oauth_setup import (
     OAuthSetupArgs,
+    _log_cloud_success,
+    _log_dc_success,
     parse_redirect_uri,
     run_oauth_flow,
     run_oauth_setup,
@@ -15,6 +18,8 @@ from mcp_atlassian.utils.oauth_setup import (
 from tests.utils.assertions import assert_config_contains
 from tests.utils.base import BaseAuthTest
 from tests.utils.mocks import MockEnvironment, MockOAuthServer
+
+DC_JIRA_URL = "https://jira.local.example.com"
 
 
 class TestCallbackHandlerLogic:
@@ -111,6 +116,7 @@ class TestOAuthFlow:
                 mock_config.redirect_uri = "http://localhost:8080/callback"
                 mock_config.scope = "read:jira-work"
                 mock_config.cloud_id = "test-cloud-id"
+                mock_config.is_data_center = False
                 mock_config.access_token = "test-access-token"
                 mock_config.refresh_token = "test-refresh-token"
                 mock_oauth_config.return_value = mock_config
@@ -161,6 +167,7 @@ class TestOAuthFlow:
                 mock_config.redirect_uri = "https://example.com/callback"
                 mock_config.scope = "read:jira-work"
                 mock_config.cloud_id = "test-cloud-id"
+                mock_config.is_data_center = False
                 mock_config.access_token = "test-access-token"
                 mock_config.refresh_token = "test-refresh-token"
                 mock_oauth_config.return_value = mock_config
@@ -180,6 +187,114 @@ class TestOAuthFlow:
                 mock_config.exchange_code_for_tokens.assert_called_once_with(
                     "test-auth-code"
                 )
+
+    def test_run_oauth_flow_success_dc(self):
+        """Test successful OAuth flow with DC base_url."""
+        with MockOAuthServer.mock_oauth_flow():
+            with (
+                patch(
+                    "mcp_atlassian.utils.oauth_setup.OAuthConfig"
+                ) as mock_oauth_config,
+                patch("mcp_atlassian.utils.oauth_setup.wait_for_callback") as mock_wait,
+                patch(
+                    "mcp_atlassian.utils.oauth_setup.start_callback_server"
+                ) as mock_start_server,
+            ):
+
+                def setup_callback_state():
+                    import mcp_atlassian.utils.oauth_setup as oauth_module
+
+                    oauth_module.authorization_code = "test-auth-code"
+                    oauth_module.authorization_state = "test-state-token"
+                    return True
+
+                mock_wait.side_effect = setup_callback_state
+                mock_httpd = MagicMock()
+                mock_start_server.return_value = mock_httpd
+
+                mock_config = MagicMock()
+                mock_config.exchange_code_for_tokens.return_value = True
+                mock_config.client_id = "dc-client-id"
+                mock_config.client_secret = "dc-client-secret"
+                mock_config.redirect_uri = "http://localhost:8080/callback"
+                mock_config.scope = "WRITE"
+                mock_config.cloud_id = None
+                mock_config.is_data_center = True
+                mock_config.base_url = DC_JIRA_URL
+                mock_config.access_token = "dc-access-token"
+                mock_config.refresh_token = None
+                mock_oauth_config.return_value = mock_config
+
+                args = OAuthSetupArgs(
+                    client_id="dc-client-id",
+                    client_secret="dc-client-secret",
+                    redirect_uri="http://localhost:8080/callback",
+                    scope="WRITE",
+                    base_url=DC_JIRA_URL,
+                )
+
+                result = run_oauth_flow(args)
+
+                assert result is True
+                mock_oauth_config.assert_called_once_with(
+                    client_id="dc-client-id",
+                    client_secret="dc-client-secret",
+                    redirect_uri="http://localhost:8080/callback",
+                    scope="WRITE",
+                    base_url=DC_JIRA_URL,
+                )
+                mock_config.exchange_code_for_tokens.assert_called_once_with(
+                    "test-auth-code"
+                )
+                mock_httpd.shutdown.assert_called_once()
+
+    def test_run_oauth_flow_dc_no_cloud_id_error(self):
+        """Test that DC flow does not log 'Failed to obtain cloud ID'."""
+        with MockOAuthServer.mock_oauth_flow():
+            with (
+                patch(
+                    "mcp_atlassian.utils.oauth_setup.OAuthConfig"
+                ) as mock_oauth_config,
+                patch("mcp_atlassian.utils.oauth_setup.wait_for_callback") as mock_wait,
+                patch(
+                    "mcp_atlassian.utils.oauth_setup.start_callback_server"
+                ) as mock_start_server,
+                patch("mcp_atlassian.utils.oauth_setup._log_dc_success") as mock_dc_log,
+                patch(
+                    "mcp_atlassian.utils.oauth_setup._log_cloud_success"
+                ) as mock_cloud_log,
+            ):
+
+                def setup_callback_state():
+                    import mcp_atlassian.utils.oauth_setup as oauth_module
+
+                    oauth_module.authorization_code = "test-auth-code"
+                    oauth_module.authorization_state = "test-state-token"
+                    return True
+
+                mock_wait.side_effect = setup_callback_state
+                mock_start_server.return_value = MagicMock()
+
+                mock_config = MagicMock()
+                mock_config.exchange_code_for_tokens.return_value = True
+                mock_config.is_data_center = True
+                mock_config.cloud_id = None
+                mock_config.refresh_token = None
+                mock_oauth_config.return_value = mock_config
+
+                args = OAuthSetupArgs(
+                    client_id="dc-id",
+                    client_secret="dc-secret",
+                    redirect_uri="http://localhost:8080/callback",
+                    scope="WRITE",
+                    base_url=DC_JIRA_URL,
+                )
+
+                result = run_oauth_flow(args)
+
+                assert result is True
+                mock_dc_log.assert_called_once_with(mock_config)
+                mock_cloud_log.assert_not_called()
 
     def test_run_oauth_flow_server_start_failure(self):
         """Test OAuth flow when server fails to start."""
@@ -265,10 +380,19 @@ class TestInteractiveSetup(BaseAuthTest):
     """Tests for the interactive OAuth setup wizard."""
 
     def test_run_oauth_setup_with_env_vars(self):
-        """Test interactive setup using environment variables."""
+        """Test interactive setup using Cloud environment variables."""
         with MockEnvironment.oauth_env() as env_vars:
             with (
-                patch("builtins.input", side_effect=["", "", "", ""]),
+                patch(
+                    "builtins.input",
+                    side_effect=[
+                        "",  # instance URL (from env / empty = Cloud)
+                        "",  # client_id
+                        "",  # client_secret
+                        "",  # redirect_uri
+                        "",  # scope
+                    ],
+                ),
                 patch(
                     "mcp_atlassian.utils.oauth_setup.run_oauth_flow", return_value=True
                 ) as mock_flow,
@@ -283,12 +407,14 @@ class TestInteractiveSetup(BaseAuthTest):
                     client_id=env_vars["ATLASSIAN_OAUTH_CLIENT_ID"],
                     client_secret=env_vars["ATLASSIAN_OAUTH_CLIENT_SECRET"],
                 )
+                assert args.base_url is None
 
     @pytest.mark.parametrize(
         "input_values,expected_result",
         [
             (
                 [
+                    "",  # instance URL (empty = Cloud)
                     "user-client-id",
                     "user-secret",
                     "http://localhost:9000/callback",
@@ -296,8 +422,26 @@ class TestInteractiveSetup(BaseAuthTest):
                 ],
                 0,
             ),
-            (["", "client-secret", "", ""], 1),  # Missing client ID
-            (["client-id", "", "", ""], 1),  # Missing client secret
+            (
+                [
+                    "",  # instance URL
+                    "",  # missing client ID
+                    "client-secret",
+                    "",
+                    "",
+                ],
+                1,
+            ),
+            (
+                [
+                    "",  # instance URL
+                    "client-id",
+                    "",  # missing client secret
+                    "",
+                    "",
+                ],
+                1,
+            ),
         ],
     )
     def test_run_oauth_setup_user_input(self, input_values, expected_result):
@@ -322,7 +466,14 @@ class TestInteractiveSetup(BaseAuthTest):
         with MockEnvironment.clean_env():
             with (
                 patch(
-                    "builtins.input", side_effect=["client-id", "client-secret", "", ""]
+                    "builtins.input",
+                    side_effect=[
+                        "",  # instance URL
+                        "client-id",
+                        "client-secret",
+                        "",
+                        "",
+                    ],
                 ),
                 patch(
                     "mcp_atlassian.utils.oauth_setup.run_oauth_flow", return_value=False
@@ -330,6 +481,92 @@ class TestInteractiveSetup(BaseAuthTest):
             ):
                 result = run_oauth_setup()
                 assert result == 1
+
+    def test_run_oauth_setup_dc_instance(self):
+        """Test interactive setup with a DC instance URL."""
+        dc_env = {
+            "JIRA_URL": DC_JIRA_URL,
+            "JIRA_OAUTH_CLIENT_ID": "dc-client-id",
+            "JIRA_OAUTH_CLIENT_SECRET": "dc-client-secret",
+        }
+        with MockEnvironment.clean_env():
+            with (
+                patch.dict(os.environ, dc_env, clear=False),
+                patch(
+                    "builtins.input",
+                    side_effect=[
+                        "",  # instance URL (picks up JIRA_URL)
+                        "",  # client_id (picks up JIRA_OAUTH_CLIENT_ID)
+                        "",  # client_secret
+                        "",  # redirect_uri
+                        "",  # scope
+                    ],
+                ),
+                patch(
+                    "mcp_atlassian.utils.oauth_setup.run_oauth_flow",
+                    return_value=True,
+                ) as mock_flow,
+            ):
+                result = run_oauth_setup()
+
+                assert result == 0
+                mock_flow.assert_called_once()
+                args = mock_flow.call_args[0][0]
+                assert args.base_url == DC_JIRA_URL
+                assert args.client_id == "dc-client-id"
+                assert args.scope == "WRITE"
+
+    def test_run_oauth_setup_dc_manual_input(self):
+        """Test interactive setup with manually typed DC URL."""
+        with MockEnvironment.clean_env():
+            with (
+                patch(
+                    "builtins.input",
+                    side_effect=[
+                        DC_JIRA_URL,  # instance URL
+                        "manual-dc-id",  # client_id
+                        "manual-dc-secret",  # client_secret
+                        "",  # redirect_uri (default)
+                        "",  # scope (default WRITE for DC)
+                    ],
+                ),
+                patch(
+                    "mcp_atlassian.utils.oauth_setup.run_oauth_flow",
+                    return_value=True,
+                ) as mock_flow,
+            ):
+                result = run_oauth_setup()
+
+                assert result == 0
+                args = mock_flow.call_args[0][0]
+                assert args.base_url == DC_JIRA_URL
+                assert args.client_id == "manual-dc-id"
+                assert args.scope == "WRITE"
+
+    def test_run_oauth_setup_cloud_url_no_base_url(self):
+        """Test that Cloud URLs do not set base_url."""
+        with MockEnvironment.clean_env():
+            with (
+                patch(
+                    "builtins.input",
+                    side_effect=[
+                        "https://company.atlassian.net",  # Cloud URL
+                        "cloud-id",
+                        "cloud-secret",
+                        "",
+                        "",
+                    ],
+                ),
+                patch(
+                    "mcp_atlassian.utils.oauth_setup.run_oauth_flow",
+                    return_value=True,
+                ) as mock_flow,
+            ):
+                result = run_oauth_setup()
+
+                assert result == 0
+                args = mock_flow.call_args[0][0]
+                assert args.base_url is None
 
 
 class TestOAuthSetupArgs:
@@ -351,6 +588,24 @@ class TestOAuthSetupArgs:
             "scope": "read:jira-work",
         }
         assert_config_contains(vars(args), **expected_config)
+        assert args.base_url is None
+
+    def test_oauth_setup_args_with_base_url(self):
+        """Test OAuthSetupArgs with DC base_url."""
+        args = OAuthSetupArgs(
+            client_id="dc-id",
+            client_secret="dc-secret",
+            redirect_uri="http://localhost:8080/callback",
+            scope="WRITE",
+            base_url=DC_JIRA_URL,
+        )
+
+        assert_config_contains(
+            vars(args),
+            client_id="dc-id",
+            scope="WRITE",
+            base_url=DC_JIRA_URL,
+        )
 
 
 class TestConfigurationGeneration:
@@ -373,3 +628,81 @@ class TestConfigurationGeneration:
         # Verify it can be parsed back
         parsed = json.loads(json_str)
         assert_config_contains(parsed, **test_config)
+
+    def test_dc_configuration_serialization(self):
+        """Test DC configuration serialization (no cloud_id, includes JIRA_URL)."""
+        test_config = {
+            "JIRA_URL": DC_JIRA_URL,
+            "JIRA_OAUTH_CLIENT_ID": "dc-id",
+            "JIRA_OAUTH_CLIENT_SECRET": "dc-secret",
+            "ATLASSIAN_OAUTH_REDIRECT_URI": "http://localhost:8080/callback",
+            "ATLASSIAN_OAUTH_SCOPE": "WRITE",
+        }
+
+        json_str = json.dumps(test_config, indent=4)
+        assert DC_JIRA_URL in json_str
+        assert "dc-id" in json_str
+        assert "cloud_id" not in json_str
+        assert "ATLASSIAN_OAUTH_CLOUD_ID" not in json_str
+
+        parsed = json.loads(json_str)
+        assert_config_contains(parsed, **test_config)
+
+
+class TestSuccessOutputHelpers:
+    """Tests for _log_cloud_success and _log_dc_success."""
+
+    def test_log_cloud_success(self, caplog):
+        """Test Cloud success output logs correct env vars."""
+        mock_config = MagicMock()
+        mock_config.client_id = "cloud-id"
+        mock_config.client_secret = "cloud-secret"
+        mock_config.redirect_uri = "http://localhost:8080/callback"
+        mock_config.scope = "read:jira-work offline_access"
+        mock_config.cloud_id = "test-cloud-id"
+
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="mcp-atlassian.oauth-setup"):
+            _log_cloud_success(mock_config)
+
+        log_text = caplog.text
+        assert "ATLASSIAN_OAUTH_CLOUD_ID=test-cloud-id" in log_text
+        assert "ATLASSIAN_OAUTH_CLIENT_ID=cloud-id" in log_text
+
+    def test_log_dc_success(self, caplog):
+        """Test DC success output logs correct env vars."""
+        mock_config = MagicMock()
+        mock_config.client_id = "dc-id"
+        mock_config.client_secret = "dc-secret"
+        mock_config.redirect_uri = "http://localhost:8080/callback"
+        mock_config.scope = "WRITE"
+        mock_config.base_url = DC_JIRA_URL
+
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="mcp-atlassian.oauth-setup"):
+            _log_dc_success(mock_config)
+
+        log_text = caplog.text
+        assert f"JIRA_URL={DC_JIRA_URL}" in log_text
+        assert "JIRA_OAUTH_CLIENT_ID=dc-id" in log_text
+        assert "ATLASSIAN_OAUTH_CLOUD_ID" not in log_text
+
+    def test_log_dc_success_no_cloud_id_in_vscode_config(self, caplog):
+        """Test DC VS Code config does not contain ATLASSIAN_OAUTH_CLOUD_ID."""
+        mock_config = MagicMock()
+        mock_config.client_id = "dc-id"
+        mock_config.client_secret = "dc-secret"
+        mock_config.redirect_uri = "http://localhost:8080/callback"
+        mock_config.scope = "WRITE"
+        mock_config.base_url = DC_JIRA_URL
+
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="mcp-atlassian.oauth-setup"):
+            _log_dc_success(mock_config)
+
+        log_text = caplog.text
+        assert "ATLASSIAN_OAUTH_CLOUD_ID" not in log_text
+        assert "VS CODE CONFIGURATION" in log_text

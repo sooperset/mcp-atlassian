@@ -34,6 +34,7 @@ from mcp_atlassian.utils.oauth import (
     CLOUD_TOKEN_URL,
     DC_AUTHORIZE_PATH,
     DC_TOKEN_PATH,
+    OAuthConfig,
 )
 from mcp_atlassian.utils.token_verifier import AtlassianOpaqueTokenVerifier
 from mcp_atlassian.utils.tools import get_enabled_tools, should_include_tool
@@ -118,6 +119,61 @@ async def health_check(request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
+def _try_auto_oauth(
+    oauth_cfg: OAuthConfig,
+    service_name: str,
+) -> bool:
+    """Attempt an automatic browser-based OAuth flow when credentials are
+    present but no stored tokens exist.
+
+    Args:
+        oauth_cfg: The OAuthConfig with client credentials but no tokens.
+        service_name: Display name for logging (e.g. "Jira", "Confluence").
+
+    Returns:
+        True if the flow succeeded and tokens were stored, False otherwise.
+    """
+    from mcp_atlassian.utils.oauth_setup import OAuthSetupArgs, run_oauth_flow
+
+    logger.info(
+        "%s OAuth credentials found but no stored tokens. "
+        "Initiating browser authorization flow...",
+        service_name,
+    )
+    args = OAuthSetupArgs(
+        client_id=oauth_cfg.client_id,
+        client_secret=oauth_cfg.client_secret,
+        redirect_uri=oauth_cfg.redirect_uri,
+        scope=oauth_cfg.scope,
+        base_url=oauth_cfg.base_url,
+    )
+    if run_oauth_flow(args):
+        logger.info("%s OAuth browser flow completed successfully.", service_name)
+        return True
+
+    logger.error(
+        "%s OAuth browser flow failed. %s tools may be unavailable.",
+        service_name,
+        service_name,
+    )
+    return False
+
+
+def _needs_auto_oauth(
+    config: JiraConfig | ConfluenceConfig,
+) -> bool:
+    """Check whether a config has OAuth credentials but no stored tokens."""
+    if config.auth_type != "oauth":
+        return False
+    oauth_cfg = config.oauth_config
+    return (
+        isinstance(oauth_cfg, OAuthConfig)
+        and bool(oauth_cfg.client_id)
+        and bool(oauth_cfg.client_secret)
+        and not oauth_cfg.access_token
+    )
+
+
 @asynccontextmanager
 async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str, Any]]:
     logger.info("Main Atlassian MCP server lifespan starting...")
@@ -137,9 +193,18 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
                 logger.info(
                     "Jira configuration loaded and authentication is configured."
                 )
+            elif _needs_auto_oauth(jira_config):
+                if _try_auto_oauth(jira_config.oauth_config, "Jira"):
+                    jira_config = JiraConfig.from_env()
+                    if jira_config.is_auth_configured():
+                        loaded_jira_config = jira_config
+                        logger.info(
+                            "Jira configuration loaded after OAuth browser flow."
+                        )
             else:
                 logger.warning(
-                    "Jira URL found, but authentication is not fully configured. Jira tools will be unavailable."
+                    "Jira URL found, but authentication is not fully "
+                    "configured. Jira tools will be unavailable."
                 )
         except Exception as e:
             logger.error(f"Failed to load Jira configuration: {e}", exc_info=True)
@@ -152,12 +217,25 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
                 logger.info(
                     "Confluence configuration loaded and authentication is configured."
                 )
+            elif _needs_auto_oauth(confluence_config):
+                if _try_auto_oauth(confluence_config.oauth_config, "Confluence"):
+                    confluence_config = ConfluenceConfig.from_env()
+                    if confluence_config.is_auth_configured():
+                        loaded_confluence_config = confluence_config
+                        logger.info(
+                            "Confluence configuration loaded after OAuth browser flow."
+                        )
             else:
                 logger.warning(
-                    "Confluence URL found, but authentication is not fully configured. Confluence tools will be unavailable."
+                    "Confluence URL found, but authentication is not "
+                    "fully configured. Confluence tools will be "
+                    "unavailable."
                 )
         except Exception as e:
-            logger.error(f"Failed to load Confluence configuration: {e}", exc_info=True)
+            logger.error(
+                f"Failed to load Confluence configuration: {e}",
+                exc_info=True,
+            )
 
     app_context = MainAppContext(
         full_jira_config=loaded_jira_config,
