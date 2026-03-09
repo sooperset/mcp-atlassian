@@ -1,6 +1,7 @@
 """Tests for the OAuth setup utilities."""
 
 import json
+import logging
 import os
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
@@ -182,7 +183,8 @@ class TestOAuthFlow:
                 result = run_oauth_flow(args)
 
                 assert result is True
-                mock_start_server.assert_not_called()  # No local server for external redirect
+                # No local server for external redirect
+                mock_start_server.assert_not_called()
                 mocks["browser"].assert_called_once()
                 mock_config.exchange_code_for_tokens.assert_called_once_with(
                     "test-auth-code"
@@ -325,7 +327,7 @@ class TestOAuthFlow:
     )
     def test_run_oauth_flow_failures(self, failure_condition, expected_result):
         """Test OAuth flow failure scenarios."""
-        with MockOAuthServer.mock_oauth_flow() as mocks:
+        with MockOAuthServer.mock_oauth_flow():
             with (
                 patch(
                     "mcp_atlassian.utils.oauth_setup.OAuthConfig"
@@ -374,6 +376,174 @@ class TestOAuthFlow:
                 result = run_oauth_flow(args)
                 assert result == expected_result
                 mock_httpd.shutdown.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "failure_condition,expected_result",
+        [
+            ("timeout", False),
+            ("state_mismatch", False),
+            ("token_exchange_failure", False),
+        ],
+    )
+    def test_run_oauth_flow_dc_failures(self, failure_condition, expected_result):
+        """Test OAuth flow failure scenarios for DC."""
+        with MockOAuthServer.mock_oauth_flow():
+            with (
+                patch(
+                    "mcp_atlassian.utils.oauth_setup.OAuthConfig"
+                ) as mock_oauth_config,
+                patch("mcp_atlassian.utils.oauth_setup.wait_for_callback") as mock_wait,
+                patch(
+                    "mcp_atlassian.utils.oauth_setup.start_callback_server"
+                ) as mock_start_server,
+            ):
+                mock_httpd = MagicMock()
+                mock_start_server.return_value = mock_httpd
+                mock_config = MagicMock()
+                mock_config.is_data_center = True
+                mock_config.cloud_id = None
+                mock_config.base_url = DC_JIRA_URL
+                mock_oauth_config.return_value = mock_config
+
+                if failure_condition == "timeout":
+                    mock_wait.return_value = False
+                elif failure_condition == "state_mismatch":
+
+                    def setup_mismatched_state():
+                        import mcp_atlassian.utils.oauth_setup as oauth_module
+
+                        oauth_module.authorization_code = "test-auth-code"
+                        oauth_module.authorization_state = "wrong-state"
+                        return True
+
+                    mock_wait.side_effect = setup_mismatched_state
+                elif failure_condition == "token_exchange_failure":
+
+                    def setup_callback_state():
+                        import mcp_atlassian.utils.oauth_setup as oauth_module
+
+                        oauth_module.authorization_code = "test-auth-code"
+                        oauth_module.authorization_state = "test-state-token"
+                        return True
+
+                    mock_wait.side_effect = setup_callback_state
+                    mock_config.exchange_code_for_tokens.return_value = False
+
+                args = OAuthSetupArgs(
+                    client_id="dc-client-id",
+                    client_secret="dc-client-secret",
+                    redirect_uri="http://localhost:8080/callback",
+                    scope="WRITE",
+                    base_url=DC_JIRA_URL,
+                )
+
+                result = run_oauth_flow(args)
+                assert result == expected_result
+                mock_httpd.shutdown.assert_called_once()
+
+    def test_run_oauth_flow_dc_no_refresh_token_warning(self, caplog):
+        """Test DC flow logs warning when no refresh token received."""
+        with MockOAuthServer.mock_oauth_flow():
+            with (
+                patch(
+                    "mcp_atlassian.utils.oauth_setup.OAuthConfig"
+                ) as mock_oauth_config,
+                patch("mcp_atlassian.utils.oauth_setup.wait_for_callback") as mock_wait,
+                patch(
+                    "mcp_atlassian.utils.oauth_setup.start_callback_server"
+                ) as mock_start_server,
+                patch("mcp_atlassian.utils.oauth_setup._log_dc_success"),
+            ):
+
+                def setup_callback_state():
+                    import mcp_atlassian.utils.oauth_setup as oauth_module
+
+                    oauth_module.authorization_code = "test-auth-code"
+                    oauth_module.authorization_state = "test-state-token"
+                    return True
+
+                mock_wait.side_effect = setup_callback_state
+                mock_httpd = MagicMock()
+                mock_start_server.return_value = mock_httpd
+
+                mock_config = MagicMock()
+                mock_config.exchange_code_for_tokens.return_value = True
+                mock_config.is_data_center = True
+                mock_config.refresh_token = None
+                mock_config.cloud_id = None
+                mock_config.base_url = DC_JIRA_URL
+                mock_oauth_config.return_value = mock_config
+
+                args = OAuthSetupArgs(
+                    client_id="dc-client-id",
+                    client_secret="dc-client-secret",
+                    redirect_uri="http://localhost:8080/callback",
+                    scope="WRITE",
+                    base_url=DC_JIRA_URL,
+                )
+
+                with caplog.at_level(
+                    logging.WARNING, logger="mcp-atlassian.oauth-setup"
+                ):
+                    result = run_oauth_flow(args)
+
+                assert result is True
+                assert (
+                    "No refresh token received. DC tokens may expire "
+                    "and require re-authentication." in caplog.text
+                )
+
+    def test_run_oauth_flow_dc_with_refresh_token_no_warning(self, caplog):
+        """Test DC flow does not log warning when refresh token is present."""
+        with MockOAuthServer.mock_oauth_flow():
+            with (
+                patch(
+                    "mcp_atlassian.utils.oauth_setup.OAuthConfig"
+                ) as mock_oauth_config,
+                patch("mcp_atlassian.utils.oauth_setup.wait_for_callback") as mock_wait,
+                patch(
+                    "mcp_atlassian.utils.oauth_setup.start_callback_server"
+                ) as mock_start_server,
+                patch("mcp_atlassian.utils.oauth_setup._log_dc_success"),
+            ):
+
+                def setup_callback_state():
+                    import mcp_atlassian.utils.oauth_setup as oauth_module
+
+                    oauth_module.authorization_code = "test-auth-code"
+                    oauth_module.authorization_state = "test-state-token"
+                    return True
+
+                mock_wait.side_effect = setup_callback_state
+                mock_httpd = MagicMock()
+                mock_start_server.return_value = mock_httpd
+
+                mock_config = MagicMock()
+                mock_config.exchange_code_for_tokens.return_value = True
+                mock_config.is_data_center = True
+                mock_config.refresh_token = "dc-refresh-tok"
+                mock_config.cloud_id = None
+                mock_config.base_url = DC_JIRA_URL
+                mock_oauth_config.return_value = mock_config
+
+                args = OAuthSetupArgs(
+                    client_id="dc-client-id",
+                    client_secret="dc-client-secret",
+                    redirect_uri="http://localhost:8080/callback",
+                    scope="WRITE",
+                    base_url=DC_JIRA_URL,
+                )
+
+                with caplog.at_level(
+                    logging.WARNING, logger="mcp-atlassian.oauth-setup"
+                ):
+                    result = run_oauth_flow(args)
+
+                assert result is True
+                assert (
+                    "No refresh token received. DC tokens may expire "
+                    "and require re-authentication." not in caplog.text
+                )
 
 
 class TestInteractiveSetup(BaseAuthTest):
@@ -567,6 +737,40 @@ class TestInteractiveSetup(BaseAuthTest):
                 assert result == 0
                 args = mock_flow.call_args[0][0]
                 assert args.base_url is None
+
+    def test_run_oauth_setup_dc_fallback_to_atlassian_env_vars(self):
+        """Test DC wizard falls back to ATLASSIAN_OAUTH_* when JIRA_OAUTH_* unset."""
+        dc_env = {
+            "JIRA_URL": DC_JIRA_URL,
+            "ATLASSIAN_OAUTH_CLIENT_ID": "fallback-id",
+            "ATLASSIAN_OAUTH_CLIENT_SECRET": "fallback-secret",
+        }
+        with MockEnvironment.clean_env():
+            with (
+                patch.dict(os.environ, dc_env, clear=False),
+                patch(
+                    "builtins.input",
+                    side_effect=[
+                        "",  # instance URL (picks up JIRA_URL)
+                        "",  # client_id (fallback to ATLASSIAN_OAUTH_CLIENT_ID)
+                        "",  # client_secret
+                        "",  # redirect_uri
+                        "",  # scope
+                    ],
+                ),
+                patch(
+                    "mcp_atlassian.utils.oauth_setup.run_oauth_flow",
+                    return_value=True,
+                ) as mock_flow,
+            ):
+                result = run_oauth_setup()
+
+                assert result == 0
+                mock_flow.assert_called_once()
+                args = mock_flow.call_args[0][0]
+                assert args.client_id == "fallback-id"
+                assert args.client_secret == "fallback-secret"
+                assert args.base_url == DC_JIRA_URL
 
 
 class TestOAuthSetupArgs:

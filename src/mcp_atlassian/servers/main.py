@@ -1,6 +1,8 @@
 """Main FastMCP server setup for Atlassian integration."""
 
+import asyncio
 import base64
+import functools
 import json
 import logging
 import os
@@ -119,12 +121,16 @@ async def health_check(request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
-def _try_auto_oauth(
+async def _try_auto_oauth(
     oauth_cfg: OAuthConfig,
     service_name: str,
 ) -> bool:
     """Attempt an automatic browser-based OAuth flow when credentials are
     present but no stored tokens exist.
+
+    The blocking ``run_oauth_flow`` call (which waits for a browser callback
+    via ``time.sleep``) is offloaded to a thread so the async event loop is
+    not blocked during server startup.
 
     Args:
         oauth_cfg: The OAuthConfig with client credentials but no tokens.
@@ -147,9 +153,18 @@ def _try_auto_oauth(
         scope=oauth_cfg.scope,
         base_url=oauth_cfg.base_url,
     )
-    if run_oauth_flow(args):
-        logger.info("%s OAuth browser flow completed successfully.", service_name)
-        return True
+    try:
+        loop = asyncio.get_running_loop()
+        success = await loop.run_in_executor(
+            None, functools.partial(run_oauth_flow, args)
+        )
+        if success:
+            logger.info("%s OAuth browser flow completed successfully.", service_name)
+            return True
+    except Exception:
+        logger.exception(
+            "%s OAuth browser flow raised an unexpected error.", service_name
+        )
 
     logger.error(
         "%s OAuth browser flow failed. %s tools may be unavailable.",
@@ -171,6 +186,7 @@ def _needs_auto_oauth(
         and bool(oauth_cfg.client_id)
         and bool(oauth_cfg.client_secret)
         and not oauth_cfg.access_token
+        and not oauth_cfg.refresh_token
     )
 
 
@@ -189,12 +205,15 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
         try:
             jira_config = JiraConfig.from_env()
             if jira_config.is_auth_configured():
+                if _needs_auto_oauth(jira_config):
+                    if await _try_auto_oauth(jira_config.oauth_config, "Jira"):
+                        jira_config = JiraConfig.from_env()
                 loaded_jira_config = jira_config
                 logger.info(
                     "Jira configuration loaded and authentication is configured."
                 )
             elif _needs_auto_oauth(jira_config):
-                if _try_auto_oauth(jira_config.oauth_config, "Jira"):
+                if await _try_auto_oauth(jira_config.oauth_config, "Jira"):
                     jira_config = JiraConfig.from_env()
                     if jira_config.is_auth_configured():
                         loaded_jira_config = jira_config
@@ -213,12 +232,17 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
         try:
             confluence_config = ConfluenceConfig.from_env()
             if confluence_config.is_auth_configured():
+                if _needs_auto_oauth(confluence_config):
+                    if await _try_auto_oauth(
+                        confluence_config.oauth_config, "Confluence"
+                    ):
+                        confluence_config = ConfluenceConfig.from_env()
                 loaded_confluence_config = confluence_config
                 logger.info(
                     "Confluence configuration loaded and authentication is configured."
                 )
             elif _needs_auto_oauth(confluence_config):
-                if _try_auto_oauth(confluence_config.oauth_config, "Confluence"):
+                if await _try_auto_oauth(confluence_config.oauth_config, "Confluence"):
                     confluence_config = ConfluenceConfig.from_env()
                     if confluence_config.is_auth_configured():
                         loaded_confluence_config = confluence_config
