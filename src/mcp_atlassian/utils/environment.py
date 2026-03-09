@@ -15,6 +15,8 @@ def get_available_services(
     headers = headers or {}
     confluence_url = os.getenv("CONFLUENCE_URL")
     confluence_is_setup = False
+    oauth_enable = os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in ("true", "1", "yes")
+
     if confluence_url:
         is_cloud = is_atlassian_cloud_url(confluence_url)
 
@@ -45,6 +47,13 @@ def get_available_services(
                 "Using Confluence OAuth 2.0 (3LO) authentication (Cloud-only features) "
                 "with provided access token"
             )
+        elif oauth_enable:
+            # CONFLUENCE_URL is set + ATLASSIAN_OAUTH_ENABLE=true:
+            # Enable Confluence expecting user-provided tokens via headers
+            confluence_is_setup = True
+            logger.info(
+                "Using Confluence OAuth (minimal) - URL is set, expecting user-provided tokens via headers"
+            )
         elif is_cloud:  # Cloud non-OAuth
             if all(
                 [
@@ -62,13 +71,13 @@ def get_available_services(
                 logger.info(
                     "Using Confluence Server/Data Center authentication (PAT or Basic Auth)"
                 )
-    elif os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in ("true", "1", "yes"):
-        # Only enable Confluence in minimal OAuth mode if CONFLUENCE_URL is set,
-        # or if no service-specific URLs are set at all (pure header-based mode)
-        if os.getenv("CONFLUENCE_URL") or not os.getenv("JIRA_URL"):
+    elif oauth_enable:
+        # No CONFLUENCE_URL set but ATLASSIAN_OAUTH_ENABLE=true:
+        # Only enable if no service-specific URLs are set at all (pure header-based mode)
+        if not os.getenv("JIRA_URL"):
             confluence_is_setup = True
             logger.info(
-                "Using Confluence minimal OAuth configuration - expecting user-provided tokens via headers"
+                "Using Confluence minimal OAuth configuration (no URLs set) - expecting user-provided tokens via headers"
             )
 
     if not confluence_is_setup:
@@ -107,6 +116,13 @@ def get_available_services(
                 "Using Jira OAuth 2.0 (3LO) authentication (Cloud-only features) "
                 "with provided access token"
             )
+        elif oauth_enable:
+            # JIRA_URL is set + ATLASSIAN_OAUTH_ENABLE=true:
+            # Enable Jira expecting user-provided tokens via headers
+            jira_is_setup = True
+            logger.info(
+                "Using Jira OAuth (minimal) - URL is set, expecting user-provided tokens via headers"
+            )
         elif is_cloud:  # Cloud non-OAuth
             if all(
                 [
@@ -124,13 +140,13 @@ def get_available_services(
                 logger.info(
                     "Using Jira Server/Data Center authentication (PAT or Basic Auth)"
                 )
-    elif os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in ("true", "1", "yes"):
-        # Only enable Jira in minimal OAuth mode if JIRA_URL is set,
-        # or if no service-specific URLs are set at all (pure header-based mode)
-        if os.getenv("JIRA_URL") or not os.getenv("CONFLUENCE_URL"):
+    elif oauth_enable:
+        # No JIRA_URL set but ATLASSIAN_OAUTH_ENABLE=true:
+        # Only enable if no service-specific URLs are set at all (pure header-based mode)
+        if not os.getenv("CONFLUENCE_URL"):
             jira_is_setup = True
             logger.info(
-                "Using Jira minimal OAuth configuration - expecting user-provided tokens via headers"
+                "Using Jira minimal OAuth configuration (no URLs set) - expecting user-provided tokens via headers"
             )
 
     if not jira_is_setup:
