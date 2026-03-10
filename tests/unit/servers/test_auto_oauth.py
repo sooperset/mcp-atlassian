@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from mcp_atlassian.servers.main import _needs_auto_oauth, _try_auto_oauth, main_lifespan
+from mcp_atlassian.servers.main import _try_auto_oauth, main_lifespan
 from mcp_atlassian.utils.oauth import BYOAccessTokenOAuthConfig, OAuthConfig
 from tests.utils.mocks import MockEnvironment
 
@@ -45,77 +45,125 @@ class _StubConfig:
     oauth_config: OAuthConfig | BYOAccessTokenOAuthConfig | None = None
 
 
+FLOW_PATCH = "mcp_atlassian.utils.oauth_setup.run_oauth_flow"
+
+
 # ---------------------------------------------------------------------------
-# _needs_auto_oauth
+# _try_auto_oauth predicate (early-return when auto-OAuth not needed)
 # ---------------------------------------------------------------------------
 
 
-class TestNeedsAutoOAuth:
-    """Tests for the _needs_auto_oauth helper."""
+class TestTryAutoOAuthPredicate:
+    """Tests for the predicate logic inside _try_auto_oauth (skips vs triggers)."""
 
-    def test_triggers_when_oauth_creds_present_no_tokens(self):
+    @pytest.mark.asyncio
+    @patch(FLOW_PATCH)
+    async def test_triggers_when_oauth_creds_present_no_tokens(self, mock_flow):
+        mock_flow.return_value = True
         cfg = _StubConfig(
             auth_type="oauth",
             oauth_config=_make_oauth_config(),
         )
-        assert _needs_auto_oauth(cfg) is True
+        result = await _try_auto_oauth(cfg, "Jira")
+        assert result is True
+        mock_flow.assert_called_once()
 
-    def test_skips_when_access_token_already_present(self):
+    @pytest.mark.asyncio
+    @patch(FLOW_PATCH)
+    async def test_skips_when_access_token_already_present(self, mock_flow):
         cfg = _StubConfig(
             auth_type="oauth",
             oauth_config=_make_oauth_config(access_token="tok"),
         )
-        assert _needs_auto_oauth(cfg) is False
+        result = await _try_auto_oauth(cfg, "Jira")
+        assert result is False
+        mock_flow.assert_not_called()
 
-    def test_skips_for_basic_auth(self):
+    @pytest.mark.asyncio
+    @patch(FLOW_PATCH)
+    async def test_skips_for_basic_auth(self, mock_flow):
         cfg = _StubConfig(auth_type="basic", oauth_config=None)
-        assert _needs_auto_oauth(cfg) is False
+        result = await _try_auto_oauth(cfg, "Jira")
+        assert result is False
+        mock_flow.assert_not_called()
 
-    def test_skips_for_pat_auth(self):
+    @pytest.mark.asyncio
+    @patch(FLOW_PATCH)
+    async def test_skips_for_pat_auth(self, mock_flow):
         cfg = _StubConfig(auth_type="pat", oauth_config=None)
-        assert _needs_auto_oauth(cfg) is False
+        result = await _try_auto_oauth(cfg, "Jira")
+        assert result is False
+        mock_flow.assert_not_called()
 
-    def test_skips_when_client_id_missing(self):
+    @pytest.mark.asyncio
+    @patch(FLOW_PATCH)
+    async def test_skips_when_client_id_missing(self, mock_flow):
         cfg = _StubConfig(
             auth_type="oauth",
             oauth_config=_make_oauth_config(client_id=""),
         )
-        assert _needs_auto_oauth(cfg) is False
+        result = await _try_auto_oauth(cfg, "Jira")
+        assert result is False
+        mock_flow.assert_not_called()
 
-    def test_skips_when_client_secret_missing(self):
+    @pytest.mark.asyncio
+    @patch(FLOW_PATCH)
+    async def test_skips_when_client_secret_missing(self, mock_flow):
         cfg = _StubConfig(
             auth_type="oauth",
             oauth_config=_make_oauth_config(client_secret=""),
         )
-        assert _needs_auto_oauth(cfg) is False
+        result = await _try_auto_oauth(cfg, "Jira")
+        assert result is False
+        mock_flow.assert_not_called()
 
-    def test_skips_for_byo_token_config(self):
+    @pytest.mark.asyncio
+    @patch(FLOW_PATCH)
+    async def test_skips_for_byo_token_config(self, mock_flow):
         byo = BYOAccessTokenOAuthConfig(access_token="byo-tok")
         cfg = _StubConfig(auth_type="oauth", oauth_config=byo)
-        assert _needs_auto_oauth(cfg) is False
+        result = await _try_auto_oauth(cfg, "Jira")
+        assert result is False
+        mock_flow.assert_not_called()
 
-    def test_skips_when_oauth_config_is_none(self):
+    @pytest.mark.asyncio
+    @patch(FLOW_PATCH)
+    async def test_skips_when_oauth_config_is_none(self, mock_flow):
         cfg = _StubConfig(auth_type="oauth", oauth_config=None)
-        assert _needs_auto_oauth(cfg) is False
+        result = await _try_auto_oauth(cfg, "Jira")
+        assert result is False
+        mock_flow.assert_not_called()
 
-    def test_skips_when_refresh_token_present(self):
+    @pytest.mark.asyncio
+    @patch(FLOW_PATCH)
+    async def test_skips_when_refresh_token_present(self, mock_flow):
         cfg = _StubConfig(
             auth_type="oauth",
             oauth_config=_make_oauth_config(refresh_token="rt"),
         )
-        assert _needs_auto_oauth(cfg) is False
+        result = await _try_auto_oauth(cfg, "Jira")
+        assert result is False
+        mock_flow.assert_not_called()
 
-    def test_triggers_for_dc_oauth_without_tokens(self):
+    @pytest.mark.asyncio
+    @patch(FLOW_PATCH)
+    async def test_triggers_for_dc_oauth_without_tokens(self, mock_flow):
+        mock_flow.return_value = True
         cfg = _StubConfig(
             auth_type="oauth",
             oauth_config=_make_oauth_config(
                 base_url="https://jira.corp.example.com",
             ),
         )
-        assert _needs_auto_oauth(cfg) is True
+        result = await _try_auto_oauth(cfg, "Jira")
+        assert result is True
+        mock_flow.assert_called_once()
 
-    def test_triggers_for_cloud_oauth_with_cloud_id_no_tokens(self):
+    @pytest.mark.asyncio
+    @patch(FLOW_PATCH)
+    async def test_triggers_for_cloud_oauth_with_cloud_id_no_tokens(self, mock_flow):
         """Cloud OAuth with cloud_id set but no tokens should trigger auto-oauth."""
+        mock_flow.return_value = True
         oauth_cfg = _make_oauth_config(
             client_id="cloud-cid",
             client_secret="cloud-csec",
@@ -123,14 +171,14 @@ class TestNeedsAutoOAuth:
         )
         oauth_cfg.cloud_id = "test-cloud-id"
         cfg = _StubConfig(auth_type="oauth", oauth_config=oauth_cfg)
-        assert _needs_auto_oauth(cfg) is True
+        result = await _try_auto_oauth(cfg, "Jira")
+        assert result is True
+        mock_flow.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
 # _try_auto_oauth
 # ---------------------------------------------------------------------------
-
-FLOW_PATCH = "mcp_atlassian.utils.oauth_setup.run_oauth_flow"
 
 
 class TestTryAutoOAuth:
@@ -140,9 +188,9 @@ class TestTryAutoOAuth:
     @patch(FLOW_PATCH)
     async def test_returns_true_on_success(self, mock_flow):
         mock_flow.return_value = True
-        oauth_cfg = _make_oauth_config()
+        cfg = _StubConfig(auth_type="oauth", oauth_config=_make_oauth_config())
 
-        result = await _try_auto_oauth(oauth_cfg, "Jira")
+        result = await _try_auto_oauth(cfg, "Jira")
 
         assert result is True
         mock_flow.assert_called_once()
@@ -157,9 +205,9 @@ class TestTryAutoOAuth:
     @patch(FLOW_PATCH)
     async def test_returns_false_on_failure(self, mock_flow):
         mock_flow.return_value = False
-        oauth_cfg = _make_oauth_config()
+        cfg = _StubConfig(auth_type="oauth", oauth_config=_make_oauth_config())
 
-        result = await _try_auto_oauth(oauth_cfg, "Confluence")
+        result = await _try_auto_oauth(cfg, "Confluence")
 
         assert result is False
         mock_flow.assert_called_once()
@@ -169,9 +217,12 @@ class TestTryAutoOAuth:
     async def test_passes_dc_base_url(self, mock_flow):
         mock_flow.return_value = True
         dc_url = "https://jira.corp.example.com"
-        oauth_cfg = _make_oauth_config(base_url=dc_url)
+        cfg = _StubConfig(
+            auth_type="oauth",
+            oauth_config=_make_oauth_config(base_url=dc_url),
+        )
 
-        await _try_auto_oauth(oauth_cfg, "Jira")
+        await _try_auto_oauth(cfg, "Jira")
 
         args = mock_flow.call_args[0][0]
         assert args.base_url == dc_url
@@ -180,9 +231,9 @@ class TestTryAutoOAuth:
     @patch(FLOW_PATCH)
     async def test_flow_exception_returns_false(self, mock_flow):
         mock_flow.side_effect = RuntimeError("port in use")
-        oauth_cfg = _make_oauth_config()
+        cfg = _StubConfig(auth_type="oauth", oauth_config=_make_oauth_config())
 
-        result = await _try_auto_oauth(oauth_cfg, "Jira")
+        result = await _try_auto_oauth(cfg, "Jira")
 
         assert result is False
         mock_flow.assert_called_once()
