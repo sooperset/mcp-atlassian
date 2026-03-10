@@ -598,3 +598,82 @@ MOCK_COMMENT_REPLY_V2_RESPONSE = {
         "webui": "/spaces/TEST/pages/12345?focusedCommentId=222333444",
     },
 }
+
+# ============================================================================
+# Inline Comment Mock Data
+# ============================================================================
+
+MOCK_INLINE_COMMENT_V1_RESPONSE = {
+    "id": "333444555",
+    "type": "comment",
+    "status": "current",
+    "title": "Inline Comment",
+    "container": {
+        "id": "12345",
+        "type": "page",
+        "status": "current",
+        "title": "Test Page",
+    },
+    "body": {
+        "view": {
+            "value": "<p>This is an inline comment</p>",
+            "representation": "view",
+        },
+    },
+    "version": {
+        "by": {
+            "type": "known",
+            "accountId": "user123",
+            "displayName": "Test User",
+        },
+        "when": "2024-01-03T10:00:00.000Z",
+        "number": 1,
+    },
+    "extensions": {
+        "location": "inline",
+        "inlineProperties": {
+            "originalSelection": "some text to anchor",
+        },
+    },
+    "_links": {
+        "webui": "/spaces/TEST/pages/12345?focusedCommentId=333444555",
+        "self": "https://example.atlassian.net/wiki/rest/api/content/333444555",
+    },
+}
+
+MOCK_INLINE_COMMENT_V2_RESPONSE = {
+    "id": "444555666",
+    "status": "open",
+    "pageId": "12345",
+    "inlineCommentProperties": {
+        "textSelection": "some text to anchor",
+        "textSelectionMatchCount": 1,
+        "textSelectionMatchIndex": 0,
+        "resolved": False,
+    },
+    "body": {
+        "storage": {
+            "value": "<p>This is a v2 inline comment</p>",
+            "representation": "storage",
+        },
+    },
+    "version": {
+        "number": 1,
+        "createdAt": "2024-01-03T10:00:00.000Z",
+    },
+    "author": {
+        "type": "known",
+        "accountId": "user123",
+        "displayName": "Test User",
+    },
+    "_links": {
+        "webui": "/spaces/TEST/pages/12345?focusedCommentId=444555666",
+    },
+}
+
+MOCK_INLINE_COMMENTS_V2_LIST_RESPONSE = {
+    "results": [MOCK_INLINE_COMMENT_V2_RESPONSE],
+    "_links": {
+        "self": "https://example.atlassian.net/wiki/api/v2/pages/12345/inline-comments",
+    },
+}
