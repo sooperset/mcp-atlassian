@@ -1201,9 +1201,7 @@ class IssuesMixin(
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Error assigning issue {issue_key}: {error_msg}")
-            raise ValueError(
-                f"Failed to assign issue {issue_key}: {error_msg}"
-            ) from e
+            raise ValueError(f"Failed to assign issue {issue_key}: {error_msg}") from e
 
     def _update_issue_with_status(
         self, issue_key: str, fields: dict[str, Any]
