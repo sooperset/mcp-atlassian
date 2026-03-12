@@ -436,7 +436,10 @@ class TestGetAvailableServicesWithHeaders:
             assert "Data Center" in caplog.text
 
     def test_oauth_enable_without_urls(self, caplog):
-        """Test BYOT OAuth mode — ATLASSIAN_OAUTH_ENABLE=true without service URLs."""
+        """Test that ATLASSIAN_OAUTH_ENABLE=true without service URLs does NOT mark services as available.
+
+        The OAuth enable check is now scoped inside the URL check, so a URL is required.
+        """
         with MockEnvironment.clean_env():
             import os
 
@@ -444,17 +447,10 @@ class TestGetAvailableServicesWithHeaders:
 
             result = get_available_services()
             _assert_service_availability(
-                result, confluence_expected=True, jira_expected=True
+                result, confluence_expected=False, jira_expected=False
             )
-            assert_log_contains(
-                caplog,
-                "INFO",
-                "Using Confluence minimal OAuth configuration",
-            )
-            assert_log_contains(
-                caplog,
-                "INFO",
-                "Using Jira minimal OAuth configuration",
+            _assert_authentication_logs(
+                caplog, "not_configured", ["confluence", "jira"]
             )
 
     def test_oauth_enable_with_cloud_url_no_creds(self, caplog):
@@ -476,7 +472,25 @@ class TestGetAvailableServicesWithHeaders:
         ["true", "True", "TRUE", "1", "yes", "YES"],
     )
     def test_oauth_enable_value_variations(self, enable_value, caplog):
-        """Test various ATLASSIAN_OAUTH_ENABLE value formats."""
+        """Test various ATLASSIAN_OAUTH_ENABLE value formats with URLs present."""
+        with MockEnvironment.clean_env():
+            import os
+
+            os.environ["ATLASSIAN_OAUTH_ENABLE"] = enable_value
+            os.environ["CONFLUENCE_URL"] = "https://test.atlassian.net/wiki"
+            os.environ["JIRA_URL"] = "https://test.atlassian.net"
+
+            result = get_available_services()
+            _assert_service_availability(
+                result, confluence_expected=True, jira_expected=True
+            )
+
+    @pytest.mark.parametrize(
+        "enable_value",
+        ["true", "True", "TRUE", "1", "yes", "YES"],
+    )
+    def test_oauth_enable_without_urls_value_variations(self, enable_value, caplog):
+        """Test that ATLASSIAN_OAUTH_ENABLE without URLs returns False regardless of value format."""
         with MockEnvironment.clean_env():
             import os
 
@@ -484,7 +498,7 @@ class TestGetAvailableServicesWithHeaders:
 
             result = get_available_services()
             _assert_service_availability(
-                result, confluence_expected=True, jira_expected=True
+                result, confluence_expected=False, jira_expected=False
             )
 
     @pytest.mark.parametrize(
