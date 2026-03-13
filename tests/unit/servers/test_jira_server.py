@@ -392,8 +392,6 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         delete_issue,
         download_attachments,
         edit_comment,
-        upload_attachment,
-        upload_attachments,
         get_agile_boards,
         get_all_projects,
         get_board_issues,
@@ -419,6 +417,8 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         transition_issue,
         update_issue,
         update_sprint,
+        upload_attachment,
+        upload_attachments,
     )
 
     jira_sub_mcp = FastMCP(name="TestJiraSubMCP")
