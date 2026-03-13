@@ -121,7 +121,7 @@ class UsersMixin(JiraClient):
             ValueError: If the account ID could not be found.
         """
         # If it looks like an account ID already, return it
-        if assignee.startswith("5") and len(assignee) >= 10:
+        if re.match(r"^[0-9a-f]{24}$", assignee) or re.match(r"^\d+:", assignee):
             return assignee
 
         account_id = self._lookup_user_directly(assignee)
