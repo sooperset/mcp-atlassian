@@ -392,6 +392,8 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         delete_issue,
         download_attachments,
         edit_comment,
+        upload_attachment,
+        upload_attachments,
         get_agile_boards,
         get_all_projects,
         get_board_issues,
@@ -457,6 +459,8 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(update_sprint)
     jira_sub_mcp.add_tool(add_issues_to_sprint)
     jira_sub_mcp.add_tool(batch_create_versions)
+    jira_sub_mcp.add_tool(upload_attachment)
+    jira_sub_mcp.add_tool(upload_attachments)
     test_mcp.mount(jira_sub_mcp, prefix="jira")
     return test_mcp
 
@@ -2430,3 +2434,71 @@ async def test_get_field_options_combined(jira_client, mock_jira_fetcher):
     # return_limit=1 caps to first match
     assert len(result) == 1
     assert result[0] == "High"
+
+
+# ── jira_upload_attachment tests ──────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_upload_attachment(jira_client, mock_jira_fetcher):
+    """Test uploading a single attachment to a Jira issue."""
+    mock_jira_fetcher.upload_attachment.return_value = {
+        "success": True,
+        "issue_key": "TEST-123",
+        "filename": "report.pdf",
+        "size": 1024,
+        "id": "att456",
+    }
+
+    response = await jira_client.call_tool(
+        "jira_upload_attachment",
+        {
+            "issue_key": "TEST-123",
+            "file_path": "/path/to/report.pdf",
+        },
+    )
+
+    mock_jira_fetcher.upload_attachment.assert_called_once_with(
+        issue_key="TEST-123",
+        file_path="/path/to/report.pdf",
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["success"] is True
+    assert result_data["issue_key"] == "TEST-123"
+    assert result_data["filename"] == "report.pdf"
+    assert result_data["id"] == "att456"
+
+
+@pytest.mark.anyio
+async def test_upload_attachments(jira_client, mock_jira_fetcher):
+    """Test uploading multiple attachments to a Jira issue."""
+    mock_jira_fetcher.upload_attachments.return_value = {
+        "success": True,
+        "issue_key": "TEST-123",
+        "total": 2,
+        "uploaded": [
+            {"filename": "file1.pdf", "size": 1024, "id": "att1"},
+            {"filename": "file2.png", "size": 2048, "id": "att2"},
+        ],
+        "failed": [],
+    }
+
+    response = await jira_client.call_tool(
+        "jira_upload_attachments",
+        {
+            "issue_key": "TEST-123",
+            "file_paths": "/path/to/file1.pdf,/path/to/file2.png",
+        },
+    )
+
+    mock_jira_fetcher.upload_attachments.assert_called_once_with(
+        issue_key="TEST-123",
+        file_paths=["/path/to/file1.pdf", "/path/to/file2.png"],
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["success"] is True
+    assert result_data["total"] == 2
+    assert len(result_data["uploaded"]) == 2
+    assert len(result_data["failed"]) == 0
