@@ -2071,3 +2071,130 @@ async def get_page_images(
         ),
     )
     return contents
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_pages"},
+    annotations={"title": "Get Content Properties", "readOnlyHint": True},
+)
+async def get_content_properties(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(
+            description=(
+                "Confluence page ID (numeric string from the page URL, "
+                "e.g. '123456789')."
+            )
+        ),
+    ],
+    key: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional property key to fetch a single property "
+                "(e.g. 'content-appearance-published'). "
+                "If omitted, all properties are returned."
+            ),
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """Get content properties for a Confluence page.
+
+    Content properties are key-value metadata stored against a page that
+    control page-level behaviours such as display width
+    (``content-appearance-published`` / ``content-appearance-draft``),
+    editor version (``editor``), and arbitrary app metadata.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: Confluence page ID.
+        key: Optional property key. If provided only that property is returned.
+
+    Returns:
+        JSON object mapping property key(s) to their values.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    properties = confluence_fetcher.get_content_properties(page_id, key)
+    return json.dumps(properties, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_pages"},
+    annotations={"title": "Set Content Property", "destructiveHint": True},
+)
+@check_write_access
+async def set_content_property(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(
+            description=(
+                "Confluence page ID (numeric string from the page URL, "
+                "e.g. '123456789')."
+            )
+        ),
+    ],
+    key: Annotated[
+        str,
+        Field(
+            description=(
+                "Property key to create or update. "
+                "Well-known keys: 'content-appearance-published', "
+                "'content-appearance-draft' (values: 'full-width' or 'fixed-width'), "
+                "'editor' (value: '{\"version\": 2}'). "
+                "Custom keys are also supported for app metadata."
+            )
+        ),
+    ],
+    value: Annotated[
+        str,
+        Field(
+            description=(
+                "Property value as a JSON string. "
+                "Examples: '\"full-width\"' for a string value, "
+                "'{\"version\": 2}' for an object value. "
+                "The version number is managed automatically."
+            )
+        ),
+    ],
+) -> str:
+    """Create or update a content property on a Confluence page.
+
+    Performs an upsert: creates the property if it does not exist, or updates
+    it if it does. The Confluence API version number is incremented automatically
+    so callers never need to manage it.
+
+    Common use cases:
+    - Switch page to full-width layout: key='content-appearance-published',
+      value='"full-width"'
+    - Switch page to fixed-width layout: key='content-appearance-published',
+      value='"fixed-width"'
+    - Set editor version: key='editor', value='{"version": 2}'
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: Confluence page ID.
+        key: Property key to create or update.
+        value: Property value as a JSON string.
+
+    Returns:
+        JSON object with the resulting ``{key: value}`` pair.
+
+    Raises:
+        ValueError: If the value is not valid JSON or in read-only mode.
+    """
+    import json as _json
+
+    try:
+        parsed_value = _json.loads(value)
+    except _json.JSONDecodeError as exc:
+        raise ValueError(
+            f"'value' must be a valid JSON string (e.g. '\"full-width\"' or "
+            f"'{{\"version\": 2}}'). Got: {value!r}"
+        ) from exc
+
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    result = confluence_fetcher.set_content_property(page_id, key, parsed_value)
+    return json.dumps(result, indent=2, ensure_ascii=False)
