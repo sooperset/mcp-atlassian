@@ -172,9 +172,9 @@ async def get_page(
         bool,
         Field(
             description=(
-                "Whether to convert page to markdown (true) or keep it in raw HTML format (false). "
-                "Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: "
-                "using HTML significantly increases token usage in AI responses."
+                "Whether to convert page to markdown (true) or return raw Confluence storage XHTML (false). "
+                "Storage output preserves macros and task metadata for safe round-tripping, but CAUTION: "
+                "it significantly increases token usage in AI responses."
             ),
             default=True,
         ),
@@ -1087,9 +1087,9 @@ async def get_page_history(
         bool,
         Field(
             description=(
-                "Whether to convert page to markdown (true) or keep it in raw HTML format (false). "
-                "Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: "
-                "using HTML significantly increases token usage in AI responses."
+                "Whether to convert page to markdown (true) or return raw Confluence storage XHTML (false). "
+                "Storage output preserves macros and task metadata for safe round-tripping, but CAUTION: "
+                "it significantly increases token usage in AI responses."
             ),
             default=True,
         ),

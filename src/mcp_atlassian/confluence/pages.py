@@ -19,6 +19,32 @@ logger = logging.getLogger("mcp-atlassian")
 class PagesMixin(ConfluenceClient):
     """Mixin for Confluence page operations."""
 
+    def _render_page_content(
+        self,
+        content: str,
+        *,
+        convert_to_markdown: bool,
+        space_key: str = "",
+        content_id: str = "",
+        attachments: list[dict[str, Any]] | None = None,
+    ) -> str:
+        """Render page content for the requested output mode.
+
+        When markdown conversion is disabled, return the exact Confluence storage
+        payload to preserve macros and task metadata for safe round-tripping.
+        """
+        if not convert_to_markdown:
+            return content
+
+        _, processed_markdown = self.preprocessor.process_html_content(
+            content,
+            space_key=space_key,
+            confluence_client=self.confluence,
+            content_id=content_id,
+            attachments=attachments,
+        )
+        return processed_markdown
+
     @property
     def _v2_adapter(self) -> ConfluenceV2Adapter | None:
         """Get v2 API adapter for OAuth authentication.
@@ -92,15 +118,13 @@ class PagesMixin(ConfluenceClient):
             page_attachments = (
                 page.get("children", {}).get("attachment", {}).get("results", [])
             )
-            processed_html, processed_markdown = self.preprocessor.process_html_content(
+            page_content = self._render_page_content(
                 content,
+                convert_to_markdown=convert_to_markdown,
                 space_key=space_key,
-                confluence_client=self.confluence,
                 content_id=page_id_str,
                 attachments=page_attachments,
             )
-
-            page_content = processed_markdown if convert_to_markdown else processed_html
 
             # Fetch page emoji and width from content properties
             emoji = self._get_page_emoji(page_id)
@@ -414,15 +438,12 @@ class PagesMixin(ConfluenceClient):
                     f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
                 )
                 content = ""
-            processed_html, processed_markdown = self.preprocessor.process_html_content(
+            page_content = self._render_page_content(
                 content,
+                convert_to_markdown=convert_to_markdown,
                 space_key=space_key,
-                confluence_client=self.confluence,
                 content_id=str(page.get("id", "")),
             )
-
-            # Use the appropriate content format based on the convert_to_markdown flag
-            page_content = processed_markdown if convert_to_markdown else processed_html
 
             # Fetch page emoji and width from content properties
             emoji = self._get_page_emoji(str(page.get("id", "")))
@@ -490,15 +511,12 @@ class PagesMixin(ConfluenceClient):
                     f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
                 )
                 content = ""
-            processed_html, processed_markdown = self.preprocessor.process_html_content(
+            page_content = self._render_page_content(
                 content,
+                convert_to_markdown=convert_to_markdown,
                 space_key=space_key,
-                confluence_client=self.confluence,
                 content_id=str(page.get("id", "")),
             )
-
-            # Use the appropriate content format based on the convert_to_markdown flag
-            page_content = processed_markdown if convert_to_markdown else processed_html
 
             # Ensure space information is included
             if "space" not in page:
@@ -793,16 +811,15 @@ class PagesMixin(ConfluenceClient):
             for item in child_items:
                 # Only process content if we have "body" expanded
                 content_override = None
-                if "body" in item and convert_to_markdown:
+                if "body" in item:
                     content = item.get("body", {}).get("storage", {}).get("value", "")
                     if content:
-                        _, processed_markdown = self.preprocessor.process_html_content(
+                        content_override = self._render_page_content(
                             content,
+                            convert_to_markdown=convert_to_markdown,
                             space_key=space_key,
-                            confluence_client=self.confluence,
                             content_id=str(item.get("id", "")),
                         )
-                        content_override = processed_markdown
 
                 # Create the page model (works for both pages and folders)
                 page_model = ConfluencePage.from_api_response(
@@ -1062,15 +1079,13 @@ class PagesMixin(ConfluenceClient):
             page_attachments = (
                 page.get("children", {}).get("attachment", {}).get("results", [])
             )
-            processed_html, processed_markdown = self.preprocessor.process_html_content(
+            page_content = self._render_page_content(
                 content,
+                convert_to_markdown=convert_to_markdown,
                 space_key=space_key,
-                confluence_client=self.confluence,
                 content_id=str(page.get("id", "")),
                 attachments=page_attachments,
             )
-
-            page_content = processed_markdown if convert_to_markdown else processed_html
 
             emoji = self._get_page_emoji(page_id)
             return ConfluencePage.from_api_response(

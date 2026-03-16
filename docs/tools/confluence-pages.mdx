@@ -15,7 +15,7 @@ Get content of a specific Confluence page by its ID, or by its title and space k
 | `title` | `string` | No | The exact title of the Confluence page. Use this with 'space_key' if 'page_id' is not known. |
 | `space_key` | `string` | No | The key of the Confluence space where the page resides (e.g., 'DEV', 'TEAM'). Required if using 'title'. |
 | `include_metadata` | `boolean` | No | Whether to include page metadata such as creation date, last update, version, and labels. |
-| `convert_to_markdown` | `boolean` | No | Whether to convert page to markdown (true) or keep it in raw HTML format (false). Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: using HTML significantly increases token usage in AI responses. |
+| `convert_to_markdown` | `boolean` | No | Whether to convert page to markdown (true) or return raw Confluence storage XHTML (false). Storage output preserves macros and task metadata for safe round-tripping, but CAUTION: it significantly increases token usage in AI responses. |
 **Example:**
 
 ```json
@@ -23,7 +23,7 @@ Get content of a specific Confluence page by its ID, or by its title and space k
 ```
 
 <Tip>
-Content is returned in Markdown format (auto-converted from Confluence storage format). Use `include_metadata` for labels, version info, and last modified date.
+Content is returned in Markdown format by default. Set `convert_to_markdown` to `false` to retrieve exact Confluence storage XHTML when macro preservation matters.
 </Tip>
 
 
@@ -135,7 +135,7 @@ Get a historical version of a specific Confluence page.
 |-----------|------|----------|-------------|
 | `page_id` | `string` | Yes | Confluence page ID (numeric ID, can be found in the page URL). For example, in 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', the page ID is '123456789'. |
 | `version` | `integer` | Yes | The version number of the page to retrieve |
-| `convert_to_markdown` | `boolean` | No | Whether to convert page to markdown (true) or keep it in raw HTML format (false). Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: using HTML significantly increases token usage in AI responses. |
+| `convert_to_markdown` | `boolean` | No | Whether to convert page to markdown (true) or return raw Confluence storage XHTML (false). Storage output preserves macros and task metadata for safe round-tripping, but CAUTION: it significantly increases token usage in AI responses. |
 
 ---
 
