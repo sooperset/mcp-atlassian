@@ -42,14 +42,9 @@ class PropertiesMixin(ConfluenceClient):
                 )
                 response.raise_for_status()
                 data = response.json()
-                return {
-                    item["key"]: item["value"]
-                    for item in data.get("results", [])
-                }
+                return {item["key"]: item["value"] for item in data.get("results", [])}
         except Exception as e:
-            logger.error(
-                f"Failed to get content properties for page {page_id}: {e}"
-            )
+            logger.error(f"Failed to get content properties for page {page_id}: {e}")
             raise Exception(
                 f"Failed to get content properties for page {page_id}: {e}"
             ) from e
