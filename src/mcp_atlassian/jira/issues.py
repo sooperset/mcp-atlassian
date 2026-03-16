@@ -605,7 +605,7 @@ class IssuesMixin(
                     "Provide issue_type like 'Task', 'Story', or 'Bug'."
                 )
 
-            # Handle Epic and Subtask issue type names across different languages
+            # Handle issue type names across different languages
             actual_issue_id = None
             if self._is_epic_issue_type(issue_type) and issue_type.lower() == "epic":
                 # If the user provided "Epic" but we need to find the localized name
@@ -620,6 +620,15 @@ class IssuesMixin(
                     actual_issue_id = subtask_type_id
                     logger.info(
                         f"Using localized Subtask issue type id: {subtask_type_id}"
+                    )
+            else:
+                # For all other issue types (Story, Task, Bug, etc.),
+                # resolve name to ID to support localized Jira instances
+                resolved_id = self._find_issue_type_id(project_key, issue_type)
+                if resolved_id:
+                    actual_issue_id = resolved_id
+                    logger.info(
+                        f"Resolved issue type '{issue_type}' to id: {resolved_id}"
                     )
 
             # Prepare fields
@@ -807,6 +816,39 @@ class IssuesMixin(
             return None
         except Exception as e:
             logger.warning(f"Could not get issue types for project {project_key}: {e}")
+            return None
+
+    def _find_issue_type_id(self, project_key: str, issue_type_name: str) -> str | None:
+        """
+        Find the issue type ID by name for a project.
+
+        Supports localized Jira instances where issue type names may differ
+        from the English defaults (e.g., Korean, Japanese, German).
+
+        Args:
+            project_key: The project key
+            issue_type_name: The issue type name to resolve
+
+        Returns:
+            The issue type ID if found, None otherwise
+        """
+        try:
+            issue_types = self.get_project_issue_types(project_key)
+            for issue_type in issue_types:
+                type_name = issue_type.get("name", "")
+                if type_name.lower() == issue_type_name.lower():
+                    return issue_type.get("id")
+            # Fallback: try untranslatedName if available
+            for issue_type in issue_types:
+                untranslated = issue_type.get("untranslatedName", "")
+                if untranslated and untranslated.lower() == issue_type_name.lower():
+                    return issue_type.get("id")
+            return None
+        except Exception as e:
+            logger.warning(
+                f"Could not resolve issue type '{issue_type_name}' "
+                f"for project {project_key}: {e}"
+            )
             return None
 
     def _prepare_epic_fields(
