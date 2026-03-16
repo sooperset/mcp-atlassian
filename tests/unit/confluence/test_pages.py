@@ -1026,7 +1026,7 @@ class TestPagesMixin:
             # Assert
             # Verify markdown was converted
             pages_mixin.preprocessor.markdown_to_confluence_storage.assert_called_once_with(
-                markdown_body, enable_heading_anchors=False
+                markdown_body, enable_heading_anchors=False, table_layout=None
             )
 
             # Verify create_page was called with the converted content
@@ -1113,7 +1113,7 @@ class TestPagesMixin:
             # Assert
             # Verify markdown was converted
             pages_mixin.preprocessor.markdown_to_confluence_storage.assert_called_once_with(
-                markdown_body, enable_heading_anchors=False
+                markdown_body, enable_heading_anchors=False, table_layout=None
             )
 
             # Verify update_page was called with the converted content
