@@ -432,6 +432,74 @@ class TestPagesMixin:
         with pytest.raises(Exception, match="Failed to update page"):
             pages_mixin.update_page("987654321", "Test Page", "<p>Content</p>")
 
+    def test_update_page_preserves_existing_width_by_default(self, pages_mixin):
+        """Test updating a page preserves the current width when none is provided."""
+        page_id = "987654321"
+        title = "Updated Page"
+        body = "<p>Updated content</p>"
+
+        mock_document = ConfluencePage(
+            id=page_id,
+            title=title,
+            content="Updated content",
+            space={"key": "PROJ", "name": "Project"},
+            version={"number": 1},
+        )
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=mock_document),
+            patch.object(pages_mixin, "_get_page_width", return_value="full-width"),
+            patch.object(pages_mixin, "_set_page_width") as mock_set_width,
+        ):
+            result = pages_mixin.update_page(
+                page_id,
+                title,
+                body,
+                is_markdown=False,
+            )
+
+            pages_mixin.confluence.update_page.assert_called_once_with(
+                page_id=page_id,
+                title=title,
+                body=body,
+                type="page",
+                representation="storage",
+                minor_edit=False,
+                version_comment="",
+                always_update=True,
+            )
+            mock_set_width.assert_called_once_with(page_id, "full-width")
+            assert result.id == page_id
+
+    def test_update_page_explicit_width_overrides_existing_width(self, pages_mixin):
+        """Test updating a page honors an explicitly provided width."""
+        page_id = "987654321"
+        title = "Updated Page"
+        body = "<p>Updated content</p>"
+
+        mock_document = ConfluencePage(
+            id=page_id,
+            title=title,
+            content="Updated content",
+            space={"key": "PROJ", "name": "Project"},
+            version={"number": 1},
+        )
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=mock_document),
+            patch.object(pages_mixin, "_get_page_width") as mock_get_width,
+            patch.object(pages_mixin, "_set_page_width") as mock_set_width,
+        ):
+            result = pages_mixin.update_page(
+                page_id,
+                title,
+                body,
+                is_markdown=False,
+                page_width="default",
+            )
+
+            mock_get_width.assert_not_called()
+            mock_set_width.assert_called_once_with(page_id, "default")
+            assert result.id == page_id
+
     def test_update_page_with_wiki_format(self, pages_mixin):
         """Test updating a page with wiki markup format."""
         # Arrange

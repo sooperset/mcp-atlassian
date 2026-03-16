@@ -683,6 +683,11 @@ class PagesMixin(ConfluenceClient):
                 final_body = body
                 representation = content_representation or "storage"
 
+            width_to_set = page_width if page_width else None
+            preserve_existing_width = page_width is None
+            if preserve_existing_width:
+                width_to_set = self._get_page_width(page_id)
+
             logger.debug(f"Updating page {page_id} with title '{title}'")
 
             # Use v2 API for OAuth authentication, v1 API for token/basic auth
@@ -724,9 +729,9 @@ class PagesMixin(ConfluenceClient):
                 self._set_page_emoji(page_id, emoji_to_set)
 
             # Set or remove the page width if provided
-            if page_width is not None:
-                # Empty string means reset to default, otherwise set it
-                width_to_set = page_width if page_width else None
+            if page_width is not None or width_to_set is not None:
+                # Empty string means reset to default, otherwise set it.
+                # When not explicitly provided, preserve the page's current width.
                 self._set_page_width(page_id, width_to_set)
 
             # After update, refresh the page data
