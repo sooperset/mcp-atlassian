@@ -57,7 +57,9 @@ class RestrictionsMixin(ConfluenceClient):
                 users = restrictions.get("user", {})
                 if isinstance(users, dict):
                     for u in users.get("results", []):
-                        account_id = u.get("accountId") or u.get("username") or u.get("name")
+                        account_id = (
+                            u.get("accountId") or u.get("username") or u.get("name")
+                        )
                         if account_id:
                             result[op_key]["users"].append(account_id)
 
@@ -73,7 +75,9 @@ class RestrictionsMixin(ConfluenceClient):
             raise
         except Exception as e:
             logger.error(f"Error fetching restrictions for page {page_id}: {str(e)}")
-            raise Exception(f"Failed to get restrictions for page {page_id}: {str(e)}") from e
+            raise Exception(
+                f"Failed to get restrictions for page {page_id}: {str(e)}"
+            ) from e
 
     @handle_auth_errors("Confluence API")
     def set_page_restrictions(
@@ -158,4 +162,6 @@ class RestrictionsMixin(ConfluenceClient):
             raise
         except Exception as e:
             logger.error(f"Error setting restrictions for page {page_id}: {str(e)}")
-            raise Exception(f"Failed to set restrictions for page {page_id}: {str(e)}") from e
+            raise Exception(
+                f"Failed to set restrictions for page {page_id}: {str(e)}"
+            ) from e

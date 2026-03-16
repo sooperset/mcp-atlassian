@@ -141,7 +141,9 @@ class TestSetPageRestrictions:
             "update": {"users": [], "groups": []},
         }
 
-    def test_set_restrictions_server_dc_uses_username(self, restrictions_mixin_server_dc):
+    def test_set_restrictions_server_dc_uses_username(
+        self, restrictions_mixin_server_dc
+    ):
         """set_page_restrictions uses 'username' key for Server/DC instances."""
         import json as _json
 
@@ -159,7 +161,9 @@ class TestSetPageRestrictions:
 
     def test_set_restrictions_api_error(self, restrictions_mixin):
         """set_page_restrictions raises on PUT failure."""
-        restrictions_mixin.confluence.put = MagicMock(side_effect=Exception("network error"))
+        restrictions_mixin.confluence.put = MagicMock(
+            side_effect=Exception("network error")
+        )
 
         with pytest.raises(Exception, match="Failed to set restrictions for page 999"):
             restrictions_mixin.set_page_restrictions("999", read_users=["u1"])
