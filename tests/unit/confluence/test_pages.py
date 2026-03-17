@@ -197,7 +197,7 @@ class TestPagesMixin:
         space_key = "DEMO"
         title = "Macro Page"
         original_storage = (
-            '<ac:task-list><ac:task><ac:task-id>1</ac:task-id>'
+            "<ac:task-list><ac:task><ac:task-id>1</ac:task-id>"
             "<ac:task-status>incomplete</ac:task-status>"
             "<ac:task-body>Test task</ac:task-body></ac:task></ac:task-list>"
         )
