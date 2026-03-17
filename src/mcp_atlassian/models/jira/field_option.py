@@ -23,7 +23,9 @@ class FieldContext(ApiModel):
     is_any_issue_type: bool = False
 
     @classmethod
-    def from_api_response(cls, data: dict[str, Any], **kwargs: Any) -> "FieldContext":
+    def from_api_response(
+        cls, data: dict[str, Any] | str | None, **kwargs: Any
+    ) -> "FieldContext":
         """Create a FieldContext from a Jira API response.
 
         Args:
@@ -65,7 +67,9 @@ class FieldOption(ApiModel):
     child_options: list["FieldOption"] = Field(default_factory=list)
 
     @classmethod
-    def from_api_response(cls, data: dict[str, Any], **kwargs: Any) -> "FieldOption":
+    def from_api_response(
+        cls, data: dict[str, Any] | str | None, **kwargs: Any
+    ) -> "FieldOption":
         """Create a FieldOption from a Jira API response.
 
         Args:
@@ -74,14 +78,26 @@ class FieldOption(ApiModel):
         Returns:
             A FieldOption instance
         """
+        # Handle simple string values (some API shapes use strings for
+        # allowedValues/children). If `data` is a bare string, treat it
+        # as a value-only FieldOption.
+        if isinstance(data, str):
+            return cls(id="", value=data)
+
         if not data or not isinstance(data, dict):
             return cls(id="", value="")
 
-        children = [
-            cls.from_api_response(c)
-            for c in data.get("cascadingOptions", [])
-            if isinstance(c, dict)
-        ]
+        # Some APIs (Server/DC createmeta) return nested children under
+        # the key "children" while other shapes (legacy in-tests or
+        # cascade-specific endpoints) may use "cascadingOptions".
+        raw_children = data.get("cascadingOptions") or data.get("children") or []
+
+        children: list[FieldOption] = []
+        for c in raw_children:
+            if isinstance(c, dict):
+                children.append(cls.from_api_response(c))
+            elif isinstance(c, str):
+                children.append(cls(id="", value=c))
 
         return cls(
             id=str(data.get("id", data.get("optionId", ""))),

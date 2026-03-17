@@ -339,22 +339,29 @@ class TestFieldOptionsMixin:
 
     def test_options_cloud_cascading(self, mixin):
         mixin.config.is_cloud = True
+        # Cloud main endpoint returns a flat list; children reference
+        # their parent via "optionId" or are available via the
+        # cascade-specific endpoint. Mock the main list followed by
+        # the cascade endpoint response for the parent.
         mixin.jira.get = MagicMock(
-            return_value={
-                "values": [
-                    {
-                        "id": "10200",
-                        "value": "Americas",
-                        "cascadingOptions": [
-                            {"id": "10201", "value": "US"},
-                            {"id": "10202", "value": "Canada"},
-                        ],
-                    }
-                ],
-                "startAt": 0,
-                "maxResults": 50,
-                "total": 1,
-            }
+            side_effect=[
+                # main options list (parent only)
+                {
+                    "values": [
+                        {"id": "10200", "value": "Americas"},
+                    ],
+                    "startAt": 0,
+                    "maxResults": 50,
+                    "total": 1,
+                },
+                # cascade-specific endpoint for parent 10200
+                {
+                    "values": [
+                        {"id": "10201", "value": "US"},
+                        {"id": "10202", "value": "Canada"},
+                    ]
+                },
+            ]
         )
 
         result = mixin.get_field_options("customfield_10020", context_id="10001")

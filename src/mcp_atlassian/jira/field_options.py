@@ -109,8 +109,8 @@ class FieldOptionsMixin(JiraClient):
             global_ctx = next((c for c in contexts if c.is_global_context), None)
             context_id = global_ctx.id if global_ctx else contexts[0].id
 
-        # Paginate through all options
-        all_options: list[FieldOption] = []
+        # Paginate through all option entries (Cloud returns a flat list).
+        raw_items: list[dict] = []
         start_at = 0
         max_results = 100
 
@@ -127,7 +127,7 @@ class FieldOptionsMixin(JiraClient):
                 values = response.get("values", [])
                 for item in values:
                     if isinstance(item, dict):
-                        all_options.append(FieldOption.from_api_response(item))
+                        raw_items.append(item)
 
                 total = response.get("total", len(values))
                 start_at += len(values)
@@ -141,7 +141,52 @@ class FieldOptionsMixin(JiraClient):
                 )
                 break
 
-        return all_options
+        # Build parent -> children mapping. Cloud main endpoint returns a
+        # flat list where child items include an "optionId" referencing
+        # their parent's id. Prefer calling the cascade-specific endpoint
+        # per parent to get authoritative child objects; fall back to
+        # grouping by optionId when cascade endpoint is unavailable.
+        items_by_id = {str(item.get("id", "")): item for item in raw_items}
+        parent_ids = [iid for iid, it in items_by_id.items() if not it.get("optionId")]
+
+        result: list[FieldOption] = []
+
+        for pid in parent_ids:
+            parent_item = items_by_id.get(pid, {})
+            # Attempt cascade-specific endpoint for this parent
+            child_items: list[dict] = []
+            try:
+                cascade_resp = self.jira.get(
+                    f"rest/api/3/field/{field_id}/context/{context_id}/option/{pid}/cascadingOption"
+                )
+                if isinstance(cascade_resp, dict):
+                    # endpoint may return values list or a single dict
+                    child_items = (
+                        cascade_resp.get("values")
+                        or cascade_resp.get("cascadingOptions")
+                        or []
+                    )
+                elif isinstance(cascade_resp, list):
+                    child_items = cascade_resp
+            except Exception:
+                # Ignore cascade endpoint failures and fall back below
+                child_items = []
+
+            # Fallback: group by flat-list "optionId"
+            if not child_items:
+                child_items = [it for it in raw_items if it.get("optionId") == pid]
+
+            # Build FieldOption objects
+            children = [
+                FieldOption.from_api_response(c)
+                for c in child_items
+                if isinstance(c, dict)
+            ]
+            parent_opt = FieldOption.from_api_response(parent_item)
+            parent_opt.child_options = children
+            result.append(parent_opt)
+
+        return result
 
     def _get_field_options_server(
         self,
