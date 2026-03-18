@@ -87,17 +87,20 @@ class FieldOption(ApiModel):
         if not data or not isinstance(data, dict):
             return cls(id="", value="")
 
-        # Some APIs (Server/DC createmeta) return nested children under
-        # the key "children" while other shapes (legacy in-tests or
-        # cascade-specific endpoints) may use "cascadingOptions".
-        raw_children = data.get("cascadingOptions") or data.get("children") or []
+        # Server/DC createmeta uses "children"; Cloud/legacy uses
+        # "cascadingOptions". Use key presence so an explicit empty list
+        # is never mistaken for a missing key.
+        if "cascadingOptions" in data:
+            raw_children: list[Any] = data["cascadingOptions"]
+        elif "children" in data:
+            raw_children = data["children"]
+        else:
+            raw_children = []
 
         children: list[FieldOption] = []
         for c in raw_children:
             if isinstance(c, dict):
                 children.append(cls.from_api_response(c))
-            elif isinstance(c, str):
-                children.append(cls(id="", value=c))
 
         return cls(
             id=str(data.get("id", data.get("optionId", ""))),

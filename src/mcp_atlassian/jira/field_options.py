@@ -144,8 +144,10 @@ class FieldOptionsMixin(JiraClient):
         # Build parent -> children mapping. Cloud main endpoint returns a
         # flat list where child items include an "optionId" referencing
         # their parent's id. Prefer calling the cascade-specific endpoint
-        # per parent to get authoritative child objects; fall back to
-        # grouping by optionId when cascade endpoint is unavailable.
+        # per parent (with pagination) to get authoritative child objects;
+        # fall back to grouping by optionId only when that endpoint is
+        # unreachable (exception), so an explicitly empty cascade response
+        # is trusted and does not trigger the fallback.
         items_by_id = {str(item.get("id", "")): item for item in raw_items}
         parent_ids = [iid for iid, it in items_by_id.items() if not it.get("optionId")]
 
@@ -153,37 +155,53 @@ class FieldOptionsMixin(JiraClient):
 
         for pid in parent_ids:
             parent_item = items_by_id.get(pid, {})
-            # Attempt cascade-specific endpoint for this parent
             child_items: list[dict] = []
-            try:
-                cascade_resp = self.jira.get(
-                    f"rest/api/3/field/{field_id}/context/{context_id}/option/{pid}/cascadingOption"
-                )
-                if isinstance(cascade_resp, dict):
-                    # endpoint may return values list or a single dict
-                    child_items = (
-                        cascade_resp.get("values")
-                        or cascade_resp.get("cascadingOptions")
-                        or []
-                    )
-                elif isinstance(cascade_resp, list):
-                    child_items = cascade_resp
-            except Exception:
-                # Ignore cascade endpoint failures and fall back below
-                child_items = []
+            # True once the cascade endpoint responds (even with empty results),
+            # so an empty authoritative response is not confused with a failure.
+            cascade_fetched = False
+            cascade_start = 0
+            cascade_max = 100
 
-            # Fallback: group by flat-list "optionId"
-            if not child_items:
+            while True:
+                try:
+                    cascade_resp = self.jira.get(
+                        f"rest/api/3/field/{field_id}/context/{context_id}"
+                        f"/option/{pid}/cascadingOption",
+                        params={"startAt": cascade_start, "maxResults": cascade_max},
+                    )
+                    cascade_fetched = True
+
+                    if isinstance(cascade_resp, dict):
+                        page = cascade_resp.get("values")
+                        page_items: list[dict] = (
+                            [c for c in page if isinstance(c, dict)]
+                            if page is not None
+                            else []
+                        )
+                        child_items.extend(page_items)
+                        total = cascade_resp.get("total", len(page_items))
+                        cascade_start += len(page_items)
+                        if cascade_start >= total or not page_items:
+                            break
+                    else:
+                        break
+
+                except Exception as e:
+                    logger.debug(
+                        f"Cascade endpoint unavailable for field {field_id} "
+                        f"option {pid}: {e}. Falling back to flat-list grouping."
+                    )
+                    break
+
+            # Fallback: reconstruct hierarchy from flat-list "optionId" references,
+            # but only when the cascade endpoint was not reachable.
+            if not cascade_fetched:
                 child_items = [it for it in raw_items if it.get("optionId") == pid]
 
-            # Build FieldOption objects
-            children = [
-                FieldOption.from_api_response(c)
-                for c in child_items
-                if isinstance(c, dict)
-            ]
-            parent_opt = FieldOption.from_api_response(parent_item)
-            parent_opt.child_options = children
+            children = [FieldOption.from_api_response(c) for c in child_items]
+            parent_opt = FieldOption.from_api_response(parent_item).model_copy(
+                update={"child_options": children}
+            )
             result.append(parent_opt)
 
         return result
