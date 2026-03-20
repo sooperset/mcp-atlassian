@@ -183,6 +183,96 @@ class TestLinksMixin:
         with pytest.raises(MCPAtlassianAuthenticationError):
             links_mixin.create_remote_issue_link(issue_key, link_data)
 
+    @pytest.mark.parametrize(
+        "url, api_version",
+        [
+            pytest.param(
+                "https://test.atlassian.net",
+                "3",
+                id="cloud",
+            ),
+            pytest.param(
+                "https://jira.example.com",
+                "2",
+                id="server",
+            ),
+        ],
+    )
+    def test_get_remote_issue_links_success(
+        self,
+        jira_config_factory,
+        mock_atlassian_jira,
+        url: str,
+        api_version: str,
+    ):
+        config = jira_config_factory(url=url)
+        mixin = LinksMixin(config=config)
+        mixin.jira = mock_atlassian_jira
+        issue_key = "PROJ-123"
+        mock_response = [
+            {
+                "id": 10000,
+                "object": {
+                    "url": "https://github.com/org/repo/pull/42",
+                    "title": "PR #42: Fix bug",
+                    "summary": "A pull request",
+                },
+                "relationship": "links to",
+                "application": {"type": "com.github", "name": "GitHub"},
+            },
+            {
+                "id": 10001,
+                "object": {
+                    "url": "https://example.com/docs",
+                    "title": "Documentation",
+                },
+            },
+        ]
+        mixin.jira.get.return_value = mock_response
+
+        result = mixin.get_remote_issue_links(issue_key)
+
+        assert len(result) == 2
+        assert result[0]["id"] == 10000
+        assert result[0]["url"] == "https://github.com/org/repo/pull/42"
+        assert result[0]["title"] == "PR #42: Fix bug"
+        assert result[0]["summary"] == "A pull request"
+        assert result[0]["relationship"] == "links to"
+        assert result[0]["application"] == "GitHub"
+        assert result[1]["id"] == 10001
+        assert result[1]["url"] == "https://example.com/docs"
+        assert result[1]["title"] == "Documentation"
+        assert "summary" not in result[1]
+        assert "relationship" not in result[1]
+        assert "application" not in result[1]
+        mixin.jira.get.assert_called_once_with(
+            f"rest/api/{api_version}/issue/PROJ-123/remotelink",
+        )
+
+    def test_get_remote_issue_links_empty(self, links_mixin):
+        links_mixin.jira.get.return_value = []
+
+        result = links_mixin.get_remote_issue_links("PROJ-123")
+
+        assert result == []
+
+    def test_get_remote_issue_links_missing_issue_key(self, links_mixin):
+        with pytest.raises(ValueError, match="Issue key is required"):
+            links_mixin.get_remote_issue_links("")
+
+    def test_get_remote_issue_links_unexpected_response(self, links_mixin):
+        links_mixin.jira.get.return_value = "not a list"
+
+        result = links_mixin.get_remote_issue_links("PROJ-123")
+
+        assert result == []
+
+    def test_get_remote_issue_links_authentication_error(self, links_mixin):
+        links_mixin.jira.get.side_effect = HTTPError(response=Mock(status_code=401))
+
+        with pytest.raises(MCPAtlassianAuthenticationError):
+            links_mixin.get_remote_issue_links("PROJ-123")
+
     def test_remove_issue_link_success(self, links_mixin):
         link_id = "10000"
 

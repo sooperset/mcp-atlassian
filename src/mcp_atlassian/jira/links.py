@@ -185,6 +185,67 @@ class LinksMixin(JiraClient):
             raise Exception(f"Error creating remote issue link: {error_msg}") from e
 
     @handle_auth_errors("Jira API")
+    def get_remote_issue_links(self, issue_key: str) -> list[dict[str, Any]]:
+        """Get all remote links for a Jira issue.
+
+        Args:
+            issue_key: The Jira issue key (e.g., 'PROJ-123')
+
+        Returns:
+            List of remote link dicts with id, url, title, relationship, etc.
+
+        Raises:
+            ValueError: If issue_key is empty
+            MCPAtlassianAuthenticationError: If authentication fails
+                with the Jira API (401/403)
+            Exception: If there is an error retrieving remote links
+        """
+        if not issue_key:
+            raise ValueError("Issue key is required")
+
+        try:
+            if self.config.is_cloud:
+                endpoint = f"rest/api/3/issue/{issue_key}/remotelink"
+            else:
+                endpoint = f"rest/api/2/issue/{issue_key}/remotelink"
+            response = self.jira.get(endpoint)
+
+            if not isinstance(response, list):
+                logger.error(
+                    "Unexpected response type from remote links API: %s",
+                    type(response),
+                )
+                return []
+
+            results = []
+            for link in response:
+                obj = link.get("object", {})
+                result: dict[str, Any] = {
+                    "id": link.get("id"),
+                    "url": obj.get("url", ""),
+                    "title": obj.get("title", ""),
+                }
+                if obj.get("summary"):
+                    result["summary"] = obj["summary"]
+                if link.get("relationship"):
+                    result["relationship"] = link["relationship"]
+                application = link.get("application", {})
+                if application.get("name"):
+                    result["application"] = application["name"]
+                results.append(result)
+
+            return results
+        except HTTPError:
+            raise  # let decorator handle auth errors
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(
+                f"Error getting remote issue links: {error_msg}",
+                exc_info=True,
+            )
+            raise Exception(f"Error getting remote issue links: {error_msg}") from e
+
+    @handle_auth_errors("Jira API")
     def remove_issue_link(self, link_id: str) -> dict[str, Any]:
         """
         Remove a link between two issues.

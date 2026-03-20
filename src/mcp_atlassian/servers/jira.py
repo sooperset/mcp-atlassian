@@ -2121,6 +2121,44 @@ async def create_remote_issue_link(
 
 
 @jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_links"},
+    annotations={"title": "Get Remote Issue Links", "readOnlyHint": True},
+)
+async def get_remote_issue_links(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+) -> str:
+    """Get all remote/web links attached to a Jira issue.
+
+    Returns external links (web URLs, Confluence pages, GitHub PRs, etc.)
+    that have been added to the issue via remote links.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+
+    Returns:
+        JSON string with list of remote links (url, title, relationship, etc.).
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_remote_issue_links(issue_key)
+    return json.dumps(
+        {"issue_key": issue_key, "count": len(result), "remote_links": result},
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_links"},
     annotations={"title": "Remove Issue Link", "destructiveHint": True},
 )
