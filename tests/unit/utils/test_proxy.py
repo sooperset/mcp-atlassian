@@ -6,9 +6,8 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-from requests.exceptions import ProxyError
-
 from requests import PreparedRequest
+from requests.exceptions import ProxyError
 from requests.sessions import Session
 
 from mcp_atlassian.confluence.client import ConfluenceClient
@@ -353,9 +352,7 @@ class TestNoProxyAdapter:
             _, kwargs = mock_send.call_args
             assert kwargs["proxies"] == proxies
 
-    def test_configure_proxy_bypass_mounts_adapter_when_no_proxy_set(
-        self, monkeypatch
-    ):
+    def test_configure_proxy_bypass_mounts_adapter_when_no_proxy_set(self, monkeypatch):
         """configure_proxy_bypass mounts NoProxyAdapter when NO_PROXY is set."""
         monkeypatch.setenv("NO_PROXY", "example.com")
         session = Session()
