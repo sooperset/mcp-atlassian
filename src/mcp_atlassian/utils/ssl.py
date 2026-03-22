@@ -3,6 +3,7 @@
 import logging
 import os
 import ssl
+from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlparse
 
@@ -30,8 +31,8 @@ class NoProxyAdapter(HTTPAdapter):
         stream: bool = False,
         timeout: float | tuple[float, float] | None = None,
         verify: bool | str = True,
-        cert: str | tuple[str, str] | None = None,
-        proxies: dict[str, str] | None = None,
+        cert: bytes | str | tuple[bytes | str, bytes | str] | None = None,
+        proxies: Mapping[str, str] | None = None,
     ) -> Response:
         """Send a request, respecting NO_PROXY environment variable.
 
@@ -51,7 +52,12 @@ class NoProxyAdapter(HTTPAdapter):
         """
         # Check if we should bypass proxies for this URL
         no_proxy = os.environ.get("NO_PROXY") or os.environ.get("no_proxy")
-        if request.url and proxies and no_proxy and should_bypass_proxies(request.url, no_proxy):
+        if (
+            request.url
+            and proxies
+            and no_proxy
+            and should_bypass_proxies(request.url, no_proxy)
+        ):
             logger.debug(
                 f"Bypassing proxy for {request.url} due to NO_PROXY setting: {no_proxy}"
             )
@@ -127,8 +133,8 @@ class SSLIgnoreAdapter(NoProxyAdapter):
         stream: bool = False,
         timeout: float | tuple[float, float] | None = None,
         verify: bool | str = True,
-        cert: str | tuple[str, str] | None = None,
-        proxies: dict[str, str] | None = None,
+        cert: bytes | str | tuple[bytes | str, bytes | str] | None = None,
+        proxies: Mapping[str, str] | None = None,
     ) -> Response:
         """Send a request with SSL verification disabled.
 
