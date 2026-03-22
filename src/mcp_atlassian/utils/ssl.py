@@ -230,15 +230,13 @@ def configure_ssl_verification(
             f"with cert: {client_cert}"
         )
 
-    # Get the domain from the configured URL
-    domain = urlparse(url).netloc
-
     if not ssl_verify:
         logger.warning(
             f"{service_name} SSL verification disabled. This is insecure and should only be used in testing environments."
         )
 
         # Mount the SSL ignore adapter which also handles NO_PROXY
+        domain = urlparse(url).netloc
         adapter = SSLIgnoreAdapter()
         session.mount(f"https://{domain}", adapter)
         session.mount(f"http://{domain}", adapter)
@@ -249,6 +247,7 @@ def configure_ssl_verification(
             logger.debug(
                 f"{service_name}: Mounting proxy bypass adapter for NO_PROXY={no_proxy}"
             )
+            domain = urlparse(url).netloc
             adapter = NoProxyAdapter()
             session.mount(f"https://{domain}", adapter)
             session.mount(f"http://{domain}", adapter)
