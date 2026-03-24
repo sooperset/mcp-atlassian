@@ -56,6 +56,9 @@ def test_ssl_ignore_adapter_init_poolmanager():
             assert mock_context.check_hostname is False
             assert mock_context.verify_mode == ssl.CERT_NONE
 
+            # Verify the SSL context methods were called
+            mock_context.set_ciphers.assert_called_once_with("DEFAULT@SECLEVEL=0")
+
             # Verify PoolManager was called with our context
             mock_pool_manager_cls.assert_called_once()
             _, kwargs = mock_pool_manager_cls.call_args

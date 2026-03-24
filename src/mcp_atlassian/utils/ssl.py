@@ -44,7 +44,7 @@ class SSLIgnoreAdapter(HTTPAdapter):
         # Enable all TLS versions for maximum compatibility
         context.minimum_version = ssl.TLSVersion.MINIMUM_SUPPORTED
         # Add legacy cipher suites for older corporate servers
-        context.set_ciphers('DEFAULT@SECLEVEL=0')
+        context.set_ciphers("DEFAULT@SECLEVEL=0")
 
         self.poolmanager = PoolManager(
             num_pools=connections,
