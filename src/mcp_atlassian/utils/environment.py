@@ -83,9 +83,7 @@ def _check_service_auth(
             )
             return True
         if client_cert_env and os.getenv(client_cert_env):
-            logger.info(
-                "Using %s mTLS client certificate authentication", service_name
-            )
+            logger.info("Using %s mTLS client certificate authentication", service_name)
             return True
 
     return False
