@@ -96,7 +96,7 @@ class JiraConfig:
     """
 
     url: str  # Base URL for Jira
-    auth_type: Literal["basic", "pat", "oauth"]  # Authentication type
+    auth_type: Literal["basic", "pat", "oauth", "cert"]  # Authentication type
     username: str | None = None  # Email or username (Cloud)
     api_token: str | None = None  # API token (Cloud)
     personal_token: str | None = None  # Personal access token (Server/DC)
@@ -178,6 +178,7 @@ class JiraConfig:
         username = os.getenv("JIRA_USERNAME")
         api_token = os.getenv("JIRA_API_TOKEN")
         personal_token = os.getenv("JIRA_PERSONAL_TOKEN")
+        client_cert_env = os.getenv("JIRA_CLIENT_CERT")
 
         # Check for OAuth configuration (pass service info for DC detection)
         oauth_config = get_oauth_config_from_env(service_url=url, service_type="jira")
@@ -222,13 +223,16 @@ class JiraConfig:
                 auth_type = "oauth"
             elif username and api_token:
                 auth_type = "basic"
+            elif client_cert_env:
+                auth_type = "cert"
             else:
                 error_msg = (
                     "Server/Data Center authentication requires "
-                    "JIRA_PERSONAL_TOKEN or JIRA_USERNAME and JIRA_API_TOKEN. "
+                    "JIRA_PERSONAL_TOKEN, JIRA_USERNAME and JIRA_API_TOKEN, "
+                    "or JIRA_CLIENT_CERT for mTLS authentication. "
                     "Jira Server/Data Center authentication is incomplete. "
-                    "Set JIRA_PERSONAL_TOKEN, or set both JIRA_USERNAME and "
-                    "JIRA_API_TOKEN."
+                    "Set JIRA_PERSONAL_TOKEN, set both JIRA_USERNAME and "
+                    "JIRA_API_TOKEN, or set JIRA_CLIENT_CERT."
                 )
                 raise ValueError(error_msg)
 
@@ -336,6 +340,8 @@ class JiraConfig:
             return bool(self.personal_token)
         elif self.auth_type == "basic":
             return bool(self.username and self.api_token)
+        elif self.auth_type == "cert":
+            return bool(self.client_cert)
         logger.warning(
             f"Unknown or unsupported auth_type: {self.auth_type} in JiraConfig"
         )
