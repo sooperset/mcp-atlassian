@@ -1390,6 +1390,7 @@ class TestIssuesMixin:
                             "display_name": "Test User 1",
                             "email": None,
                             "name": "Test User 1",
+                            "account_id": "user123",
                         },
                         "created": "2024-01-05T10:06:03.548000+08:00",
                         "items": [
@@ -1415,6 +1416,7 @@ class TestIssuesMixin:
                             "display_name": "Test User 2",
                             "email": None,
                             "name": "Test User 2",
+                            "account_id": "user456",
                         },
                         "created": "2024-01-01T11:00:00+00:00",
                         "items": [
@@ -1432,6 +1434,7 @@ class TestIssuesMixin:
                             "display_name": "Test User 3",
                             "email": None,
                             "name": "Test User 3",
+                            "account_id": "user789",
                         },
                         "created": "2024-01-06T10:06:03.548000+08:00",
                         "items": [
@@ -1451,6 +1454,7 @@ class TestIssuesMixin:
                             "display_name": "Test User 1",
                             "email": None,
                             "name": "Test User 1",
+                            "account_id": "user123",
                         },
                         "created": "2024-01-10T10:06:03.548000+08:00",
                         "items": [
