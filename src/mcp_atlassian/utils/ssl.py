@@ -37,9 +37,14 @@ class SSLIgnoreAdapter(HTTPAdapter):
             pool_kwargs: Additional arguments for the pool manager
         """
         # Configure SSL context to disable verification completely
-        context = ssl.create_default_context()
+        # Use legacy mode for compatibility with older servers (TLS 1.0/1.1)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
+        # Enable all TLS versions for maximum compatibility
+        context.minimum_version = ssl.TLSVersion.MINIMUM_SUPPORTED
+        # Add legacy cipher suites for older corporate servers
+        context.set_ciphers('DEFAULT@SECLEVEL=0')
 
         self.poolmanager = PoolManager(
             num_pools=connections,
