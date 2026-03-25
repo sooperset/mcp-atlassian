@@ -2723,3 +2723,63 @@ async def test_search_use_display_names(jira_client, mock_jira_fetcher):
     call_kwargs = mock_jira_fetcher.search_issues.call_args
     assert call_kwargs[1]["jql"] == "project = TEST"
     assert call_kwargs[1]["expand"] == "names"
+
+
+# ============================================================================
+# update_issue attachment upload tests
+# ============================================================================
+
+
+@pytest.mark.anyio
+async def test_update_issue_with_attachments_comma_separated(
+    jira_client, mock_jira_fetcher
+):
+    """update_issue with attachments param uploads files via the mixin."""
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": '{"summary": "Updated"}',
+            "attachments": "/path/to/file1.pdf,/path/to/file2.png",
+        },
+    )
+    content = json.loads(response.content[0].text)
+    assert content["message"] == "Issue updated successfully"
+    mock_jira_fetcher.update_issue.assert_called_once()
+    call_kwargs = mock_jira_fetcher.update_issue.call_args[1]
+    assert call_kwargs["attachments"] == ["/path/to/file1.pdf", "/path/to/file2.png"]
+
+
+@pytest.mark.anyio
+async def test_update_issue_with_attachments_json_array(jira_client, mock_jira_fetcher):
+    """update_issue with attachments as JSON array string."""
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": '{"summary": "Updated"}',
+            "attachments": '["/path/to/file1.pdf", "/path/to/file2.png"]',
+        },
+    )
+    content = json.loads(response.content[0].text)
+    assert content["message"] == "Issue updated successfully"
+    mock_jira_fetcher.update_issue.assert_called_once()
+    call_kwargs = mock_jira_fetcher.update_issue.call_args[1]
+    assert call_kwargs["attachments"] == ["/path/to/file1.pdf", "/path/to/file2.png"]
+
+
+@pytest.mark.anyio
+async def test_update_issue_without_attachments(jira_client, mock_jira_fetcher):
+    """update_issue without attachments param does not pass attachments kwarg."""
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": '{"summary": "Updated"}',
+        },
+    )
+    content = json.loads(response.content[0].text)
+    assert content["message"] == "Issue updated successfully"
+    mock_jira_fetcher.update_issue.assert_called_once()
+    call_kwargs = mock_jira_fetcher.update_issue.call_args[1]
+    assert "attachments" not in call_kwargs

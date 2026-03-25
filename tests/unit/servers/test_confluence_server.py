@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastmcp import Client, FastMCP
 from fastmcp.client import FastMCPTransport
+from fastmcp.exceptions import ToolError
 from starlette.requests import Request
 
 from src.mcp_atlassian.confluence import ConfluenceFetcher
@@ -222,6 +223,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_user_details,
         search,
         search_user,
+        set_content_property,
         update_page,
         upload_attachment,
         upload_attachments,
@@ -264,6 +266,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(download_content_attachments)
     confluence_sub_mcp.add_tool(delete_attachment)
     confluence_sub_mcp.add_tool(get_page_images)
+    confluence_sub_mcp.add_tool(set_content_property)
 
     test_mcp.mount(confluence_sub_mcp, prefix="confluence")
 
@@ -870,6 +873,27 @@ async def test_get_page_include_views_graceful_degradation(
 
 
 @pytest.mark.anyio
+async def test_get_page_include_properties(client, mock_confluence_fetcher):
+    """Test get_page with include='properties' inlines content properties."""
+    mock_confluence_fetcher.get_content_properties.return_value = {
+        "content-appearance-published": "full-width",
+        "editor": {"version": 2},
+    }
+
+    response = await client.call_tool(
+        "confluence_get_page", {"page_id": "123456", "include": "properties"}
+    )
+
+    mock_confluence_fetcher.get_content_properties.assert_called_once_with("123456")
+
+    result_data = json.loads(response.content[0].text)
+    assert "metadata" in result_data
+    assert "properties" in result_data
+    assert result_data["properties"]["content-appearance-published"] == "full-width"
+    assert result_data["properties"]["editor"] == {"version": 2}
+
+
+@pytest.mark.anyio
 async def test_get_page_include_none_no_enrichments(client, mock_confluence_fetcher):
     """Test get_page without include param does not call enrichment methods."""
     response = await client.call_tool("confluence_get_page", {"page_id": "123456"})
@@ -1162,3 +1186,68 @@ async def test_get_user_details_server_username(client, mock_confluence_fetcher)
     result_data = json.loads(response.content[0].text)
     assert result_data["username"] == "firstlast"
     assert result_data["displayName"] == "First Last"
+
+
+@pytest.mark.anyio
+async def test_set_content_property_valid_json(client, mock_confluence_fetcher):
+    """Test set_content_property with valid JSON string value."""
+    mock_confluence_fetcher.set_content_property.return_value = {
+        "content-appearance-published": "full-width"
+    }
+
+    response = await client.call_tool(
+        "confluence_set_content_property",
+        {
+            "page_id": "123456",
+            "key": "content-appearance-published",
+            "value": '"full-width"',
+        },
+    )
+
+    mock_confluence_fetcher.set_content_property.assert_called_once_with(
+        "123456", "content-appearance-published", "full-width"
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["content-appearance-published"] == "full-width"
+
+
+@pytest.mark.anyio
+async def test_set_content_property_json_object(client, mock_confluence_fetcher):
+    """Test set_content_property with JSON object value."""
+    mock_confluence_fetcher.set_content_property.return_value = {
+        "editor": {"version": 2}
+    }
+
+    response = await client.call_tool(
+        "confluence_set_content_property",
+        {
+            "page_id": "123456",
+            "key": "editor",
+            "value": '{"version": 2}',
+        },
+    )
+
+    mock_confluence_fetcher.set_content_property.assert_called_once_with(
+        "123456", "editor", {"version": 2}
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["editor"] == {"version": 2}
+
+
+@pytest.mark.anyio
+async def test_set_content_property_invalid_json(client, mock_confluence_fetcher):
+    """Test set_content_property rejects invalid JSON value."""
+    with pytest.raises(ToolError) as excinfo:
+        await client.call_tool(
+            "confluence_set_content_property",
+            {
+                "page_id": "123456",
+                "key": "some-key",
+                "value": "not valid json",
+            },
+        )
+
+    assert "valid JSON" in str(excinfo.value)
+    mock_confluence_fetcher.set_content_property.assert_not_called()

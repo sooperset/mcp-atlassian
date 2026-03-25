@@ -788,7 +788,7 @@ class TestPagesMixin:
             # Assert
             # Verify markdown was converted
             pages_mixin.preprocessor.markdown_to_confluence_storage.assert_called_once_with(
-                markdown_body, enable_heading_anchors=False
+                markdown_body, enable_heading_anchors=False, table_layout=None
             )
 
             # Verify create_page was called with the converted content
@@ -875,7 +875,7 @@ class TestPagesMixin:
             # Assert
             # Verify markdown was converted
             pages_mixin.preprocessor.markdown_to_confluence_storage.assert_called_once_with(
-                markdown_body, enable_heading_anchors=False
+                markdown_body, enable_heading_anchors=False, table_layout=None
             )
 
             # Verify update_page was called with the converted content
@@ -3141,3 +3141,159 @@ class TestUpdatePageSection:
             )
 
         pages_mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
+
+
+class TestContentProperties:
+    """Tests for arbitrary content property get/set."""
+
+    @pytest.fixture
+    def pages_mixin(self, confluence_client):
+        """Create a PagesMixin instance for testing."""
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = PagesMixin()
+            mixin.confluence = confluence_client.confluence
+            mixin.config = confluence_client.config
+            mixin.preprocessor = confluence_client.preprocessor
+            return mixin
+
+    def test_get_content_properties_all(self, pages_mixin):
+        """Get all properties returns {key: value} dict."""
+        pages_mixin.confluence.get_page_properties.return_value = {
+            "results": [
+                {"key": "content-appearance-published", "value": "full-width"},
+                {"key": "content-appearance-draft", "value": "fixed-width"},
+            ]
+        }
+
+        result = pages_mixin.get_content_properties("123456789")
+
+        pages_mixin.confluence.get_page_properties.assert_called_once_with("123456789")
+        assert result == {
+            "content-appearance-published": "full-width",
+            "content-appearance-draft": "fixed-width",
+        }
+
+    def test_get_content_properties_empty(self, pages_mixin):
+        """Empty results return empty dict."""
+        pages_mixin.confluence.get_page_properties.return_value = {"results": []}
+
+        result = pages_mixin.get_content_properties("123456789")
+
+        assert result == {}
+
+    def test_get_content_properties_single_key(self, pages_mixin):
+        """Single key returns only that property."""
+        pages_mixin.confluence.get_page_property.return_value = {
+            "key": "content-appearance-published",
+            "value": "full-width",
+            "version": {"number": 2},
+        }
+
+        result = pages_mixin.get_content_properties(
+            "123456789", key="content-appearance-published"
+        )
+
+        pages_mixin.confluence.get_page_property.assert_called_once_with(
+            "123456789", "content-appearance-published"
+        )
+        assert result == {"content-appearance-published": "full-width"}
+
+    def test_get_content_properties_api_error(self, pages_mixin):
+        """API errors propagate without wrapping."""
+        pages_mixin.confluence.get_page_properties.side_effect = Exception("API error")
+
+        with pytest.raises(Exception, match="API error"):
+            pages_mixin.get_content_properties("123456789")
+
+    def test_set_content_property_creates_when_not_exists(self, pages_mixin):
+        """Property that doesn't exist is created via set_page_property."""
+        pages_mixin.confluence.get_page_property.side_effect = Exception("Not found")
+        pages_mixin.confluence.set_page_property.return_value = {
+            "key": "custom-key",
+            "value": "custom-value",
+        }
+
+        result = pages_mixin.set_content_property(
+            "123456789", "custom-key", "custom-value"
+        )
+
+        pages_mixin.confluence.set_page_property.assert_called_once_with(
+            "123456789", {"key": "custom-key", "value": "custom-value"}
+        )
+        assert result == {"custom-key": "custom-value"}
+
+    def test_set_content_property_updates_existing(self, pages_mixin):
+        """Existing property is updated with version increment."""
+        pages_mixin.confluence.get_page_property.return_value = {
+            "key": "content-appearance-published",
+            "value": "fixed-width",
+            "version": {"number": 2},
+        }
+        pages_mixin.confluence.update_page_property.return_value = None
+
+        result = pages_mixin.set_content_property(
+            "123456789", "content-appearance-published", "full-width"
+        )
+
+        pages_mixin.confluence.update_page_property.assert_called_once_with(
+            "123456789",
+            {
+                "key": "content-appearance-published",
+                "value": "full-width",
+                "version": {"number": 3},
+            },
+        )
+        assert result == {"content-appearance-published": "full-width"}
+
+    def test_set_content_property_version_defaults_to_1(self, pages_mixin):
+        """Missing version info defaults to version 1."""
+        pages_mixin.confluence.get_page_property.return_value = {
+            "key": "custom-key",
+            "value": "old",
+        }
+        pages_mixin.confluence.update_page_property.return_value = None
+
+        result = pages_mixin.set_content_property("123456789", "custom-key", "new")
+
+        call_data = pages_mixin.confluence.update_page_property.call_args[0][1]
+        assert call_data["version"]["number"] == 1
+
+    def test_set_content_property_dict_value(self, pages_mixin):
+        """Dict values (JSON objects) are supported."""
+        pages_mixin.confluence.get_page_property.side_effect = Exception("Not found")
+        pages_mixin.confluence.set_page_property.return_value = {
+            "key": "editor",
+            "value": {"version": 2},
+        }
+
+        result = pages_mixin.set_content_property("123456789", "editor", {"version": 2})
+
+        pages_mixin.confluence.set_page_property.assert_called_once_with(
+            "123456789", {"key": "editor", "value": {"version": 2}}
+        )
+        assert result == {"editor": {"version": 2}}
+
+    def test_set_content_property_api_error_on_update(self, pages_mixin):
+        """API error during update propagates."""
+        pages_mixin.confluence.get_page_property.return_value = {
+            "key": "k",
+            "value": "v",
+            "version": {"number": 1},
+        }
+        pages_mixin.confluence.update_page_property.side_effect = Exception(
+            "Version conflict"
+        )
+
+        with pytest.raises(Exception, match="Version conflict"):
+            pages_mixin.set_content_property("123456789", "k", "new")
+
+    def test_set_content_property_api_error_on_create(self, pages_mixin):
+        """API error during create propagates."""
+        pages_mixin.confluence.get_page_property.side_effect = Exception("Not found")
+        pages_mixin.confluence.set_page_property.side_effect = Exception("Bad request")
+
+        with pytest.raises(Exception, match="Bad request"):
+            pages_mixin.set_content_property("123456789", "k", "v")

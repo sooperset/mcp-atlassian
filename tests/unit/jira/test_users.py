@@ -146,15 +146,43 @@ class TestUsersMixin:
         # Verify self.jira.myself was called
         users_mixin.jira.myself.assert_called_once()
 
-    def test_get_account_id_already_account_id(self, users_mixin):
-        """Test that _get_account_id returns the input if it looks like an account ID."""
-        # Call the method with a string that looks like an account ID
-        account_id = users_mixin._get_account_id("5abcdef1234567890")
+    @pytest.mark.parametrize(
+        "account_id",
+        [
+            "5abcdef123456789abcdef12",  # 24-char hex starting with 5
+            "606b8fb83a516300764cb19d",  # 24-char hex starting with 6
+            "712020:96a182bb-ee48-4240-8465-a7236ccfce2a",  # digits:uuid format
+            "557058:32b276cf-1a9f-45e0-8a70-84e38d677be0",  # digits:uuid starting with 5
+            "aabbccdd11223344aabbccdd",  # 24-char hex starting with a
+        ],
+    )
+    def test_get_account_id_already_account_id(self, users_mixin, account_id):
+        """_get_account_id returns the input unchanged for valid account ID formats."""
+        result = users_mixin._get_account_id(account_id)
 
-        # Verify result
-        assert account_id == "5abcdef1234567890"
-        # Verify no lookups were performed
+        assert result == account_id
+        # No lookups should be performed for recognized account IDs
         users_mixin.jira.user_find_by_user_string.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "not_account_id",
+        [
+            "john@example.com",  # email
+            "John Smith",  # display name
+            "jsmith",  # username
+            "abc",  # too short to be an account ID
+        ],
+    )
+    def test_get_account_id_not_account_id_triggers_lookup(
+        self, users_mixin, not_account_id
+    ):
+        """_get_account_id performs lookup for strings that aren't account IDs."""
+        users_mixin._lookup_user_directly = MagicMock(return_value="resolved-id")
+
+        result = users_mixin._get_account_id(not_account_id)
+
+        assert result == "resolved-id"
+        users_mixin._lookup_user_directly.assert_called_once_with(not_account_id)
 
     def test_get_account_id_direct_lookup(self, users_mixin):
         """Test that _get_account_id uses direct lookup."""

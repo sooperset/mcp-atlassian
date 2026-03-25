@@ -760,11 +760,12 @@ class UserTokenMiddleware:
         elif auth_header.strip():
             # Non-empty but unsupported auth type
             auth_value = auth_header.strip()
-            auth_type = (
-                auth_value.split(" ", 1)[0]
-                if " " in auth_value
-                else f"(masked) {mask_sensitive(auth_value)}"
-            )
+            if " " in auth_value:
+                auth_type = auth_value.split(" ", 1)[0]
+            else:
+                # No space means no type prefix — likely a raw token.
+                # Redact to avoid leaking credentials in logs (OWASP/CWE-532).
+                auth_type = "<redacted>"
             logger.warning(f"Unsupported Authorization type: {auth_type}")
             scope["state"]["auth_validation_error"] = (
                 "Unauthorized: Only 'Bearer <OAuthToken>', "

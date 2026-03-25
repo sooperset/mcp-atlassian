@@ -335,6 +335,61 @@ class PagesMixin(ConfluenceClient):
             logger.debug(f"Error fetching page width for page {page_id}: {str(e)}")
             return None
 
+    def get_content_properties(
+        self, page_id: str, key: str | None = None
+    ) -> dict[str, Any]:
+        """Get content properties for a Confluence page.
+
+        Args:
+            page_id: The ID of the page.
+            key: Optional property key. If provided, returns only that property.
+                If omitted, returns all properties as a ``{key: value}`` dict.
+
+        Returns:
+            Dict mapping property key(s) to their values.
+        """
+        if key:
+            prop = self.confluence.get_page_property(page_id, key)
+            return {prop["key"]: prop["value"]}
+
+        properties = self.confluence.get_page_properties(page_id)
+        return {item["key"]: item["value"] for item in properties.get("results", [])}
+
+    def set_content_property(
+        self, page_id: str, key: str, value: Any
+    ) -> dict[str, Any]:
+        """Create or update a content property on a Confluence page.
+
+        Handles version increment automatically. Reads the current version
+        before writing, so callers do not need to manage version numbers.
+
+        Args:
+            page_id: The ID of the page.
+            key: Property key (e.g. ``content-appearance-published``).
+            value: Property value. Strings, dicts, and lists are all supported.
+
+        Returns:
+            Dict with ``{key: value}`` of the created or updated property.
+        """
+        property_data: dict[str, Any] = {"key": key, "value": value}
+
+        # Check if property exists (need version for update)
+        existing = None
+        try:
+            existing = self.confluence.get_page_property(page_id, key)
+        except Exception:  # noqa: BLE001, S110
+            # Property doesn't exist — will create it
+            pass
+
+        if existing and isinstance(existing, dict):
+            existing_version = existing.get("version", {}).get("number") or 0
+            property_data["version"] = {"number": existing_version + 1}
+            self.confluence.update_page_property(page_id, property_data)
+        else:
+            self.confluence.set_page_property(page_id, property_data)
+
+        return {key: value}
+
     def _set_page_width(self, page_id: str, width: str | None) -> bool:
         """Set the page layout width.
 
@@ -535,6 +590,7 @@ class PagesMixin(ConfluenceClient):
         content_representation: str | None = None,
         emoji: str | None = None,
         page_width: str | None = None,
+        table_layout: str | None = None,
     ) -> ConfluencePage:
         """
         Create a new page in a Confluence space.
@@ -549,6 +605,7 @@ class PagesMixin(ConfluenceClient):
             content_representation: Content format when is_markdown=False ('wiki' or 'storage', keyword-only)
             emoji: Optional emoji character for the page title icon (keyword-only)
             page_width: Optional page layout width ('full-width', 'max', or 'default', keyword-only)
+            table_layout: Optional table width preset for markdown tables ('full-width', 'wide', 'default', keyword-only)
 
         Returns:
             ConfluencePage model containing the new page's data
@@ -561,7 +618,9 @@ class PagesMixin(ConfluenceClient):
             if is_markdown:
                 # Convert markdown to Confluence storage format
                 final_body = self.preprocessor.markdown_to_confluence_storage(
-                    body, enable_heading_anchors=enable_heading_anchors
+                    body,
+                    enable_heading_anchors=enable_heading_anchors,
+                    table_layout=table_layout,
                 )
                 representation = "storage"
             else:
@@ -630,6 +689,7 @@ class PagesMixin(ConfluenceClient):
         content_representation: str | None = None,
         emoji: str | None = None,
         page_width: str | None = None,
+        table_layout: str | None = None,
     ) -> ConfluencePage:
         """
         Update an existing page in Confluence.
@@ -646,6 +706,7 @@ class PagesMixin(ConfluenceClient):
             content_representation: Content format when is_markdown=False ('wiki' or 'storage', keyword-only)
             emoji: Optional emoji character for the page title icon (keyword-only). Pass empty string to remove emoji.
             page_width: Optional page layout width ('full-width', 'max', or 'default', keyword-only). Pass empty string to reset to default.
+            table_layout: Optional table width preset for markdown tables ('full-width', 'wide', 'default', keyword-only)
 
         Returns:
             ConfluencePage model containing the updated page's data
@@ -658,7 +719,9 @@ class PagesMixin(ConfluenceClient):
             if is_markdown:
                 # Convert markdown to Confluence storage format
                 final_body = self.preprocessor.markdown_to_confluence_storage(
-                    body, enable_heading_anchors=enable_heading_anchors
+                    body,
+                    enable_heading_anchors=enable_heading_anchors,
+                    table_layout=table_layout,
                 )
                 representation = "storage"
             else:
@@ -1330,3 +1393,79 @@ class PagesMixin(ConfluenceClient):
             "to_version": to_version,
             "diff": diff_string,
         }
+
+    @handle_auth_errors("Confluence API")
+    def copy_page(
+        self,
+        source_page_id: str,
+        destination_space_key: str,
+        new_title: str,
+        destination_parent_id: str | None = None,
+        *,
+        copy_attachments: bool = True,
+    ) -> ConfluencePage:
+        """Copy a Confluence page to a new location.
+
+        On Confluence Cloud the native copy endpoint is used
+        (``POST /wiki/rest/api/content/{id}/copy``).  On Server/Data Center
+        the page body and title are fetched and a new page is created manually
+        (attachments are not copied in the Server/DC fallback path).
+
+        Args:
+            source_page_id: The ID of the page to copy.
+            destination_space_key: Space key for the new page.
+            new_title: Title of the new page.
+            destination_parent_id: Optional parent page ID in the destination space.
+                When omitted the new page is created at the space root.
+            copy_attachments: Whether to copy attachments (Cloud only, keyword-only).
+
+        Returns:
+            ConfluencePage model for the newly created copy.
+
+        Raises:
+            MCPAtlassianAuthenticationError: If authentication fails.
+            Exception: If the copy operation fails.
+        """
+        try:
+            if self.config.is_cloud:
+                payload: dict[str, object] = {
+                    "copyAttachments": copy_attachments,
+                    "copyPermissions": False,
+                    "copyProperties": False,
+                    "copyLabels": False,
+                    "pageTitle": new_title,
+                    "destination": {
+                        "type": "parent_page" if destination_parent_id else "space",
+                        "value": destination_parent_id or destination_space_key,
+                    },
+                }
+                result = self.confluence.post(
+                    f"rest/api/content/{source_page_id}/copy",
+                    data=payload,
+                )
+            else:
+                # Server/DC: manual GET + POST (no native copy endpoint)
+                source = self.confluence.get_page_by_id(
+                    source_page_id, expand="body.storage,version,space"
+                )
+                body = source.get("body", {}).get("storage", {}).get("value", "")
+                create_kwargs: dict[str, object] = {
+                    "space": destination_space_key,
+                    "title": new_title,
+                    "body": body,
+                    "representation": "storage",
+                }
+                if destination_parent_id:
+                    create_kwargs["parent_id"] = destination_parent_id
+                result = self.confluence.create_page(**create_kwargs)
+
+            new_page_id = result.get("id")
+            if not new_page_id:
+                raise ValueError("Copy response did not contain a page ID")
+
+            return self.get_page_content(new_page_id)
+        except HTTPError:
+            raise
+        except Exception as e:
+            logger.error(f"Error copying page {source_page_id}: {str(e)}")
+            raise Exception(f"Failed to copy page {source_page_id}: {str(e)}") from e

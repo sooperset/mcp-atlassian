@@ -1854,3 +1854,46 @@ class TestIssuesMixin:
         assert isinstance(result, JiraIssue)
         assert result.key == "DEV-123"
         assert result.summary == "Development issue"
+
+    def test_find_issue_type_id_exact_match(self, issues_mixin: IssuesMixin):
+        """_find_issue_type_id resolves type name to ID."""
+        issues_mixin.get_project_issue_types = MagicMock(
+            return_value=[
+                {"id": "10000", "name": "Bug"},
+                {"id": "10001", "name": "Story"},
+            ]
+        )
+        assert issues_mixin._find_issue_type_id("PROJ", "Bug") == "10000"
+        assert issues_mixin._find_issue_type_id("PROJ", "Story") == "10001"
+
+    def test_find_issue_type_id_case_insensitive(self, issues_mixin: IssuesMixin):
+        """_find_issue_type_id matches case-insensitively."""
+        issues_mixin.get_project_issue_types = MagicMock(
+            return_value=[{"id": "10001", "name": "Story"}]
+        )
+        assert issues_mixin._find_issue_type_id("PROJ", "story") == "10001"
+        assert issues_mixin._find_issue_type_id("PROJ", "STORY") == "10001"
+
+    def test_find_issue_type_id_untranslated_fallback(self, issues_mixin: IssuesMixin):
+        """_find_issue_type_id falls back to untranslatedName for localized instances."""
+        issues_mixin.get_project_issue_types = MagicMock(
+            return_value=[
+                {"id": "10001", "name": "스토리", "untranslatedName": "Story"},
+            ]
+        )
+        # Korean name doesn't match "Story", but untranslatedName does
+        assert issues_mixin._find_issue_type_id("PROJ", "Story") == "10001"
+
+    def test_find_issue_type_id_not_found(self, issues_mixin: IssuesMixin):
+        """_find_issue_type_id returns None when type not found."""
+        issues_mixin.get_project_issue_types = MagicMock(
+            return_value=[{"id": "10000", "name": "Bug"}]
+        )
+        assert issues_mixin._find_issue_type_id("PROJ", "Nonexistent") is None
+
+    def test_find_issue_type_id_exception(self, issues_mixin: IssuesMixin):
+        """_find_issue_type_id returns None on exception."""
+        issues_mixin.get_project_issue_types = MagicMock(
+            side_effect=Exception("API error")
+        )
+        assert issues_mixin._find_issue_type_id("PROJ", "Bug") is None
