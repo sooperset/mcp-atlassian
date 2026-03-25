@@ -346,6 +346,58 @@ async def get_page_children(
 
 
 @confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_pages"},
+    annotations={"title": "Get Space Page Tree", "readOnlyHint": True},
+)
+async def get_space_page_tree(
+    ctx: Context,
+    space_key: Annotated[
+        str,
+        Field(description="Space key"),
+    ],
+    limit: Annotated[
+        int,
+        Field(
+            description="Max pages to fetch",
+            default=100,
+            ge=1,
+            le=1000,
+        ),
+    ] = 100,
+) -> str:
+    """Get page hierarchy for a Confluence space as a flat list.
+
+    Returns pages with parent_id and depth attributes for token-efficient
+    processing. Filter by depth to focus on relevant sections, or find
+    pages by title. Much more efficient than rendering full ASCII trees.
+
+    Use this to understand space organization before creating/moving pages.
+
+    Args:
+        ctx: The FastMCP context.
+        space_key: Space key identifier.
+        limit: Maximum pages to fetch (start with 100 for faster results).
+
+    Returns:
+        JSON with space_key, total_pages, and pages array containing
+        {id, title, parent_id, position, depth} for each page.
+        Root pages have parent_id: null and depth: 0.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    tree_data = confluence_fetcher.get_space_page_tree(space_key=space_key, limit=limit)
+
+    result: dict[str, object] = dict(tree_data)
+
+    # has_more is computed by the fetcher from the API's _links.next signal
+    if tree_data.get("has_more"):
+        result["hint"] = (
+            f"Results truncated at {limit} pages. Increase limit to see more."
+        )
+
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
     tags={"confluence", "read", "toolset:confluence_comments"},
     annotations={"title": "Get Comments", "readOnlyHint": True},
 )
@@ -505,6 +557,13 @@ async def create_page(
             default=False,
         ),
     ] = False,
+    include_content: Annotated[
+        bool,
+        Field(
+            description="(Optional) Whether to include page content in the response. Defaults to false since callers already have the content at create time",
+            default=False,
+        ),
+    ] = False,
     emoji: Annotated[
         str | None,
         Field(
@@ -523,6 +582,7 @@ async def create_page(
         parent_id: Optional parent page ID.
         content_format: The format of the content ('markdown', 'wiki', or 'storage').
         enable_heading_anchors: Whether to enable heading anchors (markdown only).
+        include_content: Whether to include page content in the response.
         emoji: Optional page title emoji (icon shown in navigation).
 
     Returns:
@@ -560,6 +620,8 @@ async def create_page(
         emoji=emoji,
     )
     result = page.to_simplified_dict()
+    if not include_content:
+        result.pop("content", None)
     return json.dumps(
         {"message": "Page created successfully", "page": result},
         indent=2,
@@ -607,6 +669,13 @@ async def update_page(
             default=False,
         ),
     ] = False,
+    include_content: Annotated[
+        bool,
+        Field(
+            description="(Optional) Whether to include page content in the response. Defaults to false since callers already have the content at update time",
+            default=False,
+        ),
+    ] = False,
     emoji: Annotated[
         str | None,
         Field(
@@ -627,6 +696,7 @@ async def update_page(
         parent_id: Optional new parent page ID.
         content_format: The format of the content ('markdown', 'wiki', or 'storage').
         enable_heading_anchors: Whether to enable heading anchors (markdown only).
+        include_content: Whether to include page content in the response.
         emoji: Optional page title emoji (icon shown in navigation).
 
     Returns:
@@ -666,6 +736,8 @@ async def update_page(
         emoji=emoji,
     )
     page_data = updated_page.to_simplified_dict()
+    if not include_content:
+        page_data.pop("content", None)
     return json.dumps(
         {"message": "Page updated successfully", "page": page_data},
         indent=2,

@@ -170,6 +170,33 @@ oauth:
   # Provide pre-existing access token
   accessToken: ""
 
+# OAuth Proxy + DCR Configuration
+# Optional and disabled by default. When enabled, the server exposes
+# discovery + DCR routes for MCP OAuth clients.
+oauthProxy:
+  enabled: false
+
+  # Optional restrictions (comma-separated values)
+  allowedClientRedirectUris: ""
+  allowedGrantTypes: ""
+
+  # Require consent page during OAuth authorize flow.
+  requireConsent: true
+
+# OAuth proxy client storage backend for registered clients.
+# "default": use FastMCP default encrypted storage.
+# "factory": load custom storage via import path.
+oauthClientStorage:
+  mode: "default" # default | factory
+  factory:
+    importPath: "" # e.g. "my_pkg.storage:create_store"
+    # Optional JSON object passed to the factory.
+    configJson: ""
+    # Optionally source JSON from an existing secret key.
+    configJsonSecret:
+      name: ""
+      key: "config.json"
+
 # Proxy Configuration
 proxy:
   enabled: false

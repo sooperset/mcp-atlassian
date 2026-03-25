@@ -61,6 +61,51 @@ See the `values.yaml` file for all configuration options.
 - **confluence/jira.enabled**: Enable/disable Confluence or Jira integration
 - **config.readOnlyMode**: Disable all write operations
 - **persistence.enabled**: Enable OAuth token persistence
+- **oauthProxy.enabled**: Expose MCP OAuth discovery + DCR routes (opt-in)
+- **oauthClientStorage.mode**: `default` (FastMCP storage) or `factory` (custom)
+
+### OAuth Proxy + DCR (opt-in)
+
+Enable OAuth proxy/DCR endpoints:
+
+```yaml
+oauthProxy:
+  enabled: true
+  requireConsent: true
+  allowedClientRedirectUris: "https://chatgpt.com/connector_platform_oauth_redirect,http://localhost:*"
+  allowedGrantTypes: "authorization_code,refresh_token"
+```
+
+This sets:
+
+- `ATLASSIAN_OAUTH_PROXY_ENABLE`
+- `ATLASSIAN_OAUTH_REQUIRE_CONSENT`
+- `ATLASSIAN_OAUTH_ALLOWED_CLIENT_REDIRECT_URIS`
+- `ATLASSIAN_OAUTH_ALLOWED_GRANT_TYPES`
+
+### Custom OAuth Client Storage (factory mode)
+
+For advanced deployments, you can provide a custom storage backend factory
+without changing core chart API:
+
+```yaml
+oauthClientStorage:
+  mode: factory
+  factory:
+    importPath: "my_pkg.storage:create_store"
+    configJsonSecret:
+      name: mcp-atlassian-storage-config
+      key: config.json
+```
+
+This sets:
+
+- `ATLASSIAN_OAUTH_CLIENT_STORAGE_MODE=factory`
+- `ATLASSIAN_OAUTH_CLIENT_STORAGE_FACTORY`
+- `ATLASSIAN_OAUTH_CLIENT_STORAGE_CONFIG_JSON` (optional)
+
+The factory callable should return an async key/value compatible storage object
+used by FastMCP OAuth proxy client registration storage.
 
 ### Health Checks and Readiness Probe
 
