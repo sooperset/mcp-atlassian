@@ -385,6 +385,11 @@ class UsersMixin(JiraClient):
                 fails.
             Exception: For other API errors.
         """
+        # Handle 'me' as a special case — resolve to current user's account ID
+        if identifier.lower() == "me":
+            resolved_id = self.get_current_user_account_id()
+            return self.get_user_profile_by_identifier(resolved_id)
+
         api_kwargs = self._determine_user_api_params(identifier)
 
         try:

@@ -401,3 +401,32 @@ def test_from_env_oauth_enable_with_server_url():
         assert config.url == "https://jira.example.com"
         assert config.auth_type == "oauth"
         assert config.is_cloud is False
+
+
+def test_from_env_with_cookie():
+    """Test that from_env reads JIRA_COOKIE and stores it in config."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://jira.example.com",
+            "JIRA_PERSONAL_TOKEN": "test_pat",
+            "JIRA_COOKIE": "JSESSIONID=abc123; other=xyz",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.cookie == "JSESSIONID=abc123; other=xyz"
+
+
+def test_from_env_without_cookie():
+    """Test that cookie defaults to None when JIRA_COOKIE is not set."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://jira.example.com",
+            "JIRA_PERSONAL_TOKEN": "test_pat",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.cookie is None
