@@ -7,7 +7,11 @@ import pytest
 from requests.adapters import HTTPAdapter
 from requests.sessions import Session
 
-from mcp_atlassian.utils.ssl import SSLIgnoreAdapter, configure_ssl_verification
+from mcp_atlassian.utils.ssl import (
+    NoProxyAdapter,
+    SSLIgnoreAdapter,
+    configure_ssl_verification,
+)
 
 
 def test_ssl_ignore_adapter_cert_verify():
@@ -90,9 +94,11 @@ def test_configure_ssl_verification_disabled():
             session.mount.assert_any_call("http://test.example.com", mock_adapter)
 
 
-def test_configure_ssl_verification_enabled():
-    """Test configure_ssl_verification when SSL verification is enabled."""
-    # Arrange
+def test_configure_ssl_verification_enabled(monkeypatch):
+    """Test configure_ssl_verification when SSL verification is enabled and NO_PROXY is absent."""
+    # Arrange — ensure NO_PROXY is absent so no proxy-bypass adapter is mounted
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
     service_name = "TestService"
     url = "https://test.example.com/path"
     session = MagicMock()  # Use MagicMock instead of actual Session
@@ -107,12 +113,14 @@ def test_configure_ssl_verification_enabled():
         assert session.mount.call_count == 0
 
 
-def test_configure_ssl_verification_enabled_with_real_session():
-    """Test SSL verification configuration when verification is enabled using a real Session."""
+def test_configure_ssl_verification_enabled_with_real_session(monkeypatch):
+    """Test SSL verification configuration when verification is enabled and NO_PROXY is absent."""
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
     session = Session()
     original_adapters_count = len(session.adapters)
 
-    # Configure with SSL verification enabled
+    # Configure with SSL verification enabled and no NO_PROXY
     configure_ssl_verification(
         service_name="Test",
         url="https://example.com",
@@ -120,7 +128,7 @@ def test_configure_ssl_verification_enabled_with_real_session():
         ssl_verify=True,
     )
 
-    # No adapters should be added when SSL verification is enabled
+    # No adapters should be added when SSL verification is enabled and NO_PROXY is absent
     assert len(session.adapters) == original_adapters_count
 
 
@@ -257,3 +265,58 @@ def test_configure_ssl_disabled_with_client_cert():
             assert session.cert == ("/path/to/cert.pem", "/path/to/key.pem")
             mock_adapter_class.assert_called_once()
             assert session.mount.call_count == 2
+
+
+def test_ssl_ignore_adapter_is_subclass_of_no_proxy_adapter():
+    """SSLIgnoreAdapter must inherit from NoProxyAdapter to pick up NO_PROXY logic."""
+    assert issubclass(SSLIgnoreAdapter, NoProxyAdapter)
+
+
+def test_ssl_ignore_adapter_send_forces_verify_false():
+    """SSLIgnoreAdapter.send() always passes verify=False to parent, ignoring the caller's value."""
+    adapter = SSLIgnoreAdapter()
+    request = MagicMock()
+    request.url = "https://external.example.com/api"
+
+    with patch.object(NoProxyAdapter, "send") as mock_super_send:
+        mock_super_send.return_value = MagicMock()
+        adapter.send(request, verify=True, proxies=None)
+        _, kwargs = mock_super_send.call_args
+        assert kwargs["verify"] is False
+
+
+def test_ssl_ignore_adapter_send_respects_no_proxy(monkeypatch):
+    """SSLIgnoreAdapter.send() honors NO_PROXY by clearing proxies for matching URLs."""
+    monkeypatch.setenv("NO_PROXY", "internal.example.com")
+    adapter = SSLIgnoreAdapter()
+    request = MagicMock()
+    request.url = "https://internal.example.com/api"
+    proxies = {"https": "https://proxy:8443"}
+
+    with patch.object(HTTPAdapter, "send") as mock_base_send:
+        mock_base_send.return_value = MagicMock()
+        adapter.send(request, proxies=proxies)
+        _, kwargs = mock_base_send.call_args
+        assert kwargs["proxies"] is None
+
+
+def test_configure_ssl_verification_enabled_with_no_proxy_mounts_adapter(monkeypatch):
+    """configure_ssl_verification mounts NoProxyAdapter when ssl_verify=True and NO_PROXY is set."""
+    monkeypatch.setenv("NO_PROXY", "test.example.com")
+    session = Session()
+    original_adapters_count = len(session.adapters)
+
+    configure_ssl_verification(
+        service_name="TestService",
+        url="https://test.example.com/path",
+        session=session,
+        ssl_verify=True,
+    )
+
+    assert len(session.adapters) == original_adapters_count + 2
+    assert isinstance(session.get_adapter("https://test.example.com"), NoProxyAdapter)
+    assert isinstance(session.get_adapter("http://test.example.com"), NoProxyAdapter)
+    # Must not be the stricter SSLIgnoreAdapter — SSL verification stays enabled
+    assert not isinstance(
+        session.get_adapter("https://test.example.com"), SSLIgnoreAdapter
+    )

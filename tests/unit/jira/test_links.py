@@ -219,37 +219,64 @@ class TestLinksMixin:
         url: str,
         api_version: str,
     ):
-        """Test successful retrieval of remote issue links."""
+        """Test successful retrieval with simplified shape extraction."""
         config = jira_config_factory(url=url)
         mixin = LinksMixin(config=config)
         mixin.jira = mock_atlassian_jira
-        mock_links = [
+        mock_response = [
             {
-                "id": 1,
+                "id": 10000,
+                "self": "https://jira.example.com/rest/api/3/...",
+                "globalId": "system=https://github.com&id=42",
                 "object": {
-                    "url": "https://example.com",
-                    "title": "Link 1",
+                    "url": "https://github.com/org/repo/pull/42",
+                    "title": "PR #42: Fix bug",
+                    "summary": "A pull request",
+                    "icon": {"url16x16": "https://github.com/favicon.ico"},
+                    "status": {"resolved": False},
                 },
+                "relationship": "links to",
+                "application": {"type": "com.github", "name": "GitHub"},
             },
             {
-                "id": 2,
+                "id": 10001,
                 "object": {
-                    "url": "https://example.org",
-                    "title": "Link 2",
+                    "url": "https://example.com/docs",
+                    "title": "Documentation",
                 },
             },
         ]
-        mixin.jira.get.return_value = mock_links
+        mixin.jira.get.return_value = mock_response
 
         result = mixin.get_remote_issue_links("PROJ-123")
 
-        assert result == mock_links
+        assert len(result) == 2
+        # First link: all optional fields present
+        assert result[0]["id"] == 10000
+        assert result[0]["url"] == "https://github.com/org/repo/pull/42"
+        assert result[0]["title"] == "PR #42: Fix bug"
+        assert result[0]["summary"] == "A pull request"
+        assert result[0]["relationship"] == "links to"
+        assert result[0]["application"] == "GitHub"
+        assert result[0]["resolved"] is False
+        # Noise fields excluded
+        assert "self" not in result[0]
+        assert "globalId" not in result[0]
+        assert "icon" not in result[0]
+        # Second link: minimal fields only
+        assert result[1]["id"] == 10001
+        assert result[1]["url"] == "https://example.com/docs"
+        assert result[1]["title"] == "Documentation"
+        assert "summary" not in result[1]
+        assert "relationship" not in result[1]
+        assert "application" not in result[1]
+        assert "resolved" not in result[1]
         mixin.jira.get.assert_called_once_with(
             f"rest/api/{api_version}/issue/PROJ-123/remotelink"
         )
 
     def test_get_remote_issue_links_dict_response(self, links_mixin):
-        """Test dict responses are unwrapped correctly."""
+        """Test dict responses are unwrapped and simplified."""
         inner = [
             {
                 "id": 1,
@@ -263,10 +290,12 @@ class TestLinksMixin:
 
         result = links_mixin.get_remote_issue_links("PROJ-123")
 
-        assert result == inner
+        assert len(result) == 1
+        assert result[0]["url"] == "https://example.com"
+        assert result[0]["title"] == "A"
 
     def test_get_remote_issue_links_dict_without_key(self, links_mixin):
-        """Dict without remoteLinks wraps as single-element list."""
+        """Dict without remoteLinks wraps as single-element list and simplifies."""
         single = {
             "id": 1,
             "object": {
@@ -278,11 +307,25 @@ class TestLinksMixin:
 
         result = links_mixin.get_remote_issue_links("PROJ-123")
 
-        assert result == [single]
+        assert len(result) == 1
+        assert result[0]["url"] == "https://example.com"
 
     def test_get_remote_issue_links_empty(self, links_mixin):
         """Test empty list response."""
         links_mixin.jira.get.return_value = []
+
+        result = links_mixin.get_remote_issue_links("PROJ-123")
+
+        assert result == []
+
+    def test_get_remote_issue_links_missing_issue_key(self, links_mixin):
+        """Test empty issue key raises ValueError."""
+        with pytest.raises(ValueError, match="Issue key is required"):
+            links_mixin.get_remote_issue_links("")
+
+    def test_get_remote_issue_links_unexpected_response(self, links_mixin):
+        """Test non-list/non-dict response returns empty list."""
+        links_mixin.jira.get.return_value = "not a list"
 
         result = links_mixin.get_remote_issue_links("PROJ-123")
 

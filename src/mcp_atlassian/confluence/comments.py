@@ -319,8 +319,10 @@ class CommentsMixin(ConfluenceClient):
     ) -> ConfluenceComment | None:
         """Add an inline comment anchored to a text selection on a page.
 
-        For Cloud instances, uses the v2 API (POST /api/v2/inline-comments).
-        For Server/DC, uses the v1 API (POST /rest/api/content/).
+        Inline comments are Cloud-only.  The v2 API
+        (``POST /wiki/api/v2/inline-comments``) is the only supported path;
+        the v1 endpoint returns 405 on Cloud and is not available on
+        Server/DC.
 
         Args:
             page_id: The ID of the page to add the inline comment to
@@ -333,57 +335,47 @@ class CommentsMixin(ConfluenceClient):
 
         Returns:
             ConfluenceComment object if successful, None otherwise
+
+        Raises:
+            ValueError: If the Confluence instance is not Cloud, or if the
+                API returns an actionable error (e.g. text not found).
         """
+        if not self.config.is_cloud:
+            raise ValueError(
+                "Inline comments are only supported on Confluence Cloud. "
+                "The v2 inline-comments API is not available on Server/DC."
+            )
+
         try:
             # Convert markdown to Confluence storage format if needed
             if not content.strip().startswith("<"):
                 content = self.preprocessor.markdown_to_confluence_storage(content)
 
             v2_adapter = self._inline_v2_adapter
-            if v2_adapter:
-                response = v2_adapter.create_inline_comment(
-                    page_id=page_id,
-                    body=content,
-                    text_selection=text_selection,
-                    text_selection_match_count=text_selection_match_count,
-                    text_selection_match_index=text_selection_match_index,
-                )
-                space_key = ""
-            else:
-                # v1 API: POST /rest/api/content/ with inline location
-                data: dict[str, Any] = {
-                    "type": "comment",
-                    "container": {
-                        "id": page_id,
-                        "type": "page",
-                    },
-                    "body": {
-                        "storage": {
-                            "value": content,
-                            "representation": "storage",
-                        },
-                    },
-                    "extensions": {
-                        "location": "inline",
-                        "inlineProperties": {
-                            "originalSelection": text_selection,
-                        },
-                    },
-                }
-                page = self.confluence.get_page_by_id(page_id=page_id, expand="space")
-                space_key = page.get("space", {}).get("key", "")
-                response = self.confluence.post("rest/api/content/", data=data)
+            if not v2_adapter:
+                logger.error("Failed to create v2 adapter for inline comments")
+                return None
+
+            response = v2_adapter.create_inline_comment(
+                page_id=page_id,
+                body=content,
+                text_selection=text_selection,
+                text_selection_match_count=text_selection_match_count,
+                text_selection_match_index=text_selection_match_index,
+            )
 
             if not response:
                 logger.error("Failed to add inline comment: empty response")
                 return None
 
-            return self._process_comment_response(response, space_key)
+            return self._process_comment_response(response, space_key="")
 
+        except ValueError:
+            raise
         except requests.RequestException as e:
             logger.error(f"Network error when adding inline comment: {str(e)}")
             return None
-        except (ValueError, TypeError, KeyError) as e:
+        except (TypeError, KeyError) as e:
             logger.error(f"Error processing inline comment data: {str(e)}")
             return None
         except Exception as e:  # noqa: BLE001 - Intentional fallback with full logging

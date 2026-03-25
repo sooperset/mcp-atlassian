@@ -188,26 +188,64 @@ class LinksMixin(JiraClient):
     def get_remote_issue_links(self, issue_key: str) -> list[dict[str, Any]]:
         """Get remote links (web links, Confluence links) for an issue.
 
+        Returns a simplified list of remote link dicts with fields useful
+        for LLM consumption: ``id``, ``url``, ``title``, and optionally
+        ``summary``, ``relationship``, ``application``, and ``resolved``.
+
         Args:
             issue_key: The issue key (e.g., 'PROJ-123')
 
         Returns:
-            List of remote link data dictionaries
+            List of simplified remote link dicts
 
         Raises:
+            ValueError: If issue_key is empty
             MCPAtlassianAuthenticationError: If authentication fails
         """
+        if not issue_key:
+            raise ValueError("Issue key is required")
+
         try:
             if self.config.is_cloud:
                 endpoint = f"rest/api/3/issue/{issue_key}/remotelink"
             else:
                 endpoint = f"rest/api/2/issue/{issue_key}/remotelink"
-            result = self.jira.get(endpoint)
-            if isinstance(result, list):
-                return result
-            if isinstance(result, dict):
-                return result.get("remoteLinks", [result])
-            return []
+            response = self.jira.get(endpoint)
+
+            # Normalise response to a list of raw link dicts
+            if isinstance(response, list):
+                raw_links = response
+            elif isinstance(response, dict):
+                raw_links = response.get("remoteLinks", [response])
+            else:
+                logger.error(
+                    "Unexpected response type from remote links API: %s",
+                    type(response),
+                )
+                return []
+
+            # Extract LLM-relevant fields, drop API noise
+            results: list[dict[str, Any]] = []
+            for link in raw_links:
+                obj = link.get("object", {})
+                result: dict[str, Any] = {
+                    "id": link.get("id"),
+                    "url": obj.get("url", ""),
+                    "title": obj.get("title", ""),
+                }
+                if obj.get("summary"):
+                    result["summary"] = obj["summary"]
+                if link.get("relationship"):
+                    result["relationship"] = link["relationship"]
+                application = link.get("application", {})
+                if application.get("name"):
+                    result["application"] = application["name"]
+                status = obj.get("status", {})
+                if status.get("resolved") is not None:
+                    result["resolved"] = status["resolved"]
+                results.append(result)
+
+            return results
         except HTTPError:
             raise  # let decorator handle auth errors
         except Exception as e:

@@ -1,6 +1,6 @@
 """Unit tests for the CommentsMixin class."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 import requests
@@ -669,34 +669,12 @@ class TestGetInlineComments:
 class TestAddInlineComment:
     """Tests for add_inline_comment method."""
 
-    def test_add_inline_comment_v1_success(self, comments_mixin_dc):
-        """add_inline_comment v1 (Server/DC) posts with inline location."""
-        page_id = "12345"
-        comments_mixin_dc.confluence.get_page_by_id.return_value = {
-            "space": {"key": "TEST"}
-        }
-        comments_mixin_dc.preprocessor.markdown_to_confluence_storage.return_value = (
-            "<p>Inline comment</p>"
-        )
-        comments_mixin_dc.confluence.post.return_value = MOCK_INLINE_COMMENT_V1_RESPONSE
-        comments_mixin_dc.preprocessor.process_html_content.return_value = (
-            "<p>Inline comment</p>",
-            "Inline comment",
-        )
-
-        result = comments_mixin_dc.add_inline_comment(
-            page_id, "Inline comment", "some text to anchor"
-        )
-
-        assert result is not None
-        assert result.location == "inline"
-        call_args = comments_mixin_dc.confluence.post.call_args
-        assert call_args[0][0] == "rest/api/content/"
-        data = call_args[1]["data"]
-        assert data["extensions"]["location"] == "inline"
-        assert data["extensions"]["inlineProperties"]["originalSelection"] == (
-            "some text to anchor"
-        )
+    def test_add_inline_comment_raises_for_server_dc(self, comments_mixin_dc):
+        """add_inline_comment raises ValueError on Server/DC (Cloud-only API)."""
+        with pytest.raises(ValueError, match="only supported on Confluence Cloud"):
+            comments_mixin_dc.add_inline_comment(
+                "12345", "Inline comment", "some text to anchor"
+            )
 
     def test_add_inline_comment_v2_cloud_success(self, comments_mixin):
         """add_inline_comment uses v2 API on Cloud (any auth type)."""
@@ -750,52 +728,76 @@ class TestAddInlineComment:
         # v1 API should not be called
         comments_mixin.confluence.post.assert_not_called()
 
-    def test_add_inline_comment_with_html_content(self, comments_mixin_dc):
-        """add_inline_comment skips markdown conversion for HTML content (Server/DC)."""
+    def test_add_inline_comment_with_html_content(self, comments_mixin):
+        """add_inline_comment skips markdown conversion for HTML content."""
         html_content = "<p>Already <strong>HTML</strong></p>"
-        comments_mixin_dc.confluence.get_page_by_id.return_value = {
-            "space": {"key": "TEST"}
+
+        v2_converted = {
+            "id": "444555666",
+            "type": "comment",
+            "status": "open",
+            "body": {"view": {"value": html_content, "representation": "view"}},
+            "extensions": {"location": "inline"},
+            "version": {"number": 1},
+            "_links": {},
         }
-        comments_mixin_dc.confluence.post.return_value = MOCK_INLINE_COMMENT_V1_RESPONSE
-        comments_mixin_dc.preprocessor.process_html_content.return_value = (
+        comments_mixin.preprocessor.process_html_content.return_value = (
             html_content,
-            "Already **HTML**",
+            "Already HTML",
         )
 
-        result = comments_mixin_dc.add_inline_comment(
-            "12345", html_content, "some text"
-        )
+        mock_adapter = MagicMock()
+        mock_adapter.create_inline_comment.return_value = v2_converted
 
-        comments_mixin_dc.preprocessor.markdown_to_confluence_storage.assert_not_called()
+        with patch.object(
+            type(comments_mixin),
+            "_inline_v2_adapter",
+            new_callable=PropertyMock,
+            return_value=mock_adapter,
+        ):
+            result = comments_mixin.add_inline_comment(
+                "12345", html_content, "some text"
+            )
+
+        comments_mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
         assert result is not None
 
-    def test_add_inline_comment_empty_response(self, comments_mixin_dc):
-        """add_inline_comment returns None on empty API response (Server/DC)."""
-        comments_mixin_dc.confluence.get_page_by_id.return_value = {
-            "space": {"key": "TEST"}
-        }
-        comments_mixin_dc.preprocessor.markdown_to_confluence_storage.return_value = (
+    def test_add_inline_comment_propagates_value_error(self, comments_mixin):
+        """add_inline_comment propagates ValueError (e.g. text not found)."""
+        comments_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
             "<p>Test</p>"
         )
-        comments_mixin_dc.confluence.post.return_value = None
+        mock_adapter = MagicMock()
+        mock_adapter.create_inline_comment.side_effect = ValueError(
+            "text not found on page"
+        )
 
-        result = comments_mixin_dc.add_inline_comment("12345", "Test", "anchor text")
+        with patch.object(
+            type(comments_mixin),
+            "_inline_v2_adapter",
+            new_callable=PropertyMock,
+            return_value=mock_adapter,
+        ):
+            with pytest.raises(ValueError, match="text not found on page"):
+                comments_mixin.add_inline_comment("12345", "Test", "missing text")
 
-        assert result is None
-
-    def test_add_inline_comment_network_error(self, comments_mixin_dc):
-        """add_inline_comment returns None on network error (Server/DC)."""
-        comments_mixin_dc.confluence.get_page_by_id.return_value = {
-            "space": {"key": "TEST"}
-        }
-        comments_mixin_dc.preprocessor.markdown_to_confluence_storage.return_value = (
+    def test_add_inline_comment_network_error(self, comments_mixin):
+        """add_inline_comment returns None on network error."""
+        comments_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
             "<p>Test</p>"
         )
-        comments_mixin_dc.confluence.post.side_effect = requests.RequestException(
+        mock_adapter = MagicMock()
+        mock_adapter.create_inline_comment.side_effect = requests.RequestException(
             "Network error"
         )
 
-        result = comments_mixin_dc.add_inline_comment("12345", "Test", "anchor text")
+        with patch.object(
+            type(comments_mixin),
+            "_inline_v2_adapter",
+            new_callable=PropertyMock,
+            return_value=mock_adapter,
+        ):
+            result = comments_mixin.add_inline_comment("12345", "Test", "anchor text")
 
         assert result is None
 
