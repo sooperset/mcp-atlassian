@@ -104,13 +104,11 @@ class TestAttachmentsMixin:
 
         mock_response = Mock()
         if raise_error:
-            # Changed from .post to .put to match implementation
-            attachments_mixin.confluence._session.put.side_effect = raise_error
+            attachments_mixin.confluence._session.post.side_effect = raise_error
         else:
             mock_response.json.return_value = response_data
             mock_response.raise_for_status.return_value = None
-            # Changed from .post to .put to match implementation
-            attachments_mixin.confluence._session.put.return_value = mock_response
+            attachments_mixin.confluence._session.post.return_value = mock_response
 
         return mock_response
 
@@ -152,9 +150,8 @@ class TestAttachmentsMixin:
             assert result["id"] == "att12345"
 
             # Verify the REST API was called with correct parameters
-            # Changed from .post to .put to match implementation
-            attachments_mixin.confluence._session.put.assert_called_once()
-            call_args = attachments_mixin.confluence._session.put.call_args
+            attachments_mixin.confluence._session.post.assert_called_once()
+            call_args = attachments_mixin.confluence._session.post.call_args
 
             # Check URL
             assert "/rest/api/content/123456/child/attachment" in call_args[0][0]
@@ -266,10 +263,9 @@ class TestAttachmentsMixin:
                 "123456", "/absolute/path/test_file.txt"
             )
 
-            # Assertions
+            # Assertions: exception is caught by upload_attachment and returned as failure dict
             assert result["success"] is False
-            # When direct API fails, we get generic failure message
-            assert "Failed to upload attachment" in result["error"]
+            assert "API Error" in result["error"]
 
     # Tests for upload_attachments method
 
