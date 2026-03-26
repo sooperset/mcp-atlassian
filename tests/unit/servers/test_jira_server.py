@@ -45,6 +45,7 @@ def mock_jira_fetcher():
         fields=None,
         expand=None,
         comment_limit=10,
+        comment_sort=None,
         properties=None,
         update_history=True,
     ):
@@ -56,6 +57,7 @@ def mock_jira_fetcher():
         response_data["fields_queried"] = fields
         response_data["expand_param"] = expand
         response_data["comment_limit"] = comment_limit
+        response_data["comment_sort"] = comment_sort
         response_data["properties_param"] = properties
         response_data["update_history"] = update_history
         response_data["id"] = MOCK_JIRA_ISSUE_RESPONSE_SIMPLIFIED["id"]
@@ -71,8 +73,11 @@ def mock_jira_fetcher():
     mock_fetcher.get_issue.side_effect = mock_get_issue
 
     # Configure get_issue_comments to return fixture data
-    def mock_get_issue_comments(issue_key, limit=10):
-        return MOCK_JIRA_COMMENTS_SIMPLIFIED["comments"][:limit]
+    def mock_get_issue_comments(issue_key, limit=10, sort=None):
+        c = MOCK_JIRA_COMMENTS_SIMPLIFIED["comments"][:limit]
+        if sort == "desc":
+            c = list(reversed(c))
+        return c
 
     mock_fetcher.get_issue_comments.side_effect = mock_get_issue_comments
 
@@ -547,6 +552,7 @@ async def test_get_issue(jira_client, mock_jira_fetcher):
         fields=["summary", "description", "status"],
         expand=None,
         comment_limit=10,
+        comment_sort=None,
         properties=None,
         update_history=True,
     )
@@ -942,6 +948,7 @@ async def test_get_issue_with_user_specific_fetcher_in_state(
         fields=expected_fields_list,
         expand=None,
         comment_limit=10,
+        comment_sort=None,
         properties=None,
         update_history=True,
     )

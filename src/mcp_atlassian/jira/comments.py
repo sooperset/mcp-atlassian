@@ -1,7 +1,7 @@
 """Module for Jira comment operations."""
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from ..models.jira.adf import adf_to_text
 from ..utils import parse_date
@@ -14,7 +14,10 @@ class CommentsMixin(JiraClient):
     """Mixin for Jira comment operations."""
 
     def get_issue_comments(
-        self, issue_key: str, limit: int = 50
+        self,
+        issue_key: str,
+        limit: int = 50,
+        sort: None | Literal["asc", "desc"] = None,
     ) -> list[dict[str, Any]]:
         """
         Get comments for a specific issue.
@@ -22,6 +25,7 @@ class CommentsMixin(JiraClient):
         Args:
             issue_key: The issue key (e.g. 'PROJ-123')
             limit: Maximum number of comments to return
+            sort: Sort order for comments ("asc" or "desc"). Default is no sorting.
 
         Returns:
             List of comments with author, creation date, and content
@@ -38,7 +42,7 @@ class CommentsMixin(JiraClient):
                 raise TypeError(msg)
 
             processed_comments = []
-            for comment in comments.get("comments", [])[:limit]:
+            for comment in comments.get("comments", []):
                 processed_comment = {
                     "id": comment.get("id"),
                     "body": self._clean_text(comment.get("body", "")),
@@ -48,7 +52,12 @@ class CommentsMixin(JiraClient):
                 }
                 processed_comments.append(processed_comment)
 
-            return processed_comments
+            if sort == "asc":
+                processed_comments.sort(key=lambda x: x["created"])
+            elif sort == "desc":
+                processed_comments.sort(key=lambda x: x["created"], reverse=True)
+
+            return processed_comments[:limit]
         except Exception as e:
             logger.error(f"Error getting comments for issue {issue_key}: {str(e)}")
             raise Exception(f"Error getting comments: {str(e)}") from e

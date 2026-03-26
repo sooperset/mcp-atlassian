@@ -2,7 +2,7 @@
 
 import logging
 from collections import defaultdict
-from typing import Any
+from typing import Any, Literal
 
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import HTTPError
@@ -46,6 +46,7 @@ class IssuesMixin(
         issue_key: str,
         expand: str | None = None,
         comment_limit: int | str | None = 10,
+        comment_sort: None | Literal["asc", "desc"] = None,
         fields: str | list[str] | tuple[str, ...] | set[str] | None = None,
         properties: str | list[str] | None = None,
         update_history: bool = True,
@@ -57,6 +58,7 @@ class IssuesMixin(
             issue_key: The issue key (e.g., PROJECT-123)
             expand: Fields to expand in the response
             comment_limit: Maximum number of comments to include, or "all"
+            comment_sort: Sort order for comments ("asc" or "desc"). Default is no sorting
             fields: Fields to return (comma-separated string, list, tuple, set, or "*all")
             properties: Issue properties to return (comma-separated string or list)
             update_history: Whether to update the issue view history
@@ -193,7 +195,7 @@ class IssuesMixin(
             if "comment" in fields_data:
                 comment_limit_int = self._normalize_comment_limit(comment_limit)
                 comments = self._get_issue_comments_if_needed(
-                    issue_key, comment_limit_int
+                    issue_key, comment_limit_int, comment_sort=comment_sort
                 )
                 # Add comments to the issue data for processing by the model
                 fields_data["comment"]["comments"] = comments
@@ -315,7 +317,10 @@ class IssuesMixin(
             return 10
 
     def _get_issue_comments_if_needed(
-        self, issue_key: str, comment_limit: int | None
+        self,
+        issue_key: str,
+        comment_limit: int | None,
+        comment_sort: None | Literal["asc", "desc"] = None,
     ) -> list[dict]:
         """
         Get comments for an issue if needed.
@@ -323,6 +328,7 @@ class IssuesMixin(
         Args:
             issue_key: The issue key
             comment_limit: Maximum number of comments to include
+            comment_sort: Sort order for comments ("asc" or "desc"). Default is no sorting.
 
         Returns:
             List of comments
@@ -335,7 +341,13 @@ class IssuesMixin(
                     logger.error(msg)
                     raise TypeError(msg)
 
-                comments = response["comments"]
+                comments = response.get("comments", [])
+
+                # Sort comments if needed
+                if comment_sort == "asc":
+                    comments.sort(key=lambda x: x.get("created", ""))
+                elif comment_sort == "desc":
+                    comments.sort(key=lambda x: x.get("created", ""), reverse=True)
 
                 # Limit comments if needed
                 if comment_limit is not None:

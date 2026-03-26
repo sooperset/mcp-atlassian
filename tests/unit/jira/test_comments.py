@@ -79,15 +79,21 @@ class TestCommentsMixin:
             ]
         }
 
-        # Call the method with limit=2
-        result = comments_mixin.get_issue_comments("TEST-123", limit=2)
+        for sort in [None, "asc", "desc"]:
+            # Call the method with limit=2
+            comments_mixin.jira.issue_get_comments.reset_mock()
+            result = comments_mixin.get_issue_comments("TEST-123", limit=2, sort=sort)
 
-        # Verify
-        comments_mixin.jira.issue_get_comments.assert_called_once_with("TEST-123")
-        assert len(result) == 2  # Only 2 comments should be returned
-        assert result[0]["id"] == "10001"
-        assert result[1]["id"] == "10002"
-        # Third comment shouldn't be included due to limit
+            # Verify
+            comments_mixin.jira.issue_get_comments.assert_called_once_with("TEST-123")
+            assert len(result) == 2  # Only 2 comments should be returned
+            if sort == "desc":
+                assert result[0]["id"] == "10003"
+                assert result[1]["id"] == "10002"
+            else:
+                assert result[0]["id"] == "10001"
+                assert result[1]["id"] == "10002"
+            # Third comment shouldn't be included due to limit
 
     def test_get_issue_comments_with_missing_fields(self, comments_mixin):
         """Test get_issue_comments with missing fields in the response."""

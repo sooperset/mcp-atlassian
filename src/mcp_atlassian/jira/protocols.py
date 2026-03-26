@@ -1,7 +1,7 @@
 """Module for Jira protocol definitions."""
 
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from ..models.jira import JiraIssue, ProFormaForm
 from ..models.jira.search import JiraSearchResult
@@ -67,6 +67,7 @@ class IssueOperationsProto(Protocol):
         issue_key: str,
         expand: str | None = None,
         comment_limit: int | str | None = 10,
+        comment_sort: None | Literal["asc", "desc"] = None,
         fields: str
         | list[str]
         | tuple[str, ...]

@@ -1,7 +1,7 @@
 """Tests for Jira protocol definitions."""
 
 import inspect
-from typing import Any, get_type_hints
+from typing import Any, Literal, get_type_hints
 
 from mcp_atlassian.jira.protocols import (
     AttachmentsOperationsProto,
@@ -36,6 +36,7 @@ class TestProtocolCompliance:
                 issue_key: str,
                 expand: str | None = None,
                 comment_limit: int | str | None = 10,
+                comment_sort: None | Literal["asc", "desc"] = None,
                 fields: str | list[str] | tuple[str, ...] | set[str] | None = (
                     "summary,description,status,assignee,reporter,labels,"
                     "priority,created,updated,issuetype"

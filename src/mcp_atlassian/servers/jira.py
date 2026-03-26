@@ -328,12 +328,23 @@ async def get_issue(
     comment_limit: Annotated[
         int,
         Field(
-            description="Maximum number of comments to include (0 or null for no comments)",
+            description=(
+                "Maximum number of comments to include (0 or null for no comments). "
+                "If the parameter 'fields' is set to a limited field list, the list must include 'comment' for comments to be fetched."
+            ),
             default=10,
             ge=0,
             le=100,
         ),
     ] = 10,
+    comment_sort: Annotated[
+        str | None,
+        Field(
+            description="Sort order for comments ('asc' - oldest first or 'desc' - newest first). If not specified, comments are returned as provided by Jira.",
+            default=None,
+            pattern="^(asc|desc)$",
+        ),
+    ] = None,
     properties: Annotated[
         str | None,
         Field(
@@ -357,6 +368,7 @@ async def get_issue(
         fields: Comma-separated list of fields to return (e.g., 'summary,status,customfield_10010'), a single field as a string (e.g., 'duedate'), '*all' for all fields, or omitted for essentials.
         expand: Optional fields to expand.
         comment_limit: Maximum number of comments.
+        comment_sort: Sort order for comments ("asc" - oldest first or "desc" - newest first). If not specified, comments are returned as provided by Jira.
         properties: Issue properties to return.
         update_history: Whether to update issue view history.
 
@@ -376,6 +388,7 @@ async def get_issue(
         fields=fields_list,
         expand=expand,
         comment_limit=comment_limit,
+        comment_sort=comment_sort if comment_sort in ("asc", "desc") else None,
         properties=properties.split(",") if properties else None,
         update_history=update_history,
     )
