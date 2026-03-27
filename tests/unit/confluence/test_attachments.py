@@ -1315,10 +1315,48 @@ class TestDownloadAttachmentServerTool:
 
 
 class TestDownloadContentAttachmentsServerTool:
-    """Tests for the server-level download_content_attachments tool (EmbeddedResource return)."""
+    """Tests for the server-level download_content_attachments tool."""
 
     @pytest.mark.asyncio
     async def test_returns_summary_plus_embedded_resources(self):
+        mock_fetcher = MagicMock()
+        mock_fetcher.config.url = "https://test.atlassian.net/wiki"
+        mock_fetcher.get_content_attachments.return_value = {
+            "success": True,
+            "attachments": [
+                {
+                    "id": "att1",
+                    "title": "photo.png",
+                    "extensions": {"mediaType": "image/png", "fileSize": 4},
+                    "_links": {"download": "/download/photo.png"},
+                }
+            ],
+        }
+
+        mock_fetcher.fetch_attachment_content.return_value = b"\x89PNG"
+
+        with patch(
+            "mcp_atlassian.servers.confluence.get_confluence_fetcher",
+            AsyncMock(return_value=mock_fetcher),
+        ):
+            from mcp_atlassian.servers.confluence import (
+                download_content_attachments as server_download_content,
+            )
+
+            results = await server_download_content.fn(
+                ctx=MagicMock(), content_id="123456"
+            )
+
+        assert len(results) == 2
+        assert isinstance(results[0], TextContent)
+        summary = json.loads(results[0].text)
+        assert summary["success"] is True
+        assert summary["downloaded"] == 1
+        assert isinstance(results[1], EmbeddedResource)
+        assert results[1].resource.mimeType == "image/png"
+
+    @pytest.mark.asyncio
+    async def test_returns_summary_plus_text_content_for_text_attachment(self):
         mock_fetcher = MagicMock()
         mock_fetcher.config.url = "https://test.atlassian.net/wiki"
         mock_fetcher.get_content_attachments.return_value = {
@@ -1352,8 +1390,11 @@ class TestDownloadContentAttachmentsServerTool:
         summary = json.loads(results[0].text)
         assert summary["success"] is True
         assert summary["downloaded"] == 1
-        assert isinstance(results[1], EmbeddedResource)
-        assert results[1].resource.mimeType == "text/plain"
+        assert isinstance(results[1], TextContent)
+        payload = json.loads(results[1].text)
+        assert payload["success"] is True
+        assert payload["filename"] == "file1.txt"
+        assert payload["content"] == "hello world!"
 
     @pytest.mark.asyncio
     async def test_returns_text_when_no_attachments(self):
