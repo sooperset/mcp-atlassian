@@ -47,6 +47,7 @@ def mock_jira_fetcher():
         comment_limit=10,
         properties=None,
         update_history=True,
+        comment_order="asc",
     ):
         if not issue_key:
             raise ValueError("Issue key is required")
@@ -549,6 +550,7 @@ async def test_get_issue(jira_client, mock_jira_fetcher):
         comment_limit=10,
         properties=None,
         update_history=True,
+        comment_order="asc",
     )
 
 
@@ -944,6 +946,7 @@ async def test_get_issue_with_user_specific_fetcher_in_state(
         comment_limit=10,
         properties=None,
         update_history=True,
+        comment_order="asc",
     )
     result_data = json.loads(response.content[0].text)
     assert result_data["key"] == "USRST-1"
