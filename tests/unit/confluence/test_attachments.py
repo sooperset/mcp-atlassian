@@ -160,7 +160,7 @@ class TestAttachmentsMixin:
             assert "/rest/api/content/123456/child/attachment" in call_args[0][0]
 
             # Check headers include X-Atlassian-Token
-            assert call_args[1]["headers"]["X-Atlassian-Token"] == "nocheck"
+            assert call_args[1]["headers"]["X-Atlassian-Token"] == "no-check"
 
             # Check minorEdit was passed in data
             assert call_args[1]["data"]["minorEdit"] == "false"
