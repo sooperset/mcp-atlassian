@@ -133,6 +133,60 @@ class TestCommentsMixin:
             result[2]["author"] == "Unknown"
         )  # Should use Unknown when only name is available
 
+    def test_get_issue_comments_desc_returns_newest_first(self, comments_mixin):
+        """Test get_issue_comments with order='desc' returns newest first."""
+        comments_mixin.jira.issue_get_comments.return_value = {
+            "comments": [
+                {
+                    "id": "10001",
+                    "body": "Oldest",
+                    "created": "2024-01-01T10:00:00.000+0000",
+                    "updated": "2024-01-01T10:00:00.000+0000",
+                    "author": {"displayName": "Alice"},
+                },
+                {
+                    "id": "10002",
+                    "body": "Newest",
+                    "created": "2024-06-01T10:00:00.000+0000",
+                    "updated": "2024-06-01T10:00:00.000+0000",
+                    "author": {"displayName": "Bob"},
+                },
+            ]
+        }
+
+        result = comments_mixin.get_issue_comments("TEST-123", limit=1, order="desc")
+
+        assert len(result) == 1
+        assert result[0]["id"] == "10002"
+        assert result[0]["body"] == "Newest"
+
+    def test_get_issue_comments_asc_returns_oldest_first(self, comments_mixin):
+        """Test get_issue_comments with order='asc' preserves oldest first."""
+        comments_mixin.jira.issue_get_comments.return_value = {
+            "comments": [
+                {
+                    "id": "10001",
+                    "body": "Oldest",
+                    "created": "2024-01-01T10:00:00.000+0000",
+                    "updated": "2024-01-01T10:00:00.000+0000",
+                    "author": {"displayName": "Alice"},
+                },
+                {
+                    "id": "10002",
+                    "body": "Newest",
+                    "created": "2024-06-01T10:00:00.000+0000",
+                    "updated": "2024-06-01T10:00:00.000+0000",
+                    "author": {"displayName": "Bob"},
+                },
+            ]
+        }
+
+        result = comments_mixin.get_issue_comments("TEST-123", limit=1, order="asc")
+
+        assert len(result) == 1
+        assert result[0]["id"] == "10001"
+        assert result[0]["body"] == "Oldest"
+
     def test_get_issue_comments_with_empty_response(self, comments_mixin):
         """Test get_issue_comments with an empty response."""
         # Setup mock response with no comments

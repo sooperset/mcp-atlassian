@@ -49,6 +49,7 @@ class IssuesMixin(
         fields: str | list[str] | tuple[str, ...] | set[str] | None = None,
         properties: str | list[str] | None = None,
         update_history: bool = True,
+        comment_order: str = "asc",
     ) -> JiraIssue:
         """
         Get a Jira issue by key.
@@ -60,6 +61,8 @@ class IssuesMixin(
             fields: Fields to return (comma-separated string, list, tuple, set, or "*all")
             properties: Issue properties to return (comma-separated string or list)
             update_history: Whether to update the issue view history
+            comment_order: Sort order for comments by created date -
+                "asc" (oldest first) or "desc" (newest first)
 
         Returns:
             JiraIssue model with issue data and metadata
@@ -193,7 +196,7 @@ class IssuesMixin(
             if "comment" in fields_data:
                 comment_limit_int = self._normalize_comment_limit(comment_limit)
                 comments = self._get_issue_comments_if_needed(
-                    issue_key, comment_limit_int
+                    issue_key, comment_limit_int, comment_order
                 )
                 # Add comments to the issue data for processing by the model
                 fields_data["comment"]["comments"] = comments
@@ -315,7 +318,10 @@ class IssuesMixin(
             return 10
 
     def _get_issue_comments_if_needed(
-        self, issue_key: str, comment_limit: int | None
+        self,
+        issue_key: str,
+        comment_limit: int | None,
+        comment_order: str = "asc",
     ) -> list[dict]:
         """
         Get comments for an issue if needed.
@@ -323,6 +329,7 @@ class IssuesMixin(
         Args:
             issue_key: The issue key
             comment_limit: Maximum number of comments to include
+            comment_order: ``"desc"`` (newest first) or ``"asc"`` (oldest first)
 
         Returns:
             List of comments
@@ -337,7 +344,9 @@ class IssuesMixin(
 
                 comments = response["comments"]
 
-                # Limit comments if needed
+                if comment_order == "desc":
+                    comments = list(reversed(comments))
+
                 if comment_limit is not None:
                     comments = comments[:comment_limit]
 

@@ -171,6 +171,115 @@ class TestIssuesMixin:
 
         issues_mixin.jira.issue_get_comments.assert_not_called()
 
+    def test_get_issue_comments_desc_returns_newest_first(
+        self, issues_mixin: IssuesMixin
+    ):
+        """Test that comment_order='desc' returns newest comments first."""
+        comments_data = {
+            "comments": [
+                {
+                    "id": "1",
+                    "body": "Oldest",
+                    "author": {"displayName": "A"},
+                    "created": "2023-01-01T00:00:00.000+0000",
+                    "updated": "2023-01-01T00:00:00.000+0000",
+                },
+                {
+                    "id": "2",
+                    "body": "Middle",
+                    "author": {"displayName": "B"},
+                    "created": "2023-06-01T00:00:00.000+0000",
+                    "updated": "2023-06-01T00:00:00.000+0000",
+                },
+                {
+                    "id": "3",
+                    "body": "Newest",
+                    "author": {"displayName": "C"},
+                    "created": "2024-01-01T00:00:00.000+0000",
+                    "updated": "2024-01-01T00:00:00.000+0000",
+                },
+            ]
+        }
+
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "comment": comments_data,
+                "summary": "Test Issue",
+                "description": "Test",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Bug"},
+                "created": "2023-01-01T00:00:00.000+0000",
+                "updated": "2024-01-02T00:00:00.000+0000",
+            },
+        }
+
+        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.issue_get_comments.return_value = comments_data
+
+        issue = issues_mixin.get_issue(
+            "TEST-123",
+            fields="summary,description,status,issuetype,comment",
+            comment_limit=2,
+            comment_order="desc",
+        )
+
+        assert len(issue.comments) == 2
+        assert issue.comments[0].body == "Newest"
+        assert issue.comments[1].body == "Middle"
+
+    def test_get_issue_comments_asc_returns_oldest_first(
+        self, issues_mixin: IssuesMixin
+    ):
+        """Test that comment_order='asc' preserves oldest-first order."""
+        comments_data = {
+            "comments": [
+                {
+                    "id": "1",
+                    "body": "Oldest",
+                    "author": {"displayName": "A"},
+                    "created": "2023-01-01T00:00:00.000+0000",
+                    "updated": "2023-01-01T00:00:00.000+0000",
+                },
+                {
+                    "id": "2",
+                    "body": "Newest",
+                    "author": {"displayName": "B"},
+                    "created": "2024-01-01T00:00:00.000+0000",
+                    "updated": "2024-01-01T00:00:00.000+0000",
+                },
+            ]
+        }
+
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "comment": comments_data,
+                "summary": "Test Issue",
+                "description": "Test",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Bug"},
+                "created": "2023-01-01T00:00:00.000+0000",
+                "updated": "2024-01-02T00:00:00.000+0000",
+            },
+        }
+
+        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.issue_get_comments.return_value = comments_data
+
+        issue = issues_mixin.get_issue(
+            "TEST-123",
+            fields="summary,description,status,issuetype,comment",
+            comment_limit=2,
+            comment_order="asc",
+        )
+
+        assert len(issue.comments) == 2
+        assert issue.comments[0].body == "Oldest"
+        assert issue.comments[1].body == "Newest"
+
     def test_get_issue_with_epic_info(self, issues_mixin: IssuesMixin, make_issue_data):
         """Test retrieving issue with epic information."""
         try:

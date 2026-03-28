@@ -334,6 +334,17 @@ async def get_issue(
             le=100,
         ),
     ] = 10,
+    comment_order: Annotated[
+        str,
+        Field(
+            description=(
+                "Sort order for comments by created date: "
+                "'asc' (oldest first, default) or 'desc' (newest first)"
+            ),
+            default="asc",
+            pattern="^(asc|desc)$",
+        ),
+    ] = "asc",
     properties: Annotated[
         str | None,
         Field(
@@ -357,6 +368,7 @@ async def get_issue(
         fields: Comma-separated list of fields to return (e.g., 'summary,status,customfield_10010'), a single field as a string (e.g., 'duedate'), '*all' for all fields, or omitted for essentials.
         expand: Optional fields to expand.
         comment_limit: Maximum number of comments.
+        comment_order: Sort order for comments by created date.
         properties: Issue properties to return.
         update_history: Whether to update issue view history.
 
@@ -378,6 +390,7 @@ async def get_issue(
         comment_limit=comment_limit,
         properties=properties.split(",") if properties else None,
         update_history=update_history,
+        comment_order=comment_order,
     )
     result = issue.to_simplified_dict()
     return json.dumps(result, indent=2, ensure_ascii=False)

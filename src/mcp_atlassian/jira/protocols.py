@@ -74,6 +74,7 @@ class IssueOperationsProto(Protocol):
         | None = "summary,description,status,assignee,reporter,labels,priority,created,updated,issuetype",
         properties: str | list[str] | None = None,
         update_history: bool = True,
+        comment_order: str = "asc",
     ) -> JiraIssue:
         """Get a Jira issue by key."""
 

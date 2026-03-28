@@ -14,7 +14,10 @@ class CommentsMixin(JiraClient):
     """Mixin for Jira comment operations."""
 
     def get_issue_comments(
-        self, issue_key: str, limit: int = 50
+        self,
+        issue_key: str,
+        limit: int = 50,
+        order: str = "asc",
     ) -> list[dict[str, Any]]:
         """
         Get comments for a specific issue.
@@ -22,6 +25,8 @@ class CommentsMixin(JiraClient):
         Args:
             issue_key: The issue key (e.g. 'PROJ-123')
             limit: Maximum number of comments to return
+            order: Sort order by created date -
+                ``"asc"`` (oldest first) or ``"desc"`` (newest first)
 
         Returns:
             List of comments with author, creation date, and content
@@ -37,8 +42,13 @@ class CommentsMixin(JiraClient):
                 logger.error(msg)
                 raise TypeError(msg)
 
+            comment_list = comments.get("comments", [])
+
+            if order == "desc":
+                comment_list = list(reversed(comment_list))
+
             processed_comments = []
-            for comment in comments.get("comments", [])[:limit]:
+            for comment in comment_list[:limit]:
                 processed_comment = {
                     "id": comment.get("id"),
                     "body": self._clean_text(comment.get("body", "")),
