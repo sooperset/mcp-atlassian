@@ -197,6 +197,30 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
             doc["content"].append({"type": "blockquote", "content": bq_content})
             continue
 
+        # --- Panel block ---
+        panel_match = re.match(r"^:::(\w+)\s*$", line)
+        if panel_match:
+            panel_type = panel_match.group(1).lower()
+            valid_panel_types = {"note", "info", "warning", "success", "error"}
+            if panel_type in valid_panel_types:
+                panel_lines: list[str] = []
+                i += 1
+                while i < len(lines) and lines[i].strip() != ":::":
+                    panel_lines.append(lines[i])
+                    i += 1
+                # Skip closing :::
+                if i < len(lines):
+                    i += 1
+                # Recursively parse panel content
+                inner_doc = markdown_to_adf("\n".join(panel_lines))
+                panel_node: dict[str, Any] = {
+                    "type": "panel",
+                    "attrs": {"panelType": panel_type},
+                    "content": inner_doc["content"],
+                }
+                doc["content"].append(panel_node)
+                continue
+
         # --- Unordered list ---
         if re.match(r"^[-*]\s+", line):
             items: list[dict[str, Any]] = []
