@@ -59,6 +59,10 @@ Ask your AI assistant to:
 - **"Create a bug ticket for the login issue"**
 - **"Update the status of PROJ-123 to Done"**
 
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/sooperset-mcp-atlassian).
+
 ## Documentation
 
 Full documentation is available at **[mcp-atlassian.soomiles.com](https://mcp-atlassian.soomiles.com)**.
