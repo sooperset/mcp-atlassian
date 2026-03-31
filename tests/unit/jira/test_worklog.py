@@ -79,7 +79,9 @@ class TestWorklogMixin:
                 }
             ],
         }
-        worklog_mixin.jira.resource_url.return_value = "https://jira.example.com/rest/api/2/issue"
+        worklog_mixin.jira.resource_url.return_value = (
+            "https://jira.example.com/rest/api/2/issue"
+        )
         worklog_mixin.jira.get.return_value = mock_result
 
         result = worklog_mixin.get_worklogs("TEST-123")
@@ -118,7 +120,9 @@ class TestWorklogMixin:
                 },
             ],
         }
-        worklog_mixin.jira.resource_url.return_value = "https://jira.example.com/rest/api/2/issue"
+        worklog_mixin.jira.resource_url.return_value = (
+            "https://jira.example.com/rest/api/2/issue"
+        )
         worklog_mixin.jira.get.return_value = mock_result
 
         result = worklog_mixin.get_worklogs("TEST-123")
@@ -142,7 +146,9 @@ class TestWorklogMixin:
                 }
             ],
         }
-        worklog_mixin.jira.resource_url.return_value = "https://jira.example.com/rest/api/2/issue"
+        worklog_mixin.jira.resource_url.return_value = (
+            "https://jira.example.com/rest/api/2/issue"
+        )
         worklog_mixin.jira.get.return_value = mock_result
 
         result = worklog_mixin.get_worklogs("TEST-123")
@@ -156,7 +162,9 @@ class TestWorklogMixin:
 
     def test_get_worklogs_with_empty_response(self, worklog_mixin):
         """Test get_worklogs with empty response."""
-        worklog_mixin.jira.resource_url.return_value = "https://jira.example.com/rest/api/2/issue"
+        worklog_mixin.jira.resource_url.return_value = (
+            "https://jira.example.com/rest/api/2/issue"
+        )
         worklog_mixin.jira.get.return_value = {"total": 0, "worklogs": []}
 
         result = worklog_mixin.get_worklogs("TEST-123")
@@ -169,17 +177,34 @@ class TestWorklogMixin:
         page1 = {
             "total": 3,
             "worklogs": [
-                {"id": "1", "timeSpent": "1h", "timeSpentSeconds": 3600, "author": {"displayName": "U"}},
-                {"id": "2", "timeSpent": "1h", "timeSpentSeconds": 3600, "author": {"displayName": "U"}},
+                {
+                    "id": "1",
+                    "timeSpent": "1h",
+                    "timeSpentSeconds": 3600,
+                    "author": {"displayName": "U"},
+                },
+                {
+                    "id": "2",
+                    "timeSpent": "1h",
+                    "timeSpentSeconds": 3600,
+                    "author": {"displayName": "U"},
+                },
             ],
         }
         page2 = {
             "total": 3,
             "worklogs": [
-                {"id": "3", "timeSpent": "1h", "timeSpentSeconds": 3600, "author": {"displayName": "U"}},
+                {
+                    "id": "3",
+                    "timeSpent": "1h",
+                    "timeSpentSeconds": 3600,
+                    "author": {"displayName": "U"},
+                },
             ],
         }
-        worklog_mixin.jira.resource_url.return_value = "https://jira.example.com/rest/api/2/issue"
+        worklog_mixin.jira.resource_url.return_value = (
+            "https://jira.example.com/rest/api/2/issue"
+        )
         worklog_mixin.jira.get.side_effect = [page1, page2]
 
         result = worklog_mixin.get_worklogs("TEST-123")
@@ -189,7 +214,9 @@ class TestWorklogMixin:
 
     def test_get_worklogs_with_error(self, worklog_mixin):
         """Test get_worklogs error handling."""
-        worklog_mixin.jira.resource_url.return_value = "https://jira.example.com/rest/api/2/issue"
+        worklog_mixin.jira.resource_url.return_value = (
+            "https://jira.example.com/rest/api/2/issue"
+        )
         worklog_mixin.jira.get.side_effect = Exception("Worklog fetch error")
 
         with pytest.raises(
