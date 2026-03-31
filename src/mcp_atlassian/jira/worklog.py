@@ -215,29 +215,44 @@ class WorklogMixin(JiraClient):
             Exception: If there's an error getting the worklogs
         """
         try:
-            result = self.jira.issue_get_worklog(issue_key)
-            if not isinstance(result, dict):
-                msg = f"Unexpected return value type from `jira.issue_get_worklog`: {type(result)}"
-                logger.error(msg)
-                raise TypeError(msg)
-
-            # Process the worklogs
+            # `jira.issue_get_worklog()` calls GET /issue/{key}/worklog without
+            # pagination parameters, so Jira returns at most 20 entries by default.
+            # We paginate explicitly to retrieve all worklogs regardless of count.
+            base_url = self.jira.resource_url("issue")
+            url = f"{base_url}/{issue_key}/worklog"
+            page_size = 100
+            start_at = 0
             worklogs = []
-            for worklog in result.get("worklogs", []):
-                worklogs.append(
-                    {
-                        "id": worklog.get("id"),
-                        "comment": self._clean_text(worklog.get("comment", "")),
-                        "created": str(parse_date(worklog.get("created", ""))),
-                        "updated": str(parse_date(worklog.get("updated", ""))),
-                        "started": str(parse_date(worklog.get("started", ""))),
-                        "time_spent": worklog.get("timeSpent", ""),
-                        "time_spent_seconds": worklog.get("timeSpentSeconds", 0),
-                        "author": worklog.get("author", {}).get(
-                            "displayName", "Unknown"
-                        ),
-                    }
+
+            while True:
+                result = self.jira.get(
+                    url, params={"maxResults": page_size, "startAt": start_at}
                 )
+                if not isinstance(result, dict):
+                    msg = f"Unexpected return value type from worklog API: {type(result)}"
+                    logger.error(msg)
+                    raise TypeError(msg)
+
+                page = result.get("worklogs", [])
+                for worklog in page:
+                    worklogs.append(
+                        {
+                            "id": worklog.get("id"),
+                            "comment": self._clean_text(worklog.get("comment", "")),
+                            "created": str(parse_date(worklog.get("created", ""))),
+                            "updated": str(parse_date(worklog.get("updated", ""))),
+                            "started": str(parse_date(worklog.get("started", ""))),
+                            "time_spent": worklog.get("timeSpent", ""),
+                            "time_spent_seconds": worklog.get("timeSpentSeconds", 0),
+                            "author": worklog.get("author", {}).get(
+                                "displayName", "Unknown"
+                            ),
+                        }
+                    )
+
+                start_at += len(page)
+                if start_at >= result.get("total", 0) or not page:
+                    break
 
             return worklogs
         except Exception as e:
