@@ -229,7 +229,9 @@ class WorklogMixin(JiraClient):
                     url, params={"maxResults": page_size, "startAt": start_at}
                 )
                 if not isinstance(result, dict):
-                    msg = f"Unexpected return value type from worklog API: {type(result)}"
+                    msg = (
+                        f"Unexpected return value type from worklog API: {type(result)}"
+                    )
                     logger.error(msg)
                     raise TypeError(msg)
 
