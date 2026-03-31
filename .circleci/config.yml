@@ -1,0 +1,63 @@
+version: 2.1
+
+orbs:
+  python: whoop/python@1
+
+executors:
+  python311:
+    docker:
+      - image: cimg/python:3.11
+    resource_class: large
+    environment:
+      CODE_ARTIFACT_HOST: whoop-688238828846.d.codeartifact.us-west-2.amazonaws.com
+      CODE_ARTIFACT_REPOSITORY_URL: https://whoop-688238828846.d.codeartifact.us-west-2.amazonaws.com/pypi/whoop-pypi/
+      UV_INDEX_URL: https://whoop-688238828846.d.codeartifact.us-west-2.amazonaws.com/pypi/whoop-pypi/simple/
+
+jobs:
+  test:
+    executor: python311
+    steps:
+      - checkout
+      - python/authenticate-with-codeartifact
+      - run:
+          name: Install uv
+          command: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - restore_cache:
+          keys:
+            - uv-deps-v1-{{ checksum "uv.lock" }}
+            - uv-deps-v1-
+      - run:
+          name: Configure uv for CodeArtifact
+          command: |
+            export CODEARTIFACT_TOKEN=$(aws codeartifact get-authorization-token \
+              --domain whoop \
+              --domain-owner 688238828846 \
+              --query authorizationToken \
+              --output text \
+              --region us-west-2)
+            echo "export UV_INDEX_URL=https://aws:${CODEARTIFACT_TOKEN}@${CODE_ARTIFACT_HOST}/pypi/whoop-pypi/simple/" >> "$BASH_ENV"
+      - run:
+          name: Install dependencies
+          command: uv sync --frozen --all-extras --dev
+      - save_cache:
+          key: uv-deps-v1-{{ checksum "uv.lock" }}
+          paths:
+            - .venv
+            - /home/circleci/.cache/uv
+      - run:
+          name: Run linting
+          command: uv run pre-commit run --all-files
+      - run:
+          name: Run tests
+          command: uv run pytest -v --cov=src/mcp_atlassian --cov-report=xml --junitxml=test-results/junit.xml
+      - store_test_results:
+          path: test-results
+      - store_artifacts:
+          path: coverage.xml
+
+workflows:
+  build-test-scan:
+    jobs:
+      - test
+      - python/endor-scan:
+          executor_docker_image: cimg/python:3.11
