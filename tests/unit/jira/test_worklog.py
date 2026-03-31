@@ -64,8 +64,8 @@ class TestWorklogMixin:
 
     def test_get_worklogs_basic(self, worklog_mixin):
         """Test basic functionality of get_worklogs."""
-        # Setup mock response
         mock_result = {
+            "total": 1,
             "worklogs": [
                 {
                     "id": "10001",
@@ -77,15 +77,17 @@ class TestWorklogMixin:
                     "timeSpentSeconds": 3600,
                     "author": {"displayName": "Test User"},
                 }
-            ]
+            ],
         }
-        worklog_mixin.jira.issue_get_worklog.return_value = mock_result
+        worklog_mixin.jira.resource_url.return_value = "https://jira.example.com/rest/api/2/issue"
+        worklog_mixin.jira.get.return_value = mock_result
 
-        # Call the method
         result = worklog_mixin.get_worklogs("TEST-123")
 
-        # Verify
-        worklog_mixin.jira.issue_get_worklog.assert_called_once_with("TEST-123")
+        worklog_mixin.jira.get.assert_called_once_with(
+            "https://jira.example.com/rest/api/2/issue/TEST-123/worklog",
+            params={"maxResults": 100, "startAt": 0},
+        )
         assert len(result) == 1
         assert result[0]["id"] == "10001"
         assert result[0]["comment"] == "Work item 1"
@@ -95,8 +97,8 @@ class TestWorklogMixin:
 
     def test_get_worklogs_with_multiple_entries(self, worklog_mixin):
         """Test get_worklogs with multiple worklog entries."""
-        # Setup mock response with multiple entries
         mock_result = {
+            "total": 2,
             "worklogs": [
                 {
                     "id": "10001",
@@ -114,14 +116,13 @@ class TestWorklogMixin:
                     "timeSpentSeconds": 7200,
                     "author": {"displayName": "User 2"},
                 },
-            ]
+            ],
         }
-        worklog_mixin.jira.issue_get_worklog.return_value = mock_result
+        worklog_mixin.jira.resource_url.return_value = "https://jira.example.com/rest/api/2/issue"
+        worklog_mixin.jira.get.return_value = mock_result
 
-        # Call the method
         result = worklog_mixin.get_worklogs("TEST-123")
 
-        # Verify
         assert len(result) == 2
         assert result[0]["id"] == "10001"
         assert result[1]["id"] == "10002"
@@ -130,8 +131,8 @@ class TestWorklogMixin:
 
     def test_get_worklogs_with_missing_fields(self, worklog_mixin):
         """Test get_worklogs with missing fields."""
-        # Setup mock response with missing fields
         mock_result = {
+            "total": 1,
             "worklogs": [
                 {
                     "id": "10001",
@@ -139,14 +140,13 @@ class TestWorklogMixin:
                     "created": "2024-01-01T10:00:00.000+0000",
                     # Missing other fields
                 }
-            ]
+            ],
         }
-        worklog_mixin.jira.issue_get_worklog.return_value = mock_result
+        worklog_mixin.jira.resource_url.return_value = "https://jira.example.com/rest/api/2/issue"
+        worklog_mixin.jira.get.return_value = mock_result
 
-        # Call the method
         result = worklog_mixin.get_worklogs("TEST-123")
 
-        # Verify
         assert len(result) == 1
         assert result[0]["id"] == "10001"
         assert result[0]["comment"] == ""
@@ -156,24 +156,42 @@ class TestWorklogMixin:
 
     def test_get_worklogs_with_empty_response(self, worklog_mixin):
         """Test get_worklogs with empty response."""
-        # Setup mock response with no worklogs
-        worklog_mixin.jira.issue_get_worklog.return_value = {}
+        worklog_mixin.jira.resource_url.return_value = "https://jira.example.com/rest/api/2/issue"
+        worklog_mixin.jira.get.return_value = {"total": 0, "worklogs": []}
 
-        # Call the method
         result = worklog_mixin.get_worklogs("TEST-123")
 
-        # Verify
         assert isinstance(result, list)
         assert len(result) == 0
 
+    def test_get_worklogs_paginates_multiple_pages(self, worklog_mixin):
+        """Test that get_worklogs fetches all pages when total exceeds page size."""
+        page1 = {
+            "total": 3,
+            "worklogs": [
+                {"id": "1", "timeSpent": "1h", "timeSpentSeconds": 3600, "author": {"displayName": "U"}},
+                {"id": "2", "timeSpent": "1h", "timeSpentSeconds": 3600, "author": {"displayName": "U"}},
+            ],
+        }
+        page2 = {
+            "total": 3,
+            "worklogs": [
+                {"id": "3", "timeSpent": "1h", "timeSpentSeconds": 3600, "author": {"displayName": "U"}},
+            ],
+        }
+        worklog_mixin.jira.resource_url.return_value = "https://jira.example.com/rest/api/2/issue"
+        worklog_mixin.jira.get.side_effect = [page1, page2]
+
+        result = worklog_mixin.get_worklogs("TEST-123")
+
+        assert len(result) == 3
+        assert worklog_mixin.jira.get.call_count == 2
+
     def test_get_worklogs_with_error(self, worklog_mixin):
         """Test get_worklogs error handling."""
-        # Setup mock to raise exception
-        worklog_mixin.jira.issue_get_worklog.side_effect = Exception(
-            "Worklog fetch error"
-        )
+        worklog_mixin.jira.resource_url.return_value = "https://jira.example.com/rest/api/2/issue"
+        worklog_mixin.jira.get.side_effect = Exception("Worklog fetch error")
 
-        # Call the method and verify exception
         with pytest.raises(
             Exception, match="Error getting worklogs: Worklog fetch error"
         ):
