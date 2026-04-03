@@ -587,10 +587,10 @@ class JiraIssue(ApiModel, TimestampMixin):
 
         # Add created and updated timestamps if available and requested
         if self.created and should_include_field("created"):
-            result["created"] = self.created
+            result["created"] = self.format_timestamp(self.created)
 
         if self.updated and should_include_field("updated"):
-            result["updated"] = self.updated
+            result["updated"] = self.format_timestamp(self.updated)
 
         # Add comments if available and requested
         if self.comments and should_include_field("comment"):
