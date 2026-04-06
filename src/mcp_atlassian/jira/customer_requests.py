@@ -46,7 +46,7 @@ class CustomerRequestsMixin(JiraClient):
             return True
         if isinstance(value, str):
             return not value.strip()
-        if isinstance(value, (list, dict)):
+        if isinstance(value, list | dict):
             return len(value) == 0
         return False
 
@@ -117,7 +117,7 @@ class CustomerRequestsMixin(JiraClient):
                     candidates.append(candidate_text)
             return candidates
 
-        if isinstance(value, (str, int, float)):
+        if isinstance(value, str | int | float):
             candidate_text = str(value).strip()
             return [candidate_text] if candidate_text else []
 
