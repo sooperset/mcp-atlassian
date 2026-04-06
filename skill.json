@@ -1,0 +1,13 @@
+{
+  "name": "mcp-atlassian",
+  "version": "0.1.0",
+  "description": "MCP server for Atlassian tools (Confluence, Jira)",
+  "author": {
+    "name": "sooperset",
+    "url": "https://github.com/sooperset"
+  },
+  "homepage": "https://github.com/sooperset/mcp-atlassian",
+  "repository": "https://github.com/sooperset/mcp-atlassian",
+  "keywords": ["mcp", "codex"],
+  "license": "MIT"
+}
