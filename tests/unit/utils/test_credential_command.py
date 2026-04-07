@@ -12,7 +12,6 @@ from mcp_atlassian.utils.credential_command import (
     CredentialCommandResolver,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -99,9 +98,7 @@ class TestResolve:
         assert os.environ["JIRA_API_TOKEN"] == "my-secret-token"
         mock_run.assert_called_once()
 
-    def test_resolve_is_idempotent(
-        self, resolver: CredentialCommandResolver
-    ) -> None:
+    def test_resolve_is_idempotent(self, resolver: CredentialCommandResolver) -> None:
         os.environ["JIRA_API_TOKEN_COMMAND"] = "echo secret"
         with patch("mcp_atlassian.utils.credential_command.subprocess.run") as mock_run:
             mock_run.return_value = subprocess.CompletedProcess(
@@ -124,7 +121,9 @@ class TestResolve:
     def test_command_timeout(self, resolver: CredentialCommandResolver) -> None:
         os.environ["JIRA_API_TOKEN_COMMAND"] = "sleep 100"
         with patch("mcp_atlassian.utils.credential_command.subprocess.run") as mock_run:
-            mock_run.side_effect = subprocess.TimeoutExpired(cmd="sleep 100", timeout=30)
+            mock_run.side_effect = subprocess.TimeoutExpired(
+                cmd="sleep 100", timeout=30
+            )
             with pytest.raises(ValueError, match="timed out"):
                 resolver.resolve("jira")
 
@@ -168,9 +167,7 @@ class TestResolve:
             "echo secret", shell=True, capture_output=True, text=True, timeout=5
         )
 
-    def test_resolves_multiple_vars(
-        self, resolver: CredentialCommandResolver
-    ) -> None:
+    def test_resolves_multiple_vars(self, resolver: CredentialCommandResolver) -> None:
         os.environ["JIRA_API_TOKEN_COMMAND"] = "echo token1"
         os.environ["JIRA_PERSONAL_TOKEN_COMMAND"] = "echo token2"
         with patch("mcp_atlassian.utils.credential_command.subprocess.run") as mock_run:

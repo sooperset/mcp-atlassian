@@ -90,9 +90,9 @@ class CredentialCommandResolver:
 
             logger.debug("Resolving %s via %s", target_var, cmd_var)
             try:
-                result = subprocess.run(  # noqa: S603
+                result = subprocess.run(  # noqa: S602
                     command,
-                    shell=True,  # noqa: S602
+                    shell=True,
                     capture_output=True,
                     text=True,
                     timeout=timeout,
