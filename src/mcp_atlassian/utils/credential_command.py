@@ -52,8 +52,17 @@ class CredentialCommandResolver:
     # ------------------------------------------------------------------
 
     def has_deferred_credentials(self, service: str) -> bool:
-        """Return ``True`` if any ``*_COMMAND`` vars are configured for *service*
-        and the corresponding plain env var is **not** already set.
+        """Check if any ``*_COMMAND`` vars are configured for a service.
+
+        Returns ``True`` only when a command var is set and the corresponding
+        plain env var is **not** already populated.  This method is safe to
+        call at startup — it never executes any commands.
+
+        Args:
+            service: Service name (``"jira"`` or ``"confluence"``).
+
+        Returns:
+            ``True`` if deferred credentials are available for *service*.
         """
         for cmd_var in _SERVICE_COMMANDS.get(service, []):
             target_var = COMMAND_ENV_MAP[cmd_var]
@@ -66,11 +75,14 @@ class CredentialCommandResolver:
     # ------------------------------------------------------------------
 
     def resolve(self, service: str) -> None:
-        """Run all pending ``*_COMMAND`` env vars for *service*.
+        """Run all pending ``*_COMMAND`` env vars for a service.
 
         Sets the corresponding plain env var with the trimmed stdout of
         each command.  Idempotent per service — subsequent calls are
         no-ops.
+
+        Args:
+            service: Service name (``"jira"`` or ``"confluence"``).
 
         Raises:
             ValueError: If any command fails, times out, or returns
@@ -128,11 +140,23 @@ class CredentialCommandResolver:
     # ------------------------------------------------------------------
 
     def get_cached_fetcher(self, service: str) -> Any | None:
-        """Return the cached fetcher for *service*, or ``None``."""
+        """Return the cached fetcher for a service.
+
+        Args:
+            service: Service name (``"jira"`` or ``"confluence"``).
+
+        Returns:
+            The cached fetcher instance, or ``None`` if not yet resolved.
+        """
         return self._fetcher_cache.get(service)
 
     def cache_fetcher(self, service: str, fetcher: Any) -> None:
-        """Cache *fetcher* for *service*."""
+        """Cache a fetcher instance for a service.
+
+        Args:
+            service: Service name (``"jira"`` or ``"confluence"``).
+            fetcher: The fetcher instance to cache.
+        """
         self._fetcher_cache[service] = fetcher
 
 
@@ -144,7 +168,11 @@ _resolver: CredentialCommandResolver | None = None
 
 
 def get_resolver() -> CredentialCommandResolver:
-    """Return the module-level ``CredentialCommandResolver`` singleton."""
+    """Return the module-level ``CredentialCommandResolver`` singleton.
+
+    Returns:
+        The shared resolver instance.
+    """
     global _resolver  # noqa: PLW0603
     if _resolver is None:
         _resolver = CredentialCommandResolver()
