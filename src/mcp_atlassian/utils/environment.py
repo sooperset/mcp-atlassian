@@ -121,6 +121,16 @@ def get_available_services(
         )
 
     if not confluence_is_setup:
+        from mcp_atlassian.utils.credential_command import get_resolver
+
+        if get_resolver().has_deferred_credentials("confluence"):
+            confluence_is_setup = True
+            logger.info(
+                "Confluence has deferred credential commands configured "
+                "- credentials will be resolved on first use"
+            )
+
+    if not confluence_is_setup:
         confluence_token = headers.get("X-Atlassian-Confluence-Personal-Token")
         confluence_url_header = headers.get("X-Atlassian-Confluence-Url")
 
@@ -158,6 +168,16 @@ def get_available_services(
             "Using Jira minimal OAuth configuration "
             "- expecting user-provided tokens via headers"
         )
+
+    if not jira_is_setup:
+        from mcp_atlassian.utils.credential_command import get_resolver as _get_resolver
+
+        if _get_resolver().has_deferred_credentials("jira"):
+            jira_is_setup = True
+            logger.info(
+                "Jira has deferred credential commands configured "
+                "- credentials will be resolved on first use"
+            )
 
     if not jira_is_setup:
         jira_token = headers.get("X-Atlassian-Jira-Personal-Token")

@@ -669,6 +669,25 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
         )
         return spec.fetcher_class(config=global_config_fallback)
 
+    # Try deferred credential resolution via *_COMMAND env vars
+    deferred_attr = f"has_deferred_{spec.name.lower()}_auth"
+    if app_ctx and getattr(app_ctx, deferred_attr, False):
+        from mcp_atlassian.utils.credential_command import get_resolver
+
+        resolver = get_resolver()
+        cached = resolver.get_cached_fetcher(spec.name.lower())
+        if cached:
+            return cached
+        resolver.resolve(spec.name.lower())
+        config = spec.config_class.from_env()  # type: ignore[attr-defined]
+        fetcher = spec.fetcher_class(config=config)
+        resolver.cache_fetcher(spec.name.lower(), fetcher)
+        logger.info(
+            "%s credentials resolved from *_COMMAND env vars on first use.",
+            spec.name,
+        )
+        return fetcher
+
     logger.error(f"{spec.name} configuration could not be resolved.")
     raise ValueError(
         f"{spec.name} client (fetcher) not available. "
