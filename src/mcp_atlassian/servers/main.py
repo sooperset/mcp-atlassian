@@ -160,9 +160,19 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
         except Exception as e:
             logger.error(f"Failed to load Confluence configuration: {e}", exc_info=True)
 
+    from mcp_atlassian.utils.credential_command import get_resolver
+
+    resolver = get_resolver()
     app_context = MainAppContext(
         full_jira_config=loaded_jira_config,
         full_confluence_config=loaded_confluence_config,
+        has_deferred_jira_auth=(
+            loaded_jira_config is None and resolver.has_deferred_credentials("jira")
+        ),
+        has_deferred_confluence_auth=(
+            loaded_confluence_config is None
+            and resolver.has_deferred_credentials("confluence")
+        ),
         read_only=read_only,
         enabled_tools=enabled_tools,
         enabled_toolsets=enabled_toolsets,
