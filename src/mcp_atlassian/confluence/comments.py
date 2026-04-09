@@ -1,6 +1,8 @@
 """Module for Confluence comment operations."""
 
+import json
 import logging
+import time
 from typing import Any
 
 import requests
@@ -351,6 +353,21 @@ class CommentsMixin(ConfluenceClient):
                 space_key = ""
             else:
                 # v1 API: POST /rest/api/content/ with inline location
+                #
+                # Confluence Server/DC requires four additional fields in
+                # inlineProperties that the frontend editor normally supplies
+                # when a user highlights text. Omitting any of them yields
+                # HTTP 400 with validation keys matchIndex / lastFetchTime /
+                # serializedHighlights. Field formats (discovered empirically
+                # against Confluence DC 8.x):
+                #
+                # - numMatches:          int, total occurrences on the page
+                # - matchIndex:          int, zero-based index of the match
+                # - lastFetchTime:       str, Unix epoch in **milliseconds**
+                # - serializedHighlights: str, JSON-encoded nested array of
+                #                         the form [["<selected text>"]]
+                last_fetch_time_ms = str(int(time.time() * 1000))
+                serialized_highlights = json.dumps([[text_selection]])
                 data: dict[str, Any] = {
                     "type": "comment",
                     "container": {
@@ -367,6 +384,10 @@ class CommentsMixin(ConfluenceClient):
                         "location": "inline",
                         "inlineProperties": {
                             "originalSelection": text_selection,
+                            "numMatches": text_selection_match_count,
+                            "matchIndex": text_selection_match_index,
+                            "lastFetchTime": last_fetch_time_ms,
+                            "serializedHighlights": serialized_highlights,
                         },
                     },
                 }

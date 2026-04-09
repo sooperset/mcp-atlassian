@@ -649,7 +649,7 @@ class TestGetInlineComments:
         assert result == []
 
     def test_get_inline_comments_html_format(self, comments_mixin_dc):
-        """get_inline_comments returns HTML body when return_markdown=False (Server/DC)."""
+        """get_inline_comments returns HTML body when markdown=False (Server/DC)."""
         comments_mixin_dc.confluence.get_page_by_id.return_value = {
             "space": {"key": "TEST"}
         }
@@ -694,9 +694,47 @@ class TestAddInlineComment:
         assert call_args[0][0] == "rest/api/content/"
         data = call_args[1]["data"]
         assert data["extensions"]["location"] == "inline"
-        assert data["extensions"]["inlineProperties"]["originalSelection"] == (
-            "some text to anchor"
+        inline_props = data["extensions"]["inlineProperties"]
+        assert inline_props["originalSelection"] == "some text to anchor"
+        # Server/DC requires four additional fields that the frontend editor
+        # normally supplies. Confluence rejects the POST with HTTP 400 if any
+        # of them is missing; see add_inline_comment() for the discovered
+        # field formats.
+        assert inline_props["numMatches"] == 1
+        assert inline_props["matchIndex"] == 0
+        assert isinstance(inline_props["lastFetchTime"], str)
+        assert inline_props["lastFetchTime"].isdigit()
+        assert inline_props["serializedHighlights"] == ('[["some text to anchor"]]')
+
+    def test_add_inline_comment_v1_forwards_match_count_and_index(
+        self, comments_mixin_dc
+    ):
+        """v1 path forwards match_count/index to numMatches/matchIndex."""
+        comments_mixin_dc.confluence.get_page_by_id.return_value = {
+            "space": {"key": "TEST"}
+        }
+        comments_mixin_dc.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<p>x</p>"
         )
+        comments_mixin_dc.confluence.post.return_value = MOCK_INLINE_COMMENT_V1_RESPONSE
+        comments_mixin_dc.preprocessor.process_html_content.return_value = (
+            "<p>x</p>",
+            "x",
+        )
+
+        comments_mixin_dc.add_inline_comment(
+            "12345",
+            "x",
+            "repeated text",
+            text_selection_match_count=5,
+            text_selection_match_index=3,
+        )
+
+        inline_props = comments_mixin_dc.confluence.post.call_args[1]["data"][
+            "extensions"
+        ]["inlineProperties"]
+        assert inline_props["numMatches"] == 5
+        assert inline_props["matchIndex"] == 3
 
     def test_add_inline_comment_v2_cloud_success(self, comments_mixin):
         """add_inline_comment uses v2 API on Cloud (any auth type)."""
