@@ -2482,6 +2482,91 @@ async def get_all_projects(
 
 
 @jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_projects"},
+    annotations={"title": "Search Projects", "readOnlyHint": True},
+)
+async def search_projects(
+    ctx: Context,
+    query: Annotated[
+        str,
+        Field(
+            description="Name or key prefix to search for",
+        ),
+    ],
+    max_results: Annotated[
+        int,
+        Field(
+            description="Maximum number of results to return",
+            default=20,
+            ge=1,
+            le=50,
+        ),
+    ] = 20,
+    current_project_ids: Annotated[
+        str | None,
+        Field(
+            description=("Comma-separated list of project IDs to exclude from results"),
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """Search for Jira projects by name or key prefix.
+
+    Uses the projects picker endpoint to return a ranked list of matching
+    projects without fetching every visible project on the instance.
+
+    Args:
+        ctx: The FastMCP context.
+        query: Name or key prefix to search for.
+        max_results: Maximum number of results to return.
+        current_project_ids: Comma-separated project IDs to exclude.
+
+    Returns:
+        JSON string representing a list of matching project objects.
+        Project keys are always returned in uppercase.
+        If JIRA_PROJECTS_FILTER is configured, only returns projects matching those keys.
+    """
+    try:
+        jira = await get_jira_fetcher(ctx)
+
+        # Parse comma-separated project IDs into list
+        parsed_ids: list[str] | None = None
+        if current_project_ids:
+            parsed_ids = [
+                pid.strip() for pid in current_project_ids.split(",") if pid.strip()
+            ]
+
+        projects = jira.search_projects(
+            query=query,
+            max_results=max_results,
+            current_project_ids=parsed_ids,
+        )
+    except (MCPAtlassianAuthenticationError, HTTPError, OSError, ValueError) as e:
+        error_message = ""
+        log_level = logging.ERROR
+        if isinstance(e, MCPAtlassianAuthenticationError):
+            error_message = f"Authentication/Permission Error: {str(e)}"
+        elif isinstance(e, OSError | HTTPError):
+            error_message = f"Network or API Error: {str(e)}"
+        elif isinstance(e, ValueError):
+            error_message = f"Configuration Error: {str(e)}"
+
+        error_result = {
+            "success": False,
+            "error": error_message,
+        }
+        logger.log(log_level, f"search_projects failed: {error_message}")
+        return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+    # Ensure all project keys are uppercase
+    for project in projects:
+        if "key" in project:
+            project["key"] = project["key"].upper()
+
+    return json.dumps(projects, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
     tags={"jira", "read", "toolset:jira_service_desk"},
     annotations={
         "title": "Get Service Desk For Project",

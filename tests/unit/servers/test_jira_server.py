@@ -218,6 +218,33 @@ def mock_jira_fetcher():
     # Set default side_effect to respect include_archived parameter
     mock_fetcher.get_all_projects.side_effect = mock_get_all_projects
 
+    # Configure search_projects
+    def mock_search_projects(query, max_results=20, current_project_ids=None):
+        all_projects = [
+            {
+                "id": "10000",
+                "key": "TEST",
+                "name": "Test Project",
+            },
+            {
+                "id": "10001",
+                "key": "DEMO",
+                "name": "Demo Project",
+            },
+        ]
+        # Simple query filtering for test purposes
+        results = [
+            p
+            for p in all_projects
+            if query.upper() in p["key"] or query.lower() in p["name"].lower()
+        ]
+        if current_project_ids:
+            exclude = set(current_project_ids)
+            results = [p for p in results if p["id"] not in exclude]
+        return results[:max_results]
+
+    mock_fetcher.search_projects.side_effect = mock_search_projects
+
     mock_fetcher.jira.jql.return_value = {
         "issues": [
             {
@@ -414,6 +441,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         remove_issue_link,
         search,
         search_fields,
+        search_projects,
         transition_issue,
         update_issue,
         update_sprint,
@@ -427,6 +455,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(get_project_versions)
     jira_sub_mcp.add_tool(get_project_components)
     jira_sub_mcp.add_tool(get_all_projects)
+    jira_sub_mcp.add_tool(search_projects)
     jira_sub_mcp.add_tool(get_service_desk_for_project)
     jira_sub_mcp.add_tool(get_service_desk_queues)
     jira_sub_mcp.add_tool(get_queue_issues)
@@ -1370,6 +1399,112 @@ async def test_get_all_projects_tool_configuration_error_handling(
     data = json.loads(msg.text)
     assert data["success"] is False
     assert "Configuration Error" in data["error"]
+
+
+@pytest.mark.anyio
+async def test_search_projects_tool(jira_client, mock_jira_fetcher):
+    """Test the jira_search_projects tool returns matching projects."""
+    mock_jira_fetcher.search_projects.reset_mock()
+    mock_jira_fetcher.search_projects.side_effect = (
+        lambda query, max_results=20, current_project_ids=None: [
+            {"id": "10000", "key": "test", "name": "Test Project"},
+        ]
+    )
+
+    response = await jira_client.call_tool(
+        "jira_search_projects",
+        {"query": "Test"},
+    )
+    assert hasattr(response, "content")
+    assert len(response.content) == 1
+    msg = response.content[0]
+    assert msg.type == "text"
+
+    data = json.loads(msg.text)
+    assert len(data) == 1
+    assert data[0]["key"] == "TEST"
+    assert data[0]["name"] == "Test Project"
+
+    mock_jira_fetcher.search_projects.assert_called_once_with(
+        query="Test",
+        max_results=20,
+        current_project_ids=None,
+    )
+
+
+@pytest.mark.anyio
+async def test_search_projects_tool_with_all_params(jira_client, mock_jira_fetcher):
+    """Test the jira_search_projects tool with all parameters."""
+    mock_jira_fetcher.search_projects.reset_mock()
+    mock_jira_fetcher.search_projects.side_effect = (
+        lambda query, max_results=20, current_project_ids=None: [
+            {"id": "10001", "key": "demo", "name": "Demo Project"},
+        ]
+    )
+
+    response = await jira_client.call_tool(
+        "jira_search_projects",
+        {
+            "query": "Demo",
+            "max_results": 5,
+            "current_project_ids": "10000, 10002",
+        },
+    )
+    assert hasattr(response, "content")
+    data = json.loads(response.content[0].text)
+    assert len(data) == 1
+    assert data[0]["key"] == "DEMO"
+
+    mock_jira_fetcher.search_projects.assert_called_once_with(
+        query="Demo",
+        max_results=5,
+        current_project_ids=["10000", "10002"],
+    )
+
+
+@pytest.mark.anyio
+async def test_search_projects_tool_empty_response(jira_client, mock_jira_fetcher):
+    """Test tool handles empty results."""
+    mock_jira_fetcher.search_projects.reset_mock()
+    mock_jira_fetcher.search_projects.side_effect = (
+        lambda query, max_results=20, current_project_ids=None: []
+    )
+
+    response = await jira_client.call_tool(
+        "jira_search_projects", {"query": "nonexistent"}
+    )
+    data = json.loads(response.content[0].text)
+    assert data == []
+
+
+@pytest.mark.anyio
+async def test_search_projects_tool_api_error_handling(jira_client, mock_jira_fetcher):
+    """Test tool handles API errors gracefully."""
+    from requests.exceptions import HTTPError
+
+    mock_jira_fetcher.search_projects.side_effect = HTTPError("API Error")
+
+    response = await jira_client.call_tool("jira_search_projects", {"query": "test"})
+    data = json.loads(response.content[0].text)
+    assert data["success"] is False
+    assert "Network or API Error" in data["error"]
+
+
+@pytest.mark.anyio
+async def test_search_projects_tool_authentication_error_handling(
+    jira_client, mock_jira_fetcher
+):
+    """Test tool handles authentication errors gracefully."""
+    from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
+
+    mock_jira_fetcher.search_projects.side_effect = MCPAtlassianAuthenticationError(
+        "Authentication failed"
+    )
+
+    response = await jira_client.call_tool("jira_search_projects", {"query": "test"})
+    data = json.loads(response.content[0].text)
+    assert data["success"] is False
+    assert "Authentication/Permission Error" in data["error"]
 
 
 @pytest.mark.anyio

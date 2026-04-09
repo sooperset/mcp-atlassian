@@ -41,6 +41,60 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             logger.error(f"Error getting all projects: {str(e)}")
             return []
 
+    def search_projects(
+        self,
+        query: str,
+        max_results: int = 20,
+        current_project_ids: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Search for projects by name or key prefix.
+
+        Uses the /rest/api/2/projects/picker endpoint to return a ranked
+        list of matching projects without fetching every visible project.
+
+        Args:
+            query: Name or key prefix to search for
+            max_results: Maximum number of results to return
+            current_project_ids: Project IDs to exclude from results
+
+        Returns:
+            List of matching project data dictionaries
+        """
+        try:
+            params: dict[str, Any] = {
+                "query": query,
+                "maxResults": max_results,
+            }
+            if current_project_ids:
+                params["currentProjectIds"] = ",".join(current_project_ids)
+
+            response = self.jira.get("rest/api/2/projects/picker", params=params)
+            if not isinstance(response, dict):
+                logger.error(
+                    f"Unexpected return type from projects/picker: {type(response)}"
+                )
+                return []
+
+            projects = response.get("projects", [])
+            if not isinstance(projects, list):
+                return []
+
+            # Apply project filter if configured
+            if self.config.projects_filter:
+                allowed_keys = {
+                    k.strip().upper() for k in self.config.projects_filter.split(",")
+                }
+                projects = [
+                    p for p in projects if p.get("key", "").upper() in allowed_keys
+                ]
+
+            return projects
+
+        except Exception as e:
+            logger.error(f"Error searching projects with query '{query}': {str(e)}")
+            return []
+
     def get_project(self, project_key: str) -> dict[str, Any] | None:
         """
         Get project information by key.

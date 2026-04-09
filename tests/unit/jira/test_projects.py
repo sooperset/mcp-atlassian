@@ -766,3 +766,84 @@ def test_create_project_version_error(projects_mixin: ProjectsMixin) -> None:
     ):
         with pytest.raises(Exception):
             projects_mixin.create_project_version("PROJ4", "v6.0")
+
+
+def test_search_projects(projects_mixin: ProjectsMixin, mock_projects: list[dict]):
+    """Test search_projects returns matching projects from the picker endpoint."""
+    projects_mixin.config.projects_filter = None
+    projects_mixin.jira.get.return_value = {"projects": mock_projects}
+
+    result = projects_mixin.search_projects("PROJ")
+    assert result == mock_projects
+    projects_mixin.jira.get.assert_called_once_with(
+        "rest/api/2/projects/picker",
+        params={"query": "PROJ", "maxResults": 20},
+    )
+
+
+def test_search_projects_with_max_results(projects_mixin: ProjectsMixin):
+    """Test search_projects passes max_results to the API."""
+    projects_mixin.config.projects_filter = None
+    projects_mixin.jira.get.return_value = {"projects": []}
+
+    projects_mixin.search_projects("test", max_results=5)
+    projects_mixin.jira.get.assert_called_once_with(
+        "rest/api/2/projects/picker",
+        params={"query": "test", "maxResults": 5},
+    )
+
+
+def test_search_projects_with_current_project_ids(
+    projects_mixin: ProjectsMixin, mock_projects: list[dict]
+):
+    """Test search_projects passes currentProjectIds to the API."""
+    projects_mixin.config.projects_filter = None
+    projects_mixin.jira.get.return_value = {"projects": mock_projects}
+
+    projects_mixin.search_projects("PROJ", current_project_ids=["10000", "10001"])
+    projects_mixin.jira.get.assert_called_once_with(
+        "rest/api/2/projects/picker",
+        params={
+            "query": "PROJ",
+            "maxResults": 20,
+            "currentProjectIds": "10000,10001",
+        },
+    )
+
+
+def test_search_projects_with_projects_filter(
+    projects_mixin: ProjectsMixin, mock_projects: list[dict]
+):
+    """Test search_projects respects JIRA_PROJECTS_FILTER config."""
+    projects_mixin.jira.get.return_value = {"projects": mock_projects}
+    projects_mixin.config.projects_filter = "PROJ1"
+
+    result = projects_mixin.search_projects("PROJ")
+    assert len(result) == 1
+    assert result[0]["key"] == "PROJ1"
+
+
+def test_search_projects_empty_results(projects_mixin: ProjectsMixin):
+    """Test search_projects with no matching projects."""
+    projects_mixin.config.projects_filter = None
+    projects_mixin.jira.get.return_value = {"projects": []}
+
+    result = projects_mixin.search_projects("nonexistent")
+    assert result == []
+
+
+def test_search_projects_exception(projects_mixin: ProjectsMixin):
+    """Test search_projects returns empty list on API error."""
+    projects_mixin.jira.get.side_effect = Exception("API error")
+
+    result = projects_mixin.search_projects("PROJ")
+    assert result == []
+
+
+def test_search_projects_non_dict_response(projects_mixin: ProjectsMixin):
+    """Test search_projects handles non-dict response gracefully."""
+    projects_mixin.config.projects_filter = None
+    projects_mixin.jira.get.return_value = "not a dict"
+
+    result = projects_mixin.search_projects("PROJ")
+    assert result == []
