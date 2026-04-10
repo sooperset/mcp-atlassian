@@ -484,10 +484,8 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             if minor_edit is not None:
                 data["minorEdit"] = str(minor_edit).lower()
 
-            # Use PUT to support creating new versions of existing attachments
-            # PUT will create a new attachment if it doesn't exist, OR create a new
-            # version if an attachment with the same filename already exists
-            response = self.confluence._session.put(
+            # POST creates a new attachment or a new version if same filename exists
+            response = self.confluence._session.post(
                 url, headers=headers, files=files, data=data
             )
             response.raise_for_status()
@@ -502,8 +500,11 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             return result
 
         except Exception as e:
-            logger.error(f"Direct API upload failed: {e}")
-            return None
+            logger.error(
+                f"Direct API upload failed: {type(e).__name__}: {e}", exc_info=True
+            )
+            # Propagate error details instead of swallowing them
+            raise
         finally:
             # Close file handles (only for actual file objects, not text fields like comment)
             if "files" in locals() and "file" in files:
