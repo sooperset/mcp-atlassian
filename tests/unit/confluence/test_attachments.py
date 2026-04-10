@@ -292,7 +292,9 @@ class TestAttachmentsMixin:
         # First POST returns 400 "same file name"
         conflict_response = Mock()
         conflict_response.status_code = 400
-        conflict_response.text = "Attachment with same file name already exists: test_file.txt"
+        conflict_response.text = (
+            "Attachment with same file name already exists: test_file.txt"
+        )
 
         # GET list returns existing attachment
         list_response = Mock()
@@ -329,7 +331,9 @@ class TestAttachmentsMixin:
 
         # Verify the versioning POST was made to the /data endpoint
         assert attachments_mixin.confluence._session.post.call_count == 2
-        second_call_url = attachments_mixin.confluence._session.post.call_args_list[1][0][0]
+        second_call_url = attachments_mixin.confluence._session.post.call_args_list[1][
+            0
+        ][0]
         assert "/child/attachment/att12345/data" in second_call_url
 
     # Tests for upload_attachments method
