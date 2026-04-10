@@ -47,6 +47,16 @@ uv run pytest --cov=src/mcp_atlassian --cov-report=term-missing  # coverage
 
 ---
 
+## Workflow rules
+
+- **TDD is default**: RED (failing test) → GREEN (minimal impl) → REFACTOR. Skip only for pure dep/config changes.
+- **Plan mode first** for tasks touching >3 files or with architectural impact. No code edits before plan approval.
+- **Codex PR review is a hard gate** — NEVER merge without it, even for trivial PRs. Use `/codex:review --base main` or `/codex:adversarial-review --base main`. Trivial 1-line fixes may be exempted only with explicit maintainer approval. **Fallback**: if the Codex review command/plugin is unavailable, fall back to manual review by a second maintainer and record the bypass in the PR description.
+- **Verify release scope**: always `git log <tag>..HEAD` before cutting a release. If `feat:` commits are present, semver requires a minor bump (not patch).
+- **No internal terminology in public**: never use "phase", "dev/", "session", or other private project terms in issues, PRs, release notes, or any GitHub interaction.
+
+---
+
 ## Rules
 
 1. **Package management**: ONLY use `uv`, NEVER `pip`
@@ -56,6 +66,7 @@ uv run pytest --cov=src/mcp_atlassian --cov-report=term-missing  # coverage
 5. **Commits**: Use trailers for attribution, never mention tools/AI
 6. **Commit types**: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`, `ci` — scopes: `jira`, `confluence`, `server`, `auth`, `docker`, `docs`
 7. **File hygiene**: Prefer editing existing files over creating new ones
+8. **Release notes**: `@mention` PR authors only (not issue reporters). No per-person descriptions.
 
 ---
 
@@ -77,6 +88,7 @@ uv run pytest --cov=src/mcp_atlassian --cov-report=term-missing  # coverage
 - **Read-only mode**: `READ_ONLY_MODE=true` blocks all write tools at server level.
 - **Type checking**: pre-commit runs **mypy** (strict mode).
 - **Environment**: See `.env.example` for all configuration options (auth, proxy, SLA, filtering).
+- **ADF write requires Cloud v3 API**: `_markdown_to_jira()` returns an ADF dict on Cloud but wiki markup on Server/DC. v2 API rejects ADF dicts with "Operation value must be a string". Route through `_post_api3()` / `_put_api3()` when writing. Affects `create_issue`, `update_issue`, `add_comment`, `edit_comment`, `add_worklog`.
 
 ---
 
