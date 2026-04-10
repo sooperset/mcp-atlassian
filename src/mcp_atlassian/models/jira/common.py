@@ -85,6 +85,8 @@ class JiraUser(ApiModel):
             "email": self.email,
             "avatar_url": self.avatar_url,
         }
+        if self.account_id:
+            result["account_id"] = self.account_id
         if self.user_key:
             result["key"] = self.user_key
         return result

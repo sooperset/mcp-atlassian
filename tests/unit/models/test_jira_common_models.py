@@ -82,8 +82,17 @@ class TestJiraUser:
         assert simplified["display_name"] == "Test User"
         assert simplified["email"] == "test@example.com"
         assert simplified["avatar_url"] == "https://example.com/avatar.png"
-        assert "account_id" not in simplified
+        assert simplified["account_id"] == "user123"
         assert "time_zone" not in simplified
+
+    def test_to_simplified_dict_no_account_id(self):
+        """Test to_simplified_dict omits account_id when not set."""
+        user = JiraUser(
+            display_name="Test User",
+            email="test@example.com",
+        )
+        simplified = user.to_simplified_dict()
+        assert "account_id" not in simplified
 
     def test_from_api_response_server_dc_with_name_and_key(self):
         """Test JiraUser captures username and key from Server/DC API response."""
@@ -149,6 +158,7 @@ class TestJiraUser:
         simplified = user.to_simplified_dict()
         assert simplified["name"] == "John Doe"
         assert simplified["display_name"] == "John Doe"
+        assert simplified["account_id"] == "abc123"
         assert "key" not in simplified
 
 
