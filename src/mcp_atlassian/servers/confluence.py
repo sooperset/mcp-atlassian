@@ -1061,6 +1061,46 @@ async def search_user(
 
 
 @confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_users"},
+    annotations={"title": "Get User Details", "readOnlyHint": True},
+)
+async def get_user_details(
+    ctx: Context,
+    identifier: Annotated[
+        str,
+        Field(
+            description=(
+                "User identifier: accountId (Cloud), username (Server/DC), "
+                "or 'me' for the currently authenticated user."
+            )
+        ),
+    ],
+) -> str:
+    """Get Confluence user details by identifier.
+
+    Fetches the full profile for a specific user. Use 'me' to get the
+    currently authenticated user's profile.
+
+    Args:
+        ctx: The FastMCP context.
+        identifier: accountId (Cloud), username (Server/DC), or 'me'.
+
+    Returns:
+        JSON string with user details (accountId, displayName, email, etc.).
+    """
+    confluence = await get_confluence_fetcher(ctx)
+
+    if identifier.lower() == "me":
+        result = confluence.get_current_user_info()
+    elif confluence.config.is_cloud:
+        result = confluence.get_user_details_by_accountid(identifier)
+    else:
+        result = confluence.get_user_details_by_username(identifier)
+
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
     tags={"confluence", "read", "toolset:confluence_pages"},
     annotations={"title": "Get Page History", "readOnlyHint": True},
 )
