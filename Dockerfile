@@ -36,6 +36,9 @@ RUN find /app/.venv -name '__pycache__' -type d -exec rm -rf {} + && \
 # Final stage
 FROM python:3.13-alpine
 
+# Upgrade base packages to pick up security fixes (zlib >= 1.3.2-r0)
+RUN apk update && apk upgrade --no-cache && rm -rf /var/cache/apk/*
+
 # Create a non-root user 'app'
 RUN adduser -D -h /home/app -s /bin/sh app
 WORKDIR /app

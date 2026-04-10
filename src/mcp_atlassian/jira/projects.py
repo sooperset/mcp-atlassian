@@ -256,8 +256,12 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
                 logger.error(msg)
                 raise TypeError(msg)
 
-            # The new createmeta endpoint returns paginated "values" array
-            issue_types = meta.get("values", [])
+            # The new createmeta endpoint returns paginated "values" array;
+            # some API versions return "issueTypes" instead of "values"
+            issue_types = meta.get("values", meta.get("issueTypes", []))
+            if not issue_types:
+                # Fallback: atlassian-python-api returns "issueTypes" key
+                issue_types = meta.get("issueTypes", [])
             if not issue_types:
                 # Fallback for older response format
                 projects = meta.get("projects", [])
@@ -269,6 +273,40 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
         except Exception as e:
             logger.error(
                 f"Error getting issue types for project {project_key}: {str(e)}"
+            )
+            return []
+
+    def get_create_fields(
+        self, project_key: str, issue_type_id: str
+    ) -> list[dict[str, Any]]:
+        """Get all fields available when creating an issue of a given type.
+
+        Uses the non-deprecated ``issue_createmeta_fieldtypes`` endpoint to
+        return field metadata for the specified project and issue type.
+
+        Args:
+            project_key: The project key (e.g., 'PROJ')
+            issue_type_id: The issue type ID (from get_project_issue_types)
+
+        Returns:
+            List of field metadata dicts with fieldId, name, required,
+            schema, etc.
+        """
+        try:
+            meta = self.jira.issue_createmeta_fieldtypes(
+                project=project_key, issue_type_id=issue_type_id
+            )
+            if not isinstance(meta, dict):
+                msg = (
+                    f"Unexpected return type from "
+                    f"issue_createmeta_fieldtypes: {type(meta)}"
+                )
+                logger.error(msg)
+                raise TypeError(msg)
+            return meta.get("values", meta.get("fields", []))
+        except Exception as e:
+            logger.error(
+                f"Error getting create fields for {project_key}/{issue_type_id}: {e}"
             )
             return []
 

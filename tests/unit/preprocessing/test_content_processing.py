@@ -765,6 +765,73 @@ def function_{i}():
         assert "😀" in processed_markdown  # Emoji from numeric entity
 
 
+class TestTableLayout:
+    """Tests for table_layout post-processing in markdown_to_confluence_storage."""
+
+    MARKDOWN_WITH_TABLE = "| A | B |\n|---|---|\n| 1 | 2 |"
+
+    def test_table_layout_full_width(self, confluence_preprocessor):
+        """table_layout='full-width' sets data-table-width=1800 and data-layout=full-width."""
+        result = confluence_preprocessor.markdown_to_confluence_storage(
+            self.MARKDOWN_WITH_TABLE, table_layout="full-width"
+        )
+        assert 'data-table-width="1800"' in result
+        assert 'data-layout="full-width"' in result
+
+    def test_table_layout_wide(self, confluence_preprocessor):
+        """table_layout='wide' sets data-table-width=960 and data-layout=wide."""
+        result = confluence_preprocessor.markdown_to_confluence_storage(
+            self.MARKDOWN_WITH_TABLE, table_layout="wide"
+        )
+        assert 'data-table-width="960"' in result
+        assert 'data-layout="wide"' in result
+
+    def test_table_layout_default(self, confluence_preprocessor):
+        """table_layout='default' adds 760 px width attribute."""
+        result = confluence_preprocessor.markdown_to_confluence_storage(
+            self.MARKDOWN_WITH_TABLE, table_layout="default"
+        )
+        assert 'data-table-width="760"' in result
+        assert 'data-layout="default"' in result
+
+    def test_table_layout_none_emits_bare_table(self, confluence_preprocessor):
+        """Omitting table_layout leaves the converter's bare <table> tag unchanged."""
+        result = confluence_preprocessor.markdown_to_confluence_storage(
+            self.MARKDOWN_WITH_TABLE
+        )
+        # md2conf produces a bare <table> with no width attributes
+        assert "data-table-width" not in result
+
+    def test_table_layout_unknown_value_is_ignored(self, confluence_preprocessor):
+        """An unrecognised table_layout value does not add width attributes."""
+        result = confluence_preprocessor.markdown_to_confluence_storage(
+            self.MARKDOWN_WITH_TABLE, table_layout="ultra-wide"
+        )
+        # Unrecognised value: no post-processing applied
+        assert "data-table-width" not in result
+
+    def test_apply_table_layout_injects_attrs_on_bare_tables(
+        self, confluence_preprocessor
+    ):
+        """_apply_table_layout adds attributes to bare <table> tags."""
+        from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
+
+        html = "<table><tr><td>A</td></tr></table><table><tr><td>B</td></tr></table>"
+        result = ConfluencePreprocessor._apply_table_layout(html, "full-width")
+        assert result.count('data-table-width="1800"') == 2
+        assert result.count('data-layout="full-width"') == 2
+
+    def test_apply_table_layout_replaces_existing_attrs(self, confluence_preprocessor):
+        """_apply_table_layout replaces existing data-table-width/layout attrs."""
+        from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
+
+        html = '<table data-table-width="760" data-layout="default"><tr><td>X</td></tr></table>'
+        result = ConfluencePreprocessor._apply_table_layout(html, "full-width")
+        assert 'data-table-width="1800"' in result
+        assert 'data-layout="full-width"' in result
+        assert 'data-table-width="760"' not in result
+
+
 class TestContentProcessingInteroperability:
     """Test interoperability between Jira and Confluence content processing."""
 
@@ -860,3 +927,62 @@ Emojis: 😀 😎 🚀 💻 ✅ ❌ ⚡ 🔥"""
             confluence_preprocessor.process_html_content(malformed_content)
         )
         assert len(confluence_result) > 0
+
+
+class TestTaskLists:
+    """Tests for GFM task list → ac:task-list conversion."""
+
+    def _convert(self, md: str, apply_task_lists: bool = True) -> str:
+        p = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        return p.markdown_to_confluence_storage(md, apply_task_lists=apply_task_lists)
+
+    def test_unchecked_item_becomes_incomplete_task(self):
+        """- [ ] item converts to ac:task with status incomplete."""
+        result = self._convert("- [ ] Todo item")
+        assert "<ac:task-list>" in result
+        assert "<ac:task-status>incomplete</ac:task-status>" in result
+        assert "<ac:task-body>Todo item</ac:task-body>" in result
+
+    def test_checked_item_becomes_complete_task(self):
+        """- [x] item converts to ac:task with status complete."""
+        result = self._convert("- [x] Done item")
+        assert "<ac:task-status>complete</ac:task-status>" in result
+        assert "<ac:task-body>Done item</ac:task-body>" in result
+
+    def test_uppercase_x_treated_as_complete(self):
+        """- [X] (uppercase) is also treated as complete."""
+        result = self._convert("- [X] Done")
+        assert "<ac:task-status>complete</ac:task-status>" in result
+
+    def test_mixed_list_left_as_ul(self):
+        """A list mixing task and non-task items is left as a plain <ul>."""
+        result = self._convert("- [ ] Task\n- Regular item")
+        assert "<ul>" in result
+        assert "<ac:task-list>" not in result
+
+    def test_multiple_tasks_in_one_list(self):
+        """All tasks in a list are converted, preserving order."""
+        result = self._convert("- [ ] First\n- [x] Second\n- [ ] Third")
+        assert result.count("<ac:task>") == 3
+        assert result.index("First") < result.index("Second") < result.index("Third")
+
+    def test_apply_task_lists_false_leaves_ul(self):
+        """apply_task_lists=False skips conversion entirely."""
+        result = self._convert("- [ ] Skip me", apply_task_lists=False)
+        assert "<ul>" in result
+        assert "<ac:task-list>" not in result
+
+    def test_apply_task_lists_classmethod_directly(self):
+        """_apply_task_lists can be called as a classmethod."""
+        html = "<ul><li>[ ] Todo</li><li>[x] Done</li></ul>"
+        result = ConfluencePreprocessor._apply_task_lists(html)
+        assert "<ac:task-list>" in result
+        assert "<ac:task-status>incomplete</ac:task-status>" in result
+        assert "<ac:task-status>complete</ac:task-status>" in result
+        assert "<ul>" not in result
+
+    def test_non_task_ul_not_modified(self):
+        """A plain <ul> with no checkbox markers is left untouched."""
+        html = "<ul><li>Alpha</li><li>Beta</li></ul>"
+        result = ConfluencePreprocessor._apply_task_lists(html)
+        assert result == html

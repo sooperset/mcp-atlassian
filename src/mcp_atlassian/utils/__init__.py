@@ -20,13 +20,20 @@ from .media import (
 
 # Export OAuth utilities
 from .oauth import OAuthConfig, configure_oauth_session
-from .ssl import SSLIgnoreAdapter, configure_ssl_verification
+from .ssl import (
+    NoProxyAdapter,
+    SSLIgnoreAdapter,
+    configure_proxy_bypass,
+    configure_ssl_verification,
+)
 from .urls import is_atlassian_cloud_url, resolve_relative_url, validate_url_for_ssrf
 
 # Export all utility functions for backward compatibility
 __all__ = [
     "ATTACHMENT_MAX_BYTES",
+    "NoProxyAdapter",
     "SSLIgnoreAdapter",
+    "configure_proxy_bypass",
     "configure_ssl_verification",
     "is_atlassian_cloud_url",
     "is_image_attachment",

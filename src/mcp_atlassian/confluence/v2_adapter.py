@@ -492,6 +492,148 @@ class ConfluenceV2Adapter:
             logger.error(f"Error creating footer comment: {e}")
             raise ValueError(f"Failed to create footer comment: {e}") from e
 
+    def get_inline_comments(
+        self,
+        page_id: str,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get inline comments for a page using the v2 API.
+
+        Args:
+            page_id: The ID of the page to get inline comments from
+            status: Optional filter — "open" or "resolved"
+
+        Returns:
+            List of inline comments in v1-compatible format
+
+        Raises:
+            ValueError: If the API request fails
+        """
+        try:
+            url = f"{self.base_url}/api/v2/pages/{page_id}/inline-comments"
+            params: dict[str, Any] = {"body-format": "storage"}
+            if status:
+                params["status"] = status
+
+            response = self.session.get(url, params=params)
+            response.raise_for_status()
+
+            data = response.json()
+            results = data.get("results", [])
+            return [self._convert_v2_inline_comment_to_v1_format(r) for r in results]
+
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting inline comments for page '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting inline comments for page '{page_id}': {e}")
+            raise ValueError(
+                f"Failed to get inline comments for page '{page_id}': {e}"
+            ) from e
+
+    def create_inline_comment(
+        self,
+        *,
+        page_id: str,
+        body: str,
+        text_selection: str,
+        text_selection_match_count: int = 1,
+        text_selection_match_index: int = 0,
+        representation: str = "storage",
+    ) -> dict[str, Any]:
+        """Create an inline comment anchored to a text selection using the v2 API.
+
+        Args:
+            page_id: The ID of the page to add the inline comment to
+            body: The comment content
+            text_selection: The text on the page to anchor the comment to
+            text_selection_match_count: Total number of times the text
+                appears on the page
+            text_selection_match_index: Zero-based index of which occurrence
+                to anchor to
+            representation: Content representation format (default: "storage")
+
+        Returns:
+            The created inline comment data in v1-compatible format
+
+        Raises:
+            ValueError: If creation fails
+        """
+        try:
+            data: dict[str, Any] = {
+                "pageId": page_id,
+                "body": {
+                    "representation": representation,
+                    "value": body,
+                },
+                "inlineCommentProperties": {
+                    "textSelection": text_selection,
+                    "textSelectionMatchCount": text_selection_match_count,
+                    "textSelectionMatchIndex": text_selection_match_index,
+                },
+            }
+
+            url = f"{self.base_url}/api/v2/inline-comments"
+            response = self.session.post(url, json=data)
+            response.raise_for_status()
+
+            result = response.json()
+            logger.debug("Successfully created inline comment with v2 API")
+
+            return self._convert_v2_inline_comment_to_v1_format(result)
+
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error creating inline comment: {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error creating inline comment: {e}")
+            raise ValueError(f"Failed to create inline comment: {e}") from e
+
+    def _convert_v2_inline_comment_to_v1_format(
+        self, v2_response: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Convert v2 inline comment response to v1-compatible format.
+
+        Args:
+            v2_response: The response from the v2 inline-comments API
+
+        Returns:
+            Response formatted like v1 API for compatibility
+        """
+        body_value = v2_response.get("body", {}).get("storage", {}).get("value", "")
+
+        v1_compatible: dict[str, Any] = {
+            "id": v2_response.get("id"),
+            "type": "comment",
+            "status": v2_response.get("status"),
+            "title": v2_response.get("title"),
+            "body": {
+                "view": {
+                    "value": body_value,
+                    "representation": "view",
+                },
+            },
+            "version": v2_response.get("version", {}),
+            "_links": v2_response.get("_links", {}),
+            "extensions": {"location": "inline"},
+            "created": v2_response.get("version", {}).get("createdAt", ""),
+            "updated": v2_response.get("version", {}).get("createdAt", ""),
+        }
+
+        if author := v2_response.get("author"):
+            v1_compatible["author"] = author
+
+        if inline_props := v2_response.get("inlineCommentProperties"):
+            v1_compatible["inlineCommentProperties"] = inline_props
+
+        return v1_compatible
+
     def _convert_v2_comment_to_v1_format(
         self, v2_response: dict[str, Any]
     ) -> dict[str, Any]:
@@ -521,6 +663,8 @@ class ConfluenceV2Adapter:
             },
             "version": v2_response.get("version", {}),
             "_links": v2_response.get("_links", {}),
+            "created": v2_response.get("version", {}).get("createdAt", ""),
+            "updated": v2_response.get("version", {}).get("createdAt", ""),
         }
 
         # Map v2 author to v1 format

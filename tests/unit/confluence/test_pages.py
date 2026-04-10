@@ -38,7 +38,8 @@ class TestPagesMixin:
 
         # Assert
         pages_mixin.confluence.get_page_by_id.assert_called_once_with(
-            page_id=page_id, expand="body.storage,version,space,children.attachment"
+            page_id=page_id,
+            expand="body.storage,version,space,children.attachment,history,ancestors",
         )
 
         # Verify result structure
@@ -66,6 +67,42 @@ class TestPagesMixin:
         assert len(result.attachments) == 2
         assert result.attachments[0].id is not None
         assert result.attachments[1].id is not None
+
+    def test_get_page_content_includes_ancestors_in_response(self, pages_mixin):
+        """Ancestors in API response flow through to ConfluencePage model.
+
+        Regression for https://github.com/sooperset/mcp-atlassian/issues/1131
+        Verifies the full path: API response → model → to_simplified_dict().
+        """
+        # Arrange — build a page response with ancestors included
+        import copy
+
+        from tests.fixtures.confluence_mocks import MOCK_PAGE_RESPONSE
+
+        page_with_ancestors = copy.deepcopy(MOCK_PAGE_RESPONSE)
+        page_with_ancestors["ancestors"] = [
+            {"id": "111", "title": "Grandparent Page", "type": "page"},
+            {"id": "222", "title": "Parent Page", "type": "page"},
+        ]
+        pages_mixin.confluence.get_page_by_id.return_value = page_with_ancestors
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+
+        # Act
+        result = pages_mixin.get_page_content("987654321", convert_to_markdown=True)
+
+        # Assert — ancestors populated on model
+        assert len(result.ancestors) == 2
+        assert result.ancestors[0]["id"] == "111"
+        assert result.ancestors[0]["title"] == "Grandparent Page"
+        assert result.ancestors[1]["id"] == "222"
+        assert result.ancestors[1]["title"] == "Parent Page"
+
+        # Assert — ancestors included in simplified dict (MCP tool output)
+        simplified = result.to_simplified_dict()
+        assert "ancestors" in simplified
+        assert len(simplified["ancestors"]) == 2
+        assert simplified["ancestors"][0] == {"id": "111", "title": "Grandparent Page"}
+        assert simplified["ancestors"][1] == {"id": "222", "title": "Parent Page"}
 
     def test_get_page_ancestors(self, pages_mixin):
         """Test getting page ancestors (parent pages)."""
@@ -140,20 +177,23 @@ class TestPagesMixin:
         assert len(result) == 0
 
     def test_get_page_content_html(self, pages_mixin):
-        """Test getting page content in HTML format."""
+        """Test getting page content in raw storage format."""
         pages_mixin.config.url = "https://example.atlassian.net/wiki"
-
-        # Mock the preprocessor to return HTML
-        pages_mixin.preprocessor.process_html_content.return_value = (
-            "<p>Processed HTML</p>",
-            "Processed Markdown",
+        original_storage = (
+            '<p><ac:structured-macro ac:name="status">'
+            '<ac:parameter ac:name="title">INCOMPLETE</ac:parameter>'
+            "</ac:structured-macro></p>"
         )
+        pages_mixin.confluence.get_page_by_id.return_value["body"]["storage"][
+            "value"
+        ] = original_storage
 
         # Act
         result = pages_mixin.get_page_content("987654321", convert_to_markdown=False)
 
-        # Assert HTML processing was used
-        assert result.content == "<p>Processed HTML</p>"
+        # Assert original storage was returned without preprocessing
+        assert result.content == original_storage
+        pages_mixin.preprocessor.process_html_content.assert_not_called()
 
     def test_get_page_by_title_success(self, pages_mixin):
         """Test getting a page by title when it exists."""
@@ -188,6 +228,31 @@ class TestPagesMixin:
         assert result.id == "987654321"
         assert result.title == title
         assert result.content == "Processed Markdown"
+
+    def test_get_page_by_title_storage_preserves_macros(self, pages_mixin):
+        """Storage mode should preserve macro-heavy content exactly."""
+        space_key = "DEMO"
+        title = "Macro Page"
+        original_storage = (
+            "<ac:task-list><ac:task><ac:task-id>1</ac:task-id>"
+            "<ac:task-status>incomplete</ac:task-status>"
+            "<ac:task-body>Test task</ac:task-body></ac:task></ac:task-list>"
+        )
+        pages_mixin.confluence.get_page_by_title.return_value = {
+            "id": "987654321",
+            "title": title,
+            "space": {"key": space_key},
+            "body": {"storage": {"value": original_storage}},
+            "version": {"number": 1},
+        }
+
+        result = pages_mixin.get_page_by_title(
+            space_key, title, convert_to_markdown=False
+        )
+
+        assert result is not None
+        assert result.content == original_storage
+        pages_mixin.preprocessor.process_html_content.assert_not_called()
 
     def test_get_page_by_title_space_not_found(self, pages_mixin):
         """Test getting a page when the space doesn't exist."""
@@ -404,6 +469,74 @@ class TestPagesMixin:
         with pytest.raises(Exception, match="Failed to update page"):
             pages_mixin.update_page("987654321", "Test Page", "<p>Content</p>")
 
+    def test_update_page_preserves_existing_width_by_default(self, pages_mixin):
+        """Test updating a page preserves the current width when none is provided."""
+        page_id = "987654321"
+        title = "Updated Page"
+        body = "<p>Updated content</p>"
+
+        mock_document = ConfluencePage(
+            id=page_id,
+            title=title,
+            content="Updated content",
+            space={"key": "PROJ", "name": "Project"},
+            version={"number": 1},
+        )
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=mock_document),
+            patch.object(pages_mixin, "_get_page_width", return_value="full-width"),
+            patch.object(pages_mixin, "_set_page_width") as mock_set_width,
+        ):
+            result = pages_mixin.update_page(
+                page_id,
+                title,
+                body,
+                is_markdown=False,
+            )
+
+            pages_mixin.confluence.update_page.assert_called_once_with(
+                page_id=page_id,
+                title=title,
+                body=body,
+                type="page",
+                representation="storage",
+                minor_edit=False,
+                version_comment="",
+                always_update=True,
+            )
+            mock_set_width.assert_called_once_with(page_id, "full-width")
+            assert result.id == page_id
+
+    def test_update_page_explicit_width_overrides_existing_width(self, pages_mixin):
+        """Test updating a page honors an explicitly provided width."""
+        page_id = "987654321"
+        title = "Updated Page"
+        body = "<p>Updated content</p>"
+
+        mock_document = ConfluencePage(
+            id=page_id,
+            title=title,
+            content="Updated content",
+            space={"key": "PROJ", "name": "Project"},
+            version={"number": 1},
+        )
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=mock_document),
+            patch.object(pages_mixin, "_get_page_width") as mock_get_width,
+            patch.object(pages_mixin, "_set_page_width") as mock_set_width,
+        ):
+            result = pages_mixin.update_page(
+                page_id,
+                title,
+                body,
+                is_markdown=False,
+                page_width="default",
+            )
+
+            mock_get_width.assert_not_called()
+            mock_set_width.assert_called_once_with(page_id, "default")
+            assert result.id == page_id
+
     def test_update_page_with_wiki_format(self, pages_mixin):
         """Test updating a page with wiki markup format."""
         # Arrange
@@ -613,7 +746,43 @@ class TestPagesMixin:
             space_key="DEMO",
             confluence_client=pages_mixin.confluence,
             content_id="789012",
+            attachments=None,
         )
+
+    def test_get_page_children_storage_preserves_macros(self, pages_mixin):
+        """Storage mode should preserve child page content exactly."""
+        parent_id = "123456"
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+        original_storage = (
+            '<p><ac:structured-macro ac:name="status">'
+            '<ac:parameter ac:name="title">READY</ac:parameter>'
+            "</ac:structured-macro></p>"
+        )
+        child_pages_data = {
+            "results": [
+                {
+                    "id": "789012",
+                    "title": "Child Page With Macro",
+                    "space": {"key": "DEMO"},
+                    "version": {"number": 1},
+                    "body": {"storage": {"value": original_storage}},
+                }
+            ]
+        }
+        child_folders_data = {"results": []}
+
+        pages_mixin.confluence.get_page_child_by_type.side_effect = [
+            child_pages_data,
+            child_folders_data,
+        ]
+
+        results = pages_mixin.get_page_children(
+            page_id=parent_id, expand="body.storage", convert_to_markdown=False
+        )
+
+        assert len(results) == 1
+        assert results[0].content == original_storage
+        pages_mixin.preprocessor.process_html_content.assert_not_called()
 
     def test_get_page_children_empty(self, pages_mixin):
         """Test getting child pages when there are none."""
@@ -698,7 +867,8 @@ class TestPagesMixin:
 
         # Verify the API call
         pages_mixin.confluence.get_page_by_id.assert_called_once_with(
-            page_id=page_id, expand="body.storage,version,space,children.attachment"
+            page_id=page_id,
+            expand="body.storage,version,space,children.attachment,history,ancestors",
         )
 
         # Verify the result
@@ -750,7 +920,7 @@ class TestPagesMixin:
             # Assert
             # Verify markdown was converted
             pages_mixin.preprocessor.markdown_to_confluence_storage.assert_called_once_with(
-                markdown_body, enable_heading_anchors=False
+                markdown_body, enable_heading_anchors=False, table_layout=None
             )
 
             # Verify create_page was called with the converted content
@@ -837,7 +1007,7 @@ class TestPagesMixin:
             # Assert
             # Verify markdown was converted
             pages_mixin.preprocessor.markdown_to_confluence_storage.assert_called_once_with(
-                markdown_body, enable_heading_anchors=False
+                markdown_body, enable_heading_anchors=False, table_layout=None
             )
 
             # Verify update_page was called with the converted content
@@ -1029,7 +1199,7 @@ class TestPagesMixin:
             page_id=page_id,
             status="historical",
             version=version,
-            expand="body.storage,version,space,children.attachment",
+            expand="body.storage,version,space,children.attachment,history,ancestors",
         )
 
         # Verify result is a ConfluencePage
@@ -1041,7 +1211,7 @@ class TestPagesMixin:
         assert result.space.key == "PROJ"
 
     def test_get_page_history_html_v1(self, pages_mixin):
-        """Test retrieving historical version with HTML format (convert_to_markdown=False)."""
+        """Test retrieving historical version in raw storage format."""
         # Arrange
         page_id = "987654321"
         version = 3
@@ -1052,15 +1222,14 @@ class TestPagesMixin:
             "title": "HTML Historical Page",
             "space": {"key": "PROJ"},
             "version": {"number": version},
-            "body": {"storage": {"value": "<p>HTML content</p>"}},
+            "body": {
+                "storage": {
+                    "value": '<p><ac:structured-macro ac:name="details"><ac:rich-text-body><p>HTML content</p></ac:rich-text-body></ac:structured-macro></p>'
+                }
+            },
             "children": {"attachment": {"results": []}},
         }
         pages_mixin.confluence.get_page_by_id.return_value = historical_page_data
-
-        pages_mixin.preprocessor.process_html_content.return_value = (
-            "<p>Processed HTML content</p>",
-            "Processed markdown",
-        )
         pages_mixin.confluence.get_page_properties.return_value = {"results": []}
 
         # Act
@@ -1068,10 +1237,11 @@ class TestPagesMixin:
             page_id, version, convert_to_markdown=False
         )
 
-        # Assert - HTML should be used instead of markdown
+        # Assert - exact storage should be returned instead of processed HTML
         assert isinstance(result, ConfluencePage)
-        assert result.content == "<p>Processed HTML content</p>"
+        assert result.content == historical_page_data["body"]["storage"]["value"]
         assert result.version.number == version
+        pages_mixin.preprocessor.process_html_content.assert_not_called()
 
     def test_get_page_history_with_attachments_v1(self, pages_mixin):
         """Test that attachments are included in historical version."""
@@ -1453,7 +1623,8 @@ class TestPagesOAuthMixin:
 
             # Assert that v2 API was used instead of v1
             mock_v2_adapter.get_page.assert_called_once_with(
-                page_id=page_id, expand="body.storage,version,space,children.attachment"
+                page_id=page_id,
+                expand="body.storage,version,space,children.attachment,history,ancestors",
             )
 
             # Verify v1 API was NOT called
@@ -1544,7 +1715,7 @@ class TestPagesOAuthMixin:
             mock_v2_adapter.get_page_by_version.assert_called_once_with(
                 page_id=page_id,
                 version=version,
-                expand="body.storage,version,space,children.attachment",
+                expand="body.storage,version,space,children.attachment,history,ancestors",
             )
 
             # Verify v1 API was NOT called
@@ -1596,7 +1767,7 @@ class TestPagesOAuthMixin:
             assert result.space.key == "PROJ"
 
     def test_get_page_history_oauth_html(self, oauth_pages_mixin):
-        """Test retrieving historical version with HTML format using OAuth."""
+        """Test retrieving historical version in raw storage format using OAuth."""
         # Arrange
         page_id = "oauth_html_789"
         version = 1
@@ -1617,20 +1788,16 @@ class TestPagesOAuthMixin:
             }
 
             mock_v2_adapter.get_page_emoji.return_value = None
-            oauth_pages_mixin.preprocessor.process_html_content.return_value = (
-                "<h1>Processed HTML</h1>",
-                "Processed markdown",
-            )
-
-            # Act - get HTML instead of markdown
+            # Act - get raw storage instead of markdown
             result = oauth_pages_mixin.get_page_history(
                 page_id, version, convert_to_markdown=False
             )
 
-            # Assert - should return HTML
+            # Assert - should return exact storage without preprocessing
             assert isinstance(result, ConfluencePage)
-            assert result.content == "<h1>Processed HTML</h1>"
+            assert result.content == "<h1>HTML</h1>"
             assert result.version.number == version
+            oauth_pages_mixin.preprocessor.process_html_content.assert_not_called()
 
     def test_get_page_history_oauth_missing_body(self, oauth_pages_mixin):
         """Test handling missing body with v2 API."""
@@ -2944,3 +3111,317 @@ class TestPageHierarchy:
 
         assert result["total_pages"] == 1
         assert result["has_more"] is False
+
+
+class TestUpdatePageSection:
+    """Tests for PagesMixin.update_page_section."""
+
+    @pytest.fixture
+    def pages_mixin(self, confluence_client):
+        """Create a PagesMixin instance for testing."""
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = PagesMixin()
+            mixin.confluence = confluence_client.confluence
+            mixin.config = confluence_client.config
+            mixin.preprocessor = confluence_client.preprocessor
+            return mixin
+
+    def _make_page(self, page_id: str, title: str, storage_html: str) -> ConfluencePage:
+        return ConfluencePage(
+            id=page_id,
+            title=title,
+            content=storage_html,
+            space={"key": "PROJ", "name": "Project"},
+            version={"number": 1},
+        )
+
+    def test_replaces_section_content(self, pages_mixin):
+        """Section body is replaced; heading and surrounding content are kept."""
+        storage = (
+            "<h1>Intro</h1><p>intro text</p>"
+            "<h2>Target Section</h2><p>old content</p>"
+            "<h2>Another Section</h2><p>other content</p>"
+        )
+        raw_page = self._make_page("123", "My Page", storage)
+        updated_page = self._make_page("123", "My Page", "updated")
+
+        pages_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<p>new content</p>"
+        )
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=raw_page),
+            patch.object(
+                pages_mixin, "update_page", return_value=updated_page
+            ) as mock_update,
+        ):
+            result = pages_mixin.update_page_section(
+                page_id="123",
+                heading_text="Target Section",
+                new_content="new content",
+            )
+
+        assert result is updated_page
+        call_body: str = mock_update.call_args.kwargs["body"]
+        # Heading preserved
+        assert "<h2>Target Section</h2>" in call_body
+        # New content inserted
+        assert "<p>new content</p>" in call_body
+        # Old content removed
+        assert "old content" not in call_body
+        # Sibling section untouched
+        assert "<h2>Another Section</h2>" in call_body
+        assert "<p>other content</p>" in call_body
+        # Written back as storage format
+        assert mock_update.call_args.kwargs["is_markdown"] is False
+        assert mock_update.call_args.kwargs["content_representation"] == "storage"
+
+    def test_stops_at_same_level_heading(self, pages_mixin):
+        """Content replacement stops at the next heading of the same level."""
+        storage = (
+            "<h2>Section A</h2><p>a content</p>"
+            "<h2>Section B</h2><p>b content</p><h3>Sub</h3><p>sub</p>"
+            "<h2>Section C</h2><p>c content</p>"
+        )
+        raw_page = self._make_page("1", "P", storage)
+        updated_page = self._make_page("1", "P", "")
+
+        pages_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<p>new b</p>"
+        )
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=raw_page),
+            patch.object(
+                pages_mixin, "update_page", return_value=updated_page
+            ) as mock_update,
+        ):
+            pages_mixin.update_page_section("1", "Section B", "new b")
+
+        body: str = mock_update.call_args.kwargs["body"]
+        assert "b content" not in body
+        assert "<p>new b</p>" in body
+        # Section C must be intact
+        assert "<h2>Section C</h2>" in body
+        assert "<p>c content</p>" in body
+        # Section A must be intact
+        assert "<h2>Section A</h2>" in body
+        assert "<p>a content</p>" in body
+
+    def test_heading_not_found_raises(self, pages_mixin):
+        """ValueError is raised when heading text does not exist on the page."""
+        raw_page = self._make_page("1", "P", "<h2>Existing</h2><p>content</p>")
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            with pytest.raises(ValueError, match="not found in page"):
+                pages_mixin.update_page_section("1", "Nonexistent Heading", "data")
+
+    def test_invalid_content_format_raises(self, pages_mixin):
+        """ValueError is raised for unsupported content_format values."""
+        with pytest.raises(ValueError, match="Invalid content_format"):
+            pages_mixin.update_page_section(
+                "1", "Heading", "content", content_format="wiki"
+            )
+
+    def test_macros_outside_section_preserved(self, pages_mixin):
+        """Confluence macros outside the target section survive the update."""
+        macro = (
+            '<ac:structured-macro ac:name="toc">'
+            '<ac:parameter ac:name="maxLevel">3</ac:parameter>'
+            "</ac:structured-macro>"
+        )
+        storage = f"{macro}<h2>Section</h2><p>old</p><h2>Other</h2><p>other</p>"
+        raw_page = self._make_page("1", "P", storage)
+        updated_page = self._make_page("1", "P", "")
+
+        pages_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<p>new</p>"
+        )
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=raw_page),
+            patch.object(
+                pages_mixin, "update_page", return_value=updated_page
+            ) as mock_update,
+        ):
+            pages_mixin.update_page_section("1", "Section", "new")
+
+        body: str = mock_update.call_args.kwargs["body"]
+        assert 'ac:name="toc"' in body
+
+    def test_storage_format_content_not_converted(self, pages_mixin):
+        """When content_format='storage', markdown_to_confluence_storage is not called."""
+        raw_page = self._make_page("1", "P", "<h2>Section</h2><p>old</p>")
+        updated_page = self._make_page("1", "P", "")
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=raw_page),
+            patch.object(pages_mixin, "update_page", return_value=updated_page),
+        ):
+            pages_mixin.update_page_section(
+                "1",
+                "Section",
+                "<p>raw storage</p>",
+                content_format="storage",
+            )
+
+        pages_mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
+
+
+class TestContentProperties:
+    """Tests for arbitrary content property get/set."""
+
+    @pytest.fixture
+    def pages_mixin(self, confluence_client):
+        """Create a PagesMixin instance for testing."""
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = PagesMixin()
+            mixin.confluence = confluence_client.confluence
+            mixin.config = confluence_client.config
+            mixin.preprocessor = confluence_client.preprocessor
+            return mixin
+
+    def test_get_content_properties_all(self, pages_mixin):
+        """Get all properties returns {key: value} dict."""
+        pages_mixin.confluence.get_page_properties.return_value = {
+            "results": [
+                {"key": "content-appearance-published", "value": "full-width"},
+                {"key": "content-appearance-draft", "value": "fixed-width"},
+            ]
+        }
+
+        result = pages_mixin.get_content_properties("123456789")
+
+        pages_mixin.confluence.get_page_properties.assert_called_once_with("123456789")
+        assert result == {
+            "content-appearance-published": "full-width",
+            "content-appearance-draft": "fixed-width",
+        }
+
+    def test_get_content_properties_empty(self, pages_mixin):
+        """Empty results return empty dict."""
+        pages_mixin.confluence.get_page_properties.return_value = {"results": []}
+
+        result = pages_mixin.get_content_properties("123456789")
+
+        assert result == {}
+
+    def test_get_content_properties_single_key(self, pages_mixin):
+        """Single key returns only that property."""
+        pages_mixin.confluence.get_page_property.return_value = {
+            "key": "content-appearance-published",
+            "value": "full-width",
+            "version": {"number": 2},
+        }
+
+        result = pages_mixin.get_content_properties(
+            "123456789", key="content-appearance-published"
+        )
+
+        pages_mixin.confluence.get_page_property.assert_called_once_with(
+            "123456789", "content-appearance-published"
+        )
+        assert result == {"content-appearance-published": "full-width"}
+
+    def test_get_content_properties_api_error(self, pages_mixin):
+        """API errors propagate without wrapping."""
+        pages_mixin.confluence.get_page_properties.side_effect = Exception("API error")
+
+        with pytest.raises(Exception, match="API error"):
+            pages_mixin.get_content_properties("123456789")
+
+    def test_set_content_property_creates_when_not_exists(self, pages_mixin):
+        """Property that doesn't exist is created via set_page_property."""
+        pages_mixin.confluence.get_page_property.side_effect = Exception("Not found")
+        pages_mixin.confluence.set_page_property.return_value = {
+            "key": "custom-key",
+            "value": "custom-value",
+        }
+
+        result = pages_mixin.set_content_property(
+            "123456789", "custom-key", "custom-value"
+        )
+
+        pages_mixin.confluence.set_page_property.assert_called_once_with(
+            "123456789", {"key": "custom-key", "value": "custom-value"}
+        )
+        assert result == {"custom-key": "custom-value"}
+
+    def test_set_content_property_updates_existing(self, pages_mixin):
+        """Existing property is updated with version increment."""
+        pages_mixin.confluence.get_page_property.return_value = {
+            "key": "content-appearance-published",
+            "value": "fixed-width",
+            "version": {"number": 2},
+        }
+        pages_mixin.confluence.update_page_property.return_value = None
+
+        result = pages_mixin.set_content_property(
+            "123456789", "content-appearance-published", "full-width"
+        )
+
+        pages_mixin.confluence.update_page_property.assert_called_once_with(
+            "123456789",
+            {
+                "key": "content-appearance-published",
+                "value": "full-width",
+                "version": {"number": 3},
+            },
+        )
+        assert result == {"content-appearance-published": "full-width"}
+
+    def test_set_content_property_version_defaults_to_1(self, pages_mixin):
+        """Missing version info defaults to version 1."""
+        pages_mixin.confluence.get_page_property.return_value = {
+            "key": "custom-key",
+            "value": "old",
+        }
+        pages_mixin.confluence.update_page_property.return_value = None
+
+        result = pages_mixin.set_content_property("123456789", "custom-key", "new")
+
+        call_data = pages_mixin.confluence.update_page_property.call_args[0][1]
+        assert call_data["version"]["number"] == 1
+
+    def test_set_content_property_dict_value(self, pages_mixin):
+        """Dict values (JSON objects) are supported."""
+        pages_mixin.confluence.get_page_property.side_effect = Exception("Not found")
+        pages_mixin.confluence.set_page_property.return_value = {
+            "key": "editor",
+            "value": {"version": 2},
+        }
+
+        result = pages_mixin.set_content_property("123456789", "editor", {"version": 2})
+
+        pages_mixin.confluence.set_page_property.assert_called_once_with(
+            "123456789", {"key": "editor", "value": {"version": 2}}
+        )
+        assert result == {"editor": {"version": 2}}
+
+    def test_set_content_property_api_error_on_update(self, pages_mixin):
+        """API error during update propagates."""
+        pages_mixin.confluence.get_page_property.return_value = {
+            "key": "k",
+            "value": "v",
+            "version": {"number": 1},
+        }
+        pages_mixin.confluence.update_page_property.side_effect = Exception(
+            "Version conflict"
+        )
+
+        with pytest.raises(Exception, match="Version conflict"):
+            pages_mixin.set_content_property("123456789", "k", "new")
+
+    def test_set_content_property_api_error_on_create(self, pages_mixin):
+        """API error during create propagates."""
+        pages_mixin.confluence.get_page_property.side_effect = Exception("Not found")
+        pages_mixin.confluence.set_page_property.side_effect = Exception("Bad request")
+
+        with pytest.raises(Exception, match="Bad request"):
+            pages_mixin.set_content_property("123456789", "k", "v")

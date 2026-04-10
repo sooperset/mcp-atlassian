@@ -605,7 +605,7 @@ class IssuesMixin(
                     "Provide issue_type like 'Task', 'Story', or 'Bug'."
                 )
 
-            # Handle Epic and Subtask issue type names across different languages
+            # Handle issue type names across different languages
             actual_issue_id = None
             if self._is_epic_issue_type(issue_type) and issue_type.lower() == "epic":
                 # If the user provided "Epic" but we need to find the localized name
@@ -620,6 +620,15 @@ class IssuesMixin(
                     actual_issue_id = subtask_type_id
                     logger.info(
                         f"Using localized Subtask issue type id: {subtask_type_id}"
+                    )
+            else:
+                # For all other issue types (Story, Task, Bug, etc.),
+                # resolve name to ID to support localized Jira instances
+                resolved_id = self._find_issue_type_id(project_key, issue_type)
+                if resolved_id:
+                    actual_issue_id = resolved_id
+                    logger.info(
+                        f"Resolved issue type '{issue_type}' to id: {resolved_id}"
                     )
 
             # Prepare fields
@@ -809,6 +818,39 @@ class IssuesMixin(
             logger.warning(f"Could not get issue types for project {project_key}: {e}")
             return None
 
+    def _find_issue_type_id(self, project_key: str, issue_type_name: str) -> str | None:
+        """
+        Find the issue type ID by name for a project.
+
+        Supports localized Jira instances where issue type names may differ
+        from the English defaults (e.g., Korean, Japanese, German).
+
+        Args:
+            project_key: The project key
+            issue_type_name: The issue type name to resolve
+
+        Returns:
+            The issue type ID if found, None otherwise
+        """
+        try:
+            issue_types = self.get_project_issue_types(project_key)
+            for issue_type in issue_types:
+                type_name = issue_type.get("name", "")
+                if type_name.lower() == issue_type_name.lower():
+                    return issue_type.get("id")
+            # Fallback: try untranslatedName if available
+            for issue_type in issue_types:
+                untranslated = issue_type.get("untranslatedName", "")
+                if untranslated and untranslated.lower() == issue_type_name.lower():
+                    return issue_type.get("id")
+            return None
+        except Exception as e:
+            logger.warning(
+                f"Could not resolve issue type '{issue_type_name}' "
+                f"for project {project_key}: {e}"
+            )
+            return None
+
     def _prepare_epic_fields(
         self, fields: dict[str, Any], summary: str, kwargs: dict[str, Any]
     ) -> None:
@@ -986,6 +1028,14 @@ class IssuesMixin(
                 logger.debug(f"Identified field '{key}' as standard system field ID.")
 
             if api_field_id:
+                # Allow None values to pass through for clearing fields
+                if value is None:
+                    fields[api_field_id] = None
+                    logger.debug(
+                        f"Setting field '{api_field_id}' to None from kwarg '{key}' (clearing field)."
+                    )
+                    continue
+
                 # Get the full field definition for formatting context if needed
                 field_definition = self.get_field_by_id(
                     api_field_id
@@ -1050,6 +1100,7 @@ class IssuesMixin(
                 - assignee: New assignee for the issue
                 - parent: Parent issue key (str or {"key": "..."} dict)
                 - epicKey/epic_link/epicLink: Epic link alias
+                Pass None to clear a field (e.g., priority=None).
 
         Returns:
             JiraIssue model representing the updated issue
@@ -1162,6 +1213,46 @@ class IssuesMixin(
             error_msg = str(e)
             logger.error(f"Error updating issue {issue_key}: {error_msg}")
             raise ValueError(f"Failed to update issue {issue_key}: {error_msg}") from e
+
+    def assign_issue(
+        self,
+        issue_key: str,
+        assignee: str | None,
+    ) -> JiraIssue:
+        """
+        Assign a Jira issue to a user using the dedicated assignment endpoint.
+
+        Unlike update_issue (which sets assignee via the fields update and is
+        silently ignored by some Jira configurations), this method calls
+        PUT /rest/api/3/issue/{key}/assignee directly.
+
+        Pass None or empty string to unassign.
+
+        Args:
+            issue_key: The key of the issue to assign (e.g., 'PROJ-123')
+            assignee: User identifier (email, display name, or account ID).
+                      Pass None or "" to unassign.
+
+        Returns:
+            JiraIssue model representing the updated issue
+
+        Raises:
+            ValueError: If the user cannot be resolved or assignment fails
+        """
+        try:
+            if assignee is None or assignee == "":
+                # Unassign: the atlassian-python-api accepts None for unassignment
+                self.jira.assign_issue(issue_key, None)
+            else:
+                account_id = self._get_account_id(assignee)
+                self.jira.assign_issue(issue_key, account_id)
+
+            # Return the updated issue
+            return self.get_issue(issue_key)
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Error assigning issue {issue_key}: {error_msg}")
+            raise ValueError(f"Failed to assign issue {issue_key}: {error_msg}") from e
 
     def _update_issue_with_status(
         self, issue_key: str, fields: dict[str, Any]

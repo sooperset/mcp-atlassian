@@ -175,3 +175,100 @@ def test_queue_methods_reject_cloud(
     """All queue methods should raise NotImplementedError on Cloud."""
     with pytest.raises(NotImplementedError, match="Server/Data Center"):
         getattr(cloud_queues_fetcher, method)(*args)
+
+
+class TestJiraServiceManagementTools:
+    """JSM tools exist and return structured data when mocked.
+
+    Regression for https://github.com/sooperset/mcp-atlassian/issues/447
+    """
+
+    def test_get_service_desk_for_project_exists(
+        self, queues_fetcher: JiraFetcher
+    ) -> None:
+        """get_service_desk_for_project is implemented on JiraFetcher."""
+        assert hasattr(queues_fetcher, "get_service_desk_for_project")
+        assert callable(queues_fetcher.get_service_desk_for_project)
+
+    def test_get_service_desk_queues_exists(self, queues_fetcher: JiraFetcher) -> None:
+        """get_service_desk_queues is implemented on JiraFetcher."""
+        assert hasattr(queues_fetcher, "get_service_desk_queues")
+        assert callable(queues_fetcher.get_service_desk_queues)
+
+    def test_get_queue_issues_exists(self, queues_fetcher: JiraFetcher) -> None:
+        """get_queue_issues is implemented on JiraFetcher."""
+        assert hasattr(queues_fetcher, "get_queue_issues")
+        assert callable(queues_fetcher.get_queue_issues)
+
+    def test_get_service_desk_for_project_returns_model(
+        self, queues_fetcher: JiraFetcher
+    ) -> None:
+        """get_service_desk_for_project returns a JiraServiceDesk model when found."""
+        from mcp_atlassian.models.jira import JiraServiceDesk
+
+        queues_fetcher.jira.get = MagicMock(
+            return_value={
+                "start": 0,
+                "limit": 50,
+                "isLastPage": True,
+                "values": [
+                    {
+                        "id": "1",
+                        "projectKey": "HELP",
+                        "projectId": "10001",
+                        "projectName": "Help Desk",
+                    }
+                ],
+            }
+        )
+        result = queues_fetcher.get_service_desk_for_project("HELP")
+        assert isinstance(result, JiraServiceDesk)
+        assert result.project_key == "HELP"
+
+    def test_get_service_desk_queues_returns_structured_result(
+        self, queues_fetcher: JiraFetcher
+    ) -> None:
+        """get_service_desk_queues returns JiraServiceDeskQueuesResult."""
+        queues_fetcher.jira.get = MagicMock(
+            return_value={
+                "start": 0,
+                "limit": 50,
+                "size": 1,
+                "isLastPage": True,
+                "values": [{"id": "10", "name": "Open Issues", "issueCount": 5}],
+            }
+        )
+        result = queues_fetcher.get_service_desk_queues("1")
+        assert isinstance(result, JiraServiceDeskQueuesResult)
+        assert result.service_desk_id == "1"
+        assert len(result.queues) == 1
+        assert result.queues[0].name == "Open Issues"
+
+    def test_get_queue_issues_returns_structured_result(
+        self, queues_fetcher: JiraFetcher
+    ) -> None:
+        """get_queue_issues returns JiraQueueIssuesResult with issues list."""
+        queues_fetcher.jira.get = MagicMock(
+            side_effect=[
+                {"id": "10", "name": "Open Issues", "issueCount": 1},
+                {
+                    "start": 0,
+                    "limit": 50,
+                    "size": 1,
+                    "isLastPage": True,
+                    "values": [
+                        {
+                            "id": "100",
+                            "key": "HELP-1",
+                            "fields": {"summary": "Need help"},
+                        }
+                    ],
+                },
+            ]
+        )
+        result = queues_fetcher.get_queue_issues("1", "10")
+        assert isinstance(result, JiraQueueIssuesResult)
+        assert result.service_desk_id == "1"
+        assert result.queue_id == "10"
+        assert len(result.issues) == 1
+        assert result.issues[0]["key"] == "HELP-1"

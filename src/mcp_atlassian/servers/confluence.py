@@ -172,13 +172,24 @@ async def get_page(
         bool,
         Field(
             description=(
-                "Whether to convert page to markdown (true) or keep it in raw HTML format (false). "
-                "Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: "
-                "using HTML significantly increases token usage in AI responses."
+                "Whether to convert page to markdown (true) or return raw Confluence storage XHTML (false). "
+                "Storage output preserves macros, embedded Jira render modes, page layout, and task metadata "
+                "for safe round-tripping, but CAUTION: it significantly increases token usage in AI responses."
             ),
             default=True,
         ),
     ] = True,
+    include: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Comma-separated sections to inline in the response, "
+                "avoiding extra tool calls. Supported: "
+                "comments, labels, views, properties"
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Get content of a specific Confluence page by its ID, or by its title and space key.
 
@@ -189,9 +200,11 @@ async def get_page(
         space_key: The key of the space. Must be used with 'title'.
         include_metadata: Whether to include page metadata.
         convert_to_markdown: Convert content to markdown (true) or keep raw HTML (false).
+        include: Comma-separated enrichments to inline (comments, labels, views, properties).
 
     Returns:
-        JSON string representing the page content and/or metadata, or an error if not found or parameters are invalid.
+        JSON string representing the page content and/or metadata, or an error
+        if not found or parameters are invalid.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
     page_object = None
@@ -237,10 +250,67 @@ async def get_page(
             ensure_ascii=False,
         )
 
+    result: dict
     if include_metadata:
         result = {"metadata": page_object.to_simplified_dict()}
     else:
         result = {"content": {"value": page_object.content}}
+
+    # Inline requested enrichments to avoid extra tool calls
+    if include:
+        sections = {s.strip().lower() for s in include.split(",")}
+        resolved_page_id = str(page_object.id)
+
+        if "comments" in sections:
+            try:
+                comments = confluence_fetcher.get_page_comments(
+                    resolved_page_id,
+                )
+                result["comments"] = [
+                    comment.to_simplified_dict() for comment in comments
+                ]
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Failed to inline comments for page %s",
+                    resolved_page_id,
+                )
+                result["comments"] = []
+
+        if "labels" in sections:
+            try:
+                labels = confluence_fetcher.get_page_labels(resolved_page_id)
+                result["labels"] = [label.to_simplified_dict() for label in labels]
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Failed to inline labels for page %s",
+                    resolved_page_id,
+                )
+                result["labels"] = []
+
+        if "views" in sections:
+            try:
+                views = confluence_fetcher.get_page_views(
+                    page_id=resolved_page_id, include_title=False
+                )
+                result["views"] = views.to_simplified_dict()
+            except Exception:  # noqa: BLE001
+                # Graceful degradation for Server/DC (analytics API unavailable)
+                logger.debug(
+                    "Views unavailable for page %s (expected on Server/DC)",
+                    resolved_page_id,
+                )
+                result["views"] = {}
+
+        if "properties" in sections:
+            try:
+                props = confluence_fetcher.get_content_properties(resolved_page_id)
+                result["properties"] = props
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Failed to inline properties for page %s",
+                    resolved_page_id,
+                )
+                result["properties"] = {}
 
     return json.dumps(result, indent=2, ensure_ascii=False)
 
@@ -532,7 +602,11 @@ async def create_page(
     content: Annotated[
         str,
         Field(
-            description="The content of the page. Format depends on content_format parameter. Can be Markdown (default), wiki markup, or storage format"
+            description=(
+                "The content of the page. Format depends on content_format parameter. "
+                "Can be Markdown (default), wiki markup, or storage format. Use storage "
+                "when retransmitting macro-heavy pages or existing layout/render metadata."
+            )
         ),
     ],
     parent_id: Annotated[
@@ -546,7 +620,12 @@ async def create_page(
     content_format: Annotated[
         str,
         Field(
-            description="(Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', or 'storage'. Wiki format uses Confluence wiki markup syntax",
+            description=(
+                "(Optional) The format of the content parameter. Options: 'markdown' "
+                "(default), 'wiki', or 'storage'. Wiki format uses Confluence wiki "
+                "markup syntax. Choose 'storage' when embedded macros, Jira cards/lists, "
+                "task metadata, or page layout must round-trip unchanged."
+            ),
             default="markdown",
         ),
     ] = "markdown",
@@ -571,6 +650,20 @@ async def create_page(
             default=None,
         ),
     ] = None,
+    page_width: Annotated[
+        str | None,
+        Field(
+            description="(Optional) Page layout width. Options: 'full-width', 'default'. Defaults to null (Confluence default).",
+            default=None,
+        ),
+    ] = None,
+    table_layout: Annotated[
+        str | None,
+        Field(
+            description="(Optional) Table width preset applied to all markdown tables. Options: 'full-width' (1800 px), 'wide' (960 px), 'default' (760 px). Only applies when content_format is 'markdown'.",
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Create a new Confluence page.
 
@@ -584,6 +677,8 @@ async def create_page(
         enable_heading_anchors: Whether to enable heading anchors (markdown only).
         include_content: Whether to include page content in the response.
         emoji: Optional page title emoji (icon shown in navigation).
+        page_width: Optional page layout width ('full-width' or 'default').
+        table_layout: Optional table width preset ('full-width', 'wide', 'default').
 
     Returns:
         JSON string representing the created page object.
@@ -618,6 +713,8 @@ async def create_page(
         else False,
         content_representation=content_representation,
         emoji=emoji,
+        page_width=page_width,
+        table_layout=table_layout if content_format == "markdown" else None,
     )
     result = page.to_simplified_dict()
     if not include_content:
@@ -641,7 +738,11 @@ async def update_page(
     content: Annotated[
         str,
         Field(
-            description="The new content of the page. Format depends on content_format parameter"
+            description=(
+                "The new content of the page. Format depends on content_format parameter. "
+                "Use storage when retransmitting macro-heavy pages or existing layout/render "
+                "metadata."
+            )
         ),
     ],
     is_minor_edit: Annotated[
@@ -658,7 +759,12 @@ async def update_page(
     content_format: Annotated[
         str,
         Field(
-            description="(Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', or 'storage'. Wiki format uses Confluence wiki markup syntax",
+            description=(
+                "(Optional) The format of the content parameter. Options: 'markdown' "
+                "(default), 'wiki', or 'storage'. Wiki format uses Confluence wiki "
+                "markup syntax. Choose 'storage' when embedded macros, Jira cards/lists, "
+                "task metadata, or page layout must round-trip unchanged."
+            ),
             default="markdown",
         ),
     ] = "markdown",
@@ -683,6 +789,20 @@ async def update_page(
             default=None,
         ),
     ] = None,
+    page_width: Annotated[
+        str | None,
+        Field(
+            description="(Optional) Page layout width. Options: 'full-width', 'default'. Defaults to null (preserve existing).",
+            default=None,
+        ),
+    ] = None,
+    table_layout: Annotated[
+        str | None,
+        Field(
+            description="(Optional) Table width preset applied to all markdown tables. Options: 'full-width' (1800 px), 'wide' (960 px), 'default' (760 px). Only applies when content_format is 'markdown'.",
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Update an existing Confluence page.
 
@@ -698,6 +818,8 @@ async def update_page(
         enable_heading_anchors: Whether to enable heading anchors (markdown only).
         include_content: Whether to include page content in the response.
         emoji: Optional page title emoji (icon shown in navigation).
+        page_width: Optional page layout width ('full-width' or 'default').
+        table_layout: Optional table width preset ('full-width', 'wide', 'default').
 
     Returns:
         JSON string representing the updated page object.
@@ -734,12 +856,112 @@ async def update_page(
         else False,
         content_representation=content_representation,
         emoji=emoji,
+        page_width=page_width,
+        table_layout=table_layout if content_format == "markdown" else None,
     )
     page_data = updated_page.to_simplified_dict()
     if not include_content:
         page_data.pop("content", None)
     return json.dumps(
         {"message": "Page updated successfully", "page": page_data},
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_pages"},
+    annotations={"title": "Update Page Section", "destructiveHint": True},
+)
+@check_write_access
+async def update_page_section(
+    ctx: Context,
+    page_id: Annotated[str, Field(description="The ID of the page to update")],
+    heading_text: Annotated[
+        str,
+        Field(
+            description=(
+                "Exact text of the heading that starts the section to replace. "
+                "Matching is case-sensitive. Use confluence_get_page with "
+                "convert_to_markdown=false to inspect exact heading text when unsure."
+            )
+        ),
+    ],
+    new_content: Annotated[
+        str,
+        Field(
+            description=(
+                "Replacement content for the section body. "
+                "Do NOT include the heading itself — only the body beneath it. "
+                "Format is controlled by content_format."
+            )
+        ),
+    ],
+    content_format: Annotated[
+        str,
+        Field(
+            description=(
+                "(Optional) Format of new_content. "
+                "Options: 'markdown' (default) or 'storage' (raw Confluence storage XML). "
+                "Use 'storage' to insert macros or elements that markdown cannot express."
+            ),
+            default="markdown",
+        ),
+    ] = "markdown",
+    is_minor_edit: Annotated[
+        bool, Field(description="Whether this is a minor edit", default=False)
+    ] = False,
+    version_comment: Annotated[
+        str | None,
+        Field(description="Optional comment for this version", default=None),
+    ] = None,
+) -> str:
+    """Update a single section of a Confluence page without affecting the rest.
+
+    Replaces only the content beneath a named heading, leaving all other
+    sections, macros, layouts, and Confluence-specific elements completely
+    intact. This avoids the data loss that occurs when a full page is
+    downloaded as Markdown, edited, and re-uploaded.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page to update.
+        heading_text: Exact heading text identifying the section to replace.
+        new_content: New body content for the section (heading not included).
+        content_format: Format of new_content ('markdown' or 'storage').
+        is_minor_edit: Whether to flag this as a minor edit.
+        version_comment: Optional version comment.
+
+    Returns:
+        JSON string representing the updated page metadata.
+
+    Raises:
+        ValueError: If Confluence client is not configured, heading is not
+            found, or content_format is invalid.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    if content_format not in ("markdown", "storage"):
+        raise ValueError(
+            f"Invalid content_format '{content_format}'. Must be 'markdown' or 'storage'."
+        )
+
+    updated_page = confluence_fetcher.update_page_section(
+        page_id=page_id,
+        heading_text=heading_text,
+        new_content=new_content,
+        content_format=content_format,
+        is_minor_edit=is_minor_edit,
+        version_comment=version_comment or "",
+    )
+
+    page_data = updated_page.to_simplified_dict()
+    page_data.pop("content", None)
+    return json.dumps(
+        {
+            "message": f"Section '{heading_text}' updated successfully",
+            "page": page_data,
+        },
         indent=2,
         ensure_ascii=False,
     )
@@ -974,6 +1196,143 @@ async def reply_to_comment(
 
 
 @confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_comments"},
+    annotations={"title": "Get Inline Comments", "readOnlyHint": True},
+)
+async def get_inline_comments(
+    ctx: Context,
+    page_id: Annotated[
+        str, Field(description="The ID of the page to get inline comments from")
+    ],
+) -> str:
+    """Get all inline comments for a Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page to get inline comments from.
+
+    Returns:
+        JSON string with a list of inline comments.
+
+    Raises:
+        ValueError: If Confluence client is unavailable.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        comments = confluence_fetcher.get_inline_comments(page_id)
+        response = {
+            "success": True,
+            "page_id": page_id,
+            "count": len(comments),
+            "comments": [c.to_simplified_dict() for c in comments],
+        }
+    except Exception as e:
+        logger.error(
+            f"Error getting inline comments for Confluence page {page_id}: {str(e)}"
+        )
+        response = {
+            "success": False,
+            "message": f"Error getting inline comments for page {page_id}",
+            "error": str(e),
+        }
+
+    return json.dumps(response, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_comments"},
+    annotations={"title": "Add Inline Comment", "destructiveHint": True},
+)
+@check_write_access
+async def add_inline_comment(
+    ctx: Context,
+    page_id: Annotated[
+        str, Field(description="The ID of the page to add the inline comment to")
+    ],
+    body: Annotated[str, Field(description="The comment content in Markdown format")],
+    text_selection: Annotated[
+        str,
+        Field(
+            description=(
+                "The exact text on the page to anchor the inline comment to. "
+                "Must match text that exists in the page content."
+            )
+        ),
+    ],
+    text_selection_match_count: Annotated[
+        int,
+        Field(
+            description=(
+                "Total number of times the selected text appears on the page. "
+                "Defaults to 1."
+            ),
+            ge=1,
+        ),
+    ] = 1,
+    text_selection_match_index: Annotated[
+        int,
+        Field(
+            description=(
+                "Zero-based index of which occurrence of the text to anchor to. "
+                "Defaults to 0 (first occurrence)."
+            ),
+            ge=0,
+        ),
+    ] = 0,
+) -> str:
+    """Add an inline comment anchored to a specific text selection on a Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page to add the inline comment to.
+        body: The comment content in Markdown format.
+        text_selection: The exact text on the page to anchor the comment to.
+        text_selection_match_count: Total occurrences of the selected text on the page.
+        text_selection_match_index: Zero-based index of which occurrence to anchor to.
+
+    Returns:
+        JSON string representing the created inline comment.
+
+    Raises:
+        ValueError: If in read-only mode or Confluence client is unavailable.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        comment = confluence_fetcher.add_inline_comment(
+            page_id=page_id,
+            content=body,
+            text_selection=text_selection,
+            text_selection_match_count=text_selection_match_count,
+            text_selection_match_index=text_selection_match_index,
+        )
+        if comment:
+            response = {
+                "success": True,
+                "message": "Inline comment added successfully",
+                "comment": comment.to_simplified_dict(),
+            }
+        else:
+            response = {
+                "success": False,
+                "message": (
+                    f"Unable to add inline comment to page {page_id}. "
+                    "API request completed but comment creation unsuccessful."
+                ),
+            }
+    except Exception as e:
+        logger.error(
+            f"Error adding inline comment to Confluence page {page_id}: {str(e)}"
+        )
+        response = {
+            "success": False,
+            "message": f"Error adding inline comment to page {page_id}",
+            "error": str(e),
+        }
+
+    return json.dumps(response, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
     tags={"confluence", "read", "toolset:confluence_users"},
     annotations={"title": "Search User", "readOnlyHint": True},
 )
@@ -1061,6 +1420,46 @@ async def search_user(
 
 
 @confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_users"},
+    annotations={"title": "Get User Details", "readOnlyHint": True},
+)
+async def get_user_details(
+    ctx: Context,
+    identifier: Annotated[
+        str,
+        Field(
+            description=(
+                "User identifier: accountId (Cloud), username (Server/DC), "
+                "or 'me' for the currently authenticated user."
+            )
+        ),
+    ],
+) -> str:
+    """Get Confluence user details by identifier.
+
+    Fetches the full profile for a specific user. Use 'me' to get the
+    currently authenticated user's profile.
+
+    Args:
+        ctx: The FastMCP context.
+        identifier: accountId (Cloud), username (Server/DC), or 'me'.
+
+    Returns:
+        JSON string with user details (accountId, displayName, email, etc.).
+    """
+    confluence = await get_confluence_fetcher(ctx)
+
+    if identifier.lower() == "me":
+        result = confluence.get_current_user_info()
+    elif confluence.config.is_cloud:
+        result = confluence.get_user_details_by_accountid(identifier)
+    else:
+        result = confluence.get_user_details_by_username(identifier)
+
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
     tags={"confluence", "read", "toolset:confluence_pages"},
     annotations={"title": "Get Page History", "readOnlyHint": True},
 )
@@ -1087,9 +1486,9 @@ async def get_page_history(
         bool,
         Field(
             description=(
-                "Whether to convert page to markdown (true) or keep it in raw HTML format (false). "
-                "Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: "
-                "using HTML significantly increases token usage in AI responses."
+                "Whether to convert page to markdown (true) or return raw Confluence storage XHTML (false). "
+                "Storage output preserves macros and task metadata for safe round-tripping, but CAUTION: "
+                "it significantly increases token usage in AI responses."
             ),
             default=True,
         ),
@@ -2071,3 +2470,396 @@ async def get_page_images(
         ),
     )
     return contents
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_pages"},
+    annotations={"title": "Set Content Property", "destructiveHint": True},
+)
+@check_write_access
+async def set_content_property(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(
+            description=(
+                "Confluence page ID (numeric string from the page URL, "
+                "e.g. '123456789')."
+            )
+        ),
+    ],
+    key: Annotated[
+        str,
+        Field(
+            description=(
+                "Property key to create or update. "
+                "Well-known keys: 'content-appearance-published', "
+                "'content-appearance-draft' (values: 'full-width' or 'fixed-width'), "
+                "'editor' (value: '{\"version\": 2}'). "
+                "Custom keys are also supported for app metadata."
+            )
+        ),
+    ],
+    value: Annotated[
+        str,
+        Field(
+            description=(
+                "Property value as a JSON string. "
+                "Examples: '\"full-width\"' for a string value, "
+                "'{\"version\": 2}' for an object value. "
+                "The version number is managed automatically."
+            )
+        ),
+    ],
+) -> str:
+    """Create or update a content property on a Confluence page.
+
+    Performs an upsert: creates the property if it does not exist, or updates
+    it if it does. The Confluence API version number is incremented automatically
+    so callers never need to manage it.
+
+    Common use cases:
+    - Switch page to full-width layout: key='content-appearance-published',
+      value='"full-width"'
+    - Switch page to fixed-width layout: key='content-appearance-published',
+      value='"fixed-width"'
+    - Set editor version: key='editor', value='{"version": 2}'
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: Confluence page ID.
+        key: Property key to create or update.
+        value: Property value as a JSON string.
+
+    Returns:
+        JSON object with the resulting ``{key: value}`` pair.
+
+    Raises:
+        ValueError: If the value is not valid JSON or in read-only mode.
+    """
+    try:
+        parsed_value = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"'value' must be a valid JSON string (e.g. '\"full-width\"' or "
+            f"'{{\"version\": 2}}'). Got: {value!r}"
+        ) from exc
+
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    result = confluence_fetcher.set_content_property(page_id, key, parsed_value)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_pages"},
+    annotations={"title": "Get Page Restrictions", "readOnlyHint": True},
+)
+async def get_page_restrictions(
+    ctx: Context,
+    page_id: Annotated[str, Field(description="The ID of the page")],
+) -> str:
+    """Get view and edit restrictions for a Confluence page.
+
+    Returns the current restriction lists for the read (view) and update (edit)
+    operations.  An empty list means the page is unrestricted for that operation.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page.
+
+    Returns:
+        JSON string with ``read`` and ``update`` restriction lists, each
+        containing ``users`` (account IDs) and ``groups`` (group names).
+
+    Raises:
+        ValueError: If Confluence client is not configured or available.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    restrictions = confluence_fetcher.get_page_restrictions(page_id=page_id)
+    return json.dumps(restrictions, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_pages"},
+    annotations={"title": "Set Page Restrictions", "destructiveHint": True},
+)
+@check_write_access
+async def set_page_restrictions(
+    ctx: Context,
+    page_id: Annotated[str, Field(description="The ID of the page to restrict")],
+    read_users: Annotated[
+        list[str] | None,
+        Field(
+            description="(Optional) Account IDs (Cloud) or usernames (Server/DC) allowed to view the page. Empty list = unrestricted.",
+            default=None,
+        ),
+    ] = None,
+    read_groups: Annotated[
+        list[str] | None,
+        Field(
+            description="(Optional) Group names allowed to view the page.",
+            default=None,
+        ),
+    ] = None,
+    edit_users: Annotated[
+        list[str] | None,
+        Field(
+            description="(Optional) Account IDs (Cloud) or usernames (Server/DC) allowed to edit the page.",
+            default=None,
+        ),
+    ] = None,
+    edit_groups: Annotated[
+        list[str] | None,
+        Field(
+            description="(Optional) Group names allowed to edit the page.",
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """Set view and edit restrictions on a Confluence page.
+
+    Replaces all existing restrictions with the provided lists.  Omitting all
+    parameters (or passing empty lists) removes all restrictions.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page to restrict.
+        read_users: Account IDs / usernames allowed to view the page.
+        read_groups: Group names allowed to view the page.
+        edit_users: Account IDs / usernames allowed to edit the page.
+        edit_groups: Group names allowed to edit the page.
+
+    Returns:
+        JSON string with the updated restriction lists.
+
+    Raises:
+        ValueError: If Confluence client is not configured or available.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    result = confluence_fetcher.set_page_restrictions(
+        page_id=page_id,
+        read_users=read_users,
+        read_groups=read_groups,
+        edit_users=edit_users,
+        edit_groups=edit_groups,
+    )
+    return json.dumps(
+        {"message": "Page restrictions updated successfully", "restrictions": result},
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_pages"},
+    annotations={"title": "Copy Page", "destructiveHint": True},
+)
+@check_write_access
+async def copy_page(
+    ctx: Context,
+    source_page_id: Annotated[str, Field(description="The ID of the page to copy")],
+    destination_space_key: Annotated[
+        str,
+        Field(description="Space key for the new page (e.g. 'DEV', 'TEAM')"),
+    ],
+    new_title: Annotated[str, Field(description="Title for the new copied page")],
+    destination_parent_id: Annotated[
+        str | None,
+        Field(
+            description="(Optional) Parent page ID in the destination space. When omitted the page is created at the space root.",
+            default=None,
+        ),
+        BeforeValidator(lambda x: str(x) if x is not None else None),
+    ] = None,
+    copy_attachments: Annotated[
+        bool,
+        Field(
+            description="(Optional) Whether to copy attachments to the new page. Defaults to true. Only supported on Confluence Cloud.",
+            default=True,
+        ),
+    ] = True,
+) -> str:
+    """Copy a Confluence page to a new location.
+
+    On Confluence Cloud the native copy endpoint is used.  On Server/Data Center
+    the page body is fetched and a new page is created manually (attachments are
+    not copied in the Server/DC path).
+
+    Args:
+        ctx: The FastMCP context.
+        source_page_id: The ID of the page to copy.
+        destination_space_key: Space key for the new page.
+        new_title: Title for the new copied page.
+        destination_parent_id: Optional parent page ID in the destination space.
+        copy_attachments: Whether to copy attachments (Cloud only).
+
+    Returns:
+        JSON string representing the new page.
+
+    Raises:
+        ValueError: If Confluence client is not configured or available.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    page = confluence_fetcher.copy_page(
+        source_page_id=source_page_id,
+        destination_space_key=destination_space_key,
+        new_title=new_title,
+        destination_parent_id=destination_parent_id,
+        copy_attachments=copy_attachments,
+    )
+    return json.dumps(
+        {"message": "Page copied successfully", "page": page.to_simplified_dict()},
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Template tools
+# ---------------------------------------------------------------------------
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_templates"},
+    annotations={"title": "List Page Templates", "readOnlyHint": True},
+)
+async def confluence_list_page_templates(
+    ctx: Context,
+    space_key: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Optional space key to list templates defined in that space. "
+                "When omitted, global templates are returned."
+            ),
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        Field(
+            default=25,
+            ge=1,
+            le=200,
+            description="Maximum number of templates to return.",
+        ),
+    ] = 25,
+) -> str:
+    """List Confluence page content templates.
+
+    Returns template metadata (ID, name, description, type) without the
+    full body.  Use confluence_get_page_template to fetch a template's body.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    try:
+        results = confluence_fetcher.list_page_templates(
+            space_key=space_key,
+            limit=limit,
+        )
+        simplified = [
+            {
+                "templateId": t.get("templateId", ""),
+                "name": t.get("name", ""),
+                "templateType": t.get("templateType", ""),
+                "description": (t.get("description") or {}).get("value", ""),
+            }
+            for t in results
+        ]
+        return json.dumps(
+            {"templates": simplified, "total": len(simplified)},
+            indent=2,
+            ensure_ascii=False,
+        )
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error listing templates: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error listing templates: {e}")
+        raise
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_templates"},
+    annotations={"title": "Get Page Template", "readOnlyHint": True},
+)
+async def confluence_get_page_template(
+    ctx: Context,
+    template_id: Annotated[
+        str,
+        Field(description="The ID of the template to retrieve."),
+    ],
+) -> str:
+    """Get a Confluence page template by ID, including its storage-format body."""
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    try:
+        template = confluence_fetcher.get_page_template(template_id)
+        body_value = template.get("body", {}).get("storage", {}).get("value", "")
+        return json.dumps(
+            {
+                "templateId": template.get("templateId", ""),
+                "name": template.get("name", ""),
+                "templateType": template.get("templateType", ""),
+                "description": (template.get("description") or {}).get("value", ""),
+                "body": body_value,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error fetching template {template_id}: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching template {template_id}: {e}")
+        raise
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_templates"},
+    annotations={"title": "Create Page from Template", "destructiveHint": False},
+)
+@check_write_access
+async def confluence_create_page_from_template(
+    ctx: Context,
+    space_key: Annotated[
+        str,
+        Field(description="Key of the space in which to create the page."),
+    ],
+    title: Annotated[
+        str,
+        Field(description="Title for the new page."),
+    ],
+    template_id: Annotated[
+        str,
+        Field(description="ID of the template to use as the page body."),
+    ],
+    parent_id: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Optional ID of the parent page.",
+        ),
+    ] = None,
+) -> str:
+    """Create a new Confluence page pre-populated with a template's body.
+
+    Fetches the named template and creates a page with its storage-format
+    content.  The page can be edited afterwards via confluence_update_page.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    try:
+        result = confluence_fetcher.create_page_from_template(
+            space_key=space_key,
+            title=title,
+            template_id=template_id,
+            parent_id=parent_id,
+        )
+        return json.dumps(result, indent=2, ensure_ascii=False)
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error creating page from template: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error creating page from template {template_id}: {e}")
+        raise

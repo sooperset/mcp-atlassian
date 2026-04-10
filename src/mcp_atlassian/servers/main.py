@@ -1,6 +1,8 @@
 """Main FastMCP server setup for Atlassian integration."""
 
+import asyncio
 import base64
+import functools
 import json
 import logging
 import os
@@ -34,6 +36,7 @@ from mcp_atlassian.utils.oauth import (
     CLOUD_TOKEN_URL,
     DC_AUTHORIZE_PATH,
     DC_TOKEN_PATH,
+    OAuthConfig,
 )
 from mcp_atlassian.utils.token_verifier import AtlassianOpaqueTokenVerifier
 from mcp_atlassian.utils.tools import get_enabled_tools, should_include_tool
@@ -118,6 +121,74 @@ async def health_check(request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
+async def _try_auto_oauth(
+    config: JiraConfig | ConfluenceConfig,
+    service_name: str,
+) -> bool:
+    """Attempt an automatic browser-based OAuth flow when credentials are
+    present but no stored tokens exist.
+
+    If the config does not need auto-OAuth (wrong auth type, missing creds, or
+    tokens already present), returns False without running the flow.
+
+    The blocking ``run_oauth_flow`` call (which waits for a browser callback
+    via ``time.sleep``) is offloaded to a thread so the async event loop is
+    not blocked during server startup.
+
+    Args:
+        config: The Jira or Confluence config to check and optionally run flow for.
+        service_name: Display name for logging (e.g. "Jira", "Confluence").
+
+    Returns:
+        True if the flow succeeded and tokens were stored, False otherwise.
+    """
+    if config.auth_type != "oauth":
+        return False
+    oauth_cfg = config.oauth_config
+    if not (
+        isinstance(oauth_cfg, OAuthConfig)
+        and bool(oauth_cfg.client_id)
+        and bool(oauth_cfg.client_secret)
+        and not oauth_cfg.access_token
+        and not oauth_cfg.refresh_token
+    ):
+        return False
+
+    from mcp_atlassian.utils.oauth_setup import OAuthSetupArgs, run_oauth_flow
+
+    logger.info(
+        "%s OAuth credentials found but no stored tokens. "
+        "Initiating browser authorization flow...",
+        service_name,
+    )
+    args = OAuthSetupArgs(
+        client_id=oauth_cfg.client_id,
+        client_secret=oauth_cfg.client_secret,
+        redirect_uri=oauth_cfg.redirect_uri,
+        scope=oauth_cfg.scope,
+        base_url=oauth_cfg.base_url,
+    )
+    try:
+        loop = asyncio.get_running_loop()
+        success = await loop.run_in_executor(
+            None, functools.partial(run_oauth_flow, args)
+        )
+        if success:
+            logger.info("%s OAuth browser flow completed successfully.", service_name)
+            return True
+    except Exception:
+        logger.exception(
+            "%s OAuth browser flow raised an unexpected error.", service_name
+        )
+
+    logger.error(
+        "%s OAuth browser flow failed. %s tools may be unavailable.",
+        service_name,
+        service_name,
+    )
+    return False
+
+
 @asynccontextmanager
 async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str, Any]]:
     logger.info("Main Atlassian MCP server lifespan starting...")
@@ -133,13 +204,21 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
         try:
             jira_config = JiraConfig.from_env()
             if jira_config.is_auth_configured():
+                if await _try_auto_oauth(jira_config, "Jira"):
+                    jira_config = JiraConfig.from_env()
                 loaded_jira_config = jira_config
                 logger.info(
                     "Jira configuration loaded and authentication is configured."
                 )
+            elif await _try_auto_oauth(jira_config, "Jira"):
+                jira_config = JiraConfig.from_env()
+                if jira_config.is_auth_configured():
+                    loaded_jira_config = jira_config
+                    logger.info("Jira configuration loaded after OAuth browser flow.")
             else:
                 logger.warning(
-                    "Jira URL found, but authentication is not fully configured. Jira tools will be unavailable."
+                    "Jira URL found, but authentication is not fully "
+                    "configured. Jira tools will be unavailable."
                 )
         except Exception as e:
             logger.error(f"Failed to load Jira configuration: {e}", exc_info=True)
@@ -148,16 +227,30 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
         try:
             confluence_config = ConfluenceConfig.from_env()
             if confluence_config.is_auth_configured():
+                if await _try_auto_oauth(confluence_config, "Confluence"):
+                    confluence_config = ConfluenceConfig.from_env()
                 loaded_confluence_config = confluence_config
                 logger.info(
                     "Confluence configuration loaded and authentication is configured."
                 )
+            elif await _try_auto_oauth(confluence_config, "Confluence"):
+                confluence_config = ConfluenceConfig.from_env()
+                if confluence_config.is_auth_configured():
+                    loaded_confluence_config = confluence_config
+                    logger.info(
+                        "Confluence configuration loaded after OAuth browser flow."
+                    )
             else:
                 logger.warning(
-                    "Confluence URL found, but authentication is not fully configured. Confluence tools will be unavailable."
+                    "Confluence URL found, but authentication is not "
+                    "fully configured. Confluence tools will be "
+                    "unavailable."
                 )
         except Exception as e:
-            logger.error(f"Failed to load Confluence configuration: {e}", exc_info=True)
+            logger.error(
+                f"Failed to load Confluence configuration: {e}",
+                exc_info=True,
+            )
 
     app_context = MainAppContext(
         full_jira_config=loaded_jira_config,
@@ -667,7 +760,12 @@ class UserTokenMiddleware:
         elif auth_header.strip():
             # Non-empty but unsupported auth type
             auth_value = auth_header.strip()
-            auth_type = auth_value.split(" ", 1)[0] if " " in auth_value else auth_value
+            if " " in auth_value:
+                auth_type = auth_value.split(" ", 1)[0]
+            else:
+                # No space means no type prefix — likely a raw token.
+                # Redact to avoid leaking credentials in logs (OWASP/CWE-532).
+                auth_type = "<redacted>"
             logger.warning(f"Unsupported Authorization type: {auth_type}")
             scope["state"]["auth_validation_error"] = (
                 "Unauthorized: Only 'Bearer <OAuthToken>', "
