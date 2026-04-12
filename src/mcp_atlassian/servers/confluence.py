@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 import mimetypes
+import re
 from typing import Annotated
 
 from fastmcp import Context, FastMCP
@@ -24,6 +25,74 @@ from mcp_atlassian.utils.media import (
 from mcp_atlassian.utils.urls import resolve_relative_url
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_page_id(page_id_str: str, confluence_fetcher: object) -> str:
+    """Resolve a page ID from a numeric ID, full URL, or tiny link.
+
+    Supports:
+    - Numeric ID: '123456789' -> '123456789'
+    - Full URL: '.../pages/123456789/Title' -> '123456789'
+    - Tiny link: '.../wiki/x/N4CIO' -> resolved numeric ID
+
+    Confluence tiny links encode page IDs as base64(little-endian 4-byte int)
+    with trailing zero-bytes ('A' in base64) and '=' padding stripped.
+
+    Args:
+        page_id_str: The page ID string (numeric, URL, or tiny link).
+        confluence_fetcher: The Confluence fetcher instance.
+
+    Returns:
+        The numeric page ID as a string.
+    """
+    # Already a numeric ID
+    if page_id_str.isdigit():
+        return page_id_str
+
+    # Full page URL: extract page ID from /pages/<id>/
+    pages_match = re.search(r"/pages/(\d+)", page_id_str)
+    if pages_match:
+        return pages_match.group(1)
+
+    # Tiny link: .../wiki/x/<encoded_id>
+    tiny_match = re.search(r"/wiki/x/([A-Za-z0-9_-]+)", page_id_str)
+    if tiny_match:
+        encoded = tiny_match.group(1)
+        resolved = _decode_confluence_tiny_id(encoded)
+        if resolved:
+            logger.info(f"Resolved tiny link 'x/{encoded}' to page ID {resolved}")
+            return str(resolved)
+        logger.error(f"Could not resolve tiny link 'x/{encoded}'")
+
+    return page_id_str
+
+
+def _decode_confluence_tiny_id(encoded: str) -> int | None:
+    """Decode a Confluence tiny link identifier to a numeric page ID.
+
+    Confluence tiny links use base64-encoded little-endian 4-byte integers.
+    Trailing zero-byte padding ('A' in base64) and '=' padding are stripped
+    from the encoded string.
+
+    Args:
+        encoded: The base64-encoded identifier from the tiny link URL.
+
+    Returns:
+        The numeric page ID, or None if decoding fails.
+    """
+    for extra_a in range(0, 4):
+        candidate = encoded + "A" * extra_a
+        remainder = len(candidate) % 4
+        if remainder:
+            candidate += "=" * (4 - remainder)
+        try:
+            decoded_bytes = base64.b64decode(candidate)
+            page_id = int.from_bytes(decoded_bytes[:4], byteorder="little")
+            if page_id > 0:
+                return page_id
+        except Exception:
+            continue
+    return None
 
 
 confluence_mcp = FastMCP(
@@ -134,9 +203,10 @@ async def get_page(
         str | None,
         Field(
             description=(
-                "Confluence page ID (numeric ID, can be found in the page URL). "
-                "For example, in the URL 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', "
-                "the page ID is '123456789'. "
+                "Confluence page ID, page URL, or tiny link. Accepts: "
+                "(1) numeric page ID (e.g., '123456789'), "
+                "(2) full page URL (e.g., 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title'), "
+                "(3) tiny link (e.g., 'https://example.atlassian.net/wiki/x/N4CIO'). "
                 "Provide this OR both 'title' and 'space_key'. If page_id is provided, title and space_key will be ignored."
             ),
             default=None,
@@ -203,6 +273,10 @@ async def get_page(
             )
         try:
             page_id_str = str(page_id)
+
+            # Resolve page ID from URL or tiny link
+            page_id_str = _resolve_page_id(page_id_str, confluence_fetcher)
+
             page_object = confluence_fetcher.get_page_content(
                 page_id_str, convert_to_markdown=convert_to_markdown
             )
