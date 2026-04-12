@@ -601,6 +601,42 @@ class TestIssuesMixin:
                 assert issues_mixin.get_issue.called
                 assert result.key == "EPIC-123"
 
+    def test_update_issue_handles_string_response_as_json(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Test that update_issue handles get_issue returning a JSON string on Server/DC."""
+        import json
+
+        issue_dict = make_issue_data(summary="Updated Summary", status="In Progress")
+        # Simulate atlassian-python-api returning a JSON string instead of dict
+        issues_mixin.jira.get_issue.return_value = json.dumps(issue_dict)
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+
+        document = issues_mixin.update_issue(
+            issue_key="TEST-123", fields={"summary": "Updated Summary"}
+        )
+
+        assert document.key == "TEST-123"
+        assert document.summary == "Updated Summary"
+
+    def test_update_issue_handles_string_response_with_refetch(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Test that update_issue re-fetches via direct GET when string is not valid JSON."""
+        issue_dict = make_issue_data(summary="Refetched", status="Open")
+        # First call returns non-JSON string, direct GET returns dict
+        issues_mixin.jira.get_issue.return_value = "<html>WAF login page</html>"
+        issues_mixin.jira.get.return_value = issue_dict
+        issues_mixin.jira.resource_url.return_value = "/rest/api/2/issue/TEST-123"
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+
+        document = issues_mixin.update_issue(
+            issue_key="TEST-123", fields={"summary": "Refetched"}
+        )
+
+        issues_mixin.jira.get.assert_called_once_with("/rest/api/2/issue/TEST-123")
+        assert document.key == "TEST-123"
+
     def test_update_issue_basic(self, issues_mixin: IssuesMixin, make_issue_data):
         """Test updating an issue with basic fields."""
         issues_mixin.jira.get_issue.return_value = make_issue_data(
