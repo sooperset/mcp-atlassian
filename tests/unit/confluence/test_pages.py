@@ -798,6 +798,31 @@ class TestPagesMixin:
                 representation="storage",
             )
 
+    def test_create_page_with_xhtml_format(self, pages_mixin):
+        """Test creating a page with xhtml format maps to storage representation."""
+        space_key = "PROJ"
+        title = "XHTML Page"
+        xhtml_body = "<ac:structured-macro ac:name='code'><ac:plain-text-body>hello</ac:plain-text-body></ac:structured-macro>"
+
+        with patch.object(
+            pages_mixin,
+            "get_page_content",
+            return_value=ConfluencePage(id="123456789", title=title),
+        ):
+            result = pages_mixin.create_page(
+                space_key=space_key, title=title, body=xhtml_body, is_markdown=False
+            )
+
+            # xhtml should be treated the same as storage
+            pages_mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
+            pages_mixin.confluence.create_page.assert_called_once_with(
+                space=space_key,
+                title=title,
+                body=xhtml_body,
+                parent_id=None,
+                representation="storage",
+            )
+
     def test_update_page_with_markdown(self, pages_mixin):
         """Test updating a page with markdown content."""
         # Arrange
