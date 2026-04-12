@@ -2944,3 +2944,161 @@ class TestPageHierarchy:
 
         assert result["total_pages"] == 1
         assert result["has_more"] is False
+
+
+class TestUpdatePageSection:
+    """Tests for PagesMixin.update_page_section."""
+
+    @pytest.fixture
+    def pages_mixin(self, confluence_client):
+        """Create a PagesMixin instance for testing."""
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = PagesMixin()
+            mixin.confluence = confluence_client.confluence
+            mixin.config = confluence_client.config
+            mixin.preprocessor = confluence_client.preprocessor
+            return mixin
+
+    def _make_page(self, page_id: str, title: str, storage_html: str) -> ConfluencePage:
+        return ConfluencePage(
+            id=page_id,
+            title=title,
+            content=storage_html,
+            space={"key": "PROJ", "name": "Project"},
+            version={"number": 1},
+        )
+
+    def test_replaces_section_content(self, pages_mixin):
+        """Section body is replaced; heading and surrounding content are kept."""
+        storage = (
+            "<h1>Intro</h1><p>intro text</p>"
+            "<h2>Target Section</h2><p>old content</p>"
+            "<h2>Another Section</h2><p>other content</p>"
+        )
+        raw_page = self._make_page("123", "My Page", storage)
+        updated_page = self._make_page("123", "My Page", "updated")
+
+        pages_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<p>new content</p>"
+        )
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=raw_page),
+            patch.object(
+                pages_mixin, "update_page", return_value=updated_page
+            ) as mock_update,
+        ):
+            result = pages_mixin.update_page_section(
+                page_id="123",
+                heading_text="Target Section",
+                new_content="new content",
+            )
+
+        assert result is updated_page
+        call_body: str = mock_update.call_args.kwargs["body"]
+        # Heading preserved
+        assert "<h2>Target Section</h2>" in call_body
+        # New content inserted
+        assert "<p>new content</p>" in call_body
+        # Old content removed
+        assert "old content" not in call_body
+        # Sibling section untouched
+        assert "<h2>Another Section</h2>" in call_body
+        assert "<p>other content</p>" in call_body
+        # Written back as storage format
+        assert mock_update.call_args.kwargs["is_markdown"] is False
+        assert mock_update.call_args.kwargs["content_representation"] == "storage"
+
+    def test_stops_at_same_level_heading(self, pages_mixin):
+        """Content replacement stops at the next heading of the same level."""
+        storage = (
+            "<h2>Section A</h2><p>a content</p>"
+            "<h2>Section B</h2><p>b content</p><h3>Sub</h3><p>sub</p>"
+            "<h2>Section C</h2><p>c content</p>"
+        )
+        raw_page = self._make_page("1", "P", storage)
+        updated_page = self._make_page("1", "P", "")
+
+        pages_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<p>new b</p>"
+        )
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=raw_page),
+            patch.object(
+                pages_mixin, "update_page", return_value=updated_page
+            ) as mock_update,
+        ):
+            pages_mixin.update_page_section("1", "Section B", "new b")
+
+        body: str = mock_update.call_args.kwargs["body"]
+        assert "b content" not in body
+        assert "<p>new b</p>" in body
+        # Section C must be intact
+        assert "<h2>Section C</h2>" in body
+        assert "<p>c content</p>" in body
+        # Section A must be intact
+        assert "<h2>Section A</h2>" in body
+        assert "<p>a content</p>" in body
+
+    def test_heading_not_found_raises(self, pages_mixin):
+        """ValueError is raised when heading text does not exist on the page."""
+        raw_page = self._make_page("1", "P", "<h2>Existing</h2><p>content</p>")
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            with pytest.raises(ValueError, match="not found in page"):
+                pages_mixin.update_page_section("1", "Nonexistent Heading", "data")
+
+    def test_invalid_content_format_raises(self, pages_mixin):
+        """ValueError is raised for unsupported content_format values."""
+        with pytest.raises(ValueError, match="Invalid content_format"):
+            pages_mixin.update_page_section(
+                "1", "Heading", "content", content_format="wiki"
+            )
+
+    def test_macros_outside_section_preserved(self, pages_mixin):
+        """Confluence macros outside the target section survive the update."""
+        macro = (
+            '<ac:structured-macro ac:name="toc">'
+            '<ac:parameter ac:name="maxLevel">3</ac:parameter>'
+            "</ac:structured-macro>"
+        )
+        storage = f"{macro}<h2>Section</h2><p>old</p><h2>Other</h2><p>other</p>"
+        raw_page = self._make_page("1", "P", storage)
+        updated_page = self._make_page("1", "P", "")
+
+        pages_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<p>new</p>"
+        )
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=raw_page),
+            patch.object(
+                pages_mixin, "update_page", return_value=updated_page
+            ) as mock_update,
+        ):
+            pages_mixin.update_page_section("1", "Section", "new")
+
+        body: str = mock_update.call_args.kwargs["body"]
+        assert 'ac:name="toc"' in body
+
+    def test_storage_format_content_not_converted(self, pages_mixin):
+        """When content_format='storage', markdown_to_confluence_storage is not called."""
+        raw_page = self._make_page("1", "P", "<h2>Section</h2><p>old</p>")
+        updated_page = self._make_page("1", "P", "")
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=raw_page),
+            patch.object(pages_mixin, "update_page", return_value=updated_page),
+        ):
+            pages_mixin.update_page_section(
+                "1",
+                "Section",
+                "<p>raw storage</p>",
+                content_format="storage",
+            )
+
+        pages_mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
