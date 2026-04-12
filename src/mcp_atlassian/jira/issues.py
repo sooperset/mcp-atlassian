@@ -337,9 +337,9 @@ class IssuesMixin(
 
                 comments = response["comments"]
 
-                # Limit comments if needed
+                # Return the most recent comments (newest) by slicing from the end
                 if comment_limit is not None:
-                    comments = comments[:comment_limit]
+                    comments = comments[-comment_limit:]
 
                 return comments
             except Exception as e:
