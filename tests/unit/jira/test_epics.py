@@ -765,3 +765,150 @@ class TestEpicsMixin:
             match="Error getting epic issues: API error",
         ):
             epics_mixin.get_epic_issues("EPIC-123")
+
+    # --- Tests for unlink_issue_from_epic ---
+
+    def test_unlink_issue_from_epic_parent_field_success(self, epics_mixin: EpicsMixin):
+        """Test unlink via parent field when parent is an Epic."""
+        epics_mixin.jira.get_issue.return_value = {
+            "key": "TEST-123",
+            "fields": {
+                "parent": {
+                    "key": "EPIC-456",
+                    "fields": {
+                        "issuetype": {"name": "Epic"},
+                    },
+                },
+            },
+        }
+        epics_mixin.get_issue = MagicMock(
+            return_value=JiraIssue(key="TEST-123", id="123456")
+        )
+        epics_mixin.jira.update_issue.return_value = None
+
+        result = epics_mixin.unlink_issue_from_epic("TEST-123")
+
+        epics_mixin.jira.update_issue.assert_called_once_with(
+            issue_key="TEST-123",
+            update={"fields": {"parent": None}},
+        )
+        epics_mixin.get_issue.assert_called_once_with("TEST-123")
+        assert isinstance(result, JiraIssue)
+        assert result.key == "TEST-123"
+
+    def test_unlink_issue_from_epic_custom_field_success(self, epics_mixin: EpicsMixin):
+        """Test unlink via discovered epic_link field when parent fails."""
+        # Issue has no parent set
+        epics_mixin.jira.get_issue.return_value = {
+            "key": "TEST-123",
+            "fields": {},
+        }
+        epics_mixin.get_issue = MagicMock(
+            return_value=JiraIssue(key="TEST-123", id="123456")
+        )
+        epics_mixin.get_field_ids_to_epic = MagicMock(
+            return_value={"epic_link": "customfield_10014"}
+        )
+        epics_mixin.jira.update_issue.return_value = None
+
+        result = epics_mixin.unlink_issue_from_epic("TEST-123")
+
+        epics_mixin.jira.update_issue.assert_called_once_with(
+            issue_key="TEST-123",
+            update={"fields": {"customfield_10014": None}},
+        )
+        assert isinstance(result, JiraIssue)
+        assert result.key == "TEST-123"
+
+    def test_unlink_issue_from_epic_common_fields_fallback(
+        self, epics_mixin: EpicsMixin
+    ):
+        """Test unlink falls back to common custom fields."""
+        # No parent, no discovered field
+        epics_mixin.jira.get_issue.return_value = {
+            "key": "TEST-123",
+            "fields": {},
+        }
+        epics_mixin.get_issue = MagicMock(
+            return_value=JiraIssue(key="TEST-123", id="123456")
+        )
+        epics_mixin.get_field_ids_to_epic = MagicMock(return_value={})
+        # First common field fails, second succeeds
+        epics_mixin.jira.update_issue.side_effect = [
+            Exception("Field not found"),
+            None,
+        ]
+
+        result = epics_mixin.unlink_issue_from_epic("TEST-123")
+
+        assert epics_mixin.jira.update_issue.call_count == 2
+        # First call: customfield_10014 (Cloud)
+        assert epics_mixin.jira.update_issue.call_args_list[0] == call(
+            issue_key="TEST-123",
+            update={"fields": {"customfield_10014": None}},
+        )
+        # Second call: customfield_10008 (Server)
+        assert epics_mixin.jira.update_issue.call_args_list[1] == call(
+            issue_key="TEST-123",
+            update={"fields": {"customfield_10008": None}},
+        )
+        assert isinstance(result, JiraIssue)
+
+    def test_unlink_issue_from_epic_all_methods_fail(self, epics_mixin: EpicsMixin):
+        """Test ValueError when all unlinking methods fail."""
+        # No parent
+        epics_mixin.jira.get_issue.return_value = {
+            "key": "TEST-123",
+            "fields": {},
+        }
+        epics_mixin.get_field_ids_to_epic = MagicMock(return_value={})
+        # All update attempts fail
+        epics_mixin.jira.update_issue.side_effect = Exception("Update failed")
+
+        with pytest.raises(
+            ValueError,
+            match="Could not unlink issue TEST-123 from its epic",
+        ):
+            epics_mixin.unlink_issue_from_epic("TEST-123")
+
+    def test_unlink_issue_from_epic_api_error(self, epics_mixin: EpicsMixin):
+        """Test API error propagation during issue retrieval."""
+        epics_mixin.jira.get_issue.side_effect = Exception("API error")
+
+        with pytest.raises(
+            Exception,
+            match="Error unlinking issue from epic: API error",
+        ):
+            epics_mixin.unlink_issue_from_epic("TEST-123")
+
+    def test_unlink_issue_from_epic_parent_not_epic(self, epics_mixin: EpicsMixin):
+        """Test that parent is skipped when it is not an Epic."""
+        # Parent is a Story, not an Epic
+        epics_mixin.jira.get_issue.return_value = {
+            "key": "TEST-123",
+            "fields": {
+                "parent": {
+                    "key": "STORY-456",
+                    "fields": {
+                        "issuetype": {"name": "Story"},
+                    },
+                },
+            },
+        }
+        epics_mixin.get_issue = MagicMock(
+            return_value=JiraIssue(key="TEST-123", id="123456")
+        )
+        epics_mixin.get_field_ids_to_epic = MagicMock(
+            return_value={"epic_link": "customfield_10014"}
+        )
+        epics_mixin.jira.update_issue.return_value = None
+
+        result = epics_mixin.unlink_issue_from_epic("TEST-123")
+
+        # Should skip parent and use discovered epic_link field
+        epics_mixin.jira.update_issue.assert_called_once_with(
+            issue_key="TEST-123",
+            update={"fields": {"customfield_10014": None}},
+        )
+        assert isinstance(result, JiraIssue)
+        assert result.key == "TEST-123"
