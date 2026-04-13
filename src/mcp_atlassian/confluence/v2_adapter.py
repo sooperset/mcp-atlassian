@@ -492,6 +492,113 @@ class ConfluenceV2Adapter:
             logger.error(f"Error creating footer comment: {e}")
             raise ValueError(f"Failed to create footer comment: {e}") from e
 
+    def create_inline_comment(
+        self,
+        page_id: str,
+        body: str,
+        text_selection: str,
+        text_selection_match_index: int = 0,
+        representation: str = "storage",
+    ) -> dict[str, Any]:
+        """Create an inline comment anchored to a text selection using the v2 API.
+
+        Inline comments are Cloud-only and require the v2 endpoint
+        ``POST /wiki/api/v2/inline-comments``.  The v1 equivalent returns
+        405 Method Not Allowed on Confluence Cloud.
+
+        Args:
+            page_id: The ID of the page to comment on.
+            body: The comment content in storage format.
+            text_selection: The exact text on the page to anchor the comment to.
+            text_selection_match_index: Zero-based index of which occurrence of
+                ``text_selection`` to anchor to (default: 0, the first match).
+            representation: Content representation format (default: "storage").
+
+        Returns:
+            The created inline comment in v1-compatible format.
+
+        Raises:
+            ValueError: If comment creation fails.
+        """
+        try:
+            # textSelectionMatchCount must be at least match_index + 1
+            match_count = text_selection_match_index + 1
+
+            data: dict[str, Any] = {
+                "pageId": page_id,
+                "inlineCommentProperties": {
+                    "textSelection": text_selection,
+                    "textSelectionMatchCount": match_count,
+                    "textSelectionMatchIndex": text_selection_match_index,
+                },
+                "body": {
+                    "representation": representation,
+                    "value": body,
+                },
+            }
+
+            url = f"{self.base_url}/api/v2/inline-comments"
+            response = self.session.post(url, json=data)
+            response.raise_for_status()
+
+            result = response.json()
+            logger.debug(
+                f"Successfully created inline comment on page '{page_id}' "
+                f"anchored to '{text_selection[:40]}'"
+            )
+
+            return self._convert_v2_inline_comment_to_v1_format(result)
+
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error creating inline comment on page '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error creating inline comment on page '{page_id}': {e}")
+            raise ValueError(
+                f"Failed to create inline comment on page '{page_id}': {e}"
+            ) from e
+
+    def _convert_v2_inline_comment_to_v1_format(
+        self, v2_response: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Convert v2 inline-comment response to v1-compatible format.
+
+        Args:
+            v2_response: The response from ``POST /wiki/api/v2/inline-comments``.
+
+        Returns:
+            Response formatted like v1 API for compatibility with
+            ``ConfluenceComment.from_api_response``.
+        """
+        body_value = v2_response.get("body", {}).get("storage", {}).get("value", "")
+
+        v1_compatible: dict[str, Any] = {
+            "id": v2_response.get("id"),
+            "type": "comment",
+            "status": v2_response.get("status"),
+            "title": v2_response.get("title"),
+            "body": {
+                "view": {
+                    "value": body_value,
+                    "representation": "view",
+                },
+            },
+            "version": v2_response.get("version", {}),
+            "_links": v2_response.get("_links", {}),
+            "extensions": {"location": "inline"},
+        }
+
+        if author := v2_response.get("author"):
+            v1_compatible["author"] = author
+
+        if props := v2_response.get("inlineCommentProperties"):
+            v1_compatible["inlineCommentProperties"] = props
+
+        return v1_compatible
+
     def _convert_v2_comment_to_v1_format(
         self, v2_response: dict[str, Any]
     ) -> dict[str, Any]:
