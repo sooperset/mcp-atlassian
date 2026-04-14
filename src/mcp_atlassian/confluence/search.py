@@ -80,7 +80,12 @@ class SearchMixin(ConfluenceClient):
         for page in search_result.results:
             # Get the excerpt from the original search results
             for result_item in results.get("results", []):
-                if result_item.get("content", {}).get("id") == page.id:
+                content_id = None
+                if result_item.get("content"):
+                    content_id = result_item["content"].get("id")
+                elif result_item.get("space"):
+                    content_id = str(result_item["space"].get("id", ""))
+                if content_id == page.id:
                     excerpt = result_item.get("excerpt", "")
                     if excerpt:
                         # Process the excerpt as HTML content
