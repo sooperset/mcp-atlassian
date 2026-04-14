@@ -107,6 +107,13 @@ class JiraPreprocessor(BasePreprocessor):
         "cmake": "bash",
     }
 
+    # Regex that detects Jira wiki markup markers unambiguous enough to conclude
+    # the input is Jira wiki format rather than Markdown.  Used to skip the
+    # "# heading" → "h1. heading" conversion when the # is a Jira ordered list.
+    _JIRA_WIKI_MARKER_RE = re.compile(
+        r"(?:^h[1-6]\.\s|^\{code|^\{noformat|^\{panel)", re.MULTILINE
+    )
+
     def __init__(
         self, base_url: str = "", disable_translation: bool = False, **kwargs: Any
     ) -> None:
@@ -269,9 +276,11 @@ class JiraPreprocessor(BasePreprocessor):
         # Text formatting (bold, italic)
         output = re.sub(
             r"([*_])(.*?)\1",
-            lambda match: ("**" if match.group(1) == "*" else "*")
-            + match.group(2)
-            + ("**" if match.group(1) == "*" else "*"),
+            lambda match: (
+                ("**" if match.group(1) == "*" else "*")
+                + match.group(2)
+                + ("**" if match.group(1) == "*" else "*")
+            ),
             output,
         )
 
@@ -426,6 +435,12 @@ class JiraPreprocessor(BasePreprocessor):
         if self.disable_translation:
             return input_text
 
+        # If input already contains Jira wiki markers it is Jira wiki markup,
+        # not Markdown.  Pass it through unchanged rather than partially
+        # converting it with Markdown -> Jira transformations.
+        if self._JIRA_WIKI_MARKER_RE.search(input_text):
+            return input_text
+
         code_blocks: list[str] = []
         inline_codes: list[str] = []
 
@@ -461,12 +476,16 @@ class JiraPreprocessor(BasePreprocessor):
             "INLINECODE",
         )
 
-        # Headers with = or - underlines
+        # Horizontal rules (--- *** ___) → Jira ----
+        # Must run before setext headings so standalone --- is not mistaken
+        # for a heading underline with an empty title.
+        output = re.sub(r"^([-*_])\1{2,}$", "----", output, flags=re.MULTILINE)
+
+        # Headers with = or - underlines (setext style)
+        # Requires non-empty content on the preceding line (.+ not .*)
         output = re.sub(
-            r"^(.*?)\n([=-])+$",
-            lambda match: (
-                f"h{1 if match.group(2)[0] == '=' else 2}. {match.group(1)}"
-            ),
+            r"^(.+)\n([=-])+$",
+            lambda match: f"h{1 if match.group(2)[0] == '=' else 2}. {match.group(1)}",
             output,
             flags=re.MULTILINE,
         )
@@ -480,6 +499,21 @@ class JiraPreprocessor(BasePreprocessor):
             flags=re.MULTILINE,
         )
 
+        # Bold+italic (all four Markdown variants) → *_text_* Jira syntax.
+        # Extracted before the general bold/italic pass so the converted
+        # *_text_* result is not re-processed as plain italic.
+        bold_italics: list[str] = []
+        output = _extract_blocks(
+            output,
+            r"\*{3}(.+?)\*{3}"  # ***text***
+            r"|_{3}(.+?)_{3}"  # ___text___
+            r"|_{2}\*(.+?)\*_{2}"  # __*text*__
+            r"|\*{2}_(.+?)_\*{2}",  # **_text_**
+            lambda m: f"*_{next(g for g in m.groups() if g is not None)}_*",
+            bold_italics,
+            "BOLDITALIC",
+        )
+
         # Bold and italic - skip lines starting with
         # asterisks+space (Jira list syntax, issue #786)
         def convert_bold_italic_line(line: str) -> str:
@@ -487,14 +521,17 @@ class JiraPreprocessor(BasePreprocessor):
                 return line
             return re.sub(
                 r"([*_]+)(.*?)\1",
-                lambda m: ("_" if len(m.group(1)) == 1 else "*")
-                + m.group(2)
-                + ("_" if len(m.group(1)) == 1 else "*"),
+                lambda m: (
+                    ("_" if len(m.group(1)) == 1 else "*")
+                    + m.group(2)
+                    + ("_" if len(m.group(1)) == 1 else "*")
+                ),
                 line,
             )
 
         lines = output.split("\n")
         output = "\n".join(convert_bold_italic_line(line) for line in lines)
+        output = _restore_blocks(output, bold_italics, "BOLDITALIC")
 
         # Multi-level bulleted list
         def bulleted_list_fn(match: re.Match[str]) -> str:
@@ -523,6 +560,26 @@ class JiraPreprocessor(BasePreprocessor):
             output,
             flags=re.MULTILINE,
         )
+
+        # Blockquotes - collect consecutive > lines into {quote} blocks
+        bq_lines = output.split("\n")
+        bq_result: list[str] = []
+        i = 0
+        while i < len(bq_lines):
+            if bq_lines[i].startswith("> ") or bq_lines[i] == ">":
+                quote_content: list[str] = []
+                while i < len(bq_lines) and (
+                    bq_lines[i].startswith("> ") or bq_lines[i] == ">"
+                ):
+                    quote_content.append("" if bq_lines[i] == ">" else bq_lines[i][2:])
+                    i += 1
+                bq_result.append("{quote}")
+                bq_result.extend(quote_content)
+                bq_result.append("{quote}")
+            else:
+                bq_result.append(bq_lines[i])
+                i += 1
+        output = "\n".join(bq_result)
 
         # HTML formatting tags to Jira markup
         tag_map = {

@@ -593,8 +593,6 @@ More content.
 
 
 # Issue #786 regression tests - Wiki Markup Corruption
-
-
 def test_markdown_to_jira_header_requires_space(preprocessor_with_jira):
     """Test that # requires space to be converted to heading (issue #786)."""
     # With space - Markdown heading, should convert
@@ -640,6 +638,25 @@ def test_markdown_to_jira_bold_without_space_still_converts(preprocessor_with_ji
     assert preprocessor_with_jira.markdown_to_jira("*italic text*") == "_italic text_"
 
 
+def test_converts_markdown_underscore_bold(preprocessor_with_jira):
+    """__bold__ (double-underscore) converts to *bold* same as **bold**."""
+    assert preprocessor_with_jira.markdown_to_jira("__bold text__") == "*bold text*"
+
+
+def test_converts_markdown_bold_italic(preprocessor_with_jira):
+    """All four Markdown bold+italic variants convert to *_text_* Jira syntax.
+
+    Markdown bold+italic (markdownguide.org):
+      ***text***  ___text___  __*text*__  **_text_**
+    Jira equivalent: *_text_* (bold wrapping italic)
+    """
+    expected = "*_really important_*"
+    assert preprocessor_with_jira.markdown_to_jira("***really important***") == expected
+    assert preprocessor_with_jira.markdown_to_jira("___really important___") == expected
+    assert preprocessor_with_jira.markdown_to_jira("__*really important*__") == expected
+    assert preprocessor_with_jira.markdown_to_jira("**_really important_**") == expected
+
+
 def test_md2conf_elements_from_string_available():
     """Test that elements_from_string is importable with fallback (issue #817)."""
     from mcp_atlassian.preprocessing.confluence import elements_from_string
@@ -648,8 +665,6 @@ def test_md2conf_elements_from_string_available():
 
 
 # Issue #893 regression tests - Code Block Content Corruption
-
-
 def test_markdown_to_jira_code_block_preserves_hash(preprocessor_with_jira):
     """Test that # characters inside code blocks are preserved (issue #893)."""
     markdown = """Here's a script:
@@ -729,9 +744,214 @@ Here's some code:
     assert "# This is a comment" in result
 
 
+# Issue #904 regression tests - Jira ordered list items converted to headings
+# --- passthrough: Jira wiki input returned unchanged (Option A) ---
+
+
+def test_passthrough_jira_heading_marker_preserves_ordered_list(preprocessor_with_jira):
+    """Jira wiki input with h[1-6]. marker is returned unchanged (Option A).
+
+    '# item' ordered list items must not be corrupted to h1. headings.
+    """
+    jira_wiki = "h3. Next Steps\n\n# Wait for mirrors\n# Apply patch\n# Retry build"
+    result = preprocessor_with_jira.markdown_to_jira(jira_wiki)
+
+    assert result == jira_wiki
+
+
+def test_passthrough_jira_heading_marker_preserves_nested_list(preprocessor_with_jira):
+    """Jira wiki input with h[1-6]. marker is returned unchanged (Option A).
+
+    Nested '## sub-item' syntax must survive intact.
+    """
+    jira_wiki = "h2. Steps\n\n# Step one\n## Sub-step A\n## Sub-step B\n# Step two"
+    result = preprocessor_with_jira.markdown_to_jira(jira_wiki)
+
+    assert result == jira_wiki
+
+
+def test_passthrough_jira_heading_marker_preserves_md_numbered_list(
+    preprocessor_with_jira,
+):
+    """Jira wiki marker causes full pass-through; MD numbered list not converted."""
+    mixed = "h3. Overview\n\n1. First step\n2. Second step"
+    result = preprocessor_with_jira.markdown_to_jira(mixed)
+
+    assert result == mixed
+
+
+def test_passthrough_jira_code_marker(preprocessor_with_jira):
+    """{code} marker triggers Option A early return - input returned unchanged."""
+    jira_wiki = "{code:python}\nprint('hello')\n{code}"
+    result = preprocessor_with_jira.markdown_to_jira(jira_wiki)
+
+    assert result == jira_wiki
+
+
+def test_passthrough_jira_noformat_marker(preprocessor_with_jira):
+    """{noformat} marker triggers Option A early return - input returned unchanged."""
+    jira_wiki = "{noformat}\nplain text block\n{noformat}"
+    result = preprocessor_with_jira.markdown_to_jira(jira_wiki)
+
+    assert result == jira_wiki
+
+
+def test_passthrough_jira_panel_marker(preprocessor_with_jira):
+    """{panel} marker triggers Option A early return - input returned unchanged."""
+    jira_wiki = "{panel:title=Note}\nSome content\n{panel}"
+    result = preprocessor_with_jira.markdown_to_jira(jira_wiki)
+
+    assert result == jira_wiki
+
+
+# --- ambiguous: no Jira marker, best-effort conversion ---
+
+
+def test_ambiguous_bare_ordered_list_converted_as_heading(preprocessor_with_jira):
+    """'# Item' without any Jira marker is indistinguishable from Markdown H1.
+
+    Known limitation: bare Jira ordered list items are treated as Markdown
+    headings because there is no reliable signal that the input is Jira wiki.
+    """
+    result = preprocessor_with_jira.markdown_to_jira("# Item")
+    assert result == "h1. Item"
+
+
+# --- converts: Markdown in, Jira wiki out ---
+
+
+def test_converts_markdown_headings(preprocessor_with_jira):
+    """Pure Markdown headings convert to h1.-h3. without Jira markers present."""
+    result = preprocessor_with_jira.markdown_to_jira("# Title\n## Section\n### Sub")
+    assert result == "h1. Title\nh2. Section\nh3. Sub"
+
+
+def test_converts_markdown_headings_with_horizontal_rule(preprocessor_with_jira):
+    """'---' horizontal rule must not suppress Markdown heading conversion.
+
+    Pure Markdown input with '---' contains no Jira wiki markers so the
+    Option A early return does not fire.  Headings must still be converted.
+    """
+    md = "## Background\n\nSome text.\n\n## Scope\n\nMore text.\n\n---\nFooter"
+    result = preprocessor_with_jira.markdown_to_jira(md)
+
+    assert "h2. Background" in result
+    assert "h2. Scope" in result
+    assert "## Background" not in result
+    assert "## Scope" not in result
+
+
+def test_converts_markdown_headings_with_template_variable(preprocessor_with_jira):
+    """{{variable}} at line start must NOT suppress Markdown heading conversion.
+
+    Double-brace template syntax is not a Jira wiki marker.
+    """
+    md = "{{variable}} should be configured first\n\n# My Heading\n## Sub-section"
+    result = preprocessor_with_jira.markdown_to_jira(md)
+
+    assert "h1. My Heading" in result
+    assert "h2. Sub-section" in result
+
+
+def test_converts_markdown_underline_heading(preprocessor_with_jira):
+    """Setext-style headings (underline with = or -) convert to h1./h2."""
+    assert preprocessor_with_jira.markdown_to_jira("Title\n=====") == "h1. Title"
+    assert preprocessor_with_jira.markdown_to_jira("Title\n-----") == "h2. Title"
+
+
+def test_converts_markdown_horizontal_rule(preprocessor_with_jira):
+    """Standalone --- converts to Jira horizontal rule ----."""
+    assert preprocessor_with_jira.markdown_to_jira("---") == "----"
+    assert preprocessor_with_jira.markdown_to_jira("***") == "----"
+    assert preprocessor_with_jira.markdown_to_jira("___") == "----"
+
+
+def test_converts_markdown_horizontal_rule_does_not_corrupt_setext(
+    preprocessor_with_jira,
+):
+    """Standalone --- must not fire the setext heading regex on empty preceding line."""
+    result = preprocessor_with_jira.markdown_to_jira("text\n\n---\n\nmore text")
+    assert "----" in result
+    assert "h2." not in result
+
+
+def test_converts_markdown_numbered_list(preprocessor_with_jira):
+    """Markdown numbered list items convert to Jira ordered list syntax."""
+    result = preprocessor_with_jira.markdown_to_jira("1. First\n2. Second\n3. Third")
+    assert result == "# First\n# Second\n# Third"
+
+
+def test_converts_markdown_strikethrough(preprocessor_with_jira):
+    """~~text~~ converts to -text- Jira strikethrough."""
+    result = preprocessor_with_jira.markdown_to_jira("~~deleted~~")
+    assert result == "-deleted-"
+
+
+def test_converts_markdown_link(preprocessor_with_jira):
+    """[text](url) converts to [text|url] Jira link syntax."""
+    result = preprocessor_with_jira.markdown_to_jira(
+        "[Atlassian](https://atlassian.com)"
+    )
+    assert result == "[Atlassian|https://atlassian.com]"
+
+
+def test_converts_markdown_bare_link(preprocessor_with_jira):
+    """<url> bare link converts to [url] Jira link syntax."""
+    result = preprocessor_with_jira.markdown_to_jira("<https://atlassian.com>")
+    assert result == "[https://atlassian.com]"
+
+
+def test_converts_markdown_image_no_alt(preprocessor_with_jira):
+    """![](url) image without alt text converts to !url! Jira syntax."""
+    result = preprocessor_with_jira.markdown_to_jira("![](https://example.com/img.png)")
+    assert result == "!https://example.com/img.png!"
+
+
+def test_converts_markdown_image_with_alt(preprocessor_with_jira):
+    """![alt](url) image with alt text converts to !url|alt=alt! Jira syntax."""
+    result = preprocessor_with_jira.markdown_to_jira(
+        "![logo](https://example.com/img.png)"
+    )
+    assert result == "!https://example.com/img.png|alt=logo!"
+
+
+def test_converts_html_color_span(preprocessor_with_jira):
+    """<span style='color:#hex'> converts to {color:#hex}text{color} Jira syntax."""
+    result = preprocessor_with_jira.markdown_to_jira(
+        '<span style="color:#ff0000">red text</span>'
+    )
+    assert result == "{color:#ff0000}red text{color}"
+
+
+def test_converts_markdown_table(preprocessor_with_jira):
+    """Markdown table header row converts to Jira double-pipe header syntax."""
+    md = "| Col A | Col B |\n|-------|-------|\n| val 1 | val 2 |"
+    result = preprocessor_with_jira.markdown_to_jira(md)
+    assert "|| Col A || Col B ||" in result
+    assert "| val 1 | val 2 |" in result
+
+
+def test_converts_markdown_blockquote(preprocessor_with_jira):
+    """'> text' blockquote converts to {quote} block."""
+    result = preprocessor_with_jira.markdown_to_jira("> This is a quote")
+    assert result == "{quote}\nThis is a quote\n{quote}"
+
+
+def test_converts_markdown_blockquote_multiline(preprocessor_with_jira):
+    """Consecutive '> lines' are collected into a single {quote} block."""
+    md = "> First line\n> Second line"
+    result = preprocessor_with_jira.markdown_to_jira(md)
+    assert result == "{quote}\nFirst line\nSecond line\n{quote}"
+
+
+def test_converts_markdown_blockquote_multi_paragraph(preprocessor_with_jira):
+    """Multi-paragraph blockquote (bare '>' separator) converts to {quote} block."""
+    md = "> First paragraph.\n>\n> Second paragraph."
+    result = preprocessor_with_jira.markdown_to_jira(md)
+    assert result == "{quote}\nFirst paragraph.\n\nSecond paragraph.\n{quote}"
+
+
 # Language mapping tests for code blocks (issue #669)
-
-
 def test_normalize_code_language_valid_jira_languages(preprocessor_with_jira):
     """Test that valid JIRA languages pass through unchanged."""
     # Official JIRA-supported languages should be returned as-is (lowercase)
@@ -899,8 +1119,6 @@ some code
 
 
 # Confluence ac:image tag processing tests
-
-
 class TestImageProcessing:
     """Tests for Confluence ac:image tag processing."""
 
@@ -1061,8 +1279,6 @@ class TestImageProcessing:
 
 
 # Issue #1052 - {panel} blocks drop links during wiki-to-markdown conversion
-
-
 class TestPanelBlocks:
     """Tests for {panel} block conversion and bare link handling."""
 
@@ -1147,8 +1363,6 @@ class TestPanelBlocks:
 
 
 # Code block placeholder protection tests
-
-
 class TestCodeBlockProtection:
     """Tests for code block content protection via placeholder extraction."""
 
