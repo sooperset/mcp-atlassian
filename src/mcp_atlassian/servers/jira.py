@@ -2629,7 +2629,9 @@ async def get_filter_by_id(
             "error": error_message,
             "filter_id": filter_id,
         }
-        logger.log(log_level, f"get_filter_by_id failed for '{filter_id}': {error_message}")
+        logger.log(
+            log_level, f"get_filter_by_id failed for '{filter_id}': {error_message}"
+        )
         return json.dumps(error_result, indent=2, ensure_ascii=False)
 
     result = jira_filter.to_simplified_dict()
