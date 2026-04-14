@@ -1,7 +1,6 @@
 """Module for Jira filter operations."""
 
 import logging
-from typing import Any
 
 from requests.exceptions import HTTPError
 
@@ -42,8 +41,9 @@ class FiltersMixin(JiraClient):
         except TypeError:
             raise
         except Exception as e:
-            logger.error(f"Error getting my filters: {str(e)}")
-            raise Exception(f"Error getting my filters: {str(e)}") from e
+            error_msg = f"Error getting my filters: {e!s}"
+            logger.error(error_msg)
+            raise Exception(error_msg) from e
 
     @handle_auth_errors("Jira API")
     def get_favourite_filters(self) -> list[JiraFilter]:
@@ -61,7 +61,9 @@ class FiltersMixin(JiraClient):
             response = self.jira.get("rest/api/2/filter/favourite")
 
             if not isinstance(response, list):
-                msg = f"Unexpected response type from filter/favourite: {type(response)}"
+                msg = (
+                    f"Unexpected response type from filter/favourite: {type(response)}"
+                )
                 logger.error(msg)
                 raise TypeError(msg)
 
@@ -72,8 +74,9 @@ class FiltersMixin(JiraClient):
         except TypeError:
             raise
         except Exception as e:
-            logger.error(f"Error getting favourite filters: {str(e)}")
-            raise Exception(f"Error getting favourite filters: {str(e)}") from e
+            error_msg = f"Error getting favourite filters: {e!s}"
+            logger.error(error_msg)
+            raise Exception(error_msg) from e
 
     @handle_auth_errors("Jira API")
     def get_filter_by_id(self, filter_id: str) -> JiraFilter:
@@ -95,7 +98,10 @@ class FiltersMixin(JiraClient):
             response = self.jira.get(f"rest/api/2/filter/{filter_id}")
 
             if not isinstance(response, dict):
-                msg = f"Unexpected response type from filter/{filter_id}: {type(response)}"
+                msg = (
+                    "Unexpected response type from"
+                    f" filter/{filter_id}: {type(response)}"
+                )
                 logger.error(msg)
                 raise TypeError(msg)
 
@@ -103,10 +109,12 @@ class FiltersMixin(JiraClient):
 
         except HTTPError as e:
             if e.response is not None and e.response.status_code == 404:
-                raise ValueError(f"Filter with ID '{filter_id}' not found.") from e
+                error_msg = f"Filter with ID '{filter_id}' not found."
+                raise ValueError(error_msg) from e
             raise  # let decorator handle auth errors
         except TypeError:
             raise
         except Exception as e:
-            logger.error(f"Error getting filter {filter_id}: {str(e)}")
-            raise Exception(f"Error getting filter {filter_id}: {str(e)}") from e
+            error_msg = f"Error getting filter {filter_id}: {e!s}"
+            logger.error(error_msg)
+            raise Exception(error_msg) from e
