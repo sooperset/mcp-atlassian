@@ -39,6 +39,13 @@ from .queue import (
     JiraServiceDesk,
     JiraServiceDeskQueuesResult,
 )
+from .request import (
+    JiraCustomerRequest,
+    JiraRequestType,
+    JiraRequestTypeField,
+    JiraRequestTypeFieldsResult,
+    JiraRequestTypesResult,
+)
 from .search import JiraSearchResult
 from .sla import (
     CycleTimeMetric,
@@ -82,6 +89,11 @@ __all__ = [
     "JiraQueue",
     "JiraServiceDeskQueuesResult",
     "JiraQueueIssuesResult",
+    "JiraRequestType",
+    "JiraRequestTypesResult",
+    "JiraRequestTypeField",
+    "JiraRequestTypeFieldsResult",
+    "JiraCustomerRequest",
     "JiraIssueLinkType",
     "JiraIssueLink",
     "JiraLinkedIssue",

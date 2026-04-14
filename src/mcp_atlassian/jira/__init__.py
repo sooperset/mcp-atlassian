@@ -13,6 +13,7 @@ from .boards import BoardsMixin
 from .client import JiraClient
 from .comments import CommentsMixin
 from .config import JiraConfig
+from .customer_requests import CustomerRequestsMixin
 from .development import DevelopmentMixin
 from .epics import EpicsMixin
 from .field_options import FieldOptionsMixin
@@ -43,6 +44,7 @@ class JiraFetcher(
     WorklogMixin,
     EpicsMixin,
     CommentsMixin,
+    CustomerRequestsMixin,
     SearchMixin,
     IssuesMixin,
     UsersMixin,

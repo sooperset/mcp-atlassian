@@ -14,6 +14,13 @@ from starlette.requests import Request
 
 from src.mcp_atlassian.jira import JiraFetcher
 from src.mcp_atlassian.jira.config import JiraConfig
+from src.mcp_atlassian.models.jira import (
+    JiraCustomerRequest,
+    JiraRequestType,
+    JiraRequestTypeField,
+    JiraRequestTypeFieldsResult,
+    JiraRequestTypesResult,
+)
 from src.mcp_atlassian.servers.context import MainAppContext
 from src.mcp_atlassian.servers.main import AtlassianMCP
 from src.mcp_atlassian.utils.oauth import OAuthConfig
@@ -386,6 +393,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         batch_create_issues,
         batch_create_versions,
         batch_get_changelogs,
+        create_customer_request,
         create_issue,
         create_issue_link,
         create_sprint,
@@ -403,6 +411,8 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         get_project_issues,
         get_project_versions,
         get_queue_issues,
+        get_request_type_fields,
+        get_request_types,
         get_service_desk_for_project,
         get_service_desk_queues,
         get_sprint_issues,
@@ -430,6 +440,8 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(get_service_desk_for_project)
     jira_sub_mcp.add_tool(get_service_desk_queues)
     jira_sub_mcp.add_tool(get_queue_issues)
+    jira_sub_mcp.add_tool(get_request_types)
+    jira_sub_mcp.add_tool(get_request_type_fields)
     jira_sub_mcp.add_tool(get_transitions)
     jira_sub_mcp.add_tool(get_worklog)
     jira_sub_mcp.add_tool(download_attachments)
@@ -442,6 +454,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(get_link_types)
     jira_sub_mcp.add_tool(get_user_profile)
     jira_sub_mcp.add_tool(create_issue)
+    jira_sub_mcp.add_tool(create_customer_request)
     jira_sub_mcp.add_tool(batch_create_issues)
     jira_sub_mcp.add_tool(batch_get_changelogs)
     jira_sub_mcp.add_tool(update_issue)
@@ -662,6 +675,106 @@ async def test_get_queue_issues(jira_client, mock_jira_fetcher):
         queue_id="47",
         start_at=0,
         limit=2,
+    )
+
+
+@pytest.mark.anyio
+async def test_get_request_types(jira_client, mock_jira_fetcher):
+    """Test request type listing for a service desk."""
+    mock_jira_fetcher.get_request_types.return_value = JiraRequestTypesResult(
+        service_desk_id="4",
+        size=2,
+        request_types=[
+            JiraRequestType(id="23", name="Incident"),
+            JiraRequestType(id="24", name="Access Request"),
+        ],
+    )
+
+    response = await jira_client.call_tool(
+        "jira_get_request_types",
+        {"service_desk_id": "4", "start_at": 0, "limit": 50},
+    )
+    content = json.loads(response.content[0].text)
+
+    assert content["service_desk_id"] == "4"
+    assert content["size"] == 2
+    assert content["request_types"][0]["id"] == "23"
+    mock_jira_fetcher.get_request_types.assert_called_once_with(
+        service_desk_id="4",
+        start_at=0,
+        limit=50,
+    )
+
+
+@pytest.mark.anyio
+async def test_get_request_type_fields(jira_client, mock_jira_fetcher):
+    """Test request type field discovery."""
+    mock_jira_fetcher.get_request_type_fields.return_value = (
+        JiraRequestTypeFieldsResult(
+            service_desk_id="4",
+            request_type_id="23",
+            can_raise_on_behalf_of=True,
+            fields=[
+                JiraRequestTypeField(
+                    field_id="summary",
+                    name="Summary",
+                    required=True,
+                    supports_multiple=False,
+                )
+            ],
+        )
+    )
+
+    response = await jira_client.call_tool(
+        "jira_get_request_type_fields",
+        {"service_desk_id": "4", "request_type_id": "23"},
+    )
+    content = json.loads(response.content[0].text)
+
+    assert content["service_desk_id"] == "4"
+    assert content["request_type_id"] == "23"
+    assert content["can_raise_on_behalf_of"] is True
+    assert content["fields"][0]["field_id"] == "summary"
+    mock_jira_fetcher.get_request_type_fields.assert_called_once_with(
+        service_desk_id="4",
+        request_type_id="23",
+    )
+
+
+@pytest.mark.anyio
+async def test_create_customer_request(jira_client, mock_jira_fetcher):
+    """Test customer request creation tool."""
+    mock_jira_fetcher.create_customer_request.return_value = JiraCustomerRequest(
+        request_id="10010",
+        request_key="SUP-101",
+        portal_url="https://jira.example.com/servicedesk/customer/portal/4/SUP-101",
+        created_mode="created_on_behalf_of",
+        on_behalf_user="d.zagitov",
+    )
+
+    response = await jira_client.call_tool(
+        "jira_create_customer_request",
+        {
+            "service_desk_id": "4",
+            "request_type_id": "23",
+            "request_field_values": '{"summary": "Production incident"}',
+            "raise_on_behalf_of": "d.zagitov",
+            "strict_on_behalf": False,
+        },
+    )
+    content = json.loads(response.content[0].text)
+
+    assert content["request_id"] == "10010"
+    assert content["request_key"] == "SUP-101"
+    assert content["created_mode"] == "created_on_behalf_of"
+    assert content["on_behalf_user"] == "d.zagitov"
+    mock_jira_fetcher.create_customer_request.assert_called_once_with(
+        service_desk_id="4",
+        request_type_id="23",
+        request_field_values={"summary": "Production incident"},
+        raise_on_behalf_of="d.zagitov",
+        request_participants=None,
+        strict_on_behalf=False,
     )
 
 
@@ -1042,8 +1155,8 @@ async def test_get_all_projects_tool(jira_client, mock_jira_fetcher):
     ]
     # Reset the mock and set specific return value for this test
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        mock_projects
     )
 
     # Test with default parameters (include_archived=False)
@@ -1091,8 +1204,8 @@ async def test_get_all_projects_tool_with_archived(jira_client, mock_jira_fetche
     ]
     # Reset the mock and set specific return value for this test
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        mock_projects
     )
 
     # Test with include_archived=True
@@ -1145,8 +1258,8 @@ async def test_get_all_projects_tool_with_projects_filter(
 
     # Set up the mock to return all projects
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: all_mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        all_mock_projects
     )
 
     # Set up the projects filter in the config
@@ -1199,8 +1312,8 @@ async def test_get_all_projects_tool_no_projects_filter(jira_client, mock_jira_f
 
     # Set up the mock to return all projects
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: all_mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        all_mock_projects
     )
 
     # Ensure no projects filter is set
@@ -1260,8 +1373,8 @@ async def test_get_all_projects_tool_case_insensitive_filter(
 
     # Set up the mock to return all projects
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: all_mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        all_mock_projects
     )
 
     # Set up projects filter with mixed case and whitespace

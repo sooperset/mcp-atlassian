@@ -103,6 +103,43 @@ def _parse_additional_fields(
     raise ValueError("additional_fields must be a dictionary or JSON string.")
 
 
+def _parse_request_field_values(
+    request_field_values: dict[str, Any] | str,
+) -> dict[str, Any]:
+    """Parse request_field_values from dict or JSON string."""
+    try:
+        return _parse_additional_fields(request_field_values)
+    except ValueError as e:
+        raise ValueError(f"request_field_values is not valid JSON: {e}") from e
+
+
+def _parse_request_participants(
+    request_participants: str | list[str] | None,
+) -> list[str] | None:
+    """Parse request participants from a JSON array string or comma-separated list."""
+    if request_participants is None:
+        return None
+    if isinstance(request_participants, list):
+        return [
+            str(value).strip() for value in request_participants if str(value).strip()
+        ]
+    if isinstance(request_participants, str):
+        stripped = request_participants.strip()
+        if not stripped:
+            return None
+        try:
+            parsed = json.loads(stripped)
+            if not isinstance(parsed, list):
+                raise ValueError("request_participants JSON string must be an array.")
+            return [str(value).strip() for value in parsed if str(value).strip()]
+        except json.JSONDecodeError:
+            return [value.strip() for value in stripped.split(",") if value.strip()]
+
+    raise ValueError(
+        "request_participants must be a JSON array string, a list of strings, or None."
+    )
+
+
 @jira_mcp.tool(
     tags={"jira", "read", "toolset:jira_users"},
     annotations={"title": "Get User Profile", "readOnlyHint": True},
@@ -2615,6 +2652,163 @@ async def get_queue_issues(
         queue_id=queue_id,
         start_at=start_at,
         limit=limit,
+    )
+    return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_service_desk"},
+    annotations={"title": "Get Request Types", "readOnlyHint": True},
+)
+async def get_request_types(
+    ctx: Context,
+    service_desk_id: Annotated[
+        str,
+        Field(description="Service desk ID (e.g., '4')"),
+    ],
+    start_at: Annotated[
+        int,
+        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(description="Maximum number of results (1-50)", default=50, ge=1, le=50),
+    ] = 50,
+) -> str:
+    """Get request types for a Jira Service Management service desk.
+
+    Args:
+        ctx: The FastMCP context.
+        service_desk_id: Service desk ID.
+        start_at: Starting index for pagination.
+        limit: Maximum number of request types to return.
+
+    Returns:
+        JSON string with request types and pagination metadata.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_request_types(
+        service_desk_id=service_desk_id,
+        start_at=start_at,
+        limit=limit,
+    )
+    return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_service_desk"},
+    annotations={"title": "Get Request Type Fields", "readOnlyHint": True},
+)
+async def get_request_type_fields(
+    ctx: Context,
+    service_desk_id: Annotated[
+        str,
+        Field(description="Service desk ID (e.g., '4')"),
+    ],
+    request_type_id: Annotated[
+        str,
+        Field(description="Request type ID (e.g., '23')"),
+    ],
+) -> str:
+    """Get field definitions for a Jira Service Management request type.
+
+    Args:
+        ctx: The FastMCP context.
+        service_desk_id: Service desk ID.
+        request_type_id: Request type ID.
+
+    Returns:
+        JSON string with request type field definitions.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_request_type_fields(
+        service_desk_id=service_desk_id,
+        request_type_id=request_type_id,
+    )
+    return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_service_desk"},
+    annotations={"title": "Create Customer Request", "destructiveHint": True},
+)
+@check_write_access
+async def create_customer_request(
+    ctx: Context,
+    service_desk_id: Annotated[
+        str,
+        Field(description="Service desk ID (e.g., '4')"),
+    ],
+    request_type_id: Annotated[
+        str,
+        Field(description="Request type ID (e.g., '23')"),
+    ],
+    request_field_values: Annotated[
+        str,
+        Field(
+            description=(
+                "JSON string of request field values keyed by field ID. Examples:\n"
+                '- Summary and description: {"summary": "Access issue", "description": "Cannot log in"}\n'
+                '- Multi-value field: {"customfield_10001": ["alice", "bob"]}'
+            )
+        ),
+    ],
+    raise_on_behalf_of: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Jira user identifier for raiseOnBehalfOf. "
+                "For Server/DC this is typically username or key; for Cloud use the identifier expected by your JSM instance."
+            ),
+            default=None,
+        ),
+    ] = None,
+    request_participants: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) JSON array string or comma-separated list of request participants. "
+                'Examples: ["user1","user2"] or "user1,user2"'
+            ),
+            default=None,
+        ),
+    ] = None,
+    strict_on_behalf: Annotated[
+        bool,
+        Field(
+            description=(
+                "If true, fail immediately when raiseOnBehalfOf cannot be applied. "
+                "If false, retry without raiseOnBehalfOf and return a fallback warning."
+            ),
+            default=False,
+        ),
+    ] = False,
+) -> str:
+    """Create a Jira Service Management customer request.
+
+    Args:
+        ctx: The FastMCP context.
+        service_desk_id: Service desk ID.
+        request_type_id: Request type ID.
+        request_field_values: JSON string of request field values keyed by field ID.
+        raise_on_behalf_of: Optional Jira user identifier for raiseOnBehalfOf.
+        request_participants: Optional JSON array string or comma-separated list.
+        strict_on_behalf: Whether to fail instead of retrying without on-behalf mode.
+
+    Returns:
+        JSON string representing the created customer request.
+    """
+    jira = await get_jira_fetcher(ctx)
+    parsed_field_values = _parse_request_field_values(request_field_values)
+    parsed_request_participants = _parse_request_participants(request_participants)
+
+    result = jira.create_customer_request(
+        service_desk_id=service_desk_id,
+        request_type_id=request_type_id,
+        request_field_values=parsed_field_values,
+        raise_on_behalf_of=raise_on_behalf_of,
+        request_participants=parsed_request_participants,
+        strict_on_behalf=strict_on_behalf,
     )
     return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
 
