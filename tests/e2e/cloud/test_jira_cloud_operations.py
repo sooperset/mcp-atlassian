@@ -199,3 +199,65 @@ class TestJiraCloudTransitions:
 
         updated = jira_fetcher.get_issue(issue.key)
         assert updated.status is not None
+
+
+class TestJiraRemoteIssueLinks:
+    """Remote issue links (web links and Confluence links) on Jira issues.
+
+    Regression for https://github.com/sooperset/mcp-atlassian/issues/240
+    Feature was requested: add web links and Confluence links to Jira issues.
+    Already implemented via create_remote_issue_link in links.py.
+    """
+
+    def test_create_web_link(
+        self,
+        jira_fetcher: JiraFetcher,
+        cloud_instance: CloudInstanceInfo,
+        resource_tracker: CloudResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        issue = jira_fetcher.create_issue(
+            project_key=cloud_instance.project_key,
+            summary=f"Remote link test {uid}",
+            issue_type="Task",
+        )
+        resource_tracker.add_jira_issue(issue.key)
+
+        link_data = {
+            "object": {
+                "url": f"https://example.com/doc-{uid}",
+                "title": f"Test Documentation {uid}",
+            }
+        }
+        result = jira_fetcher.create_remote_issue_link(issue.key, link_data)
+        assert result.get("success") is True, "Remote link was not created"
+        assert result.get("link_url") == f"https://example.com/doc-{uid}"
+
+    def test_create_confluence_link(
+        self,
+        jira_fetcher: JiraFetcher,
+        cloud_instance: CloudInstanceInfo,
+        resource_tracker: CloudResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        issue = jira_fetcher.create_issue(
+            project_key=cloud_instance.project_key,
+            summary=f"Confluence link test {uid}",
+            issue_type="Task",
+        )
+        resource_tracker.add_jira_issue(issue.key)
+
+        # Link to a Confluence page (URL format)
+        confluence_url = (
+            cloud_instance.jira_url.rstrip("/") + "/wiki/spaces/MCPTEST/overview"
+        )
+        link_data = {
+            "object": {
+                "url": confluence_url,
+                "title": "MCP Test Space",
+                "summary": "Linked from upstream issue #240 regression test",
+            }
+        }
+        result = jira_fetcher.create_remote_issue_link(issue.key, link_data)
+        assert result.get("success") is True, "Confluence remote link was not created"
+        assert "MCPTEST" in result.get("link_url", "")

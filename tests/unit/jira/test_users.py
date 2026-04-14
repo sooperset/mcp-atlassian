@@ -146,15 +146,43 @@ class TestUsersMixin:
         # Verify self.jira.myself was called
         users_mixin.jira.myself.assert_called_once()
 
-    def test_get_account_id_already_account_id(self, users_mixin):
-        """Test that _get_account_id returns the input if it looks like an account ID."""
-        # Call the method with a string that looks like an account ID
-        account_id = users_mixin._get_account_id("5abcdef1234567890")
+    @pytest.mark.parametrize(
+        "account_id",
+        [
+            "5abcdef123456789abcdef12",  # 24-char hex starting with 5
+            "606b8fb83a516300764cb19d",  # 24-char hex starting with 6
+            "712020:96a182bb-ee48-4240-8465-a7236ccfce2a",  # digits:uuid format
+            "557058:32b276cf-1a9f-45e0-8a70-84e38d677be0",  # digits:uuid starting with 5
+            "aabbccdd11223344aabbccdd",  # 24-char hex starting with a
+        ],
+    )
+    def test_get_account_id_already_account_id(self, users_mixin, account_id):
+        """_get_account_id returns the input unchanged for valid account ID formats."""
+        result = users_mixin._get_account_id(account_id)
 
-        # Verify result
-        assert account_id == "5abcdef1234567890"
-        # Verify no lookups were performed
+        assert result == account_id
+        # No lookups should be performed for recognized account IDs
         users_mixin.jira.user_find_by_user_string.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "not_account_id",
+        [
+            "john@example.com",  # email
+            "John Smith",  # display name
+            "jsmith",  # username
+            "abc",  # too short to be an account ID
+        ],
+    )
+    def test_get_account_id_not_account_id_triggers_lookup(
+        self, users_mixin, not_account_id
+    ):
+        """_get_account_id performs lookup for strings that aren't account IDs."""
+        users_mixin._lookup_user_directly = MagicMock(return_value="resolved-id")
+
+        result = users_mixin._get_account_id(not_account_id)
+
+        assert result == "resolved-id"
+        users_mixin._lookup_user_directly.assert_called_once_with(not_account_id)
 
     def test_get_account_id_direct_lookup(self, users_mixin):
         """Test that _get_account_id uses direct lookup."""
@@ -903,3 +931,47 @@ class TestUnicodeLookup:
         # Searching with the email should match (case insensitive)
         account_id = users_mixin._lookup_user_directly("TËST@EXAMPLE.COM")
         assert account_id == "email-account-id"
+
+
+class TestUserProfileMeIdentifier:
+    """get_user_profile_by_identifier handles 'me' identifier.
+
+    Regression for https://github.com/sooperset/mcp-atlassian/issues/596
+    Also addresses https://github.com/sooperset/mcp-atlassian/issues/459
+    """
+
+    def test_me_resolves_to_current_user(self, jira_fetcher):
+        """'me' identifier resolves via get_current_user_account_id."""
+        user_response = {
+            "accountId": "5b10ac8d82e05b22cc7d4ef5",
+            "displayName": "Test User",
+            "emailAddress": "test@example.com",
+            "active": True,
+        }
+        with patch.object(
+            jira_fetcher,
+            "get_current_user_account_id",
+            return_value="5b10ac8d82e05b22cc7d4ef5",
+        ) as mock_get_current:
+            jira_fetcher.jira.user = MagicMock(return_value=user_response)
+            result = jira_fetcher.get_user_profile_by_identifier("me")
+            assert result is not None
+            assert result.account_id == "5b10ac8d82e05b22cc7d4ef5"
+            mock_get_current.assert_called_once()
+
+    def test_me_case_insensitive(self, jira_fetcher):
+        """'Me', 'ME', 'mE' all resolve to current user."""
+        user_response = {
+            "accountId": "5b10ac8d82e05b22cc7d4ef5",
+            "displayName": "Test User",
+            "active": True,
+        }
+        with patch.object(
+            jira_fetcher,
+            "get_current_user_account_id",
+            return_value="5b10ac8d82e05b22cc7d4ef5",
+        ):
+            jira_fetcher.jira.user = MagicMock(return_value=user_response)
+            for variant in ["Me", "ME", "mE"]:
+                result = jira_fetcher.get_user_profile_by_identifier(variant)
+                assert result is not None

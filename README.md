@@ -1,4 +1,28 @@
-# MCP Atlassian
+# MCP Atlassian (Community Fork)
+
+> **This is an actively maintained community fork of [`sooperset/mcp-atlassian`](https://github.com/sooperset/mcp-atlassian).**
+>
+> The upstream repository has a growing backlog of unmerged pull requests and
+> unresolved issues. This fork integrates vetted community PRs so users don't
+> have to wait — we monitor upstream issues and PRs and bring them in here
+> when they're ready. All changes are tracked with provenance back to the
+> original PRs and authors.
+>
+> **This is not a takeover.** We encourage contributors to submit PRs to
+> [upstream](https://github.com/sooperset/mcp-atlassian) first. This fork
+> exists to bridge the gap while the upstream maintainer catches up. When
+> upstream merges a PR, the duplicate here becomes a no-op on the next sync.
+>
+> **Branches:**
+> - `community/main` (default) — upstream + integrated community PRs
+> - `main` — clean mirror of upstream
+> - `team/main` — optional team-specific features (error recovery, extra tools, MCPB extension)
+>
+> **Want to help?** PRs welcome against `community/main`, or submit to
+> [upstream](https://github.com/sooperset/mcp-atlassian) — we'll pick it up
+> either way.
+
+---
 
 ![PyPI Version](https://img.shields.io/pypi/v/mcp-atlassian)
 ![PyPI - Downloads](https://img.shields.io/pypi/dm/mcp-atlassian)

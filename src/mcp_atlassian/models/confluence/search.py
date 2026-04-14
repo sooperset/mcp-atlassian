@@ -53,6 +53,17 @@ class ConfluenceSearchResult(ApiModel, TimestampMixin):
             # In Confluence search, the content is nested inside the result item
             if content := item.get("content"):
                 results.append(ConfluencePage.from_api_response(content, **kwargs))
+            elif space_data := item.get("space"):
+                # Space-type results: map to ConfluencePage for uniform return type
+                space_as_page = {
+                    "id": str(space_data.get("id", "")),
+                    "title": space_data.get("name", item.get("title", "")),
+                    "space": space_data,
+                    "type": "space",
+                }
+                results.append(
+                    ConfluencePage.from_api_response(space_as_page, **kwargs)
+                )
 
         return cls(
             total_size=data.get("totalSize", 0),

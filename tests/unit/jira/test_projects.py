@@ -480,6 +480,20 @@ def test_get_project_issue_types_exception(projects_mixin: ProjectsMixin):
     projects_mixin.jira.issue_createmeta_issuetypes.assert_called_once()
 
 
+def test_get_project_issue_types_issue_types_key_fallback(
+    projects_mixin: ProjectsMixin, mock_issue_types: list[dict]
+):
+    """Test get_project_issue_types falls back to issueTypes key.
+
+    atlassian-python-api returns 'issueTypes' instead of 'values' in some cases.
+    """
+    createmeta = {"issueTypes": mock_issue_types}
+    projects_mixin.jira.issue_createmeta_issuetypes.return_value = createmeta
+
+    result = projects_mixin.get_project_issue_types("PROJ1")
+    assert result == mock_issue_types
+
+
 def test_get_project_issues_count(projects_mixin: ProjectsMixin):
     """Test get_project_issues_count method."""
     jql_result = {"total": 42}
