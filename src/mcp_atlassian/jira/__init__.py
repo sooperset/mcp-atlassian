@@ -17,6 +17,7 @@ from .development import DevelopmentMixin
 from .epics import EpicsMixin
 from .field_options import FieldOptionsMixin
 from .fields import FieldsMixin
+from .filters import FiltersMixin
 from .forms_api import FormsApiMixin  # Forms REST API
 from .formatting import FormattingMixin
 from .issues import IssuesMixin
@@ -37,6 +38,7 @@ class JiraFetcher(
     ProjectsMixin,
     FieldsMixin,
     FieldOptionsMixin,
+    FiltersMixin,
     FormsApiMixin,  # Use new Forms REST API instead of FormsMixin
     FormattingMixin,
     TransitionsMixin,
@@ -74,6 +76,7 @@ class JiraFetcher(
     - BoardsMixin: Board operations
     - SprintsMixin: Sprint operations
     - AttachmentsMixin: Attachment download operations
+    - FiltersMixin: Saved filter operations
     - LinksMixin: Issue link operations
     - MetricsMixin: Issue metrics and date operations
     - QueuesMixin: Service Desk queue read operations (Server/DC)

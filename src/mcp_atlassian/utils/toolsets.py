@@ -100,6 +100,11 @@ JIRA_TOOLSETS: dict[str, ToolsetDefinition] = {
         description="Development info (branches, PRs, commits)",
         default=False,
     ),
+    "jira_filters": ToolsetDefinition(
+        name="jira_filters",
+        description="Saved filter operations (my filters, favourites, filter by ID)",
+        default=False,
+    ),
 }
 
 # --- Confluence toolsets (6) ---

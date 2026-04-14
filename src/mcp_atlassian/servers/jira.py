@@ -2482,6 +2482,163 @@ async def get_all_projects(
 
 
 @jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_filters"},
+    annotations={"title": "Get My Filters", "readOnlyHint": True},
+)
+async def get_my_filters(
+    ctx: Context,
+    name_filter: Annotated[
+        str | None,
+        Field(
+            description="(Optional) Filter results by name substring (case-insensitive)",
+        ),
+    ] = None,
+) -> str:
+    """Get all Jira filters owned by the current user.
+
+    Args:
+        ctx: The FastMCP context.
+        name_filter: Optional substring to filter results by name.
+
+    Returns:
+        JSON string representing a list of saved filter objects.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    try:
+        jira = await get_jira_fetcher(ctx)
+        filters = jira.get_my_filters()
+    except (MCPAtlassianAuthenticationError, HTTPError, OSError, ValueError) as e:
+        error_message = ""
+        log_level = logging.ERROR
+        if isinstance(e, MCPAtlassianAuthenticationError):
+            error_message = f"Authentication/Permission Error: {str(e)}"
+        elif isinstance(e, OSError | HTTPError):
+            error_message = f"Network or API Error: {str(e)}"
+        elif isinstance(e, ValueError):
+            error_message = f"Configuration Error: {str(e)}"
+
+        error_result = {
+            "success": False,
+            "error": error_message,
+        }
+        logger.log(log_level, f"get_my_filters failed: {error_message}")
+        return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+    result = [f.to_simplified_dict() for f in filters]
+    if name_filter:
+        name_lower = name_filter.lower()
+        result = [f for f in result if name_lower in f.get("name", "").lower()]
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_filters"},
+    annotations={"title": "Get Favourite Filters", "readOnlyHint": True},
+)
+async def get_favourite_filters(
+    ctx: Context,
+    name_filter: Annotated[
+        str | None,
+        Field(
+            description="(Optional) Filter results by name substring (case-insensitive)",
+        ),
+    ] = None,
+) -> str:
+    """Get all favourite/starred Jira filters for the current user.
+
+    Args:
+        ctx: The FastMCP context.
+        name_filter: Optional substring to filter results by name.
+
+    Returns:
+        JSON string representing a list of favourite filter objects.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    try:
+        jira = await get_jira_fetcher(ctx)
+        filters = jira.get_favourite_filters()
+    except (MCPAtlassianAuthenticationError, HTTPError, OSError, ValueError) as e:
+        error_message = ""
+        log_level = logging.ERROR
+        if isinstance(e, MCPAtlassianAuthenticationError):
+            error_message = f"Authentication/Permission Error: {str(e)}"
+        elif isinstance(e, OSError | HTTPError):
+            error_message = f"Network or API Error: {str(e)}"
+        elif isinstance(e, ValueError):
+            error_message = f"Configuration Error: {str(e)}"
+
+        error_result = {
+            "success": False,
+            "error": error_message,
+        }
+        logger.log(log_level, f"get_favourite_filters failed: {error_message}")
+        return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+    result = [f.to_simplified_dict() for f in filters]
+    if name_filter:
+        name_lower = name_filter.lower()
+        result = [f for f in result if name_lower in f.get("name", "").lower()]
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_filters"},
+    annotations={"title": "Get Filter By ID", "readOnlyHint": True},
+)
+async def get_filter_by_id(
+    ctx: Context,
+    filter_id: Annotated[
+        str,
+        Field(
+            description="The ID of the Jira filter to retrieve (e.g., '10001')",
+        ),
+    ],
+) -> str:
+    """Get a specific Jira saved filter by its ID.
+
+    Args:
+        ctx: The FastMCP context.
+        filter_id: The ID of the filter.
+
+    Returns:
+        JSON string representing the filter object.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    try:
+        jira = await get_jira_fetcher(ctx)
+        jira_filter = jira.get_filter_by_id(filter_id)
+    except (MCPAtlassianAuthenticationError, HTTPError, OSError, ValueError) as e:
+        error_message = ""
+        log_level = logging.ERROR
+        if isinstance(e, MCPAtlassianAuthenticationError):
+            error_message = f"Authentication/Permission Error: {str(e)}"
+        elif isinstance(e, OSError | HTTPError):
+            error_message = f"Network or API Error: {str(e)}"
+        elif isinstance(e, ValueError):
+            log_level = logging.WARNING
+            error_message = str(e)
+
+        error_result = {
+            "success": False,
+            "error": error_message,
+            "filter_id": filter_id,
+        }
+        logger.log(
+            log_level, f"get_filter_by_id failed for '{filter_id}': {error_message}"
+        )
+        return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+    result = jira_filter.to_simplified_dict()
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
     tags={"jira", "read", "toolset:jira_service_desk"},
     annotations={
         "title": "Get Service Desk For Project",
