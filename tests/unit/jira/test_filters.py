@@ -9,7 +9,6 @@ from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.filters import FiltersMixin
 from mcp_atlassian.models.jira.filter import JiraFilter
 
-
 MOCK_FILTER_RESPONSE = {
     "id": "10001",
     "name": "My Open Bugs",
@@ -81,7 +80,10 @@ class TestFiltersMixin:
         assert f.id == "10001"
         assert f.name == "My Open Bugs"
         assert f.description == "All open bugs assigned to me"
-        assert f.jql == "assignee = currentUser() AND type = Bug AND statusCategory != Done"
+        assert (
+            f.jql
+            == "assignee = currentUser() AND type = Bug AND statusCategory != Done"
+        )
         assert f.favourite is True
         assert f.owner is not None
         assert f.owner.display_name == "Test User"
@@ -131,9 +133,7 @@ class TestFiltersMixin:
         assert result.id == "10001"
         assert result.name == "My Open Bugs"
 
-    def test_get_filter_by_id_calls_correct_endpoint(
-        self, filters_mixin: FiltersMixin
-    ):
+    def test_get_filter_by_id_calls_correct_endpoint(self, filters_mixin: FiltersMixin):
         """Test that get_filter_by_id calls the correct REST API endpoint."""
         filters_mixin.jira.get = MagicMock(return_value=MOCK_FILTER_RESPONSE)
 
@@ -212,7 +212,10 @@ class TestJiraFilterModel:
 
         assert d["id"] == "10001"
         assert d["name"] == "My Open Bugs"
-        assert d["jql"] == "assignee = currentUser() AND type = Bug AND statusCategory != Done"
+        assert (
+            d["jql"]
+            == "assignee = currentUser() AND type = Bug AND statusCategory != Done"
+        )
         assert d["favourite"] is True
         assert "description" in d
         assert "owner" in d
