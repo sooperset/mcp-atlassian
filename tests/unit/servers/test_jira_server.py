@@ -2430,3 +2430,100 @@ async def test_get_field_options_combined(jira_client, mock_jira_fetcher):
     # return_limit=1 caps to first match
     assert len(result) == 1
     assert result[0] == "High"
+
+
+# ============================================================================
+# Display-Name Feature Tests
+# ============================================================================
+
+
+@pytest.mark.anyio
+async def test_get_issue_use_display_names(jira_client, mock_jira_fetcher):
+    """Test get_issue with use_display_names=True returns display-name keys."""
+    display_name_response = {
+        "key": "TEST-123",
+        "summary": "Test Issue Summary",
+        "status": {"name": "Open"},
+        "Story Points": {"value": 5, "field_id": "customfield_10243"},
+    }
+
+    def mock_get_issue_dn(
+        issue_key,
+        fields=None,
+        expand=None,
+        comment_limit=10,
+        properties=None,
+        update_history=True,
+    ):
+        mock_issue = MagicMock()
+        mock_issue.to_simplified_dict.return_value = {
+            "key": issue_key,
+            "summary": "Test Issue Summary",
+            "status": {"name": "Open"},
+            "customfield_10243": 5,
+        }
+        mock_issue.to_display_name_dict.return_value = {
+            **display_name_response,
+            "key": issue_key,
+        }
+        return mock_issue
+
+    mock_jira_fetcher.get_issue.side_effect = mock_get_issue_dn
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123", "use_display_names": True},
+    )
+    content = json.loads(response.content[0].text)
+    assert "Story Points" in content
+    assert "customfield_10243" not in content
+
+    mock_jira_fetcher.get_issue.assert_called_once()
+    call_kwargs = mock_jira_fetcher.get_issue.call_args
+    assert call_kwargs[1]["issue_key"] == "TEST-123"
+    assert call_kwargs[1]["expand"] == "names"
+
+
+@pytest.mark.anyio
+async def test_search_use_display_names(jira_client, mock_jira_fetcher):
+    """Test search with use_display_names=True returns display-name keys."""
+    display_name_issues = [
+        {
+            "key": "PROJ-123",
+            "summary": "First issue",
+            "Story Points": {"value": 3, "field_id": "customfield_10243"},
+        },
+    ]
+
+    def mock_search_dn(jql, **kwargs):
+        mock_search_result = MagicMock()
+        mock_search_result.to_simplified_dict.return_value = {
+            "total": 1,
+            "start_at": kwargs.get("start", 0),
+            "max_results": kwargs.get("limit", 50),
+            "issues": [
+                {"key": "PROJ-123", "summary": "First issue", "customfield_10243": 3},
+            ],
+        }
+        mock_search_result.to_display_name_dict.return_value = {
+            "total": 1,
+            "start_at": kwargs.get("start", 0),
+            "max_results": kwargs.get("limit", 50),
+            "issues": display_name_issues,
+        }
+        return mock_search_result
+
+    mock_jira_fetcher.search_issues.side_effect = mock_search_dn
+
+    response = await jira_client.call_tool(
+        "jira_search",
+        {"jql": "project = TEST", "use_display_names": True},
+    )
+    content = json.loads(response.content[0].text)
+    assert content["issues"][0].get("Story Points") is not None
+    assert "customfield_10243" not in content["issues"][0]
+
+    mock_jira_fetcher.search_issues.assert_called_once()
+    call_kwargs = mock_jira_fetcher.search_issues.call_args
+    assert call_kwargs[1]["jql"] == "project = TEST"
+    assert call_kwargs[1]["expand"] == "names"
