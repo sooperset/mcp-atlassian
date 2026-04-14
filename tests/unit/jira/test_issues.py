@@ -626,6 +626,98 @@ class TestIssuesMixin:
         assert document.key == "TEST-123"
         assert document.summary == "Updated Summary"
 
+    def test_update_issue_preserves_existing_cloud_media_nodes(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Cloud markdown updates preserve existing top-level media blocks."""
+        media_single = {
+            "type": "mediaSingle",
+            "attrs": {"layout": "center"},
+            "content": [
+                {
+                    "type": "media",
+                    "attrs": {
+                        "id": "video-123",
+                        "type": "file",
+                        "collection": "",
+                    },
+                }
+            ],
+        }
+        current_description = {
+            "version": 1,
+            "type": "doc",
+            "content": [
+                {"type": "paragraph", "content": [{"type": "text", "text": "Old"}]},
+                media_single,
+            ],
+        }
+        updated_description = {
+            "version": 1,
+            "type": "doc",
+            "content": [
+                {
+                    "type": "paragraph",
+                    "content": [{"type": "text", "text": "Updated text"}],
+                },
+                media_single,
+            ],
+        }
+        issues_mixin._put_api3 = MagicMock(return_value={})
+        issues_mixin.jira.get.side_effect = [
+            {"key": "TEST-123", "fields": {"description": current_description}},
+        ]
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            description=updated_description
+        )
+
+        document = issues_mixin.update_issue(
+            issue_key="TEST-123",
+            fields={"description": "Updated text"},
+        )
+
+        issues_mixin._put_api3.assert_called_once()
+        call_args = issues_mixin._put_api3.call_args
+        assert call_args[0][0] == "issue/TEST-123"
+        sent_description = call_args[0][1]["fields"]["description"]
+        assert sent_description["content"][-1] == media_single
+        issues_mixin.jira.get.assert_called_once_with(
+            "rest/api/3/issue/TEST-123",
+            params={"fields": "description", "updateHistory": "false"},
+        )
+        issues_mixin.jira.get_issue.assert_called_once_with("TEST-123")
+        assert document.key == "TEST-123"
+
+    def test_update_issue_with_explicit_adf_does_not_fetch_current_description(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Explicit ADF updates keep replace semantics and skip media prefetch."""
+        explicit_adf = {
+            "version": 1,
+            "type": "doc",
+            "content": [
+                {
+                    "type": "paragraph",
+                    "content": [{"type": "text", "text": "Explicit ADF"}],
+                }
+            ],
+        }
+        issues_mixin._put_api3 = MagicMock(return_value={})
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            description=explicit_adf
+        )
+
+        issues_mixin.update_issue(
+            issue_key="TEST-123",
+            fields={"description": explicit_adf},
+        )
+
+        issues_mixin._put_api3.assert_called_once_with(
+            "issue/TEST-123",
+            {"fields": {"description": explicit_adf}},
+        )
+        issues_mixin.jira.get_issue.assert_called_once_with("TEST-123")
+
     def test_update_issue_with_status(self, issues_mixin: IssuesMixin):
         """Test updating an issue with a status change."""
         # Mock get_issue response
