@@ -18,6 +18,7 @@ from .common import (
     JiraUser,
 )
 from .field_option import FieldContext, FieldOption
+from .filter import JiraFilter
 from .forms import ProFormaForm, ProFormaFormField, ProFormaFormState
 from .issue import JiraIssue
 from .link import (
@@ -76,6 +77,8 @@ __all__ = [
     "JiraAttachment",
     "JiraResolution",
     "JiraTimetracking",
+    # Filter models
+    "JiraFilter",
     # Entity-specific models
     "JiraComment",
     "JiraWorklog",
