@@ -22,4 +22,4 @@ jobs:
       - name: TruffleHog secret scan
         uses: trufflesecurity/trufflehog@v3.63.7
         with:
-          extra_args: --only-verified --exclude-paths=.trufflehog-exclude.txt
+          extra_args: --only-verified --exclude-paths=/tmp/.trufflehog-exclude.txt
