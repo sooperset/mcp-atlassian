@@ -7,6 +7,7 @@ framework to provide efficient, reusable test fixtures with session-scoped cachi
 """
 
 import os
+from copy import deepcopy
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -168,8 +169,10 @@ def mock_atlassian_confluence(
         confluence_instance.get_all_spaces.return_value = MOCK_SPACES_RESPONSE
 
         # Set up common return values using both legacy mocks and new factories
-        confluence_instance.get_page_by_id.return_value = MOCK_PAGE_RESPONSE
-        confluence_instance.get_page_by_title.return_value = MOCK_PAGE_RESPONSE
+        confluence_instance.get_page_by_id.return_value = deepcopy(MOCK_PAGE_RESPONSE)
+        confluence_instance.get_page_by_title.return_value = deepcopy(
+            MOCK_PAGE_RESPONSE
+        )
         confluence_instance.get_all_pages_from_space.return_value = (
             MOCK_PAGES_FROM_SPACE_RESPONSE
         )
@@ -382,7 +385,7 @@ def oauth_confluence_client(mock_preprocessor):
                 mock_confluence_instance.get_all_spaces.return_value = (
                     MOCK_SPACES_RESPONSE
                 )
-                mock_confluence_instance.get_page_by_id.return_value = (
+                mock_confluence_instance.get_page_by_id.return_value = deepcopy(
                     MOCK_PAGE_RESPONSE
                 )
                 mock_confluence_instance.create_page.return_value = (
