@@ -464,7 +464,7 @@ async def get_labels(
 
 @confluence_mcp.tool(
     tags={"confluence", "write", "toolset:confluence_labels"},
-    annotations={"title": "Add Label", "destructiveHint": True},
+    annotations={"title": "Add Label", "destructiveHint": False},
 )
 @check_write_access
 async def add_label(
@@ -517,7 +517,7 @@ async def add_label(
 
 @confluence_mcp.tool(
     tags={"confluence", "write", "toolset:confluence_pages"},
-    annotations={"title": "Create Page", "destructiveHint": True},
+    annotations={"title": "Create Page", "destructiveHint": False},
 )
 @check_write_access
 async def create_page(
@@ -871,7 +871,7 @@ async def move_page(
 
 @confluence_mcp.tool(
     tags={"confluence", "write", "toolset:confluence_comments"},
-    annotations={"title": "Add Comment", "destructiveHint": True},
+    annotations={"title": "Add Comment", "destructiveHint": False},
 )
 @check_write_access
 async def add_comment(
@@ -922,7 +922,7 @@ async def add_comment(
 
 @confluence_mcp.tool(
     tags={"confluence", "write", "toolset:confluence_comments"},
-    annotations={"title": "Reply to Comment", "destructiveHint": True},
+    annotations={"title": "Reply to Comment", "destructiveHint": False},
 )
 @check_write_access
 async def reply_to_comment(
