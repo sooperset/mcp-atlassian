@@ -1,0 +1,10 @@
+# Paths excluded from TruffleHog secret scanning.
+# These contain example/placeholder credentials, not real secrets.
+# Review this file periodically to ensure exclusions are still justified.
+
+# Example environment config with placeholder credentials
+.env.example
+
+# Unit tests use dummy proxy credentials
+tests/unit/utils/test_proxy.py
+tests/unit/auth/test_authentication.py
