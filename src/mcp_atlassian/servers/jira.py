@@ -245,6 +245,7 @@ async def add_watcher(
     annotations={
         "title": "Remove Issue Watcher",
         "destructiveHint": True,
+        "readOnlyHint": False,
     },
 )
 @check_write_access
