@@ -14,7 +14,7 @@ def _parse_inline_formatting(text: str) -> list[dict[str, Any]]:
     """Parse inline Markdown formatting into ADF inline nodes.
 
     Handles: bold (**), italic (*), inline code (`), links ([text](url)),
-    and strikethrough (~~).
+    strikethrough (~~), and mentions (@[Display Name](account:ACCOUNT_ID)).
 
     Args:
         text: Raw text potentially containing inline Markdown formatting.
@@ -26,11 +26,13 @@ def _parse_inline_formatting(text: str) -> list[dict[str, Any]]:
         return []
 
     nodes: list[dict[str, Any]] = []
-    # Pattern order matters: bold before italic, code before others
+    # Pattern order matters: mentions before links, bold before italic,
+    # code before others
     inline_re = re.compile(
         r"`(?P<code_inner>[^`]+)`"
         r"|\*\*(?P<bold_inner>.+?)\*\*"
         r"|~~(?P<strike_inner>.+?)~~"
+        r"|@\[(?P<mention_text>[^\]]+)\]\(account:(?P<mention_id>[^)]+)\)"
         r"|\[(?P<link_text>[^\]]+)\]\((?P<link_href>[^)]+)\)"
         r"|(?<!\*)\*(?!\*)(?P<italic_inner>.+?)(?<!\*)\*(?!\*)"
     )
@@ -65,6 +67,16 @@ def _parse_inline_formatting(text: str) -> list[dict[str, Any]]:
                     "type": "text",
                     "text": m.group("strike_inner"),
                     "marks": [{"type": "strike"}],
+                }
+            )
+        elif m.group("mention_text") is not None:
+            nodes.append(
+                {
+                    "type": "mention",
+                    "attrs": {
+                        "id": m.group("mention_id"),
+                        "text": "@" + m.group("mention_text"),
+                    },
                 }
             )
         elif m.group("link_text") is not None:

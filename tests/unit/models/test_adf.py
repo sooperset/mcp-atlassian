@@ -416,6 +416,48 @@ class TestMarkdownToAdf:
         assert len(strike_nodes) >= 1
         assert strike_nodes[0]["text"] == "strike"
 
+    # -- Mentions -----------------------------------------------------------
+
+    def test_mention(self):
+        """@[Name](account:id) produces an ADF mention node."""
+        result = markdown_to_adf(
+            "@[Paolo Marin](account:712020:4d76585b-d13b-4869-9da2-b8ce71969b9f)"
+        )
+        para = result["content"][0]
+        mention_nodes = [n for n in para["content"] if n["type"] == "mention"]
+        assert len(mention_nodes) == 1
+        assert mention_nodes[0]["attrs"]["id"] == "712020:4d76585b-d13b-4869-9da2-b8ce71969b9f"
+        assert mention_nodes[0]["attrs"]["text"] == "@Paolo Marin"
+
+    def test_mention_with_surrounding_text(self):
+        """Mention embedded in a sentence preserves surrounding text."""
+        result = markdown_to_adf(
+            "Hey @[John Doe](account:123:abc) check this"
+        )
+        para = result["content"][0]
+        types = [n["type"] for n in para["content"]]
+        assert "text" in types
+        assert "mention" in types
+        mention = next(n for n in para["content"] if n["type"] == "mention")
+        assert mention["attrs"]["id"] == "123:abc"
+        assert mention["attrs"]["text"] == "@John Doe"
+
+    def test_mention_does_not_match_regular_link(self):
+        """Regular links without @ prefix are not treated as mentions."""
+        result = markdown_to_adf("[click](https://example.com)")
+        para = result["content"][0]
+        mention_nodes = [n for n in para["content"] if n["type"] == "mention"]
+        assert len(mention_nodes) == 0
+
+    def test_mention_roundtrip(self):
+        """markdown_to_adf → adf_to_text preserves mention text."""
+        md = "Hello @[Jane](account:456:def) goodbye"
+        adf = markdown_to_adf(md)
+        text_back = adf_to_text(adf) or ""
+        assert "@Jane" in text_back
+        assert "Hello" in text_back
+        assert "goodbye" in text_back
+
     # -- Links --------------------------------------------------------------
 
     def test_link(self):
