@@ -2453,15 +2453,15 @@ async def test_jira_move_issue_success(jira_client, mock_jira_fetcher):
     """Test successful cross-project issue move."""
     response = await jira_client.call_tool(
         "jira_move_issue",
-        {"issue_key": "DND-123", "target_project_key": "TRAILER"},
+        {"issue_key": "PROJ-123", "target_project_key": "OTHER"},
     )
     content = json.loads(response.content[0].text)
     assert "moved successfully" in content["message"]
-    assert "DND-123" in content["message"]
-    assert "TRAILER" in content["message"]
-    assert content["issue"]["key"] == "TRAILER-999"
-    assert content["issue"]["project"]["key"] == "TRAILER"
-    mock_jira_fetcher.move_issue.assert_called_once_with("DND-123", "TRAILER")
+    assert "PROJ-123" in content["message"]
+    assert "OTHER" in content["message"]
+    assert content["issue"]["key"] == "OTHER-999"
+    assert content["issue"]["project"]["key"] == "OTHER"
+    mock_jira_fetcher.move_issue.assert_called_once_with("PROJ-123", "OTHER")
 
 
 @pytest.mark.anyio
@@ -2472,7 +2472,7 @@ async def test_jira_move_issue_failure(jira_client, mock_jira_fetcher):
     with pytest.raises(ToolError) as excinfo:
         await jira_client.call_tool(
             "jira_move_issue",
-            {"issue_key": "DND-123", "target_project_key": "NONEXISTENT"},
+            {"issue_key": "PROJ-123", "target_project_key": "NONEXISTENT"},
         )
     assert "Target project not found" in str(excinfo.value)
 
@@ -2487,6 +2487,6 @@ async def test_jira_move_issue_not_cloud(jira_client, mock_jira_fetcher):
     with pytest.raises(ToolError) as excinfo:
         await jira_client.call_tool(
             "jira_move_issue",
-            {"issue_key": "DND-123", "target_project_key": "TRAILER"},
+            {"issue_key": "PROJ-123", "target_project_key": "OTHER"},
         )
     assert "Jira Cloud" in str(excinfo.value)
