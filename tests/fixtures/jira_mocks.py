@@ -56,6 +56,7 @@ MOCK_JIRA_ISSUE_RESPONSE = {
         "labels": ["test-label"],
         "components": [{"name": "Backend"}],
         "fixVersions": [{"name": "v1.0"}],
+        "versions": [{"name": "v0.9"}],
         "attachment": [
             {
                 "id": "10000",
