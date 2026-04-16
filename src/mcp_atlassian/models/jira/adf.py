@@ -14,7 +14,13 @@ def _parse_inline_formatting(text: str) -> list[dict[str, Any]]:
     """Parse inline Markdown formatting into ADF inline nodes.
 
     Handles: bold (**), italic (*), inline code (`), links ([text](url)),
-    and strikethrough (~~).
+    strikethrough (~~), and bare Atlassian issue URLs (converted to inlineCard).
+
+    A bare Atlassian issue URL (e.g. ``https://example.atlassian.net/browse/PROJ-1``)
+    is emitted as an ADF ``inlineCard`` node, which renders in JIRA Cloud as a rich
+    card showing the ticket icon, title and status badge.  A Markdown link
+    ``[PROJ-1](url)`` produces an ordinary hyperlink instead — use bare URLs when
+    the inline-card appearance is desired.
 
     Args:
         text: Raw text potentially containing inline Markdown formatting.
@@ -26,13 +32,16 @@ def _parse_inline_formatting(text: str) -> list[dict[str, Any]]:
         return []
 
     nodes: list[dict[str, Any]] = []
-    # Pattern order matters: bold before italic, code before others
+    # Pattern order matters: bold before italic, code before others.
+    # jira_card must come before the plain-text fallback so bare Atlassian issue
+    # URLs are emitted as inlineCard nodes rather than plain text.
     inline_re = re.compile(
         r"`(?P<code_inner>[^`]+)`"
         r"|\*\*(?P<bold_inner>.+?)\*\*"
         r"|~~(?P<strike_inner>.+?)~~"
         r"|\[(?P<link_text>[^\]]+)\]\((?P<link_href>[^)]+)\)"
         r"|(?<!\*)\*(?!\*)(?P<italic_inner>.+?)(?<!\*)\*(?!\*)"
+        r"|(?P<jira_card>https?://\S+/browse/[A-Z][A-Z0-9_]+-\d+\b)"
     )
 
     pos = 0
@@ -86,6 +95,13 @@ def _parse_inline_formatting(text: str) -> list[dict[str, Any]]:
                     "type": "text",
                     "text": m.group("italic_inner"),
                     "marks": [{"type": "em"}],
+                }
+            )
+        elif m.group("jira_card") is not None:
+            nodes.append(
+                {
+                    "type": "inlineCard",
+                    "attrs": {"url": m.group("jira_card")},
                 }
             )
 
