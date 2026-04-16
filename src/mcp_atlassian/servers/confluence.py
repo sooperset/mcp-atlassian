@@ -51,13 +51,9 @@ def _resolve_page_content(content: str | None, content_file: str | None) -> str:
     has_content = content is not None and content != ""
     has_file = content_file is not None and content_file != ""
     if has_content and has_file:
-        raise ValueError(
-            "Provide either 'content' or 'content_file', not both."
-        )
+        raise ValueError("Provide either 'content' or 'content_file', not both.")
     if not has_content and not has_file:
-        raise ValueError(
-            "One of 'content' or 'content_file' must be provided."
-        )
+        raise ValueError("One of 'content' or 'content_file' must be provided.")
     if has_content:
         return content  # type: ignore[return-value]
     path = Path(content_file).expanduser()  # type: ignore[arg-type]
