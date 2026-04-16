@@ -484,12 +484,13 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             if minor_edit is not None:
                 data["minorEdit"] = str(minor_edit).lower()
 
-            # Use PUT to support creating new versions of existing attachments
-            # PUT will create a new attachment if it doesn't exist, OR create a new
-            # version if an attachment with the same filename already exists
-            response = self.confluence._session.put(
-                url, headers=headers, files=files, data=data
-            )
+            # Confluence Cloud accepts PUT on the collection URL for both
+            # create and update.  Confluence Server/DC requires POST for new
+            # attachments — PUT on the collection URL returns an error.
+            # POST works on *both* platforms (creates a new version when the
+            # filename already exists), so we use POST unconditionally.
+            method = self.confluence._session.post
+            response = method(url, headers=headers, files=files, data=data)
             response.raise_for_status()
 
             # Parse response
