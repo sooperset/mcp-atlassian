@@ -1,6 +1,7 @@
 """Module for Jira issue operations."""
 
 import logging
+import time
 from collections import defaultdict
 from typing import Any
 
@@ -1314,6 +1315,138 @@ class IssuesMixin(
             msg = f"Error deleting issue {issue_key}: {str(e)}"
             logger.error(msg)
             raise Exception(msg) from e
+
+    def move_issue(self, issue_key: str, target_project_key: str) -> JiraIssue:
+        """
+        Move a Jira issue to a different project.
+
+        Uses Jira Cloud's bulk move API. The issue is assigned a new key in
+        the target project (e.g., DND-123 becomes TRAILER-456). The move is
+        processed asynchronously on Jira's side; this method polls until the
+        task completes or times out after 30 seconds.
+
+        Warning:
+            This function is only available on Jira Cloud.
+
+        Args:
+            issue_key: The key of the issue to move (e.g., 'DND-123')
+            target_project_key: The key of the target project (e.g., 'TRAILER')
+
+        Returns:
+            JiraIssue model representing the moved issue with its new key
+
+        Raises:
+            NotImplementedError: If not running on Jira Cloud
+            ValueError: If the move fails or times out
+        """
+        if not self.config.is_cloud:
+            error_msg = "Cross-project issue move is only available on Jira Cloud."
+            logger.error(error_msg)
+            raise NotImplementedError(error_msg)
+
+        if not issue_key:
+            raise ValueError("Issue key is required")
+        if not target_project_key:
+            raise ValueError("Target project key is required")
+
+        try:
+            # Submit the bulk move request
+            data: dict[str, Any] = {
+                "issues": [
+                    {
+                        "issueIdsOrKeys": [issue_key],
+                        "targetProject": {"projectKey": target_project_key},
+                    }
+                ],
+                "sendBulkNotification": False,
+            }
+
+            response = self._post_api3("issue/bulk/move", data)
+
+            if not isinstance(response, dict):
+                raise ValueError(
+                    f"Unexpected response from bulk move API: {response}"
+                )
+
+            task_id = response.get("taskId")
+            if not task_id:
+                raise ValueError(
+                    f"No task ID in bulk move response: {response}"
+                )
+
+            logger.info(
+                f"Bulk move submitted for {issue_key} → {target_project_key}, "
+                f"task ID: {task_id}"
+            )
+
+            # Poll for task completion (max 30 seconds)
+            task_url = self.jira.resource_url(f"task/{task_id}", api_version="3")
+            new_issue_key = issue_key
+
+            for attempt in range(15):
+                time.sleep(2)
+                task_response = self.jira.get(task_url)
+
+                if not isinstance(task_response, dict):
+                    logger.warning(
+                        f"Unexpected task response on attempt {attempt + 1}: "
+                        f"{type(task_response)}"
+                    )
+                    continue
+
+                status = task_response.get("status")
+                logger.info(f"Move task {task_id} status (attempt {attempt + 1}): {status}")
+
+                if status == "COMPLETE":
+                    result = task_response.get("result", {})
+                    if isinstance(result, dict):
+                        # Handle common response structures for the new issue key
+                        for item in result.get("issues", []):
+                            if isinstance(item, dict) and item.get("key"):
+                                new_issue_key = item["key"]
+                                break
+                        if new_issue_key == issue_key:
+                            for item in result.get("entities", []):
+                                if (
+                                    isinstance(item, dict)
+                                    and item.get("oldIssueKey") == issue_key
+                                ):
+                                    new_issue_key = item.get("newIssueKey", issue_key)
+                                    break
+                    logger.info(
+                        f"Issue {issue_key} moved successfully, new key: {new_issue_key}"
+                    )
+                    break
+
+                elif status == "FAILED":
+                    errors = task_response.get("errorMessages", ["Unknown error"])
+                    raise ValueError(f"Bulk move task failed: {errors}")
+
+                elif status in ("CANCELLED", "CANCEL_REQUESTED"):
+                    raise ValueError(f"Bulk move task was cancelled (status: {status})")
+
+            else:
+                raise ValueError(
+                    f"Move task timed out after 30 seconds (task ID: {task_id})"
+                )
+
+            issue_data = self.jira.get_issue(new_issue_key)
+            if not isinstance(issue_data, dict):
+                msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
+                logger.error(msg)
+                raise TypeError(msg)
+            return JiraIssue.from_api_response(issue_data)
+
+        except (ValueError, NotImplementedError, TypeError):
+            raise
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(
+                f"Error moving issue {issue_key} to project {target_project_key}: {error_msg}"
+            )
+            raise ValueError(
+                f"Failed to move issue {issue_key} to project {target_project_key}: {error_msg}"
+            ) from e
 
     def _log_available_fields(self, fields: list[dict]) -> None:
         """
