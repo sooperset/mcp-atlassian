@@ -478,6 +478,42 @@ class TestMarkdownToAdf:
             assert item["type"] == "listItem"
             assert item["content"][0]["type"] == "paragraph"
 
+    def test_task_list_checked(self):
+        """- [x] items produce a taskList with taskItem state=DONE."""
+        md = "- [x] done task"
+        result = markdown_to_adf(md)
+        tl = next(n for n in result["content"] if n["type"] == "taskList")
+        assert len(tl["content"]) == 1
+        item = tl["content"][0]
+        assert item["type"] == "taskItem"
+        assert item["attrs"]["state"] == "DONE"
+        assert item["content"][0]["text"] == "done task"
+
+    def test_task_list_unchecked(self):
+        """- [ ] items produce a taskList with taskItem state=TODO."""
+        md = "- [ ] pending task"
+        result = markdown_to_adf(md)
+        tl = next(n for n in result["content"] if n["type"] == "taskList")
+        item = tl["content"][0]
+        assert item["attrs"]["state"] == "TODO"
+
+    def test_task_list_mixed(self):
+        """Mixed checked/unchecked items in one taskList."""
+        md = "- [x] done\n- [ ] todo\n- [X] also done"
+        result = markdown_to_adf(md)
+        tl = next(n for n in result["content"] if n["type"] == "taskList")
+        assert len(tl["content"]) == 3
+        assert tl["content"][0]["attrs"]["state"] == "DONE"
+        assert tl["content"][1]["attrs"]["state"] == "TODO"
+        assert tl["content"][2]["attrs"]["state"] == "DONE"
+
+    def test_task_list_not_confused_with_bullet_list(self):
+        """Regular - items without [ ] are still bulletList, not taskList."""
+        md = "- regular item"
+        result = markdown_to_adf(md)
+        assert any(n["type"] == "bulletList" for n in result["content"])
+        assert not any(n["type"] == "taskList" for n in result["content"])
+
     # -- Blockquote ---------------------------------------------------------
 
     def test_blockquote(self):
