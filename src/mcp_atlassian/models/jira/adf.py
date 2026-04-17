@@ -117,6 +117,15 @@ def _make_list_item(text: str) -> dict[str, Any]:
     return {"type": "listItem", "content": [_make_paragraph(text)]}
 
 
+def _make_task_item(text: str, checked: bool, local_id: str) -> dict[str, Any]:
+    """Create an ADF taskItem node."""
+    return {
+        "type": "taskItem",
+        "attrs": {"localId": local_id, "state": "DONE" if checked else "TODO"},
+        "content": _parse_inline_formatting(text) or [{"type": "text", "text": text}],
+    }
+
+
 def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
     """Convert Markdown text to ADF (Atlassian Document Format) document.
 
@@ -195,6 +204,29 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
                 i += 1
             bq_content = [_make_paragraph(ln) for ln in quote_lines]
             doc["content"].append({"type": "blockquote", "content": bq_content})
+            continue
+
+        # --- Task list (- [ ] / - [x]) ---
+        if re.match(r"^[-*]\s+\[[ xX]\]\s+", line):
+            task_items: list[dict[str, Any]] = []
+            task_counter = 0
+            while i < len(lines) and re.match(r"^[-*]\s+\[[ xX]\]\s+", lines[i]):
+                checked = bool(re.match(r"^[-*]\s+\[[xX]\]\s+", lines[i]))
+                item_text = re.sub(r"^[-*]\s+\[[ xX]\]\s+", "", lines[i])
+                task_counter += 1
+                task_items.append(
+                    _make_task_item(
+                        item_text, checked, f"task-{id(doc)}-{task_counter}"
+                    )
+                )
+                i += 1
+            doc["content"].append(
+                {
+                    "type": "taskList",
+                    "attrs": {"localId": f"tasklist-{id(doc)}-{i}"},
+                    "content": task_items,
+                }
+            )
             continue
 
         # --- Unordered list ---
