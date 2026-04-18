@@ -3273,3 +3273,141 @@ async def get_issues_development_info(
         logger.error(f"Error getting development info for issues: {str(e)}")
         error_result = {"success": False, "error": str(e)}
         return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_link_analysis"},
+    annotations={"title": "Trace Issue Links", "readOnlyHint": True},
+)
+async def trace_issue_links(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Root issue key to start traversal from (e.g., 'PROJ-123')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+    max_depth: Annotated[
+        int,
+        Field(
+            description="Maximum link traversal depth (1-5)",
+            ge=1,
+            le=5,
+        ),
+    ] = 3,
+    link_type_filter: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Comma-separated link type names to follow "
+                "(e.g., 'Blocks,Depends on'). Omit to follow all types."
+            ),
+        ),
+    ] = None,
+    direction_filter: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Restrict traversal direction: "
+                "'inward', 'outward', or omit for both."
+            ),
+        ),
+    ] = None,
+    max_issues: Annotated[
+        int,
+        Field(
+            description="Maximum number of issues to visit (1-500)",
+            ge=1,
+            le=500,
+        ),
+    ] = 100,
+) -> str:
+    """Traverse issue links recursively and return a flat graph.
+
+    Performs a breadth-first traversal from the root issue, following
+    issue links up to max_depth hops.  Returns all visited nodes and
+    edges.  Useful for dependency tracing, impact analysis, and
+    understanding link chains across projects.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Root issue key.
+        max_depth: Max hops.
+        link_type_filter: Comma-separated type names to restrict traversal.
+        direction_filter: Direction restriction.
+        max_issues: Safety limit.
+
+    Returns:
+        JSON string with nodes, edges, and counts.
+    """
+    jira = await get_jira_fetcher(ctx)
+
+    types_list: list[str] | None = None
+    if link_type_filter:
+        types_list = [t.strip() for t in link_type_filter.split(",") if t.strip()]
+
+    result = jira.trace_issue_links(
+        issue_key=issue_key,
+        max_depth=max_depth,
+        link_type_filter=types_list,
+        direction_filter=direction_filter,
+        max_issues=max_issues,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_link_analysis"},
+    annotations={"title": "Get Issue Tree", "readOnlyHint": True},
+)
+async def get_issue_tree(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Root issue key (e.g., 'PROJ-123')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+    max_depth: Annotated[
+        int,
+        Field(
+            description="Maximum tree depth (1-5)",
+            ge=1,
+            le=5,
+        ),
+    ] = 3,
+    max_issues: Annotated[
+        int,
+        Field(
+            description="Maximum number of issues to visit (1-500)",
+            ge=1,
+            le=500,
+        ),
+    ] = 100,
+) -> str:
+    """Build a hierarchical issue tree following containment links.
+
+    Containment links (parent/child, epic, split) form the tree spine.
+    Non-containment links are returned as cross_links annotations but
+    are not traversed.  Useful for navigating hierarchical Jira
+    structures (initiative → epic → story) while seeing lateral
+    dependencies.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Root issue key.
+        max_depth: Max tree depth.
+        max_issues: Safety limit.
+
+    Returns:
+        JSON string with recursive tree root, cross_links, and count.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_issue_tree(
+        issue_key=issue_key,
+        max_depth=max_depth,
+        max_issues=max_issues,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)
