@@ -1,6 +1,6 @@
 ---
 title: "Authentication"
-description: "Configure authentication for MCP Atlassian — API tokens, PATs, and OAuth 2.0"
+description: "Configure authentication for MCP Atlassian — API tokens, service accounts, PATs, and OAuth 2.0"
 ---
 
 MCP Atlassian supports three authentication methods depending on your Atlassian deployment type.
@@ -31,6 +31,36 @@ CONFLUENCE_URL=https://your-company.atlassian.net/wiki
 CONFLUENCE_USERNAME=your.email@company.com
 CONFLUENCE_API_TOKEN=your_api_token
 ```
+
+## Service Account (Cloud)
+
+For AI agents and automations that should act under a dedicated bot identity instead of a personal account.
+
+<Steps>
+  <Step title="Create Service Account">
+    Go to [Atlassian Admin](https://admin.atlassian.com) → **Directory** → **Service accounts** and create a new service account
+  </Step>
+  <Step title="Generate API Token">
+    Generate an API token for the service account
+  </Step>
+  <Step title="Get Cloud ID">
+    Visit `https://your-company.atlassian.net/_edge/tenant_info` and copy the `cloudId` value from the JSON response
+  </Step>
+</Steps>
+
+**Environment variables:**
+```bash
+ATLASSIAN_CLOUD_ID=your-cloud-id-uuid
+JIRA_USERNAME=service-account@your-company.atlassian.net
+JIRA_API_TOKEN=service_account_api_token
+CONFLUENCE_USERNAME=service-account@your-company.atlassian.net
+CONFLUENCE_API_TOKEN=service_account_api_token
+```
+
+<Note>
+When `ATLASSIAN_CLOUD_ID` is set, `JIRA_URL` and `CONFLUENCE_URL` are optional — the server routes requests through the `api.atlassian.com` gateway automatically.
+You can also use `JIRA_CLOUD_ID` and `CONFLUENCE_CLOUD_ID` separately if your Jira and Confluence are on different Cloud sites.
+</Note>
 
 ## Personal Access Token (Server/Data Center)
 
