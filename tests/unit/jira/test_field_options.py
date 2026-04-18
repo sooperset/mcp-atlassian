@@ -516,3 +516,140 @@ class TestFieldOptionsMixin:
         )
         assert len(result) == 1
         assert result[0].value == "Yes"
+
+
+# ============================================================================
+# Regression Tests — upstream #673
+# ============================================================================
+
+
+class TestGetFieldOptionsRegression673:
+    """Regression for https://github.com/sooperset/mcp-atlassian/issues/673.
+
+    Issue: "Get Jira custom field available values"
+    Status: RESOLVED — get_field_options MCP tool already exists and the
+    fetcher method returns option values with id, value, and disabled fields.
+
+    These tests prove the end-to-end data contract: the fetcher returns
+    FieldOption objects with the fields users need to inspect available values.
+    """
+
+    @pytest.fixture
+    def mixin(self, jira_fetcher: JiraFetcher) -> FieldOptionsMixin:
+        """Create a FieldOptionsMixin configured for Cloud."""
+        fetcher = jira_fetcher
+        fetcher.config = MagicMock()
+        fetcher.config.is_cloud = True
+        return fetcher
+
+    def test_get_field_options_returns_option_values(self, mixin):
+        """get_field_options returns a list of FieldOption with value populated.
+
+        Regression: the core ask in #673 was to retrieve the available values
+        (strings) for a custom field so callers know what to submit.
+        """
+        mixin.jira.get = MagicMock(
+            return_value={
+                "values": [
+                    {"id": "10100", "value": "Blocker", "disabled": False},
+                    {"id": "10101", "value": "Critical", "disabled": False},
+                    {"id": "10102", "value": "Major", "disabled": False},
+                ],
+                "startAt": 0,
+                "maxResults": 50,
+                "total": 3,
+            }
+        )
+
+        result = mixin.get_field_options("customfield_10016", context_id="10001")
+
+        assert isinstance(result, list)
+        assert len(result) == 3
+        values = [opt.value for opt in result]
+        assert "Blocker" in values
+        assert "Critical" in values
+        assert "Major" in values
+
+    def test_get_field_options_returns_field_option_objects(self, mixin):
+        """Each returned item is a FieldOption with id, value, disabled attrs."""
+        mixin.jira.get = MagicMock(
+            return_value={
+                "values": [{"id": "10200", "value": "Yes", "disabled": False}],
+                "startAt": 0,
+                "maxResults": 50,
+                "total": 1,
+            }
+        )
+
+        result = mixin.get_field_options("customfield_10020", context_id="10001")
+
+        assert len(result) == 1
+        opt = result[0]
+        assert isinstance(opt, FieldOption)
+        assert opt.id == "10200"
+        assert opt.value == "Yes"
+        assert opt.disabled is False
+
+    def test_get_field_options_to_simplified_dict_contract(self, mixin):
+        """to_simplified_dict() provides the serialisable form consumers need."""
+        mixin.jira.get = MagicMock(
+            return_value={
+                "values": [
+                    {"id": "10300", "value": "Done", "disabled": False},
+                    {"id": "10301", "value": "Won't Do", "disabled": True},
+                ],
+                "startAt": 0,
+                "maxResults": 50,
+                "total": 2,
+            }
+        )
+
+        result = mixin.get_field_options("customfield_10030", context_id="10001")
+
+        active = next(o for o in result if o.value == "Done")
+        deprecated = next(o for o in result if o.value == "Won't Do")
+
+        active_dict = active.to_simplified_dict()
+        assert active_dict["id"] == "10300"
+        assert active_dict["value"] == "Done"
+        assert "disabled" not in active_dict  # omitted when False
+
+        deprecated_dict = deprecated.to_simplified_dict()
+        assert deprecated_dict["disabled"] is True
+
+    def test_get_field_options_server_returns_allowed_values(self, mixin):
+        """Server/DC path: allowedValues from createmeta are returned as options.
+
+        Confirms the feature works on Jira Server/DC as well as Cloud.
+        """
+        mixin.config.is_cloud = False
+        mixin.get_project_issue_types = MagicMock(
+            return_value=[{"id": "10001", "name": "Story"}]
+        )
+        mixin.jira.issue_createmeta_fieldtypes = MagicMock(
+            return_value={
+                "maxResults": 50,
+                "startAt": 0,
+                "total": 1,
+                "isLast": True,
+                "values": [
+                    {
+                        "fieldId": "customfield_10016",
+                        "required": False,
+                        "name": "Sprint",
+                        "allowedValues": [
+                            {"id": "1", "value": "Sprint 1"},
+                            {"id": "2", "value": "Sprint 2"},
+                        ],
+                    },
+                ],
+            }
+        )
+
+        result = mixin.get_field_options(
+            "customfield_10016", project_key="PROJ", issue_type="Story"
+        )
+
+        assert len(result) == 2
+        assert result[0].value == "Sprint 1"
+        assert result[1].value == "Sprint 2"
