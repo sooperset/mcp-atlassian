@@ -3273,3 +3273,54 @@ async def get_issues_development_info(
         logger.error(f"Error getting development info for issues: {str(e)}")
         error_result = {"success": False, "error": str(e)}
         return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_epic_analysis"},
+    annotations={"title": "Get Epic Summary", "readOnlyHint": True},
+)
+async def get_epic_summary(
+    ctx: Context,
+    epic_key: Annotated[
+        str,
+        Field(
+            description="Epic issue key (e.g., 'PROJ-123')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+    include_children: Annotated[
+        bool,
+        Field(
+            description=("Include the list of individual child issues in the response"),
+        ),
+    ] = True,
+    max_children: Annotated[
+        int,
+        Field(
+            description="Maximum number of child issues to fetch (1-500)",
+            ge=1,
+            le=500,
+        ),
+    ] = 200,
+) -> str:
+    """Get a summary of an epic with aggregated child issue statistics.
+
+    Returns the epic's metadata plus children grouped by status,
+    assignee, and issue type, with a completion percentage.
+
+    Args:
+        ctx: The FastMCP context.
+        epic_key: The epic issue key.
+        include_children: Whether to include individual child issues.
+        max_children: Max children to fetch.
+
+    Returns:
+        JSON string with epic summary and aggregations.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_epic_summary(
+        epic_key=epic_key,
+        include_children=include_children,
+        max_children=max_children,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)
