@@ -135,6 +135,11 @@ CONFLUENCE_TOOLSETS: dict[str, ToolsetDefinition] = {
         description="Attachment upload, download, and management",
         default=False,
     ),
+    "confluence_templates": ToolsetDefinition(
+        name="confluence_templates",
+        description="Page template listing and page creation from templates",
+        default=False,
+    ),
 }
 
 # --- Combined registry ---

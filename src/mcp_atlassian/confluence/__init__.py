@@ -12,6 +12,7 @@ from .labels import LabelsMixin
 from .pages import PagesMixin
 from .search import SearchMixin
 from .spaces import SpacesMixin
+from .templates import TemplatesMixin
 from .users import UsersMixin
 
 
@@ -24,6 +25,7 @@ class ConfluenceFetcher(
     UsersMixin,
     AnalyticsMixin,
     AttachmentsMixin,
+    TemplatesMixin,
 ):
     """Main entry point for Confluence operations, providing backward compatibility.
 
@@ -39,6 +41,7 @@ class ConfluenceFetcher(
     - UsersMixin: User operations
     - AnalyticsMixin: Page view analytics (Cloud only)
     - AttachmentsMixin: Attachment operations
+    - TemplatesMixin: Template operations
     """
 
     pass

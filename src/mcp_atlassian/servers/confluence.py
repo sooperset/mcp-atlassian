@@ -2071,3 +2071,154 @@ async def get_page_images(
         ),
     )
     return contents
+
+
+# ---------------------------------------------------------------------------
+# Template tools
+# ---------------------------------------------------------------------------
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_templates"},
+    annotations={"title": "List Page Templates", "readOnlyHint": True},
+)
+async def confluence_list_page_templates(
+    ctx: Context,
+    space_key: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Optional space key to list templates defined in that space. "
+                "When omitted, global templates are returned."
+            ),
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        Field(
+            default=25,
+            ge=1,
+            le=200,
+            description="Maximum number of templates to return.",
+        ),
+    ] = 25,
+) -> str:
+    """List Confluence page content templates.
+
+    Returns template metadata (ID, name, description, type) without the
+    full body.  Use confluence_get_page_template to fetch a template's body.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    try:
+        results = confluence_fetcher.list_page_templates(
+            space_key=space_key,
+            limit=limit,
+        )
+        simplified = [
+            {
+                "templateId": t.get("templateId", ""),
+                "name": t.get("name", ""),
+                "templateType": t.get("templateType", ""),
+                "description": (t.get("description") or {}).get("value", ""),
+            }
+            for t in results
+        ]
+        return json.dumps(
+            {"templates": simplified, "total": len(simplified)},
+            indent=2,
+            ensure_ascii=False,
+        )
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error listing templates: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error listing templates: {e}")
+        raise
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_templates"},
+    annotations={"title": "Get Page Template", "readOnlyHint": True},
+)
+async def confluence_get_page_template(
+    ctx: Context,
+    template_id: Annotated[
+        str,
+        Field(description="The ID of the template to retrieve."),
+    ],
+) -> str:
+    """Get a Confluence page template by ID, including its storage-format body."""
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    try:
+        template = confluence_fetcher.get_page_template(template_id)
+        body_value = template.get("body", {}).get("storage", {}).get("value", "")
+        return json.dumps(
+            {
+                "templateId": template.get("templateId", ""),
+                "name": template.get("name", ""),
+                "templateType": template.get("templateType", ""),
+                "description": (template.get("description") or {}).get("value", ""),
+                "body": body_value,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error fetching template {template_id}: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching template {template_id}: {e}")
+        raise
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_templates"},
+    annotations={"title": "Create Page from Template", "destructiveHint": False},
+)
+@check_write_access
+async def confluence_create_page_from_template(
+    ctx: Context,
+    space_key: Annotated[
+        str,
+        Field(description="Key of the space in which to create the page."),
+    ],
+    title: Annotated[
+        str,
+        Field(description="Title for the new page."),
+    ],
+    template_id: Annotated[
+        str,
+        Field(description="ID of the template to use as the page body."),
+    ],
+    parent_id: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Optional ID of the parent page.",
+        ),
+    ] = None,
+) -> str:
+    """Create a new Confluence page pre-populated with a template's body.
+
+    Fetches the named template and creates a page with its storage-format
+    content.  The page can be edited afterwards via confluence_update_page.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    try:
+        result = confluence_fetcher.create_page_from_template(
+            space_key=space_key,
+            title=title,
+            template_id=template_id,
+            parent_id=parent_id,
+        )
+        return json.dumps(result, indent=2, ensure_ascii=False)
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error creating page from template: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error creating page from template {template_id}: {e}")
+        raise

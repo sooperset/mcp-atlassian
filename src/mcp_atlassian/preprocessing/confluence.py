@@ -1,6 +1,7 @@
 """Confluence-specific text preprocessing module."""
 
 import logging
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -37,14 +38,22 @@ class ConfluencePreprocessor(BasePreprocessor):
         super().__init__(base_url=base_url)
 
     def markdown_to_confluence_storage(
-        self, markdown_content: str, *, enable_heading_anchors: bool = False
+        self,
+        markdown_content: str,
+        *,
+        enable_heading_anchors: bool = False,
+        apply_task_lists: bool = True,
     ) -> str:
         """
         Convert Markdown content to Confluence storage format (XHTML)
 
         Args:
             markdown_content: Markdown text to convert
-            enable_heading_anchors: Whether to enable automatic heading anchor generation (default: False)
+            enable_heading_anchors: Whether to enable automatic heading anchor
+                generation (default: False)
+            apply_task_lists: Whether to convert GFM task-list items
+                (``- [ ]`` / ``- [x]``) to Confluence ``ac:task-list`` macros
+                (default: True)
 
         Returns:
             Confluence storage format (XHTML) string
@@ -82,9 +91,12 @@ class ConfluencePreprocessor(BasePreprocessor):
                 converter.visit(root)
 
                 # Convert the element tree back to a string
-                storage_format = elements_to_string(root)
+                storage_format = str(elements_to_string(root))
 
-                return str(storage_format)
+                if apply_task_lists:
+                    storage_format = self._apply_task_lists(storage_format)
+
+                return storage_format
             finally:
                 # Clean up the temporary directory
                 shutil.rmtree(temp_dir, ignore_errors=True)
@@ -96,10 +108,59 @@ class ConfluencePreprocessor(BasePreprocessor):
             # Fall back to a simpler method if the conversion fails
             html_content = markdown_to_html(markdown_content)
 
-            # Use a different approach that doesn't rely on the HTML macro
             # This creates a proper Confluence storage format document
             storage_format = f"""<p>{html_content}</p>"""
 
             return str(storage_format)
 
-    # Confluence-specific methods can be added here
+    @classmethod
+    def _apply_task_lists(cls, storage_html: str) -> str:
+        """Convert GFM-style task list items to Confluence ac:task-list macros.
+
+        md2conf renders GFM task list items (``- [ ]`` / ``- [x]``) as plain
+        ``<ul><li>`` elements with the checkbox marker as literal text.
+        Confluence needs ``<ac:task-list>`` / ``<ac:task>`` elements to render
+        interactive checkboxes.
+
+        Only converts ``<ul>`` blocks whose every ``<li>`` begins with a
+        checkbox marker; mixed lists (some items without a checkbox prefix)
+        are left unchanged.  Nested ``<ul>`` elements are not traversed to
+        avoid partial matches.
+
+        Args:
+            storage_html: Confluence storage-format string to post-process.
+
+        Returns:
+            Updated storage-format string with task lists converted.
+        """
+        task_item_re = re.compile(r"^\[( |x|X)\]\s*(.*)", re.DOTALL)
+
+        def _replace_ul(m: re.Match) -> str:
+            ul_html = m.group(0)
+            items = re.findall(r"<li>(.*?)</li>", ul_html, re.DOTALL)
+            if not items:
+                return ul_html
+
+            task_matches = [task_item_re.match(item) for item in items]
+            if not all(task_matches):
+                return ul_html  # mixed list — leave as-is
+
+            parts = ["<ac:task-list>"]
+            for tm in task_matches:
+                if tm is None:  # should not happen given all(task_matches) above
+                    continue
+                status = "complete" if tm.group(1).lower() == "x" else "incomplete"
+                body = tm.group(2).strip()
+                parts.append(
+                    f"<ac:task>"
+                    f"<ac:task-status>{status}</ac:task-status>"
+                    f"<ac:task-body>{body}</ac:task-body>"
+                    f"</ac:task>"
+                )
+            parts.append("</ac:task-list>")
+            return "".join(parts)
+
+        # Only match <ul> blocks with no nested <ul> to avoid partial tag matches.
+        return re.sub(
+            r"<ul>(?:(?!<ul>).)*?</ul>", _replace_ul, storage_html, flags=re.DOTALL
+        )
