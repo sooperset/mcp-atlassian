@@ -1,6 +1,7 @@
 """Confluence-specific text preprocessing module."""
 
 import logging
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -84,7 +85,7 @@ class ConfluencePreprocessor(BasePreprocessor):
                 # Convert the element tree back to a string
                 storage_format = elements_to_string(root)
 
-                return str(storage_format)
+                return self._fix_attachment_images(str(storage_format))
             finally:
                 # Clean up the temporary directory
                 shutil.rmtree(temp_dir, ignore_errors=True)
@@ -102,4 +103,37 @@ class ConfluencePreprocessor(BasePreprocessor):
 
             return str(storage_format)
 
-    # Confluence-specific methods can be added here
+    @staticmethod
+    def _fix_attachment_images(storage_html: str) -> str:
+        """Replace bare-filename ``<img>`` tags with Confluence attachment macros.
+
+        Confluence Storage Format cannot resolve bare filenames in
+        ``<img src="filename.ext"/>``. Attachment references must use the
+        ``ac:image`` / ``ri:attachment`` macro instead. External URLs
+        (``http``/``https``/``data``) and absolute paths are left untouched.
+
+        Args:
+            storage_html: Confluence storage format HTML string.
+
+        Returns:
+            Storage HTML with bare-filename img tags replaced by attachment macros.
+        """
+
+        def _replace(match: re.Match) -> str:  # type: ignore[type-arg]
+            tag = match.group(0)
+            src_match = re.search(r'src="([^"]+)"', tag)
+            alt_match = re.search(r'alt="([^"]+)"', tag)
+            if not src_match:
+                return tag
+            src = src_match.group(1)
+            # Leave external URLs and absolute paths untouched
+            if src.startswith(("http://", "https://", "data:", "/")):
+                return tag
+            alt = alt_match.group(1) if alt_match else ""
+            return (
+                f'<ac:image ac:alt="{alt}">'
+                f'<ri:attachment ri:filename="{src}"/>'
+                f"</ac:image>"
+            )
+
+        return re.sub(r"<img\b[^>]*/?>", _replace, storage_html)
