@@ -1692,6 +1692,62 @@ async def update_issue(
 
 @jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_issues"},
+    annotations={"title": "Assign Issue", "readOnlyHint": False},
+)
+@check_write_access
+async def assign_issue(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+    assignee: Annotated[
+        str | None,
+        Field(
+            description=(
+                "User identifier to assign (email, display name, or account ID). "
+                "Pass null or empty string to unassign the issue."
+            ),
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """Assign a Jira issue to a user using the dedicated assignment endpoint.
+
+    This is more reliable than setting assignee via update_issue, which is
+    silently ignored by some Jira configurations. Uses PUT /issue/{key}/assignee.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+        assignee: User identifier (email, display name, or account ID).
+                  Pass None or empty string to unassign.
+
+    Returns:
+        JSON string representing the updated issue object.
+
+    Raises:
+        ValueError: If in read-only mode, Jira client unavailable, or user not found.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        issue = jira.assign_issue(issue_key=issue_key, assignee=assignee)
+        result = issue.to_simplified_dict()
+        return json.dumps(
+            {"message": f"Issue {issue_key} assigned successfully", "issue": result},
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(f"Error assigning issue {issue_key}: {str(e)}", exc_info=True)
+        raise ValueError(f"Failed to assign issue {issue_key}: {str(e)}")
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_issues"},
     annotations={"title": "Delete Issue", "destructiveHint": True},
 )
 @check_write_access

@@ -146,6 +146,23 @@ def mock_jira_fetcher():
 
     mock_fetcher.update_issue.side_effect = mock_update_issue
 
+    # Configure assign_issue
+    def mock_assign_issue(issue_key, assignee=None):
+        mock_issue = MagicMock()
+        mock_issue.to_simplified_dict.return_value = {
+            "key": issue_key,
+            "summary": "Test Issue",
+            "status": {"name": "Open"},
+            "assignee": (
+                {"displayName": "Test User", "accountId": "test-account-id"}
+                if assignee
+                else None
+            ),
+        }
+        return mock_issue
+
+    mock_fetcher.assign_issue.side_effect = mock_assign_issue
+
     # Configure batch_create_issues
     def mock_batch_create_issues(issues, validate_only=False):
         if not isinstance(issues, list):
@@ -383,6 +400,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         add_comment,
         add_issues_to_sprint,
         add_worklog,
+        assign_issue,
         batch_create_issues,
         batch_create_versions,
         batch_get_changelogs,
@@ -445,6 +463,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(batch_create_issues)
     jira_sub_mcp.add_tool(batch_get_changelogs)
     jira_sub_mcp.add_tool(update_issue)
+    jira_sub_mcp.add_tool(assign_issue)
     jira_sub_mcp.add_tool(delete_issue)
     jira_sub_mcp.add_tool(add_comment)
     jira_sub_mcp.add_tool(edit_comment)
@@ -2430,3 +2449,58 @@ async def test_get_field_options_combined(jira_client, mock_jira_fetcher):
     # return_limit=1 caps to first match
     assert len(result) == 1
     assert result[0] == "High"
+
+
+# =============================================================================
+# assign_issue tests
+# =============================================================================
+
+
+@pytest.mark.anyio
+async def test_assign_issue(jira_client, mock_jira_fetcher):
+    """Test assigning an issue to a user."""
+    response = await jira_client.call_tool(
+        "jira_assign_issue",
+        {
+            "issue_key": "TEST-123",
+            "assignee": "user@example.com",
+        },
+    )
+    content = json.loads(response.content[0].text)
+    assert content["message"] == "Issue TEST-123 assigned successfully"
+    assert "issue" in content
+    mock_jira_fetcher.assign_issue.assert_called_once_with(
+        issue_key="TEST-123", assignee="user@example.com"
+    )
+
+
+@pytest.mark.anyio
+async def test_assign_issue_unassign(jira_client, mock_jira_fetcher):
+    """Test unassigning an issue (passing None)."""
+    response = await jira_client.call_tool(
+        "jira_assign_issue",
+        {
+            "issue_key": "TEST-123",
+            "assignee": None,
+        },
+    )
+    content = json.loads(response.content[0].text)
+    assert content["message"] == "Issue TEST-123 assigned successfully"
+    mock_jira_fetcher.assign_issue.assert_called_once_with(
+        issue_key="TEST-123", assignee=None
+    )
+
+
+@pytest.mark.anyio
+async def test_assign_issue_error(jira_client, mock_jira_fetcher):
+    """Test assign_issue error handling."""
+    mock_jira_fetcher.assign_issue.side_effect = ValueError("User not found")
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_assign_issue",
+            {
+                "issue_key": "TEST-123",
+                "assignee": "nonexistent@example.com",
+            },
+        )
+    assert "User not found" in str(excinfo.value)

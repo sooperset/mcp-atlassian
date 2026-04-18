@@ -1163,6 +1163,46 @@ class IssuesMixin(
             logger.error(f"Error updating issue {issue_key}: {error_msg}")
             raise ValueError(f"Failed to update issue {issue_key}: {error_msg}") from e
 
+    def assign_issue(
+        self,
+        issue_key: str,
+        assignee: str | None,
+    ) -> JiraIssue:
+        """
+        Assign a Jira issue to a user using the dedicated assignment endpoint.
+
+        Unlike update_issue (which sets assignee via the fields update and is
+        silently ignored by some Jira configurations), this method calls
+        PUT /rest/api/3/issue/{key}/assignee directly.
+
+        Pass None or empty string to unassign.
+
+        Args:
+            issue_key: The key of the issue to assign (e.g., 'PROJ-123')
+            assignee: User identifier (email, display name, or account ID).
+                      Pass None or "" to unassign.
+
+        Returns:
+            JiraIssue model representing the updated issue
+
+        Raises:
+            ValueError: If the user cannot be resolved or assignment fails
+        """
+        try:
+            if assignee is None or assignee == "":
+                # Unassign: the atlassian-python-api accepts None for unassignment
+                self.jira.assign_issue(issue_key, None)
+            else:
+                account_id = self._get_account_id(assignee)
+                self.jira.assign_issue(issue_key, account_id)
+
+            # Return the updated issue
+            return self.get_issue(issue_key)
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Error assigning issue {issue_key}: {error_msg}")
+            raise ValueError(f"Failed to assign issue {issue_key}: {error_msg}") from e
+
     def _update_issue_with_status(
         self, issue_key: str, fields: dict[str, Any]
     ) -> JiraIssue:
