@@ -3273,3 +3273,77 @@ async def get_issues_development_info(
         logger.error(f"Error getting development info for issues: {str(e)}")
         error_result = {"success": False, "error": str(e)}
         return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_set_analysis"},
+    annotations={"title": "Compare Issue Sets", "readOnlyHint": True},
+)
+async def compare_issue_sets(
+    ctx: Context,
+    jql_a: Annotated[
+        str,
+        Field(
+            description=(
+                "First JQL query defining set A "
+                "(e.g., \"project = PROJ AND sprint = 'Sprint 13'\")"
+            )
+        ),
+    ],
+    jql_b: Annotated[
+        str,
+        Field(
+            description=(
+                "Second JQL query defining set B "
+                "(e.g., \"project = PROJ AND sprint = 'Sprint 14'\")"
+            )
+        ),
+    ],
+    compare_fields: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Comma-separated field names to compare "
+                "for change detection (e.g., 'status,assignee,priority'). "
+                "Defaults to status, assignee, priority, labels."
+            ),
+        ),
+    ] = None,
+    max_issues: Annotated[
+        int,
+        Field(
+            description="Maximum issues to fetch per query (1-500)",
+            ge=1,
+            le=500,
+        ),
+    ] = 200,
+) -> str:
+    """Compare two sets of Jira issues defined by JQL queries.
+
+    Returns which issues are only in set A, only in set B, present in
+    both but with changed field values, and how many are unchanged.
+    Useful for sprint reviews, release planning, and backlog diffs.
+
+    Args:
+        ctx: The FastMCP context.
+        jql_a: JQL query for set A.
+        jql_b: JQL query for set B.
+        compare_fields: Comma-separated field names to compare.
+        max_issues: Max issues per query.
+
+    Returns:
+        JSON string with set comparison results.
+    """
+    jira = await get_jira_fetcher(ctx)
+
+    fields_list: list[str] | None = None
+    if compare_fields:
+        fields_list = [f.strip() for f in compare_fields.split(",") if f.strip()]
+
+    result = jira.compare_issue_sets(
+        jql_a=jql_a,
+        jql_b=jql_b,
+        compare_fields=fields_list,
+        max_issues=max_issues,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)

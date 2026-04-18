@@ -26,6 +26,7 @@ from .projects import ProjectsMixin
 from .queues import QueuesMixin
 from .sla import SLAMixin
 from .search import SearchMixin
+from .set_analysis import SetAnalysisMixin
 from .sprints import SprintsMixin
 from .transitions import TransitionsMixin
 from .users import UsersMixin
@@ -55,6 +56,7 @@ class JiraFetcher(
     MetricsMixin,
     SLAMixin,
     DevelopmentMixin,
+    SetAnalysisMixin,
 ):
     """
     The main Jira client class providing access to all Jira operations.
