@@ -3273,3 +3273,187 @@ async def get_issues_development_info(
         logger.error(f"Error getting development info for issues: {str(e)}")
         error_result = {"success": False, "error": str(e)}
         return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_filters"},
+    annotations={"title": "Get Filter", "readOnlyHint": True},
+)
+async def get_filter(
+    ctx: Context,
+    filter_id: Annotated[
+        str,
+        Field(description="The ID of the Jira saved filter (e.g., '209157')"),
+    ],
+) -> str:
+    """Get a Jira saved filter by ID, including its JQL query.
+
+    Args:
+        ctx: The FastMCP context.
+        filter_id: The ID of the filter.
+
+    Returns:
+        JSON string with filter details including name, JQL, owner.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_filter(filter_id)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_filters"},
+    annotations={"title": "Search Filters", "readOnlyHint": True},
+)
+async def search_filters(
+    ctx: Context,
+    filter_name: Annotated[
+        str,
+        Field(description="Filter name to search for"),
+    ],
+    limit: Annotated[
+        int,
+        Field(
+            description="Maximum number of results (1-50)",
+            ge=1,
+            le=50,
+        ),
+    ] = 20,
+) -> str:
+    """Search for Jira saved filters by name.
+
+    Args:
+        ctx: The FastMCP context.
+        filter_name: Filter name to search for.
+        limit: Maximum number of results.
+
+    Returns:
+        JSON string with list of matching filters and their JQL.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.search_filters(filter_name=filter_name, limit=limit)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_filters"},
+    annotations={"title": "Get Favourite Filters", "readOnlyHint": True},
+)
+async def get_favourite_filters(
+    ctx: Context,
+    limit: Annotated[
+        int,
+        Field(
+            description="Maximum number of favourite filters to return (1-100)",
+            ge=1,
+            le=100,
+        ),
+    ] = 50,
+) -> str:
+    """Get the current user's favourite/starred Jira filters.
+
+    Args:
+        ctx: The FastMCP context.
+        limit: Maximum number of filters to return.
+
+    Returns:
+        JSON string with list of favourite filters and their JQL.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_favourite_filters(limit=limit)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_structures"},
+    annotations={"title": "Get Structure", "readOnlyHint": True},
+)
+async def get_structure(
+    ctx: Context,
+    structure_id: Annotated[
+        str,
+        Field(description="The ID of the Structure board (e.g., '585')"),
+    ],
+) -> str:
+    """Get metadata for a Jira Structure (Almworks) board.
+
+    Args:
+        ctx: The FastMCP context.
+        structure_id: The ID of the structure.
+
+    Returns:
+        JSON string with structure name, description, and metadata.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_structure(structure_id)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_structures"},
+    annotations={"title": "Get Structure Forest", "readOnlyHint": True},
+)
+async def get_structure_forest(
+    ctx: Context,
+    structure_id: Annotated[
+        str,
+        Field(description="The ID of the Structure board (e.g., '585')"),
+    ],
+) -> str:
+    """Get the raw hierarchy (forest) for a Structure board.
+
+    Returns row IDs and depths without resolving to issue details.
+    Use get_structure_issues for the fully resolved hierarchy.
+
+    Args:
+        ctx: The FastMCP context.
+        structure_id: The ID of the structure.
+
+    Returns:
+        JSON string with rows containing item IDs and hierarchy depths.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_structure_forest(structure_id)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_structures"},
+    annotations={"title": "Get Structure Issues", "readOnlyHint": True},
+)
+async def get_structure_issues(
+    ctx: Context,
+    structure_id: Annotated[
+        str,
+        Field(description="The ID of the Structure board (e.g., '585')"),
+    ],
+    max_depth: Annotated[
+        int | None,
+        Field(
+            description=(
+                "(Optional) Maximum hierarchy depth to include. "
+                "0 = top level only, 1 = top + first children, etc. "
+                "Omit for the full tree."
+            ),
+        ),
+    ] = None,
+) -> str:
+    """Get the full resolved hierarchy for a Jira Structure board.
+
+    Fetches the structure's forest, resolves all item IDs to Jira
+    issue details (key, summary, status, type, project), and returns
+    a flat list with depth for hierarchy reconstruction. This is the
+    composite call — one tool invocation gives you the complete
+    picture with issue details.
+
+    Args:
+        ctx: The FastMCP context.
+        structure_id: The ID of the structure.
+        max_depth: Optional maximum depth to include.
+
+    Returns:
+        JSON string with resolved issue hierarchy including key,
+        summary, status, issue_type, project, and depth for each item.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_structure_issues(structure_id, max_depth=max_depth)
+    return json.dumps(result, indent=2, ensure_ascii=False)
