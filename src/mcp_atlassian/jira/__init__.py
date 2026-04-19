@@ -17,7 +17,9 @@ from .development import DevelopmentMixin
 from .epics import EpicsMixin
 from .field_options import FieldOptionsMixin
 from .fields import FieldsMixin
+from .filters import FiltersMixin
 from .forms_api import FormsApiMixin  # Forms REST API
+from .structures import StructuresMixin
 from .formatting import FormattingMixin
 from .issues import IssuesMixin
 from .links import LinksMixin
@@ -37,7 +39,9 @@ class JiraFetcher(
     ProjectsMixin,
     FieldsMixin,
     FieldOptionsMixin,
+    FiltersMixin,
     FormsApiMixin,  # Use new Forms REST API instead of FormsMixin
+    StructuresMixin,
     FormattingMixin,
     TransitionsMixin,
     WorklogMixin,
