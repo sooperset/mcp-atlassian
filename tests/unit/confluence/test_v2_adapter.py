@@ -238,6 +238,73 @@ class TestConfluenceV2Adapter:
         absolute = "https://other.example.com/wiki/api/v2/spaces?cursor=z"
         assert v2_adapter._resolve_v2_next_link(absolute) == absolute
 
+    def test_get_spaces_walks_cursor_and_applies_start_offset(
+        self, v2_adapter, mock_session
+    ):
+        """When the requested window spans two cursor pages, the adapter
+        walks _links.next until the window is covered, then slices."""
+        page1 = Mock()
+        page1.status_code = 200
+        page1.json.return_value = {
+            "results": [
+                {
+                    "id": "1",
+                    "key": "A",
+                    "name": "A",
+                    "type": "global",
+                    "_links": {},
+                },
+                {
+                    "id": "2",
+                    "key": "B",
+                    "name": "B",
+                    "type": "global",
+                    "_links": {},
+                },
+            ],
+            "_links": {"next": "/wiki/api/v2/spaces?cursor=abc"},
+        }
+        page2 = Mock()
+        page2.status_code = 200
+        page2.json.return_value = {
+            "results": [
+                {
+                    "id": "3",
+                    "key": "C",
+                    "name": "C",
+                    "type": "global",
+                    "_links": {},
+                },
+                {
+                    "id": "4",
+                    "key": "D",
+                    "name": "D",
+                    "type": "global",
+                    "_links": {},
+                },
+            ],
+            "_links": {},
+        }
+        mock_session.get.side_effect = [page1, page2]
+
+        result = v2_adapter.get_spaces(start=2, limit=2)
+
+        # Two cursor pages fetched before slicing.
+        assert mock_session.get.call_count == 2
+        first_call = mock_session.get.call_args_list[0]
+        assert first_call.args == ("https://example.atlassian.net/wiki/api/v2/spaces",)
+        assert first_call.kwargs == {"params": {"limit": 2}}
+        second_call = mock_session.get.call_args_list[1]
+        # Cursor URL resolved against base host; params=None on cursor hop.
+        assert second_call.args[0].endswith("/wiki/api/v2/spaces?cursor=abc")
+        assert second_call.kwargs == {"params": None}
+
+        # Slice semantics: start=2, limit=2 → results[2:4] == C, D.
+        assert [s["key"] for s in result["results"]] == ["C", "D"]
+        assert result["start"] == 2
+        assert result["limit"] == 2
+        assert result["size"] == 2
+
 
 class TestConfluenceV2AdapterComments:
     """Tests for v2 adapter comment operations."""
