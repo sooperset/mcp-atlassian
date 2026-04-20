@@ -97,12 +97,14 @@ def mock_issue_types():
 
 
 def test_get_all_projects(projects_mixin: ProjectsMixin, mock_projects: list[dict]):
-    """Test get_all_projects method."""
+    """Test get_all_projects returns simplified dicts keyed by key/name/lead."""
     projects_mixin.jira.projects.return_value = mock_projects
 
     # Test with default value (include_archived=False)
     result = projects_mixin.get_all_projects()
-    assert result == mock_projects
+    assert [p["key"] for p in result] == ["PROJ1", "PROJ2"]
+    assert [p["name"] for p in result] == ["Project One", "Project Two"]
+    assert result[0]["lead"]["name"] == "user1"
     projects_mixin.jira.projects.assert_called_once_with(included_archived=False)
 
     # Reset mock and test with include_archived=True
@@ -110,7 +112,7 @@ def test_get_all_projects(projects_mixin: ProjectsMixin, mock_projects: list[dic
     projects_mixin.jira.projects.return_value = mock_projects
 
     result = projects_mixin.get_all_projects(include_archived=True)
-    assert result == mock_projects
+    assert [p["key"] for p in result] == ["PROJ1", "PROJ2"]
     projects_mixin.jira.projects.assert_called_once_with(included_archived=True)
 
 
@@ -130,6 +132,71 @@ def test_get_all_projects_non_list_response(projects_mixin: ProjectsMixin):
     result = projects_mixin.get_all_projects()
     assert result == []
     projects_mixin.jira.projects.assert_called_once()
+
+
+def test_get_all_projects_strips_bloat_fields(projects_mixin: ProjectsMixin):
+    """get_all_projects must return simplified dicts without Jira API bloat."""
+    raw_api_response = [
+        {
+            "expand": "description,lead,issueTypes,url,projectKeys",
+            "self": "https://test.atlassian.net/rest/api/2/project/10000",
+            "id": "10000",
+            "key": "PROJ1",
+            "name": "Project One",
+            "description": "Flagship project",
+            "avatarUrls": {
+                "48x48": "https://avatar.example/48.png",
+                "24x24": "https://avatar.example/24.png",
+                "16x16": "https://avatar.example/16.png",
+                "32x32": "https://avatar.example/32.png",
+            },
+            "projectTypeKey": "software",
+            "simplified": False,
+            "style": "classic",
+            "isPrivate": False,
+            "properties": {},
+            "entityId": "deadbeef-cafe-1234",
+            "uuid": "deadbeef-cafe-1234",
+            "projectCategory": {"id": "10100", "name": "Engineering"},
+            "lead": {
+                "self": "https://test.atlassian.net/rest/api/2/user?accountId=abc",
+                "accountId": "abc",
+                "name": "user1",
+                "displayName": "User One",
+                "avatarUrls": {"48x48": "https://avatar.example/u48.png"},
+            },
+        }
+    ]
+    projects_mixin.jira.projects.return_value = raw_api_response
+
+    result = projects_mixin.get_all_projects()
+
+    assert len(result) == 1
+    project = result[0]
+    # Whitelisted keys present
+    assert project["key"] == "PROJ1"
+    assert project["name"] == "Project One"
+    assert project["description"] == "Flagship project"
+    assert project["category"] == "Engineering"
+    # Bloat must be stripped
+    for bloat in (
+        "avatarUrls",
+        "self",
+        "expand",
+        "projectTypeKey",
+        "simplified",
+        "style",
+        "isPrivate",
+        "properties",
+        "entityId",
+        "uuid",
+        "projectCategory",
+        "id",
+    ):
+        assert bloat not in project, f"expected {bloat!r} to be stripped"
+    # Lead must also be simplified (no avatarUrls/self)
+    assert "avatarUrls" not in project["lead"]
+    assert "self" not in project["lead"]
 
 
 def test_get_project(projects_mixin: ProjectsMixin, mock_projects: list[dict]):
