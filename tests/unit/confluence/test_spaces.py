@@ -1,6 +1,6 @@
 """Unit tests for the SpacesMixin class."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
@@ -28,11 +28,13 @@ class TestSpacesMixin:
             return mixin
 
     def test_get_spaces(self, spaces_mixin):
-        """Test that get_spaces returns spaces from the Confluence client."""
-        # Act
-        result = spaces_mixin.get_spaces(start=10, limit=20)
+        """Non-OAuth path falls back to the v1 library call."""
+        with patch(
+            "mcp_atlassian.confluence.spaces.SpacesMixin._v2_adapter",
+            new=None,
+        ):
+            result = spaces_mixin.get_spaces(start=10, limit=20)
 
-        # Assert
         spaces_mixin.confluence.get_all_spaces.assert_called_once_with(
             start=10, limit=20
         )
@@ -165,3 +167,31 @@ class TestSpacesMixin:
 
         # Assert
         assert result == {}
+
+    def test_get_spaces_oauth_routes_through_v2_adapter(self, spaces_mixin):
+        """On OAuth Cloud the call MUST route through the v2 adapter and
+        MUST NOT call self.confluence.get_all_spaces."""
+        fake_adapter = MagicMock()
+        fake_adapter.get_spaces.return_value = {
+            "results": [
+                {
+                    "key": "TEST",
+                    "name": "Test",
+                    "id": "1",
+                    "type": "global",
+                    "_links": {},
+                }
+            ],
+            "start": 0,
+            "limit": 10,
+            "size": 1,
+        }
+        with patch(
+            "mcp_atlassian.confluence.spaces.SpacesMixin._v2_adapter",
+            new=fake_adapter,
+        ):
+            result = spaces_mixin.get_spaces(start=0, limit=10)
+
+        fake_adapter.get_spaces.assert_called_once_with(start=0, limit=10)
+        spaces_mixin.confluence.get_all_spaces.assert_not_called()
+        assert result["results"][0]["key"] == "TEST"
