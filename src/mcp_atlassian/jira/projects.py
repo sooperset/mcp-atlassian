@@ -23,19 +23,25 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
         """
         Get all projects visible to the current user.
 
+        Returns simplified project dicts (key, name, description, category,
+        lead, avatar_url) with raw Jira fields like ``avatarUrls``, ``self``,
+        ``expand``, ``projectTypeKey`` stripped.
+
         Args:
             include_archived: Whether to include archived projects
 
         Returns:
-            List of project data dictionaries
+            List of simplified project data dictionaries
         """
         try:
-            params = {}
-            if include_archived:
-                params["includeArchived"] = "true"
-
             projects = self.jira.projects(included_archived=include_archived)
-            return projects if isinstance(projects, list) else []
+            if not isinstance(projects, list):
+                return []
+            return [
+                JiraProject.from_api_response(p).to_simplified_dict()
+                for p in projects
+                if isinstance(p, dict)
+            ]
 
         except Exception as e:
             logger.error(f"Error getting all projects: {str(e)}")
