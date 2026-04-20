@@ -64,10 +64,25 @@ class TestConfluenceReadOperations:
         authed_confluence: ConfluenceFetcher,
         cloud_instance: CloudInstanceInfo,
     ) -> None:
-        spaces = authed_confluence.get_spaces()
-        assert isinstance(spaces, dict)
-        assert "results" in spaces
-        space_keys = [s["key"] for s in spaces["results"]]
+        # get_spaces defaults to limit=10; on accounts with many personal
+        # spaces (~username) the configured test space can be paginated
+        # off the first page. Walk pages until found or until exhausted,
+        # with a bounded cap so the test can't loop forever.
+        page_size = 100
+        max_pages = 20
+        space_keys: list[str] = []
+        start = 0
+        for _ in range(max_pages):
+            spaces = authed_confluence.get_spaces(start=start, limit=page_size)
+            assert isinstance(spaces, dict)
+            assert "results" in spaces
+            results = spaces["results"]
+            assert isinstance(results, list)
+            page_keys = [s["key"] for s in results]
+            space_keys.extend(page_keys)
+            if len(results) < page_size:
+                break
+            start += page_size
         assert cloud_instance.space_key in space_keys
 
 
