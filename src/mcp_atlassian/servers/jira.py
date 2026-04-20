@@ -2015,8 +2015,8 @@ async def create_issue_link(
 
     link_data = {
         "type": {"name": link_type},
-        "inwardIssue": {"key": inward_issue_key},
-        "outwardIssue": {"key": outward_issue_key},
+        "inwardIssue": {"key": outward_issue_key},
+        "outwardIssue": {"key": inward_issue_key},
     }
 
     if comment:
