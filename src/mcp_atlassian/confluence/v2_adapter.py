@@ -7,6 +7,7 @@ but still work for API token authentication.
 
 import logging
 from typing import Any
+from urllib.parse import urljoin, urlparse
 
 import requests
 from requests.exceptions import HTTPError
@@ -888,6 +889,98 @@ class ConfluenceV2Adapter:
             raise ValueError(
                 f"Failed to get page '{page_id}' version {version}: {e}"
             ) from e
+
+    def get_spaces(self, start: int = 0, limit: int = 10) -> dict[str, Any]:
+        """Get spaces using v2 API, returned in a v1-compatible envelope.
+
+        Translates v2 cursor pagination (``_links.next``) into v1
+        offset/limit pagination by walking pages until the requested
+        ``start..start+limit`` window is covered, then slicing.
+
+        Args:
+            start: Offset into the aggregated results (v1 semantics).
+            limit: Maximum number of spaces to return.
+
+        Returns:
+            Dict shaped like the v1 ``get_all_spaces`` envelope:
+            ``{"results": [...], "start": start, "limit": limit, "size": N}``.
+            Each result preserves ``id``, ``key``, ``name``, ``type``,
+            ``_links`` from the v2 payload.
+
+        Raises:
+            ValueError: If the v2 API request fails.
+        """
+        try:
+            aggregated: list[dict[str, Any]] = []
+            next_url: str | None = f"{self.base_url}/api/v2/spaces"
+            params: dict[str, Any] | None = {"limit": limit}
+
+            while next_url is not None and len(aggregated) < start + limit:
+                response = self.session.get(next_url, params=params)
+                response.raise_for_status()
+                data = response.json()
+                aggregated.extend(
+                    self._convert_v2_space_to_v1(s) for s in data.get("results", [])
+                )
+                next_link = data.get("_links", {}).get("next")
+                if not next_link:
+                    break
+                # v2 returns relative next links; join against the instance host.
+                next_url = self._resolve_v2_next_link(next_link)
+                params = None  # Cursor carries its own params.
+
+            window = aggregated[start : start + limit]
+            return {
+                "results": window,
+                "start": start,
+                "limit": limit,
+                "size": len(window),
+            }
+
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error listing spaces (start={start}, "
+                    f"limit={limit}): {e}\nResponse: {e.response.text}"
+                )
+            else:
+                logger.error(
+                    f"Error listing spaces (start={start}, limit={limit}): {e}"
+                )
+            raise ValueError(
+                f"Failed to list spaces (start={start}, limit={limit}): {e}"
+            ) from e
+
+    def _convert_v2_space_to_v1(self, v2_space: dict[str, Any]) -> dict[str, Any]:
+        """Convert a v2 space entry to a v1-compatible dict.
+
+        Preserves the stable metadata fields existing callers and tests
+        consume. Does not attempt to synthesize v1-only fields (e.g.,
+        legacy ``description`` sub-objects) — callers that need those
+        must migrate to v2-native fields.
+        """
+        return {
+            "id": v2_space.get("id"),
+            "key": v2_space.get("key"),
+            "name": v2_space.get("name"),
+            "type": v2_space.get("type"),
+            "_links": v2_space.get("_links", {}),
+        }
+
+    def _resolve_v2_next_link(self, next_link: str) -> str:
+        """Resolve a v2 ``_links.next`` value against the instance host.
+
+        v2 next links are typically site-relative (e.g.,
+        ``/wiki/api/v2/spaces?cursor=...``) and may already include the
+        ``/wiki`` prefix, so we join against the scheme+host of
+        ``base_url`` rather than the full path — joining against
+        ``base_url + '/'`` would double-prefix ``/wiki``.
+        """
+        if next_link.startswith(("http://", "https://")):
+            return next_link
+        parsed = urlparse(self.base_url)
+        root = f"{parsed.scheme}://{parsed.netloc}/"
+        return urljoin(root, next_link)
 
     def get_page_views(self, page_id: str) -> dict[str, Any]:
         """Get view statistics for a page using the Analytics API.

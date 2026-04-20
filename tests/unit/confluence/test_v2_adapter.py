@@ -183,6 +183,61 @@ class TestConfluenceV2Adapter:
         assert "/wiki/wiki/" not in url, f"Double /wiki in URL: {url}"
         assert url.endswith(expected_path), f"Expected {expected_path}, got {url}"
 
+    def test_get_spaces_single_page(self, v2_adapter, mock_session):
+        """v2 /spaces response is returned in a v1-compatible envelope
+        with a single request when the first page covers the window."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "results": [
+                {
+                    "id": "111",
+                    "key": "ABC",
+                    "name": "Alpha",
+                    "type": "global",
+                    "_links": {"webui": "/spaces/ABC"},
+                },
+                {
+                    "id": "222",
+                    "key": "DEF",
+                    "name": "Delta",
+                    "type": "global",
+                    "_links": {"webui": "/spaces/DEF"},
+                },
+            ],
+            "_links": {},
+        }
+        mock_session.get.return_value = mock_response
+
+        result = v2_adapter.get_spaces(start=0, limit=10)
+
+        mock_session.get.assert_called_once_with(
+            "https://example.atlassian.net/wiki/api/v2/spaces",
+            params={"limit": 10},
+        )
+        assert result["start"] == 0
+        assert result["limit"] == 10
+        assert result["size"] == 2
+        assert [s["key"] for s in result["results"]] == ["ABC", "DEF"]
+        # v1-compat shape preserved
+        assert result["results"][0]["id"] == "111"
+        assert result["results"][0]["name"] == "Alpha"
+        assert result["results"][0]["type"] == "global"
+        assert result["results"][0]["_links"] == {"webui": "/spaces/ABC"}
+
+    def test_resolve_v2_next_link_does_not_double_wiki_prefix(self, v2_adapter):
+        """A /wiki-prefixed next link must not be double-prefixed when
+        the adapter's base_url already ends with /wiki."""
+        resolved = v2_adapter._resolve_v2_next_link("/wiki/api/v2/spaces?cursor=abc")
+        assert resolved == (
+            "https://example.atlassian.net/wiki/api/v2/spaces?cursor=abc"
+        )
+
+    def test_resolve_v2_next_link_passes_absolute_urls_through(self, v2_adapter):
+        """Absolute URLs are returned unchanged."""
+        absolute = "https://other.example.com/wiki/api/v2/spaces?cursor=z"
+        assert v2_adapter._resolve_v2_next_link(absolute) == absolute
+
 
 class TestConfluenceV2AdapterComments:
     """Tests for v2 adapter comment operations."""
