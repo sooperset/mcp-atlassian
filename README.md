@@ -59,6 +59,40 @@ Ask your AI assistant to:
 - **"Create a bug ticket for the login issue"**
 - **"Update the status of PROJ-123 to Done"**
 
+## Multi-User Mode (URL-only Server)
+
+Deploy one shared remote MCP server that holds **no credentials** — each MCP
+client supplies its own Atlassian username + API token (or PAT / OAuth token)
+per request. Useful for teams sharing a single hosted MCP service while each
+person acts under their own Atlassian permissions.
+
+```bash
+JIRA_URL=https://your-company.atlassian.net \
+CONFLUENCE_URL=https://your-company.atlassian.net/wiki \
+uvx mcp-atlassian --transport streamable-http --multi-user --port 9000
+```
+
+Then each client sends its own credentials per request:
+
+```json
+{
+  "mcpServers": {
+    "atlassian": {
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+        "Authorization": "Basic <base64(email:api_token)>"
+      }
+    }
+  }
+}
+```
+
+`Authorization: Bearer <oauth_token>` and `Authorization: Token <pat>` are also
+supported. The server enforces its configured `JIRA_URL` / `CONFLUENCE_URL` and
+ignores per-request URL override headers for SSRF protection. See
+[HTTP Transport](https://mcp-atlassian.soomiles.com/docs/http-transport#multi-user-mode-url-only-server)
+for full details.
+
 ## Documentation
 
 Full documentation is available at **[mcp-atlassian.soomiles.com](https://mcp-atlassian.soomiles.com)**.

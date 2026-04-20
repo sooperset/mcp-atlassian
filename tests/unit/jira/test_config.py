@@ -96,6 +96,73 @@ def test_from_env_missing_server_auth():
             JiraConfig.from_env()
 
 
+def test_from_env_multi_user_url_only_cloud():
+    """Multi-user mode: server only needs JIRA_URL, no creds required."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://test.atlassian.net",
+            "MCP_ATLASSIAN_MULTI_USER_MODE": "true",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.url == "https://test.atlassian.net"
+        assert config.auth_type is None
+        assert config.username is None
+        assert config.api_token is None
+        assert config.is_auth_configured() is True
+
+
+def test_from_env_multi_user_url_only_server():
+    """Multi-user mode also works for Server/DC URLs."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://jira.example.com",
+            "MCP_ATLASSIAN_MULTI_USER_MODE": "true",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.auth_type is None
+        assert config.is_auth_configured() is True
+
+
+def test_from_env_multi_user_legacy_oauth_enable_alias():
+    """ATLASSIAN_OAUTH_ENABLE remains a backwards-compatible alias."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://test.atlassian.net",
+            "ATLASSIAN_OAUTH_ENABLE": "true",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        # Either auth_type=None (multi-user) or "oauth" (minimal OAuth) is fine,
+        # but is_auth_configured must accept it so tools remain available.
+        assert config.is_auth_configured() is True
+
+
+def test_from_env_multi_user_does_not_override_basic():
+    """When full creds are present, basic auth wins regardless of multi-user flag."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://test.atlassian.net",
+            "JIRA_USERNAME": "test_username",
+            "JIRA_API_TOKEN": "test_token",
+            "MCP_ATLASSIAN_MULTI_USER_MODE": "true",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.auth_type == "basic"
+        assert config.username == "test_username"
+        assert config.api_token == "test_token"
+
+
 def test_is_cloud():
     """Test that is_cloud property returns correct value."""
     # Arrange & Act - Cloud URL

@@ -4,6 +4,7 @@ from mcp_atlassian.utils.env import (
     is_env_extended_truthy,
     is_env_ssl_verify,
     is_env_truthy,
+    is_multi_user_mode,
 )
 
 
@@ -166,6 +167,32 @@ class TestIsEnvSslVerify:
         monkeypatch.setenv("TEST_VAR", "")
         # Empty string is not in the false values, so should be True
         assert is_env_ssl_verify("TEST_VAR") is True
+
+
+class TestIsMultiUserMode:
+    """Tests for is_multi_user_mode."""
+
+    def test_unset_returns_false(self, monkeypatch):
+        monkeypatch.delenv("MCP_ATLASSIAN_MULTI_USER_MODE", raising=False)
+        monkeypatch.delenv("ATLASSIAN_OAUTH_ENABLE", raising=False)
+        assert is_multi_user_mode() is False
+
+    def test_new_flag_truthy(self, monkeypatch):
+        monkeypatch.delenv("ATLASSIAN_OAUTH_ENABLE", raising=False)
+        for value in ["true", "1", "yes", "TRUE"]:
+            monkeypatch.setenv("MCP_ATLASSIAN_MULTI_USER_MODE", value)
+            assert is_multi_user_mode() is True
+
+    def test_legacy_oauth_enable_aliases_multi_user(self, monkeypatch):
+        monkeypatch.delenv("MCP_ATLASSIAN_MULTI_USER_MODE", raising=False)
+        monkeypatch.setenv("ATLASSIAN_OAUTH_ENABLE", "true")
+        assert is_multi_user_mode() is True
+
+    def test_falsy_values_return_false(self, monkeypatch):
+        for value in ["false", "0", "no", ""]:
+            monkeypatch.setenv("MCP_ATLASSIAN_MULTI_USER_MODE", value)
+            monkeypatch.setenv("ATLASSIAN_OAUTH_ENABLE", value)
+            assert is_multi_user_mode() is False
 
 
 class TestEdgeCases:
