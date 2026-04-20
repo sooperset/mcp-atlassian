@@ -20,6 +20,7 @@ from .fields import FieldsMixin
 from .forms_api import FormsApiMixin  # Forms REST API
 from .formatting import FormattingMixin
 from .issues import IssuesMixin
+from .link_analysis import LinkAnalysisMixin
 from .links import LinksMixin
 from .metrics import MetricsMixin
 from .projects import ProjectsMixin
@@ -55,6 +56,7 @@ class JiraFetcher(
     MetricsMixin,
     SLAMixin,
     DevelopmentMixin,
+    LinkAnalysisMixin,
 ):
     """
     The main Jira client class providing access to all Jira operations.
