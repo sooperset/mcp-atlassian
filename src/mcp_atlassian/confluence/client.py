@@ -161,12 +161,31 @@ class ConfluenceClient:
                 )
 
     def _validate_authentication(self) -> None:
-        """Validate authentication by making a simple API call."""
+        """Validate authentication by making a simple API call.
+
+        Routes through v2 ``/api/v2/spaces`` on OAuth Cloud because
+        Atlassian has removed the v1 ``/rest/api/space`` endpoint on
+        OAuth-routed paths (410 Gone). Non-OAuth paths keep the v1
+        ``get_all_spaces`` probe.
+        """
         try:
             logger.debug(
                 "Testing Confluence authentication by making a simple API call..."
             )
-            # Make a simple API call to test authentication
+            if self.config.auth_type == "oauth" and getattr(
+                self.config, "is_cloud", False
+            ):
+                # OAuth Cloud: v1 /rest/api/space is 410 Gone. Use v2.
+                url = f"{self.confluence.url}/api/v2/spaces"
+                response = self.confluence._session.get(url, params={"limit": 1})
+                response.raise_for_status()
+                results = response.json().get("results", [])
+                logger.info(
+                    f"Confluence authentication successful. "
+                    f"v2 API call returned {len(results)} spaces."
+                )
+                return
+
             spaces = self.confluence.get_all_spaces(start=0, limit=1)
             if spaces is not None:
                 logger.info(

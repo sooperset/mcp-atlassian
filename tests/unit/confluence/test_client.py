@@ -1,7 +1,10 @@
 """Unit tests for the ConfluenceClient class."""
 
+import logging
 import os
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.confluence.client import ConfluenceClient
@@ -459,3 +462,50 @@ def test_confluence_fetcher_mro_order():
     # Verify that attachment methods are accessible (the real test)
     assert hasattr(ConfluenceFetcher, "upload_attachment")
     assert hasattr(ConfluenceFetcher, "get_content_attachments")
+
+
+class TestValidateAuthentication:
+    """Tests for ConfluenceClient._validate_authentication."""
+
+    def _make_client_stub(self, *, auth_type: str, is_cloud: bool) -> ConfluenceClient:
+        """Build a stub with just the attributes _validate_authentication
+        reads. Avoids the full ConfluenceClient constructor."""
+        client = ConfluenceClient.__new__(ConfluenceClient)
+        client.config = MagicMock()
+        client.config.auth_type = auth_type
+        client.config.is_cloud = is_cloud
+        client.config.url = "https://example.atlassian.net/wiki"
+        client.confluence = MagicMock()
+        client.confluence.url = "https://example.atlassian.net/wiki"
+        client.confluence._session = MagicMock()
+        return client
+
+    def test_oauth_uses_v2_spaces_and_does_not_call_v1(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """OAuth path MUST call v2 /api/v2/spaces?limit=1 through the
+        session and MUST NOT call confluence.get_all_spaces."""
+        client = self._make_client_stub(auth_type="oauth", is_cloud=True)
+        v2_response = MagicMock()
+        v2_response.status_code = 200
+        v2_response.json.return_value = {"results": [{"key": "A"}]}
+        client.confluence._session.get.return_value = v2_response
+
+        with caplog.at_level(logging.INFO, logger="mcp-atlassian"):
+            client._validate_authentication()
+
+        client.confluence._session.get.assert_called_once_with(
+            "https://example.atlassian.net/wiki/api/v2/spaces",
+            params={"limit": 1},
+        )
+        client.confluence.get_all_spaces.assert_not_called()
+
+    def test_non_oauth_falls_back_to_v1(self) -> None:
+        """Basic/PAT/cert auth continues to probe with get_all_spaces."""
+        client = self._make_client_stub(auth_type="basic", is_cloud=True)
+        client.confluence.get_all_spaces.return_value = {"results": []}
+
+        client._validate_authentication()
+
+        client.confluence.get_all_spaces.assert_called_once_with(start=0, limit=1)
+        client.confluence._session.get.assert_not_called()
