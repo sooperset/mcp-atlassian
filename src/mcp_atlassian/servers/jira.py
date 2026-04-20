@@ -3273,3 +3273,100 @@ async def get_issues_development_info(
         logger.error(f"Error getting development info for issues: {str(e)}")
         error_result = {"success": False, "error": str(e)}
         return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_project_analysis"},
+    annotations={
+        "title": "Get Project Epic Hierarchy",
+        "readOnlyHint": True,
+    },
+)
+async def get_project_epic_hierarchy(
+    ctx: Context,
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'PROJ')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
+    max_epics: Annotated[
+        int,
+        Field(
+            description="Maximum number of epics to fetch (1-500)",
+            ge=1,
+            le=500,
+        ),
+    ] = 200,
+) -> str:
+    """Group a project's epics under their cross-project parent issues.
+
+    Fetches all epics in the project, detects their parent issue via
+    the parent field or inward issue links, then groups them by parent.
+    Epics with no detected parent appear under "Unlinked". Useful for
+    understanding how a project's epics roll up to initiatives in
+    another project.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: The project key.
+        max_epics: Max epics to fetch.
+
+    Returns:
+        JSON string with grouped epic hierarchy.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_project_epic_hierarchy(
+        project_key=project_key,
+        max_epics=max_epics,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_project_analysis"},
+    annotations={
+        "title": "Get Cross-Project Dependencies",
+        "readOnlyHint": True,
+    },
+)
+async def get_cross_project_dependencies(
+    ctx: Context,
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'PROJ')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
+    max_issues: Annotated[
+        int,
+        Field(
+            description="Maximum issues to scan for links (1-500)",
+            ge=1,
+            le=500,
+        ),
+    ] = 200,
+) -> str:
+    """Find all cross-project issue links for a project.
+
+    Scans issues in the project, extracts every issue link whose
+    target belongs to a different project, and groups them by target
+    project and link type. Useful for dependency analysis across
+    multi-project Jira setups.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: The project key.
+        max_issues: Max issues to scan.
+
+    Returns:
+        JSON string with cross-project dependency map.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_cross_project_dependencies(
+        project_key=project_key,
+        max_issues=max_issues,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)
