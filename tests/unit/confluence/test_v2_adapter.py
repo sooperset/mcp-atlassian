@@ -305,6 +305,34 @@ class TestConfluenceV2Adapter:
         assert result["limit"] == 2
         assert result["size"] == 2
 
+    def test_get_spaces_empty_result(self, v2_adapter, mock_session):
+        """Empty v2 result returns an empty v1-compatible envelope."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"results": [], "_links": {}}
+        mock_session.get.return_value = mock_response
+
+        result = v2_adapter.get_spaces(start=0, limit=10)
+
+        assert result == {
+            "results": [],
+            "start": 0,
+            "limit": 10,
+            "size": 0,
+        }
+
+    def test_get_spaces_http_error_raises_value_error(self, v2_adapter, mock_session):
+        """HTTP errors surface as ValueError with context, matching the
+        rest of the adapter's error-handling contract."""
+        mock_response = Mock()
+        mock_response.status_code = 500
+        mock_response.text = "boom"
+        mock_response.raise_for_status.side_effect = HTTPError(response=mock_response)
+        mock_session.get.return_value = mock_response
+
+        with pytest.raises(ValueError, match="Failed to list spaces"):
+            v2_adapter.get_spaces(start=0, limit=10)
+
 
 class TestConfluenceV2AdapterComments:
     """Tests for v2 adapter comment operations."""
