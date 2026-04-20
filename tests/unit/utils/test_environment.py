@@ -457,6 +457,34 @@ class TestGetAvailableServicesWithHeaders:
                 "Using Jira minimal OAuth configuration",
             )
 
+    def test_url_only_multi_user_requires_service_urls(self, caplog):
+        """Strict multi-user mode only advertises services with pinned URLs."""
+        with MockEnvironment.clean_env():
+            import os
+
+            os.environ["MCP_ATLASSIAN_MULTI_USER_MODE"] = "true"
+
+            result = get_available_services()
+            _assert_service_availability(
+                result, confluence_expected=False, jira_expected=False
+            )
+
+    def test_url_only_multi_user_with_service_urls(self, caplog):
+        """Strict multi-user mode advertises URL-configured services."""
+        with MockEnvironment.clean_env():
+            import os
+
+            os.environ["MCP_ATLASSIAN_MULTI_USER_MODE"] = "true"
+            os.environ["JIRA_URL"] = "https://test.atlassian.net"
+            os.environ["CONFLUENCE_URL"] = "https://test.atlassian.net/wiki"
+
+            result = get_available_services()
+            _assert_service_availability(
+                result, confluence_expected=True, jira_expected=True
+            )
+            assert "Using Confluence URL-only multi-user mode" in caplog.text
+            assert "Using Jira URL-only multi-user mode" in caplog.text
+
     def test_oauth_enable_with_cloud_url_no_creds(self, caplog):
         """Test BYOT OAuth mode — URL present but no credentials, ATLASSIAN_OAUTH_ENABLE=true."""
         with MockEnvironment.clean_env():

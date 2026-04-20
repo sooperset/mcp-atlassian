@@ -775,3 +775,44 @@ class TestUserTokenMiddlewareSsrfValidation:
         middleware.app.assert_called_once()
         passed_scope = middleware.app.call_args[0][0]
         assert passed_scope["state"].get("auth_validation_error") in (None, "")
+
+    @pytest.mark.anyio
+    async def test_url_only_multi_user_ignores_url_override_headers(
+        self, middleware, mock_scope, mock_receive, mock_send, monkeypatch
+    ):
+        """Strict URL-only mode drops client-selected Atlassian URLs."""
+        monkeypatch.setenv("MCP_ATLASSIAN_MULTI_USER_MODE", "true")
+        monkeypatch.delenv("ATLASSIAN_OAUTH_ENABLE", raising=False)
+        mock_scope["headers"] = [
+            (b"authorization", b"Bearer test-token"),
+            (b"x-atlassian-jira-url", b"https://other.atlassian.net"),
+        ]
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        middleware.app.assert_called_once()
+        passed_scope = middleware.app.call_args[0][0]
+        service_headers = passed_scope["state"]["atlassian_service_headers"]
+        assert "X-Atlassian-Jira-Url" not in service_headers
+
+    @pytest.mark.anyio
+    async def test_legacy_oauth_mode_keeps_url_override_headers(
+        self, middleware, mock_scope, mock_receive, mock_send, monkeypatch
+    ):
+        """Legacy per-request auth retains URL headers for compatibility."""
+        monkeypatch.delenv("MCP_ATLASSIAN_MULTI_USER_MODE", raising=False)
+        monkeypatch.setenv("ATLASSIAN_OAUTH_ENABLE", "true")
+        monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "atlassian.net")
+        mock_scope["headers"] = [
+            (b"authorization", b"Bearer test-token"),
+            (b"x-atlassian-jira-url", b"https://other.atlassian.net"),
+        ]
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        middleware.app.assert_called_once()
+        passed_scope = middleware.app.call_args[0][0]
+        service_headers = passed_scope["state"]["atlassian_service_headers"]
+        assert service_headers["X-Atlassian-Jira-Url"] == (
+            "https://other.atlassian.net"
+        )

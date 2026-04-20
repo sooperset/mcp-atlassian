@@ -3,6 +3,7 @@
 import logging
 import os
 
+from .env import is_env_truthy, is_url_only_multi_user_mode
 from .urls import is_atlassian_cloud_url
 
 logger = logging.getLogger("mcp-atlassian.utils.environment")
@@ -109,11 +110,14 @@ def get_available_services(
             pat_env="CONFLUENCE_PERSONAL_TOKEN",
         )
 
-    if not confluence_is_setup and os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in (
-        "true",
-        "1",
-        "yes",
-    ):
+    if not confluence_is_setup and confluence_url and is_url_only_multi_user_mode():
+        confluence_is_setup = True
+        logger.info(
+            "Using Confluence URL-only multi-user mode - expecting "
+            "per-request credentials via headers"
+        )
+
+    if not confluence_is_setup and is_env_truthy("ATLASSIAN_OAUTH_ENABLE"):
         confluence_is_setup = True
         logger.info(
             "Using Confluence minimal OAuth configuration "
@@ -148,11 +152,14 @@ def get_available_services(
             pat_env="JIRA_PERSONAL_TOKEN",
         )
 
-    if not jira_is_setup and os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in (
-        "true",
-        "1",
-        "yes",
-    ):
+    if not jira_is_setup and jira_url and is_url_only_multi_user_mode():
+        jira_is_setup = True
+        logger.info(
+            "Using Jira URL-only multi-user mode - expecting "
+            "per-request credentials via headers"
+        )
+
+    if not jira_is_setup and is_env_truthy("ATLASSIAN_OAUTH_ENABLE"):
         jira_is_setup = True
         logger.info(
             "Using Jira minimal OAuth configuration "

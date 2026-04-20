@@ -18,7 +18,11 @@ from starlette.requests import Request
 from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
 from mcp_atlassian.jira import JiraConfig, JiraFetcher
 from mcp_atlassian.servers.context import MainAppContext
-from mcp_atlassian.utils.env import is_env_ssl_verify, is_env_truthy
+from mcp_atlassian.utils.env import (
+    is_env_ssl_verify,
+    is_env_truthy,
+    is_multi_user_mode,
+)
 from mcp_atlassian.utils.oauth import OAuthConfig
 from mcp_atlassian.utils.urls import validate_url_for_ssrf
 
@@ -699,12 +703,13 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
             f"Attempting global {spec.name}Fetcher for non-HTTP."
         )
 
-    # Fallback to global fetcher
+    # Fallback to global fetcher. Skip configs with no server-side auth_type:
+    # those exist only in multi-user mode and require per-request credentials.
     app_ctx = _get_app_lifespan_ctx(ctx)
     global_config_fallback = (
         getattr(app_ctx, spec.config_attr, None) if app_ctx else None
     )
-    if global_config_fallback:
+    if global_config_fallback and global_config_fallback.auth_type is not None:
         # An HTTP request that reaches here has no per-user identity: serving it
         # with the operator's global credentials lets any unauthenticated caller
         # transact as the operator. Refuse unless explicitly opted in. Non-HTTP
@@ -723,6 +728,22 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
             f"{global_config_fallback.auth_type}"
         )
         return spec.fetcher_class(config=global_config_fallback)
+
+    if is_multi_user_mode():
+        logger.warning(
+            f"{spec.name} request rejected: multi-user mode requires "
+            "per-request credentials but none were supplied."
+        )
+        msg = (
+            f"{spec.name} request missing credentials. The server is running "
+            "in multi-user mode and expects every request to include one of: "
+            "'Authorization: Basic <base64(email:api_token)>' (Cloud), "
+            "'Authorization: Bearer <oauth_token>' with "
+            "'X-Atlassian-Cloud-Id: <cloud_id>' (Cloud), or "
+            "'Authorization: Token <pat>' (Server/Data Center). "
+            "Configure your MCP client to send the appropriate header."
+        )
+        raise ValueError(msg)
 
     logger.error(f"{spec.name} configuration could not be resolved.")
     raise ValueError(

@@ -1541,6 +1541,56 @@ class TestBasicAuthMultiUser:
             await get_jira_fetcher(mock_context)
 
 
+class TestMultiUserCredentialRequirement:
+    """Regression tests for URL-only configs without server credentials."""
+
+    @pytest.mark.parametrize(
+        ("service", "config"),
+        [
+            (
+                "Jira",
+                JiraConfig(
+                    url="https://test.atlassian.net",
+                    auth_type=None,
+                ),
+            ),
+            (
+                "Confluence",
+                ConfluenceConfig(
+                    url="https://test.atlassian.net/wiki",
+                    auth_type=None,
+                ),
+            ),
+        ],
+    )
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    async def test_missing_request_credentials_do_not_use_global_config(
+        self,
+        mock_get_http_request,
+        service,
+        config,
+        mock_context,
+        mock_request,
+        config_factory,
+        monkeypatch,
+    ) -> None:
+        """An auth-less global config must never become a request fetcher."""
+        monkeypatch.setenv("MCP_ATLASSIAN_MULTI_USER_MODE", "true")
+        _setup_mock_request_state(mock_request)
+        mock_get_http_request.return_value = mock_request
+
+        if service == "Jira":
+            app_context = config_factory.create_app_context(jira_config=config)
+            get_fetcher = get_jira_fetcher
+        else:
+            app_context = config_factory.create_app_context(confluence_config=config)
+            get_fetcher = get_confluence_fetcher
+        _setup_mock_context(mock_context, app_context)
+
+        with pytest.raises(ValueError, match=f"{service} request missing credentials"):
+            await get_fetcher(mock_context)
+
+
 class TestResolveBearerAuthType:
     """Tests for _resolve_bearer_auth_type bearer token disambiguation."""
 

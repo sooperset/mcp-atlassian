@@ -38,6 +38,34 @@ def is_env_extended_truthy(env_var_name: str, default: str = "") -> bool:
     return os.getenv(env_var_name, default).lower() in ("true", "1", "yes", "y", "on")
 
 
+def is_url_only_multi_user_mode() -> bool:
+    """Check whether strict URL-only multi-user mode is enabled.
+
+    Returns:
+        True when ``MCP_ATLASSIAN_MULTI_USER_MODE`` is enabled.
+    """
+    return is_env_truthy("MCP_ATLASSIAN_MULTI_USER_MODE")
+
+
+def is_multi_user_mode() -> bool:
+    """Check whether any per-request credential mode is enabled.
+
+    Strict URL-only mode requires `JIRA_URL` / `CONFLUENCE_URL`. Both modes
+    expect every MCP client to supply its own credentials per request via the
+    `Authorization` header. Cloud OAuth also requires
+    `X-Atlassian-Cloud-Id`. URL override headers are ignored in strict
+    URL-only mode. Tools remain available without global credentials.
+
+    The legacy `ATLASSIAN_OAUTH_ENABLE` mode is also recognised for service
+    discovery. Unlike strict URL-only mode, it retains support for per-request
+    URL headers for backwards compatibility.
+
+    Returns:
+        True when either per-request credential mode is enabled.
+    """
+    return is_url_only_multi_user_mode() or is_env_truthy("ATLASSIAN_OAUTH_ENABLE")
+
+
 def is_env_ssl_verify(env_var_name: str, default: str = "true") -> bool:
     """Check SSL verification setting with secure defaults.
 
