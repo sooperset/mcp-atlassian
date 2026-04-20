@@ -35,6 +35,24 @@ def is_env_extended_truthy(env_var_name: str, default: str = "") -> bool:
     return os.getenv(env_var_name, default).lower() in ("true", "1", "yes", "y", "on")
 
 
+def is_multi_user_mode() -> bool:
+    """True when the server runs in multi-user mode.
+
+    In multi-user mode the server only requires `JIRA_URL` / `CONFLUENCE_URL`
+    and expects every MCP client to supply its own credentials per request via
+    `Authorization` or `X-Atlassian-*` headers. Tools remain available even if
+    the server has no global credentials configured.
+
+    Recognises the new `MCP_ATLASSIAN_MULTI_USER_MODE` flag and the legacy
+    `ATLASSIAN_OAUTH_ENABLE` flag (kept as an alias for backwards compatibility
+    with deployments that already use the OAuth-flavoured "user-provided
+    tokens" mode).
+    """
+    return is_env_truthy("MCP_ATLASSIAN_MULTI_USER_MODE") or is_env_truthy(
+        "ATLASSIAN_OAUTH_ENABLE"
+    )
+
+
 def is_env_ssl_verify(env_var_name: str, default: str = "true") -> bool:
     """Check SSL verification setting with secure defaults.
 
