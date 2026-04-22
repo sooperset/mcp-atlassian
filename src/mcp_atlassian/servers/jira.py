@@ -1038,6 +1038,95 @@ async def get_issue_images(
 
 
 @jira_mcp.tool(
+    tags={"jira", "read", "attachments", "toolset:jira_attachments"},
+    annotations={"title": "Get Embedded Images", "readOnlyHint": True},
+)
+async def get_issue_embedded_images(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description=(
+                "Jira issue key (e.g., 'PROJ-123'). Returns images "
+                "pasted directly into the Jira editor (description "
+                "and comments) that are NOT formal attachments."
+            ),
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+) -> list[TextContent | ImageContent]:
+    """Get images embedded in the Jira rich text editor as inline image content.
+
+    Scans the rendered HTML of the issue description and comments for
+    ``<img>`` tags that point to Jira-internal URLs (e.g.
+    ``jeditor_file_provider``) which are not discoverable via the
+    attachments API.
+
+    Images are downloaded using the existing authenticated session and
+    returned as base64-encoded ImageContent for LLM vision.  Images
+    larger than 50 MB are skipped.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+
+    Returns:
+        A list with a text summary followed by one ImageContent per
+        successfully downloaded embedded image.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_embedded_images(issue_key)
+    contents: list[TextContent | ImageContent] = []
+
+    if not result.get("success"):
+        contents.append(
+            TextContent(
+                type="text",
+                text=json.dumps(result, indent=2, ensure_ascii=False),
+            )
+        )
+        return contents
+
+    images = result.get("images", [])
+    failed = result.get("failed", [])
+
+    for img in images:
+        data_bytes: bytes = img["data"]
+        encoded = base64.b64encode(data_bytes).decode("ascii")
+        mime_type = img.get("content_type", "image/png")
+
+        contents.append(
+            ImageContent(
+                type="image",
+                data=encoded,
+                mimeType=mime_type,
+            )
+        )
+
+    summary: dict[str, object] = {
+        "success": True,
+        "issue_key": issue_key,
+        "total_embedded": result.get("total", 0),
+        "downloaded": len(images),
+        "failed": failed,
+    }
+
+    if not images and not failed:
+        summary["message"] = result.get(
+            "message", "No embedded images found"
+        )
+
+    contents.insert(
+        0,
+        TextContent(
+            type="text",
+            text=json.dumps(summary, indent=2, ensure_ascii=False),
+        ),
+    )
+    return contents
+
+
+@jira_mcp.tool(
     tags={"jira", "read", "toolset:jira_agile"},
     annotations={"title": "Get Agile Boards", "readOnlyHint": True},
 )
