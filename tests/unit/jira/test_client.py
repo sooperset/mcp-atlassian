@@ -396,3 +396,34 @@ def test_jira_client_basic_auth_preserves_trust_env():
         JiraClient(config=config)
 
         assert mock_session.trust_env is True
+
+
+# ---------------------------------------------------------------------------
+# mTLS client certificate auth tests
+# ---------------------------------------------------------------------------
+
+
+def test_init_cert_auth():
+    """Test that cert auth initializes without credentials and disables trust_env."""
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        mock_session = MagicMock()
+        mock_jira.return_value._session = mock_session
+
+        config = JiraConfig(
+            url="https://jira.example.com",
+            auth_type="cert",
+            client_cert="/path/to/cert.pem",
+        )
+
+        JiraClient(config=config)
+
+        mock_jira.assert_called_once_with(
+            url="https://jira.example.com",
+            cloud=False,
+            verify_ssl=True,
+            timeout=75,
+        )
+        assert mock_session.trust_env is False
