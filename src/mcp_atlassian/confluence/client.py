@@ -90,7 +90,7 @@ class ConfluenceClient:
             logger.debug(
                 f"Initializing Confluence client with mTLS certificate auth. "
                 f"URL: {self.config.url}, "
-                f"Cert: {self.config.client_cert}"
+                f"Cert configured: {bool(self.config.client_cert)}"
             )
             self.confluence = Confluence(
                 url=self.config.url,

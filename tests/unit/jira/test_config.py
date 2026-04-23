@@ -401,3 +401,58 @@ def test_from_env_oauth_enable_with_server_url():
         assert config.url == "https://jira.example.com"
         assert config.auth_type == "oauth"
         assert config.is_cloud is False
+
+
+# ---------------------------------------------------------------------------
+# mTLS client certificate auth tests
+# ---------------------------------------------------------------------------
+
+
+def test_from_env_cert_auth_server():
+    """Test cert auth type detected when JIRA_CLIENT_CERT is set on Server/DC."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://jira.example.com",
+            "JIRA_CLIENT_CERT": "/path/to/cert.pem",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.auth_type == "cert"
+        assert config.client_cert == "/path/to/cert.pem"
+        assert config.is_cloud is False
+
+
+def test_from_env_cert_auth_precedence():
+    """PAT takes precedence over cert auth."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://jira.example.com",
+            "JIRA_PERSONAL_TOKEN": "test_pat",
+            "JIRA_CLIENT_CERT": "/path/to/cert.pem",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.auth_type == "pat"
+
+
+def test_is_auth_configured_cert():
+    """is_auth_configured returns True for cert auth with client_cert set."""
+    config = JiraConfig(
+        url="https://jira.example.com",
+        auth_type="cert",
+        client_cert="/path/to/cert.pem",
+    )
+    assert config.is_auth_configured() is True
+
+
+def test_is_auth_configured_cert_missing():
+    """is_auth_configured returns False for cert auth without client_cert."""
+    config = JiraConfig(
+        url="https://jira.example.com",
+        auth_type="cert",
+    )
+    assert config.is_auth_configured() is False

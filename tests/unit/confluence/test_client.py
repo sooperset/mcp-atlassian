@@ -459,3 +459,33 @@ def test_confluence_fetcher_mro_order():
     # Verify that attachment methods are accessible (the real test)
     assert hasattr(ConfluenceFetcher, "upload_attachment")
     assert hasattr(ConfluenceFetcher, "get_content_attachments")
+
+# ---------------------------------------------------------------------------
+# mTLS client certificate auth tests
+# ---------------------------------------------------------------------------
+
+def test_init_cert_auth():
+    """Test that cert auth initializes without credentials and disables trust_env."""
+    config = ConfluenceConfig(
+        url="https://confluence.example.com",
+        auth_type="cert",
+        client_cert="/path/to/cert.pem",
+    )
+
+    with (
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+        patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+    ):
+        mock_session = MagicMock()
+        mock_confluence.return_value._session = mock_session
+
+        ConfluenceClient(config=config)
+
+        mock_confluence.assert_called_once_with(
+            url="https://confluence.example.com",
+            cloud=False,
+            verify_ssl=True,
+            timeout=75,
+        )
+        assert mock_session.trust_env is False
