@@ -47,6 +47,8 @@ HTTP_CONNECT_TIMEOUT = 5
 HTTP_READ_TIMEOUT = 20
 HTTP_TIMEOUT = (HTTP_CONNECT_TIMEOUT, HTTP_READ_TIMEOUT)
 KEYRING_SERVICE_NAME = "mcp-atlassian-oauth"
+TOKEN_DIR_MODE = 0o700
+TOKEN_FILE_MODE = 0o600
 
 
 @dataclass
@@ -400,7 +402,8 @@ class OAuthConfig:
         try:
             # Create the directory if it doesn't exist
             token_dir = Path.home() / ".mcp-atlassian"
-            token_dir.mkdir(exist_ok=True)
+            token_dir.mkdir(mode=TOKEN_DIR_MODE, exist_ok=True)
+            token_dir.chmod(TOKEN_DIR_MODE)
 
             # Save the tokens to a file
             token_path = token_dir / f"oauth-{self.client_id}.json"
@@ -414,8 +417,14 @@ class OAuthConfig:
                     "base_url": self.base_url,
                 }
 
-            with open(token_path, "w") as f:
+            fd = os.open(
+                token_path,
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                TOKEN_FILE_MODE,
+            )
+            with os.fdopen(fd, "w") as f:
                 json.dump(token_data, f)
+            token_path.chmod(TOKEN_FILE_MODE)
 
             logger.debug(f"Saved OAuth tokens to file {token_path} (fallback storage)")
         except Exception as e:

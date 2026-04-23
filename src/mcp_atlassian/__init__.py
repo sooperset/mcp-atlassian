@@ -61,6 +61,37 @@ logging_stream = sys.stdout if is_env_truthy("MCP_LOGGING_STDOUT") else sys.stde
 # Set up logging using the utility function
 logger = setup_logging(logging_level, logging_stream)
 
+_DEPRECATED_SECRET_OPTION_ENV_MAP: dict[str, str] = {
+    "confluence_token": "CONFLUENCE_API_TOKEN",
+    "jira_token": "JIRA_API_TOKEN",
+    "oauth_client_secret": "ATLASSIAN_OAUTH_CLIENT_SECRET",
+    "oauth_access_token": "ATLASSIAN_OAUTH_ACCESS_TOKEN",
+}
+
+
+def _warn_deprecated_secret_options(click_ctx: click.Context | None) -> None:
+    """Warn when deprecated secret-bearing CLI flags are used.
+
+    Secret flags remain supported for compatibility but are discouraged because
+    command-line args may be exposed in shell history/process listings.
+    """
+    if not click_ctx:
+        return
+
+    for param_name, env_name in _DEPRECATED_SECRET_OPTION_ENV_MAP.items():
+        source = click_ctx.get_parameter_source(param_name)
+        if source in (
+            click.core.ParameterSource.DEFAULT,
+            click.core.ParameterSource.DEFAULT_MAP,
+        ):
+            continue
+        logger.warning(
+            "CLI option --%s is deprecated for secrets. "
+            "Use %s environment variable instead.",
+            param_name.replace("_", "-"),
+            env_name,
+        )
+
 
 async def _watch_parent_exit(stop_event: threading.Event) -> None:
     parent_pid = os.getppid()
@@ -161,7 +192,12 @@ async def _run_stdio_with_stdin_guard(run_kwargs: dict[str, object]) -> None:
     help="Confluence URL (e.g., https://your-domain.atlassian.net/wiki)",
 )
 @click.option("--confluence-username", help="Confluence username/email")
-@click.option("--confluence-token", help="Confluence API token")
+@click.option(
+    "--confluence-token",
+    help=(
+        "DEPRECATED for secrets. Use CONFLUENCE_API_TOKEN environment variable instead."
+    ),
+)
 @click.option(
     "--confluence-personal-token",
     help="Confluence Personal Access Token (for Confluence Server/Data Center)",
@@ -180,7 +216,10 @@ async def _run_stdio_with_stdin_guard(run_kwargs: dict[str, object]) -> None:
     help="Jira URL (e.g., https://your-domain.atlassian.net or https://jira.your-company.com)",
 )
 @click.option("--jira-username", help="Jira username/email (for Jira Cloud)")
-@click.option("--jira-token", help="Jira API token (for Jira Cloud)")
+@click.option(
+    "--jira-token",
+    help=("DEPRECATED for secrets. Use JIRA_API_TOKEN environment variable instead."),
+)
 @click.option(
     "--jira-personal-token",
     help="Jira Personal Access Token (for Jira Server/Data Center)",
@@ -213,7 +252,10 @@ async def _run_stdio_with_stdin_guard(run_kwargs: dict[str, object]) -> None:
 )
 @click.option(
     "--oauth-client-secret",
-    help="OAuth 2.0 client secret for Atlassian Cloud",
+    help=(
+        "DEPRECATED for secrets. Use ATLASSIAN_OAUTH_CLIENT_SECRET "
+        "environment variable instead."
+    ),
 )
 @click.option(
     "--oauth-redirect-uri",
@@ -229,8 +271,10 @@ async def _run_stdio_with_stdin_guard(run_kwargs: dict[str, object]) -> None:
 )
 @click.option(
     "--oauth-access-token",
-    help="Atlassian Cloud OAuth 2.0 access token (if you have your own you'd like to "
-    "use for the session.)",
+    help=(
+        "DEPRECATED for secrets. Use ATLASSIAN_OAUTH_ACCESS_TOKEN environment "
+        "variable instead."
+    ),
 )
 def main(
     verbose: int,
@@ -323,6 +367,7 @@ def main(
             sys.exit(1)
 
     click_ctx = click.get_current_context(silent=True)
+    _warn_deprecated_secret_options(click_ctx)
 
     # Transport precedence
     final_transport = os.getenv("TRANSPORT", "stdio").lower()

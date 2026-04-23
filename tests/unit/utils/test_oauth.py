@@ -440,36 +440,61 @@ class TestOAuthConfig:
         # Verify fallback to file was used
         mock_save_to_file.assert_called_once()
 
+    @patch("pathlib.Path.chmod")
     @patch("pathlib.Path.mkdir")
+    @patch("os.fdopen")
+    @patch("os.open")
     @patch("json.dump")
-    def test_save_tokens_to_file(self, mock_dump, mock_mkdir):
+    def test_save_tokens_to_file(
+        self,
+        mock_dump,
+        mock_open_fd,
+        mock_fdopen,
+        mock_mkdir,
+        mock_chmod,
+    ):
         """Test _save_tokens_to_file method."""
-        # Mock open
-        mock_open = MagicMock()
-        with patch("builtins.open", mock_open):
-            config = OAuthConfig(
-                client_id="test-client-id",
-                client_secret="test-client-secret",
-                redirect_uri="https://example.com/callback",
-                scope="read:jira-work write:jira-work",
-                cloud_id="test-cloud-id",
-                refresh_token="test-refresh-token",
-                access_token="test-access-token",
-                expires_at=1234567890,
-            )
-            config._save_tokens_to_file()
+        mock_open_fd.return_value = 42
+        mock_file = MagicMock()
+        mock_fdopen.return_value.__enter__.return_value = mock_file
 
-            # Should create directory and save tokens
-            mock_mkdir.assert_called_once()
-            mock_open.assert_called_once()
-            mock_dump.assert_called_once()
+        config = OAuthConfig(
+            client_id="test-client-id",
+            client_secret="test-client-secret",
+            redirect_uri="https://example.com/callback",
+            scope="read:jira-work write:jira-work",
+            cloud_id="test-cloud-id",
+            refresh_token="test-refresh-token",
+            access_token="test-access-token",
+            expires_at=1234567890,
+        )
+        config._save_tokens_to_file()
 
-            # Check saved data
-            saved_data = mock_dump.call_args[0][0]
-            assert saved_data["refresh_token"] == "test-refresh-token"
-            assert saved_data["access_token"] == "test-access-token"
-            assert saved_data["expires_at"] == 1234567890
-            assert saved_data["cloud_id"] == "test-cloud-id"
+        # Should create directory with restrictive permissions and save tokens
+        assert mock_mkdir.called
+        mkdir_kwargs = mock_mkdir.call_args.kwargs
+        assert mkdir_kwargs.get("mode") == 0o700
+
+        assert mock_open_fd.called
+        open_args = mock_open_fd.call_args.args
+        assert open_args[2] == 0o600
+
+        mock_dump.assert_called_once()
+
+        # Check saved data
+        saved_data = mock_dump.call_args[0][0]
+        assert saved_data["refresh_token"] == "test-refresh-token"
+        assert saved_data["access_token"] == "test-access-token"
+        assert saved_data["expires_at"] == 1234567890
+        assert saved_data["cloud_id"] == "test-cloud-id"
+
+        # Directory and file chmod calls should enforce restrictive perms
+        chmod_modes = [
+            call.args[0] if call.args else call.kwargs.get("mode")
+            for call in mock_chmod.call_args_list
+        ]
+        assert 0o700 in chmod_modes
+        assert 0o600 in chmod_modes
 
     @patch("keyring.get_password")
     @patch.object(OAuthConfig, "_load_tokens_from_file")
