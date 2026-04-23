@@ -5,6 +5,9 @@ import mimetypes
 import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
+
+from bs4 import BeautifulSoup
 
 from ..models.jira import JiraAttachment
 from ..utils.io import validate_safe_path
@@ -467,3 +470,193 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             "uploaded": uploaded,
             "failed": failed,
         }
+
+    def get_embedded_images(self, issue_key: str) -> dict[str, Any]:
+        """Fetch images embedded in the rich text editor (description + comments).
+
+        These are images pasted directly into Jira's editor that are NOT
+        stored as formal attachments.  They are served via internal servlets
+        like ``jeditor_file_provider`` and only appear as ``<img>`` tags in
+        the rendered HTML.
+
+        Args:
+            issue_key: The Jira issue key (e.g., 'PROJ-123').
+
+        Returns:
+            A dictionary with:
+                success (bool)
+                issue_key (str)
+                total (int)
+                images (list[dict]): each dict has 'filename',
+                    'content_type', 'size', 'data' (bytes), and 'source'
+                failed (list[dict]): each dict has 'filename' and 'error'
+        """
+        logger.info(f"Fetching embedded images for {issue_key}")
+
+        try:
+            issue_data = self.jira.issue(
+                issue_key,
+                fields="description,comment",
+                expand="renderedFields",
+            )
+        except Exception as e:
+            logger.error(f"Error fetching issue {issue_key}: {e}")
+            return {"success": False, "error": str(e)}
+
+        if not isinstance(issue_data, dict):
+            msg = f"Unexpected return type from jira.issue: {type(issue_data)}"
+            logger.error(msg)
+            raise TypeError(msg)
+
+        rendered = issue_data.get("renderedFields") or {}
+        base_url = self.config.url
+
+        # Sammle URLs aus Description und Kommentaren
+        image_urls: list[dict[str, str]] = []
+
+        desc_html = rendered.get("description") or ""
+        if desc_html:
+            for entry in _extract_embedded_image_urls(desc_html, base_url):
+                entry["source"] = "description"
+                image_urls.append(entry)
+
+        comment_field = rendered.get("comment")
+        if isinstance(comment_field, dict):
+            comments_list = comment_field.get("comments", [])
+        elif isinstance(comment_field, list):
+            comments_list = comment_field
+        else:
+            comments_list = []
+
+        for comment in comments_list:
+            if not isinstance(comment, dict):
+                continue
+            body_html = comment.get("body") or ""
+            if body_html:
+                comment_id = comment.get("id", "")
+                for entry in _extract_embedded_image_urls(body_html, base_url):
+                    entry["source"] = "comment"
+                    entry["comment_id"] = str(comment_id)
+                    image_urls.append(entry)
+
+        if not image_urls:
+            return {
+                "success": True,
+                "issue_key": issue_key,
+                "total": 0,
+                "images": [],
+                "failed": [],
+                "message": "No embedded images found",
+            }
+
+        # Lade jedes Bild herunter
+        images: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+
+        for img_info in image_urls:
+            url = img_info["url"]
+            filename = img_info["filename"]
+
+            data = self.fetch_attachment_content(url)
+            if data is None:
+                failed.append({"filename": filename, "error": "Fetch failed"})
+                continue
+
+            if len(data) > ATTACHMENT_MAX_BYTES:
+                failed.append(
+                    {
+                        "filename": filename,
+                        "error": (
+                            f"Image is {len(data)} bytes which exceeds "
+                            "the 50 MB inline limit."
+                        ),
+                    }
+                )
+                continue
+
+            content_type = (
+                mimetypes.guess_type(filename)[0] or "image/png"
+            )
+            images.append(
+                {
+                    "filename": filename,
+                    "content_type": content_type,
+                    "size": len(data),
+                    "data": data,
+                    "source": img_info.get("source", "unknown"),
+                }
+            )
+
+        return {
+            "success": True,
+            "issue_key": issue_key,
+            "total": len(image_urls),
+            "images": images,
+            "failed": failed,
+        }
+
+
+def _extract_embedded_image_urls(
+    html: str, base_url: str
+) -> list[dict[str, str]]:
+    """Extract embedded image URLs from rendered HTML.
+
+    Parses ``<img>`` tags, keeps only same-host URLs that are NOT formal
+    attachment paths (``/secure/attachment/``, ``/rest/api/``), and returns
+    a list of dicts with ``url`` and ``filename`` keys.
+
+    Args:
+        html: Rendered HTML string from Jira's ``renderedFields``.
+        base_url: The Jira instance base URL for host comparison.
+
+    Returns:
+        List of ``{"url": ..., "filename": ...}`` dicts.
+    """
+    if not html:
+        return []
+
+    parsed_base = urlparse(base_url)
+    base_host = parsed_base.hostname or ""
+
+    soup = BeautifulSoup(html, "html.parser")
+    results: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+
+    for img in soup.find_all("img"):
+        src = img.get("src")
+        if not src or not isinstance(src, str):
+            continue
+
+        parsed_src = urlparse(src)
+        src_host = parsed_src.hostname or ""
+
+        # Nur gleicher Host — verhindert SSRF
+        if src_host.lower() != base_host.lower():
+            continue
+
+        # Formale Attachment-URLs ausschliessen
+        path_lower = parsed_src.path.lower()
+        if "/secure/attachment/" in path_lower or "/rest/api/" in path_lower:
+            continue
+
+        # Deduplizierung
+        if src in seen_urls:
+            continue
+        seen_urls.add(src)
+
+        # Dateiname extrahieren: fileName-Query-Param oder URL-Pfad-Basename
+        query_params = parse_qs(parsed_src.query)
+        file_name_list = query_params.get("fileName", [])
+        if file_name_list:
+            filename = file_name_list[0]
+        else:
+            basename = os.path.basename(parsed_src.path)
+            # Nur verwenden wenn es eine Dateiendung hat
+            if basename and "." in basename:
+                filename = basename
+            else:
+                filename = f"embedded_{len(results)}.png"
+
+        results.append({"url": src, "filename": filename})
+
+    return results
