@@ -453,7 +453,7 @@ def test_process_confluence_profile_macro_fallback():
 
 
 def test_process_user_profile_macro_multiple():
-    """Test processing multiple User Profile Macros with account-id and userkey."""
+    """Test processing multiple User Profile Macros with account-id, userkey, and username."""
     from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
 
     html = (
@@ -468,6 +468,12 @@ def test_process_user_profile_macro_multiple():
         '<ac:parameter ac:name="user">'
         '<ri:user ri:userkey="test-userkey-456" />'
         "</ac:parameter>"
+        "</ac:structured-macro>. "
+        "And a third: "
+        '<ac:structured-macro ac:name="profile" ac:schema-version="1">'
+        '<ac:parameter ac:name="user">'
+        '<ri:user ri:username="test-username-789" />'
+        "</ac:parameter>"
         "</ac:structured-macro>."
         "</p>"
     )
@@ -480,10 +486,17 @@ def test_process_user_profile_macro_multiple():
                 else {}
             )
 
-        def get_user_details_by_username(self, username):
+        def get_user_details_by_userkey(self, userkey):
             return (
                 {"displayName": "Test User Two"}
-                if username == "test-userkey-456"
+                if userkey == "test-userkey-456"
+                else {}
+            )
+
+        def get_user_details_by_username(self, username):
+            return (
+                {"displayName": "Test User Three"}
+                if username == "test-username-789"
                 else {}
             )
 
@@ -493,8 +506,10 @@ def test_process_user_profile_macro_multiple():
     )
     assert "@Test User One" in processed_html
     assert "@Test User Two" in processed_html
+    assert "@Test User Three" in processed_html
     assert "@Test User One" in processed_markdown
     assert "@Test User Two" in processed_markdown
+    assert "@Test User Three" in processed_markdown
 
 
 def test_markdown_to_confluence_no_automatic_anchors():

@@ -74,6 +74,10 @@ class ConfluenceClient(Protocol):
         """Get user details by username (for Server/DC compatibility)."""
         ...
 
+    def get_user_details_by_userkey(self, userkey: str) -> dict[str, Any]:
+        """Get user details by userkey (for Server/DC compatibility)."""
+        ...
+
 
 class BasePreprocessor:
     """Base class for text preprocessing operations."""
@@ -137,6 +141,9 @@ class BasePreprocessor:
         """
         Process user mentions in BeautifulSoup object.
 
+        Handles both Cloud (ri:account-id) and Server/DC (ri:userkey,
+        ri:username) user reference formats.
+
         Args:
             soup: BeautifulSoup object containing HTML
             confluence_client: Optional Confluence client for user lookups
@@ -146,25 +153,26 @@ class BasePreprocessor:
 
         for user_element in user_mentions:
             user_ref = user_element.find("ri:user")
-            if user_ref and user_ref.get("ri:account-id"):
-                # Case 1: Direct user reference without link-body
-                account_id = user_ref.get("ri:account-id")
-                if isinstance(account_id, str):
-                    self._replace_user_mention(
-                        user_element, account_id, confluence_client
-                    )
-                    continue
+            if not user_ref:
+                continue
 
-            # Case 2: User reference with link-body containing @
-            link_body = user_element.find("ac:link-body")
-            if link_body and "@" in link_body.get_text(strip=True):
-                user_ref = user_element.find("ri:user")
-                if user_ref and user_ref.get("ri:account-id"):
-                    account_id = user_ref.get("ri:account-id")
-                    if isinstance(account_id, str):
-                        self._replace_user_mention(
-                            user_element, account_id, confluence_client
-                        )
+            account_id = user_ref.get("ri:account-id")
+            userkey = user_ref.get("ri:userkey")
+            username = user_ref.get("ri:username")
+
+            if account_id and isinstance(account_id, str):
+                # Cloud: use account-id
+                self._replace_user_mention(user_element, account_id, confluence_client)
+            elif userkey and isinstance(userkey, str):
+                # Server/DC: use userkey (internal key, needs /rest/api/user?key=)
+                self._replace_user_mention_by_userkey(
+                    user_element, userkey, confluence_client
+                )
+            elif username and isinstance(username, str):
+                # Server/DC fallback: use username
+                self._replace_user_mention_by_username(
+                    user_element, username, confluence_client
+                )
 
     def _process_user_profile_macros_in_soup(
         self, soup: BeautifulSoup, confluence_client: ConfluenceClient | None = None
@@ -201,8 +209,9 @@ class BasePreprocessor:
 
             account_id = user_ref.get("ri:account-id")
             userkey = user_ref.get("ri:userkey")  # Fallback for Confluence Server/DC
+            username = user_ref.get("ri:username")  # Fallback for older Server/DC
 
-            user_identifier_for_log = account_id or userkey
+            user_identifier_for_log = account_id or userkey or username
             display_name = None
 
             if confluence_client and user_identifier_for_log:
@@ -213,9 +222,15 @@ class BasePreprocessor:
                         )
                         display_name = user_details.get("displayName")
                     elif userkey and isinstance(userkey, str):
-                        # For Confluence Server/DC, userkey might be the username
-                        user_details = confluence_client.get_user_details_by_username(
+                        # For Confluence Server/DC, use userkey endpoint
+                        user_details = confluence_client.get_user_details_by_userkey(
                             userkey
+                        )
+                        display_name = user_details.get("displayName")
+                    elif username and isinstance(username, str):
+                        # For older Confluence Server/DC, use username endpoint
+                        user_details = confluence_client.get_user_details_by_username(
+                            username
                         )
                         display_name = user_details.get("displayName")
                 except Exception as e:
@@ -283,6 +298,61 @@ class BasePreprocessor:
         # Fallback: just use the account ID
         new_text = f"@user_{account_id}"
         user_element.replace_with(new_text)
+
+    def _replace_user_mention_by_userkey(
+        self,
+        user_element: Tag,
+        userkey: str,
+        confluence_client: ConfluenceClient | None = None,
+    ) -> None:
+        """
+        Replace a user mention using userkey (Server/DC).
+
+        Uses the /rest/api/user?key= endpoint to resolve the display name.
+
+        Args:
+            user_element: The HTML element containing the user mention
+            userkey: The user's internal userkey
+            confluence_client: Optional Confluence client for user lookups
+        """
+        try:
+            if confluence_client is not None:
+                user_details = confluence_client.get_user_details_by_userkey(userkey)
+                display_name = user_details.get("displayName", "")
+                if display_name:
+                    user_element.replace_with(f"@{display_name}")
+                    return
+            user_element.replace_with(f"@user_{userkey}")
+        except Exception as e:
+            logger.warning(f"Error processing user mention by userkey: {str(e)}")
+            user_element.replace_with(f"@user_{userkey}")
+
+    def _replace_user_mention_by_username(
+        self,
+        user_element: Tag,
+        username: str,
+        confluence_client: ConfluenceClient | None = None,
+    ) -> None:
+        """
+        Replace a user mention using username/userkey (Server/DC).
+
+        Args:
+            user_element: The HTML element containing the user mention
+            username: The user's username or userkey
+            confluence_client: Optional Confluence client for user lookups
+        """
+        try:
+            if confluence_client is not None:
+                user_details = confluence_client.get_user_details_by_username(username)
+                display_name = user_details.get("displayName", "")
+                if display_name:
+                    user_element.replace_with(f"@{display_name}")
+                    return
+            # Fallback: use the username directly
+            user_element.replace_with(f"@{username}")
+        except Exception as e:
+            logger.warning(f"Error processing user mention by username: {str(e)}")
+            user_element.replace_with(f"@{username}")
 
     def _find_attachment_url(
         self,

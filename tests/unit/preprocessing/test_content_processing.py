@@ -445,6 +445,34 @@ def process():
         assert "@Test User user789" in processed_markdown
         assert "@Test User admin" in processed_markdown
 
+    def test_confluence_user_mentions_serverdc_aclink(self, confluence_preprocessor):
+        """Test Server/DC user mentions via ac:link with ri:userkey and ri:username."""
+        html_content = """<p>Server/DC mention with userkey:</p>
+<ac:link>
+    <ri:user ri:userkey="8a286d85984c4df30198bc47dba33367"/>
+</ac:link>
+
+<p>Server/DC mention with username:</p>
+<ac:link>
+    <ri:user ri:username="test.user"/>
+</ac:link>
+
+<p>Cloud mention with account-id:</p>
+<ac:link>
+    <ri:user ri:account-id="5b10a2844c20165700ede21g"/>
+</ac:link>"""
+
+        processed_html, processed_markdown = (
+            confluence_preprocessor.process_html_content(html_content)
+        )
+
+        # Verify Server/DC userkey mention is resolved
+        assert "@Test User 8a286d85984c4df30198bc47dba33367" in processed_markdown
+        # Verify Server/DC username mention is resolved
+        assert "@Test User test.user" in processed_markdown
+        # Verify Cloud mention still works
+        assert "@Test User 5b10a2844c20165700ede21g" in processed_markdown
+
     def test_confluence_markdown_roundtrip(self, confluence_preprocessor):
         """Test Markdown to Confluence storage format and processing."""
         markdown_content = """# Main Title
