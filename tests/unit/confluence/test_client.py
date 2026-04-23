@@ -460,9 +460,11 @@ def test_confluence_fetcher_mro_order():
     assert hasattr(ConfluenceFetcher, "upload_attachment")
     assert hasattr(ConfluenceFetcher, "get_content_attachments")
 
+
 # ---------------------------------------------------------------------------
 # mTLS client certificate auth tests
 # ---------------------------------------------------------------------------
+
 
 def test_init_cert_auth():
     """Test that cert auth initializes without credentials and disables trust_env."""
