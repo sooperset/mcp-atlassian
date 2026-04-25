@@ -145,6 +145,11 @@ class ConfluenceClient:
         if self.config.custom_headers:
             self._apply_custom_headers()
 
+        # Apply cookie if configured
+        if self.config.cookie:
+            self.confluence._session.headers["Cookie"] = self.config.cookie
+            logger.debug("Applied configured cookie to Confluence session")
+
         # Import here to avoid circular imports
         from ..preprocessing.confluence import ConfluencePreprocessor
 
