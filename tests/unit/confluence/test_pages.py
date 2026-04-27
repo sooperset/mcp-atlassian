@@ -1,6 +1,6 @@
 """Unit tests for the PagesMixin class."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -639,11 +639,119 @@ class TestPagesMixin:
             "API Error"
         )
 
-        # Act
-        results = pages_mixin.get_page_children(page_id=parent_id)
+        # Act/Assert
+        with pytest.raises(Exception, match="API Error"):
+            pages_mixin.get_page_children(page_id=parent_id)
 
-        # Assert - should return empty list on error, not raise exception
-        assert len(results) == 0
+    def test_get_page_children_cloud_uses_v2_direct_children(self, pages_mixin):
+        """Test Cloud OAuth child lookup uses the v2 direct-children endpoint."""
+        parent_id = "123456"
+        pages_mixin.config = MagicMock(url="https://example.atlassian.net/wiki")
+        pages_mixin.config.auth_type = "oauth"
+        pages_mixin.config.is_cloud = True
+
+        mock_v2_adapter = MagicMock()
+        mock_v2_adapter.get_page_direct_children.return_value = {
+            "results": [
+                {
+                    "id": "789012",
+                    "title": "Child Page 1",
+                    "type": "page",
+                    "space": {"id": "42", "key": "TEST", "name": "Test Space"},
+                    "spaceId": "42",
+                    "status": "current",
+                },
+                {
+                    "id": "111222",
+                    "title": "Child Folder 1",
+                    "type": "folder",
+                    "space": {"id": "42", "key": "TEST", "name": "Test Space"},
+                    "spaceId": "42",
+                    "status": "current",
+                },
+            ]
+        }
+
+        with patch.object(
+            PagesMixin, "_v2_adapter", new_callable=PropertyMock
+        ) as mock_prop:
+            mock_prop.return_value = mock_v2_adapter
+            results = pages_mixin.get_page_children(page_id=parent_id, limit=10)
+
+        mock_v2_adapter.get_page_direct_children.assert_called_once_with(
+            page_id=parent_id,
+            limit=10,
+            cursor=None,
+        )
+        assert len(results) == 2
+        assert results[0].type == "page"
+        assert results[1].type == "folder"
+        assert results[0].space is not None
+        assert results[0].space.key == "TEST"
+        assert results[0].space.name == "Test Space"
+        assert results[0].url == (
+            "https://example.atlassian.net/wiki/spaces/TEST/pages/789012"
+        )
+
+    def test_get_page_children_cloud_filters_folders_when_disabled(self, pages_mixin):
+        """Test Cloud OAuth child lookup filters folders client-side."""
+        pages_mixin.config = MagicMock(url="https://example.atlassian.net/wiki")
+        pages_mixin.config.auth_type = "oauth"
+        pages_mixin.config.is_cloud = True
+
+        mock_v2_adapter = MagicMock()
+        mock_v2_adapter.get_page_direct_children.return_value = {
+            "results": [
+                {"id": "1", "title": "Page Child", "type": "page"},
+                {"id": "2", "title": "Folder Child", "type": "folder"},
+            ]
+        }
+
+        with patch.object(
+            PagesMixin, "_v2_adapter", new_callable=PropertyMock
+        ) as mock_prop:
+            mock_prop.return_value = mock_v2_adapter
+            results = pages_mixin.get_page_children(
+                page_id="123456", include_folders=False
+            )
+
+        assert len(results) == 1
+        assert results[0].type == "page"
+
+    def test_get_page_children_cloud_partial_space_uses_expandable_fallback(
+        self, pages_mixin
+    ):
+        """Test partial space payloads still produce correct Cloud space metadata."""
+        pages_mixin.config = MagicMock(url="https://example.atlassian.net/wiki")
+        pages_mixin.config.auth_type = "oauth"
+        pages_mixin.config.is_cloud = True
+
+        mock_v2_adapter = MagicMock()
+        mock_v2_adapter.get_page_direct_children.return_value = {
+            "results": [
+                {
+                    "id": "2645262347",
+                    "title": "AS_008 Import",
+                    "type": "page",
+                    "status": "current",
+                    "space": {"id": "42"},
+                    "_expandable": {"space": "/rest/api/space/IOT"},
+                }
+            ]
+        }
+
+        with patch.object(
+            PagesMixin, "_v2_adapter", new_callable=PropertyMock
+        ) as mock_prop:
+            mock_prop.return_value = mock_v2_adapter
+            results = pages_mixin.get_page_children(page_id="123456")
+
+        assert len(results) == 1
+        assert results[0].space is not None
+        assert results[0].space.key == "IOT"
+        assert results[0].url == (
+            "https://example.atlassian.net/wiki/spaces/IOT/pages/2645262347"
+        )
 
     def test_get_page_children_folder_error_graceful(self, pages_mixin):
         """Test that folder fetch errors don't fail the whole operation."""

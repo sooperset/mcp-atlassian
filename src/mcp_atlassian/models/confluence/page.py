@@ -136,14 +136,22 @@ class ConfluencePage(ApiModel, TimestampMixin):
 
         # Extract space information first to ensure it's available for URL construction
         space_data = data.get("space", {})
-        if not space_data:
-            # Try to extract space info from _expandable if available
+        if not isinstance(space_data, dict):
+            space_data = {}
+
+        # Some child/list endpoints return partial space objects, such as
+        # {"id": "123"}, which would otherwise suppress the _expandable fallback.
+        if not space_data.get("key"):
             if expandable := data.get("_expandable", {}):
                 if space_path := expandable.get("space"):
                     # Extract space key from REST API path
                     if space_path.startswith("/rest/api/space/"):
                         space_key = space_path.split("/rest/api/space/")[1]
-                        space_data = {"key": space_key, "name": f"Space {space_key}"}
+                        space_data = {
+                            **space_data,
+                            "key": space_key,
+                            "name": space_data.get("name") or f"Space {space_key}",
+                        }
 
         # Create space model
         space = ConfluenceSpace.from_api_response(space_data)
