@@ -82,7 +82,7 @@ JIRA_TOOLSETS: dict[str, ToolsetDefinition] = {
     ),
     "jira_service_desk": ToolsetDefinition(
         name="jira_service_desk",
-        description="Jira Service Management queues and service desks",
+        description="Jira Service Management queues, service desks, and requests",
         default=False,
     ),
     "jira_forms": ToolsetDefinition(

@@ -84,6 +84,11 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_get_service_desk_for_project",
         "jira_get_service_desk_queues",
         "jira_get_queue_issues",
+        "jira_get_customer_request",
+        "jira_search_customer_requests",
+        "jira_get_customer_request_comments",
+        "jira_get_customer_request_statuses",
+        "jira_get_customer_request_transitions",
     ],
     "jira-forms-metrics": [
         "jira_get_issue_proforma_forms",

@@ -291,6 +291,41 @@ def mock_jira_fetcher():
     }
     mock_fetcher.get_queue_issues.return_value = mock_queue_issues
 
+    mock_fetcher.get_customer_request.return_value = {
+        "issueId": "107001",
+        "issueKey": "SUP-1",
+        "summary": "Need help",
+        "currentStatus": {"status": "Waiting for support"},
+    }
+    mock_fetcher.search_customer_requests.return_value = {
+        "start": 0,
+        "limit": 50,
+        "size": 1,
+        "isLastPage": True,
+        "values": [{"issueKey": "SUP-1", "summary": "Need help"}],
+    }
+    mock_fetcher.get_customer_request_comments.return_value = {
+        "start": 0,
+        "limit": 50,
+        "size": 1,
+        "isLastPage": True,
+        "values": [{"id": "10001", "body": "Test comment"}],
+    }
+    mock_fetcher.get_customer_request_statuses.return_value = {
+        "start": 0,
+        "limit": 50,
+        "size": 1,
+        "isLastPage": True,
+        "values": [{"status": "Waiting for support"}],
+    }
+    mock_fetcher.get_customer_request_transitions.return_value = {
+        "start": 0,
+        "limit": 50,
+        "size": 1,
+        "isLastPage": True,
+        "values": [{"id": "1", "name": "Resolve"}],
+    }
+
     # Configure add_comment
     mock_fetcher.add_comment.return_value = {
         "id": "10001",
@@ -395,6 +430,10 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         get_agile_boards,
         get_all_projects,
         get_board_issues,
+        get_customer_request,
+        get_customer_request_comments,
+        get_customer_request_statuses,
+        get_customer_request_transitions,
         get_field_options,
         get_issue,
         get_issue_images,
@@ -413,6 +452,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         link_to_epic,
         remove_issue_link,
         search,
+        search_customer_requests,
         search_fields,
         transition_issue,
         update_issue,
@@ -430,6 +470,11 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(get_service_desk_for_project)
     jira_sub_mcp.add_tool(get_service_desk_queues)
     jira_sub_mcp.add_tool(get_queue_issues)
+    jira_sub_mcp.add_tool(get_customer_request)
+    jira_sub_mcp.add_tool(search_customer_requests)
+    jira_sub_mcp.add_tool(get_customer_request_comments)
+    jira_sub_mcp.add_tool(get_customer_request_statuses)
+    jira_sub_mcp.add_tool(get_customer_request_transitions)
     jira_sub_mcp.add_tool(get_transitions)
     jira_sub_mcp.add_tool(get_worklog)
     jira_sub_mcp.add_tool(download_attachments)
@@ -662,6 +707,115 @@ async def test_get_queue_issues(jira_client, mock_jira_fetcher):
         queue_id="47",
         start_at=0,
         limit=2,
+    )
+
+
+@pytest.mark.anyio
+async def test_get_customer_request(jira_client, mock_jira_fetcher):
+    """Test customer request retrieval via the service desk API."""
+    response = await jira_client.call_tool(
+        "jira_get_customer_request",
+        {"issue_id_or_key": "SUP-1", "expand": "comment,status"},
+    )
+    assert hasattr(response, "content")
+    assert len(response.content) > 0
+
+    content = json.loads(response.content[0].text)
+    assert content["issueKey"] == "SUP-1"
+    assert content["currentStatus"]["status"] == "Waiting for support"
+    mock_jira_fetcher.get_customer_request.assert_called_once_with(
+        issue_id_or_key="SUP-1",
+        expand="comment,status",
+    )
+
+
+@pytest.mark.anyio
+async def test_search_customer_requests(jira_client, mock_jira_fetcher):
+    """Test customer request search."""
+    response = await jira_client.call_tool(
+        "jira_search_customer_requests",
+        {
+            "request_ownership": "OWNED_REQUESTS",
+            "search_term": "Need help",
+            "start_at": 0,
+            "limit": 50,
+        },
+    )
+    assert hasattr(response, "content")
+    assert len(response.content) > 0
+
+    content = json.loads(response.content[0].text)
+    assert content["size"] == 1
+    assert content["values"][0]["issueKey"] == "SUP-1"
+    mock_jira_fetcher.search_customer_requests.assert_called_once_with(
+        request_ownership="OWNED_REQUESTS",
+        request_status=None,
+        search_term="Need help",
+        organization_id=None,
+        service_desk_id=None,
+        start_at=0,
+        limit=50,
+        expand=None,
+    )
+
+
+@pytest.mark.anyio
+async def test_get_customer_request_comments(jira_client, mock_jira_fetcher):
+    """Test customer request comments retrieval."""
+    response = await jira_client.call_tool(
+        "jira_get_customer_request_comments",
+        {"issue_id_or_key": "SUP-1", "public": True, "start_at": 0, "limit": 50},
+    )
+    assert hasattr(response, "content")
+    assert len(response.content) > 0
+
+    content = json.loads(response.content[0].text)
+    assert content["values"][0]["body"] == "Test comment"
+    mock_jira_fetcher.get_customer_request_comments.assert_called_once_with(
+        issue_id_or_key="SUP-1",
+        public=True,
+        internal=None,
+        start_at=0,
+        limit=50,
+        expand=None,
+    )
+
+
+@pytest.mark.anyio
+async def test_get_customer_request_statuses(jira_client, mock_jira_fetcher):
+    """Test customer request status history retrieval."""
+    response = await jira_client.call_tool(
+        "jira_get_customer_request_statuses",
+        {"issue_id_or_key": "SUP-1", "start_at": 0, "limit": 50},
+    )
+    assert hasattr(response, "content")
+    assert len(response.content) > 0
+
+    content = json.loads(response.content[0].text)
+    assert content["values"][0]["status"] == "Waiting for support"
+    mock_jira_fetcher.get_customer_request_statuses.assert_called_once_with(
+        issue_id_or_key="SUP-1",
+        start_at=0,
+        limit=50,
+    )
+
+
+@pytest.mark.anyio
+async def test_get_customer_request_transitions(jira_client, mock_jira_fetcher):
+    """Test customer-visible transition retrieval."""
+    response = await jira_client.call_tool(
+        "jira_get_customer_request_transitions",
+        {"issue_id_or_key": "SUP-1", "start_at": 0, "limit": 50},
+    )
+    assert hasattr(response, "content")
+    assert len(response.content) > 0
+
+    content = json.loads(response.content[0].text)
+    assert content["values"][0]["name"] == "Resolve"
+    mock_jira_fetcher.get_customer_request_transitions.assert_called_once_with(
+        issue_id_or_key="SUP-1",
+        start_at=0,
+        limit=50,
     )
 
 
@@ -1042,8 +1196,8 @@ async def test_get_all_projects_tool(jira_client, mock_jira_fetcher):
     ]
     # Reset the mock and set specific return value for this test
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        mock_projects
     )
 
     # Test with default parameters (include_archived=False)
@@ -1091,8 +1245,8 @@ async def test_get_all_projects_tool_with_archived(jira_client, mock_jira_fetche
     ]
     # Reset the mock and set specific return value for this test
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        mock_projects
     )
 
     # Test with include_archived=True
@@ -1145,8 +1299,8 @@ async def test_get_all_projects_tool_with_projects_filter(
 
     # Set up the mock to return all projects
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: all_mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        all_mock_projects
     )
 
     # Set up the projects filter in the config
@@ -1199,8 +1353,8 @@ async def test_get_all_projects_tool_no_projects_filter(jira_client, mock_jira_f
 
     # Set up the mock to return all projects
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: all_mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        all_mock_projects
     )
 
     # Ensure no projects filter is set
@@ -1260,8 +1414,8 @@ async def test_get_all_projects_tool_case_insensitive_filter(
 
     # Set up the mock to return all projects
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: all_mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        all_mock_projects
     )
 
     # Set up projects filter with mixed case and whitespace
