@@ -136,7 +136,9 @@ class TestConfluenceV2Adapter:
         # Verify we still get a result
         assert result["id"] == "123456"
 
-    def test_get_page_direct_children_resolves_space_key(self, v2_adapter, mock_session):
+    def test_get_page_direct_children_resolves_space_key(
+        self, v2_adapter, mock_session
+    ):
         """Test v2 direct children are normalized with space metadata."""
         children_response = Mock()
         children_response.status_code = 200
@@ -167,7 +169,9 @@ class TestConfluenceV2Adapter:
         }
         assert mock_session.get.call_count == 2
 
-    def test_get_page_direct_children_handles_repeated_space_ids(self, v2_adapter, mock_session):
+    def test_get_page_direct_children_handles_repeated_space_ids(
+        self, v2_adapter, mock_session
+    ):
         """Test v2 direct children resolve each space ID once."""
         children_response = Mock()
         children_response.status_code = 200
@@ -191,7 +195,9 @@ class TestConfluenceV2Adapter:
         assert result["results"][0]["space"]["name"] == "Test Space"
         assert mock_session.get.call_count == 2
 
-    def test_get_page_direct_children_handles_numeric_space_id(self, v2_adapter, mock_session):
+    def test_get_page_direct_children_handles_numeric_space_id(
+        self, v2_adapter, mock_session
+    ):
         """Test numeric space IDs are normalized before lookup."""
         children_response = Mock()
         children_response.status_code = 200
