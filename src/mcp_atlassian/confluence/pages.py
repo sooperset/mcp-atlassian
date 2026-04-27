@@ -743,51 +743,83 @@ class PagesMixin(ConfluenceClient):
             List of ConfluencePage models containing the child pages and folders
         """
         try:
-            # Use the Atlassian Python API's get_page_child_by_type method
-            # First, get child pages
-            page_results = self.confluence.get_page_child_by_type(
-                page_id=page_id, type="page", start=start, limit=limit, expand=expand
-            )
-
-            # Handle both pagination modes for pages
-            if isinstance(page_results, dict) and "results" in page_results:
+            v2_adapter = self._v2_adapter
+            if v2_adapter:
+                logger.debug(
+                    "Using v2 API for OAuth authentication to get children "
+                    f"for '{page_id}'"
+                )
+                page_results = v2_adapter.get_page_direct_children(
+                    page_id=page_id,
+                    limit=limit,
+                    cursor=str(start) if start > 0 else None,
+                )
                 child_items = page_results.get("results", [])
+
+                if not include_folders:
+                    child_items = [
+                        item for item in child_items if item.get("type") == "page"
+                    ]
             else:
-                child_items = page_results or []
+                # Use the Atlassian Python API's get_page_child_by_type method
+                # First, get child pages
+                page_results = self.confluence.get_page_child_by_type(
+                    page_id=page_id,
+                    type="page",
+                    start=start,
+                    limit=limit,
+                    expand=expand,
+                )
 
-            # Also get child folders if requested
-            if include_folders:
-                try:
-                    folder_results = self.confluence.get_page_child_by_type(
-                        page_id=page_id,
-                        type="folder",
-                        start=start,
-                        limit=limit,
-                        expand=expand,
-                    )
+                # Handle both pagination modes for pages
+                if isinstance(page_results, dict) and "results" in page_results:
+                    child_items = page_results.get("results", [])
+                else:
+                    child_items = page_results or []
 
-                    # Handle both pagination modes for folders
-                    if isinstance(folder_results, dict) and "results" in folder_results:
-                        child_folders = folder_results.get("results", [])
-                    else:
-                        child_folders = folder_results or []
+                # Also get child folders if requested
+                if include_folders:
+                    try:
+                        folder_results = self.confluence.get_page_child_by_type(
+                            page_id=page_id,
+                            type="folder",
+                            start=start,
+                            limit=limit,
+                            expand=expand,
+                        )
 
-                    # Combine pages and folders
-                    child_items = child_items + child_folders
-                except Exception as folder_err:
-                    # Log but don't fail if folder fetching fails
-                    # (e.g., older Confluence versions might not support folders)
-                    logger.debug(
-                        f"Could not fetch child folders for page {page_id}: {folder_err}"
-                    )
+                        # Handle both pagination modes for folders
+                        if (
+                            isinstance(folder_results, dict)
+                            and "results" in folder_results
+                        ):
+                            child_folders = folder_results.get("results", [])
+                        else:
+                            child_folders = folder_results or []
+
+                        # Combine pages and folders
+                        child_items = child_items + child_folders
+                    except Exception as folder_err:
+                        # Log but don't fail if folder fetching fails
+                        # (e.g., older Confluence versions might not support folders)
+                        logger.debug(
+                            "Could not fetch child folders for page "
+                            f"{page_id}: {folder_err}"
+                        )
+
+            # Get space key from the first result if available
+            space_key = ""
+            if child_items:
+                first_item = child_items[0]
+                if "space" in first_item:
+                    space_key = first_item.get("space", {}).get("key", "")
+                elif expandable := first_item.get("_expandable", {}):
+                    if space_path := expandable.get("space"):
+                        if space_path.startswith("/rest/api/space/"):
+                            space_key = space_path.split("/rest/api/space/")[1]
 
             # Process results
             page_models = []
-            space_key = ""
-
-            # Get space key from the first result if available
-            if child_items and "space" in child_items[0]:
-                space_key = child_items[0].get("space", {}).get("key", "")
 
             # Process each child item (page or folder)
             for item in child_items:
@@ -811,6 +843,7 @@ class PagesMixin(ConfluenceClient):
                     include_body=True,
                     content_override=content_override,
                     content_format="markdown" if convert_to_markdown else "storage",
+                    is_cloud=self.config.is_cloud,
                 )
 
                 page_models.append(page_model)
@@ -820,7 +853,7 @@ class PagesMixin(ConfluenceClient):
         except Exception as e:
             logger.error(f"Error fetching child pages for page {page_id}: {str(e)}")
             logger.debug("Full exception details:", exc_info=True)
-            return []
+            raise
 
     @handle_auth_errors("Confluence API")
     def get_space_page_tree(

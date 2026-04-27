@@ -327,7 +327,12 @@ async def get_page_children(
             convert_to_markdown=convert_to_markdown,
             include_folders=include_folders,
         )
-        child_pages = [page.to_simplified_dict() for page in pages]
+        child_pages = []
+        for page in pages:
+            child_page = page.to_simplified_dict()
+            child_page.pop("space", None)
+            child_page.pop("url", None)
+            child_pages.append(child_page)
         result = {
             "parent_id": parent_id,
             "count": len(child_pages),

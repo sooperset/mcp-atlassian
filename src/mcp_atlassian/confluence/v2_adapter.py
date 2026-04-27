@@ -246,14 +246,14 @@ class ConfluenceV2Adapter:
                 logger.error(f"Error updating page '{page_id}': {e}")
             raise ValueError(f"Failed to update page '{page_id}': {e}") from e
 
-    def _get_space_key_from_id(self, space_id: str) -> str:
-        """Get space key from space ID using v2 API.
+    def _get_space_from_id(self, space_id: str) -> dict[str, str]:
+        """Get space metadata from space ID using v2 API.
 
         Args:
             space_id: The space ID to look up
 
         Returns:
-            The space key
+            Space metadata containing at least ``id`` and ``key``.
 
         Raises:
             ValueError: If space not found or API error
@@ -265,13 +265,17 @@ class ConfluenceV2Adapter:
             response = self.session.get(url)
             response.raise_for_status()
 
-            data = response.json()
+            data: dict[str, Any] = response.json()
             space_key = data.get("key")
 
             if not space_key:
                 raise ValueError(f"No key found for space ID '{space_id}'")
 
-            return space_key
+            return {
+                "id": space_id,
+                "key": str(space_key),
+                "name": str(data.get("name") or f"Space {space_key}"),
+            }
 
         except Exception as e:
             if isinstance(e, HTTPError) and e.response is not None:
@@ -282,7 +286,11 @@ class ConfluenceV2Adapter:
             else:
                 logger.error(f"Error getting space key for ID '{space_id}': {e}")
             # Return the space_id as fallback
-            return space_id
+            return {"id": space_id, "key": space_id, "name": f"Space {space_id}"}
+
+    def _get_space_key_from_id(self, space_id: str) -> str:
+        """Get space key from space ID using v2 API."""
+        return self._get_space_from_id(space_id)["key"]
 
     def get_page(
         self,
@@ -352,6 +360,82 @@ class ConfluenceV2Adapter:
             else:
                 logger.error(f"Error getting page '{page_id}': {e}")
             raise ValueError(f"Failed to get page '{page_id}': {e}") from e
+
+    def get_page_direct_children(
+        self,
+        page_id: str,
+        *,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        """Get a page's direct children using the v2 API.
+
+        Args:
+            page_id: The ID of the page whose direct children to retrieve.
+            limit: Optional maximum number of direct children to return.
+            cursor: Optional pagination cursor.
+
+        Returns:
+            The direct-children response from the v2 API.
+
+        Raises:
+            ValueError: If the request fails.
+        """
+        try:
+            url = f"{self.base_url}/api/v2/pages/{page_id}/direct-children"
+            params: dict[str, Any] = {}
+
+            if limit is not None:
+                params["limit"] = limit
+            if cursor is not None:
+                params["cursor"] = cursor
+
+            response = self.session.get(url, params=params or None)
+            response.raise_for_status()
+
+            logger.debug(
+                "Successfully retrieved direct children for page "
+                f"'{page_id}' with v2 API"
+            )
+
+            data: dict[str, Any] = response.json()
+            results = data.get("results", [])
+            if isinstance(results, list):
+                spaces_by_id: dict[str, dict[str, str]] = {}
+                normalized_results: list[dict[str, Any]] = []
+
+                for item in results:
+                    if not isinstance(item, dict):
+                        continue
+
+                    normalized_item = dict(item)
+                    space_id = normalized_item.get("spaceId")
+
+                    if space_id is not None and str(space_id):
+                        space_id_str = str(space_id)
+                        if space_id_str not in spaces_by_id:
+                            spaces_by_id[space_id_str] = self._get_space_from_id(
+                                space_id_str
+                            )
+
+                        normalized_item["space"] = spaces_by_id[space_id_str]
+
+                    normalized_results.append(normalized_item)
+
+                data["results"] = normalized_results
+
+            return data
+
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting direct children for page '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting direct children for page '{page_id}': {e}")
+            error_msg = f"Failed to get direct children for page '{page_id}': {e}"
+            raise ValueError(error_msg) from e
 
     def delete_page(self, page_id: str) -> bool:
         """Delete a page using the v2 API.
