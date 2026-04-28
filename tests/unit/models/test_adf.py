@@ -497,6 +497,40 @@ class TestMarkdownToAdf:
         rule_nodes = [n for n in result["content"] if n["type"] == "rule"]
         assert len(rule_nodes) >= 1
 
+    # -- Expand/collapse block ----------------------------------------------
+
+    def test_expand_with_title(self):
+        """Expand block with title produces an expand node."""
+        md = "{expand:Details}\n* bullet one\n* bullet two\n{expand}"
+        result = markdown_to_adf(md)
+        expand = next(n for n in result["content"] if n["type"] == "expand")
+        assert expand["attrs"]["title"] == "Details"
+        assert any(n["type"] == "bulletList" for n in expand["content"])
+
+    def test_expand_without_title(self):
+        """Expand block without a title uses an empty string."""
+        md = "{expand}\nSome content\n{expand}"
+        result = markdown_to_adf(md)
+        expand = next(n for n in result["content"] if n["type"] == "expand")
+        assert expand["attrs"]["title"] == ""
+        assert any(n["type"] == "paragraph" for n in expand["content"])
+
+    def test_expand_with_nested_formatting(self):
+        """Expand block recursively parses inner markdown."""
+        md = "{expand:Steps}\n## Heading\n1. First\n1. Second\n{expand}"
+        result = markdown_to_adf(md)
+        expand = next(n for n in result["content"] if n["type"] == "expand")
+        inner_types = [n["type"] for n in expand["content"]]
+        assert "heading" in inner_types
+        assert "orderedList" in inner_types
+
+    def test_expand_preserves_surrounding_content(self):
+        """Content before and after expand block is preserved."""
+        md = "Before\n{expand:Title}\nInside\n{expand}\nAfter"
+        result = markdown_to_adf(md)
+        types = [n["type"] for n in result["content"]]
+        assert types == ["paragraph", "expand", "paragraph"]
+
     # -- Mixed formatting ---------------------------------------------------
 
     def test_mixed_formatting(self):
