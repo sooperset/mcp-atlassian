@@ -14,21 +14,28 @@ def _parse_inline_formatting(text: str) -> list[dict[str, Any]]:
     """Parse inline Markdown formatting into ADF inline nodes.
 
     Handles: bold (**), italic (*), inline code (`), links ([text](url)),
-    and strikethrough (~~).
+    strikethrough (~~), and Jira-flavored user mentions
+    ([~accountid:ACCOUNT_ID]).
+
+    The mention syntax mirrors what Jira's v2 wiki text returns when a real
+    ADF mention is read back, so the read and write paths are symmetric.
 
     Args:
         text: Raw text potentially containing inline Markdown formatting.
 
     Returns:
-        List of ADF inline nodes (text nodes with optional marks).
+        List of ADF inline nodes (text nodes with optional marks, plus
+        mention nodes when [~accountid:...] is present).
     """
     if not text:
         return []
 
     nodes: list[dict[str, Any]] = []
-    # Pattern order matters: bold before italic, code before others
+    # Pattern order matters: mention before link (both start with `[`),
+    # bold before italic, code before others
     inline_re = re.compile(
-        r"`(?P<code_inner>[^`]+)`"
+        r"\[~accountid:(?P<mention_id>[^\]]+)\]"
+        r"|`(?P<code_inner>[^`]+)`"
         r"|\*\*(?P<bold_inner>.+?)\*\*"
         r"|~~(?P<strike_inner>.+?)~~"
         r"|\[(?P<link_text>[^\]]+)\]\((?P<link_href>[^)]+)\)"
@@ -43,7 +50,14 @@ def _parse_inline_formatting(text: str) -> list[dict[str, Any]]:
             if plain:
                 nodes.append({"type": "text", "text": plain})
 
-        if m.group("code_inner") is not None:
+        if m.group("mention_id") is not None:
+            nodes.append(
+                {
+                    "type": "mention",
+                    "attrs": {"id": m.group("mention_id")},
+                }
+            )
+        elif m.group("code_inner") is not None:
             nodes.append(
                 {
                     "type": "text",
