@@ -1067,9 +1067,10 @@ class IssuesMixin(
 
             # Convert description from Markdown to Jira format if present
             if "description" in update_fields:
-                update_fields["description"] = self._markdown_to_jira(
-                    update_fields["description"]
-                )
+                desc = update_fields["description"]
+                # Skip conversion if already an ADF dict (e.g. passed from raw ADF input)
+                if not isinstance(desc, dict):
+                    update_fields["description"] = self._markdown_to_jira(desc)
 
             # Resolve epic link aliases before processing kwargs
             kwargs_mutable = dict(kwargs)
