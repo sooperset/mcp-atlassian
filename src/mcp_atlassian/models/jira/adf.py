@@ -163,7 +163,8 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
     """Convert Markdown text to ADF (Atlassian Document Format) document.
 
     Implements a line-by-line parser that handles common Markdown constructs.
-    No external dependencies required.
+    Jira Cloud expand blocks can be written as
+    ``{expand:Title}...{expand}``. No external dependencies required.
 
     Args:
         markdown_text: Markdown-formatted text to convert.
@@ -182,6 +183,29 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
 
     while i < len(lines):
         line = lines[i]
+
+        # --- Expand/collapse block ({expand:Title}...{expand}) ---
+        expand_match = re.match(r"^\{expand(?::(.+?))?\}\s*$", line)
+        if expand_match:
+            expand_title = expand_match.group(1) or ""
+            expand_lines: list[str] = []
+            i += 1
+            while i < len(lines) and not re.match(r"^\{expand\}\s*$", lines[i]):
+                expand_lines.append(lines[i])
+                i += 1
+            # Skip closing {expand}
+            if i < len(lines):
+                i += 1
+            # Recursively parse the inner content as ADF
+            inner_markdown = "\n".join(expand_lines)
+            inner_doc = markdown_to_adf(inner_markdown)
+            expand_node: dict[str, Any] = {
+                "type": "expand",
+                "attrs": {"title": expand_title},
+                "content": inner_doc.get("content", []),
+            }
+            doc["content"].append(expand_node)
+            continue
 
         # --- Fenced code block ---
         if line.startswith("```"):

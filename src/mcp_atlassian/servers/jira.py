@@ -1704,7 +1704,13 @@ async def create_issue(
     ] = None,
     description: Annotated[
         str | None,
-        Field(description="Issue description in Markdown format", default=None),
+        Field(
+            description=(
+                "Issue description in Markdown format. On Jira Cloud, use "
+                "'{expand:Title}...{expand}' for a collapsible section."
+            ),
+            default=None,
+        ),
     ] = None,
     components: Annotated[
         str | None,
@@ -1946,7 +1952,8 @@ async def update_issue(
         Field(
             description=(
                 "JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
-                "For 'description', provide text in Markdown format. "
+                "For 'description', provide text in Markdown format; on Jira Cloud, "
+                "use '{expand:Title}...{expand}' for a collapsible section. "
                 'Example: \'{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\\nMarkdown text"}\''
             )
         ),
