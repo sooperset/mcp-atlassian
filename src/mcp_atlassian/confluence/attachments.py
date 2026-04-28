@@ -2,6 +2,7 @@
 
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -466,30 +467,42 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             Attachment metadata dict if successful, None otherwise
         """
         try:
-            # Build the API endpoint URL
             base_url = self.config.url.rstrip("/")
-            url = f"{base_url}/rest/api/content/{content_id}/child/attachment"
+            headers = {"X-Atlassian-Token": "no-check"}
 
-            # Prepare headers (X-Atlassian-Token required for file uploads)
-            headers = {"X-Atlassian-Token": "nocheck"}
+            # Check if an attachment with this filename already exists.
+            # Confluence Server returns HTTP 400 when POSTing a new attachment
+            # whose filename already exists; in that case we must POST to the
+            # per-attachment /data endpoint to create a new version instead.
+            existing_id = None
+            try:
+                check_url = f"{base_url}/rest/api/content/{content_id}/child/attachment"
+                check_resp = self.confluence._session.get(
+                    check_url, params={"filename": filename, "expand": "version"}
+                )
+                if check_resp.ok:
+                    results = check_resp.json().get("results", [])
+                    if results:
+                        existing_id = results[0].get("id")
+                        logger.debug(f"Found existing attachment id={existing_id} for filename '{filename}'")
+            except Exception as ex:
+                logger.warning(f"Could not check existing attachments: {ex}")
 
-            # Prepare multipart form data
-            files = {"file": (filename, open(file_path, "rb"))}
+            # Use the update endpoint for existing attachments, create endpoint for new ones
+            if existing_id:
+                url = f"{base_url}/rest/api/content/{content_id}/child/attachment/{existing_id}/data"
+                logger.info(f"Updating existing attachment '{filename}' (id={existing_id})")
+            else:
+                url = f"{base_url}/rest/api/content/{content_id}/child/attachment"
+                logger.info(f"Creating new attachment '{filename}'")
 
-            # Comment must be sent with text/plain content-type for proper encoding
-            if comment:
-                files["comment"] = (None, comment, "text/plain; charset=utf-8")
+            with open(file_path, "rb") as file_obj:
+                files = {"file": (filename, file_obj)}
+                response = self.confluence._session.post(
+                    url, headers=headers, files=files
+                )
 
-            data = {}
-            if minor_edit is not None:
-                data["minorEdit"] = str(minor_edit).lower()
-
-            # Use PUT to support creating new versions of existing attachments
-            # PUT will create a new attachment if it doesn't exist, OR create a new
-            # version if an attachment with the same filename already exists
-            response = self.confluence._session.put(
-                url, headers=headers, files=files, data=data
-            )
+            logger.debug(f"Attachment upload response status: {response.status_code}")
             response.raise_for_status()
 
             # Parse response
@@ -502,14 +515,8 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             return result
 
         except Exception as e:
-            logger.error(f"Direct API upload failed: {e}")
+            logger.error(f"Direct API upload failed: {e}", exc_info=True)
             return None
-        finally:
-            # Close file handles (only for actual file objects, not text fields like comment)
-            if "files" in locals() and "file" in files:
-                file_tuple = files["file"]
-                if len(file_tuple) >= 2 and hasattr(file_tuple[1], "close"):
-                    file_tuple[1].close()
 
     def delete_attachment(self, attachment_id: str) -> dict[str, Any]:
         """
@@ -557,3 +564,4 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             error_msg = str(e)
             logger.error(f"Error deleting attachment: {error_msg}")
             return {"success": False, "error": error_msg}
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                              
