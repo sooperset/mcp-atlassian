@@ -126,6 +126,8 @@ class SearchMixin(ConfluenceClient):
             MCPAtlassianAuthenticationError: If authentication fails
                 with the Confluence API (401/403)
         """
+        limit = clamp_limit(limit, context="confluence.search_user")
+
         if self.config.is_cloud:
             # Cloud: use CQL search endpoint
             results = self.confluence.get(
