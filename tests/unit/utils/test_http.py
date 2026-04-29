@@ -1,5 +1,7 @@
-"""Tests for the shared HTTP retry utilities."""
+"""Tests for the shared HTTP utilities (retry, concurrency, rate limit)."""
 
+import threading
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -11,9 +13,22 @@ from mcp_atlassian.utils.http import (
     DEFAULT_RETRY_BACKOFF,
     DEFAULT_RETRY_STATUSES,
     DEFAULT_RETRY_TOTAL,
+    _reset_concurrency_semaphore_for_tests,
+    _reset_rate_limit_bucket_for_tests,
+    configure_concurrency,
+    configure_rate_limit,
     configure_retry,
     format_rate_limit_error,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_state():
+    _reset_concurrency_semaphore_for_tests()
+    _reset_rate_limit_bucket_for_tests()
+    yield
+    _reset_concurrency_semaphore_for_tests()
+    _reset_rate_limit_bucket_for_tests()
 
 
 def _new_session() -> Session:
@@ -116,3 +131,163 @@ def test_format_rate_limit_error_handles_no_response():
     http_err.response = None
     msg = format_rate_limit_error(http_err, service="Jira")
     assert "429" in msg
+
+
+def test_configure_concurrency_disabled_by_default():
+    from mcp_atlassian.utils.http import _THROTTLED_ATTR
+
+    session = Session()
+    configure_concurrency(session, service="Test")
+    for adapter in session.adapters.values():
+        assert not getattr(adapter, _THROTTLED_ATTR, False)
+
+
+def test_configure_concurrency_caps_parallel_sends(monkeypatch: pytest.MonkeyPatch):
+    """Cap=2 means at most 2 send() calls run concurrently."""
+    monkeypatch.setenv("ATLASSIAN_MAX_CONCURRENT_REQUESTS", "2")
+
+    session = Session()
+    in_flight = 0
+    max_in_flight = 0
+    lock = threading.Lock()
+
+    def slow_send(*args, **kwargs):
+        nonlocal in_flight, max_in_flight
+        with lock:
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+        time.sleep(0.05)
+        with lock:
+            in_flight -= 1
+        return MagicMock()
+
+    for adapter in session.adapters.values():
+        adapter.send = slow_send  # type: ignore[method-assign]
+
+    configure_concurrency(session, service="Test")
+
+    threads = [
+        threading.Thread(
+            target=lambda: session.adapters["https://"].send(MagicMock())
+        )
+        for _ in range(8)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert max_in_flight <= 2, f"expected cap=2, observed {max_in_flight} in flight"
+
+
+def test_configure_concurrency_is_idempotent(monkeypatch: pytest.MonkeyPatch):
+    from mcp_atlassian.utils.http import _THROTTLED_ATTR
+
+    monkeypatch.setenv("ATLASSIAN_MAX_CONCURRENT_REQUESTS", "3")
+    session = Session()
+    configure_concurrency(session, service="Test")
+    adapter = session.adapters["https://"]
+    wrapped_func = adapter.send
+    configure_concurrency(session, service="Test")
+    assert adapter.send is wrapped_func
+    assert getattr(adapter, _THROTTLED_ATTR) is True
+
+
+def test_configure_concurrency_shares_semaphore_across_sessions(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Two sessions (Jira + Confluence) must share the cap, not get one each."""
+    monkeypatch.setenv("ATLASSIAN_MAX_CONCURRENT_REQUESTS", "2")
+
+    s1, s2 = Session(), Session()
+    in_flight = 0
+    max_in_flight = 0
+    lock = threading.Lock()
+
+    def slow_send(*args, **kwargs):
+        nonlocal in_flight, max_in_flight
+        with lock:
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+        time.sleep(0.05)
+        with lock:
+            in_flight -= 1
+        return MagicMock()
+
+    for sess in (s1, s2):
+        for adapter in sess.adapters.values():
+            adapter.send = slow_send  # type: ignore[method-assign]
+
+    configure_concurrency(s1, service="S1")
+    configure_concurrency(s2, service="S2")
+
+    threads = []
+    for sess in (s1, s2):
+        for _ in range(4):
+            threads.append(
+                threading.Thread(
+                    target=lambda s=sess: s.adapters["https://"].send(MagicMock())
+                )
+            )
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert max_in_flight <= 2
+
+
+def test_configure_rate_limit_disabled_by_default():
+    from mcp_atlassian.utils.http import _RATE_LIMITED_ATTR
+
+    session = Session()
+    configure_rate_limit(session, service="Test")
+    for adapter in session.adapters.values():
+        assert not getattr(adapter, _RATE_LIMITED_ATTR, False)
+
+
+def test_configure_rate_limit_throttles_requests(monkeypatch: pytest.MonkeyPatch):
+    """At 10 rps, 5 sends after the burst should take >= ~0.4s."""
+    monkeypatch.setenv("ATLASSIAN_REQUESTS_PER_SECOND", "10")
+
+    session = Session()
+    for adapter in session.adapters.values():
+        adapter.send = lambda *a, **kw: MagicMock()  # type: ignore[method-assign]
+
+    configure_rate_limit(session, service="Test")
+
+    adapter = session.adapters["https://"]
+    for _ in range(10):
+        adapter.send(MagicMock())  # drain burst
+
+    start = time.monotonic()
+    for _ in range(5):
+        adapter.send(MagicMock())
+    elapsed = time.monotonic() - start
+
+    assert elapsed >= 0.35, f"expected throttling >= 0.35s, got {elapsed:.3f}s"
+
+
+def test_configure_rate_limit_shares_bucket_across_sessions(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("ATLASSIAN_REQUESTS_PER_SECOND", "5")
+
+    s1, s2 = Session(), Session()
+    for sess in (s1, s2):
+        for adapter in sess.adapters.values():
+            adapter.send = lambda *a, **kw: MagicMock()  # type: ignore[method-assign]
+
+    configure_rate_limit(s1, service="S1")
+    configure_rate_limit(s2, service="S2")
+
+    s1.adapters["https://"].send(MagicMock())
+    s1.adapters["https://"].send(MagicMock())
+    s2.adapters["https://"].send(MagicMock())
+    s2.adapters["https://"].send(MagicMock())
+    s2.adapters["https://"].send(MagicMock())
+
+    start = time.monotonic()
+    s1.adapters["https://"].send(MagicMock())
+    elapsed = time.monotonic() - start
+    assert elapsed >= 0.1

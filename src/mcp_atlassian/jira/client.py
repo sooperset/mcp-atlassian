@@ -15,7 +15,11 @@ from mcp_atlassian.utils.logging import (
     log_config_param,
     mask_sensitive,
 )
-from mcp_atlassian.utils.http import configure_retry
+from mcp_atlassian.utils.http import (
+    configure_concurrency,
+    configure_rate_limit,
+    configure_retry,
+)
 from mcp_atlassian.utils.oauth import configure_oauth_session
 from mcp_atlassian.utils.ssl import configure_ssl_verification
 
@@ -140,6 +144,8 @@ class JiraClient:
         # Apply retry/backoff to all mounted adapters (must run after SSL setup
         # so SSLIgnoreAdapter, if mounted, also picks up the retry policy).
         configure_retry(self.jira._session, service="Jira")
+        configure_concurrency(self.jira._session, service="Jira")
+        configure_rate_limit(self.jira._session, service="Jira")
 
         # Proxy configuration
         proxies = {}
