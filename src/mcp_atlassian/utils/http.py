@@ -17,7 +17,7 @@ import threading
 import time
 
 from requests import Session
-from requests.adapters import BaseAdapter
+from requests.adapters import BaseAdapter, HTTPAdapter
 from urllib3.util.retry import Retry
 
 logger = logging.getLogger("mcp-atlassian.http")
@@ -26,9 +26,7 @@ DEFAULT_RETRY_TOTAL = 5
 DEFAULT_RETRY_BACKOFF = 1.0
 DEFAULT_RETRY_STATUSES = (429, 502, 503, 504)
 _READ_METHODS = frozenset(["GET", "HEAD", "OPTIONS"])
-_ALL_METHODS = frozenset(
-    ["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"]
-)
+_ALL_METHODS = frozenset(["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"])
 _THROTTLED_ATTR = "_mcp_atlassian_throttled"
 _RATE_LIMITED_ATTR = "_mcp_atlassian_rate_limited"
 _CIRCUIT_BREAKER_ATTR = "_mcp_atlassian_circuit_breaker"
@@ -36,6 +34,7 @@ _CIRCUIT_BREAKER_ATTR = "_mcp_atlassian_circuit_breaker"
 
 class CircuitBreakerOpenError(Exception):
     """Raised by the circuit breaker when in the open state."""
+
 
 _concurrency_semaphore: threading.BoundedSemaphore | None = None
 _concurrency_semaphore_cap: int | None = None
@@ -145,13 +144,11 @@ def _float_env(name: str, default: float) -> float:
     try:
         return float(raw)
     except ValueError:
-        logger.warning(
-            "Invalid float for %s=%r; using default %s", name, raw, default
-        )
+        logger.warning("Invalid float for %s=%r; using default %s", name, raw, default)
         return default
 
 
-def _bool_env(name: str, default: bool) -> bool:
+def _bool_env(name: str, *, default: bool) -> bool:
     raw = os.getenv(name)
     if not raw:
         return default
@@ -177,7 +174,7 @@ def configure_retry(session: Session, *, service: str = "atlassian") -> None:
         return
 
     backoff = _float_env("ATLASSIAN_RETRY_BACKOFF", DEFAULT_RETRY_BACKOFF)
-    include_writes = _bool_env("ATLASSIAN_RETRY_INCLUDE_WRITES", False)
+    include_writes = _bool_env("ATLASSIAN_RETRY_INCLUDE_WRITES", default=False)
     methods = _ALL_METHODS if include_writes else _READ_METHODS
 
     retry = Retry(
@@ -196,7 +193,10 @@ def configure_retry(session: Session, *, service: str = "atlassian") -> None:
         return
 
     for adapter in session.adapters.values():
-        adapter.max_retries = retry
+        # session.adapters always contains HTTPAdapter instances; the abstract
+        # BaseAdapter doesn't expose max_retries so we narrow the type here.
+        if isinstance(adapter, HTTPAdapter):
+            adapter.max_retries = retry
 
     logger.debug(
         "%s: retry configured total=%d backoff=%.2fs statuses=%s writes=%s",
@@ -233,9 +233,7 @@ def _reset_concurrency_semaphore_for_tests() -> None:
         _concurrency_semaphore_cap = None
 
 
-def _wrap_adapter_send(
-    adapter: BaseAdapter, sem: threading.BoundedSemaphore
-) -> None:
+def _wrap_adapter_send(adapter: BaseAdapter, sem: threading.BoundedSemaphore) -> None:
     if getattr(adapter, _THROTTLED_ATTR, False):
         return
     original_send = adapter.send
@@ -372,9 +370,7 @@ def _wrap_adapter_circuit_breaker(
     setattr(adapter, _CIRCUIT_BREAKER_ATTR, True)
 
 
-def configure_circuit_breaker(
-    session: Session, *, service: str = "atlassian"
-) -> None:
+def configure_circuit_breaker(session: Session, *, service: str = "atlassian") -> None:
     """Trip a process-wide circuit breaker after N consecutive 429/503 responses.
 
     Disabled by default. When tripped, in-flight Sessions raise

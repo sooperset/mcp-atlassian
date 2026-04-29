@@ -48,12 +48,14 @@ def test_configure_retry_applies_to_all_adapters_with_defaults():
     configure_retry(session, service="Test")
 
     for adapter in session.adapters.values():
+        assert isinstance(adapter, HTTPAdapter)
         retry = adapter.max_retries
         assert isinstance(retry, Retry)
         assert retry.total == DEFAULT_RETRY_TOTAL
         assert retry.backoff_factor == DEFAULT_RETRY_BACKOFF
-        assert tuple(retry.status_forcelist) == DEFAULT_RETRY_STATUSES
+        assert tuple(retry.status_forcelist or ()) == DEFAULT_RETRY_STATUSES
         assert retry.respect_retry_after_header is True
+        assert retry.allowed_methods  # narrow Literal[False] away
         assert "GET" in retry.allowed_methods
         assert "POST" not in retry.allowed_methods
 
@@ -67,9 +69,12 @@ def test_configure_retry_respects_env_overrides(monkeypatch: pytest.MonkeyPatch)
     configure_retry(session, service="Test")
 
     adapter = next(iter(session.adapters.values()))
+    assert isinstance(adapter, HTTPAdapter)
     retry = adapter.max_retries
+    assert isinstance(retry, Retry)
     assert retry.total == 2
     assert retry.backoff_factor == 0.25
+    assert retry.allowed_methods  # narrow Literal[False] away
     assert "POST" in retry.allowed_methods
     assert "DELETE" in retry.allowed_methods
 
@@ -80,10 +85,14 @@ def test_configure_retry_disabled_when_total_le_zero(
     monkeypatch.setenv("ATLASSIAN_RETRY_TOTAL", "0")
 
     session = _new_session()
-    before = {prefix: adapter.max_retries for prefix, adapter in session.adapters.items()}
+    before = {}
+    for prefix, adapter in session.adapters.items():
+        assert isinstance(adapter, HTTPAdapter)
+        before[prefix] = adapter.max_retries
     configure_retry(session, service="Test")
 
     for prefix, adapter in session.adapters.items():
+        assert isinstance(adapter, HTTPAdapter)
         assert adapter.max_retries is before[prefix]
 
 
@@ -96,7 +105,10 @@ def test_configure_retry_invalid_env_falls_back_to_default(
     session = _new_session()
     configure_retry(session, service="Test")
 
-    retry = next(iter(session.adapters.values())).max_retries
+    adapter = next(iter(session.adapters.values()))
+    assert isinstance(adapter, HTTPAdapter)
+    retry = adapter.max_retries
+    assert isinstance(retry, Retry)
     assert retry.total == DEFAULT_RETRY_TOTAL
     assert retry.backoff_factor == DEFAULT_RETRY_BACKOFF
 
@@ -172,9 +184,7 @@ def test_configure_concurrency_caps_parallel_sends(monkeypatch: pytest.MonkeyPat
     configure_concurrency(session, service="Test")
 
     threads = [
-        threading.Thread(
-            target=lambda: session.adapters["https://"].send(MagicMock())
-        )
+        threading.Thread(target=lambda: session.adapters["https://"].send(MagicMock()))
         for _ in range(8)
     ]
     for t in threads:

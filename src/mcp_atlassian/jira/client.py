@@ -10,16 +10,16 @@ from requests.exceptions import ConnectionError as RequestsConnectionError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.preprocessing import JiraPreprocessor
-from mcp_atlassian.utils.logging import (
-    get_masked_session_headers,
-    log_config_param,
-    mask_sensitive,
-)
 from mcp_atlassian.utils.http import (
     configure_circuit_breaker,
     configure_concurrency,
     configure_rate_limit,
     configure_retry,
+)
+from mcp_atlassian.utils.logging import (
+    get_masked_session_headers,
+    log_config_param,
+    mask_sensitive,
 )
 from mcp_atlassian.utils.oauth import configure_oauth_session
 from mcp_atlassian.utils.ssl import configure_ssl_verification
