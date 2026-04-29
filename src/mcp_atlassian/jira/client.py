@@ -10,6 +10,12 @@ from requests.exceptions import ConnectionError as RequestsConnectionError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.preprocessing import JiraPreprocessor
+from mcp_atlassian.utils.http import (
+    configure_circuit_breaker,
+    configure_concurrency,
+    configure_rate_limit,
+    configure_retry,
+)
 from mcp_atlassian.utils.logging import (
     get_masked_session_headers,
     log_config_param,
@@ -135,6 +141,13 @@ class JiraClient:
             client_key=self.config.client_key,
             client_key_password=self.config.client_key_password,
         )
+
+        # Apply retry/backoff to all mounted adapters (must run after SSL setup
+        # so SSLIgnoreAdapter, if mounted, also picks up the retry policy).
+        configure_retry(self.jira._session, service="Jira")
+        configure_concurrency(self.jira._session, service="Jira")
+        configure_rate_limit(self.jira._session, service="Jira")
+        configure_circuit_breaker(self.jira._session, service="Jira")
 
         # Proxy configuration
         proxies = {}

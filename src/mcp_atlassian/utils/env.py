@@ -1,6 +1,9 @@
 """Environment variable utility functions for MCP Atlassian."""
 
+import logging
 import os
+
+logger = logging.getLogger("mcp-atlassian.env")
 
 
 def is_env_truthy(env_var_name: str, default: str = "") -> bool:
@@ -49,6 +52,56 @@ def is_env_ssl_verify(env_var_name: str, default: str = "true") -> bool:
         True unless explicitly set to false values
     """
     return os.getenv(env_var_name, default).lower() not in ("false", "0", "no")
+
+
+def get_int_env(env_var_name: str, default: int) -> int:
+    """Read an environment variable as an integer, falling back to `default`.
+
+    Logs a warning and falls back to `default` if the variable is set to a
+    non-integer value.
+
+    Args:
+        env_var_name: Name of the environment variable to read
+        default: Value to return when the variable is unset or unparseable
+
+    Returns:
+        Parsed integer value, or `default`
+    """
+    raw = os.getenv(env_var_name)
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid int for %s=%r; using default %d", env_var_name, raw, default
+        )
+        return default
+
+
+def get_float_env(env_var_name: str, default: float) -> float:
+    """Read an environment variable as a float, falling back to `default`.
+
+    Logs a warning and falls back to `default` if the variable is set to a
+    non-float value.
+
+    Args:
+        env_var_name: Name of the environment variable to read
+        default: Value to return when the variable is unset or unparseable
+
+    Returns:
+        Parsed float value, or `default`
+    """
+    raw = os.getenv(env_var_name)
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid float for %s=%r; using default %s", env_var_name, raw, default
+        )
+        return default
 
 
 def get_custom_headers(env_var_name: str) -> dict[str, str]:

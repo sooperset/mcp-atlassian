@@ -270,7 +270,9 @@ class IssuesMixin(
                 logger.error(error_msg)
                 raise ValueError(error_msg) from http_err
             if status_code == 429:
-                error_msg = "Jira API rate limit hit (429). Retry after a short delay."
+                from mcp_atlassian.utils.http import format_rate_limit_error
+
+                error_msg = format_rate_limit_error(http_err, service="Jira")
                 logger.error(error_msg)
                 raise ValueError(error_msg) from http_err
             else:
