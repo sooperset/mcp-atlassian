@@ -16,6 +16,7 @@ from mcp_atlassian.utils.logging import (
     mask_sensitive,
 )
 from mcp_atlassian.utils.http import (
+    configure_circuit_breaker,
     configure_concurrency,
     configure_rate_limit,
     configure_retry,
@@ -146,6 +147,7 @@ class JiraClient:
         configure_retry(self.jira._session, service="Jira")
         configure_concurrency(self.jira._session, service="Jira")
         configure_rate_limit(self.jira._session, service="Jira")
+        configure_circuit_breaker(self.jira._session, service="Jira")
 
         # Proxy configuration
         proxies = {}

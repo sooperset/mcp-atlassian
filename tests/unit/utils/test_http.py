@@ -13,8 +13,11 @@ from mcp_atlassian.utils.http import (
     DEFAULT_RETRY_BACKOFF,
     DEFAULT_RETRY_STATUSES,
     DEFAULT_RETRY_TOTAL,
+    CircuitBreakerOpenError,
+    _reset_circuit_breaker_for_tests,
     _reset_concurrency_semaphore_for_tests,
     _reset_rate_limit_bucket_for_tests,
+    configure_circuit_breaker,
     configure_concurrency,
     configure_rate_limit,
     configure_retry,
@@ -26,9 +29,11 @@ from mcp_atlassian.utils.http import (
 def _reset_state():
     _reset_concurrency_semaphore_for_tests()
     _reset_rate_limit_bucket_for_tests()
+    _reset_circuit_breaker_for_tests()
     yield
     _reset_concurrency_semaphore_for_tests()
     _reset_rate_limit_bucket_for_tests()
+    _reset_circuit_breaker_for_tests()
 
 
 def _new_session() -> Session:
@@ -291,3 +296,78 @@ def test_configure_rate_limit_shares_bucket_across_sessions(
     s1.adapters["https://"].send(MagicMock())
     elapsed = time.monotonic() - start
     assert elapsed >= 0.1
+
+
+def _build_circuit_session(status_codes_iter):
+    session = Session()
+    iterator = iter(status_codes_iter)
+
+    def fake_send(*args, **kwargs):
+        resp = MagicMock()
+        resp.status_code = next(iterator)
+        return resp
+
+    for adapter in session.adapters.values():
+        adapter.send = fake_send  # type: ignore[method-assign]
+    return session
+
+
+def test_circuit_breaker_disabled_by_default():
+    from mcp_atlassian.utils.http import _CIRCUIT_BREAKER_ATTR
+
+    session = Session()
+    configure_circuit_breaker(session, service="Test")
+    for adapter in session.adapters.values():
+        assert not getattr(adapter, _CIRCUIT_BREAKER_ATTR, False)
+
+
+def test_circuit_breaker_trips_after_threshold(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("ATLASSIAN_CIRCUIT_BREAKER_THRESHOLD", "3")
+    monkeypatch.setenv("ATLASSIAN_CIRCUIT_BREAKER_COOLDOWN", "60")
+
+    session = _build_circuit_session([429, 429, 429, 429])
+    configure_circuit_breaker(session, service="Test")
+
+    adapter = session.adapters["https://"]
+    for _ in range(3):
+        resp = adapter.send(MagicMock())
+        assert resp.status_code == 429
+
+    with pytest.raises(CircuitBreakerOpenError):
+        adapter.send(MagicMock())
+
+
+def test_circuit_breaker_resets_on_success(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("ATLASSIAN_CIRCUIT_BREAKER_THRESHOLD", "3")
+    monkeypatch.setenv("ATLASSIAN_CIRCUIT_BREAKER_COOLDOWN", "60")
+
+    session = _build_circuit_session([429, 429, 200, 429, 429])
+    configure_circuit_breaker(session, service="Test")
+
+    adapter = session.adapters["https://"]
+    for _ in range(5):
+        adapter.send(MagicMock())  # must not raise
+
+    from mcp_atlassian.utils.http import _circuit_breaker
+
+    assert _circuit_breaker is not None
+    assert _circuit_breaker.failures == 2  # last two 429s, no trip
+
+
+def test_circuit_breaker_cooldown_then_reset(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("ATLASSIAN_CIRCUIT_BREAKER_THRESHOLD", "2")
+    monkeypatch.setenv("ATLASSIAN_CIRCUIT_BREAKER_COOLDOWN", "0.1")
+
+    session = _build_circuit_session([429, 429, 200])
+    configure_circuit_breaker(session, service="Test")
+    adapter = session.adapters["https://"]
+
+    adapter.send(MagicMock())
+    adapter.send(MagicMock())  # trips
+
+    with pytest.raises(CircuitBreakerOpenError):
+        adapter.send(MagicMock())
+
+    time.sleep(0.15)
+    resp = adapter.send(MagicMock())
+    assert resp.status_code == 200
