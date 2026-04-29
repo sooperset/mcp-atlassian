@@ -9,6 +9,7 @@ from requests.exceptions import ConnectionError as RequestsConnectionError
 
 from ..exceptions import MCPAtlassianAuthenticationError
 from ..utils.logging import get_masked_session_headers, log_config_param, mask_sensitive
+from ..utils.http import configure_retry
 from ..utils.oauth import configure_oauth_session
 from ..utils.ssl import configure_ssl_verification
 from .config import ConfluenceConfig
@@ -122,6 +123,10 @@ class ConfluenceClient:
             client_key=self.config.client_key,
             client_key_password=self.config.client_key_password,
         )
+
+        # Apply retry/backoff to all mounted adapters (must run after SSL setup
+        # so SSLIgnoreAdapter, if mounted, also picks up the retry policy).
+        configure_retry(self.confluence._session, service="Confluence")
 
         # Proxy configuration
         proxies = {}
