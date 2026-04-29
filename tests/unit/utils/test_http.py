@@ -1,5 +1,7 @@
 """Tests for the shared HTTP retry utilities."""
 
+from unittest.mock import MagicMock
+
 import pytest
 from requests.adapters import HTTPAdapter
 from requests.sessions import Session
@@ -10,6 +12,7 @@ from mcp_atlassian.utils.http import (
     DEFAULT_RETRY_STATUSES,
     DEFAULT_RETRY_TOTAL,
     configure_retry,
+    format_rate_limit_error,
 )
 
 
@@ -88,3 +91,28 @@ def test_configure_retry_patches_custom_adapter_in_place():
 
     assert session.adapters["https://example.com"] is custom
     assert isinstance(custom.max_retries, Retry)
+
+
+def test_format_rate_limit_error_includes_retry_after():
+    http_err = MagicMock()
+    http_err.response.headers = {"Retry-After": "42"}
+    msg = format_rate_limit_error(http_err, service="Jira")
+    assert "Jira" in msg
+    assert "42" in msg
+    assert "Retry-After" in msg
+
+
+def test_format_rate_limit_error_handles_missing_header():
+    http_err = MagicMock()
+    http_err.response.headers = {}
+    msg = format_rate_limit_error(http_err, service="Confluence")
+    assert "Confluence" in msg
+    assert "429" in msg
+    assert "back off" in msg.lower()
+
+
+def test_format_rate_limit_error_handles_no_response():
+    http_err = MagicMock()
+    http_err.response = None
+    msg = format_rate_limit_error(http_err, service="Jira")
+    assert "429" in msg

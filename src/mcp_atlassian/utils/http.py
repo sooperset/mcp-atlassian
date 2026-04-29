@@ -102,3 +102,24 @@ def configure_retry(session: Session, *, service: str = "atlassian") -> None:
         DEFAULT_RETRY_STATUSES,
         include_writes,
     )
+
+
+def format_rate_limit_error(http_err: object, *, service: str) -> str:
+    """Build a 429 error string that includes Retry-After when the server set it.
+
+    Surfaces the structured backoff hint to the LLM so the agent can pause
+    instead of immediately retrying.
+    """
+    response = getattr(http_err, "response", None)
+    headers = getattr(response, "headers", None) or {}
+    retry_after = headers.get("Retry-After") or headers.get("retry-after")
+    if retry_after:
+        return (
+            f"{service} API rate limit hit (429). "
+            f"Server requested Retry-After: {retry_after} seconds. "
+            "Pause before retrying."
+        )
+    return (
+        f"{service} API rate limit hit (429). "
+        "No Retry-After header provided; back off and retry."
+    )
