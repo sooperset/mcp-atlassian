@@ -13,6 +13,7 @@ from ..models.confluence import (
 )
 from ..models.confluence.common import ConfluenceUser
 from ..utils.decorators import handle_atlassian_api_errors
+from ..utils.pagination import clamp_limit
 from .client import ConfluenceClient
 from .utils import quote_cql_identifier_if_needed
 
@@ -42,6 +43,8 @@ class SearchMixin(ConfluenceClient):
             MCPAtlassianAuthenticationError: If authentication fails with the
                 Confluence API (401/403)
         """
+        limit = clamp_limit(limit, context="confluence.search")
+
         # Use spaces_filter parameter if provided, otherwise fall back to config
         filter_to_use = spaces_filter or self.config.spaces_filter
 
