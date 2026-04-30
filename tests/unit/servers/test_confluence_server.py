@@ -201,6 +201,8 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_page_children,
         get_page_images,
         get_space_page_tree,
+        get_spaces,
+        get_user_contributed_spaces,
         search,
         search_user,
         update_page,
@@ -226,6 +228,8 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     # Create and configure the sub-MCP for Confluence tools
     confluence_sub_mcp = FastMCP(name="TestConfluenceSubMCP")
     confluence_sub_mcp.add_tool(search)
+    confluence_sub_mcp.add_tool(get_spaces)
+    confluence_sub_mcp.add_tool(get_user_contributed_spaces)
     confluence_sub_mcp.add_tool(get_page)
     confluence_sub_mcp.add_tool(get_page_children)
     confluence_sub_mcp.add_tool(get_space_page_tree)
@@ -270,6 +274,8 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         get_page_children,
         get_page_images,
         get_space_page_tree,
+        get_spaces,
+        get_user_contributed_spaces,
         search,
         search_user,
         update_page,
@@ -297,6 +303,8 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     # Create and configure the sub-MCP for Confluence tools
     confluence_sub_mcp = FastMCP(name="NoFetcherTestConfluenceSubMCP")
     confluence_sub_mcp.add_tool(search)
+    confluence_sub_mcp.add_tool(get_spaces)
+    confluence_sub_mcp.add_tool(get_user_contributed_spaces)
     confluence_sub_mcp.add_tool(get_page)
     confluence_sub_mcp.add_tool(get_page_children)
     confluence_sub_mcp.add_tool(get_space_page_tree)
@@ -963,3 +971,168 @@ async def test_get_page_images_fetch_failure(client, mock_confluence_fetcher):
     summary = json.loads(response.content[0].text)
     assert summary["downloaded"] == 0
     assert len(summary["failed"]) == 1
+
+
+def test_simplify_spaces_response_extracts_relevant_fields():
+    """The helper returns pagination + a per-space subset."""
+    from src.mcp_atlassian.servers.confluence import _simplify_spaces_response
+
+    raw = {
+        "results": [
+            {
+                "key": "NH",
+                "name": "Nighthawk / NPA",
+                "type": "global",
+                "status": "current",
+                "description": {"plain": {"value": "NPA team"}},
+                "_links": {"self": "https://example.com/api/space/NH"},
+            },
+            {
+                "key": "~944777288",
+                "name": "Personal space",
+                "type": "personal",
+                "status": "current",
+                "description": {"plain": {"value": ""}},
+                "_links": {},
+            },
+        ],
+        "size": 2,
+        "limit": 25,
+        "start": 0,
+        "_links": {"base": "https://example.com/wiki"},
+    }
+
+    result = _simplify_spaces_response(raw)
+
+    assert result["start"] == 0
+    assert result["limit"] == 25
+    assert result["size"] == 2
+    assert len(result["spaces"]) == 2
+    assert result["spaces"][0] == {
+        "key": "NH",
+        "name": "Nighthawk / NPA",
+        "type": "global",
+        "status": "current",
+        "description": "NPA team",
+    }
+    assert result["spaces"][1]["key"] == "~944777288"
+    assert result["spaces"][1]["description"] == ""
+
+
+def test_simplify_spaces_response_handles_missing_fields():
+    """Missing optional fields should not raise; defaults are empty strings."""
+    from src.mcp_atlassian.servers.confluence import _simplify_spaces_response
+
+    raw = {
+        "results": [{"key": "X", "name": "X-space"}],
+        "size": 1,
+        "limit": 25,
+        "start": 0,
+    }
+    result = _simplify_spaces_response(raw)
+
+    assert result["spaces"][0] == {
+        "key": "X",
+        "name": "X-space",
+        "type": "",
+        "status": "",
+        "description": "",
+    }
+
+
+def test_simplify_spaces_response_empty_results():
+    """Empty results list is handled cleanly."""
+    from src.mcp_atlassian.servers.confluence import _simplify_spaces_response
+
+    raw = {"results": [], "size": 0, "limit": 25, "start": 0}
+    result = _simplify_spaces_response(raw)
+
+    assert result == {"start": 0, "limit": 25, "size": 0, "spaces": []}
+
+
+@pytest.mark.anyio
+async def test_get_spaces_default_pagination(client, mock_confluence_fetcher):
+    """confluence_get_spaces uses defaults start=0, limit=50 and returns simplified shape."""
+    mock_confluence_fetcher.get_spaces.return_value = {
+        "results": [
+            {
+                "key": "NH",
+                "name": "Nighthawk / NPA",
+                "type": "global",
+                "status": "current",
+                "description": {"plain": {"value": "NPA team"}},
+            }
+        ],
+        "size": 1,
+        "limit": 50,
+        "start": 0,
+    }
+
+    response = await client.call_tool("confluence_get_spaces", {})
+
+    mock_confluence_fetcher.get_spaces.assert_called_once_with(start=0, limit=50)
+    result_data = json.loads(response.content[0].text)
+    assert result_data["start"] == 0
+    assert result_data["limit"] == 50
+    assert result_data["size"] == 1
+    assert result_data["spaces"][0]["key"] == "NH"
+    assert result_data["spaces"][0]["description"] == "NPA team"
+
+
+@pytest.mark.anyio
+async def test_get_spaces_explicit_pagination(client, mock_confluence_fetcher):
+    """confluence_get_spaces forwards start and limit to the fetcher."""
+    mock_confluence_fetcher.get_spaces.return_value = {
+        "results": [],
+        "size": 0,
+        "limit": 10,
+        "start": 100,
+    }
+
+    response = await client.call_tool(
+        "confluence_get_spaces", {"start": 100, "limit": 10}
+    )
+
+    mock_confluence_fetcher.get_spaces.assert_called_once_with(start=100, limit=10)
+    result_data = json.loads(response.content[0].text)
+    assert result_data["spaces"] == []
+    assert result_data["start"] == 100
+
+
+@pytest.mark.anyio
+async def test_get_user_contributed_spaces_default_limit(
+    client, mock_confluence_fetcher
+):
+    """Tool forwards default limit and returns the deduplicated dict as JSON."""
+    mock_confluence_fetcher.get_user_contributed_spaces.return_value = {
+        "NH": {"key": "NH", "name": "Nighthawk / NPA"},
+        "CSME": {"key": "CSME", "name": "Customer Success / NPI"},
+    }
+
+    response = await client.call_tool("confluence_get_user_contributed_spaces", {})
+
+    mock_confluence_fetcher.get_user_contributed_spaces.assert_called_once_with(
+        limit=100
+    )
+    result_data = json.loads(response.content[0].text)
+    assert "NH" in result_data
+    assert "CSME" in result_data
+    assert result_data["NH"]["name"] == "Nighthawk / NPA"
+
+
+@pytest.mark.anyio
+async def test_get_user_contributed_spaces_explicit_limit(
+    client, mock_confluence_fetcher
+):
+    """Tool forwards explicit limit value."""
+    mock_confluence_fetcher.get_user_contributed_spaces.return_value = {}
+
+    response = await client.call_tool(
+        "confluence_get_user_contributed_spaces", {"limit": 25}
+    )
+
+    mock_confluence_fetcher.get_user_contributed_spaces.assert_called_once_with(
+        limit=25
+    )
+    result_data = json.loads(response.content[0].text)
+    assert result_data == {}
