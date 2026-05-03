@@ -269,9 +269,11 @@ class JiraPreprocessor(BasePreprocessor):
         # Text formatting (bold, italic)
         output = re.sub(
             r"([*_])(.*?)\1",
-            lambda match: ("**" if match.group(1) == "*" else "*")
-            + match.group(2)
-            + ("**" if match.group(1) == "*" else "*"),
+            lambda match: (
+                ("**" if match.group(1) == "*" else "*")
+                + match.group(2)
+                + ("**" if match.group(1) == "*" else "*")
+            ),
             output,
         )
 
@@ -464,9 +466,7 @@ class JiraPreprocessor(BasePreprocessor):
         # Headers with = or - underlines
         output = re.sub(
             r"^(.*?)\n([=-])+$",
-            lambda match: (
-                f"h{1 if match.group(2)[0] == '=' else 2}. {match.group(1)}"
-            ),
+            lambda match: f"h{1 if match.group(2)[0] == '=' else 2}. {match.group(1)}",
             output,
             flags=re.MULTILINE,
         )
@@ -487,9 +487,11 @@ class JiraPreprocessor(BasePreprocessor):
                 return line
             return re.sub(
                 r"([*_]+)(.*?)\1",
-                lambda m: ("_" if len(m.group(1)) == 1 else "*")
-                + m.group(2)
-                + ("_" if len(m.group(1)) == 1 else "*"),
+                lambda m: (
+                    ("_" if len(m.group(1)) == 1 else "*")
+                    + m.group(2)
+                    + ("_" if len(m.group(1)) == 1 else "*")
+                ),
                 line,
             )
 

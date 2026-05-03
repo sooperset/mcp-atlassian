@@ -1737,3 +1737,125 @@ class TestIssuesMixin:
         assert isinstance(result, JiraIssue)
         assert result.key == "DEV-123"
         assert result.summary == "Development issue"
+
+
+class TestMoveIssue:
+    """Tests for IssuesMixin.move_issue."""
+
+    @pytest.fixture
+    def cloud_mixin(self, jira_fetcher: JiraFetcher) -> IssuesMixin:
+        """IssuesMixin wired to a Cloud instance."""
+        mixin = jira_fetcher
+        mixin.config.url = "https://test.atlassian.net"
+        return mixin
+
+    @pytest.fixture
+    def server_mixin(self, jira_fetcher: JiraFetcher) -> IssuesMixin:
+        """IssuesMixin wired to a Server/DC instance."""
+        mixin = jira_fetcher
+        mixin.config.url = "https://jira.example.com"
+        return mixin
+
+    def _task_response(self, status: str, new_key: str | None = None) -> dict:
+        result: dict = {}
+        if new_key:
+            result = {"entities": [{"oldIssueKey": "SRC-1", "newIssueKey": new_key}]}
+        return {"status": status, "result": result}
+
+    def test_move_issue_success(self, cloud_mixin: IssuesMixin, make_issue_data):
+        """Successful move returns JiraIssue with new key."""
+        cloud_mixin._post_api3 = MagicMock(return_value={"taskId": "task-1"})
+        cloud_mixin.jira.resource_url = MagicMock(
+            return_value="https://api/task/task-1"
+        )
+        cloud_mixin.jira.get = MagicMock(
+            return_value=self._task_response("COMPLETE", "DST-99")
+        )
+        cloud_mixin.jira.get_issue = MagicMock(
+            return_value=make_issue_data(key="DST-99", summary="Moved")
+        )
+
+        result = cloud_mixin.move_issue("SRC-1", "DST")
+
+        assert result.key == "DST-99"
+        cloud_mixin._post_api3.assert_called_once()
+        cloud_mixin.jira.get_issue.assert_called_once_with("DST-99")
+
+    def test_move_issue_not_cloud(self, server_mixin: IssuesMixin):
+        """Raises NotImplementedError on Server/DC."""
+        with pytest.raises(NotImplementedError, match="Jira Cloud"):
+            server_mixin.move_issue("SRC-1", "DST")
+
+    def test_move_issue_empty_key(self, cloud_mixin: IssuesMixin):
+        """Raises ValueError when issue_key is empty."""
+        with pytest.raises(ValueError, match="Issue key is required"):
+            cloud_mixin.move_issue("", "DST")
+
+    def test_move_issue_empty_target(self, cloud_mixin: IssuesMixin):
+        """Raises ValueError when target_project_key is empty."""
+        with pytest.raises(ValueError, match="Target project key is required"):
+            cloud_mixin.move_issue("SRC-1", "")
+
+    def test_move_issue_task_failed(self, cloud_mixin: IssuesMixin):
+        """Raises ValueError when the async task reports FAILED."""
+        cloud_mixin._post_api3 = MagicMock(return_value={"taskId": "task-1"})
+        cloud_mixin.jira.resource_url = MagicMock(
+            return_value="https://api/task/task-1"
+        )
+        cloud_mixin.jira.get = MagicMock(
+            return_value={"status": "FAILED", "errorMessages": ["No permission"]}
+        )
+
+        with pytest.raises(ValueError, match="Bulk move task failed"):
+            cloud_mixin.move_issue("SRC-1", "DST")
+
+    def test_move_issue_task_cancelled(self, cloud_mixin: IssuesMixin):
+        """Raises ValueError when the async task is cancelled."""
+        cloud_mixin._post_api3 = MagicMock(return_value={"taskId": "task-1"})
+        cloud_mixin.jira.resource_url = MagicMock(
+            return_value="https://api/task/task-1"
+        )
+        cloud_mixin.jira.get = MagicMock(
+            return_value={"status": "CANCELLED", "result": {}}
+        )
+
+        with pytest.raises(ValueError, match="cancelled"):
+            cloud_mixin.move_issue("SRC-1", "DST")
+
+    def test_move_issue_timeout(self, cloud_mixin: IssuesMixin):
+        """Raises ValueError after exhausting all polling attempts."""
+        cloud_mixin._post_api3 = MagicMock(return_value={"taskId": "task-1"})
+        cloud_mixin.jira.resource_url = MagicMock(
+            return_value="https://api/task/task-1"
+        )
+        cloud_mixin.jira.get = MagicMock(return_value={"status": "IN_PROGRESS"})
+
+        with patch("mcp_atlassian.jira.issues.time.sleep"):
+            with pytest.raises(ValueError, match="timed out"):
+                cloud_mixin.move_issue("SRC-1", "DST")
+
+    def test_move_issue_key_not_in_response_warns(
+        self,
+        cloud_mixin: IssuesMixin,
+        make_issue_data,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """Logs a warning and falls back to original key when new key absent."""
+        cloud_mixin._post_api3 = MagicMock(return_value={"taskId": "task-1"})
+        cloud_mixin.jira.resource_url = MagicMock(
+            return_value="https://api/task/task-1"
+        )
+        cloud_mixin.jira.get = MagicMock(
+            return_value={"status": "COMPLETE", "result": {}}
+        )
+        cloud_mixin.jira.get_issue = MagicMock(
+            return_value=make_issue_data(key="SRC-1")
+        )
+
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="mcp_atlassian.jira.issues"):
+            result = cloud_mixin.move_issue("SRC-1", "DST")
+
+        assert result.key == "SRC-1"
+        assert any("new issue key not found" in r.message for r in caplog.records)

@@ -1,5 +1,6 @@
 """Jira FastMCP server instance and tool definitions."""
 
+import asyncio
 import base64
 import json
 import logging
@@ -1722,6 +1723,76 @@ async def delete_issue(
     result = {"message": f"Issue {issue_key} has been deleted successfully."}
     # The underlying method raises on failure, so if we reach here, it's success.
     return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_issues"},
+    annotations={"title": "Move Issue to Project", "destructiveHint": True},
+)
+@check_write_access
+async def move_issue(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key to move (e.g., 'PROJ-123')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+    target_project_key: Annotated[
+        str,
+        Field(
+            description=(
+                "Key of the target project (e.g., 'OTHERPROJ'). "
+                "The issue will receive a new key in the target project."
+            )
+        ),
+    ],
+) -> str:
+    """Move a Jira issue to a different project (Jira Cloud only).
+
+    Uses Jira Cloud's bulk move API to perform a cross-project move.
+    The issue is assigned a new key in the target project
+    (e.g., OLDPROJ-123 becomes NEWPROJ-456).
+
+    The move is processed asynchronously on Jira's side; this tool polls
+    until confirmed or times out after 30 seconds.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key of the issue to move.
+        target_project_key: Key of the target project.
+
+    Returns:
+        JSON string representing the moved issue with its new key and project.
+
+    Raises:
+        ValueError: If in read-only mode, Jira client unavailable, or the move fails.
+        NotImplementedError: If not running on Jira Cloud.
+    """
+    jira = await get_jira_fetcher(ctx)
+
+    try:
+        result = await asyncio.to_thread(jira.move_issue, issue_key, target_project_key)
+        return json.dumps(
+            {
+                "message": (
+                    f"Issue moved successfully from {issue_key} "
+                    f"to project {target_project_key}"
+                ),
+                "issue": result.to_simplified_dict(),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except (NotImplementedError, ValueError):
+        raise
+    except Exception as e:
+        logger.error(
+            f"Error moving issue {issue_key} to project {target_project_key}: {str(e)}",
+            exc_info=True,
+        )
+        raise ValueError(f"Failed to move issue {issue_key}: {str(e)}")
 
 
 @jira_mcp.tool(
