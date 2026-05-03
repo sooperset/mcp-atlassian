@@ -64,6 +64,17 @@ class TestJiraDCBehavior:
             for project in projects
         )
 
+    def test_move_issue_not_supported(
+        self,
+        jira_fetcher: JiraFetcher,
+        dc_instance: DCInstanceInfo,
+    ) -> None:
+        with pytest.raises(NotImplementedError, match="Jira Cloud"):
+            jira_fetcher.move_issue(
+                dc_instance.test_issue_key,
+                dc_instance.project_key,
+            )
+
 
 class TestJiraDCEpicOperations:
     """Epic creation with DC custom fields."""

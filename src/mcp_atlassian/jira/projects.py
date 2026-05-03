@@ -330,6 +330,10 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             # The new createmeta endpoint returns paginated "values" array
             issue_types = meta.get("values", [])
             if not issue_types:
+                # atlassian-python-api's issue_createmeta_issuetypes endpoint
+                # returns a paginated "issueTypes" array on Jira Cloud.
+                issue_types = meta.get("issueTypes", [])
+            if not issue_types:
                 # Fallback for older response format
                 projects = meta.get("projects", [])
                 if projects and "issuetypes" in projects[0]:
