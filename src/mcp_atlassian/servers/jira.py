@@ -472,11 +472,16 @@ async def get_available_labels(
     ] = None,
     start_at: Annotated[
         int,
-        Field(description="Index of the first label to return (for pagination).", default=0),
+        Field(
+            description="Index of the first label to return (for pagination).",
+            default=0,
+        ),
     ] = 0,
     max_results: Annotated[
         int,
-        Field(description="Maximum number of labels to return (default 50).", default=50),
+        Field(
+            description="Maximum number of labels to return (default 50).", default=50
+        ),
     ] = 50,
 ) -> str:
     """Get available labels from the Jira instance.

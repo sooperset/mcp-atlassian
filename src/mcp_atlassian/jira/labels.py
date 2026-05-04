@@ -31,9 +31,7 @@ class LabelsMixin(JiraClient):
         labels: list[str] = result.get("fields", {}).get("labels", [])
         return {"issue_key": issue_key, "labels": labels}
 
-    def add_issue_labels(
-        self, issue_key: str, labels: list[str]
-    ) -> dict[str, Any]:
+    def add_issue_labels(self, issue_key: str, labels: list[str]) -> dict[str, Any]:
         """Add labels to an issue without removing existing ones.
 
         Args:
@@ -52,9 +50,7 @@ class LabelsMixin(JiraClient):
         )
         return {"issue_key": issue_key, "labels": new_labels, "added": added}
 
-    def remove_issue_labels(
-        self, issue_key: str, labels: list[str]
-    ) -> dict[str, Any]:
+    def remove_issue_labels(self, issue_key: str, labels: list[str]) -> dict[str, Any]:
         """Remove specific labels from an issue.
 
         Args:
@@ -83,9 +79,7 @@ class LabelsMixin(JiraClient):
             result["not_found"] = not_found
         return result
 
-    def set_issue_labels(
-        self, issue_key: str, labels: list[str]
-    ) -> dict[str, Any]:
+    def set_issue_labels(self, issue_key: str, labels: list[str]) -> dict[str, Any]:
         """Replace all labels on an issue.
 
         Args:

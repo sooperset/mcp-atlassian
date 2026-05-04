@@ -81,9 +81,7 @@ class TestAddIssueLabels:
             ["frontend", "backend"]
         )
 
-        result = labels_mixin.add_issue_labels(
-            "TEST-123", ["frontend", "urgent"]
-        )
+        result = labels_mixin.add_issue_labels("TEST-123", ["frontend", "urgent"])
 
         assert result["added"] == ["urgent"]
 
@@ -111,9 +109,7 @@ class TestRemoveIssueLabels:
         assert result["removed"] == ["urgent"]
 
     def test_calls_update_with_remaining_labels(self, labels_mixin):
-        labels_mixin.jira.get_issue.return_value = _issue_with_labels(
-            ["a", "b", "c"]
-        )
+        labels_mixin.jira.get_issue.return_value = _issue_with_labels(["a", "b", "c"])
 
         labels_mixin.remove_issue_labels("TEST-123", ["b"])
 
@@ -139,9 +135,7 @@ class TestRemoveIssueLabels:
         assert "not_found" not in result
 
     def test_remove_all_labels(self, labels_mixin):
-        labels_mixin.jira.get_issue.return_value = _issue_with_labels(
-            ["a", "b"]
-        )
+        labels_mixin.jira.get_issue.return_value = _issue_with_labels(["a", "b"])
 
         result = labels_mixin.remove_issue_labels("TEST-123", ["a", "b"])
 
