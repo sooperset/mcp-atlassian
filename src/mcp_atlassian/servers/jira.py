@@ -292,6 +292,215 @@ async def remove_watcher(
 
 
 @jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_labels"},
+    annotations={"title": "Get Issue Labels", "readOnlyHint": True},
+)
+async def get_issue_labels(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+) -> str:
+    """Get the labels applied to a Jira issue.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+
+    Returns:
+        JSON string with issue_key and list of label strings.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_issue_labels(issue_key)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_labels"},
+    annotations={"title": "Add Issue Labels", "readOnlyHint": False},
+)
+@check_write_access
+async def add_issue_labels(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+    labels: Annotated[
+        str,
+        Field(
+            description=(
+                "Comma-separated list of labels to add (e.g., 'frontend,urgent')."
+                " Existing labels are preserved."
+            ),
+        ),
+    ],
+) -> str:
+    """Add one or more labels to a Jira issue without removing existing labels.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+        labels: Comma-separated label strings to add.
+
+    Returns:
+        JSON string with updated labels list and which labels were added.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    jira = await get_jira_fetcher(ctx)
+    label_list = [lbl.strip() for lbl in labels.split(",") if lbl.strip()]
+    if not label_list:
+        raise ValueError("At least one label must be provided")
+    result = jira.add_issue_labels(issue_key, label_list)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_labels"},
+    annotations={"title": "Remove Issue Labels", "readOnlyHint": False},
+)
+@check_write_access
+async def remove_issue_labels(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+    labels: Annotated[
+        str,
+        Field(
+            description=(
+                "Comma-separated list of labels to remove (e.g., 'frontend,urgent')."
+                " Labels not present on the issue are reported but not treated as errors."
+            ),
+        ),
+    ],
+) -> str:
+    """Remove one or more labels from a Jira issue.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+        labels: Comma-separated label strings to remove.
+
+    Returns:
+        JSON string with updated labels list, removed labels, and any labels
+        that were not present on the issue.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    jira = await get_jira_fetcher(ctx)
+    label_list = [lbl.strip() for lbl in labels.split(",") if lbl.strip()]
+    if not label_list:
+        raise ValueError("At least one label must be provided")
+    result = jira.remove_issue_labels(issue_key, label_list)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_labels"},
+    annotations={"title": "Set Issue Labels", "readOnlyHint": False},
+)
+@check_write_access
+async def set_issue_labels(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+    labels: Annotated[
+        str,
+        Field(
+            description=(
+                "Comma-separated list of labels to set (e.g., 'frontend,urgent')."
+                " Replaces ALL existing labels. Pass an empty string to clear all labels."
+            ),
+        ),
+    ],
+) -> str:
+    """Replace all labels on a Jira issue with the provided set.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+        labels: Comma-separated label strings (replaces existing labels entirely).
+                Pass an empty string to clear all labels.
+
+    Returns:
+        JSON string with issue_key and the new labels list.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    jira = await get_jira_fetcher(ctx)
+    label_list = [lbl.strip() for lbl in labels.split(",") if lbl.strip()]
+    result = jira.set_issue_labels(issue_key, label_list)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_labels"},
+    annotations={"title": "Get Available Labels", "readOnlyHint": True},
+)
+async def get_available_labels(
+    ctx: Context,
+    query: Annotated[
+        str | None,
+        Field(
+            description="Optional prefix string to filter labels by name.",
+            default=None,
+        ),
+    ] = None,
+    start_at: Annotated[
+        int,
+        Field(description="Index of the first label to return (for pagination).", default=0),
+    ] = 0,
+    max_results: Annotated[
+        int,
+        Field(description="Maximum number of labels to return (default 50).", default=50),
+    ] = 50,
+) -> str:
+    """Get available labels from the Jira instance.
+
+    Args:
+        ctx: The FastMCP context.
+        query: Optional prefix to filter labels.
+        start_at: Pagination offset.
+        max_results: Maximum labels to return.
+
+    Returns:
+        JSON string with labels list, total count, and pagination info.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_available_labels(
+        query=query, start_at=start_at, max_results=max_results
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
     tags={"jira", "read", "toolset:jira_issues"},
     annotations={"title": "Get Issue", "readOnlyHint": True},
 )

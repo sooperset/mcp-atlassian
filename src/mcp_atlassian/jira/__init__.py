@@ -20,6 +20,7 @@ from .fields import FieldsMixin
 from .forms_api import FormsApiMixin  # Forms REST API
 from .formatting import FormattingMixin
 from .issues import IssuesMixin
+from .labels import LabelsMixin
 from .links import LinksMixin
 from .metrics import MetricsMixin
 from .projects import ProjectsMixin
@@ -47,6 +48,7 @@ class JiraFetcher(
     IssuesMixin,
     UsersMixin,
     WatchersMixin,
+    LabelsMixin,
     BoardsMixin,
     SprintsMixin,
     QueuesMixin,
@@ -71,6 +73,7 @@ class JiraFetcher(
     - IssuesMixin: Issue operations
     - UsersMixin: User operations
     - WatchersMixin: Watcher operations
+    - LabelsMixin: Label operations
     - BoardsMixin: Board operations
     - SprintsMixin: Sprint operations
     - AttachmentsMixin: Attachment download operations
