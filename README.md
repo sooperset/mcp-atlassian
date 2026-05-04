@@ -94,8 +94,13 @@ Documentation is also available in [llms.txt format](https://llmstxt.org/), whic
 | `jira_create_issue` - Create issues | `confluence_create_page` - Create pages |
 | `jira_update_issue` - Update issues | `confluence_update_page` - Update pages |
 | `jira_transition_issue` - Change status | `confluence_add_comment` - Add comments |
+| `jira_get_issue_labels` - Get issue labels | |
+| `jira_add_issue_labels` - Add labels (preserves existing) | |
+| `jira_remove_issue_labels` - Remove specific labels | |
+| `jira_set_issue_labels` - Replace all labels | |
+| `jira_get_available_labels` - List instance labels | |
 
-**72 tools total** — See [Tools Reference](https://mcp-atlassian.soomiles.com/docs/tools-reference) for the complete list.
+**78 tools total** — See [Tools Reference](https://mcp-atlassian.soomiles.com/docs/tools-reference) for the complete list.
 
 ## Security
 

@@ -1,6 +1,6 @@
 """Toolset definitions and filtering utilities for MCP Atlassian.
 
-Groups 68 tools into 21 named toolsets controlled via the TOOLSETS env var.
+Groups 73 tools into 22 named toolsets controlled via the TOOLSETS env var.
 Supports 'all', 'default', and comma-separated toolset names.
 """
 
@@ -22,7 +22,7 @@ class ToolsetDefinition:
     default: bool
 
 
-# --- Jira toolsets (15) ---
+# --- Jira toolsets (16) ---
 
 JIRA_TOOLSETS: dict[str, ToolsetDefinition] = {
     "jira_issues": ToolsetDefinition(
@@ -100,6 +100,11 @@ JIRA_TOOLSETS: dict[str, ToolsetDefinition] = {
         description="Development info (branches, PRs, commits)",
         default=False,
     ),
+    "jira_labels": ToolsetDefinition(
+        name="jira_labels",
+        description="Issue label management (get, add, remove, set, list available)",
+        default=False,
+    ),
 }
 
 # --- Confluence toolsets (6) ---
@@ -152,7 +157,7 @@ DEFAULT_TOOLSETS: set[str] = {
 def get_enabled_toolsets() -> set[str]:
     """Parse the TOOLSETS env var into a set of enabled toolset names.
 
-    Supports keywords 'all' (all 21 toolsets) and 'default' (6 defaults),
+    Supports keywords 'all' (all 22 toolsets) and 'default' (6 defaults),
     plus comma-separated specific toolset names. Case-insensitive for keywords.
 
     When TOOLSETS is unset or empty, returns all toolsets with a deprecation
@@ -165,8 +170,8 @@ def get_enabled_toolsets() -> set[str]:
         names are given, returns an empty set (fail-closed).
 
     Examples:
-        TOOLSETS unset -> all 21 toolsets (with deprecation warning)
-        TOOLSETS="" -> all 21 toolsets (with deprecation warning)
+        TOOLSETS unset -> all 22 toolsets (with deprecation warning)
+        TOOLSETS="" -> all 22 toolsets (with deprecation warning)
         TOOLSETS="all" -> all 21 names
         TOOLSETS="default" -> 6 default names
         TOOLSETS="default,jira_agile" -> defaults + jira_agile
@@ -214,7 +219,8 @@ def get_enabled_toolsets() -> set[str]:
         logger.info(f"TOOLSETS: enabled toolsets: {sorted(result)}")
     else:
         logger.warning(
-            "TOOLSETS: no valid toolset names found — all tools will be blocked (fail-closed)."
+            "TOOLSETS: no valid toolset names found — "
+            "all tools will be blocked (fail-closed)."
         )
 
     return result

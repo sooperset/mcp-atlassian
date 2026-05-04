@@ -52,7 +52,7 @@ repos:
             'types-requests',
             'types-setuptools',
             'types-urllib3',
-            'types-cachetools',
+            'types-cachetools==5.5.0.20240820',
             'types-PyYAML',
             'atlassian-python-api',
             'beautifulsoup4',

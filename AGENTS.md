@@ -9,7 +9,7 @@
 | Path | Purpose |
 | --- | --- |
 | `src/mcp_atlassian/` | Library source (Python ≥ 3.10) |
-| `  ├─ jira/` | Jira client + 21 mixins (issues, search, SLA, metrics, …) |
+| `  ├─ jira/` | Jira client + 22 mixins (issues, search, labels, SLA, metrics, …) |
 | `  ├─ confluence/` | Confluence client + 8 mixins (pages, search, analytics, …) |
 | `  ├─ models/` | Pydantic v2 data models (`ApiModel` base) |
 | `  ├─ servers/` | FastMCP server instances (`jira_mcp`, `confluence_mcp`) |
@@ -22,7 +22,7 @@
 
 ## Architecture
 
-- **Mixin composition**: `JiraFetcher` composes 21 mixins, `ConfluenceFetcher` composes 8. Client inheritance is transitive through mixins.
+- **Mixin composition**: `JiraFetcher` composes 22 mixins, `ConfluenceFetcher` composes 8. Client inheritance is transitive through mixins.
 - **FastMCP servers**: `servers/main.py` → lifespan → dependency injection via `get_jira_fetcher(ctx)` / `get_confluence_fetcher(ctx)`.
 - **Tool naming**: `{service}_{action}_{target}` (e.g., `jira_create_issue`, `confluence_get_page`).
 - **Config**: Environment-based `from_env()` factory on `JiraConfig` / `ConfluenceConfig` dataclasses.

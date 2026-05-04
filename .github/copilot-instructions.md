@@ -40,7 +40,7 @@ uv run mcp-atlassian -v              # Verbose logging mode
 
 ### Mixin-Based Composition
 Functionality is organized into **focused mixins** that compose together:
-- **Jira**: `JiraFetcher` inherits from 13 feature mixins (ProjectsMixin, IssuesMixin, WorklogMixin, etc.)
+- **Jira**: `JiraFetcher` inherits from 22 feature mixins (ProjectsMixin, IssuesMixin, LabelsMixin, WorklogMixin, etc.)
 - **Confluence**: `ConfluenceFetcher` inherits from 7 feature mixins (SearchMixin, PagesMixin, SpacesMixin, etc.)
 
 Each mixin lives in its own module under `src/mcp_atlassian/jira/` or `src/mcp_atlassian/confluence/`.
