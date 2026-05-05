@@ -46,6 +46,7 @@ from mcp_atlassian.utils.urls import is_atlassian_cloud_url, validate_url_for_ss
 from .client_storage import build_oauth_client_storage_from_env
 from .confluence import confluence_mcp
 from .context import MainAppContext
+from .error_handling import ErrorPreservingFastMCP
 from .jira import jira_mcp
 from .oauth_proxy import HardenedOAuthProxy, parse_env_list
 
@@ -189,7 +190,7 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
         logger.info("Main Atlassian MCP server lifespan shutdown complete.")
 
 
-class AtlassianMCP(FastMCP[MainAppContext]):
+class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
     """Custom FastMCP server class for Atlassian integration with tool filtering."""
 
     _active_streamable_http_path: str | None = None
