@@ -18,14 +18,11 @@ F = TypeVar("F", bound=Callable[..., Awaitable[Any]])
 
 def handle_tool_errors(func: F) -> F:
     """
-    Decorator for FastMCP tool handlers that catches exceptions and re-raises
-    them as ToolError with the original error message preserved.
+    Convert tool handler exceptions to ToolError with details preserved.
 
-    ToolError bypasses FastMCP's mask_error_details setting, ensuring that
-    descriptive error messages are always sent to MCP clients regardless of
-    server configuration.
-
-    Assumes the decorated function is async.
+    Raising ToolError from inside the tool preserves actionable Atlassian API
+    errors for MCP clients even when the FastMCP server masks non-ToolError
+    exceptions.
     """
     tool_name = func.__name__
 
@@ -36,8 +33,10 @@ def handle_tool_errors(func: F) -> F:
         except ToolError:
             raise
         except Exception as e:
-            logger.error(f"Error in tool '{tool_name}': {e}", exc_info=True)
-            raise ToolError(str(e)) from e
+            detail = str(e).strip() or type(e).__name__
+            logger.error(f"Error in tool '{tool_name}': {detail}", exc_info=True)
+            message = f"Error calling tool '{tool_name}': {detail}"
+            raise ToolError(message) from e
 
     return wrapper  # type: ignore
 
@@ -48,12 +47,13 @@ def check_write_access(func: F) -> F:
     If in read-only mode, it raises a ToolError.
     Also catches unhandled exceptions and re-raises them as ToolError with
     descriptive error messages.
-    Assumes the decorated function is async and has `ctx: Context` as its first argument.
+    Assumes the decorated function is async and has `ctx: Context` as its
+    first argument.
     """
     tool_name = func.__name__
 
-    @wraps(func)
     @handle_tool_errors
+    @wraps(func)
     async def wrapper(ctx: Context, *args: Any, **kwargs: Any) -> Any:
         lifespan_ctx_dict = ctx.request_context.lifespan_context
         app_lifespan_ctx = (
@@ -67,7 +67,8 @@ def check_write_access(func: F) -> F:
                 "_", " "
             )  # e.g., "create_issue" -> "create issue"
             logger.warning(f"Attempted to call tool '{tool_name}' in read-only mode.")
-            raise ValueError(f"Cannot {action_description} in read-only mode.")
+            message = f"Cannot {action_description} in read-only mode."
+            raise ValueError(message)
 
         return await func(ctx, *args, **kwargs)
 
@@ -148,22 +149,29 @@ def handle_atlassian_api_errors(service_name: str = "Atlassian API") -> Callable
             except KeyError as e:
                 operation_name = getattr(func, "__name__", "API operation")
                 logger.error(f"Missing key in {operation_name} results: {str(e)}")
-                return []
+                message = (
+                    f"{operation_name} returned an unexpected response from "
+                    f"{service_name}: missing key {e}"
+                )
+                raise ValueError(message) from e
             except requests.RequestException as e:
                 operation_name = getattr(func, "__name__", "API operation")
                 logger.error(f"Network error during {operation_name}: {str(e)}")
-                return []
+                message = f"Network error during {operation_name}: {e}"
+                raise ValueError(message) from e
             except (ValueError, TypeError) as e:
                 operation_name = getattr(func, "__name__", "API operation")
                 logger.error(f"Error processing {operation_name} results: {str(e)}")
-                return []
+                message = f"Error processing {operation_name} results: {e}"
+                raise ValueError(message) from e
             except Exception as e:  # noqa: BLE001 - Intentional fallback with logging
                 operation_name = getattr(func, "__name__", "API operation")
                 logger.error(f"Unexpected error during {operation_name}: {str(e)}")
                 logger.debug(
                     f"Full exception details for {operation_name}:", exc_info=True
                 )
-                return []
+                message = f"Unexpected error during {operation_name}: {e}"
+                raise RuntimeError(message) from e
 
         return wrapper
 

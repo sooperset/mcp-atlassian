@@ -6,13 +6,14 @@ import logging
 import mimetypes
 from typing import Annotated
 
-from fastmcp import Context, FastMCP
+from fastmcp import Context
 from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
 from pydantic import BeforeValidator, Field
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.models.confluence import ConfluenceAttachment
 from mcp_atlassian.servers.dependencies import get_confluence_fetcher
+from mcp_atlassian.servers.error_handling import ErrorPreservingFastMCP
 from mcp_atlassian.utils.decorators import (
     check_write_access,
 )
@@ -26,7 +27,7 @@ from mcp_atlassian.utils.urls import resolve_relative_url
 logger = logging.getLogger(__name__)
 
 
-confluence_mcp = FastMCP(
+confluence_mcp = ErrorPreservingFastMCP(
     name="Confluence MCP Service",
     instructions="Provides tools for interacting with Atlassian Confluence.",
 )
