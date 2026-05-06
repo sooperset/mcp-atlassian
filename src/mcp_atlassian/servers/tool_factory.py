@@ -196,15 +196,19 @@ def create_jira_instance_tools(
         import json
 
         jira = await get_jira_fetcher(ctx, instance_name=instance_name)
+        fields_list: str | list[str] | None = fields
+        if fields and fields != "*all":
+            fields_list = [f.strip() for f in fields.split(",")]
+
         results = jira.search_issues(
             jql=jql,
-            fields=fields,
+            fields=fields_list,
             limit=limit,
             start=start_at,
             projects_filter=projects_filter,
             expand=expand,
         )
-        return json.dumps(results, indent=2)
+        return json.dumps(results.to_simplified_dict(), indent=2, ensure_ascii=False)
 
     @mcp.tool(
         name=f"{prefix}create_issue",
@@ -253,7 +257,7 @@ def create_jira_instance_tools(
         import json
 
         jira = await get_jira_fetcher(ctx, instance_name=instance_name)
-        result = jira.create_issue(
+        issue = jira.create_issue(
             project_key=project_key,
             summary=summary,
             issue_type=issue_type,
@@ -262,7 +266,12 @@ def create_jira_instance_tools(
             components=components,
             additional_fields=additional_fields,
         )
-        return json.dumps(result, indent=2)
+        result = issue.to_simplified_dict()
+        return json.dumps(
+            {"message": "Issue created successfully", "issue": result},
+            indent=2,
+            ensure_ascii=False,
+        )
 
     @mcp.tool(
         name=f"{prefix}update_issue",
@@ -404,10 +413,11 @@ def create_confluence_instance_tools(
         import json
 
         confluence = await get_confluence_fetcher(ctx, instance_name=instance_name)
-        results = confluence.search(
+        pages = confluence.search(
             query=query, limit=limit, spaces_filter=spaces_filter
         )
-        return json.dumps(results, indent=2)
+        results = [page.to_simplified_dict() for page in pages]
+        return json.dumps(results, indent=2, ensure_ascii=False)
 
     @mcp.tool(
         name=f"{prefix}get_page",
@@ -454,14 +464,34 @@ def create_confluence_instance_tools(
         import json
 
         confluence = await get_confluence_fetcher(ctx, instance_name=instance_name)
-        result = confluence.get_page(
-            page_id=page_id,
-            title=title,
-            space_key=space_key,
-            include_metadata=include_metadata,
-            convert_to_markdown=convert_to_markdown,
-        )
-        return json.dumps(result, indent=2)
+
+        page_object = None
+        if page_id:
+            page_object = confluence.get_page_content(
+                str(page_id), convert_to_markdown=convert_to_markdown
+            )
+        elif title and space_key:
+            page_object = confluence.get_page_by_title(
+                space_key, title, convert_to_markdown=convert_to_markdown
+            )
+        else:
+            raise ValueError(
+                "Either 'page_id' OR both 'title' and 'space_key' must be provided."
+            )
+
+        if not page_object:
+            return json.dumps(
+                {"error": "Page not found with the provided identifiers."},
+                indent=2,
+                ensure_ascii=False,
+            )
+
+        if include_metadata:
+            result = {"metadata": page_object.to_simplified_dict()}
+        else:
+            result = {"content": {"value": page_object.content}}
+
+        return json.dumps(result, indent=2, ensure_ascii=False)
 
     @mcp.tool(
         name=f"{prefix}create_page",
@@ -513,16 +543,29 @@ def create_confluence_instance_tools(
         import json
 
         confluence = await get_confluence_fetcher(ctx, instance_name=instance_name)
-        result = confluence.create_page(
+
+        # Determine parameters based on content format
+        if content_format == "markdown":
+            is_markdown = True
+            content_representation = None
+        else:
+            is_markdown = False
+            content_representation = content_format  # 'wiki' or 'storage'
+
+        page = confluence.create_page(
             space_key=space_key,
             title=title,
-            content=content,
+            body=content,
             parent_id=parent_id,
-            content_format=content_format,
-            enable_heading_anchors=enable_heading_anchors,
+            is_markdown=is_markdown,
+            enable_heading_anchors=enable_heading_anchors
+            if content_format == "markdown"
+            else False,
+            content_representation=content_representation,
             emoji=emoji,
         )
-        return json.dumps(result, indent=2)
+        result = page.to_simplified_dict()
+        return json.dumps(result, indent=2, ensure_ascii=False)
 
     logger.info(
         f"Successfully registered {4} tools for Confluence instance '{instance_label}'"
