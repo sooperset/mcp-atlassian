@@ -10,6 +10,7 @@ from .comments import CommentsMixin
 from .config import ConfluenceConfig
 from .labels import LabelsMixin
 from .pages import PagesMixin
+from .permissions import PermissionsMixin
 from .search import SearchMixin
 from .spaces import SpacesMixin
 from .users import UsersMixin
@@ -24,6 +25,7 @@ class ConfluenceFetcher(
     UsersMixin,
     AnalyticsMixin,
     AttachmentsMixin,
+    PermissionsMixin,
 ):
     """Main entry point for Confluence operations, providing backward compatibility.
 
