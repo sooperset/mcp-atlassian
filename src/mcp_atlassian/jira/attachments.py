@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 
 from ..models.jira import JiraAttachment
 from ..utils.io import validate_safe_path
-from ..utils.media import ATTACHMENT_MAX_BYTES
+from ..utils.media import ATTACHMENT_MAX_BYTES, detect_mime_from_bytes
 from .client import JiraClient
 from .protocols import AttachmentsOperationsProto
 
@@ -587,7 +587,9 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
                 continue
 
             content_type = (
-                mimetypes.guess_type(filename)[0] or "image/png"
+                detect_mime_from_bytes(data)
+                or mimetypes.guess_type(filename)[0]
+                or "image/png"
             )
             images.append(
                 {
@@ -608,9 +610,7 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
         }
 
 
-def _extract_embedded_image_urls(
-    html: str, base_url: str
-) -> list[dict[str, str]]:
+def _extract_embedded_image_urls(html: str, base_url: str) -> list[dict[str, str]]:
     """Extract embedded image URLs from rendered HTML.
 
     Parses ``<img>`` tags, keeps only same-host URLs that are NOT formal

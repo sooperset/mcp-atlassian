@@ -1478,9 +1478,7 @@ async def get_issue_embedded_images(
     }
 
     if not images and not failed:
-        summary["message"] = result.get(
-            "message", "No embedded images found"
-        )
+        summary["message"] = result.get("message", "No embedded images found")
 
     contents.insert(
         0,
