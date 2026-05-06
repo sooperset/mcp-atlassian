@@ -9,6 +9,47 @@ from mcp_atlassian.jira.attachments import (
     AttachmentsMixin,
     _extract_embedded_image_urls,
 )
+from mcp_atlassian.utils.media import detect_mime_from_bytes
+
+# ---------------------------------------------------------------------------
+# Tests for detect_mime_from_bytes()
+# ---------------------------------------------------------------------------
+
+
+class TestDetectMimeFromBytes:
+    """Tests for the magic-byte MIME type detection helper."""
+
+    def test_png(self) -> None:
+        data = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+        assert detect_mime_from_bytes(data) == "image/png"
+
+    def test_jpeg(self) -> None:
+        data = b"\xff\xd8\xff\xe0" + b"\x00" * 100
+        assert detect_mime_from_bytes(data) == "image/jpeg"
+
+    def test_gif87a(self) -> None:
+        data = b"GIF87a" + b"\x00" * 100
+        assert detect_mime_from_bytes(data) == "image/gif"
+
+    def test_gif89a(self) -> None:
+        data = b"GIF89a" + b"\x00" * 100
+        assert detect_mime_from_bytes(data) == "image/gif"
+
+    def test_bmp(self) -> None:
+        data = b"BM" + b"\x00" * 100
+        assert detect_mime_from_bytes(data) == "image/bmp"
+
+    def test_webp(self) -> None:
+        data = b"RIFF\x00\x00\x00\x00WEBP" + b"\x00" * 100
+        assert detect_mime_from_bytes(data) == "image/webp"
+
+    def test_unknown_returns_none(self) -> None:
+        data = b"\x00\x01\x02\x03" * 10
+        assert detect_mime_from_bytes(data) is None
+
+    def test_empty_returns_none(self) -> None:
+        assert detect_mime_from_bytes(b"") is None
+
 
 # ---------------------------------------------------------------------------
 # Tests for _extract_embedded_image_urls()
@@ -72,7 +113,7 @@ class TestExtractEmbeddedImageUrls:
     def test_mixed_content(self) -> None:
         """Embedded images kept, external and formal excluded."""
         html = (
-            '<p>Description</p>'
+            "<p>Description</p>"
             '<img src="https://external.com/img.png">'
             '<img src="https://jira.example.com/secure/attachment/1/a.png">'
             '<img src="https://jira.example.com/plugins/servlet/'
@@ -127,9 +168,7 @@ class TestGetEmbeddedImages:
         attachments_mixin.jira._session = MagicMock()
         return attachments_mixin
 
-    def test_no_embedded_images(
-        self, attachments_mixin: AttachmentsMixin
-    ) -> None:
+    def test_no_embedded_images(self, attachments_mixin: AttachmentsMixin) -> None:
         attachments_mixin.jira.issue.return_value = {
             "fields": {"description": "plain text", "comment": {"comments": []}},
             "renderedFields": {
@@ -159,9 +198,7 @@ class TestGetEmbeddedImages:
         }
         # Simuliere erfolgreichen Download
         fake_png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
-        attachments_mixin.fetch_attachment_content = MagicMock(
-            return_value=fake_png
-        )
+        attachments_mixin.fetch_attachment_content = MagicMock(return_value=fake_png)
 
         result = attachments_mixin.get_embedded_images("PROJ-1")
 
@@ -195,9 +232,7 @@ class TestGetEmbeddedImages:
             },
         }
         fake_png = b"\x89PNG" + b"\x00" * 50
-        attachments_mixin.fetch_attachment_content = MagicMock(
-            return_value=fake_png
-        )
+        attachments_mixin.fetch_attachment_content = MagicMock(return_value=fake_png)
 
         result = attachments_mixin.get_embedded_images("PROJ-2")
 
@@ -206,9 +241,7 @@ class TestGetEmbeddedImages:
         assert result["images"][0]["source"] == "comment"
         assert result["images"][0]["filename"] == "comment_img.png"
 
-    def test_fetch_failure_recorded(
-        self, attachments_mixin: AttachmentsMixin
-    ) -> None:
+    def test_fetch_failure_recorded(self, attachments_mixin: AttachmentsMixin) -> None:
         base_url = attachments_mixin.config.url
         img_url = (
             f"{base_url}/plugins/servlet/jeditor_file_provider"
@@ -221,9 +254,7 @@ class TestGetEmbeddedImages:
                 "comment": {"comments": []},
             },
         }
-        attachments_mixin.fetch_attachment_content = MagicMock(
-            return_value=None
-        )
+        attachments_mixin.fetch_attachment_content = MagicMock(return_value=None)
 
         result = attachments_mixin.get_embedded_images("PROJ-3")
 
@@ -233,9 +264,7 @@ class TestGetEmbeddedImages:
         assert len(result["failed"]) == 1
         assert result["failed"][0]["filename"] == "broken.png"
 
-    def test_oversized_image_skipped(
-        self, attachments_mixin: AttachmentsMixin
-    ) -> None:
+    def test_oversized_image_skipped(self, attachments_mixin: AttachmentsMixin) -> None:
         base_url = attachments_mixin.config.url
         img_url = (
             f"{base_url}/plugins/servlet/jeditor_file_provider"
@@ -270,3 +299,28 @@ class TestGetEmbeddedImages:
 
         assert result["success"] is False
         assert "API down" in result["error"]
+
+    def test_jpeg_data_with_png_filename_detected_as_jpeg(
+        self, attachments_mixin: AttachmentsMixin
+    ) -> None:
+        """JPEG image data must be reported as image/jpeg even when the
+        filename extension is .png (e.g. fallback-generated names)."""
+        base_url = attachments_mixin.config.url
+        img_url = f"{base_url}/plugins/servlet/jeditor_file_provider?imgId=abc"
+        attachments_mixin.jira.issue.return_value = {
+            "fields": {},
+            "renderedFields": {
+                "description": f'<img src="{img_url}">',
+                "comment": {"comments": []},
+            },
+        }
+        # JPEG magic bytes, but the URL has no fileName param so
+        # the fallback name will be embedded_0.png
+        fake_jpeg = b"\xff\xd8\xff\xe0" + b"\x00" * 100
+        attachments_mixin.fetch_attachment_content = MagicMock(return_value=fake_jpeg)
+
+        result = attachments_mixin.get_embedded_images("PROJ-6")
+
+        assert result["success"] is True
+        assert len(result["images"]) == 1
+        assert result["images"][0]["content_type"] == "image/jpeg"
