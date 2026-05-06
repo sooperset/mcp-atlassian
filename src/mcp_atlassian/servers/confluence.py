@@ -2168,6 +2168,7 @@ async def confluence_get_space_permissions(
                 "Maximum number of permission entries to return. Defaults to 25."
             ),
             default=25,
+            ge=1,
         ),
     ] = 25,
 ) -> str:
