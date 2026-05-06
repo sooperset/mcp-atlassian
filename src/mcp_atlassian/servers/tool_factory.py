@@ -108,7 +108,7 @@ def create_jira_instance_tools(
             Field(
                 description="(Optional) Comma-separated list of fields to return (e.g., 'summary,status,customfield_10010'). You may also provide a single field as a string (e.g., 'duedate'). Use '*all' for all fields (including custom fields), or omit for essential fields only."
             ),
-        ] = DEFAULT_READ_JIRA_FIELDS,
+        ] = ",".join(DEFAULT_READ_JIRA_FIELDS),
         expand: Annotated[
             str | None,
             Field(
@@ -171,7 +171,7 @@ def create_jira_instance_tools(
             Field(
                 description="(Optional) Comma-separated fields to return in the results. Use '*all' for all fields, or specify individual fields like 'summary,status,assignee,priority'"
             ),
-        ] = DEFAULT_READ_JIRA_FIELDS,
+        ] = ",".join(DEFAULT_READ_JIRA_FIELDS),
         limit: Annotated[
             int, Field(description="Maximum number of results (1-50)", ge=1, le=50)
         ] = 10,
