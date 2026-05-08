@@ -25,6 +25,7 @@ from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.config import JiraConfig
+from mcp_atlassian.privacy import install_privacy_filter
 from mcp_atlassian.utils.env import is_env_truthy
 from mcp_atlassian.utils.environment import get_available_services
 from mcp_atlassian.utils.io import is_read_only_mode
@@ -817,6 +818,7 @@ main_mcp = AtlassianMCP(
 )
 main_mcp.mount(jira_mcp, "jira")
 main_mcp.mount(confluence_mcp, "confluence")
+install_privacy_filter(server=main_mcp)
 
 
 @main_mcp.custom_route("/healthz", methods=["GET"], include_in_schema=False)
