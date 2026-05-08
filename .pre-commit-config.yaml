@@ -52,7 +52,7 @@ repos:
             'types-requests',
             'types-setuptools',
             'types-urllib3',
-            'types-cachetools',
+            'types-cachetools<7',  # 7.x added a third generic param to TTLCache; pin <7 so existing TTLCache annotations type-check.
             'types-PyYAML',
             'atlassian-python-api',
             'beautifulsoup4',
