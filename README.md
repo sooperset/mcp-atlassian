@@ -35,7 +35,7 @@ Go to https://id.atlassian.com/manage-profile/security/api-tokens and create a t
 Example for InelliJ IDEA, add you your mcp.sjon (sometimes it requires restart of IDEA):
 ```json
         "mcp-atlassian-remote": {
-            "url": "https://mcp.mhdidevxasayd.com:9000/mcp",
+            "url": "https://mcp.mhdidevxasayd.com/atlassian",
             "requestInit": {
                 "headers": {
                     "X-Atlassian-Confluence-Personal-Token": "YOUR CONFLUENCE PAT TOKEN (Optional)",
@@ -50,7 +50,7 @@ Example for InelliJ IDEA, add you your mcp.sjon (sometimes it requires restart o
 Example for AWS Kiro IDE:
 ```json
 "mcp-atlassian-service": {
-      "url": "https://mcp.mhdidevxasayd.com:9000/mcp",
+      "url": "https://mcp.mhdidevxasayd.com/atlassian",
       "headers": {
         "X-Atlassian-Confluence-Personal-Token": "YOUR CONFLUENCE PAT TOKEN (Optional)",
         "X-Atlassian-Confluence-Url": "https://confluence.medhost.com:8443/",
@@ -96,27 +96,6 @@ Example for IntelliJ IDEA:
                 "MCP_VERBOSE": "true"
             }
         }
-  }
-}
-```
-
-Add to your Claude Desktop or Cursor MCP configuration:
-
-```json
-{
-  "mcpServers": {
-    "mcp-atlassian": {
-      "command": "uvx",
-      "args": ["mcp-atlassian"],
-      "env": {
-        "JIRA_URL": "https://your-company.atlassian.net",
-        "JIRA_USERNAME": "your.email@company.com",
-        "JIRA_API_TOKEN": "your_api_token",
-        "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
-        "CONFLUENCE_USERNAME": "your.email@company.com",
-        "CONFLUENCE_API_TOKEN": "your_api_token"
-      }
-    }
   }
 }
 ```
