@@ -131,6 +131,9 @@ confluence:
   # Custom headers (comma-separated key=value pairs)
   customHeaders: ""
 
+  # Incoming MCP request header names to pass through (comma-separated)
+  passthroughHeaders: ""
+
 # Jira Configuration
 jira:
   enabled: true
@@ -153,6 +156,9 @@ jira:
 
   # Custom headers (comma-separated key=value pairs)
   customHeaders: ""
+
+  # Incoming MCP request header names to pass through (comma-separated)
+  passthroughHeaders: ""
 
 # OAuth 2.0 Configuration (Cloud only)
 # Required when authMode: oauth or byot

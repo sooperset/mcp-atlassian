@@ -91,3 +91,33 @@ def get_custom_headers(env_var_name: str) -> dict[str, str]:
             headers[key] = value
 
     return headers
+
+
+def get_header_names(env_var_name: str) -> list[str]:
+    """Parse comma-separated HTTP header names from an environment variable.
+
+    Args:
+        env_var_name: Name of the environment variable to read.
+
+    Returns:
+        List of parsed header names, preserving the first configured casing.
+    """
+    header_string = os.getenv(env_var_name)
+    if not header_string or not header_string.strip():
+        return []
+
+    header_names: list[str] = []
+    seen_names: set[str] = set()
+    for raw_name in header_string.split(","):
+        header_name = raw_name.strip()
+        if not header_name:
+            continue
+
+        normalized_name = header_name.lower()
+        if normalized_name in seen_names:
+            continue
+
+        seen_names.add(normalized_name)
+        header_names.append(header_name)
+
+    return header_names

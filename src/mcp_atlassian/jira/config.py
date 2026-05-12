@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
-from ..utils.env import get_custom_headers, is_env_ssl_verify
+from ..utils.env import get_custom_headers, get_header_names, is_env_ssl_verify
 from ..utils.oauth import (
     BYOAccessTokenOAuthConfig,
     OAuthConfig,
@@ -108,6 +108,7 @@ class JiraConfig:
     no_proxy: str | None = None  # Comma-separated list of hosts to bypass proxy
     socks_proxy: str | None = None  # SOCKS proxy URL (optional)
     custom_headers: dict[str, str] | None = None  # Custom HTTP headers
+    passthrough_headers: list[str] | None = None  # Request headers to pass through
     disable_jira_markup_translation: bool = (
         False  # Disable automatic markup translation between formats
     )
@@ -246,6 +247,7 @@ class JiraConfig:
 
         # Custom headers - service-specific only
         custom_headers = get_custom_headers("JIRA_CUSTOM_HEADERS")
+        passthrough_headers = get_header_names("JIRA_PASSTHROUGH_HEADERS")
 
         # Markup translation setting
         disable_jira_markup_translation = (
@@ -276,6 +278,7 @@ class JiraConfig:
             no_proxy=no_proxy,
             socks_proxy=socks_proxy,
             custom_headers=custom_headers,
+            passthrough_headers=passthrough_headers,
             disable_jira_markup_translation=disable_jira_markup_translation,
             client_cert=client_cert,
             client_key=client_key,

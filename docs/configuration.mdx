@@ -182,13 +182,27 @@ Add custom HTTP headers to all API requests. Useful in corporate environments.
 |----------|-------------|
 | `JIRA_CUSTOM_HEADERS` | Custom headers for Jira requests |
 | `CONFLUENCE_CUSTOM_HEADERS` | Custom headers for Confluence requests |
+| `JIRA_PASSTHROUGH_HEADERS` | Incoming MCP request header names to pass through to Jira requests |
+| `CONFLUENCE_PASSTHROUGH_HEADERS` | Incoming MCP request header names to pass through to Confluence requests |
 
-**Format:** Comma-separated `key=value` pairs.
+**Format:** Static custom headers use comma-separated `key=value` pairs.
+Passthrough headers use comma-separated header names.
 
 ```bash
 JIRA_CUSTOM_HEADERS=X-Forwarded-User=service-account,X-Custom-Auth=token
 CONFLUENCE_CUSTOM_HEADERS=X-Service=mcp-integration,X-ALB-Token=secret
+
+# Header names only. Values are read from each incoming MCP HTTP request.
+JIRA_PASSTHROUGH_HEADERS=X-SSO-User,X-Request-ID
+CONFLUENCE_PASSTHROUGH_HEADERS=X-SSO-User,X-Request-ID
 ```
+
+Passthrough headers are request-scoped and only apply to HTTP transports. If a
+passthrough header name conflicts with a static custom header, the incoming
+request header value is used for that request.
+
+Only configure headers that are set by a trusted proxy or gateway. Clients can
+control any passthrough header they are allowed to send to the MCP endpoint.
 
 <Note>
 Header values are masked in debug logs for security.

@@ -105,6 +105,13 @@ spec:
               name: {{ include "mcp-atlassian.fullname" . }}
               key: confluence-custom-headers
         {{- end }}
+        {{- if .Values.confluence.passthroughHeaders }}
+        - name: CONFLUENCE_PASSTHROUGH_HEADERS
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: confluence-passthrough-headers
+        {{- end }}
         {{- end }}
 
         # Jira Configuration
@@ -149,6 +156,13 @@ spec:
             secretKeyRef:
               name: {{ include "mcp-atlassian.fullname" . }}
               key: jira-custom-headers
+        {{- end }}
+        {{- if .Values.jira.passthroughHeaders }}
+        - name: JIRA_PASSTHROUGH_HEADERS
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: jira-passthrough-headers
         {{- end }}
         {{- end }}
 

@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
-from ..utils.env import get_custom_headers, is_env_ssl_verify
+from ..utils.env import get_custom_headers, get_header_names, is_env_ssl_verify
 from ..utils.oauth import (
     BYOAccessTokenOAuthConfig,
     OAuthConfig,
@@ -36,6 +36,7 @@ class ConfluenceConfig:
     no_proxy: str | None = None  # Comma-separated list of hosts to bypass proxy
     socks_proxy: str | None = None  # SOCKS proxy URL (optional)
     custom_headers: dict[str, str] | None = None  # Custom HTTP headers
+    passthrough_headers: list[str] | None = None  # Request headers to pass through
     client_cert: str | None = None  # Client certificate file path (.pem)
     client_key: str | None = None  # Client private key file path (.pem)
     client_key_password: str | None = None  # Password for encrypted private key
@@ -173,6 +174,7 @@ class ConfluenceConfig:
 
         # Custom headers - service-specific only
         custom_headers = get_custom_headers("CONFLUENCE_CUSTOM_HEADERS")
+        passthrough_headers = get_header_names("CONFLUENCE_PASSTHROUGH_HEADERS")
 
         # Client certificate settings
         client_cert = os.getenv("CONFLUENCE_CLIENT_CERT")
@@ -201,6 +203,7 @@ class ConfluenceConfig:
             no_proxy=no_proxy,
             socks_proxy=socks_proxy,
             custom_headers=custom_headers,
+            passthrough_headers=passthrough_headers,
             client_cert=client_cert,
             client_key=client_key,
             client_key_password=client_key_password,
