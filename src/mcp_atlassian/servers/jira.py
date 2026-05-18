@@ -2177,8 +2177,12 @@ async def transition_issue(
         Field(
             description=(
                 "(Optional) JSON string of fields to update during the transition. "
-                "Some transitions require specific fields to be set (e.g., resolution). "
-                'Example: \'{"resolution": {"name": "Fixed"}}\''
+                "Some transitions require specific fields to be set. "
+                "Use jira_get_transitions first to discover required fields "
+                "(look for 'has_screen' and 'required_fields' in the response). "
+                "Examples: "
+                "'{\"resolution\": {\"name\": \"Fixed\"}}', "
+                "'{\"customfield_10010\": 3600}'."
             ),
             default=None,
         ),

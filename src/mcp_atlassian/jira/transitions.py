@@ -21,12 +21,16 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
         """
         Get the available status transitions for an issue.
 
+        Includes has_screen flag and required fields metadata
+        (name, schema, allowed values) so callers can see what
+        fields are mandatory before attempting a transition.
+
         Args:
             issue_key: The issue key (e.g. 'PROJ-123')
 
         Returns:
             List of available transitions with id, name,
-            and to status details
+            to_status, has_screen, and required_fields details
 
         Raises:
             MCPAtlassianAuthenticationError: If authentication fails
@@ -34,7 +38,9 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             Exception: If there is an error getting transitions
         """
         try:
-            transitions_data = self.jira.get_issue_transitions(issue_key)
+            transitions_data = self.get_transitions(
+                issue_key, expand="transitions.fields"
+            )
             result: list[dict[str, Any]] = []
 
             for transition in transitions_data:
@@ -64,6 +70,18 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
                 if to_status:
                     transition_info["to_status"] = to_status
 
+                # Include has_screen flag and required fields
+                has_screen = bool(transition.get("hasScreen"))
+                if has_screen:
+                    transition_info["has_screen"] = True
+                    fields = transition.get("fields", {})
+                    if isinstance(fields, dict):
+                        required_fields = self._extract_required_fields(fields)
+                        if required_fields:
+                            transition_info["required_fields"] = required_fields
+                else:
+                    transition_info["has_screen"] = False
+
                 result.append(transition_info)
 
             return result
@@ -74,7 +92,51 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             logger.error(error_msg)
             raise Exception(f"Error getting transitions: {str(e)}") from e
 
-    def get_transitions(self, issue_key: str) -> list[dict[str, Any]]:
+    @staticmethod
+    def _extract_required_fields(
+        fields: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """
+        Extract required field metadata from transition fields dict.
+
+        Args:
+            fields: The "fields" dict from a transition API response.
+
+        Returns:
+            List of required field info dicts with key, name, schema,
+            and allowed_values (for select-type fields).
+        """
+        required_fields: list[dict[str, Any]] = []
+        for field_key, field_data in fields.items():
+            if not isinstance(field_data, dict):
+                continue
+            if not field_data.get("required"):
+                continue
+
+            field_info: dict[str, Any] = {
+                "key": field_key,
+                "name": field_data.get("name", field_key),
+            }
+
+            schema = field_data.get("schema")
+            if isinstance(schema, dict):
+                field_info["schema"] = schema
+
+            allowed_values = field_data.get("allowedValues")
+            if isinstance(allowed_values, list):
+                field_info["allowed_values"] = [
+                    {"id": str(v.get("id", "")), "name": v.get("name", "")}
+                    for v in allowed_values
+                    if isinstance(v, dict)
+                ]
+
+            required_fields.append(field_info)
+
+        return required_fields
+
+    def get_transitions(
+        self, issue_key: str, expand: str | None = None
+    ) -> list[dict[str, Any]]:
         """
         Get the raw transitions data for an issue.
 
@@ -84,11 +146,13 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
 
         Args:
             issue_key: The issue key (e.g. 'PROJ-123')
+            expand: Optional expand parameter (e.g. 'transitions.fields'
+                to include field metadata with required flags and allowed values)
 
         Returns:
             Raw transitions data from the API with full 'to' status objects
         """
-        response = self.jira.get_issue_transitions_full(issue_key)
+        response = self.jira.get_issue_transitions_full(issue_key, expand=expand)
         if isinstance(response, dict):
             return response.get("transitions", [])
         return []
