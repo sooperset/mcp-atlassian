@@ -66,7 +66,6 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
                 elif "status" in transition:
                     to_status = transition.get("status")
 
-                # Add to_status if found in any format
                 if to_status:
                     transition_info["to_status"] = to_status
 
@@ -183,6 +182,7 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
         transition_id: str | int,
         fields: dict[str, Any] | None = None,
         comment: str | None = None,
+        update_data: dict[str, Any] | None = None,
     ) -> JiraIssue:
         """
         Transition a Jira issue to a new status.
@@ -193,6 +193,9 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
                 (integer preferred, string accepted)
             fields: Optional fields to set during the transition
             comment: Optional comment to add during the transition
+            update_data: Optional update data (e.g., worklog) to send
+                alongside the transition. Example:
+                {"worklog": [{"add": {"timeSpent": "1h", "comment": "Resolved"}}]}
 
         Returns:
             JiraIssue model representing the transitioned issue
@@ -247,12 +250,17 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
                 if sanitized_fields:
                     fields_for_api = sanitized_fields
 
-            # Prepare update data for comments if provided
+            # Prepare update data (comment + extra update_data like worklog)
             update_for_api = None
+            temp_transition_data: dict[str, Any] = {}
             if comment:
-                temp_transition_data: dict[str, Any] = {}
                 self._add_comment_to_transition_data(temp_transition_data, comment)
-                update_for_api = temp_transition_data.get("update")
+            if update_data:
+                temp_transition_data.setdefault("update", {})
+                if isinstance(update_data, dict):
+                    for key, value in update_data.items():
+                        temp_transition_data["update"][key] = value
+            update_for_api = temp_transition_data.get("update")
 
             # Log the transition request for debugging
             logger.info(

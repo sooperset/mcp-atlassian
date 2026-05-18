@@ -83,9 +83,7 @@ class TestTransitionsMixin:
                 },
             ],
         }
-        transitions_mixin.jira.get_issue_transitions_full.return_value = (
-            mock_response
-        )
+        transitions_mixin.jira.get_issue_transitions_full.return_value = mock_response
 
         # Call the method
         result = transitions_mixin.get_available_transitions("TEST-123")
@@ -632,8 +630,7 @@ class TestTransitionsMixin:
                 "schema": {
                     "type": "number",
                     "custom": (
-                        "com.atlassian.jira.plugin.system"
-                        ".customfieldtypes:float"
+                        "com.atlassian.jira.plugin.system.customfieldtypes:float"
                     ),
                     "customId": 10000,
                 },
@@ -662,9 +659,7 @@ class TestTransitionsMixin:
     ):
         """Test get_available_transitions calls get_transitions with expand."""
         mock_response = {"transitions": []}
-        transitions_mixin.jira.get_issue_transitions_full.return_value = (
-            mock_response
-        )
+        transitions_mixin.jira.get_issue_transitions_full.return_value = mock_response
 
         transitions_mixin.get_available_transitions("TEST-123")
 
@@ -704,9 +699,7 @@ class TestTransitionsMixin:
                 }
             ]
         }
-        transitions_mixin.jira.get_issue_transitions_full.return_value = (
-            mock_response
-        )
+        transitions_mixin.jira.get_issue_transitions_full.return_value = mock_response
 
         result = transitions_mixin.get_available_transitions("TEST-123")
 
@@ -724,3 +717,70 @@ class TestTransitionsMixin:
         res = next(r for r in required if r["key"] == "resolution")
         assert res["name"] == "Resolution"
         assert len(res["allowed_values"]) == 1
+
+    def test_transition_issue_with_update_data(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test transition_issue with update_data (worklog)."""
+        # Call with update_data containing worklog
+        update_data = {"worklog": [{"add": {"timeSpent": "1h", "comment": "Resolved"}}]}
+        transitions_mixin.transition_issue("TEST-123", "10", update_data=update_data)
+
+        # Verify set_issue_status was called with update
+        transitions_mixin.jira.set_issue_status.assert_called_once_with(
+            issue_key="TEST-123",
+            status_name="In Progress",
+            fields=None,
+            update={"worklog": [{"add": {"timeSpent": "1h", "comment": "Resolved"}}]},
+        )
+
+    def test_transition_issue_with_comment_and_update_data(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test transition_issue with both comment and update_data."""
+
+        # Setup mock for _add_comment_to_transition_data
+        def add_comment_side_effect(transition_data, comment_text):
+            transition_data["update"] = {"comment": [{"add": {"body": comment_text}}]}
+
+        transitions_mixin._add_comment_to_transition_data = MagicMock(
+            side_effect=add_comment_side_effect
+        )
+
+        # Call with both comment and update_data
+        update_data = {"worklog": [{"add": {"timeSpent": "2h"}}]}
+        transitions_mixin.transition_issue(
+            "TEST-123", "10", comment="Done", update_data=update_data
+        )
+
+        # Verify update contains both comment and worklog
+        transitions_mixin.jira.set_issue_status.assert_called_once_with(
+            issue_key="TEST-123",
+            status_name="In Progress",
+            fields=None,
+            update={
+                "comment": [{"add": {"body": "Done"}}],
+                "worklog": [{"add": {"timeSpent": "2h"}}],
+            },
+        )
+
+    def test_transition_issue_with_update_data_no_status_name(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test transition_issue with update_data when no status name."""
+        # Setup - transition without to_status
+        mock_transitions = [
+            JiraTransition(id="10", name="Start Progress", to_status=None)
+        ]
+        transitions_mixin.get_transitions_models = MagicMock(
+            return_value=mock_transitions
+        )
+        transitions_mixin.jira.set_issue_status_by_transition_id = MagicMock()
+
+        update_data = {"worklog": [{"add": {"timeSpent": "1h"}}]}
+        transitions_mixin.transition_issue("TEST-123", "10", update_data=update_data)
+
+        # Verify the payload includes update data
+        transitions_mixin.jira.set_issue_status_by_transition_id.assert_called_once_with(
+            issue_key="TEST-123", transition_id=10
+        )
