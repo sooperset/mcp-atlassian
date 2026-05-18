@@ -81,5 +81,5 @@ class TestJiraTransition:
         assert simplified["name"] == "Start Progress"
         assert simplified["to_status"] is not None
         assert simplified["to_status"]["name"] == "In Progress"
-        assert "has_screen" not in simplified
-        assert "is_global" not in simplified
+        assert simplified["has_screen"] is True
+        assert "is_conditional" not in simplified
