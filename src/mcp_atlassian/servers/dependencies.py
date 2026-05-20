@@ -566,8 +566,9 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
     """
     fn_name = f"get_{spec.name.lower()}_fetcher"
     logger.debug(f"{fn_name}: ENTERED. Context ID: {id(ctx)}")
+    request: Request | None = None
     try:
-        request: Request = get_http_request()
+        request = get_http_request()
         logger.debug(
             f"{fn_name}: In HTTP request context. "
             f"Request URL: {request.url}. "
@@ -729,6 +730,34 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
             f"{global_config_fallback.auth_type}"
         )
         if request is not None:
+            # Per-request URL override for external auth mode when no URL is
+            # configured server-side (URL is supplied via request header instead).
+            if (
+                global_config_fallback.auth_type == "external"
+                and not global_config_fallback.url
+            ):
+                url_from_header = request.headers.get(spec.url_header)
+                if url_from_header:
+                    ssrf_error = validate_url_for_ssrf(url_from_header)
+                    if ssrf_error:
+                        error_msg = (
+                            f"Forbidden: Invalid {spec.name} URL - {ssrf_error}"
+                        )
+                        raise ValueError(error_msg)
+                    logger.debug(
+                        f"{fn_name}: Using per-request {spec.name} URL "
+                        f"from {spec.url_header} header: {url_from_header}"
+                    )
+                    global_config_fallback = dataclasses.replace(
+                        global_config_fallback, url=url_from_header
+                    )
+                else:
+                    error_msg = (
+                        f"{spec.name} URL is not configured. "
+                        f"Set {spec.url_header} header or configure the "
+                        f"{spec.name.upper()}_URL environment variable."
+                    )
+                    raise ValueError(error_msg)
             global_config_fallback = _with_request_passthrough_headers(
                 request, spec, global_config_fallback
             )
