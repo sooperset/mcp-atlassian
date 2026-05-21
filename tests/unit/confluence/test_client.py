@@ -3,9 +3,12 @@
 import os
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.confluence.client import ConfluenceClient
 from mcp_atlassian.confluence.config import ConfluenceConfig
+from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 
 
 def test_init_with_basic_auth():
@@ -459,3 +462,90 @@ def test_confluence_fetcher_mro_order():
     # Verify that attachment methods are accessible (the real test)
     assert hasattr(ConfluenceFetcher, "upload_attachment")
     assert hasattr(ConfluenceFetcher, "get_content_attachments")
+
+
+def _make_oauth_cloud_client() -> ConfluenceClient:
+    """Build a ConfluenceClient on OAuth Cloud with internals stubbed.
+
+    Skips ConfluenceClient.__init__ so we don't have to fake the full
+    OAuth bootstrap; the unit tests here only exercise
+    `_validate_authentication`.
+    """
+    client = ConfluenceClient.__new__(ConfluenceClient)
+    client.config = MagicMock(spec=ConfluenceConfig)
+    client.config.auth_type = "oauth"
+    client.config.is_cloud = True
+    client.config.url = "https://api.atlassian.com/ex/confluence/cloud-id/wiki"
+    client.confluence = MagicMock()
+    client.confluence.url = client.config.url
+    client.confluence._session = MagicMock()
+    client.confluence._session.headers = {}
+    return client
+
+
+def test_validate_authentication_oauth_cloud_uses_v2_spaces_endpoint():
+    """Regression for #1323: OAuth Cloud must skip the deprecated v1 /rest/api/space.
+
+    The v1 spaces endpoint returns 410 Gone on Cloud for OAuth tokens; the
+    validation must route through /api/v2/spaces instead.
+    """
+    client = _make_oauth_cloud_client()
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"results": [{"id": "10000"}]}
+    mock_response.raise_for_status = MagicMock()
+    client.confluence._session.get.return_value = mock_response
+
+    client._validate_authentication()
+
+    client.confluence.get_all_spaces.assert_not_called()
+    client.confluence._session.get.assert_called_once_with(
+        f"{client.config.url}/api/v2/spaces", params={"limit": 1}
+    )
+    mock_response.raise_for_status.assert_called_once()
+
+
+def test_validate_authentication_oauth_cloud_handles_v2_http_error():
+    """OAuth Cloud v2 validation should still raise a typed auth error on HTTP failure."""
+    client = _make_oauth_cloud_client()
+    mock_response = MagicMock()
+    mock_response.raise_for_status.side_effect = Exception("401 Unauthorized")
+    client.confluence._session.get.return_value = mock_response
+
+    with pytest.raises(MCPAtlassianAuthenticationError):
+        client._validate_authentication()
+
+
+def test_validate_authentication_non_oauth_still_uses_v1():
+    """Basic/token auth on Cloud keeps using v1 get_all_spaces (still works there)."""
+    client = ConfluenceClient.__new__(ConfluenceClient)
+    client.config = MagicMock(spec=ConfluenceConfig)
+    client.config.auth_type = "basic"
+    client.config.is_cloud = True
+    client.config.url = "https://test.atlassian.net/wiki"
+    client.confluence = MagicMock()
+    client.confluence._session = MagicMock()
+    client.confluence._session.headers = {}
+    client.confluence.get_all_spaces.return_value = {"results": []}
+
+    client._validate_authentication()
+
+    client.confluence.get_all_spaces.assert_called_once_with(start=0, limit=1)
+    client.confluence._session.get.assert_not_called()
+
+
+def test_validate_authentication_server_dc_still_uses_v1():
+    """Server/DC keeps using v1 get_all_spaces (v2 doesn't exist on DC)."""
+    client = ConfluenceClient.__new__(ConfluenceClient)
+    client.config = MagicMock(spec=ConfluenceConfig)
+    client.config.auth_type = "oauth"
+    client.config.is_cloud = False
+    client.config.url = "https://confluence.example.com"
+    client.confluence = MagicMock()
+    client.confluence._session = MagicMock()
+    client.confluence._session.headers = {}
+    client.confluence.get_all_spaces.return_value = {"results": []}
+
+    client._validate_authentication()
+
+    client.confluence.get_all_spaces.assert_called_once_with(start=0, limit=1)
+    client.confluence._session.get.assert_not_called()
