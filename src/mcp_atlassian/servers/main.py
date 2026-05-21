@@ -578,21 +578,29 @@ class UserTokenMiddleware:
                     f"UserTokenMiddleware: Extracted cloudId: {cloud_id_str.strip()}"
                 )
 
-            # Process Authorization header
-            if auth_header_str:
+            # If per-user PAT + URL service headers are present, they take
+            # precedence over any Authorization header. Gateways (AWS AgentCore,
+            # OAuth proxies) frequently inject their own outbound Authorization
+            # bearer; treating that as the Atlassian credential breaks
+            # multi-tenant PAT injection (#1162).
+            has_service_pat = bool(
+                service_headers
+                and (
+                    (jira_token_str and jira_url_str)
+                    or (confluence_token_str and confluence_url_str)
+                )
+            )
+            if has_service_pat:
+                scope["state"]["user_atlassian_auth_type"] = "pat"
+                scope["state"]["user_atlassian_email"] = None
+                logger.debug(
+                    "UserTokenMiddleware: Header-based PAT detected; ignoring "
+                    "Authorization header for Atlassian credential resolution."
+                )
+            elif auth_header_str:
                 self._parse_auth_header(auth_header_str, scope)
             else:
                 logger.debug("UserTokenMiddleware: No Authorization header provided")
-                # If service headers are present without Authorization header, set PAT auth type
-                if service_headers and (
-                    (jira_token_str and jira_url_str)
-                    or (confluence_token_str and confluence_url_str)
-                ):
-                    scope["state"]["user_atlassian_auth_type"] = "pat"
-                    scope["state"]["user_atlassian_email"] = None
-                    logger.debug(
-                        "UserTokenMiddleware: Header-based authentication detected. Setting PAT auth type."
-                    )
 
         except Exception as e:
             logger.error(f"Error processing authentication headers: {e}", exc_info=True)

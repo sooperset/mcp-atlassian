@@ -407,6 +407,57 @@ class TestUserTokenMiddleware:
         assert passed_scope["state"]["user_atlassian_auth_type"] == "pat"
 
     @pytest.mark.anyio
+    async def test_service_headers_take_precedence_over_gateway_authorization(
+        self, middleware, mock_scope, mock_receive, mock_send
+    ):
+        """Regression for #1162: gateway-injected Authorization must not be
+        used as the Atlassian credential when per-user PAT service headers
+        are present (multi-tenant deployment behind AWS AgentCore-style
+        gateway).
+        """
+        mock_scope["headers"] = [
+            (b"authorization", b"Bearer gateway-outbound-token"),
+            (b"x-atlassian-jira-personal-token", b"user-jira-pat"),
+            (b"x-atlassian-jira-url", b"https://jira.example.com"),
+        ]
+
+        with patch(
+            "mcp_atlassian.servers.main.validate_url_for_ssrf", return_value=None
+        ):
+            await middleware(mock_scope, mock_receive, mock_send)
+
+        middleware.app.assert_called_once()
+        passed_scope = middleware.app.call_args[0][0]
+        assert passed_scope["state"]["user_atlassian_auth_type"] == "pat"
+        # The gateway bearer must NOT have been stored as the Atlassian token.
+        assert (
+            passed_scope["state"].get("user_atlassian_token")
+            != "gateway-outbound-token"
+        )
+        # The service headers are still forwarded for downstream fetchers.
+        assert (
+            passed_scope["state"]["atlassian_service_headers"][
+                "X-Atlassian-Jira-Personal-Token"
+            ]
+            == "user-jira-pat"
+        )
+
+    @pytest.mark.anyio
+    async def test_authorization_used_when_no_service_pat_headers(
+        self, middleware, mock_scope, mock_receive, mock_send
+    ):
+        """Authorization header still works on its own (no service PAT present)."""
+        mock_scope["headers"] = [
+            (b"authorization", b"Bearer real-bearer-token"),
+        ]
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        passed_scope = middleware.app.call_args[0][0]
+        assert passed_scope["state"]["user_atlassian_auth_type"] == "oauth"
+        assert passed_scope["state"]["user_atlassian_token"] == "real-bearer-token"
+
+    @pytest.mark.anyio
     async def test_basic_auth_header_extraction_success(
         self, middleware, mock_scope, mock_receive, mock_send
     ):
