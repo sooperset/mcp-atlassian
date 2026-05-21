@@ -2761,6 +2761,79 @@ async def batch_create_versions(
 
 
 @jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_projects"},
+    annotations={"title": "Update Version", "destructiveHint": True},
+)
+@check_write_access
+async def update_version(
+    ctx: Context,
+    version_id: Annotated[
+        str,
+        Field(description="Numeric ID of the version to update (e.g. '10001')"),
+    ],
+    name: Annotated[
+        str | None, Field(description="New name for the version", default=None)
+    ] = None,
+    description: Annotated[
+        str | None,
+        Field(description="New description for the version", default=None),
+    ] = None,
+    start_date: Annotated[
+        str | None,
+        Field(description="New start date (YYYY-MM-DD)", default=None),
+    ] = None,
+    release_date: Annotated[
+        str | None,
+        Field(description="New release date (YYYY-MM-DD)", default=None),
+    ] = None,
+    archived: Annotated[
+        bool | None,
+        Field(description="Set archived flag (true to archive)", default=None),
+    ] = None,
+    released: Annotated[
+        bool | None,
+        Field(description="Set released flag (true to mark released)", default=None),
+    ] = None,
+) -> str:
+    """Update an existing fix version in a Jira project.
+
+    Only fields explicitly provided are modified; other attributes of the
+    version are left untouched. Useful for archiving/unarchiving versions,
+    renaming, or shifting release dates without recreating them.
+
+    Args:
+        ctx: The FastMCP context.
+        version_id: Numeric ID of the version to update.
+        name: New name (optional).
+        description: New description (optional).
+        start_date: New start date YYYY-MM-DD (optional).
+        release_date: New release date YYYY-MM-DD (optional).
+        archived: Archived flag (optional).
+        released: Released flag (optional).
+
+    Returns:
+        JSON string of the updated version object.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        version = jira.update_project_version(
+            version_id=version_id,
+            name=name,
+            description=description,
+            start_date=start_date,
+            release_date=release_date,
+            archived=archived,
+            released=released,
+        )
+        return json.dumps(version, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Error updating version {version_id}: {str(e)}", exc_info=True)
+        return json.dumps(
+            {"success": False, "error": str(e)}, indent=2, ensure_ascii=False
+        )
+
+
+@jira_mcp.tool(
     tags={"jira", "read", "toolset:jira_forms"},
     annotations={"title": "Get Issue Forms", "readOnlyHint": True},
 )
