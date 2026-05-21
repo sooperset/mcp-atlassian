@@ -117,6 +117,101 @@ def _make_list_item(text: str) -> dict[str, Any]:
     return {"type": "listItem", "content": [_make_paragraph(text)]}
 
 
+# A list marker is "- ", "* " or "<digits>. " possibly preceded by spaces or tabs.
+# Tabs are normalized to four spaces before the indent is measured.
+_LIST_LINE_RE = re.compile(r"^(?P<indent>[ \t]*)(?P<marker>[-*]|\d+\.)\s+(?P<text>.*)$")
+
+
+def _list_marker(line: str) -> tuple[int, str, str] | None:
+    """Parse a markdown list line into (indent_columns, list_type, item_text).
+
+    Returns None if the line is not a list item. ``indent_columns`` measures
+    leading whitespace with tabs counted as four spaces, matching the
+    CommonMark convention closely enough for nesting decisions.
+    """
+    m = _LIST_LINE_RE.match(line)
+    if m is None:
+        return None
+    indent_text = m.group("indent").replace("\t", "    ")
+    list_type = "orderedList" if m.group("marker").endswith(".") else "bulletList"
+    return len(indent_text), list_type, m.group("text")
+
+
+def _parse_list_block(
+    lines: list[str], start: int, base_indent: int
+) -> tuple[list[dict[str, Any]], str, int]:
+    """Parse one nesting level of list items starting at ``start``.
+
+    Stops as soon as the next non-blank line is not a list item or has a
+    smaller indent than ``base_indent``. A child block whose indent is greater
+    than ``base_indent`` is recursively attached to the most recent item.
+
+    Returns the list items, the list type of this level (``bulletList`` or
+    ``orderedList`` — taken from the first item), and the index of the first
+    line that does not belong to this level.
+    """
+    items: list[dict[str, Any]] = []
+    level_type: str | None = None
+    i = start
+    while i < len(lines):
+        line = lines[i]
+        if not line.strip():
+            # Peek past the blank line(s) — only consume them if a deeper or
+            # same-level list item follows. Otherwise the blank line belongs to
+            # the document, not this list block.
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            if j >= len(lines):
+                break
+            peek = _list_marker(lines[j])
+            if peek is None or peek[0] < base_indent:
+                break
+            i = j
+            continue
+        marker = _list_marker(line)
+        if marker is None or marker[0] < base_indent:
+            break
+        indent, list_type, item_text = marker
+        if indent > base_indent:
+            # Deeper than expected and no parent item to hang off — bail and
+            # let the caller decide what to do.
+            break
+        if level_type is None:
+            level_type = list_type
+        elif list_type != level_type:
+            # A different list type at the same level starts a sibling list,
+            # which the outer loop in ``markdown_to_adf`` will pick up.
+            break
+        i += 1
+        children: list[dict[str, Any]] = []
+        while i < len(lines):
+            next_line = lines[i]
+            if not next_line.strip():
+                j = i + 1
+                while j < len(lines) and not lines[j].strip():
+                    j += 1
+                if j >= len(lines):
+                    break
+                peek = _list_marker(lines[j])
+                if peek is None or peek[0] <= indent:
+                    break
+                i = j
+                continue
+            peek = _list_marker(next_line)
+            if peek is None or peek[0] <= indent:
+                break
+            child_items, child_type, i = _parse_list_block(lines, i, peek[0])
+            children.append({"type": child_type, "content": child_items})
+        items.append(
+            {
+                "type": "listItem",
+                "content": [_make_paragraph(item_text), *children],
+            }
+        )
+    return items, level_type or "bulletList", i
+
+
 def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
     """Convert Markdown text to ADF (Atlassian Document Format) document.
 
@@ -197,24 +292,11 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
             doc["content"].append({"type": "blockquote", "content": bq_content})
             continue
 
-        # --- Unordered list ---
-        if re.match(r"^[-*]\s+", line):
-            items: list[dict[str, Any]] = []
-            while i < len(lines) and re.match(r"^[-*]\s+", lines[i]):
-                item_text = re.sub(r"^[-*]\s+", "", lines[i])
-                items.append(_make_list_item(item_text))
-                i += 1
-            doc["content"].append({"type": "bulletList", "content": items})
-            continue
-
-        # --- Ordered list ---
-        if re.match(r"^\d+\.\s+", line):
-            items_ol: list[dict[str, Any]] = []
-            while i < len(lines) and re.match(r"^\d+\.\s+", lines[i]):
-                item_text = re.sub(r"^\d+\.\s+", "", lines[i])
-                items_ol.append(_make_list_item(item_text))
-                i += 1
-            doc["content"].append({"type": "orderedList", "content": items_ol})
+        # --- List (ordered or unordered, with nesting) ---
+        marker = _list_marker(line)
+        if marker is not None and marker[0] == 0:
+            list_items, list_type, i = _parse_list_block(lines, i, 0)
+            doc["content"].append({"type": list_type, "content": list_items})
             continue
 
         # --- Table ---

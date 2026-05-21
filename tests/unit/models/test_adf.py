@@ -478,6 +478,63 @@ class TestMarkdownToAdf:
             assert item["type"] == "listItem"
             assert item["content"][0]["type"] == "paragraph"
 
+    def test_nested_unordered_list(self):
+        """Regression for #1129: indented bullet items nest under the parent.
+
+        Without the fix, '  * Apples' was rendered as a flat paragraph below
+        the 'Fruits' bullet, losing the nesting entirely.
+        """
+        md = "* Fruits\n  * Apples\n  * Bananas"
+        result = markdown_to_adf(md)
+        bl = next(n for n in result["content"] if n["type"] == "bulletList")
+        # Top level has exactly one item: "Fruits" with a nested bulletList.
+        assert len(bl["content"]) == 1
+        fruits = bl["content"][0]
+        assert fruits["content"][0]["content"][0]["text"] == "Fruits"
+        nested = fruits["content"][1]
+        assert nested["type"] == "bulletList"
+        nested_texts = [
+            item["content"][0]["content"][0]["text"] for item in nested["content"]
+        ]
+        assert nested_texts == ["Apples", "Bananas"]
+        # No stray paragraph siblings escaped to the document root.
+        assert all(n["type"] != "paragraph" for n in result["content"])
+
+    def test_nested_mixed_ordered_then_unordered(self):
+        """Ordered parent with nested unordered children is preserved."""
+        md = "1. First\n   * sub one\n   * sub two\n2. Second"
+        result = markdown_to_adf(md)
+        ol = next(n for n in result["content"] if n["type"] == "orderedList")
+        first, second = ol["content"]
+        assert first["content"][0]["content"][0]["text"] == "First"
+        nested = first["content"][1]
+        assert nested["type"] == "bulletList"
+        assert [i["content"][0]["content"][0]["text"] for i in nested["content"]] == [
+            "sub one",
+            "sub two",
+        ]
+        assert second["content"][0]["content"][0]["text"] == "Second"
+        assert len(second["content"]) == 1  # Second has no nested children
+
+    def test_nested_three_levels(self):
+        """Deep nesting (3 levels) is preserved."""
+        md = "- L1\n  - L2\n    - L3"
+        result = markdown_to_adf(md)
+        bl = result["content"][0]
+        l1 = bl["content"][0]
+        l2 = l1["content"][1]["content"][0]
+        l3 = l2["content"][1]["content"][0]
+        assert l1["content"][0]["content"][0]["text"] == "L1"
+        assert l2["content"][0]["content"][0]["text"] == "L2"
+        assert l3["content"][0]["content"][0]["text"] == "L3"
+
+    def test_nested_tab_indented(self):
+        """Tab-indented nested items are recognized (tab = 4 spaces)."""
+        md = "* Fruits\n\t* Apples"
+        result = markdown_to_adf(md)
+        bl = result["content"][0]
+        assert bl["content"][0]["content"][1]["type"] == "bulletList"
+
     # -- Blockquote ---------------------------------------------------------
 
     def test_blockquote(self):
