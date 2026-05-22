@@ -180,8 +180,10 @@ def _parse_list_block(
         if level_type is None:
             level_type = list_type
         elif list_type != level_type:
-            # A different list type at the same level starts a sibling list,
-            # which the outer loop in ``markdown_to_adf`` will pick up.
+            # A different list type at the same indent starts a sibling
+            # list; return so the caller (``markdown_to_adf`` at the top
+            # level, or the parent ``_parse_list_block`` for nested
+            # levels) opens a new list node for it.
             break
         i += 1
         children: list[dict[str, Any]] = []
@@ -203,12 +205,12 @@ def _parse_list_block(
                 break
             child_items, child_type, i = _parse_list_block(lines, i, peek[0])
             children.append({"type": child_type, "content": child_items})
-        items.append(
-            {
-                "type": "listItem",
-                "content": [_make_paragraph(item_text), *children],
-            }
-        )
+        # Reuse _make_list_item for the paragraph wrapping, then attach any
+        # nested child lists so the same shape used by single-level lists
+        # stays the single source of truth.
+        item = _make_list_item(item_text)
+        item["content"].extend(children)
+        items.append(item)
     return items, level_type or "bulletList", i
 
 
