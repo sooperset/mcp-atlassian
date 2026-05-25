@@ -29,6 +29,7 @@ from .search import SearchMixin
 from .sprints import SprintsMixin
 from .transitions import TransitionsMixin
 from .users import UsersMixin
+from .velocity import VelocityMixin
 from .watchers import WatchersMixin
 from .worklog import WorklogMixin
 
@@ -55,6 +56,7 @@ class JiraFetcher(
     MetricsMixin,
     SLAMixin,
     DevelopmentMixin,
+    VelocityMixin,
 ):
     """
     The main Jira client class providing access to all Jira operations.
@@ -93,4 +95,5 @@ __all__ = [
     "Jira",
     "MetricsMixin",
     "SLAMixin",
+    "VelocityMixin",
 ]

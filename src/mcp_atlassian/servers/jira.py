@@ -1266,6 +1266,96 @@ async def get_sprint_issues(
 
 
 @jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Sprint Velocity", "readOnlyHint": True},
+)
+async def get_sprint_velocity(
+    ctx: Context,
+    board_id: Annotated[
+        str,
+        Field(description="The id of board (e.g., '1000')"),
+    ],
+    sprint_id: Annotated[
+        str,
+        Field(description="The id of sprint (e.g., '10001')"),
+    ],
+) -> str:
+    """Calculate sprint velocity metrics for a specific sprint.
+
+    Args:
+        ctx: The FastMCP context.
+        board_id: The ID of the board.
+        sprint_id: The ID of the sprint.
+
+    Returns:
+        JSON string representing committed/completed points and completion rate.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_sprint_velocity(board_id=board_id, sprint_id=sprint_id)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Velocity Report", "readOnlyHint": True},
+)
+async def get_velocity_report(
+    ctx: Context,
+    board_id: Annotated[
+        str,
+        Field(description="The id of board (e.g., '1000')"),
+    ],
+    num_sprints: Annotated[
+        int,
+        Field(description="Number of latest closed sprints", default=3, ge=1, le=20),
+    ] = 3,
+) -> str:
+    """Get sprint velocity trend for the latest closed sprints.
+
+    Args:
+        ctx: The FastMCP context.
+        board_id: The ID of the board.
+        num_sprints: Number of recent closed sprints to analyze.
+
+    Returns:
+        JSON string representing sprint-by-sprint velocity metrics and trend.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_velocity_report(board_id=board_id, num_sprints=num_sprints)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read"},
+    annotations={"title": "Get Team Sprint Summary", "readOnlyHint": True},
+)
+async def get_team_sprint_summary(
+    ctx: Context,
+    board_id: Annotated[
+        str,
+        Field(description="The id of board (e.g., '1000')"),
+    ],
+    num_sprints: Annotated[
+        int,
+        Field(description="Number of latest closed sprints", default=3, ge=1, le=20),
+    ] = 3,
+) -> str:
+    """Get aggregated team performance summary for recent sprints.
+
+    Args:
+        ctx: The FastMCP context.
+        board_id: The ID of the board.
+        num_sprints: Number of recent closed sprints to analyze.
+
+    Returns:
+        JSON string representing team-level velocity and assignee breakdown.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_team_sprint_summary(board_id=board_id, num_sprints=num_sprints)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
     tags={"jira", "read", "toolset:jira_links"},
     annotations={"title": "Get Link Types", "readOnlyHint": True},
 )
