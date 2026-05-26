@@ -218,9 +218,7 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             if update_for_api:
                 payload["update"] = update_for_api
 
-            base_url = self.jira.resource_url("issue").replace(
-                "/api/3/", "/api/2/"
-            )
+            base_url = self.jira.resource_url("issue").replace("/api/3/", "/api/2/")
             url = f"{base_url}/{issue_key}/transitions"
             self.jira.post(url, json=payload)
 
