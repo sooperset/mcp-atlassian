@@ -36,7 +36,11 @@ def mock_jira_fetcher():
     mock_fetcher.config.projects_filter = None  # Explicitly set to None by default
 
     # Configure common methods
-    mock_fetcher.get_current_user_account_id.return_value = "test-account-id"
+    mock_fetcher.get_current_user_details.return_value = {
+        "accountId": "test-account-id",
+        "emailAddress": "test@example.com",
+        "displayName": "Test User",
+    }
     mock_fetcher.jira = MagicMock()
 
     # Configure get_issue to return fixture data

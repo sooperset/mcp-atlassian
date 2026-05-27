@@ -258,6 +258,7 @@ class TestDevelopmentMixin:
         assert results[1]["pullRequests"] == []
 
         """Test 404 response returns descriptive error message without raising."""
+        development_mixin.jira.get_issue.side_effect = None
         development_mixin.jira.get_issue.return_value = {
             "id": "12345",
             "key": "TEST-123",
