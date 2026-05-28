@@ -2755,9 +2755,7 @@ async def update_version(
         )
         return json.dumps(version, indent=2, ensure_ascii=False)
     except Exception as e:
-        logger.error(
-            f"Error updating version {version_id}: {str(e)}", exc_info=True
-        )
+        logger.error(f"Error updating version {version_id}: {str(e)}", exc_info=True)
         return json.dumps(
             {"success": False, "error": str(e)}, indent=2, ensure_ascii=False
         )
