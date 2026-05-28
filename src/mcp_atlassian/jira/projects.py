@@ -463,3 +463,42 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             release_date=release_date,
             description=description,
         )
+
+    def update_project_version(
+        self,
+        version_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        is_released: bool | None = None,
+        is_archived: bool | None = None,
+        start_date: str | None = None,
+        release_date: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Update an existing version in a Jira project.
+
+        Any argument left as ``None`` is omitted from the PUT payload, so the
+        corresponding field on the version is left unchanged.
+
+        Args:
+            version_id: The numeric id of the version to update (e.g., '11819').
+            name: New version name (optional).
+            description: New version description (optional).
+            is_released: Mark version as released (True) / un-released (False).
+            is_archived: Mark version as archived (True) / un-archived (False).
+            start_date: New start date (YYYY-MM-DD, optional).
+            release_date: New release date (YYYY-MM-DD, optional).
+
+        Returns:
+            The updated version object as returned by Jira.
+        """
+        result = self.jira.update_version(
+            version=version_id,
+            name=name,
+            description=description,
+            is_archived=is_archived,
+            is_released=is_released,
+            start_date=start_date,
+            release_date=release_date,
+        )
+        return result if isinstance(result, dict) else {}

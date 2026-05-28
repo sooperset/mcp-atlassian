@@ -298,6 +298,40 @@ def test_get_project_versions_non_list_response(projects_mixin: ProjectsMixin):
     projects_mixin.jira.get_project_versions.assert_called_once_with(key="PROJ1")
 
 
+def test_update_project_version_marks_released(projects_mixin: ProjectsMixin):
+    """Marking a version released forwards exactly the supplied fields."""
+    updated = {
+        "id": "11819",
+        "name": "v0.99.105",
+        "released": True,
+        "releaseDate": "2026-05-29",
+    }
+    projects_mixin.jira.update_version.return_value = updated
+
+    result = projects_mixin.update_project_version(
+        version_id="11819",
+        is_released=True,
+        release_date="2026-05-29",
+    )
+
+    assert result == updated
+    projects_mixin.jira.update_version.assert_called_once_with(
+        version="11819",
+        name=None,
+        description=None,
+        is_archived=None,
+        is_released=True,
+        start_date=None,
+        release_date="2026-05-29",
+    )
+
+
+def test_update_project_version_non_dict_response(projects_mixin: ProjectsMixin):
+    """Non-dict responses from the underlying client collapse to ``{}``."""
+    projects_mixin.jira.update_version.return_value = "unexpected"
+    assert projects_mixin.update_project_version(version_id="11819") == {}
+
+
 def test_get_project_roles(
     projects_mixin: ProjectsMixin, mock_roles: dict[str, dict[str, str]]
 ):
