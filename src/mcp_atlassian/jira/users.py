@@ -367,6 +367,85 @@ class UsersMixin(JiraClient):
         return api_kwargs
 
     @handle_auth_errors("Jira API")
+    def search_assignable_users(
+        self,
+        query: str,
+        project_key: str | None = None,
+        issue_key: str | None = None,
+        limit: int = 20,
+    ) -> list["JiraUser"]:
+        """
+        Search Jira users assignable in a given project or issue.
+
+        Uses GET /rest/api/2/user/assignable/search — the project-scoped
+        assignee picker. Unlike /user/search (needs global "Browse Users")
+        or /user/picker (often locked down on hardened DC instances), this
+        endpoint only requires the caller to be able to assign issues in
+        the target project / browse the target issue, which any bot that
+        already works with that project will have.
+
+        Exactly one of ``project_key`` or ``issue_key`` must be provided.
+
+        Args:
+            query: Free-form text matched against username, displayName,
+                and emailAddress (case-insensitive substring on Server/DC).
+            project_key: Project key (e.g. "DT") to scope the search.
+            issue_key: Issue key (e.g. "DT-779") to scope the search.
+            limit: Maximum number of users to return (1..1000, clamped).
+
+        Returns:
+            List of JiraUser models (possibly empty). Order is preserved
+            from the API.
+
+        Raises:
+            ValueError: If neither project_key nor issue_key is provided.
+            MCPAtlassianAuthenticationError: If authentication fails (decorator).
+            Exception: For other API errors.
+        """
+        if not project_key and not issue_key:
+            raise ValueError("Either project_key or issue_key must be provided.")
+
+        limit = max(1, min(int(limit or 20), 1000))
+        url = f"{self.config.url}/rest/api/2/user/assignable/search"
+        params: dict[str, str | int] = {
+            "username": query,
+            "maxResults": limit,
+            "startAt": 0,
+        }
+        if issue_key:
+            params["issueKey"] = issue_key
+        else:
+            params["project"] = project_key  # type: ignore[assignment]
+
+        try:
+            response = self.jira._session.get(
+                url, params=params, verify=self.config.ssl_verify
+            )
+            response.raise_for_status()
+            data = response.json()
+        except HTTPError as http_err:
+            logger.warning(
+                f"jira_search_assignable_users HTTPError for query={query!r}: {http_err}"
+            )
+            raise
+        except Exception as e:
+            logger.exception(f"jira_search_assignable_users failed for query={query!r}")
+            raise Exception(f"Error searching users for query '{query}': {e}") from e
+
+        if not isinstance(data, list):
+            logger.error(
+                f"Unexpected response type from /user/assignable/search: {type(data)}"
+            )
+            return []
+
+        users: list[JiraUser] = []
+        for raw in data:
+            if not isinstance(raw, dict):
+                continue
+            users.append(JiraUser.from_api_response(raw))
+        return users
+
+    @handle_auth_errors("Jira API")
     def get_user_profile_by_identifier(self, identifier: str) -> "JiraUser":
         """
         Retrieve Jira user profile information by identifier.
