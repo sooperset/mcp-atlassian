@@ -571,6 +571,16 @@ async def create_page(
             default=None,
         ),
     ] = None,
+    subtype: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Confluence page subtype. Use 'live' to create a "
+                "Confluence Live Doc. Only supported for Confluence Cloud."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Create a new Confluence page.
 
@@ -584,6 +594,7 @@ async def create_page(
         enable_heading_anchors: Whether to enable heading anchors (markdown only).
         include_content: Whether to include page content in the response.
         emoji: Optional page title emoji (icon shown in navigation).
+        subtype: Optional page subtype. Use "live" to create a Confluence Live Doc.
 
     Returns:
         JSON string representing the created page object.
@@ -618,6 +629,7 @@ async def create_page(
         else False,
         content_representation=content_representation,
         emoji=emoji,
+        subtype=subtype,
     )
     result = page.to_simplified_dict()
     if not include_content:
