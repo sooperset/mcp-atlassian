@@ -163,9 +163,7 @@ class VelocityMixin(JiraClient):
             assignee_name = "Unassigned"
             if isinstance(assignee, dict):
                 assignee_name = str(
-                    assignee.get("displayName")
-                    or assignee.get("name")
-                    or "Unassigned"
+                    assignee.get("displayName") or assignee.get("name") or "Unassigned"
                 )
 
             if assignee_name not in assignee_stats:
@@ -213,9 +211,7 @@ class VelocityMixin(JiraClient):
             "per_assignee": per_assignee,
         }
 
-    def _calculate_velocity_trend(
-        self, sprint_data: list[dict[str, Any]]
-    ) -> str:
+    def _calculate_velocity_trend(self, sprint_data: list[dict[str, Any]]) -> str:
         """Calculate high-level velocity trend from first to last sprint."""
         if len(sprint_data) < 2:
             return "insufficient_data"

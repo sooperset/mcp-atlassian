@@ -1266,7 +1266,7 @@ async def get_sprint_issues(
 
 
 @jira_mcp.tool(
-    tags={"jira", "read"},
+    tags={"jira", "read", "toolset:jira_agile"},
     annotations={"title": "Get Sprint Velocity", "readOnlyHint": True},
 )
 async def get_sprint_velocity(
@@ -1296,7 +1296,7 @@ async def get_sprint_velocity(
 
 
 @jira_mcp.tool(
-    tags={"jira", "read"},
+    tags={"jira", "read", "toolset:jira_agile"},
     annotations={"title": "Get Velocity Report", "readOnlyHint": True},
 )
 async def get_velocity_report(
@@ -1326,7 +1326,7 @@ async def get_velocity_report(
 
 
 @jira_mcp.tool(
-    tags={"jira", "read"},
+    tags={"jira", "read", "toolset:jira_agile"},
     annotations={"title": "Get Team Sprint Summary", "readOnlyHint": True},
 )
 async def get_team_sprint_summary(
@@ -3363,3 +3363,122 @@ async def get_issues_development_info(
         logger.error(f"Error getting development info for issues: {str(e)}")
         error_result = {"success": False, "error": str(e)}
         return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_filters"},
+    annotations={"title": "Get Jira Filter", "readOnlyHint": True},
+)
+async def get_filter(
+    ctx: Context,
+    filter_id: Annotated[
+        str,
+        Field(description="The numeric ID of the Jira saved filter (e.g., '12345')"),
+    ],
+) -> str:
+    """Get a saved Jira filter by ID, returning its JQL and metadata.
+
+    Args:
+        ctx: The FastMCP context.
+        filter_id: The ID of the saved filter.
+
+    Returns:
+        JSON string with id, name, jql, owner, description, favourite,
+        shared_with fields, or an error object if not found.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_filter(filter_id=filter_id)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_filters"},
+    annotations={"title": "Search Jira Filters", "readOnlyHint": True},
+)
+async def search_filters(
+    ctx: Context,
+    query: Annotated[
+        str,
+        Field(
+            description=(
+                "Optional substring to match against filter names. "
+                "If omitted, returns the current user's accessible filters."
+            ),
+            default="",
+        ),
+    ] = "",
+    limit: Annotated[
+        int,
+        Field(
+            description="Maximum number of filters to return (1–50)",
+            default=25,
+            ge=1,
+            le=50,
+        ),
+    ] = 25,
+) -> str:
+    """Search for saved Jira filters accessible to the current user.
+
+    Args:
+        ctx: The FastMCP context.
+        query: Optional filter name substring. Omit to list all accessible filters.
+        limit: Maximum results (1–50).
+
+    Returns:
+        JSON array of objects with id, name, jql, owner_display_name.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.search_filters(
+        query=query if query else None,
+        limit=limit,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_dashboards"},
+    annotations={"title": "Get Jira Dashboard", "readOnlyHint": True},
+)
+async def get_dashboard(
+    ctx: Context,
+    dashboard_id: Annotated[
+        str,
+        Field(description="The numeric ID of the Jira dashboard (e.g., '14207')"),
+    ],
+    resolve_filters: Annotated[
+        bool,
+        Field(
+            description=(
+                "When True (default), attempt to resolve the filter name and JQL "
+                "for each gadget that references a saved filter. Best-effort on "
+                "Data Center — gadgets without a filterId are skipped gracefully."
+            ),
+            default=True,
+        ),
+    ] = True,
+) -> str:
+    """Get Jira dashboard metadata including gadgets and their filter details.
+
+    On Jira Data Center, gadget enumeration may not be supported.
+    In that case, gadgets will be empty and gadgets_supported will be False.
+    When gadgets_supported is False, surface next_step_hint to the user and
+    wait for filter IDs before continuing. Resolve via jira_get_filter or
+    jira_search_filters.
+
+    Args:
+        ctx: The FastMCP context.
+        dashboard_id: The ID of the dashboard.
+        resolve_filters: Whether to resolve filter name/JQL per gadget.
+
+    Returns:
+        JSON with id, name, description, owner, view_url, gadgets list
+        (each with filter_id, filter_name, jql when resolvable),
+        gadget_resolution_warnings, gadgets_supported bool, and
+        next_step_hint (set when gadgets_supported is False).
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_dashboard(
+        dashboard_id=dashboard_id,
+        resolve_filters=resolve_filters,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)

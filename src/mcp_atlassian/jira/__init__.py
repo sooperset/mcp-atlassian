@@ -32,6 +32,8 @@ from .users import UsersMixin
 from .velocity import VelocityMixin
 from .watchers import WatchersMixin
 from .worklog import WorklogMixin
+from .filters import FilterMixin
+from .dashboards import DashboardMixin
 
 
 class JiraFetcher(
@@ -57,6 +59,8 @@ class JiraFetcher(
     SLAMixin,
     DevelopmentMixin,
     VelocityMixin,
+    FilterMixin,
+    DashboardMixin,
 ):
     """
     The main Jira client class providing access to all Jira operations.
@@ -80,6 +84,8 @@ class JiraFetcher(
     - MetricsMixin: Issue metrics and date operations
     - QueuesMixin: Service Desk queue read operations (Server/DC)
     - SLAMixin: SLA calculations
+    - FilterMixin: Saved filter read operations
+    - DashboardMixin: Dashboard metadata and gadget read operations
 
     The class structure is designed to maintain backward compatibility while
     improving code organization and maintainability.
@@ -96,4 +102,6 @@ __all__ = [
     "MetricsMixin",
     "SLAMixin",
     "VelocityMixin",
+    "FilterMixin",
+    "DashboardMixin",
 ]
