@@ -688,8 +688,17 @@ class TestUserTokenMiddlewareSsrfValidation:
         mock_send,
         jira_url,
         confluence_url,
+        monkeypatch,
     ):
-        """Legitimate Atlassian Cloud / hostnamed URLs must not be short-circuited."""
+        """Legitimate Atlassian Cloud / self-hosted URLs must not be short-circuited.
+
+        The benign hosts are placed on the SSRF allowlist (MCP_ALLOWED_URL_DOMAINS)
+        so the assertion is deterministic and does not depend on live DNS
+        resolution in CI. The exploit cases above are blocked before any DNS
+        lookup (bad scheme / IP literal / blocked hostname), so they are
+        unaffected by the allowlist.
+        """
+        monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "example.com,atlassian.net")
         headers = [(b"authorization", b"Bearer test-token")]
         if jira_url is not None:
             headers.append((b"x-atlassian-jira-url", jira_url))
