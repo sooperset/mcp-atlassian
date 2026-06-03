@@ -6,6 +6,7 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pypac.parser import MalformedPacError
 from requests import PreparedRequest
 from requests.exceptions import ProxyError
 from requests.sessions import Session
@@ -14,6 +15,12 @@ from mcp_atlassian.confluence.client import ConfluenceClient
 from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.jira.client import JiraClient
 from mcp_atlassian.jira.config import JiraConfig
+from mcp_atlassian.utils.proxy import (
+    DEFAULT_PROXY_WPAD_URL,
+    _load_pac_file,
+    apply_proxy_configuration,
+    get_proxy_settings_from_env,
+)
 from mcp_atlassian.utils.ssl import NoProxyAdapter, configure_proxy_bypass
 from tests.utils.base import BaseAuthTest
 from tests.utils.mocks import MockEnvironment
@@ -370,3 +377,175 @@ class TestNoProxyAdapter:
         default_https_adapter = session.get_adapter("https://example.com")
         configure_proxy_bypass("TestService", "https://example.com", session)
         assert session.get_adapter("https://example.com") is default_https_adapter
+
+
+def test_get_proxy_settings_from_env_uses_default_wpad_url():
+    """Global WPAD enable defaults to the built-in PAC URL."""
+    with patch.dict(
+        os.environ,
+        {"ATLASSIAN_PROXY_WPAD_ENABLE": "true"},
+        clear=True,
+    ):
+        proxy_settings = get_proxy_settings_from_env("JIRA")
+
+    assert proxy_settings["proxy_wpad_enable"] is True
+    assert proxy_settings["proxy_wpad_url"] == DEFAULT_PROXY_WPAD_URL
+
+
+def test_get_proxy_settings_from_env_service_disable_overrides_global():
+    """A service-specific disable flag overrides globally enabled WPAD."""
+    with patch.dict(
+        os.environ,
+        {
+            "ATLASSIAN_PROXY_WPAD_ENABLE": "true",
+            "ATLASSIAN_PROXY_WPAD_URL": "http://global.example/wpad.dat",
+            "CONFLUENCE_PROXY_WPAD_ENABLE": "false",
+        },
+        clear=True,
+    ):
+        proxy_settings = get_proxy_settings_from_env("CONFLUENCE")
+
+    assert proxy_settings["proxy_wpad_enable"] is False
+    assert proxy_settings["proxy_wpad_url"] == "http://global.example/wpad.dat"
+
+
+def test_apply_proxy_configuration_prefers_explicit_proxies(monkeypatch):
+    """Explicit proxy settings win over WPAD and reuse the original session."""
+    session = Session()
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    config = JiraConfig(
+        url="https://test.atlassian.net",
+        auth_type="basic",
+        username="user",
+        api_token="token",
+        http_proxy="http://proxy:8080",
+        https_proxy="https://proxy:8443",
+        socks_proxy="socks5://proxy:1080",
+        no_proxy="localhost,127.0.0.1",
+        proxy_wpad_enable=True,
+        proxy_wpad_url="http://wpad.example/wpad.dat",
+    )
+
+    result = apply_proxy_configuration(
+        logger=MagicMock(),
+        service_name="Jira",
+        session=session,
+        config=config,
+        target_url=config.url,
+    )
+
+    assert result is session
+    assert session.proxies == {
+        "http": "http://proxy:8080",
+        "https": "https://proxy:8443",
+        "socks": "socks5://proxy:1080",
+    }
+    assert os.environ["NO_PROXY"] == "localhost,127.0.0.1"
+
+
+def test_apply_proxy_configuration_wraps_hardened_session_for_wpad():
+    """WPAD preserves the source session state and validates the target URL."""
+    source_session = Session()
+    source_session.headers["X-Test"] = "1"
+    source_session.cookies.set("cookie", "value")
+    source_session.trust_env = False
+    config = JiraConfig(
+        url="https://test.atlassian.net",
+        auth_type="basic",
+        username="user",
+        api_token="token",
+        proxy_wpad_enable=True,
+        proxy_wpad_url="http://wpad.example/wpad.dat",
+    )
+    pac = MagicMock()
+    pac_session = Session()
+
+    with (
+        patch(
+            "mcp_atlassian.utils.proxy._load_pac_file", return_value=pac
+        ) as mock_load_pac,
+        patch(
+            "mcp_atlassian.utils.proxy._validate_pac_for_target_url"
+        ) as mock_validate,
+        patch(
+            "mcp_atlassian.utils.proxy._NoProxyAwarePACSession",
+            return_value=pac_session,
+        ) as mock_pac_session,
+    ):
+        result = apply_proxy_configuration(
+            logger=MagicMock(),
+            service_name="Jira",
+            session=source_session,
+            config=config,
+            target_url="https://api.atlassian.com/ex/jira/cloud-id",
+        )
+
+    assert result is pac_session
+    mock_pac_session.assert_called_once_with(pac=pac, no_proxy=None)
+    mock_load_pac.assert_called_once_with(
+        pac_url="http://wpad.example/wpad.dat",
+        verify=source_session.verify,
+        cert=source_session.cert,
+        trust_env=False,
+    )
+    mock_validate.assert_called_once_with(
+        pac=pac,
+        target_url="https://api.atlassian.com/ex/jira/cloud-id",
+    )
+    assert pac_session.headers["X-Test"] == "1"
+    assert pac_session.cookies.get("cookie") == "value"
+    assert pac_session.trust_env is False
+
+
+def test_apply_proxy_configuration_reports_malformed_pac():
+    """Malformed PAC files produce a clear service-specific error."""
+    config = JiraConfig(
+        url="https://test.atlassian.net",
+        auth_type="basic",
+        username="user",
+        api_token="token",
+        proxy_wpad_enable=True,
+        proxy_wpad_url="http://wpad.example/wpad.dat",
+    )
+
+    with (
+        patch(
+            "mcp_atlassian.utils.proxy._load_pac_file",
+            side_effect=MalformedPacError("broken pac"),
+        ),
+        pytest.raises(ValueError, match="Jira PAC file .* is malformed"),
+    ):
+        apply_proxy_configuration(
+            logger=MagicMock(),
+            service_name="Jira",
+            session=Session(),
+            config=config,
+            target_url=config.url,
+        )
+
+
+def test_load_pac_file_is_cached():
+    """PAC loads are cached for identical URL and TLS settings."""
+    _load_pac_file.cache_clear()
+    pac = object()
+    try:
+        with patch(
+            "mcp_atlassian.utils.proxy.get_pac", return_value=pac
+        ) as mock_get_pac:
+            first = _load_pac_file(
+                "http://wpad/wpad.dat",
+                verify=True,
+                cert=None,
+                trust_env=False,
+            )
+            second = _load_pac_file(
+                "http://wpad/wpad.dat",
+                verify=True,
+                cert=None,
+                trust_env=False,
+            )
+
+        assert first is second is pac
+        assert mock_get_pac.call_count == 1
+    finally:
+        _load_pac_file.cache_clear()

@@ -587,6 +587,8 @@ class TestGetJiraFetcher:
             https_proxy="https://proxy.example",
             no_proxy="localhost",
             socks_proxy="socks5://proxy.example",
+            proxy_wpad_enable=True,
+            proxy_wpad_url="http://wpad.example/wpad.dat",
             custom_headers={"X-Instance-Secret": "do-not-forward"},
         )
         app_context = config_factory.create_app_context(jira_config=jira_config)
@@ -618,6 +620,8 @@ class TestGetJiraFetcher:
         assert called_config.https_proxy == "https://proxy.example"
         assert called_config.no_proxy == "localhost"
         assert called_config.socks_proxy == "socks5://proxy.example"
+        assert called_config.proxy_wpad_enable is True
+        assert called_config.proxy_wpad_url == "http://wpad.example/wpad.dat"
         assert called_config.custom_headers is None
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
@@ -1013,6 +1017,8 @@ class TestGetConfluenceFetcher:
         monkeypatch.setenv("CONFLUENCE_NO_PROXY", "localhost")
         monkeypatch.setenv("SOCKS_PROXY", "socks5://shared-proxy.example")
         monkeypatch.delenv("CONFLUENCE_SOCKS_PROXY", raising=False)
+        monkeypatch.setenv("ATLASSIAN_PROXY_WPAD_ENABLE", "true")
+        monkeypatch.setenv("CONFLUENCE_PROXY_WPAD_URL", "http://wpad.example/wpad.dat")
         monkeypatch.setenv(
             "CONFLUENCE_CUSTOM_HEADERS", "X-Instance-Secret=do-not-forward"
         )
@@ -1050,6 +1056,8 @@ class TestGetConfluenceFetcher:
         assert called_config.https_proxy == "https://shared-proxy.example"
         assert called_config.no_proxy == "localhost"
         assert called_config.socks_proxy == "socks5://shared-proxy.example"
+        assert called_config.proxy_wpad_enable is True
+        assert called_config.proxy_wpad_url == "http://wpad.example/wpad.dat"
         assert called_config.custom_headers is None
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")

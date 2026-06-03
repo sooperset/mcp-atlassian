@@ -178,18 +178,24 @@ instances from runaway request loops. They are disabled by default.
 
 ## Proxy Configuration
 
-MCP Atlassian supports routing API requests through HTTP/HTTPS/SOCKS proxies.
+MCP Atlassian supports routing API requests through HTTP/HTTPS/SOCKS proxies,
+with optional PAC/WPAD auto-configuration.
 
 | Variable | Description |
 |----------|-------------|
-| `HTTP_PROXY` | HTTP proxy URL |
-| `HTTPS_PROXY` | HTTPS proxy URL |
-| `SOCKS_PROXY` | SOCKS proxy URL |
-| `NO_PROXY` | Hosts to bypass proxy |
-| `JIRA_HTTPS_PROXY` | Jira-specific HTTPS proxy |
-| `CONFLUENCE_HTTPS_PROXY` | Confluence-specific HTTPS proxy |
+| `HTTP_PROXY` | Global HTTP proxy URL |
+| `HTTPS_PROXY` | Global HTTPS proxy URL |
+| `SOCKS_PROXY` | Global SOCKS proxy URL |
+| `NO_PROXY` | Global hosts to bypass proxy |
+| `ATLASSIAN_PROXY_WPAD_ENABLE` | Enable global PAC/WPAD evaluation (`true`/`false`) |
+| `ATLASSIAN_PROXY_WPAD_URL` | Global PAC URL (defaults to `http://wpad/wpad.dat` when enabled) |
+| `JIRA_HTTP_PROXY`, `JIRA_HTTPS_PROXY`, `JIRA_SOCKS_PROXY`, `JIRA_NO_PROXY` | Jira-specific explicit proxy overrides |
+| `JIRA_PROXY_WPAD_ENABLE`, `JIRA_PROXY_WPAD_URL` | Jira-specific PAC/WPAD overrides |
+| `CONFLUENCE_HTTP_PROXY`, `CONFLUENCE_HTTPS_PROXY`, `CONFLUENCE_SOCKS_PROXY`, `CONFLUENCE_NO_PROXY` | Confluence-specific explicit proxy overrides |
+| `CONFLUENCE_PROXY_WPAD_ENABLE`, `CONFLUENCE_PROXY_WPAD_URL` | Confluence-specific PAC/WPAD overrides |
 
-Service-specific variables override global ones.
+Service-specific variables override global ones. PAC/WPAD is opt-in and is
+only evaluated when no explicit proxy is configured for that service.
 
 ## Custom HTTP Headers
 

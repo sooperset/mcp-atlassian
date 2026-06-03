@@ -7,6 +7,7 @@ requires-python = ">=3.10"
 dependencies = [
     "atlassian-python-api>=4.0.0",
     "requests[socks]>=2.31.0",
+    "pypac>=0.17.2",
     "beautifulsoup4>=4.12.3",
     "httpx>=0.28.0",
     "mcp>=1.8.0,<2.0.0",
@@ -150,6 +151,10 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "src.mcp_atlassian.*"
 disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = "pypac.*"
+ignore_missing_imports = true
 
 [tool.hatch.version]
 source = "uv-dynamic-versioning"
