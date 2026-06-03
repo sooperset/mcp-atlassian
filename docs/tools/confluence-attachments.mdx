@@ -82,6 +82,8 @@ Confluence API returns generic MIME types — use the `mediaTypeDescription` fie
 
 Download an attachment from Confluence as an embedded resource.
 
+<Note>On Confluence Cloud, attachment downloads automatically use the v1 REST endpoint (the legacy `/download/` link was removed and returns 401 for API/scoped tokens). Override with `CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1`.</Note>
+
 **Parameters:**
 
 | Parameter | Type | Required | Description |
@@ -119,6 +121,8 @@ Permanently delete an attachment from Confluence.
 ### Get Page Images
 
 Get all images attached to a Confluence page as inline image content.
+
+<Note>On Confluence Cloud, images are fetched via the v1 REST endpoint automatically (the legacy `/download/` link was removed and returns 401 for API/scoped tokens). Override with `CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1`.</Note>
 
 **Parameters:**
 
