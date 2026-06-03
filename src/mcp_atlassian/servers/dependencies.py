@@ -387,6 +387,8 @@ def _create_user_config_for_fetcher(
         "https_proxy": base_config.https_proxy,
         "no_proxy": base_config.no_proxy,
         "socks_proxy": base_config.socks_proxy,
+        "proxy_wpad_enable": base_config.proxy_wpad_enable,
+        "proxy_wpad_url": base_config.proxy_wpad_url,
     }
 
     if auth_type == "oauth":
@@ -541,6 +543,10 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 f"Creating header-based {spec.name}Fetcher "
                 f"with URL: {url_header_val} and PAT token"
             )
+            global_config = getattr(_get_app_lifespan_ctx(ctx), spec.config_attr, None)
+            proxy_wpad_enable = (
+                bool(global_config.proxy_wpad_enable) if global_config else False
+            )
             header_config = spec.config_class(
                 url=url_header_val,
                 auth_type="pat",
@@ -548,8 +554,16 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 ssl_verify=True,
                 http_proxy=None,
                 https_proxy=None,
-                no_proxy=None,
+                no_proxy=(
+                    global_config.no_proxy
+                    if global_config and proxy_wpad_enable
+                    else None
+                ),
                 socks_proxy=None,
+                proxy_wpad_enable=proxy_wpad_enable,
+                proxy_wpad_url=(
+                    global_config.proxy_wpad_url if global_config else None
+                ),
                 custom_headers=None,
                 **spec.filter_kwargs,
             )
