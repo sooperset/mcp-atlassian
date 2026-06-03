@@ -140,6 +140,34 @@ def _parse_request_participants(
     )
 
 
+def _parse_attachments(
+    attachments: str | list[dict[str, Any]] | None,
+) -> list[dict[str, Any]] | None:
+    """Parse customer request attachments from a JSON array string or list.
+
+    Each attachment must be an object with ``filename``, ``mime_type`` and
+    base64-encoded ``base64`` content.
+    """
+    if attachments is None:
+        return None
+    if isinstance(attachments, str):
+        stripped = attachments.strip()
+        if not stripped:
+            return None
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"attachments is not valid JSON: {e}") from e
+    else:
+        parsed = attachments
+
+    if not isinstance(parsed, list):
+        raise ValueError("attachments must be a JSON array of attachment objects.")
+    if not all(isinstance(item, dict) for item in parsed):
+        raise ValueError("attachments must be a JSON array of attachment objects.")
+    return parsed
+
+
 @jira_mcp.tool(
     tags={"jira", "read", "toolset:jira_users"},
     annotations={"title": "Get User Profile", "readOnlyHint": True},
@@ -2773,6 +2801,17 @@ async def create_customer_request(
             default=None,
         ),
     ] = None,
+    attachments: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) JSON array string of files to attach to the created request. "
+                "Each object must contain 'filename', 'mime_type', and base64-encoded 'base64' content. "
+                'Example: [{"filename": "log.txt", "mime_type": "text/plain", "base64": "aGVsbG8="}]'
+            ),
+            default=None,
+        ),
+    ] = None,
     strict_on_behalf: Annotated[
         bool,
         Field(
@@ -2793,6 +2832,7 @@ async def create_customer_request(
         request_field_values: JSON string of request field values keyed by field ID.
         raise_on_behalf_of: Optional Jira user identifier for raiseOnBehalfOf.
         request_participants: Optional JSON array string or comma-separated list.
+        attachments: Optional JSON array string of base64-encoded files to attach.
         strict_on_behalf: Whether to fail instead of retrying without on-behalf mode.
 
     Returns:
@@ -2801,6 +2841,7 @@ async def create_customer_request(
     jira = await get_jira_fetcher(ctx)
     parsed_field_values = _parse_request_field_values(request_field_values)
     parsed_request_participants = _parse_request_participants(request_participants)
+    parsed_attachments = _parse_attachments(attachments)
 
     result = jira.create_customer_request(
         service_desk_id=service_desk_id,
@@ -2808,6 +2849,7 @@ async def create_customer_request(
         request_field_values=parsed_field_values,
         raise_on_behalf_of=raise_on_behalf_of,
         request_participants=parsed_request_participants,
+        attachments=parsed_attachments,
         strict_on_behalf=strict_on_behalf,
     )
     return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)

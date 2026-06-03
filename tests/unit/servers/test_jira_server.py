@@ -774,6 +774,44 @@ async def test_create_customer_request(jira_client, mock_jira_fetcher):
         request_field_values={"summary": "Production incident"},
         raise_on_behalf_of="d.zagitov",
         request_participants=None,
+        attachments=None,
+        strict_on_behalf=False,
+    )
+
+
+@pytest.mark.anyio
+async def test_create_customer_request_with_attachments(jira_client, mock_jira_fetcher):
+    """Customer request tool should forward parsed base64 attachments."""
+    mock_jira_fetcher.create_customer_request.return_value = JiraCustomerRequest(
+        request_id="10010",
+        request_key="SUP-101",
+        created_mode="created_direct",
+    )
+
+    response = await jira_client.call_tool(
+        "jira_create_customer_request",
+        {
+            "service_desk_id": "4",
+            "request_type_id": "23",
+            "request_field_values": '{"summary": "Production incident"}',
+            "attachments": (
+                '[{"filename": "log.txt", "mime_type": "text/plain", '
+                '"base64": "aGVsbG8="}]'
+            ),
+        },
+    )
+    content = json.loads(response.content[0].text)
+
+    assert content["request_key"] == "SUP-101"
+    mock_jira_fetcher.create_customer_request.assert_called_once_with(
+        service_desk_id="4",
+        request_type_id="23",
+        request_field_values={"summary": "Production incident"},
+        raise_on_behalf_of=None,
+        request_participants=None,
+        attachments=[
+            {"filename": "log.txt", "mime_type": "text/plain", "base64": "aGVsbG8="}
+        ],
         strict_on_behalf=False,
     )
 

@@ -1,5 +1,7 @@
 """Module for Jira Service Management customer request operations."""
 
+import base64
+import binascii
 import logging
 from typing import Any
 
@@ -455,6 +457,186 @@ class CustomerRequestsMixin(JiraClient):
                 request_type_id=request_type_id,
             )
 
+    @staticmethod
+    def _decode_attachment_file(file: Any) -> tuple[str, str, bytes]:
+        """Decode a base64 attachment descriptor into upload-ready bytes.
+
+        Args:
+            file: A mapping with ``filename``, optional ``mime_type`` and
+                base64-encoded ``base64`` content.
+
+        Returns:
+            A tuple of ``(filename, mime_type, content_bytes)``.
+
+        Raises:
+            ValueError: If the descriptor is malformed or the content is not
+                valid base64.
+        """
+        if not isinstance(file, dict):
+            raise ValueError("Each attachment must be an object")
+
+        filename = file.get("filename")
+        if not isinstance(filename, str) or not filename.strip():
+            raise ValueError("Attachment filename is required")
+
+        mime_type = file.get("mime_type") or "application/octet-stream"
+        if not isinstance(mime_type, str) or not mime_type.strip():
+            raise ValueError(f"Attachment '{filename}' mime_type must be a string")
+
+        encoded = file.get("base64")
+        if not isinstance(encoded, str) or not encoded.strip():
+            raise ValueError(f"Attachment '{filename}' is missing base64 content")
+
+        try:
+            content = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError(
+                f"Attachment '{filename}' has invalid base64 content"
+            ) from exc
+
+        if not content:
+            raise ValueError(f"Attachment '{filename}' is empty")
+
+        return filename.strip(), mime_type.strip(), content
+
+    def attach_temporary_files(
+        self,
+        service_desk_id: str,
+        files: list[dict[str, Any]],
+    ) -> list[str]:
+        """Upload files to the ServiceDesk temporary attachment store.
+
+        Args:
+            service_desk_id: The service desk ID owning the attachments.
+            files: A list of descriptors, each containing ``filename``,
+                optional ``mime_type`` and base64-encoded ``base64`` content.
+
+        Returns:
+            A list of temporary attachment IDs returned by Jira.
+
+        Raises:
+            ValueError: If the service desk ID is missing or a descriptor is
+                malformed.
+        """
+        if not service_desk_id or not service_desk_id.strip():
+            raise ValueError("Service desk ID is required")
+        if not files:
+            return []
+
+        multipart_files = []
+        for file in files:
+            filename, mime_type, content = self._decode_attachment_file(file)
+            multipart_files.append(("file", (filename, content, mime_type)))
+
+        headers = self._get_servicedesk_headers(self.jira.default_headers)
+        headers["X-Atlassian-Token"] = "no-check"
+        # Let requests set the multipart Content-Type (with boundary) itself.
+        headers.pop("Content-Type", None)
+
+        base_url = self.config.url.rstrip("/")
+        url = (
+            f"{base_url}/rest/servicedeskapi/servicedesk/"
+            f"{service_desk_id}/attachTemporaryFile"
+        )
+
+        response = self.jira._session.post(url, headers=headers, files=multipart_files)
+        response.raise_for_status()
+        data = response.json()
+
+        temporary_attachments = (
+            data.get("temporaryAttachments", []) if isinstance(data, dict) else []
+        )
+        return [
+            str(item["temporaryAttachmentId"])
+            for item in temporary_attachments
+            if isinstance(item, dict) and item.get("temporaryAttachmentId")
+        ]
+
+    def _attach_files_to_request(
+        self,
+        issue_key: str,
+        temporary_attachment_ids: list[str],
+        *,
+        public: bool = True,
+    ) -> None:
+        """Attach previously uploaded temporary files to a customer request.
+
+        Args:
+            issue_key: The created request issue key.
+            temporary_attachment_ids: Temporary attachment IDs to attach.
+            public: Whether the attachments are visible to the customer.
+
+        Raises:
+            TypeError: If the ServiceDesk attachment API returns an unexpected
+                response type.
+        """
+        if not issue_key or not temporary_attachment_ids:
+            return
+
+        headers = self._get_servicedesk_headers(self.jira.default_headers)
+        payload: dict[str, Any] = {
+            "temporaryAttachmentIds": temporary_attachment_ids,
+            "public": public,
+        }
+        endpoint = f"rest/servicedeskapi/request/{issue_key}/attachment"
+        response = self.jira.post(endpoint, data=payload, headers=headers)
+        if not isinstance(response, dict):
+            msg = (
+                "Unexpected return value type from "
+                f"ServiceDesk attachment API: {type(response)}"
+            )
+            logger.error(msg)
+            raise TypeError(msg)
+
+    def _process_request_attachments(
+        self,
+        service_desk_id: str,
+        request_type_id: str,
+        issue_key: str,
+        attachments: list[dict[str, Any]],
+        warnings: list[str],
+    ) -> None:
+        """Upload and attach files to a created request, recording warnings.
+
+        Attachment failures never break a successfully created request; they
+        are logged and appended to ``warnings`` instead.
+        """
+        if not attachments:
+            return
+
+        if not issue_key:
+            prefix = self._trace_prefix(
+                service_desk_id,
+                request_type_id,
+                "ATTACH_SKIPPED",
+            )
+            warnings.append(f"{prefix}: missing issue key for attachments")
+            return
+
+        try:
+            temporary_ids = self.attach_temporary_files(service_desk_id, attachments)
+            self._attach_files_to_request(issue_key, temporary_ids)
+        except Exception as exc:  # noqa: BLE001
+            status_code, error_text = self._extract_error_details(exc)
+            shortened_error = self._shorten_error_text(error_text)
+            prefix = self._trace_prefix(
+                service_desk_id,
+                request_type_id,
+                "ATTACH_ERROR",
+            )
+            logger.error(
+                "%s issue_key=%s file_count=%s status=%s error=%s",
+                prefix,
+                issue_key,
+                len(attachments),
+                status_code,
+                shortened_error,
+            )
+            warnings.append(
+                f"{prefix} issue_key={issue_key} "
+                f"status={status_code}: {shortened_error}"
+            )
+
     def create_customer_request(
         self,
         service_desk_id: str,
@@ -462,6 +644,7 @@ class CustomerRequestsMixin(JiraClient):
         request_field_values: dict[str, Any],
         raise_on_behalf_of: str | None = None,
         request_participants: list[str] | None = None,
+        attachments: list[dict[str, Any]] | None = None,
         *,
         strict_on_behalf: bool = False,
     ) -> JiraCustomerRequest:
@@ -544,6 +727,16 @@ class CustomerRequestsMixin(JiraClient):
                 logger.error(msg)
                 raise TypeError(msg)
 
+            if attachments:
+                issue_key = response.get("issueKey") or response.get("key") or ""
+                self._process_request_attachments(
+                    service_desk_id,
+                    request_type_id,
+                    str(issue_key),
+                    attachments,
+                    warnings,
+                )
+
             return JiraCustomerRequest.from_api_response(
                 response,
                 portal_url=self._build_portal_url(response, service_desk_id),
@@ -603,6 +796,16 @@ class CustomerRequestsMixin(JiraClient):
                     )
                     message = f"{error_message}; fallback_failed: {fallback_message}"
                     raise ValueError(message) from fallback_error
+
+                if attachments:
+                    issue_key = response.get("issueKey") or response.get("key") or ""
+                    self._process_request_attachments(
+                        service_desk_id,
+                        request_type_id,
+                        str(issue_key),
+                        attachments,
+                        warnings,
+                    )
 
                 return JiraCustomerRequest.from_api_response(
                     response,

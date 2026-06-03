@@ -403,3 +403,120 @@ def test_create_customer_request_strict_on_behalf_raises(
 
     assert "JSM_CUSTOMER_REQUEST_HTTP_ERROR" in str(exc_info.value)
     assert fetcher.jira.post.call_count == 1
+
+
+def _make_session_response(payload: dict) -> MagicMock:
+    """Build a mocked requests.Response for multipart uploads."""
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json.return_value = payload
+    return response
+
+
+def test_attach_temporary_files_uploads_and_returns_ids(
+    jira_fetcher: JiraFetcher,
+) -> None:
+    """Temporary upload should send multipart data and return attachment IDs."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira._session = MagicMock()
+    fetcher.jira._session.post = MagicMock(
+        return_value=_make_session_response(
+            {"temporaryAttachments": [{"temporaryAttachmentId": "temp-1"}]}
+        )
+    )
+
+    result = fetcher.attach_temporary_files(
+        "4",
+        [{"filename": "log.txt", "mime_type": "text/plain", "base64": "aGVsbG8="}],
+    )
+
+    assert result == ["temp-1"]
+    call = fetcher.jira._session.post.call_args
+    assert call.args[0].endswith(
+        "/rest/servicedeskapi/servicedesk/4/attachTemporaryFile"
+    )
+    assert call.kwargs["headers"]["X-Atlassian-Token"] == "no-check"
+    assert "Content-Type" not in call.kwargs["headers"]
+    uploaded_files = call.kwargs["files"]
+    assert uploaded_files[0][0] == "file"
+    assert uploaded_files[0][1] == ("log.txt", b"hello", "text/plain")
+
+
+def test_decode_attachment_file_rejects_invalid_base64(
+    jira_fetcher: JiraFetcher,
+) -> None:
+    """Invalid base64 content should raise a descriptive ValueError."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+
+    with pytest.raises(ValueError, match="invalid base64 content"):
+        fetcher._decode_attachment_file(
+            {"filename": "bad.txt", "mime_type": "text/plain", "base64": "!!!"}
+        )
+
+
+def test_create_customer_request_attaches_files(
+    jira_fetcher: JiraFetcher,
+) -> None:
+    """Created requests should upload and attach provided base64 files."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.get = MagicMock(return_value={"requestTypeFields": []})
+    fetcher.jira._session = MagicMock()
+    fetcher.jira._session.post = MagicMock(
+        return_value=_make_session_response(
+            {"temporaryAttachments": [{"temporaryAttachmentId": "temp-1"}]}
+        )
+    )
+    fetcher.jira.post = MagicMock(
+        side_effect=[
+            {"issueId": "10010", "issueKey": "SUP-101"},
+            {"id": "20001"},
+        ]
+    )
+
+    result = fetcher.create_customer_request(
+        service_desk_id="4",
+        request_type_id="23",
+        request_field_values={"summary": "With attachment"},
+        attachments=[
+            {"filename": "log.txt", "mime_type": "text/plain", "base64": "aGVsbG8="}
+        ],
+    )
+
+    assert result.request_key == "SUP-101"
+    assert result.warnings == []
+    fetcher.jira._session.post.assert_called_once()
+    assert fetcher.jira.post.call_count == 2
+    attach_call = fetcher.jira.post.call_args_list[1]
+    assert attach_call.args[0] == "rest/servicedeskapi/request/SUP-101/attachment"
+    assert attach_call.kwargs["data"]["temporaryAttachmentIds"] == ["temp-1"]
+    assert attach_call.kwargs["data"]["public"] is True
+
+
+def test_create_customer_request_attachment_failure_adds_warning(
+    jira_fetcher: JiraFetcher,
+) -> None:
+    """Attachment failures must not break a successfully created request."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.get = MagicMock(return_value={"requestTypeFields": []})
+    fetcher.jira._session = MagicMock()
+    fetcher.jira._session.post = MagicMock(
+        side_effect=_make_http_error(status_code=413, text="Payload Too Large")
+    )
+    fetcher.jira.post = MagicMock(
+        return_value={"issueId": "10010", "issueKey": "SUP-101"}
+    )
+
+    result = fetcher.create_customer_request(
+        service_desk_id="4",
+        request_type_id="23",
+        request_field_values={"summary": "With attachment"},
+        attachments=[
+            {"filename": "log.txt", "mime_type": "text/plain", "base64": "aGVsbG8="}
+        ],
+    )
+
+    assert result.request_key == "SUP-101"
+    assert len(result.warnings) == 1
+    assert "JSM_CUSTOMER_REQUEST_ATTACH_ERROR" in result.warnings[0]
+    assert "issue_key=SUP-101" in result.warnings[0]
+    assert fetcher.jira.post.call_count == 1
