@@ -166,6 +166,17 @@ def test_find_epic_issue_type_id_returns_id(issues_mixin):
     assert epic_id == "10001"
 
 
+def test_find_epic_issue_type_id_prefers_exact_match(issues_mixin):
+    """Verify _find_epic_issue_type_id prefers exact 'Epic' over substring match."""
+    issues_mixin.get_project_issue_types.return_value = [
+        {"id": "10099", "name": "EpicStory", "subtask": False},
+        {"id": "10001", "name": "Epic", "subtask": False},
+    ]
+
+    epic_id = issues_mixin._find_epic_issue_type_id("PROJ")
+    assert epic_id == "10001"
+
+
 def test_find_subtask_issue_type_id_returns_id(issues_mixin):
     """Verify _find_subtask_issue_type_id returns the correct ID."""
     issues_mixin.get_project_issue_types.return_value = [
