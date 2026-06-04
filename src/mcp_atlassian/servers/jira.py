@@ -15,6 +15,7 @@ from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 from mcp_atlassian.jira.forms_common import convert_datetime_to_timestamp
 from mcp_atlassian.models.jira import JiraAttachment
 from mcp_atlassian.models.jira.common import JiraUser
+from mcp_atlassian.servers.async_utils import run_jira_fetcher_call
 from mcp_atlassian.servers.dependencies import get_jira_fetcher
 from mcp_atlassian.utils.decorators import check_write_access
 from mcp_atlassian.utils.media import (
@@ -371,7 +372,8 @@ async def get_issue(
     if fields and fields != "*all":
         fields_list = [f.strip() for f in fields.split(",")]
 
-    issue = jira.get_issue(
+    issue = await run_jira_fetcher_call(
+        jira.get_issue,
         issue_key=issue_key,
         fields=fields_list,
         expand=expand,
@@ -472,7 +474,8 @@ async def search(
     if fields and fields != "*all":
         fields_list = [f.strip() for f in fields.split(",")]
 
-    search_result = jira.search_issues(
+    search_result = await run_jira_fetcher_call(
+        jira.search_issues,
         jql=jql,
         fields=fields_list,
         limit=limit,
