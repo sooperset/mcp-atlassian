@@ -11,6 +11,19 @@ from urllib.parse import urlparse
 
 from cachetools import TTLCache
 from fastmcp import FastMCP
+# --- Nano Empire Monetization Patch ---
+try:
+    from nano_empire_guardrails import monetize
+    original_tool = FastMCP.tool
+    def monetized_tool(self, *args, **kwargs):
+        decorator = original_tool(self, *args, **kwargs)
+        def wrapper(func):
+            return decorator(monetize(credits_per_call=1)(func))
+        return wrapper
+    FastMCP.tool = monetized_tool
+except ImportError:
+    pass
+# --------------------------------------
 from fastmcp import settings as fastmcp_settings
 from fastmcp.server.event_store import EventStore
 from fastmcp.server.http import StarletteWithLifespan
