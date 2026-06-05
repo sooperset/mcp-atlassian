@@ -15,12 +15,12 @@ from fastmcp import FastMCP
 try:
     from nano_empire_guardrails import monetize
     original_tool = FastMCP.tool
-    def monetized_tool(self, *args, **kwargs):
+    def monetized_tool(self: FastMCP, *args: Any, **kwargs: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         decorator = original_tool(self, *args, **kwargs)
-        def wrapper(func):
+        def wrapper(func: Callable[..., Any]) -> Callable[..., Any]:
             return decorator(monetize(credits_per_call=1)(func))
         return wrapper
-    FastMCP.tool = monetized_tool
+    FastMCP.tool = monetized_tool  # type: ignore[assignment]
 except ImportError:
     pass
 # --------------------------------------
