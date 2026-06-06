@@ -1,13 +1,12 @@
-"""Main FastMCP server setup for Atlassian integration."""
+﻿"""Main FastMCP server setup for Atlassian integration."""
 
 import base64
 import json
 import logging
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any, Literal, Optional
-from collections.abc import Callable
 from urllib.parse import urlparse
 
 from cachetools import TTLCache
@@ -92,7 +91,7 @@ def _sanitize_schema_for_compatibility(tool: MCPTool) -> MCPTool:
     Vertex AI / Google ADK rejecting ``anyOf`` alongside ``default`` or
     ``description`` fields (issues #640, #733).
 
-    The transform is intentionally conservative — it only flattens unions
+    The transform is intentionally conservative â€” it only flattens unions
     of exactly ``[{"type": <primitive>}, {"type": "null"}]`` so that
     complex / nested schemas are left untouched.
 
@@ -847,3 +846,5 @@ async def _health_check_route(request: Request) -> JSONResponse:
 
 
 logger.info("Added /healthz endpoint for Kubernetes probes")
+
+
