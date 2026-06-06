@@ -11,15 +11,23 @@ from urllib.parse import urlparse
 
 from cachetools import TTLCache
 from fastmcp import FastMCP
+
 # --- Nano Empire Monetization Patch ---
 try:
     from nano_empire_guardrails import monetize
+
     original_tool = FastMCP.tool
-    def monetized_tool(self: FastMCP, *args: Any, **kwargs: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+
+    def monetized_tool(
+        self: FastMCP, *args: Any, **kwargs: Any
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         decorator = original_tool(self, *args, **kwargs)
+
         def wrapper(func: Callable[..., Any]) -> Callable[..., Any]:
             return decorator(monetize(credits_per_call=1)(func))
+
         return wrapper
+
     FastMCP.tool = monetized_tool  # type: ignore[assignment]
 except ImportError:
     pass
