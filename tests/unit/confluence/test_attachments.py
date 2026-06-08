@@ -104,13 +104,11 @@ class TestAttachmentsMixin:
 
         mock_response = Mock()
         if raise_error:
-            # Changed from .post to .put to match implementation
-            attachments_mixin.confluence._session.put.side_effect = raise_error
+            attachments_mixin.confluence._session.post.side_effect = raise_error
         else:
             mock_response.json.return_value = response_data
             mock_response.raise_for_status.return_value = None
-            # Changed from .post to .put to match implementation
-            attachments_mixin.confluence._session.put.return_value = mock_response
+            attachments_mixin.confluence._session.post.return_value = mock_response
 
         return mock_response
 
@@ -129,6 +127,11 @@ class TestAttachmentsMixin:
             patch("os.path.abspath") as mock_abspath,
             patch("os.path.basename") as mock_basename,
             patch("builtins.open", mock_open(read_data=b"test content")),
+            patch.object(
+                attachments_mixin,
+                "get_content_attachments",
+                return_value={"attachments": []},
+            ),
         ):
             mock_exists.return_value = True
             mock_getsize.return_value = 100
@@ -152,19 +155,58 @@ class TestAttachmentsMixin:
             assert result["id"] == "att12345"
 
             # Verify the REST API was called with correct parameters
-            # Changed from .post to .put to match implementation
-            attachments_mixin.confluence._session.put.assert_called_once()
-            call_args = attachments_mixin.confluence._session.put.call_args
+            attachments_mixin.confluence._session.post.assert_called_once()
+            call_args = attachments_mixin.confluence._session.post.call_args
 
-            # Check URL
-            assert "/rest/api/content/123456/child/attachment" in call_args[0][0]
+            # Check URL targets the create endpoint (no existing attachment)
+            assert call_args[0][0].endswith("/rest/api/content/123456/child/attachment")
 
-            # Check headers include X-Atlassian-Token
-            assert call_args[1]["headers"]["X-Atlassian-Token"] == "nocheck"
+            # Check headers include correct X-Atlassian-Token value
+            assert call_args[1]["headers"]["X-Atlassian-Token"] == "no-check"
 
             # Check minorEdit was passed in data
             assert call_args[1]["data"]["minorEdit"] == "false"
-            # Note: comment is now in files dict as multipart form data, not in data dict
+            # Note: comment is in files dict as multipart form data, not in data dict
+
+    def test_upload_attachment_update_existing(self, attachments_mixin: AttachmentsMixin):
+        """Test that re-uploading an existing attachment routes to the update endpoint."""
+        self._mock_rest_api_upload(attachments_mixin)
+
+        existing_attachment = [{"id": "att12345", "title": "test_file.txt"}]
+
+        with (
+            patch("os.path.exists") as mock_exists,
+            patch("os.path.getsize") as mock_getsize,
+            patch("os.path.isabs") as mock_isabs,
+            patch("os.path.abspath") as mock_abspath,
+            patch("os.path.basename") as mock_basename,
+            patch("builtins.open", mock_open(read_data=b"updated content")),
+            patch.object(
+                attachments_mixin,
+                "get_content_attachments",
+                return_value={"attachments": existing_attachment},
+            ),
+        ):
+            mock_exists.return_value = True
+            mock_getsize.return_value = 100
+            mock_isabs.return_value = True
+            mock_abspath.return_value = "/absolute/path/test_file.txt"
+            mock_basename.return_value = "test_file.txt"
+
+            result = attachments_mixin.upload_attachment(
+                "123456", "/absolute/path/test_file.txt"
+            )
+
+            assert result["success"] is True
+
+            attachments_mixin.confluence._session.post.assert_called_once()
+            call_args = attachments_mixin.confluence._session.post.call_args
+
+            # Update path must target the /data endpoint for the existing attachment
+            assert call_args[0][0].endswith(
+                "/rest/api/content/123456/child/attachment/att12345/data"
+            )
+            assert call_args[1]["headers"]["X-Atlassian-Token"] == "no-check"
 
     def test_upload_attachment_relative_path(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with a relative path."""
@@ -179,6 +221,11 @@ class TestAttachmentsMixin:
             patch("os.path.abspath") as mock_abspath,
             patch("os.path.basename") as mock_basename,
             patch("builtins.open", mock_open(read_data=b"test content")),
+            patch.object(
+                attachments_mixin,
+                "get_content_attachments",
+                return_value={"attachments": []},
+            ),
         ):
             mock_exists.return_value = True
             mock_getsize.return_value = 100
@@ -255,6 +302,11 @@ class TestAttachmentsMixin:
             patch("os.path.basename") as mock_basename,
             patch("os.path.getsize") as mock_getsize,
             patch("builtins.open", mock_open(read_data=b"test content")),
+            patch.object(
+                attachments_mixin,
+                "get_content_attachments",
+                return_value={"attachments": []},
+            ),
         ):
             mock_exists.return_value = True
             mock_isabs.return_value = True

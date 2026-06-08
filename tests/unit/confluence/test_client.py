@@ -378,6 +378,11 @@ def test_confluence_fetcher_attachment_method_calls():
         fetcher = ConfluenceFetcher()
 
         # Test upload_attachment can be called
+        # Pre-configure the existing-attachment check to return empty (new attachment case)
+        mock_confluence.get_attachments_from_content.return_value = {
+            "results": [],
+            "size": 0,
+        }
         with (
             patch("os.path.exists", return_value=True),
             patch("os.path.isabs", return_value=True),
@@ -389,11 +394,8 @@ def test_confluence_fetcher_attachment_method_calls():
             assert result["success"] is True
             assert result["content_id"] == "123"
 
-        # Test get_content_attachments can be called
-        mock_confluence.get_attachments_from_content.return_value = {
-            "results": [],
-            "size": 0,
-        }
+        # Test get_content_attachments can be called (reset to isolate call count)
+        mock_confluence.get_attachments_from_content.reset_mock()
         result = fetcher.get_content_attachments("123")
         assert result["success"] is True
         mock_confluence.get_attachments_from_content.assert_called_once()
