@@ -168,7 +168,9 @@ class TestAttachmentsMixin:
             assert call_args[1]["data"]["minorEdit"] == "false"
             # Note: comment is in files dict as multipart form data, not in data dict
 
-    def test_upload_attachment_update_existing(self, attachments_mixin: AttachmentsMixin):
+    def test_upload_attachment_update_existing(
+        self, attachments_mixin: AttachmentsMixin
+    ):
         """Test that re-uploading an existing attachment routes to the update endpoint."""
         self._mock_rest_api_upload(attachments_mixin)
 
