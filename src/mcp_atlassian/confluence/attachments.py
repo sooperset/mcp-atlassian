@@ -466,12 +466,20 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             Attachment metadata dict if successful, None otherwise
         """
         try:
-            # Build the API endpoint URL
             base_url = self.config.url.rstrip("/")
-            url = f"{base_url}/rest/api/content/{content_id}/child/attachment"
+
+            # Confluence Server rejects POST to the create endpoint when an attachment
+            # with the same filename already exists. Route to the update endpoint instead.
+            existing = self.get_content_attachments(content_id, filename=filename)
+            existing_list = existing.get("attachments", [])
+            if existing_list:
+                attachment_id = existing_list[0].get("id")
+                url = f"{base_url}/rest/api/content/{content_id}/child/attachment/{attachment_id}/data"
+            else:
+                url = f"{base_url}/rest/api/content/{content_id}/child/attachment"
 
             # Prepare headers (X-Atlassian-Token required for file uploads)
-            headers = {"X-Atlassian-Token": "nocheck"}
+            headers = {"X-Atlassian-Token": "no-check"}
 
             # Prepare multipart form data
             files = {"file": (filename, open(file_path, "rb"))}
@@ -484,10 +492,8 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             if minor_edit is not None:
                 data["minorEdit"] = str(minor_edit).lower()
 
-            # Use PUT to support creating new versions of existing attachments
-            # PUT will create a new attachment if it doesn't exist, OR create a new
-            # version if an attachment with the same filename already exists
-            response = self.confluence._session.put(
+            # Use POST to create new attachment or new version of existing attachment
+            response = self.confluence._session.post(
                 url, headers=headers, files=files, data=data
             )
             response.raise_for_status()
