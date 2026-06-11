@@ -23,7 +23,9 @@ class TestMainTransportSelection:
         """Mock asyncio.run to capture what coroutine is executed."""
         with patch("asyncio.run") as mock_run:
             # Store the coroutine for inspection
-            mock_run.side_effect = lambda coro: setattr(mock_run, "_called_with", coro)
+            mock_run.side_effect = lambda coro, **kw: setattr(
+                mock_run, "_called_with", coro
+            )
             yield mock_run
 
     @pytest.mark.parametrize("transport", ["sse", "streamable-http"])

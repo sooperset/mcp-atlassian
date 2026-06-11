@@ -254,13 +254,14 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             f"_list_tools_mcp: read_only={read_only}, enabled_tools_filter={enabled_tools_filter}, header_services={header_based_services}"
         )
 
-        all_tools: dict[str, FastMCPTool] = await self.get_tools()
+        all_tools_list: list[FastMCPTool] = await self.list_tools()
         logger.debug(
-            f"Aggregated {len(all_tools)} tools before filtering: {list(all_tools.keys())}"
+            f"Aggregated {len(all_tools_list)} tools before filtering: {[t.name for t in all_tools_list]}"
         )
 
         filtered_tools: list[MCPTool] = []
-        for registered_name, tool_obj in all_tools.items():
+        for tool_obj in all_tools_list:
+            registered_name = tool_obj.name
             tool_tags = tool_obj.tags
 
             if not should_include_tool_by_toolset(tool_tags, enabled_toolsets_filter):
@@ -360,7 +361,7 @@ class AtlassianMCP(FastMCP[MainAppContext]):
         return app
 
 
-token_validation_cache: TTLCache[
+token_validation_cache: TTLCache[  # type: ignore[type-arg]
     int, tuple[bool, str | None, JiraFetcher | None, ConfluenceFetcher | None]
 ] = TTLCache(maxsize=100, ttl=300)
 

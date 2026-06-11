@@ -79,7 +79,7 @@ if __name__ == "__main__":
 
         # 2. STDIO path must use stdin guard wrapper
         assert "_run_stdio_with_stdin_guard" in source
-        assert "asyncio.run(_run_stdio_with_stdin_guard(run_kwargs))" in source
+        assert "_run_stdio_with_stdin_guard(run_kwargs)" in source
 
         # 3. HTTP path should still use direct execution with no stdin watcher
         assert (
@@ -97,7 +97,7 @@ if __name__ == "__main__":
 
         lines = source.split("\n")
         for i, line in enumerate(lines):
-            if "asyncio.run(_run_stdio_with_stdin_guard(run_kwargs))" in line:
+            if "_run_stdio_with_stdin_guard(run_kwargs)" in line:
                 stdio_section = True
 
             if "# For HTTP transports" in line and "stdin monitoring" in line:

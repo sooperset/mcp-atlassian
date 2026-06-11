@@ -30,13 +30,6 @@ if os.getenv(
 import click
 from fastmcp import settings as fastmcp_settings
 
-# Fix high CPU usage on Windows - use SelectorEventLoop instead of ProactorEventLoop
-# ProactorEventLoop uses IOCP which can cause busy-waiting when combined with
-# synchronous libraries (like requests) that use select() for socket operations.
-# This reduces idle CPU usage from ~3-5% per process to near zero.
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
 from mcp_atlassian.utils.env import is_env_truthy
 from mcp_atlassian.utils.lifecycle import (
     ensure_clean_exit,
@@ -455,11 +448,27 @@ def main(
     if final_transport == "stdio":
         logger.debug("STDIO transport detected, setting up stdin monitoring")
 
+    # Fix high CPU usage on Windows - use SelectorEventLoop instead of
+    # ProactorEventLoop. ProactorEventLoop uses IOCP which causes busy-waiting
+    # with synchronous libraries like requests. SelectorEventLoop reduces idle
+    # CPU from ~3-5% per process to near zero.
+    # Python 3.12+ supports loop_factory in asyncio.run(); older versions use
+    # the (not-yet-deprecated) set_event_loop_policy approach.
+    _asyncio_run_kwargs: dict[str, object] = {}
+    if sys.platform == "win32":
+        if sys.version_info >= (3, 12):
+            _asyncio_run_kwargs["loop_factory"] = asyncio.SelectorEventLoop
+        else:
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     try:
         logger.debug("Starting asyncio event loop...")
 
         if final_transport == "stdio":
-            asyncio.run(_run_stdio_with_stdin_guard(run_kwargs))
+            asyncio.run(
+                _run_stdio_with_stdin_guard(run_kwargs),
+                **_asyncio_run_kwargs,
+            )
         else:
             # For HTTP transports (SSE, streamable-http), don't use stdin monitoring
             # as it causes premature shutdown when the client closes stdin
@@ -467,7 +476,10 @@ def main(
             logger.debug(
                 f"Running server for {final_transport} transport without stdin monitoring"
             )
-            asyncio.run(main_mcp.run_async(**run_kwargs))
+            asyncio.run(
+                main_mcp.run_async(**run_kwargs),
+                **_asyncio_run_kwargs,
+            )
     except (KeyboardInterrupt, SystemExit) as e:
         logger.info(f"Server shutdown initiated: {type(e).__name__}")
     except Exception as e:
