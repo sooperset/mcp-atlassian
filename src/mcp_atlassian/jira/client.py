@@ -383,7 +383,7 @@ class JiraClient:
             payload["description"] = description
         logger.info(f"Creating Jira version: {payload}")
 
-	if self.config.is_cloud:
+        if self.config.is_cloud:
             result = self.jira.post("/rest/api/3/version", json=payload)
         else:
             result = self.jira.post("/rest/api/2/version", data=payload)
