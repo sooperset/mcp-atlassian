@@ -1,10 +1,9 @@
 # .github/workflows/publish.yml
-name: Publish MCP-Atlassian to PyPI
+name: Publish MCP Atlassian Confluence Raw Storage to PyPI
 
 on:
   release:
-    types: [published] # Triggers when a GitHub Release is published
-  workflow_dispatch:   # Allows manual triggering
+    types: [published]
 
 jobs:
   pypi-publish:
@@ -12,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/mcp-atlassian # Link to your PyPI package
+      url: https://pypi.org/p/mcp-atlassian-confluence-raw-storage
     permissions:
       id-token: write # Necessary for PyPI's trusted publishing
 
@@ -33,9 +32,7 @@ jobs:
           enable-cache: true
 
       - name: Build package
-        run: uv build
+        run: uv build --no-sources
 
       - name: Publish package to PyPI
-        run: uv publish --token ${{ secrets.PYPI_API_TOKEN }} dist/*
-        # If using trusted publishing (recommended), remove --token and configure it in PyPI:
-        # run: uv publish dist/*
+        uses: pypa/gh-action-pypi-publish@release/v1

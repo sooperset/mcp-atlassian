@@ -172,9 +172,10 @@ async def get_page(
         bool,
         Field(
             description=(
-                "Whether to convert page to markdown (true) or keep it in raw HTML format (false). "
-                "Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: "
-                "using HTML significantly increases token usage in AI responses."
+                "Whether to convert page to markdown (true) or keep it in raw "
+                "Confluence storage format (false). Raw storage can reveal macros "
+                "(like dates) not visible in markdown, but CAUTION: using storage "
+                "format significantly increases token usage in AI responses."
             ),
             default=True,
         ),
@@ -188,7 +189,8 @@ async def get_page(
         title: The exact title of the page. Must be used with 'space_key'.
         space_key: The key of the space. Must be used with 'title'.
         include_metadata: Whether to include page metadata.
-        convert_to_markdown: Convert content to markdown (true) or keep raw HTML (false).
+        convert_to_markdown: Convert content to markdown (true) or keep raw
+            Confluence storage (false).
 
     Returns:
         JSON string representing the page content and/or metadata, or an error if not found or parameters are invalid.
@@ -283,7 +285,11 @@ async def get_page_children(
     convert_to_markdown: Annotated[
         bool,
         Field(
-            description="Whether to convert page content to markdown (true) or keep it in raw HTML format (false). Only relevant if include_content is true.",
+            description=(
+                "Whether to convert page content to markdown (true) or keep it "
+                "in raw Confluence storage format (false). Only relevant if "
+                "include_content is true."
+            ),
             default=True,
         ),
     ] = True,
@@ -1087,9 +1093,10 @@ async def get_page_history(
         bool,
         Field(
             description=(
-                "Whether to convert page to markdown (true) or keep it in raw HTML format (false). "
-                "Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: "
-                "using HTML significantly increases token usage in AI responses."
+                "Whether to convert page to markdown (true) or keep it in raw "
+                "Confluence storage format (false). Raw storage can reveal macros "
+                "(like dates) not visible in markdown, but CAUTION: using storage "
+                "format significantly increases token usage in AI responses."
             ),
             default=True,
         ),
@@ -1101,7 +1108,8 @@ async def get_page_history(
         ctx: The FastMCP context.
         page_id: Confluence page ID.
         version: The version number to retrieve.
-        convert_to_markdown: Convert content to markdown (true) or keep raw HTML (false).
+        convert_to_markdown: Convert content to markdown (true) or keep raw
+            Confluence storage (false).
 
     Returns:
         JSON string representing the page content at the specified version.

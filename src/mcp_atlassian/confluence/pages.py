@@ -32,6 +32,16 @@ class PagesMixin(ConfluenceClient):
             )
         return None
 
+    def _get_storage_content(self, page: dict[str, Any]) -> str:
+        """Extract raw Confluence storage content from a page response."""
+        try:
+            return page["body"]["storage"]["value"]
+        except (KeyError, TypeError) as e:
+            logger.warning(
+                f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
+            )
+            return ""
+
     @handle_auth_errors("Confluence API")
     def get_page_content(
         self, page_id: str, *, convert_to_markdown: bool = True
@@ -42,7 +52,7 @@ class PagesMixin(ConfluenceClient):
         Args:
             page_id: The ID of the page to retrieve
             convert_to_markdown: When True, returns content in
-                markdown format, otherwise returns raw HTML
+                markdown format, otherwise returns raw Confluence storage format
                 (keyword-only)
 
         Returns:
@@ -81,26 +91,23 @@ class PagesMixin(ConfluenceClient):
                 raise Exception(error_msg)
 
             space_key = page.get("space", {}).get("key", "")
-            try:
-                content = page["body"]["storage"]["value"]
-            except (KeyError, TypeError) as e:
-                logger.warning(
-                    f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
-                )
-                content = ""
+            content = self._get_storage_content(page)
             page_id_str = str(page.get("id", ""))
             page_attachments = (
                 page.get("children", {}).get("attachment", {}).get("results", [])
             )
-            processed_html, processed_markdown = self.preprocessor.process_html_content(
-                content,
-                space_key=space_key,
-                confluence_client=self.confluence,
-                content_id=page_id_str,
-                attachments=page_attachments,
-            )
 
-            page_content = processed_markdown if convert_to_markdown else processed_html
+            if convert_to_markdown:
+                _, processed_markdown = self.preprocessor.process_html_content(
+                    content,
+                    space_key=space_key,
+                    confluence_client=self.confluence,
+                    content_id=page_id_str,
+                    attachments=page_attachments,
+                )
+                page_content = processed_markdown
+            else:
+                page_content = content
 
             # Fetch page emoji and width from content properties
             emoji = self._get_page_emoji(page_id)
@@ -389,7 +396,8 @@ class PagesMixin(ConfluenceClient):
             space_key: The key of the space containing the page
             title: The title of the page to retrieve
             convert_to_markdown: When True, returns content in markdown format,
-                               otherwise returns raw HTML (keyword-only)
+                               otherwise returns raw Confluence storage format
+                               (keyword-only)
 
         Returns:
             ConfluencePage model containing the page content and metadata, or None if not found
@@ -407,22 +415,17 @@ class PagesMixin(ConfluenceClient):
                 )
                 return None
 
-            try:
-                content = page["body"]["storage"]["value"]
-            except (KeyError, TypeError) as e:
-                logger.warning(
-                    f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
+            content = self._get_storage_content(page)
+            if convert_to_markdown:
+                _, processed_markdown = self.preprocessor.process_html_content(
+                    content,
+                    space_key=space_key,
+                    confluence_client=self.confluence,
+                    content_id=str(page.get("id", "")),
                 )
-                content = ""
-            processed_html, processed_markdown = self.preprocessor.process_html_content(
-                content,
-                space_key=space_key,
-                confluence_client=self.confluence,
-                content_id=str(page.get("id", "")),
-            )
-
-            # Use the appropriate content format based on the convert_to_markdown flag
-            page_content = processed_markdown if convert_to_markdown else processed_html
+                page_content = processed_markdown
+            else:
+                page_content = content
 
             # Fetch page emoji and width from content properties
             emoji = self._get_page_emoji(str(page.get("id", "")))
@@ -472,7 +475,8 @@ class PagesMixin(ConfluenceClient):
             start: The starting index for pagination
             limit: Maximum number of pages to return
             convert_to_markdown: When True, returns content in markdown format,
-                               otherwise returns raw HTML (keyword-only)
+                               otherwise returns raw Confluence storage format
+                               (keyword-only)
 
         Returns:
             List of ConfluencePage models containing page content and metadata
@@ -483,22 +487,17 @@ class PagesMixin(ConfluenceClient):
 
         page_models = []
         for page in pages:
-            try:
-                content = page["body"]["storage"]["value"]
-            except (KeyError, TypeError) as e:
-                logger.warning(
-                    f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
+            content = self._get_storage_content(page)
+            if convert_to_markdown:
+                _, processed_markdown = self.preprocessor.process_html_content(
+                    content,
+                    space_key=space_key,
+                    confluence_client=self.confluence,
+                    content_id=str(page.get("id", "")),
                 )
-                content = ""
-            processed_html, processed_markdown = self.preprocessor.process_html_content(
-                content,
-                space_key=space_key,
-                confluence_client=self.confluence,
-                content_id=str(page.get("id", "")),
-            )
-
-            # Use the appropriate content format based on the convert_to_markdown flag
-            page_content = processed_markdown if convert_to_markdown else processed_html
+                page_content = processed_markdown
+            else:
+                page_content = content
 
             # Ensure space information is included
             if "space" not in page:
@@ -606,7 +605,7 @@ class PagesMixin(ConfluenceClient):
             if page_width:
                 self._set_page_width(page_id, page_width)
 
-            return self.get_page_content(page_id)
+            return self.get_page_content(page_id, convert_to_markdown=is_markdown)
         except Exception as e:
             logger.error(
                 f"Error creating page '{title}' in space {space_key}: {str(e)}"
@@ -712,7 +711,7 @@ class PagesMixin(ConfluenceClient):
                 self._set_page_width(page_id, width_to_set)
 
             # After update, refresh the page data
-            return self.get_page_content(page_id)
+            return self.get_page_content(page_id, convert_to_markdown=is_markdown)
         except Exception as e:
             logger.error(f"Error updating page {page_id}: {str(e)}")
             raise Exception(f"Failed to update page {page_id}: {str(e)}") from e
@@ -736,7 +735,8 @@ class PagesMixin(ConfluenceClient):
             limit: Maximum number of child items to return
             expand: Fields to expand in the response
             convert_to_markdown: When True, returns content in markdown format,
-                               otherwise returns raw HTML (keyword-only)
+                               otherwise returns raw Confluence storage format
+                               (keyword-only)
             include_folders: When True, also returns child folders (keyword-only)
 
         Returns:
@@ -1010,7 +1010,7 @@ class PagesMixin(ConfluenceClient):
             page_id: The ID of the page to get history for
             version: The version to get history for
             convert_to_markdown: When True, returns content in
-                markdown format
+                markdown format, otherwise returns raw Confluence storage format
 
         Returns:
             ConfluencePage model containing the page history
@@ -1050,27 +1050,24 @@ class PagesMixin(ConfluenceClient):
                 error_msg = f"API returned error response: {page[:500]}"
                 raise Exception(error_msg)
 
-            try:
-                content = page["body"]["storage"]["value"]
-            except (KeyError, TypeError) as e:
-                logger.warning(
-                    f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
-                )
-                content = ""
+            content = self._get_storage_content(page)
 
             space_key = page.get("space", {}).get("key", "")
             page_attachments = (
                 page.get("children", {}).get("attachment", {}).get("results", [])
             )
-            processed_html, processed_markdown = self.preprocessor.process_html_content(
-                content,
-                space_key=space_key,
-                confluence_client=self.confluence,
-                content_id=str(page.get("id", "")),
-                attachments=page_attachments,
-            )
 
-            page_content = processed_markdown if convert_to_markdown else processed_html
+            if convert_to_markdown:
+                _, processed_markdown = self.preprocessor.process_html_content(
+                    content,
+                    space_key=space_key,
+                    confluence_client=self.confluence,
+                    content_id=str(page.get("id", "")),
+                    attachments=page_attachments,
+                )
+                page_content = processed_markdown
+            else:
+                page_content = content
 
             emoji = self._get_page_emoji(page_id)
             return ConfluencePage.from_api_response(

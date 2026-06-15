@@ -139,21 +139,30 @@ class TestPagesMixin:
         assert isinstance(result, list)
         assert len(result) == 0
 
-    def test_get_page_content_html(self, pages_mixin):
-        """Test getting page content in HTML format."""
+    def test_get_page_content_storage(self, pages_mixin):
+        """Test getting page content in raw storage format."""
         pages_mixin.config.url = "https://example.atlassian.net/wiki"
-
-        # Mock the preprocessor to return HTML
-        pages_mixin.preprocessor.process_html_content.return_value = (
-            "<p>Processed HTML</p>",
-            "Processed Markdown",
-        )
 
         # Act
         result = pages_mixin.get_page_content("987654321", convert_to_markdown=False)
 
-        # Assert HTML processing was used
-        assert result.content == "<p>Processed HTML</p>"
+        # Assert storage content is returned without preprocessing
+        assert result.content == (
+            '<h2><ac:emoticon ac:name="blue-star" />&nbsp;Date</h2>'
+            '<p><time datetime="2024-01-01" /></p>'
+            '<h2><ac:emoticon ac:name="blue-star" />&nbsp;Participants</h2>'
+            "<ul><li><p><ac:link><ri:user "
+            'ri:account-id="user123" /></ac:link></p></li></ul>'
+            '<h2><ac:emoticon ac:name="blue-star" />&nbsp;Goals</h2>'
+            "<ul><li><p>Example goal</p></li></ul>"
+            '<p><ac:structured-macro ac:name="profile">'
+            '<ac:parameter ac:name="user">'
+            '<ri:user ri:account-id="user123" />'
+            "</ac:parameter>"
+            "</ac:structured-macro></p>"
+        )
+        assert result.content_format == "storage"
+        pages_mixin.preprocessor.process_html_content.assert_not_called()
 
     def test_get_page_by_title_success(self, pages_mixin):
         """Test getting a page by title when it exists."""
@@ -280,8 +289,8 @@ class TestPagesMixin:
                 content="Page content",
                 space={"key": space_key, "name": "Project"},
             ),
-        ):
-            # Act - specify is_markdown=False since we're directly providing storage format
+        ) as mock_get_page_content:
+            # Act - pass storage format directly
             result = pages_mixin.create_page(
                 space_key, title, body, parent_id, is_markdown=False
             )
@@ -300,6 +309,9 @@ class TestPagesMixin:
             assert result.id == "123456789"
             assert result.title == title
             assert result.content == "Page content"
+            mock_get_page_content.assert_called_once_with(
+                "123456789", convert_to_markdown=False
+            )
 
     def test_create_page_error(self, pages_mixin):
         """Test error handling when creating a page."""
@@ -327,7 +339,7 @@ class TestPagesMixin:
                 content="Wiki page content",
                 space={"key": space_key, "name": "Project"},
             ),
-        ):
+        ) as mock_get_page_content:
             # Act - use wiki format
             result = pages_mixin.create_page(
                 space_key,
@@ -352,6 +364,9 @@ class TestPagesMixin:
             # Verify result is a ConfluencePage
             assert isinstance(result, ConfluencePage)
             assert result.id == "wiki123"
+            mock_get_page_content.assert_called_once_with(
+                "123456789", convert_to_markdown=False
+            )
 
     def test_update_page_success(self, pages_mixin):
         """Test updating an existing page."""
@@ -370,9 +385,11 @@ class TestPagesMixin:
             space={"key": "PROJ", "name": "Project"},
             version={"number": 1},  # Add version information
         )
-        with patch.object(pages_mixin, "get_page_content", return_value=mock_document):
-            # Act - specify is_markdown=False since we're directly providing storage format
-            result = pages_mixin.update_page(
+        with patch.object(
+            pages_mixin, "get_page_content", return_value=mock_document
+        ) as mock_get_page_content:
+            # Act - pass storage format directly
+            pages_mixin.update_page(
                 page_id,
                 title,
                 body,
@@ -393,6 +410,9 @@ class TestPagesMixin:
                 minor_edit=is_minor_edit,
                 version_comment=version_comment,
                 always_update=True,
+            )
+            mock_get_page_content.assert_called_once_with(
+                page_id, convert_to_markdown=False
             )
 
     def test_update_page_error(self, pages_mixin):
@@ -420,7 +440,9 @@ class TestPagesMixin:
             space={"key": "PROJ", "name": "Project"},
             version={"number": 2},
         )
-        with patch.object(pages_mixin, "get_page_content", return_value=mock_document):
+        with patch.object(
+            pages_mixin, "get_page_content", return_value=mock_document
+        ) as mock_get_page_content:
             # Act - use wiki format
             result = pages_mixin.update_page(
                 page_id,
@@ -441,6 +463,9 @@ class TestPagesMixin:
                 minor_edit=False,
                 version_comment=version_comment,
                 always_update=True,
+            )
+            mock_get_page_content.assert_called_once_with(
+                page_id, convert_to_markdown=False
             )
 
             # Verify no markdown conversion happened
@@ -1040,8 +1065,8 @@ class TestPagesMixin:
         assert result.content == "## Historical Content\n\nThis is historical content"
         assert result.space.key == "PROJ"
 
-    def test_get_page_history_html_v1(self, pages_mixin):
-        """Test retrieving historical version with HTML format (convert_to_markdown=False)."""
+    def test_get_page_history_storage_v1(self, pages_mixin):
+        """Test retrieving historical version with storage format."""
         # Arrange
         page_id = "987654321"
         version = 3
@@ -1049,7 +1074,7 @@ class TestPagesMixin:
 
         historical_page_data = {
             "id": page_id,
-            "title": "HTML Historical Page",
+            "title": "Storage Historical Page",
             "space": {"key": "PROJ"},
             "version": {"number": version},
             "body": {"storage": {"value": "<p>HTML content</p>"}},
@@ -1057,10 +1082,6 @@ class TestPagesMixin:
         }
         pages_mixin.confluence.get_page_by_id.return_value = historical_page_data
 
-        pages_mixin.preprocessor.process_html_content.return_value = (
-            "<p>Processed HTML content</p>",
-            "Processed markdown",
-        )
         pages_mixin.confluence.get_page_properties.return_value = {"results": []}
 
         # Act
@@ -1068,10 +1089,12 @@ class TestPagesMixin:
             page_id, version, convert_to_markdown=False
         )
 
-        # Assert - HTML should be used instead of markdown
+        # Assert - raw storage should be used instead of markdown
         assert isinstance(result, ConfluencePage)
-        assert result.content == "<p>Processed HTML content</p>"
+        assert result.content == "<p>HTML content</p>"
+        assert result.content_format == "storage"
         assert result.version.number == version
+        pages_mixin.preprocessor.process_html_content.assert_not_called()
 
     def test_get_page_history_with_attachments_v1(self, pages_mixin):
         """Test that attachments are included in historical version."""
@@ -1280,8 +1303,8 @@ class TestPagesOAuthMixin:
                     content="OAuth page content",
                     space={"key": space_key, "name": "Project"},
                 ),
-            ):
-                # Act - specify is_markdown=False since we're directly providing storage format
+            ) as mock_get_page_content:
+                # Act - pass storage format directly
                 result = oauth_pages_mixin.create_page(
                     space_key, title, body, parent_id, is_markdown=False
                 )
@@ -1301,6 +1324,9 @@ class TestPagesOAuthMixin:
                 # Verify result is a ConfluencePage
                 assert isinstance(result, ConfluencePage)
                 assert result.id == "oauth_123456789"
+                mock_get_page_content.assert_called_once_with(
+                    "oauth_123456789", convert_to_markdown=False
+                )
 
     def test_create_page_oauth_with_wiki_format(self, oauth_pages_mixin):
         """Test that OAuth authentication uses v2 API for creating pages with wiki format."""
@@ -1330,7 +1356,7 @@ class TestPagesOAuthMixin:
                     content="OAuth wiki page content",
                     space={"key": space_key, "name": "Project"},
                 ),
-            ):
+            ) as mock_get_page_content:
                 # Act - use wiki format
                 result = oauth_pages_mixin.create_page(
                     space_key,
@@ -1359,6 +1385,9 @@ class TestPagesOAuthMixin:
                 assert isinstance(result, ConfluencePage)
                 assert result.id == "oauth_wiki_123"
                 assert result.title == title
+                mock_get_page_content.assert_called_once_with(
+                    "oauth_wiki_123", convert_to_markdown=False
+                )
 
     def test_update_page_oauth_uses_v2_api(self, oauth_pages_mixin):
         """Test that OAuth authentication uses v2 API for updating pages."""
@@ -1389,8 +1418,8 @@ class TestPagesOAuthMixin:
                     content="Updated OAuth page content",
                     version={"number": 2},
                 ),
-            ):
-                # Act - specify is_markdown=False since we're directly providing storage format
+            ) as mock_get_page_content:
+                # Act - pass storage format directly
                 result = oauth_pages_mixin.update_page(
                     page_id,
                     title,
@@ -1415,6 +1444,9 @@ class TestPagesOAuthMixin:
                 assert isinstance(result, ConfluencePage)
                 assert result.id == page_id
                 assert result.title == title
+                mock_get_page_content.assert_called_once_with(
+                    page_id, convert_to_markdown=False
+                )
 
     def test_get_page_content_oauth_uses_v2_api(self, oauth_pages_mixin):
         """Test that OAuth authentication uses v2 API for getting page content."""
@@ -1595,8 +1627,8 @@ class TestPagesOAuthMixin:
             assert result.content == "Version 3 content"
             assert result.space.key == "PROJ"
 
-    def test_get_page_history_oauth_html(self, oauth_pages_mixin):
-        """Test retrieving historical version with HTML format using OAuth."""
+    def test_get_page_history_oauth_storage(self, oauth_pages_mixin):
+        """Test retrieving historical version with storage format using OAuth."""
         # Arrange
         page_id = "oauth_html_789"
         version = 1
@@ -1609,7 +1641,7 @@ class TestPagesOAuthMixin:
 
             mock_v2_adapter.get_page_by_version.return_value = {
                 "id": page_id,
-                "title": "OAuth HTML Version",
+                "title": "OAuth Storage Version",
                 "space": {"key": "PROJ"},
                 "version": {"number": version},
                 "body": {"storage": {"value": "<h1>HTML</h1>"}},
@@ -1617,20 +1649,17 @@ class TestPagesOAuthMixin:
             }
 
             mock_v2_adapter.get_page_emoji.return_value = None
-            oauth_pages_mixin.preprocessor.process_html_content.return_value = (
-                "<h1>Processed HTML</h1>",
-                "Processed markdown",
-            )
-
-            # Act - get HTML instead of markdown
+            # Act - get storage instead of markdown
             result = oauth_pages_mixin.get_page_history(
                 page_id, version, convert_to_markdown=False
             )
 
-            # Assert - should return HTML
+            # Assert - should return raw storage
             assert isinstance(result, ConfluencePage)
-            assert result.content == "<h1>Processed HTML</h1>"
+            assert result.content == "<h1>HTML</h1>"
+            assert result.content_format == "storage"
             assert result.version.number == version
+            oauth_pages_mixin.preprocessor.process_html_content.assert_not_called()
 
     def test_get_page_history_oauth_missing_body(self, oauth_pages_mixin):
         """Test handling missing body with v2 API."""

@@ -15,7 +15,7 @@ Get content of a specific Confluence page by its ID, or by its title and space k
 | `title` | `string` | No | The exact title of the Confluence page. Use this with 'space_key' if 'page_id' is not known. |
 | `space_key` | `string` | No | The key of the Confluence space where the page resides (e.g., 'DEV', 'TEAM'). Required if using 'title'. |
 | `include_metadata` | `boolean` | No | Whether to include page metadata such as creation date, last update, version, and labels. |
-| `convert_to_markdown` | `boolean` | No | Whether to convert page to markdown (true) or keep it in raw HTML format (false). Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: using HTML significantly increases token usage in AI responses. |
+| `convert_to_markdown` | `boolean` | No | Whether to convert page to markdown (true) or keep it in raw Confluence storage format (false). Raw storage can reveal macros (like dates) not visible in markdown, but CAUTION: using storage format significantly increases token usage in AI responses. |
 **Example:**
 
 ```json
@@ -119,7 +119,7 @@ Get child pages and folders of a specific Confluence page.
 | `expand` | `string` | No | Fields to expand in the response (e.g., 'version', 'body.storage') |
 | `limit` | `integer` | No | Maximum number of child items to return (1-50) |
 | `include_content` | `boolean` | No | Whether to include the page content in the response |
-| `convert_to_markdown` | `boolean` | No | Whether to convert page content to markdown (true) or keep it in raw HTML format (false). Only relevant if include_content is true. |
+| `convert_to_markdown` | `boolean` | No | Whether to convert page content to markdown (true) or keep it in raw Confluence storage format (false). Only relevant if include_content is true. |
 | `start` | `integer` | No | Starting index for pagination (0-based) |
 | `include_folders` | `boolean` | No | Whether to include child folders in addition to child pages |
 
@@ -135,7 +135,7 @@ Get a historical version of a specific Confluence page.
 |-----------|------|----------|-------------|
 | `page_id` | `string` | Yes | Confluence page ID (numeric ID, can be found in the page URL). For example, in 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', the page ID is '123456789'. |
 | `version` | `integer` | Yes | The version number of the page to retrieve |
-| `convert_to_markdown` | `boolean` | No | Whether to convert page to markdown (true) or keep it in raw HTML format (false). Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: using HTML significantly increases token usage in AI responses. |
+| `convert_to_markdown` | `boolean` | No | Whether to convert page to markdown (true) or keep it in raw Confluence storage format (false). Raw storage can reveal macros (like dates) not visible in markdown, but CAUTION: using storage format significantly increases token usage in AI responses. |
 
 ---
 

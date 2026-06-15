@@ -1,13 +1,15 @@
-# MCP Atlassian
+# MCP Atlassian Confluence Raw Storage
 
-![PyPI Version](https://img.shields.io/pypi/v/mcp-atlassian)
-![PyPI - Downloads](https://img.shields.io/pypi/dm/mcp-atlassian)
-![PePy - Total Downloads](https://static.pepy.tech/personalized-badge/mcp-atlassian?period=total&units=international_system&left_color=grey&right_color=blue&left_text=Total%20Downloads)
+![PyPI Version](https://img.shields.io/pypi/v/mcp-atlassian-confluence-raw-storage)
+![PyPI - Downloads](https://img.shields.io/pypi/dm/mcp-atlassian-confluence-raw-storage)
+![PePy - Total Downloads](https://static.pepy.tech/personalized-badge/mcp-atlassian-confluence-raw-storage?period=total&units=international_system&left_color=grey&right_color=blue&left_text=Total%20Downloads)
 [![Run Tests](https://github.com/sooperset/mcp-atlassian/actions/workflows/tests.yml/badge.svg)](https://github.com/sooperset/mcp-atlassian/actions/workflows/tests.yml)
 ![License](https://img.shields.io/github/license/sooperset/mcp-atlassian)
 [![Docs](https://img.shields.io/badge/docs-mintlify-blue)](https://mcp-atlassian.soomiles.com)
 
-Model Context Protocol (MCP) server for Atlassian products (Confluence and Jira). Supports both Cloud and Server/Data Center deployments.
+Model Context Protocol (MCP) server for Atlassian products (Confluence and Jira). This package is an independent distribution of MCP Atlassian with Confluence raw storage retrieval support. It supports both Cloud and Server/Data Center deployments.
+
+This package is maintained by [mishannn](https://github.com/mishannn) and is based on the original [sooperset/mcp-atlassian](https://github.com/sooperset/mcp-atlassian) project. Original documentation is available at [mcp-atlassian.soomiles.com](https://mcp-atlassian.soomiles.com).
 
 https://github.com/user-attachments/assets/35303504-14c6-4ae4-913b-7c25ea511c3e
 
@@ -33,9 +35,9 @@ Add to your Claude Desktop or Cursor MCP configuration:
 ```json
 {
   "mcpServers": {
-    "mcp-atlassian": {
+    "mcp-atlassian-confluence-raw-storage": {
       "command": "uvx",
-      "args": ["mcp-atlassian"],
+      "args": ["mcp-atlassian-confluence-raw-storage"],
       "env": {
         "JIRA_URL": "https://your-company.atlassian.net",
         "JIRA_USERNAME": "your.email@company.com",
@@ -58,6 +60,17 @@ Ask your AI assistant to:
 - **"Search Confluence for onboarding docs"**
 - **"Create a bug ticket for the login issue"**
 - **"Update the status of PROJ-123 to Done"**
+
+## Publishing
+
+PyPI releases are published from GitHub Releases. The release tag controls the package version; `pyproject.toml` does not duplicate it.
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Create a GitHub Release for that tag. The `publish.yml` workflow builds the package from the release tag and publishes it to PyPI using Trusted Publishing.
 
 ## Documentation
 
