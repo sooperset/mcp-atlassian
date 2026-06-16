@@ -254,13 +254,16 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             f"_list_tools_mcp: read_only={read_only}, enabled_tools_filter={enabled_tools_filter}, header_services={header_based_services}"
         )
 
-        all_tools: dict[str, FastMCPTool] = await self.get_tools()
+        # NOTE: FastMCP 3.x replaced get_tools() (dict) with list_tools() (list).
+        all_tools: list[FastMCPTool] = await self.list_tools()
         logger.debug(
-            f"Aggregated {len(all_tools)} tools before filtering: {list(all_tools.keys())}"
+            f"Aggregated {len(all_tools)} tools before filtering: "
+            f"{[t.name for t in all_tools]}"
         )
 
         filtered_tools: list[MCPTool] = []
-        for registered_name, tool_obj in all_tools.items():
+        for tool_obj in all_tools:
+            registered_name = tool_obj.name
             tool_tags = tool_obj.tags
 
             if not should_include_tool_by_toolset(tool_tags, enabled_toolsets_filter):
@@ -361,7 +364,9 @@ class AtlassianMCP(FastMCP[MainAppContext]):
 
 
 token_validation_cache: TTLCache[
-    int, tuple[bool, str | None, JiraFetcher | None, ConfluenceFetcher | None]
+    int,
+    tuple[bool, str | None, JiraFetcher | None, ConfluenceFetcher | None],
+    float,
 ] = TTLCache(maxsize=100, ttl=300)
 
 
@@ -815,8 +820,8 @@ main_mcp = AtlassianMCP(
     lifespan=main_lifespan,
     auth=_build_auth_provider(),
 )
-main_mcp.mount(jira_mcp, "jira")
-main_mcp.mount(confluence_mcp, "confluence")
+main_mcp.mount(jira_mcp, namespace="jira")
+main_mcp.mount(confluence_mcp, namespace="confluence")
 
 
 @main_mcp.custom_route("/healthz", methods=["GET"], include_in_schema=False)

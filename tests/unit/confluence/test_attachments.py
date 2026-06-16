@@ -1214,7 +1214,7 @@ class TestDownloadAttachmentServerTool:
                 download_attachment as server_download_attachment,
             )
 
-            result = await server_download_attachment.fn(
+            result = await server_download_attachment(
                 ctx=MagicMock(), attachment_id="att123456"
             )
 
@@ -1245,7 +1245,7 @@ class TestDownloadAttachmentServerTool:
                 download_attachment as server_download_attachment,
             )
 
-            result = await server_download_attachment.fn(
+            result = await server_download_attachment(
                 ctx=MagicMock(), attachment_id="att123456"
             )
 
@@ -1280,7 +1280,7 @@ class TestDownloadAttachmentServerTool:
                 download_attachment as server_download_attachment,
             )
 
-            result = await server_download_attachment.fn(
+            result = await server_download_attachment(
                 ctx=MagicMock(), attachment_id="att_huge"
             )
 
@@ -1304,7 +1304,7 @@ class TestDownloadAttachmentServerTool:
                 download_attachment as server_download_attachment,
             )
 
-            result = await server_download_attachment.fn(
+            result = await server_download_attachment(
                 ctx=MagicMock(), attachment_id="att123456"
             )
 
@@ -1343,7 +1343,7 @@ class TestDownloadContentAttachmentsServerTool:
                 download_content_attachments as server_download_content,
             )
 
-            results = await server_download_content.fn(
+            results = await server_download_content(
                 ctx=MagicMock(), content_id="123456"
             )
 
@@ -1371,7 +1371,7 @@ class TestDownloadContentAttachmentsServerTool:
                 download_content_attachments as server_download_content,
             )
 
-            results = await server_download_content.fn(
+            results = await server_download_content(
                 ctx=MagicMock(), content_id="123456"
             )
 
@@ -1397,7 +1397,7 @@ class TestDownloadContentAttachmentsServerTool:
                 download_content_attachments as server_download_content,
             )
 
-            results = await server_download_content.fn(
+            results = await server_download_content(
                 ctx=MagicMock(), content_id="123456"
             )
 
@@ -1433,7 +1433,7 @@ class TestDownloadContentAttachmentsServerTool:
                 download_content_attachments as server_download_content,
             )
 
-            results = await server_download_content.fn(
+            results = await server_download_content(
                 ctx=MagicMock(), content_id="123456"
             )
 
