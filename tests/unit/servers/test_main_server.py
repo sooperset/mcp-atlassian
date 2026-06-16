@@ -84,9 +84,10 @@ async def test_run_server_invalid_transport():
 @pytest.mark.anyio
 async def test_tool_registration_issue_dates_name():
     """Ensure issue dates tool is registered with a single Jira prefix."""
-    tools = await main_mcp.get_tools()
-    assert "jira_get_issue_dates" in tools
-    assert "jira_jira_get_issue_dates" not in tools
+    tools = await main_mcp.list_tools()
+    tool_names = {t.name for t in tools}
+    assert "jira_get_issue_dates" in tool_names
+    assert "jira_jira_get_issue_dates" not in tool_names
 
 
 @pytest.mark.anyio
