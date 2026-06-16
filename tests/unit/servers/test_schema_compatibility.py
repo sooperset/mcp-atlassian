@@ -215,6 +215,34 @@ class TestSanitizeSchemaForCompatibility:
         assert prop["type"] == "boolean"
         assert "anyOf" not in prop
 
+    def test_flattens_nested_nullable_string(self) -> None:
+        """FastMCP 3 can emit nested nullable unions on Python 3.10."""
+        tool = self._make_tool(
+            {
+                "project_key": {
+                    "anyOf": [
+                        {
+                            "anyOf": [
+                                {"type": "string", "pattern": "^[A-Z][A-Z0-9_]+$"},
+                                {"type": "null"},
+                            ],
+                            "description": "Inner description",
+                        },
+                        {"type": "null"},
+                    ],
+                    "default": None,
+                    "description": "Outer description",
+                }
+            }
+        )
+        _sanitize_schema_for_compatibility(tool)
+        prop = tool.inputSchema["properties"]["project_key"]
+        assert prop["type"] == "string"
+        assert prop["pattern"] == "^[A-Z][A-Z0-9_]+$"
+        assert "anyOf" not in prop
+        assert prop["default"] is None
+        assert prop["description"] == "Outer description"
+
     def test_preserves_non_nullable_property(self) -> None:
         """Properties without ``anyOf`` are untouched."""
         tool = self._make_tool(

@@ -70,9 +70,10 @@ def _sanitize_schema_for_compatibility(tool: MCPTool) -> MCPTool:
     Vertex AI / Google ADK rejecting ``anyOf`` alongside ``default`` or
     ``description`` fields (issues #640, #733).
 
-    The transform is intentionally conservative — it only flattens unions
-    of exactly ``[{"type": <primitive>}, {"type": "null"}]`` so that
-    complex / nested schemas are left untouched.
+    The transform is intentionally conservative — it only flattens nullable
+    unions with exactly one non-null branch so that complex multi-type schemas
+    are left untouched. FastMCP/Pydantic can emit nested nullable unions on
+    Python 3.10, so nullable branches are resolved recursively.
 
     Note: Only top-level ``properties`` are processed.  Nested schemas
     (e.g. ``items`` of arrays or ``properties`` of sub-objects) are not
@@ -93,23 +94,40 @@ def _sanitize_schema_for_compatibility(tool: MCPTool) -> MCPTool:
     if not properties or not isinstance(properties, dict):
         return tool
 
+    def resolve_nullable_schema(schema_def: dict[str, Any]) -> dict[str, Any] | None:
+        any_of = schema_def.get("anyOf")
+        if not any_of or not isinstance(any_of, list):
+            return None
+
+        # Only flatten nullable unions with exactly one non-null branch.
+        non_null = [v for v in any_of if v != {"type": "null"}]
+        null_present = any(v == {"type": "null"} for v in any_of)
+        if not null_present or len(non_null) != 1 or not isinstance(non_null[0], dict):
+            return None
+
+        candidate = non_null[0]
+        nested = resolve_nullable_schema(candidate)
+        resolved = nested if nested is not None else candidate
+        if "type" not in resolved:
+            return None
+
+        return {key: value for key, value in resolved.items() if key != "anyOf"}
+
     for _prop_name, prop_def in properties.items():
         if not isinstance(prop_def, dict):
             continue
 
-        any_of = prop_def.get("anyOf")
-        if not any_of or not isinstance(any_of, list):
+        resolved_schema = resolve_nullable_schema(prop_def)
+        if resolved_schema is None:
             continue
 
-        # Only flatten simple nullable unions: [{"type": T}, {"type": "null"}]
-        non_null = [v for v in any_of if v != {"type": "null"}]
-        null_present = any(v == {"type": "null"} for v in any_of)
-
-        if null_present and len(non_null) == 1 and "type" in non_null[0]:
-            # Collapse: pull the real type up, drop anyOf
-            resolved_type = non_null[0]["type"]
-            prop_def.pop("anyOf")
-            prop_def["type"] = resolved_type
+        # Collapse: pull the real schema up, drop anyOf, and preserve outer
+        # metadata such as description/default when both levels provide it.
+        prop_def.pop("anyOf")
+        for key, value in resolved_schema.items():
+            if key in {"default", "description"} and key in prop_def:
+                continue
+            prop_def[key] = value
 
     return tool
 
