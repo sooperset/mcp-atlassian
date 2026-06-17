@@ -135,6 +135,11 @@ CONFLUENCE_TOOLSETS: dict[str, ToolsetDefinition] = {
         description="Attachment upload, download, and management",
         default=False,
     ),
+    "confluence_permissions": ToolsetDefinition(
+        name="confluence_permissions",
+        description="Content and space permission checking",
+        default=False,
+    ),
 }
 
 # --- Combined registry ---
