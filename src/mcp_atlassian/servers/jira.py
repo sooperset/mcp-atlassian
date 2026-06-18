@@ -17,6 +17,7 @@ from mcp_atlassian.models.jira import JiraAttachment
 from mcp_atlassian.models.jira.common import JiraUser
 from mcp_atlassian.servers.dependencies import get_jira_fetcher
 from mcp_atlassian.utils.decorators import check_write_access
+from mcp_atlassian.utils.gcf_serializer import serialize
 from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
     fetch_and_encode_attachment,
@@ -161,7 +162,7 @@ async def get_user_profile(
             f"get_user_profile failed for '{user_identifier}': {error_message}",
         )
         response_data = error_result
-    return json.dumps(response_data, indent=2, ensure_ascii=False)
+    return serialize(response_data, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -192,7 +193,7 @@ async def get_issue_watchers(
     """
     jira = await get_jira_fetcher(ctx)
     result = jira.get_issue_watchers(issue_key)
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -237,7 +238,7 @@ async def add_watcher(
     """
     jira = await get_jira_fetcher(ctx)
     result = jira.add_watcher(issue_key, user_identifier)
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -288,7 +289,7 @@ async def remove_watcher(
     """
     jira = await get_jira_fetcher(ctx)
     result = jira.remove_watcher(issue_key, username=username, account_id=account_id)
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -380,7 +381,7 @@ async def get_issue(
         update_history=update_history,
     )
     result = issue.to_simplified_dict()
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -482,7 +483,7 @@ async def search(
         page_token=page_token,
     )
     result = search_result.to_simplified_dict()
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -519,7 +520,7 @@ async def search_fields(
     """
     jira = await get_jira_fetcher(ctx)
     result = jira.search_fields(keyword, limit=limit, refresh=refresh)
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 def _matches_contains(option: dict[str, Any], needle: str) -> bool:
@@ -695,12 +696,12 @@ async def get_field_options(
     result = [opt.to_simplified_dict() for opt in options]
     result = _apply_option_filters(result, contains, return_limit)
     if values_only:
-        return json.dumps(
+        return serialize(
             _to_values_only_payload(result),
             indent=2,
             ensure_ascii=False,
         )
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -741,7 +742,7 @@ async def get_project_issues(
         project_key=project_key, start=start_at, limit=limit
     )
     result = search_result.to_simplified_dict()
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -770,7 +771,7 @@ async def get_transitions(
     jira = await get_jira_fetcher(ctx)
     # Underlying method returns list[dict] in the desired format
     transitions = jira.get_available_transitions(issue_key)
-    return json.dumps(transitions, indent=2, ensure_ascii=False)
+    return serialize(transitions, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -799,7 +800,7 @@ async def get_worklog(
     jira = await get_jira_fetcher(ctx)
     worklogs = jira.get_worklogs(issue_key)
     result = {"worklogs": worklogs}
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -1091,7 +1092,7 @@ async def get_agile_boards(
         limit=limit,
     )
     result = [board.to_simplified_dict() for board in boards]
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -1171,7 +1172,7 @@ async def get_board_issues(
         expand=expand,
     )
     result = search_result.to_simplified_dict()
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -1211,7 +1212,7 @@ async def get_sprints_from_board(
         board_id=board_id, state=state, start=start_at, limit=limit
     )
     result = [sprint.to_simplified_dict() for sprint in sprints]
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -1262,7 +1263,7 @@ async def get_sprint_issues(
         sprint_id=sprint_id, fields=fields_list, start=start_at, limit=limit
     )
     result = search_result.to_simplified_dict()
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -1297,7 +1298,7 @@ async def get_link_types(
             for lt in formatted_link_types
             if name_lower in lt.get("name", "").lower()
         ]
-    return json.dumps(formatted_link_types, indent=2, ensure_ascii=False)
+    return serialize(formatted_link_types, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -1401,7 +1402,7 @@ async def create_issue(
         **extra_fields,
     )
     result = issue.to_simplified_dict()
-    return json.dumps(
+    return serialize(
         {"message": "Issue created successfully", "issue": result},
         indent=2,
         ensure_ascii=False,
@@ -1477,7 +1478,7 @@ async def batch_create_issues(
         "message": message,
         "issues": [issue.to_simplified_dict() for issue in created_issues],
     }
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -1558,7 +1559,7 @@ async def batch_get_changelogs(
                 ],
             }
         )
-    return json.dumps(results, indent=2, ensure_ascii=False)
+    return serialize(results, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -1680,7 +1681,7 @@ async def update_issue(
             and "attachment_results" in issue.custom_fields
         ):
             result["attachment_results"] = issue.custom_fields["attachment_results"]
-        return json.dumps(
+        return serialize(
             {"message": "Issue updated successfully", "issue": result},
             indent=2,
             ensure_ascii=False,
@@ -1721,7 +1722,7 @@ async def delete_issue(
     deleted = jira.delete_issue(issue_key)
     result = {"message": f"Issue {issue_key} has been deleted successfully."}
     # The underlying method raises on failure, so if we reach here, it's success.
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -1781,7 +1782,7 @@ async def add_comment(
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
     result = jira.add_comment(issue_key, body, visibility_dict, public=public)
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -1825,7 +1826,7 @@ async def edit_comment(
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
     result = jira.edit_comment(issue_key, comment_id, body, visibility_dict)
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -1901,7 +1902,7 @@ async def add_worklog(
         remaining_estimate=remaining_estimate,
     )
     result = {"message": "Worklog added successfully", "worklog": worklog_result}
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -1945,7 +1946,7 @@ async def link_to_epic(
         "message": f"Issue {issue_key} has been linked to epic {epic_key}.",
         "issue": issue.to_simplified_dict(),
     }
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -2029,7 +2030,7 @@ async def create_issue_link(
         link_data["comment"] = comment_obj
 
     result = jira.create_issue_link(link_data)
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -2117,7 +2118,7 @@ async def create_remote_issue_link(
         link_data["relationship"] = relationship
 
     result = jira.create_remote_issue_link(issue_key, link_data)
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -2146,7 +2147,7 @@ async def remove_issue_link(
         raise ValueError("link_id is required")
 
     result = jira.remove_issue_link(link_id)  # Returns dict on success
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -2226,7 +2227,7 @@ async def transition_issue(
         "message": f"Issue {issue_key} transitioned successfully",
         "issue": issue.to_simplified_dict() if issue else None,
     }
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -2272,7 +2273,7 @@ async def create_sprint(
         end_date=end_date,
         goal=goal,
     )
-    return json.dumps(sprint.to_simplified_dict(), indent=2, ensure_ascii=False)
+    return serialize(sprint.to_simplified_dict(), indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -2331,9 +2332,9 @@ async def update_sprint(
         error_payload = {
             "error": f"Failed to update sprint {sprint_id}. Check logs for details."
         }
-        return json.dumps(error_payload, indent=2, ensure_ascii=False)
+        return serialize(error_payload, indent=2, ensure_ascii=False)
     else:
-        return json.dumps(sprint.to_simplified_dict(), indent=2, ensure_ascii=False)
+        return serialize(sprint.to_simplified_dict(), indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -2370,7 +2371,7 @@ async def add_issues_to_sprint(
         "sprint_id": sprint_id,
         "issue_keys": keys_list,
     }
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -2390,7 +2391,7 @@ async def get_project_versions(
     """Get all fix versions for a specific Jira project."""
     jira = await get_jira_fetcher(ctx)
     versions = jira.get_project_versions(project_key)
-    return json.dumps(versions, indent=2, ensure_ascii=False)
+    return serialize(versions, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -2410,7 +2411,7 @@ async def get_project_components(
     """Get all components for a specific Jira project."""
     jira = await get_jira_fetcher(ctx)
     components = jira.get_project_components(project_key)
-    return json.dumps(components, indent=2, ensure_ascii=False)
+    return serialize(components, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -2459,7 +2460,7 @@ async def get_all_projects(
             "error": error_message,
         }
         logger.log(log_level, f"get_all_projects failed: {error_message}")
-        return json.dumps(error_result, indent=2, ensure_ascii=False)
+        return serialize(error_result, indent=2, ensure_ascii=False)
 
     # Ensure all project keys are uppercase
     for project in projects:
@@ -2478,7 +2479,7 @@ async def get_all_projects(
             if project.get("key") in allowed_project_keys
         ]
 
-    return json.dumps(projects, indent=2, ensure_ascii=False)
+    return serialize(projects, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -2519,7 +2520,7 @@ async def get_service_desk_for_project(
         "project_key": project_key.upper(),
         "service_desk": service_desk.to_simplified_dict() if service_desk else None,
     }
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -2565,7 +2566,7 @@ async def get_service_desk_queues(
         limit=limit,
         include_count=True,
     )
-    return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+    return serialize(result.to_simplified_dict(), indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -2616,7 +2617,7 @@ async def get_queue_issues(
         start_at=start_at,
         limit=limit,
     )
-    return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+    return serialize(result.to_simplified_dict(), indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -2666,12 +2667,12 @@ async def create_version(
             release_date=release_date,
             description=description,
         )
-        return json.dumps(version, indent=2, ensure_ascii=False)
+        return serialize(version, indent=2, ensure_ascii=False)
     except Exception as e:
         logger.error(
             f"Error creating version in project {project_key}: {str(e)}", exc_info=True
         )
-        return json.dumps(
+        return serialize(
             {"success": False, "error": str(e)}, indent=2, ensure_ascii=False
         )
 
@@ -2730,7 +2731,7 @@ async def batch_create_versions(
 
     results = []
     if not version_list:
-        return json.dumps(results, indent=2, ensure_ascii=False)
+        return serialize(results, indent=2, ensure_ascii=False)
 
     for idx, v in enumerate(version_list):
         # Defensive: ensure v is a dict and has a name
@@ -2757,7 +2758,7 @@ async def batch_create_versions(
                 exc_info=True,
             )
             results.append({"success": False, "error": str(e), "input": v})
-    return json.dumps(results, indent=2, ensure_ascii=False)
+    return serialize(results, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -2812,7 +2813,7 @@ async def get_issue_proforma_forms(
             f"get_issue_proforma_forms failed for '{issue_key}': {error_message}",
         )
         response_data = error_result
-    return json.dumps(response_data, indent=2, ensure_ascii=False)
+    return serialize(response_data, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -2882,7 +2883,7 @@ async def get_proforma_form_details(
             f"get_proforma_form_details failed for '{issue_key}/{form_id}': {error_message}",
         )
         response_data = error_result
-    return json.dumps(response_data, indent=2, ensure_ascii=False)
+    return serialize(response_data, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -3012,7 +3013,7 @@ async def update_proforma_form_answers(
             f"update_proforma_form_answers failed for '{issue_key}/{form_id}': {error_message}",
         )
         response_data = error_result
-    return json.dumps(response_data, indent=2, ensure_ascii=False)
+    return serialize(response_data, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -3065,11 +3066,11 @@ async def get_issue_dates(
             include_status_changes=include_status_changes,
             include_status_summary=include_status_summary,
         )
-        return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+        return serialize(result.to_simplified_dict(), indent=2, ensure_ascii=False)
     except Exception as e:
         logger.error(f"Error getting issue dates for {issue_key}: {str(e)}")
         error_result = {"success": False, "error": str(e), "issue_key": issue_key}
-        return json.dumps(error_result, indent=2, ensure_ascii=False)
+        return serialize(error_result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -3146,11 +3147,11 @@ async def get_issue_sla(
             working_hours_only=working_hours_only,
             include_raw_dates=include_raw_dates,
         )
-        return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+        return serialize(result.to_simplified_dict(), indent=2, ensure_ascii=False)
     except Exception as e:
         logger.error(f"Error calculating SLA for {issue_key}: {str(e)}")
         error_result = {"success": False, "error": str(e), "issue_key": issue_key}
-        return json.dumps(error_result, indent=2, ensure_ascii=False)
+        return serialize(error_result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -3206,11 +3207,11 @@ async def get_issue_development_info(
             application_type=application_type,
             data_type=data_type,
         )
-        return json.dumps(result, indent=2, ensure_ascii=False)
+        return serialize(result, indent=2, ensure_ascii=False)
     except Exception as e:
         logger.error(f"Error getting development info for {issue_key}: {str(e)}")
         error_result = {"success": False, "error": str(e), "issue_key": issue_key}
-        return json.dumps(error_result, indent=2, ensure_ascii=False)
+        return serialize(error_result, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -3268,8 +3269,8 @@ async def get_issues_development_info(
             application_type=application_type,
             data_type=data_type,
         )
-        return json.dumps(results, indent=2, ensure_ascii=False)
+        return serialize(results, indent=2, ensure_ascii=False)
     except Exception as e:
         logger.error(f"Error getting development info for issues: {str(e)}")
         error_result = {"success": False, "error": str(e)}
-        return json.dumps(error_result, indent=2, ensure_ascii=False)
+        return serialize(error_result, indent=2, ensure_ascii=False)
