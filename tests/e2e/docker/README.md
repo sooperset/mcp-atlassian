@@ -55,9 +55,9 @@ Both Jira and Confluence require completing a setup wizard on first launch.
 
 These tests use Atlassian's published **Data Center timebomb licenses** (10 user, valid **3 hours** from when applied) instead of 30-day my.atlassian.com evals — they are free, public, and need no my.atlassian.com account. Get them from [Atlassian's testing licenses page](https://developer.atlassian.com/platform/marketplace/timebomb-licenses-for-testing-server-apps/) → *Data Center host product licenses* → **Jira Software Data Center** / **Confluence Data Center**.
 
-The 3-hour limit is irrelevant for a normal run (the DC suite completes in well under a minute); it only matters if an instance stays up for hours.
+The 3-hour limit is irrelevant for a normal run (the DC suite typically completes in under a minute); it only matters if an instance stays up for hours.
 
-- **Confluence** — set `CONFLUENCE_LICENSE_KEY` in `.env` (see `.env.example`). Confluence 7.9+ reads it from `ATL_LICENSE_KEY` and applies it at **first-time setup** (skipping the wizard license step), writing it to `confluence.cfg.xml` on the persisted volume. It is **not** re-read on later restarts (`ATL_FORCE_CFG_UPDATE` defaults `false`), so a restart does **not** reset the 3-hour timer. To re-apply after expiry: clean re-setup (`docker compose down -v`) or `ATL_FORCE_CFG_UPDATE=true`. _(Verified on `confluence:9.2.21`: a fresh blank-DB start with this set skips the wizard license step. The no-restart-refresh detail follows Atlassian's container docs.)_
+- **Confluence** — set `CONFLUENCE_LICENSE_KEY` in `.env` (see `.env.example`). Confluence 7.9+ reads it from `ATL_LICENSE_KEY` and applies it at **first-time setup** (skipping the wizard license step), writing it to `confluence.cfg.xml` on the persisted volume. It is **not** re-read on later restarts (`ATL_FORCE_CFG_UPDATE` defaults `false`), so a restart does **not** reset the 3-hour timer. To re-apply after expiry: a clean re-setup (`docker compose down -v`), or force a config refresh with `ATL_FORCE_CFG_UPDATE=true docker compose up -d confluence` (wired in `docker-compose.yml`). _(Verified on `confluence:9.2.21`: a fresh blank-DB start with this set skips the wizard license step. The no-restart-refresh detail follows Atlassian's container docs.)_
 - **Jira** — has no license env var. Paste the timebomb key in the setup wizard. If it expires on a long-lived instance, re-paste at **Administration > System > License** (`/secure/admin/ViewLicense.jspa`, no restart needed) — still no my.atlassian.com.
 
 > A 30-day my.atlassian.com eval also works for either product if you want a longer-lived local instance.
@@ -83,7 +83,7 @@ docker compose down -v
 | Port conflict | Change the host port in `docker-compose.yml` (e.g., `9080:8080`) |
 | DB connection error | Ensure the DB container is healthy: `docker compose ps` |
 | Setup wizard reappears | Data volumes were removed — run `docker compose down` (without `-v`) to preserve them |
-| License expired | See [License (timebomb)](#license-timebomb) — Jira: re-paste in admin; Confluence: `down -v` re-setup or `ATL_FORCE_CFG_UPDATE=true` (a plain restart does **not** refresh it) |
+| License expired | See [License (timebomb)](#license-timebomb) — Jira: re-paste in admin; Confluence: `down -v` re-setup or `ATL_FORCE_CFG_UPDATE=true docker compose up -d confluence` (a plain restart does **not** refresh it) |
 
 ## Environment variables
 
