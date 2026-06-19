@@ -30,11 +30,12 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             List of project data dictionaries
         """
         try:
-            params = {}
-            if include_archived:
-                params["includeArchived"] = "true"
-
-            projects = self.jira.projects(included_archived=include_archived)
+            # expand=description so each project carries its description ("for what
+            # it is"); the bare /project list omits it otherwise. Used by the kg
+            # graph (053) and harmless for other callers.
+            projects = self.jira.projects(
+                included_archived=include_archived, expand="description"
+            )
             return projects if isinstance(projects, list) else []
 
         except Exception as e:
