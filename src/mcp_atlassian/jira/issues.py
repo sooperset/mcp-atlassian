@@ -1032,10 +1032,32 @@ class IssuesMixin(
         else:
             logger.error(f"Error creating {issue_type}: {error_msg}")
 
+    @staticmethod
+    def _normalize_return_fields(
+        return_fields: str | list[str] | tuple[str, ...] | set[str] | None,
+    ) -> str | None:
+        """Normalize a return-fields selector into a value for the Jira API.
+
+        Args:
+            return_fields: Fields to request on the post-update re-fetch as a
+                comma-separated string, a collection of field names, ``"*all"``,
+                or None.
+
+        Returns:
+            A comma-separated field string (or ``"*all"``) to pass to the Jira
+            API, or None to let the API return its default field set.
+        """
+        if return_fields is None:
+            return None
+        if isinstance(return_fields, list | tuple | set):
+            return ",".join(return_fields)
+        return return_fields
+
     def update_issue(
         self,
         issue_key: str,
         fields: dict[str, Any] | None = None,
+        return_fields: str | list[str] | tuple[str, ...] | set[str] | None = None,
         **kwargs: Any,  # noqa: ANN401 - Dynamic field types are necessary for Jira API
     ) -> JiraIssue:
         """
@@ -1044,6 +1066,10 @@ class IssuesMixin(
         Args:
             issue_key: The key of the issue to update
             fields: Dictionary of fields to update
+            return_fields: Fields to include on the issue returned after the
+                update (comma-separated string, collection, or ``"*all"``).
+                None lets the API return its default field set. Narrowing this
+                reduces the size of the returned issue.
             **kwargs: Additional fields to update. Special fields include:
                 - attachments: List of file paths to upload as attachments
                 - status: New status for the issue (handled via transitions)
@@ -1081,7 +1107,9 @@ class IssuesMixin(
                     # Status changes are handled separately via transitions
                     # Add status to fields so _update_issue_with_status can find it
                     update_fields["status"] = value
-                    return self._update_issue_with_status(issue_key, update_fields)
+                    return self._update_issue_with_status(
+                        issue_key, update_fields, return_fields=return_fields
+                    )
 
                 elif key == "attachments":
                     # Handle attachments separately - they're not part of fields update
@@ -1145,7 +1173,9 @@ class IssuesMixin(
                     # Continue with the update even if attachments fail
 
             # Get the updated issue data and convert to JiraIssue model
-            issue_data = self.jira.get_issue(issue_key)
+            issue_data = self.jira.get_issue(
+                issue_key, fields=self._normalize_return_fields(return_fields)
+            )
             if not isinstance(issue_data, dict):
                 msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
                 logger.error(msg)
@@ -1164,7 +1194,10 @@ class IssuesMixin(
             raise ValueError(f"Failed to update issue {issue_key}: {error_msg}") from e
 
     def _update_issue_with_status(
-        self, issue_key: str, fields: dict[str, Any]
+        self,
+        issue_key: str,
+        fields: dict[str, Any],
+        return_fields: str | list[str] | tuple[str, ...] | set[str] | None = None,
     ) -> JiraIssue:
         """
         Update an issue with a status change.
@@ -1172,6 +1205,9 @@ class IssuesMixin(
         Args:
             issue_key: The key of the issue to update
             fields: Dictionary of fields to update
+            return_fields: Fields to include on the issue returned after the
+                update (comma-separated string, collection, or ``"*all"``).
+                None lets the API return its default field set.
 
         Returns:
             JiraIssue model representing the updated issue
@@ -1179,6 +1215,8 @@ class IssuesMixin(
         Raises:
             Exception: If there is an error updating the issue
         """
+        return_fields_param = self._normalize_return_fields(return_fields)
+
         # Extract status from fields and remove it for the standard update
         status = fields.pop("status", None)
 
@@ -1188,7 +1226,7 @@ class IssuesMixin(
 
         # If no status change is requested, return the issue
         if not status:
-            issue_data = self.jira.get_issue(issue_key)
+            issue_data = self.jira.get_issue(issue_key, fields=return_fields_param)
             if not isinstance(issue_data, dict):
                 msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
                 logger.error(msg)
@@ -1287,7 +1325,7 @@ class IssuesMixin(
         )
 
         # Get the updated issue data
-        issue_data = self.jira.get_issue(issue_key)
+        issue_data = self.jira.get_issue(issue_key, fields=return_fields_param)
         if not isinstance(issue_data, dict):
             msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
             logger.error(msg)
