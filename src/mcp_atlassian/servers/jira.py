@@ -2602,6 +2602,55 @@ async def get_all_projects(
 
 
 @jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_projects"},
+    annotations={"title": "Get Project Fields", "readOnlyHint": True},
+)
+async def get_project_fields(
+    ctx: Context,
+    project_key: Annotated[
+        str,
+        Field(description="The project key, e.g. 'PROJ'."),
+    ],
+) -> str:
+    """Get the fields available on issues of a project (the create schema),
+    deduplicated across the project's issue types — i.e. which fields tickets in
+    this project have, regardless of whether they are filled.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: The project key.
+
+    Returns:
+        JSON string with a list of fields: each {field_id, name, required,
+        schema_type, custom, issue_types}. Empty list if none / on error.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    try:
+        jira = await get_jira_fetcher(ctx)
+        fields = jira.get_project_fields(project_key)
+    except (MCPAtlassianAuthenticationError, HTTPError, OSError, ValueError) as e:
+        error_message = ""
+        log_level = logging.ERROR
+        if isinstance(e, MCPAtlassianAuthenticationError):
+            error_message = f"Authentication/Permission Error: {str(e)}"
+        elif isinstance(e, OSError | HTTPError):
+            error_message = f"Network or API Error: {str(e)}"
+        elif isinstance(e, ValueError):
+            error_message = f"Configuration Error: {str(e)}"
+        logger.log(
+            log_level, f"get_project_fields failed for '{project_key}': {error_message}"
+        )
+        return json.dumps(
+            {"success": False, "error": error_message, "project_key": project_key},
+            indent=2,
+            ensure_ascii=False,
+        )
+    return json.dumps(fields, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
     tags={"jira", "read", "toolset:jira_service_desk"},
     annotations={
         "title": "Get Service Desk For Project",
