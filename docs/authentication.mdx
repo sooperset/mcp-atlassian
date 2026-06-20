@@ -142,23 +142,42 @@ ATLASSIAN_OAUTH_ACCESS_TOKEN=your_pre_existing_access_token
 Token refresh is your responsibility - the server does not handle it for BYOT.
 </Warning>
 
-### Multi-Cloud OAuth
+### Multi-User Mode (URL-only Server)
 
-For multi-tenant applications where users provide their own OAuth tokens:
+Deploy one remote MCP server that holds no Atlassian credentials. Each MCP
+client supplies its own credentials per request via HTTP headers — Basic
+(`email:api_token`), PAT, or OAuth Bearer.
 
-1. Enable minimal OAuth mode:
+1. Enable multi-user mode:
    ```bash
    # Using uvx
-   ATLASSIAN_OAUTH_ENABLE=true uvx mcp-atlassian --transport streamable-http --port 9000
+   JIRA_URL=https://your-company.atlassian.net \
+   CONFLUENCE_URL=https://your-company.atlassian.net/wiki \
+   uvx mcp-atlassian --transport streamable-http --multi-user --port 9000
 
    # Or using Docker
-   docker run -e ATLASSIAN_OAUTH_ENABLE=true -p 9000:9000 \
+   docker run -p 9000:9000 \
+     -e JIRA_URL=https://your-company.atlassian.net \
+     -e CONFLUENCE_URL=https://your-company.atlassian.net/wiki \
+     -e MCP_ATLASSIAN_MULTI_USER_MODE=true \
      ghcr.io/sooperset/mcp-atlassian:latest \
      --transport streamable-http --port 9000
    ```
 
-2. Users provide authentication via HTTP headers:
-   - `Authorization: Bearer <user_oauth_token>`
-   - `X-Atlassian-Cloud-Id: <user_cloud_id>`
+   The legacy `ATLASSIAN_OAUTH_ENABLE=true` flag remains a backwards-compatible
+   alias for this mode.
 
-See [HTTP Transport](/docs/http-transport) for more details on multi-user authentication.
+2. Each client sends one of the following headers per request:
+   - `Authorization: Basic <base64(email:api_token)>` (Cloud)
+   - `Authorization: Bearer <user_oauth_token>` (Cloud)
+   - `Authorization: Token <user_personal_access_token>` (Server/Data Center)
+   - Optional: `X-Atlassian-Cloud-Id: <user_cloud_id>` for OAuth multi-cloud
+
+<Note>
+For SSRF protection, multi-user mode ignores `X-Atlassian-Jira-Url` and
+`X-Atlassian-Confluence-Url` headers; the server enforces the URLs configured
+at startup. Requires HTTP transport (sse / streamable-http).
+</Note>
+
+See [HTTP Transport](/docs/http-transport#multi-user-mode-url-only-server) for
+full details and per-client config examples (Cursor, Claude Desktop, VS Code).

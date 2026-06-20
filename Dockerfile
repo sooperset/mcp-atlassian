@@ -49,10 +49,16 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Disable Python output buffering for proper stdio communication
 ENV PYTHONUNBUFFERED=1
 
-# For minimal OAuth setup without environment variables, use:
-# docker run -e ATLASSIAN_OAUTH_ENABLE=true -p 8000:8000 your-image
-# Then provide authentication via headers:
-# Authorization: Bearer <your_oauth_token>
-# X-Atlassian-Cloud-Id: <your_cloud_id>
+# Multi-user mode: server holds no credentials; each client supplies its own
+# per request via headers. Example:
+#   docker run -p 9000:9000 \
+#     -e JIRA_URL=https://your-company.atlassian.net \
+#     -e CONFLUENCE_URL=https://your-company.atlassian.net/wiki \
+#     -e MCP_ATLASSIAN_MULTI_USER_MODE=true \
+#     your-image --transport streamable-http --port 9000
+# Clients then send one of:
+#   Authorization: Basic <base64(email:api_token)>   (Cloud)
+#   Authorization: Bearer <oauth_token>              (Cloud)
+#   Authorization: Token <personal_access_token>     (Server/DC)
 
 ENTRYPOINT ["mcp-atlassian"]

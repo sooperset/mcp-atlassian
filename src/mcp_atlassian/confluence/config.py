@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
-from ..utils.env import get_custom_headers, is_env_ssl_verify
+from ..utils.env import get_custom_headers, is_env_ssl_verify, is_multi_user_mode
 from ..utils.oauth import (
     BYOAccessTokenOAuthConfig,
     OAuthConfig,
@@ -24,7 +24,9 @@ class ConfluenceConfig:
     """
 
     url: str  # Base URL for Confluence
-    auth_type: Literal["basic", "pat", "oauth"]  # Authentication type
+    # Authentication type. None means multi-user mode: credentials are
+    # supplied per-request via headers, not from server-side config.
+    auth_type: Literal["basic", "pat", "oauth"] | None
     username: str | None = None  # Email or username
     api_token: str | None = None  # API token used as password
     personal_token: str | None = None  # Personal access token (Server/DC)
@@ -90,7 +92,7 @@ class ConfluenceConfig:
             ValueError: If any required environment variable is missing
         """
         url = os.getenv("CONFLUENCE_URL")
-        if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE"):
+        if not url and not is_multi_user_mode():
             error_msg = (
                 "Missing required CONFLUENCE_URL environment variable. "
                 "Set CONFLUENCE_URL to your Confluence base URL, for example "
@@ -112,12 +114,16 @@ class ConfluenceConfig:
         # Use the shared utility function directly
         is_cloud = is_atlassian_cloud_url(url) if url else False
 
+        multi_user = is_multi_user_mode()
         if is_cloud:
             # Cloud: OAuth takes priority, then basic auth
             if oauth_config:
                 auth_type = "oauth"
             elif username and api_token:
                 auth_type = "basic"
+            elif multi_user:
+                # Credentials will be supplied per-request via headers.
+                auth_type = None
             else:
                 missing_fields: list[str] = []
                 if not username:
@@ -127,12 +133,11 @@ class ConfluenceConfig:
                 missing_fields_text = ", ".join(missing_fields)
                 error_msg = (
                     "Cloud authentication requires CONFLUENCE_USERNAME and "
-                    "CONFLUENCE_API_TOKEN, or OAuth configuration "
-                    "(set ATLASSIAN_OAUTH_ENABLE=true for user-provided tokens). "
+                    "CONFLUENCE_API_TOKEN, or OAuth configuration, or "
+                    "multi-user mode (set MCP_ATLASSIAN_MULTI_USER_MODE=true "
+                    "to let clients supply credentials per-request via headers). "
                     "Confluence Cloud authentication is incomplete. Missing: "
-                    f"{missing_fields_text}. "
-                    "Set CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN, or "
-                    "enable OAuth with ATLASSIAN_OAUTH_ENABLE=true."
+                    f"{missing_fields_text}."
                 )
                 raise ValueError(error_msg)
         else:  # Server/Data Center
@@ -148,14 +153,17 @@ class ConfluenceConfig:
                 auth_type = "oauth"
             elif username and api_token:
                 auth_type = "basic"
+            elif multi_user:
+                # Credentials will be supplied per-request via headers.
+                auth_type = None
             else:
                 error_msg = (
                     "Server/Data Center authentication requires "
                     "CONFLUENCE_PERSONAL_TOKEN or CONFLUENCE_USERNAME and "
-                    "CONFLUENCE_API_TOKEN. "
-                    "Confluence Server/Data Center authentication is incomplete. "
-                    "Set CONFLUENCE_PERSONAL_TOKEN, or set both "
-                    "CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN."
+                    "CONFLUENCE_API_TOKEN, or multi-user mode (set "
+                    "MCP_ATLASSIAN_MULTI_USER_MODE=true to let clients supply "
+                    "credentials per-request via headers). Confluence "
+                    "Server/Data Center authentication is incomplete."
                 )
                 raise ValueError(error_msg)
 
@@ -214,6 +222,11 @@ class ConfluenceConfig:
             bool: True if authentication is fully configured, False otherwise.
         """
         logger = logging.getLogger("mcp-atlassian.confluence.config")
+        if self.auth_type is None and is_multi_user_mode():
+            logger.debug(
+                "Multi-user mode: per-request credentials expected via headers"
+            )
+            return True
         if self.auth_type == "oauth":
             if self.oauth_config:
                 # Minimal OAuth (user-provided tokens mode)

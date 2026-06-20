@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
-from ..utils.env import get_custom_headers, is_env_ssl_verify
+from ..utils.env import get_custom_headers, is_env_ssl_verify, is_multi_user_mode
 from ..utils.oauth import (
     BYOAccessTokenOAuthConfig,
     OAuthConfig,
@@ -96,7 +96,9 @@ class JiraConfig:
     """
 
     url: str  # Base URL for Jira
-    auth_type: Literal["basic", "pat", "oauth"]  # Authentication type
+    # Authentication type. None means multi-user mode: credentials are
+    # supplied per-request via headers, not from server-side config.
+    auth_type: Literal["basic", "pat", "oauth"] | None
     username: str | None = None  # Email or username (Cloud)
     api_token: str | None = None  # API token (Cloud)
     personal_token: str | None = None  # Personal access token (Server/DC)
@@ -166,7 +168,7 @@ class JiraConfig:
             ValueError: If required environment variables are missing or invalid
         """
         url = os.getenv("JIRA_URL")
-        if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE"):
+        if not url and not is_multi_user_mode():
             error_msg = (
                 "Missing required JIRA_URL environment variable. "
                 "Set JIRA_URL to your Jira base URL, for example "
@@ -186,12 +188,16 @@ class JiraConfig:
         # Use the shared utility function directly
         is_cloud = is_atlassian_cloud_url(url) if url else False
 
+        multi_user = is_multi_user_mode()
         if is_cloud:
             # Cloud: OAuth takes priority, then basic auth
             if oauth_config:
                 auth_type = "oauth"
             elif username and api_token:
                 auth_type = "basic"
+            elif multi_user:
+                # Credentials will be supplied per-request via headers.
+                auth_type = None
             else:
                 missing_fields: list[str] = []
                 if not username:
@@ -201,12 +207,11 @@ class JiraConfig:
                 missing_fields_text = ", ".join(missing_fields)
                 error_msg = (
                     "Cloud authentication requires JIRA_USERNAME and "
-                    "JIRA_API_TOKEN, or OAuth configuration "
-                    "(set ATLASSIAN_OAUTH_ENABLE=true for user-provided tokens). "
+                    "JIRA_API_TOKEN, or OAuth configuration, or multi-user "
+                    "mode (set MCP_ATLASSIAN_MULTI_USER_MODE=true to let "
+                    "clients supply credentials per-request via headers). "
                     "Jira Cloud authentication is incomplete. Missing: "
-                    f"{missing_fields_text}. "
-                    "Set JIRA_USERNAME and JIRA_API_TOKEN, or enable OAuth with "
-                    "ATLASSIAN_OAUTH_ENABLE=true."
+                    f"{missing_fields_text}."
                 )
                 raise ValueError(error_msg)
         else:  # Server/Data Center
@@ -222,13 +227,16 @@ class JiraConfig:
                 auth_type = "oauth"
             elif username and api_token:
                 auth_type = "basic"
+            elif multi_user:
+                # Credentials will be supplied per-request via headers.
+                auth_type = None
             else:
                 error_msg = (
                     "Server/Data Center authentication requires "
-                    "JIRA_PERSONAL_TOKEN or JIRA_USERNAME and JIRA_API_TOKEN. "
-                    "Jira Server/Data Center authentication is incomplete. "
-                    "Set JIRA_PERSONAL_TOKEN, or set both JIRA_USERNAME and "
-                    "JIRA_API_TOKEN."
+                    "JIRA_PERSONAL_TOKEN or JIRA_USERNAME and JIRA_API_TOKEN, "
+                    "or multi-user mode (set MCP_ATLASSIAN_MULTI_USER_MODE=true "
+                    "to let clients supply credentials per-request via headers). "
+                    "Jira Server/Data Center authentication is incomplete."
                 )
                 raise ValueError(error_msg)
 
@@ -290,6 +298,11 @@ class JiraConfig:
             bool: True if authentication is fully configured, False otherwise.
         """
         logger = logging.getLogger("mcp-atlassian.jira.config")
+        if self.auth_type is None and is_multi_user_mode():
+            logger.debug(
+                "Multi-user mode: per-request credentials expected via headers"
+            )
+            return True
         if self.auth_type == "oauth":
             if self.oauth_config:
                 # Minimal OAuth (user-provided tokens mode)

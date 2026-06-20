@@ -449,12 +449,12 @@ class TestGetAvailableServicesWithHeaders:
             assert_log_contains(
                 caplog,
                 "INFO",
-                "Using Confluence minimal OAuth configuration",
+                "Using Confluence multi-user mode",
             )
             assert_log_contains(
                 caplog,
                 "INFO",
-                "Using Jira minimal OAuth configuration",
+                "Using Jira multi-user mode",
             )
 
     def test_oauth_enable_with_cloud_url_no_creds(self, caplog):

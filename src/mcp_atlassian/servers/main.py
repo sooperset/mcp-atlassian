@@ -25,7 +25,7 @@ from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.config import JiraConfig
-from mcp_atlassian.utils.env import is_env_truthy
+from mcp_atlassian.utils.env import is_env_truthy, is_multi_user_mode
 from mcp_atlassian.utils.environment import get_available_services
 from mcp_atlassian.utils.io import is_read_only_mode
 from mcp_atlassian.utils.logging import mask_sensitive
@@ -121,6 +121,13 @@ async def health_check(request: Request) -> JSONResponse:
 @asynccontextmanager
 async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str, Any]]:
     logger.info("Main Atlassian MCP server lifespan starting...")
+    if is_multi_user_mode():
+        logger.info(
+            "Multi-user mode enabled: server expects per-request credentials "
+            "via 'Authorization' or 'X-Atlassian-*' headers. URL override "
+            "headers are ignored; HTTP transport (sse / streamable-http) is "
+            "required."
+        )
     services = get_available_services()
     read_only = is_read_only_mode()
     enabled_tools = get_enabled_tools()
@@ -520,6 +527,18 @@ class UserTokenMiddleware:
                 if confluence_url_header
                 else None
             )
+
+            # In multi-user mode, the server enforces JIRA_URL/CONFLUENCE_URL
+            # for SSRF protection. URL override headers are ignored so a client
+            # cannot redirect the server to an arbitrary Atlassian instance.
+            if is_multi_user_mode() and (jira_url_str or confluence_url_str):
+                logger.warning(
+                    "Multi-user mode: ignoring URL override headers "
+                    "(X-Atlassian-Jira-Url / X-Atlassian-Confluence-Url). "
+                    "Server uses configured JIRA_URL / CONFLUENCE_URL."
+                )
+                jira_url_str = None
+                confluence_url_str = None
 
             # Validate URLs to prevent SSRF
             if jira_url_str:

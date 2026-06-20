@@ -198,6 +198,95 @@ For multi-tenant applications where each user connects to their own Atlassian cl
    - `Authorization: Bearer <user_oauth_token>`
    - `X-Atlassian-Cloud-Id: <user_cloud_id>`
 
+### Multi-User Mode (URL-only Server)
+
+For deployments where the server holds **no Atlassian credentials at all** and
+every MCP client supplies its own username + API token (or PAT, or OAuth
+token), enable multi-user mode. This is the recommended setup when multiple
+people share one remote MCP service and each must act under their own
+Atlassian permissions.
+
+<Steps>
+  <Step title="Start the server with only URLs">
+    ```bash
+    JIRA_URL=https://your-company.atlassian.net \
+    CONFLUENCE_URL=https://your-company.atlassian.net/wiki \
+    uvx mcp-atlassian --transport streamable-http --multi-user --port 9000
+    ```
+
+    Equivalent environment variable form:
+
+    ```bash
+    MCP_ATLASSIAN_MULTI_USER_MODE=true uvx mcp-atlassian \
+      --transport streamable-http --port 9000
+    ```
+
+    The legacy `ATLASSIAN_OAUTH_ENABLE=true` flag remains a backwards-compatible
+    alias for this mode.
+  </Step>
+  <Step title="Configure each MCP client to send credentials per request">
+    <Tabs>
+      <Tab title="Cursor / VS Code">
+        ```json
+        {
+          "mcpServers": {
+            "atlassian": {
+              "url": "https://mcp.example.com/mcp",
+              "headers": {
+                "Authorization": "Basic <base64(email:api_token)>"
+              }
+            }
+          }
+        }
+        ```
+      </Tab>
+      <Tab title="Claude Desktop (mcp-remote)">
+        ```json
+        {
+          "mcpServers": {
+            "atlassian": {
+              "command": "npx",
+              "args": [
+                "mcp-remote",
+                "https://mcp.example.com/mcp",
+                "--header",
+                "Authorization: Basic <base64(email:api_token)>"
+              ]
+            }
+          }
+        }
+        ```
+      </Tab>
+      <Tab title="Server/DC PAT">
+        ```json
+        {
+          "mcpServers": {
+            "atlassian": {
+              "url": "https://mcp.example.com/mcp",
+              "headers": {
+                "Authorization": "Token <USER_PERSONAL_ACCESS_TOKEN>"
+              }
+            }
+          }
+        }
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+</Steps>
+
+<Note>
+- Multi-user mode requires HTTP transport (`sse` or `streamable-http`); `stdio`
+  has no per-request headers.
+- For SSRF protection, the server **ignores** `X-Atlassian-Jira-Url` and
+  `X-Atlassian-Confluence-Url` headers in this mode and always uses the
+  configured `JIRA_URL` / `CONFLUENCE_URL`.
+- Requests without recognised credential headers are rejected with a clear
+  message instructing the client to add an `Authorization` header.
+- Each request runs under its sender's own Atlassian permissions; the server
+  stores no credentials.
+</Note>
+
 ### Python Example
 
 ```python
