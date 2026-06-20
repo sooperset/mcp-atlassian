@@ -470,8 +470,10 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             base_url = self.config.url.rstrip("/")
             url = f"{base_url}/rest/api/content/{content_id}/child/attachment"
 
-            # Prepare headers (X-Atlassian-Token required for file uploads)
-            headers = {"X-Atlassian-Token": "nocheck"}
+            # Prepare headers — Confluence Server/DC requires "no-check" (with hyphen)
+            # to bypass XSRF validation on multipart uploads. "nocheck" (no hyphen)
+            # causes a 403 Forbidden on Server/DC instances.
+            headers = {"X-Atlassian-Token": "no-check"}
 
             # Prepare multipart form data
             files = {"file": (filename, open(file_path, "rb"))}
@@ -484,12 +486,43 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             if minor_edit is not None:
                 data["minorEdit"] = str(minor_edit).lower()
 
-            # Use PUT to support creating new versions of existing attachments
-            # PUT will create a new attachment if it doesn't exist, OR create a new
-            # version if an attachment with the same filename already exists
-            response = self.confluence._session.put(
+            # Use POST to create a new attachment on Server/DC.
+            # PUT on the list endpoint is not supported by Confluence Server/DC and
+            # returns 404 or 405. POST is the correct method per the REST API docs.
+            response = self.confluence._session.post(
                 url, headers=headers, files=files, data=data
             )
+
+            # On Server/DC, uploading a file that already exists returns HTTP 400
+            # with "same file name" in the response. In that case we must locate the
+            # existing attachment by filename and POST to its /data endpoint to create
+            # a new version instead.
+            if response.status_code == 400 and "same file name" in response.text:
+                logger.debug(
+                    f"Attachment '{filename}' already exists on content {content_id}, "
+                    "updating existing attachment version"
+                )
+                att_list = self.confluence._session.get(
+                    f"{url}?filename={filename}",
+                    headers={"X-Atlassian-Token": "no-check"},
+                )
+                att_list.raise_for_status()
+                att_results = att_list.json().get("results", [])
+                if att_results:
+                    att_id = att_results[0]["id"]
+                    update_url = (
+                        f"{base_url}/rest/api/content/{content_id}"
+                        f"/child/attachment/{att_id}/data"
+                    )
+                    files2 = {"file": (filename, open(file_path, "rb"))}
+                    if comment:
+                        files2["comment"] = (None, comment, "text/plain; charset=utf-8")
+                    response = self.confluence._session.post(
+                        update_url, headers=headers, files=files2, data=data
+                    )
+                    if "file" in files2 and hasattr(files2["file"][1], "close"):
+                        files2["file"][1].close()
+
             response.raise_for_status()
 
             # Parse response
