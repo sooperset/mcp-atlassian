@@ -383,6 +383,76 @@ class TestAttachmentsMixin:
         assert result["success"] is False
         assert "No content ID provided" in result["error"]
 
+    # Tests for upload_attachment_from_content method
+
+    def test_upload_attachment_from_content_success(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test successful in-memory attachment upload (no filesystem access)."""
+        self._mock_rest_api_upload(attachments_mixin)
+
+        result = attachments_mixin.upload_attachment_from_content(
+            "123456",
+            "test_file.txt",
+            b"test content",
+            comment="Test comment",
+            minor_edit=False,
+        )
+
+        assert result["success"] is True
+        assert result["content_id"] == "123456"
+        assert result["filename"] == "test_file.txt"
+        assert result["size"] == len(b"test content")
+        assert result["id"] == "att12345"
+
+        # The REST API must be called without ever touching the filesystem
+        attachments_mixin.confluence._session.put.assert_called_once()
+        call_args = attachments_mixin.confluence._session.put.call_args
+        assert "/rest/api/content/123456/child/attachment" in call_args[0][0]
+        assert call_args[1]["headers"]["X-Atlassian-Token"] == "nocheck"
+        assert call_args[1]["data"]["minorEdit"] == "false"
+        # The raw bytes are sent directly as the multipart file payload
+        assert call_args[1]["files"]["file"] == ("test_file.txt", b"test content")
+
+    def test_upload_attachment_from_content_no_content_id(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test in-memory upload with no content ID."""
+        result = attachments_mixin.upload_attachment_from_content(
+            "", "test_file.txt", b"data"
+        )
+
+        assert result["success"] is False
+        assert "No content ID provided" in result["error"]
+        attachments_mixin.confluence._session.put.assert_not_called()
+
+    def test_upload_attachment_from_content_no_filename(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test in-memory upload with no filename."""
+        result = attachments_mixin.upload_attachment_from_content("123456", "", b"data")
+
+        assert result["success"] is False
+        assert "No filename provided" in result["error"]
+        attachments_mixin.confluence._session.put.assert_not_called()
+
+    def test_upload_attachment_from_content_api_error(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test in-memory upload surfaces API errors as a failure result."""
+        from requests.exceptions import HTTPError
+
+        self._mock_rest_api_upload(
+            attachments_mixin, raise_error=HTTPError("API Error")
+        )
+
+        result = attachments_mixin.upload_attachment_from_content(
+            "123456", "test_file.txt", b"data"
+        )
+
+        assert result["success"] is False
+        assert "Failed to upload attachment" in result["error"]
+
     # Tests for download_attachment method
 
     def test_download_attachment_success(self, attachments_mixin: AttachmentsMixin):

@@ -167,6 +167,84 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             "failed": failed,
         }
 
+    def upload_attachment_from_content(
+        self,
+        content_id: str,
+        filename: str,
+        content: bytes,
+        comment: str | None = None,
+        minor_edit: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Upload a single attachment from in-memory bytes.
+
+        This is the filesystem-free counterpart to ``upload_attachment``. It is
+        intended for deployments where the server cannot read host file paths
+        (for example, a remote or containerized MCP server): the caller provides
+        the raw file content directly instead of a path.
+
+        Args:
+            content_id: The Confluence content ID
+            filename: Name of the attachment (determines title and file type)
+            content: Raw file bytes to upload
+            comment: Optional comment for the attachment
+            minor_edit: Whether this is a minor edit (default: True)
+
+        Returns:
+            A dictionary with upload result information
+        """
+        if not content_id:
+            logger.error("No content ID provided for attachment upload")
+            return {"success": False, "error": "No content ID provided"}
+
+        if not filename:
+            logger.error("No filename provided for attachment upload")
+            return {"success": False, "error": "No filename provided"}
+
+        if content is None:
+            logger.error("No file content provided for attachment upload")
+            return {"success": False, "error": "No file content provided"}
+
+        try:
+            logger.info(
+                f"Uploading attachment {filename} ({len(content)} bytes) to "
+                f"content {content_id} (minor_edit={minor_edit})"
+            )
+
+            attachment = self._upload_attachment_from_bytes(
+                content_id, filename, content, comment, minor_edit
+            )
+
+            if attachment:
+                logger.info(
+                    f"Successfully uploaded attachment {filename} to content "
+                    f"{content_id} (size: {len(content)} bytes)"
+                )
+                return {
+                    "success": True,
+                    "content_id": content_id,
+                    "filename": filename,
+                    "size": len(content),
+                    "id": attachment.get("id")
+                    if isinstance(attachment, dict)
+                    else None,
+                }
+
+            logger.error(
+                f"Failed to upload attachment {filename} to content {content_id}"
+            )
+            return {
+                "success": False,
+                "error": (
+                    f"Failed to upload attachment {filename} to content {content_id}"
+                ),
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Error uploading attachment from content: {error_msg}")
+            return {"success": False, "error": error_msg}
+
     def fetch_attachment_content(self, url: str) -> bytes | None:
         """Fetch attachment content into memory.
 
@@ -465,51 +543,114 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
         Returns:
             Attachment metadata dict if successful, None otherwise
         """
+        file_handle = None
         try:
-            # Build the API endpoint URL
-            base_url = self.config.url.rstrip("/")
-            url = f"{base_url}/rest/api/content/{content_id}/child/attachment"
-
-            # Prepare headers (X-Atlassian-Token required for file uploads)
-            headers = {"X-Atlassian-Token": "nocheck"}
-
-            # Prepare multipart form data
-            files = {"file": (filename, open(file_path, "rb"))}
-
-            # Comment must be sent with text/plain content-type for proper encoding
-            if comment:
-                files["comment"] = (None, comment, "text/plain; charset=utf-8")
-
-            data = {}
-            if minor_edit is not None:
-                data["minorEdit"] = str(minor_edit).lower()
-
-            # Use PUT to support creating new versions of existing attachments
-            # PUT will create a new attachment if it doesn't exist, OR create a new
-            # version if an attachment with the same filename already exists
-            response = self.confluence._session.put(
-                url, headers=headers, files=files, data=data
+            # Open the file and reuse the shared multipart upload helper
+            file_handle = open(file_path, "rb")
+            return self._send_attachment_request(
+                content_id, filename, file_handle, comment, minor_edit
             )
-            response.raise_for_status()
-
-            # Parse response
-            result = response.json()
-
-            # Return first result if it's a list
-            if isinstance(result, dict) and "results" in result:
-                results = result.get("results", [])
-                return results[0] if results else result
-            return result
-
         except Exception as e:
             logger.error(f"Direct API upload failed: {e}")
             return None
         finally:
-            # Close file handles (only for actual file objects, not text fields like comment)
-            if "files" in locals() and "file" in files:
-                file_tuple = files["file"]
-                if len(file_tuple) >= 2 and hasattr(file_tuple[1], "close"):
-                    file_tuple[1].close()
+            if file_handle is not None:
+                file_handle.close()
+
+    def _upload_attachment_from_bytes(
+        self,
+        content_id: str,
+        filename: str,
+        content: bytes,
+        comment: str | None,
+        minor_edit: bool,
+    ) -> dict[str, Any] | None:
+        """
+        Upload attachment from in-memory bytes using a direct REST API call.
+
+        Unlike ``_upload_attachment_direct`` this never touches the filesystem,
+        which is required when the server cannot read host file paths (for
+        example when running inside a container).
+
+        Args:
+            content_id: The Confluence content ID
+            filename: Name of the file (determines the attachment title/type)
+            content: Raw file bytes to upload
+            comment: Optional comment for the attachment
+            minor_edit: Whether this is a minor edit
+
+        Returns:
+            Attachment metadata dict if successful, None otherwise
+        """
+        try:
+            return self._send_attachment_request(
+                content_id, filename, content, comment, minor_edit
+            )
+        except Exception as e:
+            logger.error(f"In-memory API upload failed: {e}")
+            return None
+
+    def _send_attachment_request(
+        self,
+        content_id: str,
+        filename: str,
+        file_obj: Any,
+        comment: str | None,
+        minor_edit: bool,
+    ) -> dict[str, Any]:
+        """
+        Send the multipart attachment upload request to the Confluence REST API.
+
+        This uses the REST API directly to support the ``minorEdit`` parameter,
+        which is not available in the atlassian-python-api library's
+        ``attach_file()`` method. ``file_obj`` may be any value accepted by the
+        ``requests`` library as multipart content (an open file handle or raw
+        ``bytes``).
+
+        Args:
+            content_id: The Confluence content ID
+            filename: Name of the file
+            file_obj: File-like object or raw bytes to upload
+            comment: Optional comment for the attachment
+            minor_edit: Whether this is a minor edit
+
+        Returns:
+            Attachment metadata dict.
+        """
+        # Build the API endpoint URL
+        base_url = self.config.url.rstrip("/")
+        url = f"{base_url}/rest/api/content/{content_id}/child/attachment"
+
+        # Prepare headers (X-Atlassian-Token required for file uploads)
+        headers = {"X-Atlassian-Token": "nocheck"}
+
+        # Prepare multipart form data
+        files = {"file": (filename, file_obj)}
+
+        # Comment must be sent with text/plain content-type for proper encoding
+        if comment:
+            files["comment"] = (None, comment, "text/plain; charset=utf-8")
+
+        data = {}
+        if minor_edit is not None:
+            data["minorEdit"] = str(minor_edit).lower()
+
+        # Use PUT to support creating new versions of existing attachments
+        # PUT will create a new attachment if it doesn't exist, OR create a new
+        # version if an attachment with the same filename already exists
+        response = self.confluence._session.put(
+            url, headers=headers, files=files, data=data
+        )
+        response.raise_for_status()
+
+        # Parse response
+        result = response.json()
+
+        # Return first result if it's a list
+        if isinstance(result, dict) and "results" in result:
+            results = result.get("results", [])
+            return results[0] if results else result
+        return result
 
     def delete_attachment(self, attachment_id: str) -> dict[str, Any]:
         """

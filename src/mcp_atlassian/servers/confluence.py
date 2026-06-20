@@ -1,6 +1,7 @@
 """Confluence FastMCP server instance and tool definitions."""
 
 import base64
+import binascii
 import json
 import logging
 import mimetypes
@@ -1305,15 +1306,43 @@ async def upload_attachment(
         ),
     ],
     file_path: Annotated[
-        str,
+        str | None,
         Field(
             description=(
                 "Full path to the file to upload. Can be absolute (e.g., '/home/user/document.pdf' or 'C:\\Users\\name\\file.docx') "
                 "or relative to the current working directory (e.g., './uploads/document.pdf'). "
-                "If a file with the same name already exists, a new version will be created."
-            )
+                "If a file with the same name already exists, a new version will be created. "
+                "Requires the server to be able to read the path; for remote or "
+                "containerized servers use 'content_base64' instead. Provide either "
+                "'file_path' or 'content_base64', not both."
+            ),
+            default=None,
         ),
-    ],
+    ] = None,
+    content_base64: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Base64-encoded file content to upload directly, without "
+                "the server reading from disk. Use this when the server cannot access "
+                "host file paths (e.g. a remote or containerized MCP server). "
+                "Requires 'filename'. Provide either 'file_path' or 'content_base64', "
+                "not both."
+            ),
+            default=None,
+        ),
+    ] = None,
+    filename: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Attachment filename, including extension (e.g. "
+                "'report.pdf'). Required when using 'content_base64'; it determines "
+                "the attachment title and file type. Ignored when 'file_path' is used."
+            ),
+            default=None,
+        ),
+    ] = None,
     comment: Annotated[
         str | None,
         Field(
@@ -1337,6 +1366,11 @@ async def upload_attachment(
 ) -> str:
     """Upload an attachment to Confluence content (page or blog post).
 
+    Provide the file either as a server-readable path ('file_path') or as
+    base64-encoded content ('content_base64' together with 'filename'). The
+    base64 form is intended for remote or containerized servers that cannot
+    read host file paths. Exactly one of the two must be supplied.
+
     If the attachment already exists (same filename), a new version is created.
     This is useful for:
     - Attaching documents, images, or files to a page
@@ -1346,21 +1380,42 @@ async def upload_attachment(
     Args:
         ctx: The FastMCP context.
         content_id: The ID of the content to attach to.
-        file_path: Path to the file to upload.
+        file_path: Path to the file to upload (server-readable).
+        content_base64: Base64-encoded file content (filesystem-free upload).
+        filename: Attachment filename, required with content_base64.
         comment: Optional comment for the attachment.
         minor_edit: Whether this is a minor edit (no notifications).
 
     Returns:
         JSON string with upload confirmation and attachment metadata.
     """
+    if bool(file_path) == bool(content_base64):
+        raise ValueError("Provide exactly one of 'file_path' or 'content_base64'.")
+
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
-    result = confluence_fetcher.upload_attachment(
-        content_id=content_id,
-        file_path=file_path,
-        comment=comment,
-        minor_edit=minor_edit,
-    )
+    if content_base64:
+        if not filename:
+            raise ValueError("'filename' is required when using 'content_base64'.")
+        try:
+            content = base64.b64decode(content_base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError(f"Invalid base64 content: {exc}") from exc
+
+        result = confluence_fetcher.upload_attachment_from_content(
+            content_id=content_id,
+            filename=filename,
+            content=content,
+            comment=comment,
+            minor_edit=minor_edit,
+        )
+    else:
+        result = confluence_fetcher.upload_attachment(
+            content_id=content_id,
+            file_path=file_path,
+            comment=comment,
+            minor_edit=minor_edit,
+        )
 
     return json.dumps(
         {"message": "Attachment uploaded successfully", "attachment": result},
