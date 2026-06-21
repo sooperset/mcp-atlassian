@@ -626,6 +626,56 @@ class TestIssuesMixin:
         assert document.key == "TEST-123"
         assert document.summary == "Updated Summary"
 
+    def test_update_issue_return_fields_forwarded(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """return_fields is normalized and forwarded to the post-update re-fetch."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            summary="Updated Summary"
+        )
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+
+        issues_mixin.update_issue(
+            issue_key="TEST-123",
+            fields={"summary": "Updated Summary"},
+            return_fields=["summary", "duedate"],
+        )
+
+        assert issues_mixin.jira.get_issue.call_args[1]["fields"] == "summary,duedate"
+
+    def test_update_issue_return_fields_none_by_default(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Omitting return_fields lets the re-fetch use the API default field set."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            summary="Updated Summary"
+        )
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+
+        issues_mixin.update_issue(
+            issue_key="TEST-123", fields={"summary": "Updated Summary"}
+        )
+
+        assert issues_mixin.jira.get_issue.call_args[1]["fields"] is None
+
+    def test_update_issue_with_status_forwards_return_fields(
+        self, issues_mixin: IssuesMixin
+    ):
+        """return_fields is forwarded through the status-change re-fetch."""
+        issues_mixin.get_available_transitions = MagicMock(
+            return_value=[
+                {"id": "21", "name": "In Progress", "to_status": "In Progress"}
+            ]
+        )
+
+        issues_mixin.update_issue(
+            issue_key="TEST-123",
+            status="In Progress",
+            return_fields="summary",
+        )
+
+        assert issues_mixin.jira.get_issue.call_args[1]["fields"] == "summary"
+
     def test_update_issue_with_status(self, issues_mixin: IssuesMixin):
         """Test updating an issue with a status change."""
         # Mock get_issue response
