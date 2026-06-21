@@ -116,6 +116,7 @@ class JiraConfig:
     client_key_password: str | None = None  # Password for encrypted private key
     sla_config: SLAConfig | None = None  # Optional SLA configuration
     timeout: int = 75  # Connection timeout in seconds
+    cookie: str | None = None  # Raw cookie string to attach to all requests
 
     @property
     def is_cloud(self) -> bool:
@@ -262,6 +263,9 @@ class JiraConfig:
         if os.getenv("JIRA_TIMEOUT") and os.getenv("JIRA_TIMEOUT", "").isdigit():
             timeout = int(os.getenv("JIRA_TIMEOUT", "75"))
 
+        # Cookie configuration
+        cookie = os.getenv("JIRA_COOKIE")
+
         return cls(
             url=url or "",
             auth_type=auth_type,
@@ -281,6 +285,7 @@ class JiraConfig:
             client_key=client_key,
             client_key_password=client_key_password,
             timeout=timeout,
+            cookie=cookie,
         )
 
     def is_auth_configured(self) -> bool:
