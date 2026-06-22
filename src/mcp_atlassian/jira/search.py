@@ -9,6 +9,7 @@ from requests.exceptions import HTTPError
 
 from ..models.jira import JiraSearchResult
 from ..utils.decorators import handle_auth_errors
+from ..utils.pagination import clamp_limit
 from .client import JiraClient
 from .constants import DEFAULT_READ_JIRA_FIELDS
 from .protocols import IssueOperationsProto
@@ -54,6 +55,8 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             Exception: If there is an error searching for issues
         """
         try:
+            limit = clamp_limit(limit, context="jira.search_issues")
+
             # Sanitize JQL reserved words in project key values
             jql = sanitize_jql_reserved_words(jql)
 
@@ -232,6 +235,8 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             Exception: If there is an error getting board issues
         """
         try:
+            limit = clamp_limit(limit, context="jira.get_board_issues")
+
             # Sanitize JQL reserved words in project key values
             jql = sanitize_jql_reserved_words(jql) or jql
 
@@ -294,6 +299,8 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             Exception: If there is an error getting sprint issues
         """
         try:
+            limit = clamp_limit(limit, context="jira.get_sprint_issues")
+
             # Use JQL search to get sprint issues with proper fields filtering
             jql = f"sprint = {sprint_id}"
             return self.search_issues(
