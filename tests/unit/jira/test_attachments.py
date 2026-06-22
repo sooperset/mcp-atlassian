@@ -1580,6 +1580,63 @@ class TestAttachmentsMixin:
 
         assert attachments_mixin.get_attachment_media_id("123") == uuid
 
+    def test_get_attachment_media_id_makes_relative_url_absolute(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Regression: a relative ``resource_url`` is joined to an absolute URL.
+
+        Some atlassian-python-api versions return a path without scheme/host;
+        passing it straight to ``requests`` raised ``MissingSchema`` (the real
+        root cause behind "could not resolve the Media Services id").
+        """
+        uuid = "db6c5692-53da-4f3e-94ba-08c64e86265b"
+        attachments_mixin.jira.url = "https://novidea.atlassian.net"
+        attachments_mixin.jira.resource_url.return_value = (
+            "rest/api/3/attachment/content/416348"
+        )
+        resp = MagicMock()
+        resp.headers = {
+            "Location": f"https://api.media.atlassian.com/file/{uuid}/binary"
+        }
+        resp.status_code = 303
+        attachments_mixin.jira._session.get.return_value = resp
+
+        assert attachments_mixin.get_attachment_media_id("416348") == uuid
+        called_url = attachments_mixin.jira._session.get.call_args[0][0]
+        assert called_url == (
+            "https://novidea.atlassian.net/rest/api/3/attachment/content/416348"
+        )
+
+    def test_get_attachment_media_id_recovers_when_pass1_raises(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """A pass-1 request error no longer returns None — the chain is tried."""
+        uuid = "11111111-2222-3333-4444-555555555555"
+        attachments_mixin.jira.resource_url.return_value = "https://x/y"
+
+        followed = MagicMock()
+        followed.history = []
+        followed.url = f"https://api.media.atlassian.com/file/{uuid}/binary"
+        attachments_mixin.jira._session.get.side_effect = [
+            ValueError("pass-1 boom"),
+            followed,
+        ]
+
+        assert attachments_mixin.get_attachment_media_id("123") == uuid
+
+    def test_get_attachment_media_id_propagates_hard_error(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """A hard request error is surfaced, not swallowed into a vague None."""
+        attachments_mixin.jira.resource_url.return_value = "https://x/y"
+        attachments_mixin.jira._session.get.side_effect = [
+            ValueError("pass-1 boom"),
+            ConnectionError("network down"),
+        ]
+
+        with pytest.raises(ConnectionError, match="network down"):
+            attachments_mixin.get_attachment_media_id("123")
+
     def test_extract_media_file_uuid_host_agnostic(self):
         """UUID extraction matches the /file/{uuid} fragment on any host."""
         extract = AttachmentsMixin._extract_media_file_uuid
