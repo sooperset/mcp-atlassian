@@ -166,6 +166,52 @@ def test_process_html_content_error_handling(preprocessor_with_confluence):
         )
 
 
+def test_process_rendered_html_content_preserves_links(preprocessor_with_confluence):
+    """process_rendered_html_content converts body.view HTML with real links to markdown."""
+    html = (
+        '<p>See <a href="https://example.com/page">My Page</a> for details.</p>'
+        "<h1>Section</h1>"
+        '<p>A <strong>bold</strong> word and a <a href="https://jira.example.com/browse/PROJ-1">ticket</a>.</p>'
+    )
+    returned_html, markdown = (
+        preprocessor_with_confluence.process_rendered_html_content(html)
+    )
+
+    assert returned_html == html  # HTML is returned unchanged
+    assert "[My Page](https://example.com/page)" in markdown
+    assert "[ticket](https://jira.example.com/browse/PROJ-1)" in markdown
+    assert "**bold**" in markdown
+    assert "# Section" in markdown
+
+
+def test_process_rendered_html_content_does_not_mangle_macros(
+    preprocessor_with_confluence,
+):
+    """body.view HTML is already rendered so no Confluence macro tags should be present."""
+    # body.view provides normal HTML — tables, divs, spans — not ac:link / ac:structured-macro
+    html = (
+        "<table><tr><th>Header</th></tr><tr><td>Cell</td></tr></table>"
+        "<p>Normal paragraph without Confluence XML.</p>"
+    )
+    _, markdown = preprocessor_with_confluence.process_rendered_html_content(html)
+
+    assert "Header" in markdown
+    assert "Cell" in markdown
+    assert "Normal paragraph" in markdown
+    # No Confluence XML should leak through
+    assert "ac:" not in markdown
+    assert "ri:" not in markdown
+
+
+def test_process_rendered_html_content_empty_input(preprocessor_with_confluence):
+    """Empty input returns empty output without raising."""
+    returned_html, markdown = (
+        preprocessor_with_confluence.process_rendered_html_content("")
+    )
+    assert returned_html == ""
+    assert markdown == ""
+
+
 def test_clean_jira_text_with_invalid_html(preprocessor_with_jira):
     """Test cleaning Jira text with invalid HTML."""
     text = "<p>Unclosed paragraph with <b>bold</b"
