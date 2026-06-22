@@ -158,3 +158,6 @@ vcs = "git"
 style = "pep440"
 bump = true
 fallback-version = "0.0.0"
+
+[tool.uv]
+exclude-newer = "7 days"
