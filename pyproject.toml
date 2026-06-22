@@ -32,6 +32,14 @@ dependencies = [
     "truststore>=0.10.0",
     "tzdata>=2024.1; platform_system=='Windows'",
 ]
+
+[project.optional-dependencies]
+# NER-based PII redaction backend for the privacy filter (PRIVACY_USE_PRESIDIO).
+# Heavy dependency (loads spaCy models); install only if you need NER detection.
+privacy-nlp = [
+    "presidio-analyzer>=2.2.0",
+]
+
 [[project.authors]]
 name = "sooperset"
 email = "soomiles.dev@gmail.com"
@@ -65,6 +73,7 @@ markers = [
     "integration: mark test as requiring integration with real services",
     "dc_e2e: mark test as requiring DC instances (Jira DC + Confluence DC)",
     "cloud_e2e: mark test as requiring Cloud instances (Jira Cloud + Confluence Cloud)",
+    "performance: mark test as a perf benchmark with explicit thresholds",
 ]
 
 [tool.ruff]
