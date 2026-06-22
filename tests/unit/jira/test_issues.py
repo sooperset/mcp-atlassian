@@ -1386,6 +1386,7 @@ class TestIssuesMixin:
                 "changelogs": [
                     {
                         "author": {
+                            "account_id": "user123",
                             "avatar_url": None,
                             "display_name": "Test User 1",
                             "email": None,
@@ -1411,6 +1412,7 @@ class TestIssuesMixin:
                 "changelogs": [
                     {
                         "author": {
+                            "account_id": "user456",
                             "avatar_url": None,
                             "display_name": "Test User 2",
                             "email": None,
@@ -1428,6 +1430,7 @@ class TestIssuesMixin:
                     },
                     {
                         "author": {
+                            "account_id": "user789",
                             "avatar_url": None,
                             "display_name": "Test User 3",
                             "email": None,
@@ -1447,6 +1450,7 @@ class TestIssuesMixin:
                     },
                     {
                         "author": {
+                            "account_id": "user123",
                             "avatar_url": None,
                             "display_name": "Test User 1",
                             "email": None,
