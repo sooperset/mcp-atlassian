@@ -156,6 +156,30 @@ class TestUsersMixin:
         # Verify no lookups were performed
         users_mixin.jira.user_find_by_user_string.assert_not_called()
 
+    def test_get_account_id_modern_cloud_format(self, users_mixin):
+        """Test that _get_account_id returns modern Cloud account IDs unchanged."""
+        # Call the method with a modern Atlassian Cloud account ID
+        account_id = users_mixin._get_account_id(
+            "712020:f653aab5-cc61-4c57-8fa8-f7d73b94499d"
+        )
+
+        # Verify result
+        assert account_id == "712020:f653aab5-cc61-4c57-8fa8-f7d73b94499d"
+        # Verify no lookups were performed
+        users_mixin.jira.user_find_by_user_string.assert_not_called()
+
+    def test_get_account_id_strips_accountid_prefix(self, users_mixin):
+        """Test that _get_account_id strips the accountid: prefix."""
+        # Call the method with an accountid:-prefixed Cloud account ID
+        account_id = users_mixin._get_account_id(
+            "accountid:712020:f653aab5-cc61-4c57-8fa8-f7d73b94499d"
+        )
+
+        # Verify result
+        assert account_id == "712020:f653aab5-cc61-4c57-8fa8-f7d73b94499d"
+        # Verify no lookups were performed
+        users_mixin.jira.user_find_by_user_string.assert_not_called()
+
     def test_get_account_id_direct_lookup(self, users_mixin):
         """Test that _get_account_id uses direct lookup."""
         # Mock both methods to avoid AttributeError
