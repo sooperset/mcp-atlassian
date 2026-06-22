@@ -5,9 +5,13 @@ This module provides utilities for converting between ADF and other formats.
 Supports both ADF → plain text (for reading) and Markdown → ADF (for writing).
 """
 
+import copy
+import json
 import re
 from datetime import datetime, timezone
 from typing import Any
+
+_MEDIA_NODE_TYPES = frozenset({"media", "mediaSingle", "mediaGroup"})
 
 
 def _parse_inline_formatting(text: str) -> list[dict[str, Any]]:
@@ -272,6 +276,74 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
         doc["content"].append({"type": "paragraph", "content": []})
 
     return doc
+
+
+def _adf_node_contains_media(node: dict[str, Any]) -> bool:
+    """Return True when an ADF node contains media content."""
+    if node.get("type") in _MEDIA_NODE_TYPES:
+        return True
+
+    content = node.get("content")
+    if isinstance(content, list):
+        return any(
+            _adf_node_contains_media(child)
+            for child in content
+            if isinstance(child, dict)
+        )
+
+    return False
+
+
+def extract_top_level_media_nodes(
+    adf_document: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Extract top-level ADF nodes that contain media content."""
+    if not isinstance(adf_document, dict):
+        return []
+
+    content = adf_document.get("content")
+    if not isinstance(content, list):
+        return []
+
+    return [
+        copy.deepcopy(node)
+        for node in content
+        if isinstance(node, dict) and _adf_node_contains_media(node)
+    ]
+
+
+def merge_adf_with_preserved_media(
+    target_adf: dict[str, Any],
+    source_adf: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Append existing media nodes from one ADF document into another.
+
+    This is intentionally narrow: it preserves existing media-bearing blocks
+    when a caller rewrites the surrounding description text, without attempting
+    to merge all prior formatting or layout.
+    """
+    preserved_media = extract_top_level_media_nodes(source_adf)
+    if not preserved_media:
+        return target_adf
+
+    merged = copy.deepcopy(target_adf)
+    content = merged.get("content")
+    if not isinstance(content, list):
+        content = []
+        merged["content"] = content
+
+    existing_signatures = {
+        json.dumps(node, sort_keys=True, separators=(",", ":"))
+        for node in extract_top_level_media_nodes(merged)
+    }
+    for media_node in preserved_media:
+        signature = json.dumps(media_node, sort_keys=True, separators=(",", ":"))
+        if signature in existing_signatures:
+            continue
+        content.append(media_node)
+        existing_signatures.add(signature)
+
+    return merged
 
 
 def adf_to_text(adf_content: dict | list | str | None) -> str | None:
