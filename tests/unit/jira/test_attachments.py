@@ -1316,3 +1316,205 @@ class TestAttachmentsMixin:
         assert result[1].filename == "report.pdf"
         # No download calls should have been made
         attachments_mixin.jira._session.get.assert_not_called()
+
+    # Tests for upload_attachment_content (in-memory) method
+
+    def test_upload_attachment_content_success(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """In-memory upload posts a named buffer and returns the new id."""
+        attachments_mixin.jira.add_attachment_object.return_value = [
+            {"id": "55", "filename": "note.txt", "size": 5}
+        ]
+
+        result = attachments_mixin.upload_attachment_content(
+            "TEST-123", "note.txt", b"hello"
+        )
+
+        assert result["success"] is True
+        assert result["issue_key"] == "TEST-123"
+        assert result["filename"] == "note.txt"
+        assert result["size"] == 5
+        assert result["id"] == "55"
+        attachments_mixin.jira.add_attachment_object.assert_called_once()
+        # The buffer passed to the API carries the basename and content
+        args = attachments_mixin.jira.add_attachment_object.call_args[0]
+        assert args[0] == "TEST-123"
+        buffer = args[1]
+        assert buffer.name == "note.txt"
+        assert buffer.getvalue() == b"hello"
+
+    def test_upload_attachment_content_dict_response(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """A dict response (not a list) still yields the id and basename."""
+        attachments_mixin.jira.add_attachment_object.return_value = {"id": "77"}
+
+        result = attachments_mixin.upload_attachment_content(
+            "TEST-123", "/tmp/some/path/data.bin", b"\x00\x01"
+        )
+
+        assert result["success"] is True
+        assert result["filename"] == "data.bin"
+        assert result["id"] == "77"
+
+    def test_upload_attachment_content_no_issue_key(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Upload with no issue key is rejected before any API call."""
+        result = attachments_mixin.upload_attachment_content("", "f.txt", b"x")
+        assert result["success"] is False
+        assert "No issue key provided" in result["error"]
+        attachments_mixin.jira.add_attachment_object.assert_not_called()
+
+    def test_upload_attachment_content_no_filename(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Upload with no filename is rejected before any API call."""
+        result = attachments_mixin.upload_attachment_content("TEST-123", "", b"x")
+        assert result["success"] is False
+        assert "No filename provided" in result["error"]
+        attachments_mixin.jira.add_attachment_object.assert_not_called()
+
+    def test_upload_attachment_content_too_large(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Content over the size limit is rejected before any API call."""
+        with patch("mcp_atlassian.jira.attachments.ATTACHMENT_MAX_BYTES", 4):
+            result = attachments_mixin.upload_attachment_content(
+                "TEST-123", "big.bin", b"12345"
+            )
+        assert result["success"] is False
+        assert "exceeds the 50 MB limit" in result["error"]
+        attachments_mixin.jira.add_attachment_object.assert_not_called()
+
+    def test_upload_attachment_content_api_error(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """API failures during in-memory upload are reported, not raised."""
+        attachments_mixin.jira.add_attachment_object.side_effect = Exception(
+            "API Error"
+        )
+        result = attachments_mixin.upload_attachment_content("TEST-123", "f.txt", b"x")
+        assert result["success"] is False
+        assert "API Error" in result["error"]
+
+    # Tests for delete_attachment method
+
+    def test_delete_attachment_success(self, attachments_mixin: AttachmentsMixin):
+        """delete_attachment calls remove_attachment and reports success."""
+        attachments_mixin.jira.remove_attachment.return_value = None
+
+        result = attachments_mixin.delete_attachment("12345")
+
+        assert result["success"] is True
+        assert result["attachment_id"] == "12345"
+        assert "deleted successfully" in result["message"]
+        attachments_mixin.jira.remove_attachment.assert_called_once_with("12345")
+
+    def test_delete_attachment_no_id(self, attachments_mixin: AttachmentsMixin):
+        """delete_attachment with no id is rejected before any API call."""
+        result = attachments_mixin.delete_attachment("")
+        assert result["success"] is False
+        assert "No attachment ID provided" in result["error"]
+        attachments_mixin.jira.remove_attachment.assert_not_called()
+
+    def test_delete_attachment_api_error(self, attachments_mixin: AttachmentsMixin):
+        """API failures during deletion are reported, not raised."""
+        attachments_mixin.jira.remove_attachment.side_effect = Exception("API Error")
+
+        result = attachments_mixin.delete_attachment("12345")
+
+        assert result["success"] is False
+        assert result["attachment_id"] == "12345"
+        assert "API Error" in result["error"]
+
+    def test_extract_attachment_id_variants(self):
+        """_extract_attachment_id handles list, dict, and bad shapes."""
+        extract = AttachmentsMixin._extract_attachment_id
+        assert extract([{"id": "1"}]) == "1"
+        assert extract({"id": 2}) == "2"
+        assert extract([]) is None
+        assert extract(None) is None
+        assert extract("nope") is None
+
+    # Tests for upload_attachment_from_path
+
+    def test_upload_attachment_from_path_success(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Path upload reads the file and delegates to in-memory upload."""
+        attachments_mixin.jira.add_attachment_object.return_value = [{"id": "90"}]
+        with (
+            patch("os.path.isabs", return_value=True),
+            patch("os.path.exists", return_value=True),
+            patch("mcp_atlassian.jira.attachments.validate_safe_path"),
+            patch("builtins.open", mock_open(read_data=b"PNGDATA")),
+        ):
+            result = attachments_mixin.upload_attachment_from_path(
+                "TEST-123", "/abs/shot.png"
+            )
+        assert result["success"] is True
+        assert result["filename"] == "shot.png"
+        assert result["id"] == "90"
+        assert result["size"] == len(b"PNGDATA")
+
+    def test_upload_attachment_from_path_not_found(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Missing file is reported without calling the API."""
+        with (
+            patch("os.path.isabs", return_value=True),
+            patch("os.path.exists", return_value=False),
+            patch("mcp_atlassian.jira.attachments.validate_safe_path"),
+        ):
+            result = attachments_mixin.upload_attachment_from_path(
+                "TEST-123", "/abs/missing.png"
+            )
+        assert result["success"] is False
+        assert "File not found" in result["error"]
+        attachments_mixin.jira.add_attachment_object.assert_not_called()
+
+    def test_upload_attachment_from_path_no_path(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Empty path is rejected before any filesystem/API access."""
+        result = attachments_mixin.upload_attachment_from_path("TEST-123", "")
+        assert result["success"] is False
+        assert "No file path provided" in result["error"]
+
+    # Tests for get_attachment_media_id
+
+    def test_get_attachment_media_id_success(self, attachments_mixin: AttachmentsMixin):
+        """Media UUID is extracted from the redirect Location header."""
+        uuid = "056f8363-192c-4f50-85a6-9ce2f4dca583"
+        attachments_mixin.jira.resource_url.return_value = (
+            "https://x.atlassian.net/rest/api/3/attachment/content/123"
+        )
+        mock_resp = MagicMock()
+        mock_resp.headers = {
+            "Location": (f"https://api.media.atlassian.com/file/{uuid}/binary?token=z")
+        }
+        attachments_mixin.jira._session.get.return_value = mock_resp
+
+        result = attachments_mixin.get_attachment_media_id("123")
+
+        assert result == uuid
+        attachments_mixin.jira._session.get.assert_called_once()
+        _, kwargs = attachments_mixin.jira._session.get.call_args
+        assert kwargs.get("allow_redirects") is False
+
+    def test_get_attachment_media_id_no_location(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """No redirect location yields None."""
+        attachments_mixin.jira.resource_url.return_value = "https://x/y"
+        mock_resp = MagicMock()
+        mock_resp.headers = {}
+        attachments_mixin.jira._session.get.return_value = mock_resp
+        assert attachments_mixin.get_attachment_media_id("123") is None
+
+    def test_get_attachment_media_id_no_id(self, attachments_mixin: AttachmentsMixin):
+        """Empty attachment id returns None without any HTTP call."""
+        assert attachments_mixin.get_attachment_media_id("") is None
+        attachments_mixin.jira._session.get.assert_not_called()

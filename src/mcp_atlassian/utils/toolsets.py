@@ -1,6 +1,6 @@
 """Toolset definitions and filtering utilities for MCP Atlassian.
 
-Groups 68 tools into 21 named toolsets controlled via the TOOLSETS env var.
+Groups 72 tools into 21 named toolsets controlled via the TOOLSETS env var.
 Supports 'all', 'default', and comma-separated toolset names.
 """
 
@@ -67,7 +67,7 @@ JIRA_TOOLSETS: dict[str, ToolsetDefinition] = {
     ),
     "jira_attachments": ToolsetDefinition(
         name="jira_attachments",
-        description="Attachment download and image retrieval",
+        description="Attachment download, upload, deletion, and image retrieval",
         default=False,
     ),
     "jira_users": ToolsetDefinition(

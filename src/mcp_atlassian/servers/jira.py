@@ -14,6 +14,7 @@ from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 from mcp_atlassian.jira.forms_common import convert_datetime_to_timestamp
 from mcp_atlassian.models.jira import JiraAttachment
+from mcp_atlassian.models.jira.adf import build_media_comment_adf
 from mcp_atlassian.models.jira.common import JiraUser
 from mcp_atlassian.servers.dependencies import get_jira_fetcher
 from mcp_atlassian.utils.decorators import check_write_access
@@ -1038,6 +1039,127 @@ async def get_issue_images(
 
 
 @jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_attachments"},
+    annotations={"title": "Upload Attachment", "destructiveHint": False},
+)
+@check_write_access
+async def upload_attachment(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+    file_path: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Absolute path to a local file the server can "
+                "read. Provide this OR 'file_content_base64', not both."
+            )
+        ),
+    ] = None,
+    file_content_base64: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Base64-encoded file content to upload inline "
+                "without filesystem access (e.g. LLM-generated content). "
+                "Requires 'filename'. Provide this OR 'file_path', not both."
+            )
+        ),
+    ] = None,
+    filename: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Filename to store in Jira when uploading via "
+                "'file_content_base64'. Ignored when 'file_path' is used."
+            )
+        ),
+    ] = None,
+) -> str:
+    """Upload a single attachment to a Jira issue.
+
+    Provide EITHER 'file_path' (a local file the server can read) OR
+    'file_content_base64' together with 'filename' (inline content, useful
+    for remote servers and LLM-generated files).
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+        file_path: Optional local file path to upload.
+        file_content_base64: Optional base64-encoded inline content.
+        filename: Filename to use with file_content_base64.
+
+    Returns:
+        JSON string with the upload result.
+
+    Raises:
+        ValueError: If neither or both sources are given, if filename is
+            missing for inline content, if the base64 is invalid, or if in
+            read-only mode / Jira client unavailable.
+    """
+    jira = await get_jira_fetcher(ctx)
+
+    if file_path and file_content_base64:
+        raise ValueError(
+            "Provide either 'file_path' or 'file_content_base64', not both."
+        )
+    if not file_path and not file_content_base64:
+        raise ValueError("Provide one of 'file_path' or 'file_content_base64'.")
+
+    if file_content_base64:
+        if not filename:
+            raise ValueError("'filename' is required when using 'file_content_base64'.")
+        try:
+            content = base64.b64decode(file_content_base64, validate=True)
+        except ValueError as exc:
+            raise ValueError(f"Invalid base64 content: {exc}") from exc
+        result = jira.upload_attachment_content(issue_key, filename, content)
+    else:
+        result = jira.upload_attachment_from_path(issue_key, file_path)
+
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_attachments"},
+    annotations={"title": "Delete Attachment", "destructiveHint": True},
+)
+@check_write_access
+async def delete_attachment(
+    ctx: Context,
+    attachment_id: Annotated[
+        str,
+        Field(
+            description=(
+                "The numeric ID of the attachment to delete (available in "
+                "issue attachment metadata, e.g. from get_issue)."
+            )
+        ),
+    ],
+) -> str:
+    """Delete an attachment from Jira by its ID.
+
+    Args:
+        ctx: The FastMCP context.
+        attachment_id: The numeric ID of the attachment.
+
+    Returns:
+        JSON string describing the result.
+
+    Raises:
+        ValueError: If in read-only mode or Jira client unavailable.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.delete_attachment(attachment_id)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
     tags={"jira", "read", "toolset:jira_agile"},
     annotations={"title": "Get Agile Boards", "readOnlyHint": True},
 )
@@ -1826,6 +1948,203 @@ async def edit_comment(
     visibility_dict = _parse_visibility(visibility)
     result = jira.edit_comment(issue_key, comment_id, body, visibility_dict)
     return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_comments"},
+    annotations={"title": "Delete Comment", "destructiveHint": True},
+)
+@check_write_access
+async def delete_comment(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+    comment_id: Annotated[str, Field(description="The ID of the comment to delete")],
+) -> str:
+    """Delete a comment from a Jira issue.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+        comment_id: The ID of the comment to delete.
+
+    Returns:
+        JSON string indicating success.
+
+    Raises:
+        ValueError: If in read-only mode or Jira client unavailable.
+    """
+    jira = await get_jira_fetcher(ctx)
+    jira.delete_comment(issue_key, comment_id)
+    result = {
+        "success": True,
+        "issue_key": issue_key,
+        "comment_id": comment_id,
+        "message": f"Comment {comment_id} deleted from issue {issue_key}.",
+    }
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_comments"},
+    annotations={"title": "Add Comment With Media", "destructiveHint": False},
+)
+@check_write_access
+async def add_comment_with_media(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+    blocks: Annotated[
+        str,
+        Field(
+            description=(
+                "JSON array of ordered blocks composing the comment body. "
+                "Each block is either a text block "
+                '{"type":"text","text":"<markdown>"} or an image block '
+                '{"type":"image","file_path":"/abs/path.png"} OR '
+                '{"type":"image","file_content_base64":"<b64>",'
+                '"filename":"shot.png"}. Images are uploaded to the issue and '
+                "embedded inline, in order, so the comment renders like "
+                "text → screenshot → text → screenshot. Jira Cloud only."
+            )
+        ),
+    ],
+    visibility: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Comment visibility as JSON string "
+                '(e.g. \'{"type":"group","value":"jira-users"}\')'
+            )
+        ),
+    ] = None,
+) -> str:
+    """Add a Jira Cloud comment whose body mixes text and inline screenshots.
+
+    Each image block is uploaded as an issue attachment, its Media Services id
+    is resolved, and the image is embedded inline in the comment in the given
+    order. Use this for the "text, screenshot, text, screenshot" layout that a
+    plain text comment cannot express.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+        blocks: JSON array of ordered text/image blocks.
+        visibility: (Optional) Comment visibility as JSON string.
+
+    Returns:
+        JSON string with the created comment and the embedded attachments.
+
+    Raises:
+        ValueError: On invalid input, non-Cloud instance, upload/resolve
+            failure, read-only mode, or unavailable Jira client.
+    """
+    jira = await get_jira_fetcher(ctx)
+
+    if not jira.config.is_cloud:
+        raise ValueError("Inline media comments are supported on Jira Cloud only.")
+
+    try:
+        parsed_blocks = json.loads(blocks)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"'blocks' must be a valid JSON array: {exc}") from exc
+
+    if not isinstance(parsed_blocks, list) or not parsed_blocks:
+        raise ValueError("'blocks' must be a non-empty JSON array.")
+
+    segments: list[dict[str, Any]] = []
+    embedded: list[dict[str, Any]] = []
+
+    for index, block in enumerate(parsed_blocks):
+        if not isinstance(block, dict):
+            raise ValueError(f"Block {index} must be a JSON object.")
+        block_type = block.get("type")
+
+        if block_type == "text":
+            segments.append({"type": "text", "text": block.get("text", "")})
+            continue
+
+        if block_type != "image":
+            raise ValueError(
+                f"Block {index}: unknown type '{block_type}'. Use 'text' or 'image'."
+            )
+
+        file_path = block.get("file_path")
+        file_content_base64 = block.get("file_content_base64")
+        filename = block.get("filename")
+
+        if file_path and file_content_base64:
+            raise ValueError(
+                f"Block {index}: provide 'file_path' OR "
+                "'file_content_base64', not both."
+            )
+
+        if file_content_base64:
+            if not filename:
+                raise ValueError(
+                    f"Block {index}: 'filename' is required with 'file_content_base64'."
+                )
+            try:
+                content = base64.b64decode(file_content_base64, validate=True)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Block {index}: invalid base64 content: {exc}"
+                ) from exc
+            upload = jira.upload_attachment_content(issue_key, filename, content)
+        elif file_path:
+            upload = jira.upload_attachment_from_path(issue_key, file_path)
+        else:
+            raise ValueError(
+                f"Block {index}: image block needs 'file_path' or "
+                "'file_content_base64'."
+            )
+
+        if not upload.get("success"):
+            raise ValueError(
+                f"Block {index}: attachment upload failed: {upload.get('error')}"
+            )
+
+        attachment_id = upload.get("id")
+        if not attachment_id:
+            raise ValueError(
+                f"Block {index}: could not determine the attachment id after upload."
+            )
+
+        media_id = jira.get_attachment_media_id(attachment_id)
+        if not media_id:
+            raise ValueError(
+                f"Block {index}: could not resolve the Media Services id "
+                f"for attachment {attachment_id}."
+            )
+
+        segments.append({"type": "media", "media_id": media_id})
+        embedded.append(
+            {
+                "filename": upload.get("filename"),
+                "attachment_id": attachment_id,
+                "media_id": media_id,
+            }
+        )
+
+    adf_body = build_media_comment_adf(segments)
+    visibility_dict = _parse_visibility(visibility)
+    comment = jira.add_comment_adf(issue_key, adf_body, visibility_dict)
+
+    return json.dumps(
+        {"comment": comment, "embedded": embedded},
+        indent=2,
+        ensure_ascii=False,
+    )
 
 
 @jira_mcp.tool(

@@ -274,6 +274,56 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
     return doc
 
 
+def build_media_comment_adf(segments: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build an ADF document interleaving text and inline media (images).
+
+    Used to compose a Jira Cloud comment whose body mixes rich text with
+    inline screenshots, e.g. text -> image -> text -> image.
+
+    Args:
+        segments: Ordered list of segment dicts. Each is either:
+            ``{"type": "text", "text": "<markdown>"}`` — converted to ADF
+            paragraphs/lists via :func:`markdown_to_adf`; or
+            ``{"type": "media", "media_id": "<uuid>"}`` — a Media Services
+            file UUID (NOT the REST attachment id) rendered as an inline
+            ``mediaSingle`` node.
+
+    Returns:
+        An ADF document dict (``version``/``type``/``content``).
+    """
+    content: list[dict[str, Any]] = []
+
+    for segment in segments:
+        seg_type = segment.get("type")
+        if seg_type == "text":
+            sub_doc = markdown_to_adf(segment.get("text", ""))
+            content.extend(sub_doc.get("content", []))
+        elif seg_type == "media":
+            media_id = segment.get("media_id")
+            content.append(
+                {
+                    "type": "mediaSingle",
+                    "attrs": {"layout": "center"},
+                    "content": [
+                        {
+                            "type": "media",
+                            "attrs": {
+                                "id": media_id,
+                                "type": "file",
+                                "collection": "",
+                            },
+                        }
+                    ],
+                }
+            )
+
+    # ADF docs must contain at least one node.
+    if not content:
+        content.append({"type": "paragraph", "content": []})
+
+    return {"version": 1, "type": "doc", "content": content}
+
+
 def adf_to_text(adf_content: dict | list | str | None) -> str | None:
     """
     Convert Atlassian Document Format (ADF) content to plain text.
