@@ -1,6 +1,6 @@
 ---
 title: "Jira Service Desk"
-description: "Service desk queues and queue issues"
+description: "Service desk queues, queue issues, and customer requests"
 ---
 
 ### Get Service Desk For Project
@@ -39,6 +39,83 @@ Get issues from a Jira Service Desk queue.
 |-----------|------|----------|-------------|
 | `service_desk_id` | `string` | Yes | Service desk ID (e.g., '4') |
 | `queue_id` | `string` | Yes | Queue ID (e.g., '47') |
+| `start_at` | `integer` | No | Starting index for pagination (0-based) |
+| `limit` | `integer` | No | Maximum number of results (1-50) |
+
+---
+
+### Get Customer Request
+
+Get a Jira Service Management customer request by issue ID or key.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_id_or_key` | `string` | Yes | Jira issue ID or key (e.g., 'HELPDESK-1') |
+| `expand` | `string` | No | Optional comma-separated expand values |
+
+---
+
+### Search Customer Requests
+
+Search Jira Service Management customer requests visible to the caller.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `request_ownership` | `string` | No | Request ownership filter |
+| `request_status` | `string` | No | Optional request status filter |
+| `search_term` | `string` | No | Optional search text |
+| `organization_id` | `string` | No | Optional organization ID filter |
+| `service_desk_id` | `string` | No | Optional service desk ID filter |
+| `start_at` | `integer` | No | Starting index for pagination (0-based) |
+| `limit` | `integer` | No | Maximum number of results (1-50) |
+| `expand` | `string` | No | Optional comma-separated expand values |
+
+---
+
+### Get Customer Request Comments
+
+Get comments on a Jira Service Management customer request.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_id_or_key` | `string` | Yes | Jira issue ID or key (e.g., 'HELPDESK-1') |
+| `public` | `boolean` | No | Optional public comment filter |
+| `internal` | `boolean` | No | Optional internal comment filter |
+| `start_at` | `integer` | No | Starting index for pagination (0-based) |
+| `limit` | `integer` | No | Maximum number of results (1-50) |
+| `expand` | `string` | No | Optional comma-separated expand values |
+
+---
+
+### Get Customer Request Statuses
+
+Get status history for a Jira Service Management customer request.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_id_or_key` | `string` | Yes | Jira issue ID or key (e.g., 'HELPDESK-1') |
+| `start_at` | `integer` | No | Starting index for pagination (0-based) |
+| `limit` | `integer` | No | Maximum number of results (1-50) |
+
+---
+
+### Get Customer Request Transitions
+
+Get customer-visible transitions for a Service Management request.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_id_or_key` | `string` | Yes | Jira issue ID or key (e.g., 'HELPDESK-1') |
 | `start_at` | `integer` | No | Starting index for pagination (0-based) |
 | `limit` | `integer` | No | Maximum number of results (1-50) |
 

@@ -2620,6 +2620,265 @@ async def get_queue_issues(
 
 
 @jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_service_desk"},
+    annotations={"title": "Get Customer Request", "readOnlyHint": True},
+)
+async def get_customer_request(
+    ctx: Context,
+    issue_id_or_key: Annotated[
+        str,
+        Field(description="Jira issue ID or key (e.g., 'HELPDESK-1')"),
+    ],
+    expand: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional comma-separated expand values, such as "
+                "'participant,status,sla,requestType,serviceDesk,attachment,"
+                "action,comment'"
+            ),
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """
+    Get a Jira Service Management customer request by issue ID or key.
+
+    Uses /rest/servicedeskapi/request/{issueIdOrKey}, which can read portal
+    requests visible to the authenticated customer even when the standard Jira
+    issue API cannot.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_id_or_key: Jira issue ID or key.
+        expand: Optional comma-separated expand values.
+
+    Returns:
+        JSON string with the customer request payload.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_customer_request(
+        issue_id_or_key=issue_id_or_key,
+        expand=expand,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_service_desk"},
+    annotations={"title": "Search Customer Requests", "readOnlyHint": True},
+)
+async def search_customer_requests(
+    ctx: Context,
+    request_ownership: Annotated[
+        str,
+        Field(
+            description=(
+                "Request ownership filter. Common values: OWNED_REQUESTS, "
+                "PARTICIPATED_REQUESTS, APPROVER_REQUESTS."
+            ),
+            default="OWNED_REQUESTS",
+        ),
+    ] = "OWNED_REQUESTS",
+    request_status: Annotated[
+        str | None,
+        Field(description="Optional request status filter", default=None),
+    ] = None,
+    search_term: Annotated[
+        str | None,
+        Field(description="Optional search text", default=None),
+    ] = None,
+    organization_id: Annotated[
+        str | None,
+        Field(description="Optional organization ID filter", default=None),
+    ] = None,
+    service_desk_id: Annotated[
+        str | None,
+        Field(description="Optional service desk ID filter", default=None),
+    ] = None,
+    start_at: Annotated[
+        int,
+        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(description="Maximum number of results (1-50)", default=50, ge=1, le=50),
+    ] = 50,
+    expand: Annotated[
+        str | None,
+        Field(description="Optional comma-separated expand values", default=None),
+    ] = None,
+) -> str:
+    """
+    Search Jira Service Management customer requests visible to the caller.
+
+    Args:
+        ctx: The FastMCP context.
+        request_ownership: Which visible requests to return.
+        request_status: Optional request status filter.
+        search_term: Optional search text.
+        organization_id: Optional organization ID filter.
+        service_desk_id: Optional service desk ID filter.
+        start_at: Starting index for pagination.
+        limit: Maximum number of requests to return.
+        expand: Optional comma-separated expand values.
+
+    Returns:
+        JSON string with paged customer requests.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.search_customer_requests(
+        request_ownership=request_ownership,
+        request_status=request_status,
+        search_term=search_term,
+        organization_id=organization_id,
+        service_desk_id=service_desk_id,
+        start_at=start_at,
+        limit=limit,
+        expand=expand,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_service_desk"},
+    annotations={"title": "Get Customer Request Comments", "readOnlyHint": True},
+)
+async def get_customer_request_comments(
+    ctx: Context,
+    issue_id_or_key: Annotated[
+        str,
+        Field(description="Jira issue ID or key (e.g., 'HELPDESK-1')"),
+    ],
+    public: Annotated[
+        bool | None,
+        Field(description="Optional public comment filter", default=None),
+    ] = None,
+    internal: Annotated[
+        bool | None,
+        Field(description="Optional internal comment filter", default=None),
+    ] = None,
+    start_at: Annotated[
+        int,
+        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(description="Maximum number of results (1-50)", default=50, ge=1, le=50),
+    ] = 50,
+    expand: Annotated[
+        str | None,
+        Field(description="Optional comma-separated expand values", default=None),
+    ] = None,
+) -> str:
+    """
+    Get comments on a Jira Service Management customer request.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_id_or_key: Jira issue ID or key.
+        public: Optional public comment filter.
+        internal: Optional internal comment filter.
+        start_at: Starting index for pagination.
+        limit: Maximum number of comments to return.
+        expand: Optional comma-separated expand values.
+
+    Returns:
+        JSON string with paged comments.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_customer_request_comments(
+        issue_id_or_key=issue_id_or_key,
+        public=public,
+        internal=internal,
+        start_at=start_at,
+        limit=limit,
+        expand=expand,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_service_desk"},
+    annotations={"title": "Get Customer Request Statuses", "readOnlyHint": True},
+)
+async def get_customer_request_statuses(
+    ctx: Context,
+    issue_id_or_key: Annotated[
+        str,
+        Field(description="Jira issue ID or key (e.g., 'HELPDESK-1')"),
+    ],
+    start_at: Annotated[
+        int,
+        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(description="Maximum number of results (1-50)", default=50, ge=1, le=50),
+    ] = 50,
+) -> str:
+    """
+    Get status history for a Jira Service Management customer request.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_id_or_key: Jira issue ID or key.
+        start_at: Starting index for pagination.
+        limit: Maximum number of statuses to return.
+
+    Returns:
+        JSON string with paged status history.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_customer_request_statuses(
+        issue_id_or_key=issue_id_or_key,
+        start_at=start_at,
+        limit=limit,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_service_desk"},
+    annotations={"title": "Get Customer Request Transitions", "readOnlyHint": True},
+)
+async def get_customer_request_transitions(
+    ctx: Context,
+    issue_id_or_key: Annotated[
+        str,
+        Field(description="Jira issue ID or key (e.g., 'HELPDESK-1')"),
+    ],
+    start_at: Annotated[
+        int,
+        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(description="Maximum number of results (1-50)", default=50, ge=1, le=50),
+    ] = 50,
+) -> str:
+    """
+    Get customer-visible transitions for a Service Management request.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_id_or_key: Jira issue ID or key.
+        start_at: Starting index for pagination.
+        limit: Maximum number of transitions to return.
+
+    Returns:
+        JSON string with paged customer transitions.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_customer_request_transitions(
+        issue_id_or_key=issue_id_or_key,
+        start_at=start_at,
+        limit=limit,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_projects"},
     annotations={"title": "Create Version", "destructiveHint": True},
 )

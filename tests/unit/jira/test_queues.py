@@ -152,6 +152,102 @@ def test_get_queue_issues_invalid_payload_returns_safe_default(
     assert result.size == 0
 
 
+def test_get_customer_request_success(queues_fetcher: JiraFetcher):
+    """Customer request lookup should call the JSM request endpoint."""
+    queues_fetcher.jira.get = MagicMock(
+        return_value={"issueKey": "SUP-1", "summary": "Need help"}
+    )
+
+    result = queues_fetcher.get_customer_request("SUP-1", expand="comment,status")
+
+    assert result["issueKey"] == "SUP-1"
+    queues_fetcher.jira.get.assert_called_once_with(
+        "rest/servicedeskapi/request/SUP-1",
+        params={"expand": "comment,status"},
+    )
+
+
+def test_search_customer_requests_success(queues_fetcher: JiraFetcher):
+    """Customer request search should pass filters to the JSM request endpoint."""
+    queues_fetcher.jira.get = MagicMock(
+        return_value={
+            "start": 0,
+            "limit": 50,
+            "size": 1,
+            "values": [{"issueKey": "SUP-1"}],
+        }
+    )
+
+    result = queues_fetcher.search_customer_requests(
+        search_term="snowflake",
+        service_desk_id="4",
+        expand="status",
+    )
+
+    assert result["values"][0]["issueKey"] == "SUP-1"
+    queues_fetcher.jira.get.assert_called_once_with(
+        "rest/servicedeskapi/request",
+        params={
+            "requestOwnership": "OWNED_REQUESTS",
+            "start": 0,
+            "limit": 50,
+            "searchTerm": "snowflake",
+            "serviceDeskId": "4",
+            "expand": "status",
+        },
+    )
+
+
+def test_get_customer_request_comments_success(queues_fetcher: JiraFetcher):
+    """Customer request comments should call the JSM comments endpoint."""
+    queues_fetcher.jira.get = MagicMock(
+        return_value={"size": 1, "values": [{"id": "10001", "body": "Done"}]}
+    )
+
+    result = queues_fetcher.get_customer_request_comments(
+        "SUP-1",
+        public=True,
+        start_at=1,
+        limit=10,
+    )
+
+    assert result["values"][0]["body"] == "Done"
+    queues_fetcher.jira.get.assert_called_once_with(
+        "rest/servicedeskapi/request/SUP-1/comment",
+        params={"start": 1, "limit": 10, "public": "true"},
+    )
+
+
+def test_get_customer_request_statuses_success(queues_fetcher: JiraFetcher):
+    """Customer request statuses should call the JSM status endpoint."""
+    queues_fetcher.jira.get = MagicMock(
+        return_value={"size": 1, "values": [{"status": "Waiting for support"}]}
+    )
+
+    result = queues_fetcher.get_customer_request_statuses("SUP-1")
+
+    assert result["values"][0]["status"] == "Waiting for support"
+    queues_fetcher.jira.get.assert_called_once_with(
+        "rest/servicedeskapi/request/SUP-1/status",
+        params={"start": 0, "limit": 50},
+    )
+
+
+def test_get_customer_request_transitions_success(queues_fetcher: JiraFetcher):
+    """Customer request transitions should call the JSM transition endpoint."""
+    queues_fetcher.jira.get = MagicMock(
+        return_value={"size": 1, "values": [{"id": "1", "name": "Resolve"}]}
+    )
+
+    result = queues_fetcher.get_customer_request_transitions("SUP-1")
+
+    assert result["values"][0]["name"] == "Resolve"
+    queues_fetcher.jira.get.assert_called_once_with(
+        "rest/servicedeskapi/request/SUP-1/transition",
+        params={"start": 0, "limit": 50},
+    )
+
+
 @pytest.fixture
 def cloud_queues_fetcher(jira_fetcher: JiraFetcher) -> JiraFetcher:
     """Create a Jira fetcher configured as Cloud for queue rejection testing."""

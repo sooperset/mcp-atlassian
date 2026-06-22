@@ -216,3 +216,221 @@ class QueuesMixin(JiraClient):
                 queue_id=queue_id,
                 queue=queue_model,
             )
+
+    def get_customer_request(
+        self,
+        issue_id_or_key: str,
+        expand: str | None = None,
+    ) -> dict[str, object]:
+        """
+        Get a Jira Service Management customer request by issue ID or key.
+
+        This uses the customer request API instead of the standard Jira issue API,
+        which lets customers read their own portal requests even when
+        /rest/api/2/issue/{key} is not visible to them.
+
+        Args:
+            issue_id_or_key: Jira issue ID or key (e.g. 'HELPDESK-1').
+            expand: Optional comma-separated expand values such as
+                'participant,status,sla,requestType,serviceDesk,attachment,action,comment'.
+
+        Returns:
+            Raw customer request payload from the Service Management API.
+        """
+        if not issue_id_or_key or not issue_id_or_key.strip():
+            raise ValueError("Issue ID or key is required")
+
+        params = {"expand": expand} if expand else None
+        response = self.jira.get(
+            f"rest/servicedeskapi/request/{issue_id_or_key.strip()}",
+            params=params,
+        )
+        if not isinstance(response, dict):
+            logger.error(
+                "Unexpected response type from customer request endpoint: %s",
+                type(response),
+            )
+            return {}
+        return response
+
+    def search_customer_requests(
+        self,
+        request_ownership: str = "OWNED_REQUESTS",
+        request_status: str | None = None,
+        search_term: str | None = None,
+        organization_id: str | None = None,
+        service_desk_id: str | None = None,
+        start_at: int = 0,
+        limit: int = 50,
+        expand: str | None = None,
+    ) -> dict[str, object]:
+        """
+        Search Jira Service Management customer requests visible to the caller.
+
+        Args:
+            request_ownership: Which requests to return. Common values include
+                'OWNED_REQUESTS', 'PARTICIPATED_REQUESTS', and 'APPROVER_REQUESTS'.
+            request_status: Optional request status filter.
+            search_term: Optional search text.
+            organization_id: Optional organization ID filter.
+            service_desk_id: Optional service desk ID filter.
+            start_at: Starting index for pagination.
+            limit: Maximum number of requests to return.
+            expand: Optional comma-separated expand values.
+
+        Returns:
+            Raw paged customer request payload from the Service Management API.
+        """
+        if start_at < 0:
+            raise ValueError("start_at must be >= 0")
+        if limit < 1:
+            raise ValueError("limit must be >= 1")
+
+        params: dict[str, object] = {
+            "requestOwnership": request_ownership,
+            "start": start_at,
+            "limit": limit,
+        }
+        if request_status:
+            params["requestStatus"] = request_status
+        if search_term:
+            params["searchTerm"] = search_term
+        if organization_id:
+            params["organizationId"] = organization_id
+        if service_desk_id:
+            params["serviceDeskId"] = service_desk_id
+        if expand:
+            params["expand"] = expand
+
+        response = self.jira.get("rest/servicedeskapi/request", params=params)
+        if not isinstance(response, dict):
+            logger.error(
+                "Unexpected response type from customer request search endpoint: %s",
+                type(response),
+            )
+            return {}
+        return response
+
+    def get_customer_request_comments(
+        self,
+        issue_id_or_key: str,
+        *,
+        public: bool | None = None,
+        internal: bool | None = None,
+        start_at: int = 0,
+        limit: int = 50,
+        expand: str | None = None,
+    ) -> dict[str, object]:
+        """
+        Get comments on a Jira Service Management customer request.
+
+        Args:
+            issue_id_or_key: Jira issue ID or key.
+            public: Optional public comment filter.
+            internal: Optional internal comment filter.
+            start_at: Starting index for pagination.
+            limit: Maximum number of comments to return.
+            expand: Optional comma-separated expand values.
+
+        Returns:
+            Raw paged comments payload from the Service Management API.
+        """
+        if not issue_id_or_key or not issue_id_or_key.strip():
+            raise ValueError("Issue ID or key is required")
+        if start_at < 0:
+            raise ValueError("start_at must be >= 0")
+        if limit < 1:
+            raise ValueError("limit must be >= 1")
+
+        params: dict[str, object] = {"start": start_at, "limit": limit}
+        if public is not None:
+            params["public"] = str(public).lower()
+        if internal is not None:
+            params["internal"] = str(internal).lower()
+        if expand:
+            params["expand"] = expand
+
+        response = self.jira.get(
+            f"rest/servicedeskapi/request/{issue_id_or_key.strip()}/comment",
+            params=params,
+        )
+        if not isinstance(response, dict):
+            logger.error(
+                "Unexpected response type from customer request comments endpoint: %s",
+                type(response),
+            )
+            return {}
+        return response
+
+    def get_customer_request_statuses(
+        self,
+        issue_id_or_key: str,
+        start_at: int = 0,
+        limit: int = 50,
+    ) -> dict[str, object]:
+        """
+        Get status history for a Jira Service Management customer request.
+
+        Args:
+            issue_id_or_key: Jira issue ID or key.
+            start_at: Starting index for pagination.
+            limit: Maximum number of statuses to return.
+
+        Returns:
+            Raw paged status payload from the Service Management API.
+        """
+        if not issue_id_or_key or not issue_id_or_key.strip():
+            raise ValueError("Issue ID or key is required")
+        if start_at < 0:
+            raise ValueError("start_at must be >= 0")
+        if limit < 1:
+            raise ValueError("limit must be >= 1")
+
+        response = self.jira.get(
+            f"rest/servicedeskapi/request/{issue_id_or_key.strip()}/status",
+            params={"start": start_at, "limit": limit},
+        )
+        if not isinstance(response, dict):
+            logger.error(
+                "Unexpected response type from customer request status endpoint: %s",
+                type(response),
+            )
+            return {}
+        return response
+
+    def get_customer_request_transitions(
+        self,
+        issue_id_or_key: str,
+        start_at: int = 0,
+        limit: int = 50,
+    ) -> dict[str, object]:
+        """
+        Get customer-visible transitions for a Service Management request.
+
+        Args:
+            issue_id_or_key: Jira issue ID or key.
+            start_at: Starting index for pagination.
+            limit: Maximum number of transitions to return.
+
+        Returns:
+            Raw paged transition payload from the Service Management API.
+        """
+        if not issue_id_or_key or not issue_id_or_key.strip():
+            raise ValueError("Issue ID or key is required")
+        if start_at < 0:
+            raise ValueError("start_at must be >= 0")
+        if limit < 1:
+            raise ValueError("limit must be >= 1")
+
+        response = self.jira.get(
+            f"rest/servicedeskapi/request/{issue_id_or_key.strip()}/transition",
+            params={"start": start_at, "limit": limit},
+        )
+        if not isinstance(response, dict):
+            logger.error(
+                "Unexpected response type from customer request transitions "
+                "endpoint: %s",
+                type(response),
+            )
+            return {}
+        return response
