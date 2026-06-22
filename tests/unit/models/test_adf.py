@@ -605,6 +605,57 @@ class TestMarkdownToAdf:
             assert word in text_back
 
 
+class TestMarkdownToAdfPanels:
+    """Tests for panel node support in markdown_to_adf."""
+
+    def _assert_valid_adf(self, result: dict) -> None:
+        """Helper: assert the result is a valid ADF document."""
+        assert result["version"] == 1
+        assert result["type"] == "doc"
+        assert isinstance(result["content"], list)
+
+    @pytest.mark.parametrize(
+        "panel_type",
+        ["note", "info", "warning", "success", "error"],
+        ids=["note", "info", "warning", "success", "error"],
+    )
+    def test_all_valid_panel_types(self, panel_type: str):
+        """All five valid panel types produce a panel node."""
+        result = markdown_to_adf(f":::{panel_type}\ntext\n:::")
+        self._assert_valid_adf(result)
+        assert result["content"][0]["type"] == "panel"
+        assert result["content"][0]["attrs"]["panelType"] == panel_type
+
+    def test_panel_content_is_paragraph(self):
+        """Panel body text becomes a paragraph node inside the panel."""
+        result = markdown_to_adf(":::note\nThis is a note.\n:::")
+        panel = result["content"][0]
+        assert panel["type"] == "panel"
+        assert panel["content"][0]["type"] == "paragraph"
+
+    def test_panel_with_nested_heading_and_list(self):
+        """Panel content supports nested headings and bullet lists."""
+        result = markdown_to_adf(":::info\n## Title\n- item 1\n- item 2\n:::")
+        panel = result["content"][0]
+        assert panel["type"] == "panel"
+        assert panel["attrs"]["panelType"] == "info"
+        inner_types = [n["type"] for n in panel["content"]]
+        assert "heading" in inner_types
+        assert "bulletList" in inner_types
+
+    def test_invalid_panel_type_falls_through_as_paragraph(self):
+        """Unknown panel type (:::custom) is not converted to a panel node."""
+        result = markdown_to_adf(":::custom\nsome text\n:::")
+        types = [n["type"] for n in result["content"]]
+        assert "panel" not in types
+
+    def test_panel_mixed_with_other_content(self):
+        """Panel can appear alongside headings and lists in a document."""
+        result = markdown_to_adf("## Heading\n\n:::note\nA note.\n:::\n\n- list item")
+        types = [n["type"] for n in result["content"]]
+        assert types == ["heading", "panel", "bulletList"]
+
+
 class TestMarkdownToJiraDispatch:
     """Tests for _markdown_to_jira Cloud/Server dispatch."""
 
