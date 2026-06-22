@@ -2677,6 +2677,91 @@ async def create_version(
 
 
 @jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_projects"},
+    annotations={"title": "Update Version", "destructiveHint": True},
+)
+@check_write_access
+async def update_version(
+    ctx: Context,
+    version_id: Annotated[
+        str,
+        Field(description="Numeric id of the version to update (e.g., '11819')"),
+    ],
+    name: Annotated[
+        str | None, Field(description="New version name", default=None)
+    ] = None,
+    description: Annotated[
+        str | None, Field(description="New version description", default=None)
+    ] = None,
+    released: Annotated[
+        bool | None,
+        Field(
+            description=(
+                "Mark version as released (True) or un-released (False); "
+                "omit to leave unchanged"
+            ),
+            default=None,
+        ),
+    ] = None,
+    archived: Annotated[
+        bool | None,
+        Field(
+            description=(
+                "Mark version as archived (True) or un-archived (False); "
+                "omit to leave unchanged"
+            ),
+            default=None,
+        ),
+    ] = None,
+    start_date: Annotated[
+        str | None,
+        Field(description="New start date (YYYY-MM-DD)", default=None),
+    ] = None,
+    release_date: Annotated[
+        str | None,
+        Field(description="New release date (YYYY-MM-DD)", default=None),
+    ] = None,
+) -> str:
+    """Update an existing fix version in a Jira project.
+
+    Any field left unset is left unchanged on the server. Common use is to
+    flip ``released`` to ``True`` once a release ships, optionally backfilling
+    the description with the actual deployment summary.
+
+    Args:
+        ctx: The FastMCP context.
+        version_id: Numeric version id (as returned by ``create_version`` or
+            ``get_project_versions``).
+        name: Optional new name.
+        description: Optional new description.
+        released: Optional released flag.
+        archived: Optional archived flag.
+        start_date: Optional new start date.
+        release_date: Optional new release date.
+
+    Returns:
+        JSON string of the updated version object.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        version = jira.update_project_version(
+            version_id=version_id,
+            name=name,
+            description=description,
+            is_released=released,
+            is_archived=archived,
+            start_date=start_date,
+            release_date=release_date,
+        )
+        return json.dumps(version, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Error updating version {version_id}: {str(e)}", exc_info=True)
+        return json.dumps(
+            {"success": False, "error": str(e)}, indent=2, ensure_ascii=False
+        )
+
+
+@jira_mcp.tool(
     name="batch_create_versions",
     tags={"jira", "write", "toolset:jira_projects"},
     annotations={"title": "Batch Create Versions", "destructiveHint": True},
