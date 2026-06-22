@@ -988,6 +988,28 @@ class TestBuildMediaCommentAdf:
             "collection": "",
         }
 
+    def test_media_node_includes_dimensions_when_present(self):
+        """Integer width/height are written to the media node attrs."""
+        doc = build_media_comment_adf(
+            [{"type": "media", "media_id": "abc-123", "width": 800, "height": 600}]
+        )
+        media = doc["content"][0]["content"][0]
+        assert media["attrs"] == {
+            "id": "abc-123",
+            "type": "file",
+            "collection": "",
+            "width": 800,
+            "height": 600,
+        }
+
+    def test_media_node_omits_invalid_dimensions(self):
+        """Missing/zero/None dimensions leave the media node without them."""
+        doc = build_media_comment_adf(
+            [{"type": "media", "media_id": "abc-123", "width": 0, "height": None}]
+        )
+        media = doc["content"][0]["content"][0]
+        assert media["attrs"] == {"id": "abc-123", "type": "file", "collection": ""}
+
     def test_text_segment_uses_markdown(self):
         """Text segments are converted through markdown_to_adf."""
         doc = build_media_comment_adf([{"type": "text", "text": "# Title"}])
