@@ -2,6 +2,7 @@
 
 import logging
 import os
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,77 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                 session=self.confluence._session, base_url=self.confluence.url
             )
         return None
+
+    def _resolve_attachment_download_url(
+        self,
+        download_url: str | None,
+        attachment_id: str | None = None,
+        content_id: str | None = None,
+    ) -> str:
+        """Resolve an attachment's download URL to an absolute URL.
+
+        Confluence Cloud removed the legacy ``/download/attachments/{cid}/{file}``
+        endpoint that the attachment's ``_links.download`` still points to; it now
+        returns 401 for API-token / scoped-token auth (while metadata endpoints
+        keep working). Depending on ``config.attachment_download_use_v1`` this
+        rewrites the link to the v1 REST endpoint
+        ``/rest/api/content/{cid}/child/attachment/{aid}/download`` (which still
+        authenticates correctly):
+
+        - ``None`` (default): auto — v1 on Cloud, the legacy link on Server/DC.
+        - ``True``: always use v1.
+        - ``False``: always use the legacy link.
+
+        Args:
+            download_url: The (possibly relative) download link from the API.
+            attachment_id: The attachment ID (e.g. ``att123``); required for v1.
+            content_id: The parent content ID. If omitted, it is parsed from the
+                legacy download link.
+
+        Returns:
+            An absolute URL to fetch the attachment binary from, or an empty
+            string when ``download_url`` is falsy.
+        """
+        resolved = (
+            resolve_relative_url(download_url, self.config.url) if download_url else ""
+        )
+        use_v1 = self.config.attachment_download_use_v1
+        if use_v1 is None:
+            # Auto: Cloud removed the legacy endpoint, so default to v1 there;
+            # Server/DC keeps the legacy link.
+            use_v1 = self.config.is_cloud
+        if not (use_v1 and attachment_id and download_url):
+            return resolved
+
+        parsed = urllib.parse.urlsplit(download_url)
+        if not content_id:
+            # Legacy path form: /download/attachments/{content_id}/{filename}
+            # (match with or without a leading slash on the path).
+            marker = "download/attachments/"
+            if marker not in parsed.path:
+                logger.debug(
+                    "Could not derive content_id from download URL %s; "
+                    "falling back to the original link",
+                    download_url,
+                )
+                return resolved
+            content_id = parsed.path.split(marker, 1)[1].split("/", 1)[0]
+
+        base = self.config.url.rstrip("/")
+        # v1 "Get attachment download" endpoint — not part of the deprecated
+        # /download/attachments/... paths. See:
+        # https://developer.atlassian.com/cloud/confluence/rest/v1/api-group-content---attachments/
+        v1_url = (
+            f"{base}/rest/api/content/{content_id}"
+            f"/child/attachment/{attachment_id}/download"
+        )
+        # Keep only the documented ``version`` query param (the endpoint honours
+        # it) so a version-specific link still resolves to that version; drop the
+        # other legacy params (api / cacheVersion / modificationDate).
+        version = urllib.parse.parse_qs(parsed.query).get("version", [None])[0]
+        if version:
+            v1_url = f"{v1_url}?{urllib.parse.urlencode({'version': version})}"
+        return v1_url
 
     def upload_attachment(
         self,
@@ -321,9 +393,11 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             safe_filename = Path(attachment.title).name
             file_path = target_path / safe_filename
 
-            # Prepend base URL if download URL is relative
-            download_url = resolve_relative_url(
-                attachment.download_url, self.config.url
+            # Resolve to an absolute URL (and optionally the v1 endpoint)
+            download_url = self._resolve_attachment_download_url(
+                attachment.download_url,
+                attachment_id=attachment.id,
+                content_id=content_id,
             )
 
             # Download the attachment
