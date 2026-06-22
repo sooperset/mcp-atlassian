@@ -407,11 +407,13 @@ def _create_mock_fetcher(fetcher_class, validation_return=None, validation_error
 
     if fetcher_class == JiraFetcher:
         if validation_error:
-            mock_fetcher.get_current_user_account_id.side_effect = validation_error
+            mock_fetcher.get_current_user_details.side_effect = validation_error
         else:
-            mock_fetcher.get_current_user_account_id.return_value = (
-                validation_return or "test-account-id"
-            )
+            mock_fetcher.get_current_user_details.return_value = validation_return or {
+                "accountId": "test-account-id",
+                "emailAddress": "test@example.com",
+                "displayName": "Test User",
+            }
         # Set up jira._session.hooks for SSRF redirect hook attachment
         mock_session = MagicMock()
         mock_session.hooks = {"response": []}
