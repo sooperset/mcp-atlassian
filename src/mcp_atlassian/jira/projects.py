@@ -23,9 +23,7 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
         """
         Get all projects visible to the current user.
 
-        Returns simplified project dicts (key, name, description, category,
-        lead, avatar_url) with raw Jira fields like ``avatarUrls``, ``self``,
-        ``expand``, ``projectTypeKey`` stripped.
+        Returns simplified project dictionaries.
 
         Args:
             include_archived: Whether to include archived projects
