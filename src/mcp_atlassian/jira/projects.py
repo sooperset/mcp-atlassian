@@ -463,3 +463,41 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             release_date=release_date,
             description=description,
         )
+
+    def update_project_version(
+        self,
+        version_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        start_date: str | None = None,
+        release_date: str | None = None,
+        archived: bool | None = None,
+        released: bool | None = None,
+    ) -> dict[str, Any]:
+        """
+        Update an existing version in a Jira project.
+
+        Only fields that are not None are sent to Jira, so callers can flip a
+        single attribute (e.g. ``archived``) without overwriting the others.
+
+        Args:
+            version_id: The numeric ID of the version to update.
+            name: New name for the version (optional).
+            description: New description for the version (optional).
+            start_date: New start date (YYYY-MM-DD, optional).
+            release_date: New release date (YYYY-MM-DD, optional).
+            archived: Archived flag (optional).
+            released: Released flag (optional).
+
+        Returns:
+            The updated version object as returned by Jira.
+        """
+        return self.update_version(
+            version_id=version_id,
+            name=name,
+            description=description,
+            start_date=start_date,
+            release_date=release_date,
+            archived=archived,
+            released=released,
+        )

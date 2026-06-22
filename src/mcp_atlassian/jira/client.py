@@ -387,3 +387,53 @@ class JiraClient:
             error_message = f"Unexpected response from Jira API: {result}"
             raise ValueError(error_message)
         return result
+
+    def update_version(
+        self,
+        version_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        start_date: str | None = None,
+        release_date: str | None = None,
+        archived: bool | None = None,
+        released: bool | None = None,
+    ) -> dict[str, Any]:
+        """
+        Update an existing version in a Jira project.
+
+        Only fields that are not None are sent in the request, so callers can
+        toggle a single attribute (e.g. archived) without touching the others.
+
+        Args:
+            version_id: The numeric ID of the version to update.
+            name: New name for the version (optional).
+            description: New description for the version (optional).
+            start_date: New start date (YYYY-MM-DD, optional).
+            release_date: New release date (YYYY-MM-DD, optional).
+            archived: Archived flag (optional).
+            released: Released flag (optional).
+
+        Returns:
+            The updated version object as returned by Jira.
+        """
+        payload: dict[str, Any] = {}
+        if name is not None:
+            payload["name"] = name
+        if description is not None:
+            payload["description"] = description
+        if start_date is not None:
+            payload["startDate"] = start_date
+        if release_date is not None:
+            payload["releaseDate"] = release_date
+        if archived is not None:
+            payload["archived"] = archived
+        if released is not None:
+            payload["released"] = released
+        if not payload:
+            raise ValueError("update_version requires at least one field to update")
+        logger.info(f"Updating Jira version {version_id}: {payload}")
+        result = self.jira.put(f"/rest/api/2/version/{version_id}", data=payload)
+        if not isinstance(result, dict):
+            error_message = f"Unexpected response from Jira API: {result}"
+            raise ValueError(error_message)
+        return result
