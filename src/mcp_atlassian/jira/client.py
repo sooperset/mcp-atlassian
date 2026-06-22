@@ -1,7 +1,6 @@
 """Base client module for Jira API interactions."""
 
 import logging
-import os
 from typing import Any, Literal
 
 from atlassian import Jira
@@ -12,10 +11,10 @@ from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.preprocessing import JiraPreprocessor
 from mcp_atlassian.utils.logging import (
     get_masked_session_headers,
-    log_config_param,
     mask_sensitive,
 )
 from mcp_atlassian.utils.oauth import configure_oauth_session
+from mcp_atlassian.utils.proxy import apply_proxy_configuration
 from mcp_atlassian.utils.ssl import configure_ssl_verification
 
 from ..models.jira.adf import markdown_to_adf
@@ -46,6 +45,7 @@ class JiraClient:
         """
         # Load configuration from environment variables if not provided
         self.config = config or JiraConfig.from_env()
+        outbound_url = self.config.url
 
         # Initialize the Jira client based on auth type
         if self.config.auth_type == "oauth":
@@ -78,6 +78,8 @@ class JiraClient:
                 # Cloud: use the Atlassian Cloud API URL
                 api_url = f"https://api.atlassian.com/ex/jira/{self.config.oauth_config.cloud_id}"
                 is_cloud = True
+
+            outbound_url = api_url
 
             # Initialize Jira with the session
             self.jira = Jira(
@@ -136,23 +138,13 @@ class JiraClient:
             client_key_password=self.config.client_key_password,
         )
 
-        # Proxy configuration
-        proxies = {}
-        if self.config.http_proxy:
-            proxies["http"] = self.config.http_proxy
-        if self.config.https_proxy:
-            proxies["https"] = self.config.https_proxy
-        if self.config.socks_proxy:
-            proxies["socks"] = self.config.socks_proxy
-        if proxies:
-            self.jira._session.proxies.update(proxies)
-            for k, v in proxies.items():
-                log_config_param(
-                    logger, "Jira", f"{k.upper()}_PROXY", v, sensitive=True
-                )
-        if self.config.no_proxy and isinstance(self.config.no_proxy, str):
-            os.environ["NO_PROXY"] = self.config.no_proxy
-            log_config_param(logger, "Jira", "NO_PROXY", self.config.no_proxy)
+        self.jira._session = apply_proxy_configuration(
+            logger=logger,
+            service_name="Jira",
+            session=self.jira._session,
+            config=self.config,
+            target_url=outbound_url,
+        )
 
         # Apply custom headers if configured
         if self.config.custom_headers:
