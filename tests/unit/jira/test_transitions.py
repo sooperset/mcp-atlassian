@@ -119,12 +119,18 @@ class TestTransitionsMixin:
 
     def test_transition_issue_basic(self, transitions_mixin: TransitionsMixin):
         """Test transition_issue with basic parameters."""
+        # Client configured for v3 (Jira Cloud default)
+        transitions_mixin.jira.resource_url = MagicMock(
+            return_value="https://jira.example.com/rest/api/3/issue"
+        )
+
         # Call the method
         result = transitions_mixin.transition_issue("TEST-123", "10")
 
-        # Verify
-        transitions_mixin.jira.set_issue_status.assert_called_once_with(
-            issue_key="TEST-123", status_name="In Progress", fields=None, update=None
+        # Verify POST to the v2 transitions endpoint with a minimal payload
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://jira.example.com/rest/api/2/issue/TEST-123/transitions",
+            json={"transition": {"id": "10"}},
         )
         transitions_mixin.get_issue.assert_called_once_with("TEST-123")
         assert isinstance(result, JiraIssue)
@@ -134,12 +140,17 @@ class TestTransitionsMixin:
 
     def test_transition_issue_with_int_id(self, transitions_mixin: TransitionsMixin):
         """Test transition_issue with int transition ID."""
+        transitions_mixin.jira.resource_url = MagicMock(
+            return_value="https://jira.example.com/rest/api/3/issue"
+        )
+
         # Call the method with int ID
         transitions_mixin.transition_issue("TEST-123", 10)
 
-        # Verify status name is used instead of ID
-        transitions_mixin.jira.set_issue_status.assert_called_once_with(
-            issue_key="TEST-123", status_name="In Progress", fields=None, update=None
+        # Verify the transition ID is stringified in the payload
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://jira.example.com/rest/api/2/issue/TEST-123/transitions",
+            json={"transition": {"id": "10"}},
         )
 
     def test_transition_issue_with_fields(self, transitions_mixin: TransitionsMixin):
@@ -148,17 +159,21 @@ class TestTransitionsMixin:
         transitions_mixin._sanitize_transition_fields = MagicMock(
             return_value={"summary": "Updated"}
         )
+        transitions_mixin.jira.resource_url = MagicMock(
+            return_value="https://jira.example.com/rest/api/3/issue"
+        )
 
         # Call the method with fields
         fields = {"summary": "Updated"}
         transitions_mixin.transition_issue("TEST-123", "10", fields=fields)
 
-        # Verify fields were passed correctly
-        transitions_mixin.jira.set_issue_status.assert_called_once_with(
-            issue_key="TEST-123",
-            status_name="In Progress",
-            fields={"summary": "Updated"},
-            update=None,
+        # Verify fields are included in the POST payload
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://jira.example.com/rest/api/2/issue/TEST-123/transitions",
+            json={
+                "transition": {"id": "10"},
+                "fields": {"summary": "Updated"},
+            },
         )
 
     def test_transition_issue_with_empty_sanitized_fields(
@@ -167,14 +182,18 @@ class TestTransitionsMixin:
         """Test transition_issue with empty sanitized fields."""
         # Mock _sanitize_transition_fields to return empty dict
         transitions_mixin._sanitize_transition_fields = MagicMock(return_value={})
+        transitions_mixin.jira.resource_url = MagicMock(
+            return_value="https://jira.example.com/rest/api/3/issue"
+        )
 
         # Call the method with fields that will be sanitized to empty
         fields = {"invalid": "field"}
         transitions_mixin.transition_issue("TEST-123", "10", fields=fields)
 
-        # Verify fields were passed as None
-        transitions_mixin.jira.set_issue_status.assert_called_once_with(
-            issue_key="TEST-123", status_name="In Progress", fields=None, update=None
+        # Empty sanitized fields should result in no "fields" key in the payload
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://jira.example.com/rest/api/2/issue/TEST-123/transitions",
+            json={"transition": {"id": "10"}},
         )
 
     def test_transition_issue_with_comment(self, transitions_mixin: TransitionsMixin):
@@ -190,6 +209,9 @@ class TestTransitionsMixin:
         transitions_mixin._add_comment_to_transition_data = MagicMock(
             side_effect=add_comment_side_effect
         )
+        transitions_mixin.jira.resource_url = MagicMock(
+            return_value="https://jira.example.com/rest/api/3/issue"
+        )
 
         # Call the method with comment
         transitions_mixin.transition_issue("TEST-123", "10", comment=comment)
@@ -197,20 +219,22 @@ class TestTransitionsMixin:
         # Verify _add_comment_to_transition_data was called
         transitions_mixin._add_comment_to_transition_data.assert_called_once()
 
-        # Verify set_issue_status was called with the right parameters
-        transitions_mixin.jira.set_issue_status.assert_called_once_with(
-            issue_key="TEST-123",
-            status_name="In Progress",
-            fields=None,
-            update={"comment": [{"add": {"body": comment}}]},
+        # Verify the comment update is included in the POST payload, sent to v2
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://jira.example.com/rest/api/2/issue/TEST-123/transitions",
+            json={
+                "transition": {"id": "10"},
+                "update": {"comment": [{"add": {"body": comment}}]},
+            },
         )
 
     def test_transition_issue_with_error(self, transitions_mixin: TransitionsMixin):
         """Test transition_issue error handling."""
-        # Setup mock to raise exception
-        transitions_mixin.jira.set_issue_status.side_effect = Exception(
-            "Transition error"
+        transitions_mixin.jira.resource_url = MagicMock(
+            return_value="https://jira.example.com/rest/api/3/issue"
         )
+        # Setup mock to raise exception on the POST
+        transitions_mixin.jira.post.side_effect = Exception("Transition error")
 
         # Call the method and verify exception
         with pytest.raises(
@@ -222,7 +246,12 @@ class TestTransitionsMixin:
     def test_transition_issue_without_status_name(
         self, transitions_mixin: TransitionsMixin
     ):
-        """Test transition_issue when status name is not available."""
+        """Test transition_issue when target status name is not available.
+
+        After the unification onto a single v2 POST path, the absence of a
+        resolvable target status name no longer affects behavior -- the
+        transition still succeeds using the transition_id alone.
+        """
         # Setup - create a transition without to_status
         mock_transitions = [
             JiraTransition(
@@ -234,24 +263,65 @@ class TestTransitionsMixin:
         transitions_mixin.get_transitions_models = MagicMock(
             return_value=mock_transitions
         )
-
-        # Add mock for set_issue_status_by_transition_id
-        transitions_mixin.jira.set_issue_status_by_transition_id = MagicMock()
+        transitions_mixin.jira.resource_url = MagicMock(
+            return_value="https://jira.example.com/rest/api/3/issue"
+        )
 
         # Call the method
         result = transitions_mixin.transition_issue("TEST-123", "10")
 
-        # Verify direct transition ID was used
-        transitions_mixin.jira.set_issue_status_by_transition_id.assert_called_once_with(
-            issue_key="TEST-123", transition_id=10
+        # Verify the unified POST still happens with the transition id
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://jira.example.com/rest/api/2/issue/TEST-123/transitions",
+            json={"transition": {"id": "10"}},
         )
-
-        # Verify standard status call was not made
-        transitions_mixin.jira.set_issue_status.assert_not_called()
 
         # Verify result
         transitions_mixin.get_issue.assert_called_once_with("TEST-123")
         assert isinstance(result, JiraIssue)
+
+    def test_transition_issue_forces_v2_on_cloud(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Regression test for issue #1262.
+
+        The v3 transitions endpoint rejects update.comment[].add.body when it
+        is a wiki-markup string (it expects ADF). _markdown_to_jira produces
+        wiki-markup. Forcing v2 here avoids the impedance mismatch without
+        needing a markdown->ADF conversion path.
+        """
+        # Client configured for v3 (Jira Cloud default)
+        transitions_mixin.jira.resource_url = MagicMock(
+            return_value="https://jira.example.com/rest/api/3/issue"
+        )
+
+        transitions_mixin.transition_issue("TEST-123", "10")
+
+        # The URL must have been rewritten to /api/2/
+        call_args = transitions_mixin.jira.post.call_args
+        url = call_args.args[0]
+        assert "/rest/api/2/issue/TEST-123/transitions" in url
+        assert "/api/3/" not in url
+
+    def test_transition_issue_v2_url_passthrough(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test that a v2 URL from the client is passed through unchanged.
+
+        This is the Server / Data Center case, where the client is already
+        configured for v2. The string-replace from /api/3/ to /api/2/ is a
+        no-op when /api/3/ is not present.
+        """
+        transitions_mixin.jira.resource_url = MagicMock(
+            return_value="https://jira.example.com/rest/api/2/issue"
+        )
+
+        transitions_mixin.transition_issue("TEST-123", "10")
+
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://jira.example.com/rest/api/2/issue/TEST-123/transitions",
+            json={"transition": {"id": "10"}},
+        )
 
     def test_get_transitions_uses_full_api(self, transitions_mixin: TransitionsMixin):
         """Test that get_transitions uses get_issue_transitions_full for complete data.
@@ -362,11 +432,14 @@ class TestTransitionsMixin:
     def test_transition_issue_with_resolution_field(
         self, transitions_mixin: TransitionsMixin
     ):
-        """Test transition_issue with resolution field uses correct code path.
+        """Test transition_issue with resolution field includes it in the payload.
 
-        This is the end-to-end test for issue #602 - when transitioning with fields
-        like resolution, the to_status should be available (from get_issue_transitions_full)
-        so set_issue_status is used which properly includes fields.
+        Regression test for issue #602 - the fields parameter (e.g. resolution)
+        must be sent atomically with the transition so the resolution is set
+        as part of the status change rather than dropped.
+
+        After the unification onto a single v2 POST path, this is verified
+        directly by inspecting the request payload.
         """
         # Setup mock for get_issue_transitions_full (used by get_transitions)
         mock_response = {
@@ -383,6 +456,9 @@ class TestTransitionsMixin:
         }
         transitions_mixin.jira.get_issue_transitions_full = MagicMock(
             return_value=mock_response
+        )
+        transitions_mixin.jira.resource_url = MagicMock(
+            return_value="https://jira.example.com/rest/api/3/issue"
         )
 
         # Don't mock get_transitions_models - let it use real implementation
@@ -403,13 +479,14 @@ class TestTransitionsMixin:
             fields={"resolution": {"id": "10001"}},
         )
 
-        # Verify set_issue_status was called (not set_issue_status_by_transition_id)
-        # because to_status should now be available
-        transitions_mixin.jira.set_issue_status.assert_called_once_with(
-            issue_key="TEST-123",
-            status_name="Closed",
-            fields={"resolution": {"id": "10001"}},
-            update=None,
+        # Verify the resolution field is present in the POST payload alongside
+        # the transition id, so Jira sets it atomically with the status change
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://jira.example.com/rest/api/2/issue/TEST-123/transitions",
+            json={
+                "transition": {"id": "731"},
+                "fields": {"resolution": {"id": "10001"}},
+            },
         )
 
     def test_normalize_transition_id(self, transitions_mixin: TransitionsMixin):

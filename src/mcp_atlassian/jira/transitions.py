@@ -197,42 +197,30 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             )
             logger.debug(f"Fields: {fields_for_api}, Update: {update_for_api}")
 
-            # Transition using the appropriate method
-            if target_status_name:
-                logger.info(f"Using status name '{target_status_name}' for transition")
-                self.jira.set_issue_status(
-                    issue_key=issue_key,
-                    status_name=target_status_name,
-                    fields=fields_for_api,
-                    update=update_for_api,
-                )
-            else:
-                logger.info(f"Using direct transition ID {normalized_transition_id}")
-                if (
-                    isinstance(normalized_transition_id, str)
-                    and normalized_transition_id.isdigit()
-                ):
-                    normalized_transition_id = int(normalized_transition_id)
+            # POST directly to the v2 transitions endpoint. atlassian-python-api
+            # defaults to v3 on Jira Cloud, but v3 requires update.comment[].add.body
+            # to be an Atlassian Document (ADF). _markdown_to_jira produces a
+            # wiki-markup string, which v2 accepts. Forcing v2 here avoids a
+            # markdown->ADF conversion path on the transitions endpoint
+            # specifically; other endpoints retain whatever version the client
+            # is configured for. See upstream issue #1262.
+            if (
+                isinstance(normalized_transition_id, str)
+                and normalized_transition_id.isdigit()
+            ):
+                normalized_transition_id = int(normalized_transition_id)
 
-                self.jira.set_issue_status_by_transition_id(
-                    issue_key=issue_key,
-                    transition_id=normalized_transition_id,
-                )
+            payload: dict[str, Any] = {
+                "transition": {"id": str(normalized_transition_id)},
+            }
+            if fields_for_api:
+                payload["fields"] = fields_for_api
+            if update_for_api:
+                payload["update"] = update_for_api
 
-                # Apply fields and comments separately
-                if fields_for_api or update_for_api:
-                    payload: dict[str, Any] = {
-                        "transition": {"id": str(normalized_transition_id)},
-                    }
-                    if fields_for_api:
-                        payload["fields"] = fields_for_api
-                    if update_for_api:
-                        payload["update"] = update_for_api
-
-                    if payload:
-                        base_url = self.jira.resource_url("issue")
-                        url = f"{base_url}/{issue_key}/transitions"
-                        self.jira.post(url, json=payload)
+            base_url = self.jira.resource_url("issue").replace("/api/3/", "/api/2/")
+            url = f"{base_url}/{issue_key}/transitions"
+            self.jira.post(url, json=payload)
 
             # Return the updated issue
             return self.get_issue(issue_key)
