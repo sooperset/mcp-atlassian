@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from starlette.datastructures import Headers
 
 from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
 from mcp_atlassian.jira import JiraConfig, JiraFetcher
@@ -586,6 +587,49 @@ class TestGetJiraFetcher:
         elif scenario["auth_type"] == "pat":
             assert called_config.personal_token == scenario["token"]
 
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_user_specific_jira_passthrough_headers_override_static_headers(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+        auth_scenarios,
+    ):
+        """Passthrough headers are merged into user-specific Jira configs."""
+        scenario = auth_scenarios["pat"]
+        _setup_mock_request_state(mock_request, scenario)
+        mock_request.headers = Headers(
+            {
+                "x-sso-user": "incoming-user",
+                "x-request-id": "request-123",
+            }
+        )
+        mock_get_http_request.return_value = mock_request
+
+        jira_config = config_factory.create_jira_config(
+            auth_type="pat",
+            custom_headers={"X-SSO-User": "static-user", "X-Static": "keep"},
+            passthrough_headers=["X-SSO-User", "X-Request-ID", "X-Missing"],
+        )
+        app_context = config_factory.create_app_context(jira_config=jira_config)
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(JiraFetcher)
+        mock_jira_fetcher_class.return_value = mock_fetcher
+
+        result = await get_jira_fetcher(mock_context)
+
+        assert result == mock_fetcher
+        called_config = mock_jira_fetcher_class.call_args[1]["config"]
+        assert called_config.custom_headers == {
+            "X-Static": "keep",
+            "X-SSO-User": "incoming-user",
+            "X-Request-ID": "request-123",
+        }
+
     @patch("mcp_atlassian.servers.dependencies.get_access_token")
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
@@ -734,6 +778,40 @@ class TestGetJiraFetcher:
             mock_jira_fetcher_class.reset_mock()
             mock_get_http_request.reset_mock()
 
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_global_jira_passthrough_headers(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ):
+        """Global Jira fallback applies passthrough headers in HTTP requests."""
+        _setup_mock_request_state(mock_request)
+        mock_request.headers = Headers({"x-sso-user": "global-user"})
+        mock_get_http_request.return_value = mock_request
+
+        jira_config = config_factory.create_jira_config(
+            custom_headers={"X-Static": "keep"},
+            passthrough_headers=["X-SSO-User"],
+        )
+        app_context = config_factory.create_app_context(jira_config=jira_config)
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(JiraFetcher)
+        mock_jira_fetcher_class.return_value = mock_fetcher
+
+        result = await get_jira_fetcher(mock_context)
+
+        assert result == mock_fetcher
+        called_config = mock_jira_fetcher_class.call_args[1]["config"]
+        assert called_config.custom_headers == {
+            "X-Static": "keep",
+            "X-SSO-User": "global-user",
+        }
+
     @pytest.mark.parametrize(
         "error_scenario,expected_error_match",
         [
@@ -867,6 +945,51 @@ class TestGetConfluenceFetcher:
         assert called_config.auth_type == "pat"
         assert called_config.url == "https://test.atlassian.net"
         assert called_config.personal_token == "test-confluence-pat-token"
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_header_based_confluence_passthrough_headers_without_global_config(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        monkeypatch,
+    ):
+        """Header-based Confluence auth can use passthrough without global config."""
+        monkeypatch.setenv("CONFLUENCE_PASSTHROUGH_HEADERS", "X-SSO-User, X-Request-ID")
+        service_headers = {
+            "X-Atlassian-Confluence-Url": "https://test.atlassian.net",
+            "X-Atlassian-Confluence-Personal-Token": "test-confluence-pat-token",
+        }
+
+        class MockState:
+            def __init__(self):
+                self.confluence_fetcher = None
+                self.user_atlassian_auth_type = "pat"
+                self.user_atlassian_email = None
+                self.atlassian_service_headers = service_headers
+
+            def __getattr__(self, name):
+                if name == "user_atlassian_token":
+                    raise AttributeError(
+                        f"'{type(self).__name__}' object has no attribute '{name}'"
+                    )
+                return None
+
+        mock_request.state = MockState()
+        mock_request.headers = Headers({"x-sso-user": "header-user"})
+        mock_get_http_request.return_value = mock_request
+        mock_context.request_context.lifespan_context = {}
+
+        mock_fetcher = _create_mock_fetcher(ConfluenceFetcher)
+        mock_confluence_fetcher_class.return_value = mock_fetcher
+
+        result = await get_confluence_fetcher(mock_context)
+
+        assert result == mock_fetcher
+        called_config = mock_confluence_fetcher_class.call_args[1]["config"]
+        assert called_config.custom_headers == {"X-SSO-User": "header-user"}
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")

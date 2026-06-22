@@ -5,7 +5,12 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
-from ..utils.env import get_custom_headers, is_env_ssl_verify
+from ..utils.env import (
+    get_custom_headers,
+    get_header_names,
+    is_env_ssl_verify,
+    is_env_truthy,
+)
 from ..utils.oauth import (
     BYOAccessTokenOAuthConfig,
     OAuthConfig,
@@ -24,7 +29,7 @@ class ConfluenceConfig:
     """
 
     url: str  # Base URL for Confluence
-    auth_type: Literal["basic", "pat", "oauth"]  # Authentication type
+    auth_type: Literal["basic", "pat", "oauth", "external"]  # Authentication type
     username: str | None = None  # Email or username
     api_token: str | None = None  # API token used as password
     personal_token: str | None = None  # Personal access token (Server/DC)
@@ -36,6 +41,7 @@ class ConfluenceConfig:
     no_proxy: str | None = None  # Comma-separated list of hosts to bypass proxy
     socks_proxy: str | None = None  # SOCKS proxy URL (optional)
     custom_headers: dict[str, str] | None = None  # Custom HTTP headers
+    passthrough_headers: list[str] | None = None  # Request headers to pass through
     client_cert: str | None = None  # Client certificate file path (.pem)
     client_key: str | None = None  # Client private key file path (.pem)
     client_key_password: str | None = None  # Password for encrypted private key
@@ -90,7 +96,11 @@ class ConfluenceConfig:
             ValueError: If any required environment variable is missing
         """
         url = os.getenv("CONFLUENCE_URL")
-        if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE"):
+        if (
+            not url
+            and not os.getenv("ATLASSIAN_OAUTH_ENABLE")
+            and not is_env_truthy("ATLASSIAN_EXTERNAL_AUTH_ENABLE")
+        ):
             error_msg = (
                 "Missing required CONFLUENCE_URL environment variable. "
                 "Set CONFLUENCE_URL to your Confluence base URL, for example "
@@ -112,7 +122,16 @@ class ConfluenceConfig:
         # Use the shared utility function directly
         is_cloud = is_atlassian_cloud_url(url) if url else False
 
-        if is_cloud:
+        # External auth passthrough mode — no credentials needed
+        if (
+            is_env_truthy("ATLASSIAN_EXTERNAL_AUTH_ENABLE")
+            and not username
+            and not api_token
+            and not personal_token
+            and not oauth_config
+        ):
+            auth_type = "external"
+        elif is_cloud:
             # Cloud: OAuth takes priority, then basic auth
             if oauth_config:
                 auth_type = "oauth"
@@ -173,6 +192,7 @@ class ConfluenceConfig:
 
         # Custom headers - service-specific only
         custom_headers = get_custom_headers("CONFLUENCE_CUSTOM_HEADERS")
+        passthrough_headers = get_header_names("CONFLUENCE_PASSTHROUGH_HEADERS")
 
         # Client certificate settings
         client_cert = os.getenv("CONFLUENCE_CLIENT_CERT")
@@ -201,6 +221,7 @@ class ConfluenceConfig:
             no_proxy=no_proxy,
             socks_proxy=socks_proxy,
             custom_headers=custom_headers,
+            passthrough_headers=passthrough_headers,
             client_cert=client_cert,
             client_key=client_key,
             client_key_password=client_key_password,
@@ -260,6 +281,8 @@ class ConfluenceConfig:
             return bool(self.personal_token)
         elif self.auth_type == "basic":
             return bool(self.username and self.api_token)
+        elif self.auth_type == "external":
+            return True
         logger.warning(
             f"Unknown or unsupported auth_type: {self.auth_type} in ConfluenceConfig"
         )

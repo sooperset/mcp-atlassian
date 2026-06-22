@@ -17,6 +17,7 @@ from starlette.requests import Request
 from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
 from mcp_atlassian.jira import JiraConfig, JiraFetcher
 from mcp_atlassian.servers.context import MainAppContext
+from mcp_atlassian.utils.env import get_header_names
 from mcp_atlassian.utils.oauth import OAuthConfig
 from mcp_atlassian.utils.urls import validate_url_for_ssrf
 
@@ -45,6 +46,7 @@ class _ServiceSpec:
     config_attr: str  # MainAppContext attribute for global config
     url_header: str  # X-Atlassian-{Service}-Url
     token_header: str  # X-Atlassian-{Service}-Personal-Token
+    passthrough_env_var: str  # {SERVICE}_PASSTHROUGH_HEADERS
     filter_kwargs: dict[str, Any]  # e.g. {"projects_filter": None}
     get_session: Callable[[Any], Any]  # fetcher → session
     validate_fn: Callable[[Any], Any]  # fetcher → validation data
@@ -136,6 +138,7 @@ def _jira_spec() -> _ServiceSpec:
         config_attr="full_jira_config",
         url_header="X-Atlassian-Jira-Url",
         token_header="X-Atlassian-Jira-Personal-Token",  # noqa: S106
+        passthrough_env_var="JIRA_PASSTHROUGH_HEADERS",
         filter_kwargs={"projects_filter": None},
         get_session=lambda f: f.jira._session,
         validate_fn=lambda f: f.get_current_user_account_id(),
@@ -157,6 +160,7 @@ def _confluence_spec() -> _ServiceSpec:
         config_attr="full_confluence_config",
         url_header="X-Atlassian-Confluence-Url",
         token_header="X-Atlassian-Confluence-Personal-Token",  # noqa: S106
+        passthrough_env_var="CONFLUENCE_PASSTHROUGH_HEADERS",
         filter_kwargs={"spaces_filter": None},
         get_session=lambda f: f.confluence._session,
         validate_fn=lambda f: f.get_current_user_info(),
@@ -197,6 +201,61 @@ def _get_global_config(
     return config
 
 
+def _get_passthrough_header_names(config: Any, spec: _ServiceSpec) -> list[str]:
+    configured_names = getattr(config, "passthrough_headers", None)
+    if configured_names is not None:
+        return configured_names
+    return get_header_names(spec.passthrough_env_var)
+
+
+def _get_request_passthrough_headers(
+    request: Request, spec: _ServiceSpec, config: Any
+) -> dict[str, str]:
+    request_headers = getattr(request, "headers", None)
+    if request_headers is None:
+        return {}
+
+    passthrough_headers: dict[str, str] = {}
+    for header_name in _get_passthrough_header_names(config, spec):
+        header_value = request_headers.get(header_name)
+        if header_value is not None:
+            passthrough_headers[header_name] = header_value
+
+    if passthrough_headers:
+        logger.debug(
+            "Forwarding %d passthrough headers to %s: %s",
+            len(passthrough_headers),
+            spec.name,
+            list(passthrough_headers.keys()),
+        )
+    return passthrough_headers
+
+
+def _merge_passthrough_headers(
+    custom_headers: dict[str, str] | None, passthrough_headers: dict[str, str]
+) -> dict[str, str]:
+    merged_headers = dict(custom_headers or {})
+    passthrough_names = {name.lower() for name in passthrough_headers}
+    for header_name in list(merged_headers):
+        if header_name.lower() in passthrough_names:
+            del merged_headers[header_name]
+    merged_headers.update(passthrough_headers)
+    return merged_headers
+
+
+def _with_request_passthrough_headers(
+    request: Request, spec: _ServiceSpec, config: Any
+) -> Any:
+    passthrough_headers = _get_request_passthrough_headers(request, spec, config)
+    if not passthrough_headers:
+        return config
+
+    custom_headers = _merge_passthrough_headers(
+        getattr(config, "custom_headers", None), passthrough_headers
+    )
+    return dataclasses.replace(config, custom_headers=custom_headers)
+
+
 def _create_and_validate(
     request: Request,
     spec: _ServiceSpec,
@@ -225,6 +284,7 @@ def _create_and_validate(
     fn_name = f"get_{spec.name.lower()}_fetcher"
     auth_desc = "header-based" if auth_branch == "header_pat" else "user"
     try:
+        config = _with_request_passthrough_headers(request, spec, config)
         fetcher = spec.fetcher_class(config=config)
         if attach_ssrf_hook:
             session = spec.get_session(fetcher)
@@ -506,8 +566,9 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
     """
     fn_name = f"get_{spec.name.lower()}_fetcher"
     logger.debug(f"{fn_name}: ENTERED. Context ID: {id(ctx)}")
+    request: Request | None = None
     try:
-        request: Request = get_http_request()
+        request = get_http_request()
         logger.debug(
             f"{fn_name}: In HTTP request context. "
             f"Request URL: {request.url}. "
@@ -551,6 +612,7 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 no_proxy=None,
                 socks_proxy=None,
                 custom_headers=None,
+                passthrough_headers=get_header_names(spec.passthrough_env_var),
                 **spec.filter_kwargs,
             )
             return _create_and_validate(
@@ -667,6 +729,38 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
             f"Global config auth_type: "
             f"{global_config_fallback.auth_type}"
         )
+        if request is not None:
+            # Per-request URL override for external auth mode when no URL is
+            # configured server-side (URL is supplied via request header instead).
+            if (
+                global_config_fallback.auth_type == "external"
+                and not global_config_fallback.url
+            ):
+                url_from_header = request.headers.get(spec.url_header)
+                if url_from_header:
+                    ssrf_error = validate_url_for_ssrf(url_from_header)
+                    if ssrf_error:
+                        error_msg = (
+                            f"Forbidden: Invalid {spec.name} URL - {ssrf_error}"
+                        )
+                        raise ValueError(error_msg)
+                    logger.debug(
+                        f"{fn_name}: Using per-request {spec.name} URL "
+                        f"from {spec.url_header} header: {url_from_header}"
+                    )
+                    global_config_fallback = dataclasses.replace(
+                        global_config_fallback, url=url_from_header
+                    )
+                else:
+                    error_msg = (
+                        f"{spec.name} URL is not configured. "
+                        f"Set {spec.url_header} header or configure the "
+                        f"{spec.name.upper()}_URL environment variable."
+                    )
+                    raise ValueError(error_msg)
+            global_config_fallback = _with_request_passthrough_headers(
+                request, spec, global_config_fallback
+            )
         return spec.fetcher_class(config=global_config_fallback)
 
     logger.error(f"{spec.name} configuration could not be resolved.")
