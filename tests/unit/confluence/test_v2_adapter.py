@@ -136,6 +136,98 @@ class TestConfluenceV2Adapter:
         # Verify we still get a result
         assert result["id"] == "123456"
 
+    def test_get_page_direct_children_resolves_space_key(
+        self, v2_adapter, mock_session
+    ):
+        """Test v2 direct children are normalized with space metadata."""
+        children_response = Mock()
+        children_response.status_code = 200
+        children_response.json.return_value = {
+            "results": [
+                {
+                    "id": "123456",
+                    "status": "current",
+                    "title": "Child Page",
+                    "type": "page",
+                    "spaceId": "789",
+                }
+            ]
+        }
+
+        space_response = Mock()
+        space_response.status_code = 200
+        space_response.json.return_value = {"key": "TEST", "name": "Test Space"}
+
+        mock_session.get.side_effect = [children_response, space_response]
+
+        result = v2_adapter.get_page_direct_children("999")
+
+        assert result["results"][0]["space"] == {
+            "id": "789",
+            "key": "TEST",
+            "name": "Test Space",
+        }
+        assert mock_session.get.call_count == 2
+
+    def test_get_page_direct_children_handles_repeated_space_ids(
+        self, v2_adapter, mock_session
+    ):
+        """Test v2 direct children resolve each space ID once."""
+        children_response = Mock()
+        children_response.status_code = 200
+        children_response.json.return_value = {
+            "results": [
+                {"id": "1", "title": "A", "type": "page", "spaceId": "789"},
+                {"id": "2", "title": "B", "type": "folder", "spaceId": "789"},
+            ]
+        }
+
+        space_response = Mock()
+        space_response.status_code = 200
+        space_response.json.return_value = {"key": "TEST", "name": "Test Space"}
+
+        mock_session.get.side_effect = [children_response, space_response]
+
+        result = v2_adapter.get_page_direct_children("999")
+
+        assert result["results"][0]["space"]["key"] == "TEST"
+        assert result["results"][1]["space"]["key"] == "TEST"
+        assert result["results"][0]["space"]["name"] == "Test Space"
+        assert mock_session.get.call_count == 2
+
+    def test_get_page_direct_children_handles_numeric_space_id(
+        self, v2_adapter, mock_session
+    ):
+        """Test numeric space IDs are normalized before lookup."""
+        children_response = Mock()
+        children_response.status_code = 200
+        children_response.json.return_value = {
+            "results": [
+                {
+                    "id": "123456",
+                    "status": "current",
+                    "title": "Child Page",
+                    "type": "page",
+                    "spaceId": 789,
+                }
+            ]
+        }
+
+        space_response = Mock()
+        space_response.status_code = 200
+        space_response.json.return_value = {"key": "TEST", "name": "Test Space"}
+
+        mock_session.get.side_effect = [children_response, space_response]
+
+        result = v2_adapter.get_page_direct_children("999")
+
+        assert result["results"][0]["space"] == {
+            "id": "789",
+            "key": "TEST",
+            "name": "Test Space",
+        }
+        assert mock_session.get.call_args_list[1][0][0].endswith("/api/v2/spaces/789")
+
     @pytest.mark.parametrize(
         "method,call_kwargs,expected_path",
         [

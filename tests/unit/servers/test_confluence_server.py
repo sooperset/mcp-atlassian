@@ -458,6 +458,8 @@ async def test_get_page_children(client, mock_confluence_fetcher):
     assert "results" in result_data
     assert len(result_data["results"]) > 0
     assert result_data["results"][0]["title"] == "Test Page Mock Title"
+    assert "space" not in result_data["results"][0]
+    assert "url" not in result_data["results"][0]
 
 
 @pytest.mark.anyio
