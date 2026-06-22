@@ -446,6 +446,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     )
     from src.mcp_atlassian.servers.jira import (
         add_comment,
+        add_comment_with_media,
         add_issues_to_sprint,
         add_worklog,
         assign_issue,
@@ -524,6 +525,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(move_issue)
     jira_sub_mcp.add_tool(add_comment)
     jira_sub_mcp.add_tool(edit_comment)
+    jira_sub_mcp.add_tool(add_comment_with_media)
     jira_sub_mcp.add_tool(add_worklog)
     jira_sub_mcp.add_tool(link_to_epic)
     jira_sub_mcp.add_tool(create_issue_link)
@@ -663,6 +665,54 @@ async def test_search(jira_client, mock_jira_fetcher):
         projects_filter=None,
         page_token=None,
     )
+
+
+@pytest.mark.anyio
+async def test_add_comment_with_media(jira_client, mock_jira_fetcher):
+    """Inline-media comment uploads each image and embeds it in order."""
+    import base64
+
+    mock_jira_fetcher.config.is_cloud = True
+    mock_jira_fetcher.upload_attachment_content.side_effect = [
+        {"success": True, "filename": "a.png", "id": "att-a", "size": 3},
+        {"success": True, "filename": "b.png", "id": "att-b", "size": 3},
+    ]
+    mock_jira_fetcher.get_attachment_media_id.side_effect = [
+        "11111111-1111-1111-1111-111111111111",
+        "22222222-2222-2222-2222-222222222222",
+    ]
+    mock_jira_fetcher.add_comment_adf.return_value = {
+        "id": "30003",
+        "body": "rendered",
+        "created": "2024-01-01 10:00:00+00:00",
+        "author": "John Doe",
+    }
+
+    png_b64 = base64.b64encode(b"img").decode()
+    blocks = json.dumps(
+        [
+            {"type": "text", "text": "First"},
+            {"type": "image", "file_content_base64": png_b64, "filename": "a.png"},
+            {"type": "text", "text": "Second"},
+            {"type": "image", "file_content_base64": png_b64, "filename": "b.png"},
+        ]
+    )
+
+    response = await jira_client.call_tool(
+        "jira_add_comment_with_media",
+        {"issue_key": "TEST-123", "blocks": blocks},
+    )
+
+    content = json.loads(response.content[0].text)
+    assert content["comment"]["id"] == "30003"
+    assert len(content["embedded"]) == 2
+    assert content["embedded"][0]["media_id"].startswith("1111")
+    assert mock_jira_fetcher.upload_attachment_content.call_count == 2
+    assert mock_jira_fetcher.get_attachment_media_id.call_count == 2
+    # The ADF passed to add_comment_adf must interleave text and media in order
+    adf = mock_jira_fetcher.add_comment_adf.call_args[0][1]
+    node_types = [node["type"] for node in adf["content"]]
+    assert node_types == ["paragraph", "mediaSingle", "paragraph", "mediaSingle"]
 
 
 @pytest.mark.anyio

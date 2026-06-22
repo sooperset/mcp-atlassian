@@ -1,8 +1,10 @@
 """Attachment operations for Jira API."""
 
+import io
 import logging
 import mimetypes
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -467,3 +469,197 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             "uploaded": uploaded,
             "failed": failed,
         }
+
+    @staticmethod
+    def _extract_attachment_id(response: Any) -> str | None:
+        """Extract the attachment id from a Jira attachments API response.
+
+        The ``issue/{key}/attachments`` endpoint returns a list of attachment
+        objects, but some code paths/mocks return a single dict. Handle both.
+
+        Args:
+            response: The raw response from the attachments endpoint.
+
+        Returns:
+            The attachment id as a string, or None if it cannot be determined.
+        """
+        item: Any = None
+        if isinstance(response, list) and response:
+            item = response[0]
+        elif isinstance(response, dict):
+            item = response
+        if isinstance(item, dict):
+            attachment_id = item.get("id")
+            return str(attachment_id) if attachment_id is not None else None
+        return None
+
+    def upload_attachment_content(
+        self, issue_key: str, filename: str, content: bytes
+    ) -> dict[str, Any]:
+        """
+        Upload an attachment to a Jira issue from in-memory bytes.
+
+        Unlike :meth:`upload_attachment`, this does not require filesystem
+        access, so it works for remote/stdio servers and for content the LLM
+        generates inline (passed as base64 by the server layer).
+
+        Args:
+            issue_key: The Jira issue key (e.g., 'PROJ-123')
+            filename: The name to give the attachment in Jira
+            content: The raw bytes of the file to upload
+
+        Returns:
+            A dictionary with upload result information
+        """
+        if not issue_key:
+            logger.error("No issue key provided for attachment upload")
+            return {"success": False, "error": "No issue key provided"}
+
+        if not filename:
+            logger.error("No filename provided for attachment upload")
+            return {"success": False, "error": "No filename provided"}
+
+        if len(content) > ATTACHMENT_MAX_BYTES:
+            msg = (
+                f"Attachment '{filename}' is {len(content)} bytes which "
+                "exceeds the 50 MB limit."
+            )
+            logger.error(msg)
+            return {"success": False, "error": msg}
+
+        try:
+            safe_filename = os.path.basename(filename)
+            logger.info(
+                f"Uploading in-memory attachment '{safe_filename}' "
+                f"({len(content)} bytes) to issue {issue_key}"
+            )
+            # A named buffer makes requests send the correct multipart filename.
+            buffer = io.BytesIO(content)
+            buffer.name = safe_filename
+            response = self.jira.add_attachment_object(issue_key, buffer)
+
+            return {
+                "success": True,
+                "issue_key": issue_key,
+                "filename": safe_filename,
+                "size": len(content),
+                "id": self._extract_attachment_id(response),
+            }
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Error uploading attachment: {error_msg}")
+            return {"success": False, "error": error_msg}
+
+    def delete_attachment(self, attachment_id: str) -> dict[str, Any]:
+        """
+        Delete a Jira attachment by its ID.
+
+        Args:
+            attachment_id: The numeric ID of the attachment to delete
+
+        Returns:
+            A dictionary describing the result of the deletion
+        """
+        if not attachment_id:
+            logger.error("No attachment ID provided for deletion")
+            return {"success": False, "error": "No attachment ID provided"}
+
+        try:
+            logger.info(f"Deleting attachment {attachment_id}")
+            self.jira.remove_attachment(attachment_id)
+            return {
+                "success": True,
+                "attachment_id": attachment_id,
+                "message": f"Attachment {attachment_id} deleted successfully",
+            }
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Error deleting attachment {attachment_id}: {error_msg}")
+            return {
+                "success": False,
+                "attachment_id": attachment_id,
+                "error": error_msg,
+            }
+
+    def upload_attachment_from_path(
+        self, issue_key: str, file_path: str
+    ) -> dict[str, Any]:
+        """
+        Upload a local file to a Jira issue, returning a reliable attachment id.
+
+        Reads the file into memory and delegates to
+        :meth:`upload_attachment_content`, so the returned ``id`` is correct
+        (the legacy :meth:`upload_attachment` cannot report it because the
+        attachments endpoint returns a list).
+
+        Args:
+            issue_key: The Jira issue key (e.g., 'PROJ-123')
+            file_path: Path to the local file to upload
+
+        Returns:
+            A dictionary with upload result information
+        """
+        if not file_path:
+            logger.error("No file path provided for attachment upload")
+            return {"success": False, "error": "No file path provided"}
+
+        try:
+            if not os.path.isabs(file_path):
+                file_path = os.path.abspath(file_path)
+            # Guard against path traversal (resolves symlinks)
+            validate_safe_path(file_path)
+            if not os.path.exists(file_path):
+                logger.error(f"File not found: {file_path}")
+                return {"success": False, "error": f"File not found: {file_path}"}
+            with open(file_path, "rb") as fh:
+                content = fh.read()
+            return self.upload_attachment_content(
+                issue_key, os.path.basename(file_path), content
+            )
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Error uploading attachment from path: {error_msg}")
+            return {"success": False, "error": error_msg}
+
+    def get_attachment_media_id(self, attachment_id: str) -> str | None:
+        """
+        Resolve the Media Services file UUID for an uploaded attachment.
+
+        Inline ADF ``media`` nodes require the Media Services UUID, which
+        differs from the REST attachment id. It is obtained by requesting the
+        attachment content endpoint *without* following the redirect and
+        reading the UUID from the ``Location`` header
+        (``.../file/{uuid}/binary``).
+
+        Args:
+            attachment_id: The REST attachment id returned when uploading
+
+        Returns:
+            The media UUID string, or None if it cannot be resolved
+        """
+        if not attachment_id:
+            return None
+
+        try:
+            url = self.jira.resource_url(
+                f"attachment/content/{attachment_id}", api_version="3"
+            )
+            response = self.jira._session.get(url, allow_redirects=False, stream=True)
+            location = response.headers.get("Location", "")
+            match = re.search(
+                r"/file/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})",
+                location,
+            )
+            if match:
+                return match.group(1)
+            logger.error(
+                f"Could not extract media id for attachment {attachment_id} "
+                "from the redirect location"
+            )
+            return None
+        except Exception as e:
+            logger.error(
+                f"Error resolving media id for attachment {attachment_id}: {str(e)}"
+            )
+            return None

@@ -300,6 +300,15 @@ class JiraClient:
         url = self.jira.resource_url(resource, api_version="3")
         return self.jira.put(url, data=data)
 
+    def _delete_api3(self, resource: str, params: dict[str, str] | None = None) -> Any:
+        """DELETE against Jira REST API v3.
+
+        Mirrors ``_post_api3`` / ``_put_api3`` so deletions on Cloud target
+        the v3 endpoint consistently with the rest of the client.
+        """
+        url = self.jira.resource_url(resource, api_version="3")
+        return self.jira.delete(url, params=params)
+
     def get_paged(
         self,
         method: Literal["get", "post"],
