@@ -589,6 +589,28 @@ async def test_search(jira_client, mock_jira_fetcher):
 
 
 @pytest.mark.anyio
+async def test_search_returns_error_details(jira_client, mock_jira_fetcher):
+    """Test that search tool failures preserve the original error message."""
+    mock_jira_fetcher.search_issues.side_effect = RuntimeError(
+        "Jira JQL rejected the query"
+    )
+
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_search",
+            {
+                "jql": "project = TEST",
+                "fields": "summary,status",
+                "limit": 10,
+                "start_at": 0,
+            },
+        )
+
+    assert "Error calling tool 'search'" in str(excinfo.value)
+    assert "Jira JQL rejected the query" in str(excinfo.value)
+
+
+@pytest.mark.anyio
 async def test_get_service_desk_for_project(jira_client, mock_jira_fetcher):
     """Test service desk lookup by project key."""
     response = await jira_client.call_tool(
@@ -830,6 +852,7 @@ async def test_batch_create_issues_invalid_json(jira_client):
             "jira_batch_create_issues",
             {"issues": "{invalid json", "validate_only": False},
         )
+    assert "Error calling tool 'batch_create_issues'" in str(excinfo.value)
     assert "Invalid JSON" in str(excinfo.value)
 
 
@@ -896,6 +919,7 @@ async def test_no_fetcher_get_issue(no_fetcher_client_fixture, mock_request):
                 },
             )
     assert "Error calling tool 'get_issue'" in str(excinfo.value)
+    assert "Jira client (fetcher) not available" in str(excinfo.value)
 
 
 @pytest.mark.anyio

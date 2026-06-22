@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastmcp import Client, FastMCP
 from fastmcp.client import FastMCPTransport
+from fastmcp.exceptions import ToolError
 from starlette.requests import Request
 
 from src.mcp_atlassian.confluence import ConfluenceFetcher
@@ -372,6 +373,20 @@ async def test_search(client, mock_confluence_fetcher):
     assert isinstance(result_data, list)
     assert len(result_data) > 0
     assert result_data[0]["title"] == "Test Page Mock Title"
+
+
+@pytest.mark.anyio
+async def test_search_returns_error_details(client, mock_confluence_fetcher):
+    """Test that search tool failures preserve the original error message."""
+    mock_confluence_fetcher.search.side_effect = RuntimeError(
+        "Confluence CQL rejected the query"
+    )
+
+    with pytest.raises(ToolError) as excinfo:
+        await client.call_tool("confluence_search", {"query": "type=page"})
+
+    assert "Error calling tool 'search'" in str(excinfo.value)
+    assert "Confluence CQL rejected the query" in str(excinfo.value)
 
 
 @pytest.mark.anyio

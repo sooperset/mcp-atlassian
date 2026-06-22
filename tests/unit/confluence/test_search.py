@@ -107,10 +107,8 @@ class TestSearchMixin:
         # Mock a response missing required keys
         search_mixin.confluence.cql.return_value = {"incomplete": "data"}
 
-        # Act
         results = search_mixin.search("invalid query")
 
-        # Assert
         assert isinstance(results, list)
         assert len(results) == 0
 
@@ -119,36 +117,24 @@ class TestSearchMixin:
         # Mock a network error
         search_mixin.confluence.cql.side_effect = requests.RequestException("API error")
 
-        # Act
-        results = search_mixin.search("error query")
-
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == 0
+        with pytest.raises(ValueError, match="Network error during search"):
+            search_mixin.search("error query")
 
     def test_search_value_error(self, search_mixin):
         """Test handling of ValueError during search."""
         # Mock a value error
         search_mixin.confluence.cql.side_effect = ValueError("Value error")
 
-        # Act
-        results = search_mixin.search("error query")
-
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == 0
+        with pytest.raises(ValueError, match="Error processing search results"):
+            search_mixin.search("error query")
 
     def test_search_type_error(self, search_mixin):
         """Test handling of TypeError during search."""
         # Mock a type error
         search_mixin.confluence.cql.side_effect = TypeError("Type error")
 
-        # Act
-        results = search_mixin.search("error query")
-
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == 0
+        with pytest.raises(ValueError, match="Error processing search results"):
+            search_mixin.search("error query")
 
     def test_search_with_spaces_filter(self, search_mixin):
         """Test searching with spaces filter from parameter."""
@@ -262,12 +248,8 @@ class TestSearchMixin:
         # Mock a general exception
         search_mixin.confluence.cql.side_effect = Exception("General error")
 
-        # Act
-        results = search_mixin.search("error query")
-
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == 0
+        with pytest.raises(RuntimeError, match="Unexpected error during search"):
+            search_mixin.search("error query")
 
     def test_search_user_success(self, search_mixin):
         """Test search_user with successful results."""
@@ -365,28 +347,44 @@ class TestSearchMixin:
         )
 
     @pytest.mark.parametrize(
-        "exception_type,exception_args,expected_result",
+        "exception_type,exception_args,expected_exception,match",
         [
-            (requests.RequestException, ("Network error",), []),
-            (ValueError, ("Value error",), []),
-            (TypeError, ("Type error",), []),
-            (Exception, ("General error",), []),
-            (KeyError, ("Missing key",), []),
+            (
+                requests.RequestException,
+                ("Network error",),
+                ValueError,
+                "Network error during search_user",
+            ),
+            (
+                ValueError,
+                ("Value error",),
+                ValueError,
+                "Error processing search_user results",
+            ),
+            (
+                TypeError,
+                ("Type error",),
+                ValueError,
+                "Error processing search_user results",
+            ),
+            (
+                Exception,
+                ("General error",),
+                RuntimeError,
+                "Unexpected error during search_user",
+            ),
+            (KeyError, ("Missing key",), ValueError, "missing key"),
         ],
     )
     def test_search_user_exception_handling(
-        self, search_mixin, exception_type, exception_args, expected_result
+        self, search_mixin, exception_type, exception_args, expected_exception, match
     ):
-        """Test search_user handling of various exceptions that return empty list."""
+        """Test search_user propagates detailed exceptions."""
         # Mock the exception
         search_mixin.confluence.get.side_effect = exception_type(*exception_args)
 
-        # Act
-        results = search_mixin.search_user('user.fullname ~ "Test"')
-
-        # Assert
-        assert isinstance(results, list)
-        assert results == expected_result
+        with pytest.raises(expected_exception, match=match):
+            search_mixin.search_user('user.fullname ~ "Test"')
 
     @pytest.mark.parametrize(
         "status_code,exception_type",
@@ -444,28 +442,44 @@ class TestSearchMixin:
 
     # You can also parametrize the regular search method exception tests:
     @pytest.mark.parametrize(
-        "exception_type,exception_args,expected_result",
+        "exception_type,exception_args,expected_exception,match",
         [
-            (requests.RequestException, ("API error",), []),
-            (ValueError, ("Value error",), []),
-            (TypeError, ("Type error",), []),
-            (Exception, ("General error",), []),
-            (KeyError, ("Missing key",), []),
+            (
+                requests.RequestException,
+                ("API error",),
+                ValueError,
+                "Network error during search",
+            ),
+            (
+                ValueError,
+                ("Value error",),
+                ValueError,
+                "Error processing search results",
+            ),
+            (
+                TypeError,
+                ("Type error",),
+                ValueError,
+                "Error processing search results",
+            ),
+            (
+                Exception,
+                ("General error",),
+                RuntimeError,
+                "Unexpected error during search",
+            ),
+            (KeyError, ("Missing key",), ValueError, "missing key"),
         ],
     )
     def test_search_exception_handling(
-        self, search_mixin, exception_type, exception_args, expected_result
+        self, search_mixin, exception_type, exception_args, expected_exception, match
     ):
-        """Test search handling of various exceptions that return empty list."""
+        """Test search propagates detailed exceptions."""
         # Mock the exception
         search_mixin.confluence.cql.side_effect = exception_type(*exception_args)
 
-        # Act
-        results = search_mixin.search("error query")
-
-        # Assert
-        assert isinstance(results, list)
-        assert results == expected_result
+        with pytest.raises(expected_exception, match=match):
+            search_mixin.search("error query")
 
     # Parametrize CQL query tests:
     @pytest.mark.parametrize(
