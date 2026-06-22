@@ -903,3 +903,132 @@ class TestUnicodeLookup:
         # Searching with the email should match (case insensitive)
         account_id = users_mixin._lookup_user_directly("TËST@EXAMPLE.COM")
         assert account_id == "email-account-id"
+
+
+class TestSearchAssignableUsers:
+    """Tests for UsersMixin.search_assignable_users."""
+
+    @pytest.fixture
+    def users_mixin(self, jira_client):
+        """Create a UsersMixin instance with mocked dependencies."""
+        mixin = UsersMixin(config=jira_client.config)
+        mixin.jira = jira_client.jira
+        return mixin
+
+    @staticmethod
+    def _mock_response(payload):
+        response = MagicMock()
+        response.json.return_value = payload
+        response.raise_for_status = MagicMock()
+        return response
+
+    def test_search_assignable_users_by_project(self, users_mixin):
+        """search_assignable_users hits /user/assignable/search with project= param."""
+        users_mixin.jira._session.get.return_value = self._mock_response(
+            [
+                {
+                    "name": "jsmith@example.com",
+                    "key": "JIRAUSER1001",
+                    "displayName": "John Smith",
+                    "emailAddress": "jsmith@example.com",
+                    "active": True,
+                }
+            ]
+        )
+
+        users = users_mixin.search_assignable_users(
+            query="Smith", project_key="PROJ", limit=5
+        )
+
+        assert len(users) == 1
+        assert users[0].username == "jsmith@example.com"
+        assert users[0].user_key == "JIRAUSER1001"
+        assert users[0].display_name == "John Smith"
+
+        users_mixin.jira._session.get.assert_called_once()
+        call_args = users_mixin.jira._session.get.call_args
+        assert call_args.args[0].endswith("/rest/api/2/user/assignable/search")
+        params = call_args.kwargs["params"]
+        assert params["project"] == "PROJ"
+        assert params["username"] == "Smith"
+        assert params["maxResults"] == 5
+        assert "issueKey" not in params
+
+    def test_search_assignable_users_by_issue_key(self, users_mixin):
+        """When issue_key is given, it takes precedence and project param is omitted."""
+        users_mixin.jira._session.get.return_value = self._mock_response([])
+
+        users_mixin.search_assignable_users(
+            query="Smith", issue_key="PROJ-42", limit=20
+        )
+
+        params = users_mixin.jira._session.get.call_args.kwargs["params"]
+        assert params["issueKey"] == "PROJ-42"
+        assert "project" not in params
+
+    def test_search_assignable_users_returns_multiple(self, users_mixin):
+        """All matching users are returned in API order."""
+        users_mixin.jira._session.get.return_value = self._mock_response(
+            [
+                {"name": "a", "key": "K1", "displayName": "Alice Smith"},
+                {"name": "b", "key": "K2", "displayName": "Bob Smith"},
+                {"name": "c", "key": "K3", "displayName": "Carol Smith"},
+            ]
+        )
+
+        users = users_mixin.search_assignable_users(query="Smith", project_key="PROJ")
+
+        assert [u.username for u in users] == ["a", "b", "c"]
+        assert [u.display_name for u in users] == [
+            "Alice Smith",
+            "Bob Smith",
+            "Carol Smith",
+        ]
+
+    def test_search_assignable_users_requires_scope(self, users_mixin):
+        """Missing both project_key and issue_key raises ValueError."""
+        with pytest.raises(ValueError, match="project_key or issue_key"):
+            users_mixin.search_assignable_users(query="Smith")
+
+        users_mixin.jira._session.get.assert_not_called()
+
+    def test_search_assignable_users_non_list_response(self, users_mixin):
+        """A non-list response (e.g. error envelope) yields an empty result."""
+        users_mixin.jira._session.get.return_value = self._mock_response(
+            {"errorMessages": ["nope"]}
+        )
+
+        users = users_mixin.search_assignable_users(query="Smith", project_key="PROJ")
+
+        assert users == []
+
+    def test_search_assignable_users_limit_clamped(self, users_mixin):
+        """Limit is clamped to [1, 1000]; falsy is treated as default 20."""
+        users_mixin.jira._session.get.return_value = self._mock_response([])
+
+        # Falsy → default 20
+        users_mixin.search_assignable_users(query="Smith", project_key="PROJ", limit=0)
+        assert (
+            users_mixin.jira._session.get.call_args.kwargs["params"]["maxResults"] == 20
+        )
+
+        # Above ceiling → clamped to 1000
+        users_mixin.jira._session.get.reset_mock()
+        users_mixin.search_assignable_users(
+            query="Smith", project_key="PROJ", limit=5000
+        )
+        assert (
+            users_mixin.jira._session.get.call_args.kwargs["params"]["maxResults"]
+            == 1000
+        )
+
+    def test_search_assignable_users_http_error_propagates(self, users_mixin):
+        """HTTPError from the session bubbles up so the auth decorator can handle 401/403."""
+        response = MagicMock()
+        response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            "403 Forbidden"
+        )
+        users_mixin.jira._session.get.return_value = response
+
+        with pytest.raises(requests.exceptions.HTTPError):
+            users_mixin.search_assignable_users(query="Smith", project_key="PROJ")

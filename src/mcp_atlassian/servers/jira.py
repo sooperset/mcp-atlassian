@@ -165,6 +165,126 @@ async def get_user_profile(
 
 
 @jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_users"},
+    annotations={"title": "Search Assignable Users", "readOnlyHint": True},
+)
+async def search_assignable_users(
+    ctx: Context,
+    query: Annotated[
+        str,
+        Field(
+            description=(
+                "Free-form text to search Jira users by: display name, "
+                "username, or email substring (e.g. 'Smith', 'jane.doe', "
+                "'doe@example.com'). Server-side match is case-insensitive "
+                "and partial."
+            ),
+        ),
+    ],
+    project_key: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Project key to scope the search to (e.g. 'DT'). "
+                "Required if issue_key is not given."
+            ),
+            default=None,
+        ),
+    ] = None,
+    issue_key: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Issue key to scope the search to (e.g. 'DT-779'). "
+                "Required if project_key is not given."
+            ),
+            default=None,
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        Field(
+            description="Maximum number of users to return (default 20).",
+            default=20,
+            ge=1,
+            le=1000,
+        ),
+    ] = 20,
+) -> str:
+    """Search Jira users assignable in a given project or issue.
+
+    Use this when you have a display name / partial name / email fragment
+    and need a concrete identifier (``name`` / ``key`` for Server/DC,
+    ``accountId`` for Cloud) to feed into assignee, reporter, watcher, etc.
+
+    Returns the full result set so the caller can disambiguate when several
+    users match — ``get_user_profile`` only resolves one identifier and is
+    not designed for human-name search.
+
+    Exactly one of ``project_key`` or ``issue_key`` must be provided — the
+    underlying API (``/user/assignable/search``) requires a project or issue
+    context and works without the global "Browse Users" permission that bot
+    accounts in locked-down DC instances often lack.
+
+    Args:
+        ctx: The FastMCP context.
+        query: Display name / username / email substring.
+        project_key: Project key (e.g. 'DT') to scope the search.
+        issue_key: Issue key (e.g. 'DT-779') to scope the search.
+        limit: Maximum number of users to return.
+
+    Returns:
+        JSON string: {"success": true, "count": N, "users": [...]} on success,
+        or an error object on failure.
+    """
+    jira = await get_jira_fetcher(ctx)
+    if not project_key and not issue_key:
+        return json.dumps(
+            {
+                "success": False,
+                "error": "Either project_key or issue_key must be provided.",
+                "query": query,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    try:
+        users = jira.search_assignable_users(
+            query=query,
+            project_key=project_key,
+            issue_key=issue_key,
+            limit=limit,
+        )
+        result_users = [u.to_simplified_dict() for u in users]
+        response_data = {
+            "success": True,
+            "count": len(result_users),
+            "users": result_users,
+        }
+    except Exception as e:
+        error_message = ""
+        log_level = logging.ERROR
+        if isinstance(e, MCPAtlassianAuthenticationError):
+            error_message = f"Authentication/Permission Error: {str(e)}"
+        elif isinstance(e, OSError | HTTPError):
+            error_message = f"Network or API Error: {str(e)}"
+        else:
+            error_message = "An unexpected error occurred while searching users."
+            logger.exception(
+                f"Unexpected error in search_assignable_users for {query!r}:"
+            )
+        logger.log(
+            log_level, f"search_assignable_users failed for {query!r}: {error_message}"
+        )
+        response_data = {
+            "success": False,
+            "error": str(e),
+            "query": query,
+        }
+    return json.dumps(response_data, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
     tags={"jira", "read", "toolset:jira_watchers"},
     annotations={"title": "Get Issue Watchers", "readOnlyHint": True},
 )
@@ -2479,6 +2599,55 @@ async def get_all_projects(
         ]
 
     return json.dumps(projects, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_projects"},
+    annotations={"title": "Get Project Fields", "readOnlyHint": True},
+)
+async def get_project_fields(
+    ctx: Context,
+    project_key: Annotated[
+        str,
+        Field(description="The project key, e.g. 'PROJ'."),
+    ],
+) -> str:
+    """Get the fields available on issues of a project (the create schema),
+    deduplicated across the project's issue types — i.e. which fields tickets in
+    this project have, regardless of whether they are filled.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: The project key.
+
+    Returns:
+        JSON string with a list of fields: each {field_id, name, required,
+        schema_type, custom, issue_types}. Empty list if none / on error.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    try:
+        jira = await get_jira_fetcher(ctx)
+        fields = jira.get_project_fields(project_key)
+    except (MCPAtlassianAuthenticationError, HTTPError, OSError, ValueError) as e:
+        error_message = ""
+        log_level = logging.ERROR
+        if isinstance(e, MCPAtlassianAuthenticationError):
+            error_message = f"Authentication/Permission Error: {str(e)}"
+        elif isinstance(e, OSError | HTTPError):
+            error_message = f"Network or API Error: {str(e)}"
+        elif isinstance(e, ValueError):
+            error_message = f"Configuration Error: {str(e)}"
+        logger.log(
+            log_level, f"get_project_fields failed for '{project_key}': {error_message}"
+        )
+        return json.dumps(
+            {"success": False, "error": error_message, "project_key": project_key},
+            indent=2,
+            ensure_ascii=False,
+        )
+    return json.dumps(fields, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
