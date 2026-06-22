@@ -269,9 +269,11 @@ class JiraPreprocessor(BasePreprocessor):
         # Text formatting (bold, italic)
         output = re.sub(
             r"([*_])(.*?)\1",
-            lambda match: ("**" if match.group(1) == "*" else "*")
-            + match.group(2)
-            + ("**" if match.group(1) == "*" else "*"),
+            lambda match: (
+                ("**" if match.group(1) == "*" else "*")
+                + match.group(2)
+                + ("**" if match.group(1) == "*" else "*")
+            ),
             output,
         )
 
@@ -464,9 +466,7 @@ class JiraPreprocessor(BasePreprocessor):
         # Headers with = or - underlines
         output = re.sub(
             r"^(.*?)\n([=-])+$",
-            lambda match: (
-                f"h{1 if match.group(2)[0] == '=' else 2}. {match.group(1)}"
-            ),
+            lambda match: f"h{1 if match.group(2)[0] == '=' else 2}. {match.group(1)}",
             output,
             flags=re.MULTILINE,
         )
@@ -487,9 +487,11 @@ class JiraPreprocessor(BasePreprocessor):
                 return line
             return re.sub(
                 r"([*_]+)(.*?)\1",
-                lambda m: ("_" if len(m.group(1)) == 1 else "*")
-                + m.group(2)
-                + ("_" if len(m.group(1)) == 1 else "*"),
+                lambda m: (
+                    ("_" if len(m.group(1)) == 1 else "*")
+                    + m.group(2)
+                    + ("_" if len(m.group(1)) == 1 else "*")
+                ),
                 line,
             )
 
@@ -567,12 +569,32 @@ class JiraPreprocessor(BasePreprocessor):
         output = re.sub(r"<([^>]+)>", r"[\1]", output)
 
         # Convert markdown tables to Jira table format
+        # Issue #1343: parse full table blocks (header + separator + data rows),
+        # strip whitespace from each cell, convert header to ||cell|| and data
+        # rows to |cell|.
         lines = output.split("\n")
         i = 0
         while i < len(lines):
-            if i < len(lines) - 1 and re.match(r"\|[-\s|]+\|", lines[i + 1]):
-                lines[i] = lines[i].replace("|", "||")
-                lines.pop(i + 1)
+            # Look for a header row followed by a markdown separator line
+            if (
+                i < len(lines) - 1
+                and re.match(r"^\|[-\s|:]+\|$", lines[i + 1])
+                and re.match(r"^\|.*\|$", lines[i])
+            ):
+                # Header row
+                header_cells = [cell.strip() for cell in lines[i].split("|")[1:-1]]
+                lines[i] = "||" + "||".join(header_cells) + "||"
+                lines.pop(i + 1)  # drop separator
+
+                # Consume data rows while they look like table rows
+                while i < len(lines) and re.match(
+                    r"^\|.*\|$", lines[i + 1] if i + 1 < len(lines) else ""
+                ):
+                    data_cells = [
+                        cell.strip() for cell in lines[i + 1].split("|")[1:-1]
+                    ]
+                    lines[i + 1] = "|" + "|".join(data_cells) + "|"
+                    i += 1
             i += 1
 
         # Rejoin the lines
