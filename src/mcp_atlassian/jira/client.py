@@ -382,7 +382,12 @@ class JiraClient:
         if description:
             payload["description"] = description
         logger.info(f"Creating Jira version: {payload}")
-        result = self.jira.post("/rest/api/3/version", json=payload)
+
+        if self.config.is_cloud:
+            result = self.jira.post("/rest/api/3/version", json=payload)
+        else:
+            result = self.jira.post("/rest/api/2/version", data=payload)
+
         if not isinstance(result, dict):
             error_message = f"Unexpected response from Jira API: {result}"
             raise ValueError(error_message)
