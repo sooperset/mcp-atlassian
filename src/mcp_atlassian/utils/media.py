@@ -3,6 +3,7 @@
 import base64
 import logging
 import mimetypes
+import struct
 from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,107 @@ def is_image_attachment(
             return True, guessed
 
     return False, media_type or "application/octet-stream"
+
+
+def get_image_dimensions(data: bytes) -> tuple[int, int] | None:
+    """Read the pixel dimensions of an image from its header bytes.
+
+    Pure-stdlib header parsing (no Pillow dependency) for the formats Jira
+    renders inline: PNG, GIF, JPEG, BMP, and WebP. Jira Cloud requires
+    ``width``/``height`` on inline ``mediaSingle`` nodes for the image to
+    render, so these are derived from the raw bytes before upload.
+
+    Args:
+        data: The raw image bytes.
+
+    Returns:
+        A ``(width, height)`` tuple in pixels, or ``None`` if the format is
+        unrecognised or the header is too short/corrupt to parse.
+    """
+    if not data or len(data) < 24:
+        return None
+
+    try:
+        # --- PNG: 8-byte signature, then IHDR with width/height as BE uint32.
+        if data[:8] == b"\x89PNG\r\n\x1a\n":
+            width, height = struct.unpack(">II", data[16:24])
+            return int(width), int(height)
+
+        # --- GIF: 'GIF87a'/'GIF89a', logical screen size as LE uint16.
+        if data[:6] in (b"GIF87a", b"GIF89a"):
+            width, height = struct.unpack("<HH", data[6:10])
+            return int(width), int(height)
+
+        # --- BMP: 'BM', BITMAPINFOHEADER width/height as LE int32.
+        if data[:2] == b"BM":
+            width, height = struct.unpack("<ii", data[18:26])
+            return int(width), abs(int(height))
+
+        # --- WebP: 'RIFF'....'WEBP' followed by a VP8/VP8L/VP8X chunk.
+        if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+            chunk = data[12:16]
+            if chunk == b"VP8 " and len(data) >= 30:
+                width = struct.unpack("<H", data[26:28])[0] & 0x3FFF
+                height = struct.unpack("<H", data[28:30])[0] & 0x3FFF
+                return int(width), int(height)
+            if chunk == b"VP8L" and len(data) >= 25:
+                bits = struct.unpack("<I", data[21:25])[0]
+                width = (bits & 0x3FFF) + 1
+                height = ((bits >> 14) & 0x3FFF) + 1
+                return int(width), int(height)
+            if chunk == b"VP8X" and len(data) >= 30:
+                width = int.from_bytes(data[24:27], "little") + 1
+                height = int.from_bytes(data[27:30], "little") + 1
+                return int(width), int(height)
+
+        # --- JPEG: scan for a Start-Of-Frame (SOFn) marker.
+        if data[:2] == b"\xff\xd8":
+            return _jpeg_dimensions(data)
+    except (struct.error, IndexError, ValueError):
+        return None
+
+    return None
+
+
+def _jpeg_dimensions(data: bytes) -> tuple[int, int] | None:
+    """Extract dimensions from a JPEG by walking its marker segments."""
+    # SOF markers carry the frame size. Skip the standalone/irrelevant ones.
+    sof_markers = {
+        0xC0,
+        0xC1,
+        0xC2,
+        0xC3,
+        0xC5,
+        0xC6,
+        0xC7,
+        0xC9,
+        0xCA,
+        0xCB,
+        0xCD,
+        0xCE,
+        0xCF,
+    }
+    pos = 2
+    size = len(data)
+    while pos + 1 < size:
+        if data[pos] != 0xFF:
+            pos += 1
+            continue
+        marker = data[pos + 1]
+        pos += 2
+        # Padding bytes / markers without a length payload.
+        if marker in (0xD8, 0xD9) or 0xD0 <= marker <= 0xD7 or marker == 0x01:
+            continue
+        if pos + 2 > size:
+            break
+        seg_len = struct.unpack(">H", data[pos : pos + 2])[0]
+        if marker in sof_markers:
+            if pos + 7 > size:
+                break
+            height, width = struct.unpack(">HH", data[pos + 3 : pos + 7])
+            return int(width), int(height)
+        pos += seg_len
+    return None
 
 
 def fetch_and_encode_attachment(

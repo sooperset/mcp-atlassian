@@ -639,6 +639,81 @@ async def test_add_comment_with_media(jira_client, mock_jira_fetcher):
 
 
 @pytest.mark.anyio
+async def test_add_comment_with_media_rolls_back_on_resolve_failure(
+    jira_client, mock_jira_fetcher
+):
+    """A media-id resolve failure deletes the uploaded attachment (no orphan)."""
+    import base64
+
+    mock_jira_fetcher.config.is_cloud = True
+    mock_jira_fetcher.upload_attachment_content.return_value = {
+        "success": True,
+        "filename": "a.png",
+        "id": "att-a",
+        "size": 3,
+    }
+    # Resolution fails — the core bug scenario.
+    mock_jira_fetcher.get_attachment_media_id.return_value = None
+
+    png_b64 = base64.b64encode(b"img").decode()
+    blocks = json.dumps(
+        [
+            {"type": "text", "text": "First"},
+            {"type": "image", "file_content_base64": png_b64, "filename": "a.png"},
+        ]
+    )
+
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_add_comment_with_media",
+            {"issue_key": "TEST-123", "blocks": blocks},
+        )
+
+    assert "could not resolve the Media Services id" in str(excinfo.value)
+    # The uploaded attachment must be rolled back and no comment posted.
+    mock_jira_fetcher.delete_attachment.assert_called_once_with("att-a")
+    mock_jira_fetcher.add_comment_adf.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_add_comment_with_media_rolls_back_all_on_post_failure(
+    jira_client, mock_jira_fetcher
+):
+    """If posting the comment fails, every uploaded attachment is removed."""
+    import base64
+
+    mock_jira_fetcher.config.is_cloud = True
+    mock_jira_fetcher.upload_attachment_content.side_effect = [
+        {"success": True, "filename": "a.png", "id": "att-a", "size": 3},
+        {"success": True, "filename": "b.png", "id": "att-b", "size": 3},
+    ]
+    mock_jira_fetcher.get_attachment_media_id.side_effect = [
+        "11111111-1111-1111-1111-111111111111",
+        "22222222-2222-2222-2222-222222222222",
+    ]
+    mock_jira_fetcher.add_comment_adf.side_effect = Exception("comment POST failed")
+
+    png_b64 = base64.b64encode(b"img").decode()
+    blocks = json.dumps(
+        [
+            {"type": "image", "file_content_base64": png_b64, "filename": "a.png"},
+            {"type": "image", "file_content_base64": png_b64, "filename": "b.png"},
+        ]
+    )
+
+    with pytest.raises(ToolError):
+        await jira_client.call_tool(
+            "jira_add_comment_with_media",
+            {"issue_key": "TEST-123", "blocks": blocks},
+        )
+
+    deleted = {
+        call.args[0] for call in mock_jira_fetcher.delete_attachment.call_args_list
+    }
+    assert deleted == {"att-a", "att-b"}
+
+
+@pytest.mark.anyio
 async def test_get_service_desk_for_project(jira_client, mock_jira_fetcher):
     """Test service desk lookup by project key."""
     response = await jira_client.call_tool(

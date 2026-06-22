@@ -286,7 +286,11 @@ def build_media_comment_adf(segments: list[dict[str, Any]]) -> dict[str, Any]:
             paragraphs/lists via :func:`markdown_to_adf`; or
             ``{"type": "media", "media_id": "<uuid>"}`` — a Media Services
             file UUID (NOT the REST attachment id) rendered as an inline
-            ``mediaSingle`` node.
+            ``mediaSingle`` node. Media segments may also carry integer
+            ``width``/``height`` (pixel dimensions); when present they are
+            written to the ``media`` node so Jira Cloud renders the image
+            reliably (the ADF spec warns the media "isn't displayed"
+            without dimensions inside ``mediaSingle``).
 
     Returns:
         An ADF document dict (``version``/``type``/``content``).
@@ -299,21 +303,26 @@ def build_media_comment_adf(segments: list[dict[str, Any]]) -> dict[str, Any]:
             sub_doc = markdown_to_adf(segment.get("text", ""))
             content.extend(sub_doc.get("content", []))
         elif seg_type == "media":
-            media_id = segment.get("media_id")
+            media_attrs: dict[str, Any] = {
+                "id": segment.get("media_id"),
+                "type": "file",
+                "collection": "",
+            }
+            width = segment.get("width")
+            height = segment.get("height")
+            if (
+                isinstance(width, int)
+                and isinstance(height, int)
+                and width > 0
+                and height > 0
+            ):
+                media_attrs["width"] = width
+                media_attrs["height"] = height
             content.append(
                 {
                     "type": "mediaSingle",
                     "attrs": {"layout": "center"},
-                    "content": [
-                        {
-                            "type": "media",
-                            "attrs": {
-                                "id": media_id,
-                                "type": "file",
-                                "collection": "",
-                            },
-                        }
-                    ],
+                    "content": [{"type": "media", "attrs": media_attrs}],
                 }
             )
 

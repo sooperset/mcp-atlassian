@@ -2034,7 +2034,9 @@ async def add_comment_with_media(
     Each image block is uploaded as an issue attachment, its Media Services id
     is resolved, and the image is embedded inline in the comment in the given
     order. Use this for the "text, screenshot, text, screenshot" layout that a
-    plain text comment cannot express.
+    plain text comment cannot express. ``file_path`` accepts any absolute path
+    (e.g. screenshots under ``/tmp``). If any step fails, every attachment
+    uploaded during this call is rolled back so no orphans are left behind.
 
     Args:
         ctx: The FastMCP context.
@@ -2064,81 +2066,123 @@ async def add_comment_with_media(
 
     segments: list[dict[str, Any]] = []
     embedded: list[dict[str, Any]] = []
+    # Attachments uploaded during this call, so they can be rolled back if a
+    # later step fails — otherwise a failed comment leaves orphan attachments.
+    uploaded_ids: list[str] = []
 
-    for index, block in enumerate(parsed_blocks):
-        if not isinstance(block, dict):
-            raise ValueError(f"Block {index} must be a JSON object.")
-        block_type = block.get("type")
-
-        if block_type == "text":
-            segments.append({"type": "text", "text": block.get("text", "")})
-            continue
-
-        if block_type != "image":
-            raise ValueError(
-                f"Block {index}: unknown type '{block_type}'. Use 'text' or 'image'."
-            )
-
-        file_path = block.get("file_path")
-        file_content_base64 = block.get("file_content_base64")
-        filename = block.get("filename")
-
-        if file_path and file_content_base64:
-            raise ValueError(
-                f"Block {index}: provide 'file_path' OR "
-                "'file_content_base64', not both."
-            )
-
-        if file_content_base64:
-            if not filename:
-                raise ValueError(
-                    f"Block {index}: 'filename' is required with 'file_content_base64'."
-                )
+    def _rollback_uploads() -> None:
+        for att_id in uploaded_ids:
             try:
-                content = base64.b64decode(file_content_base64, validate=True)
-            except ValueError as exc:
+                jira.delete_attachment(att_id)
+            except Exception as exc:  # best-effort cleanup
+                logger.warning(
+                    "Failed to roll back attachment %s on %s: %s",
+                    att_id,
+                    issue_key,
+                    exc,
+                )
+        if uploaded_ids:
+            logger.info(
+                "Rolled back %d attachment(s) on %s after a failed media comment: %s",
+                len(uploaded_ids),
+                issue_key,
+                uploaded_ids,
+            )
+
+    try:
+        for index, block in enumerate(parsed_blocks):
+            if not isinstance(block, dict):
+                raise ValueError(f"Block {index} must be a JSON object.")
+            block_type = block.get("type")
+
+            if block_type == "text":
+                segments.append({"type": "text", "text": block.get("text", "")})
+                continue
+
+            if block_type != "image":
                 raise ValueError(
-                    f"Block {index}: invalid base64 content: {exc}"
-                ) from exc
-            upload = jira.upload_attachment_content(issue_key, filename, content)
-        elif file_path:
-            upload = jira.upload_attachment_from_path(issue_key, file_path)
-        else:
-            raise ValueError(
-                f"Block {index}: image block needs 'file_path' or "
-                "'file_content_base64'."
+                    f"Block {index}: unknown type '{block_type}'. "
+                    "Use 'text' or 'image'."
+                )
+
+            file_path = block.get("file_path")
+            file_content_base64 = block.get("file_content_base64")
+            filename = block.get("filename")
+
+            if file_path and file_content_base64:
+                raise ValueError(
+                    f"Block {index}: provide 'file_path' OR "
+                    "'file_content_base64', not both."
+                )
+
+            if file_content_base64:
+                if not filename:
+                    raise ValueError(
+                        f"Block {index}: 'filename' is required with "
+                        "'file_content_base64'."
+                    )
+                try:
+                    content = base64.b64decode(file_content_base64, validate=True)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Block {index}: invalid base64 content: {exc}"
+                    ) from exc
+                upload = jira.upload_attachment_content(issue_key, filename, content)
+            elif file_path:
+                upload = jira.upload_attachment_from_path(issue_key, file_path)
+            else:
+                raise ValueError(
+                    f"Block {index}: image block needs 'file_path' or "
+                    "'file_content_base64'."
+                )
+
+            if not upload.get("success"):
+                raise ValueError(
+                    f"Block {index}: attachment upload failed: {upload.get('error')}"
+                )
+
+            attachment_id = upload.get("id")
+            if not attachment_id:
+                raise ValueError(
+                    f"Block {index}: could not determine the attachment id "
+                    "after upload."
+                )
+            # Track immediately so rollback covers a later resolve/post failure.
+            uploaded_ids.append(attachment_id)
+
+            media_id = jira.get_attachment_media_id(attachment_id)
+            if not media_id:
+                raise ValueError(
+                    f"Block {index}: could not resolve the Media Services id "
+                    f"for attachment {attachment_id}. Jira Cloud's "
+                    "attachment-content endpoint did not return a parseable "
+                    "media redirect (this can happen behind OAuth gateways or "
+                    "proxies; the server log records the HTTP status and "
+                    "redirect target). Uploaded attachments were rolled back."
+                )
+
+            segments.append(
+                {
+                    "type": "media",
+                    "media_id": media_id,
+                    "width": upload.get("width"),
+                    "height": upload.get("height"),
+                }
+            )
+            embedded.append(
+                {
+                    "filename": upload.get("filename"),
+                    "attachment_id": attachment_id,
+                    "media_id": media_id,
+                }
             )
 
-        if not upload.get("success"):
-            raise ValueError(
-                f"Block {index}: attachment upload failed: {upload.get('error')}"
-            )
-
-        attachment_id = upload.get("id")
-        if not attachment_id:
-            raise ValueError(
-                f"Block {index}: could not determine the attachment id after upload."
-            )
-
-        media_id = jira.get_attachment_media_id(attachment_id)
-        if not media_id:
-            raise ValueError(
-                f"Block {index}: could not resolve the Media Services id "
-                f"for attachment {attachment_id}."
-            )
-
-        segments.append({"type": "media", "media_id": media_id})
-        embedded.append(
-            {
-                "filename": upload.get("filename"),
-                "attachment_id": attachment_id,
-                "media_id": media_id,
-            }
-        )
-
-    adf_body = build_media_comment_adf(segments)
-    visibility_dict = _parse_visibility(visibility)
-    comment = jira.add_comment_adf(issue_key, adf_body, visibility_dict)
+        adf_body = build_media_comment_adf(segments)
+        visibility_dict = _parse_visibility(visibility)
+        comment = jira.add_comment_adf(issue_key, adf_body, visibility_dict)
+    except Exception:
+        _rollback_uploads()
+        raise
 
     return json.dumps(
         {"comment": comment, "embedded": embedded},
