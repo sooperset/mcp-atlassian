@@ -679,9 +679,18 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
         if not attachment_id:
             return None
 
-        url = self.jira.resource_url(
+        # resource_url may return a path RELATIVE to the API base depending on
+        # the atlassian-python-api version. ``_session.get`` needs an absolute
+        # URL or requests raises ``MissingSchema``. Join against the base the
+        # library itself uses (``self.jira.url``) so the OAuth gateway host
+        # (``api.atlassian.com/ex/jira/{cloudId}``) is honoured too.
+        resource = self.jira.resource_url(
             f"attachment/content/{attachment_id}", api_version="3"
         )
+        if resource.startswith(("http://", "https://")):
+            url = resource
+        else:
+            url = f"{self.jira.url.rstrip('/')}/{resource.lstrip('/')}"
 
         # --- Pass 1: documented single-hop redirect (no follow). ---
         first_status: int | str = "unknown"
@@ -694,38 +703,38 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             media_id = self._extract_media_file_uuid(first_location)
             if media_id:
                 return media_id
-        except Exception as e:
-            logger.error(
-                f"Error resolving media id for attachment {attachment_id}: {str(e)}"
+        except Exception:
+            # Don't swallow the real cause: log the full traceback, then let
+            # the redirect-chain pass run (and surface any error it hits).
+            logger.warning(
+                "Media-id resolution pass 1 failed for attachment %s "
+                "(url=%s); trying the redirect chain.",
+                attachment_id,
+                url,
+                exc_info=True,
             )
-            return None
 
-        # --- Pass 2: follow the full redirect chain and scan each hop. ---
-        try:
-            followed = self.jira._session.get(url, allow_redirects=True, stream=True)
-            candidates: list[str] = []
-            for hop in followed.history or []:
-                candidates.append(hop.headers.get("Location", ""))
-                candidates.append(getattr(hop, "url", "") or "")
-            candidates.append(getattr(followed, "url", "") or "")
-            followed.close()
-            for candidate in candidates:
-                media_id = self._extract_media_file_uuid(candidate)
-                if media_id:
-                    return media_id
-        except Exception as e:
-            logger.error(
-                f"Error resolving media id for attachment {attachment_id} "
-                f"via the redirect chain: {str(e)}"
-            )
-            return None
+        # --- Pass 2: follow the full redirect chain and scan every hop. ---
+        # A hard error here is intentionally NOT caught so the caller reports
+        # the real reason (e.g. a bad URL or network failure) rather than a
+        # vague "could not resolve".
+        followed = self.jira._session.get(url, allow_redirects=True, stream=True)
+        candidates: list[str] = []
+        for hop in followed.history or []:
+            candidates.append(hop.headers.get("Location", ""))
+            candidates.append(getattr(hop, "url", "") or "")
+        candidates.append(getattr(followed, "url", "") or "")
+        followed.close()
+        for candidate in candidates:
+            media_id = self._extract_media_file_uuid(candidate)
+            if media_id:
+                return media_id
 
         logger.error(
-            "Could not resolve the media id for attachment %s: the "
-            "attachment-content endpoint returned HTTP %s and no hop exposed a "
-            "'/file/{uuid}' media URL (first-hop Location: %s). The instance "
-            "likely routes attachment content through a gateway/proxy that "
-            "hides the media URL.",
+            "Could not resolve the media id for attachment %s: HTTP %s and no "
+            "hop exposed a '/file/{uuid}' media URL (first-hop Location: %s). "
+            "The instance may route attachment content through a gateway/proxy "
+            "that hides the media URL.",
             attachment_id,
             first_status,
             (first_location[:120] or "<none>"),
