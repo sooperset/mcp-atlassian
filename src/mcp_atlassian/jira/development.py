@@ -26,7 +26,9 @@ class DevelopmentMixin(JiraClient):
         Args:
             issue_key: The issue key (e.g., PROJECT-123)
             application_type: Filter by application type
-                (e.g., 'stash', 'github', 'bitbucket').
+                (e.g., 'stash', 'GitHub', 'bitbucket').
+                Values are case-sensitive (the dev-status API
+                returns empty results or 500 errors on mismatch).
                 If None, tries common application types.
             data_type: Filter by data type
                 (e.g., 'pullrequest', 'branch', 'repository').
@@ -65,8 +67,9 @@ class DevelopmentMixin(JiraClient):
                 )
 
             # Otherwise, try common application types and merge results
-            # Common types: stash (Bitbucket Server), bitbucket, github, gitlab
-            app_types = ["stash", "bitbucket", "github", "gitlab"]
+            # Values are case-sensitive — the dev-status API requires the
+            # exact casing registered by each DVCS connector plugin.
+            app_types = ["stash", "bitbucket", "GitHub", "GitLab"]
             # Data types to try for each app type
             data_types = ["pullrequest", "branch", "repository"]
             merged_result: dict[str, Any] = {
@@ -132,7 +135,7 @@ class DevelopmentMixin(JiraClient):
         Args:
             issue_key: The issue key
             issue_id: The numeric issue ID
-            application_type: The application type (stash, github, etc.)
+            application_type: The application type (stash, GitHub, etc.) — case-sensitive
             data_type: Optional data type filter
 
         Returns:

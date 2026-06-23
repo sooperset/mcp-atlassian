@@ -37,6 +37,7 @@ def mock_confluence_fetcher():
             "format": "markdown",
         },
     }
+    mock_page.id = "123456"
     mock_page.content = "This is a test page content in Markdown"
 
     # Set up mock responses for each method
@@ -86,6 +87,23 @@ def mock_confluence_fetcher():
         "body": "This is a test comment added via API",
     }
     mock_fetcher.add_comment.return_value = mock_comment
+
+    # Mock get_user_details methods
+    mock_fetcher.get_current_user_info.return_value = {
+        "accountId": "current-user-id",
+        "displayName": "Current User",
+        "email": "current@example.com",
+    }
+    mock_fetcher.get_user_details_by_accountid.return_value = {
+        "accountId": "a031248587011jasoidf9832jd8j1",
+        "displayName": "First Last",
+        "email": "first.last@foo.com",
+    }
+    mock_fetcher.get_user_details_by_username.return_value = {
+        "username": "firstlast",
+        "displayName": "First Last",
+        "email": "first.last@foo.com",
+    }
 
     # Mock search_user method
     mock_user_search_result = MagicMock()
@@ -201,6 +219,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_page_children,
         get_page_images,
         get_space_page_tree,
+        get_user_details,
         search,
         search_user,
         update_page,
@@ -237,6 +256,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(update_page)
     confluence_sub_mcp.add_tool(delete_page)
     confluence_sub_mcp.add_tool(search_user)
+    confluence_sub_mcp.add_tool(get_user_details)
     confluence_sub_mcp.add_tool(upload_attachment)
     confluence_sub_mcp.add_tool(upload_attachments)
     confluence_sub_mcp.add_tool(get_attachments)
@@ -743,6 +763,126 @@ async def test_get_page_with_numeric_id(client, mock_confluence_fetcher):
     assert result_data["metadata"]["id"] == "123456"
 
 
+# --- get_page include enrichment tests (issue #1103) ---
+
+
+@pytest.mark.anyio
+async def test_get_page_include_comments(client, mock_confluence_fetcher):
+    """Test get_page with include='comments' inlines comment data."""
+    response = await client.call_tool(
+        "confluence_get_page", {"page_id": "123456", "include": "comments"}
+    )
+
+    mock_confluence_fetcher.get_page_content.assert_called_once_with(
+        "123456", convert_to_markdown=True
+    )
+    mock_confluence_fetcher.get_page_comments.assert_called_once_with("123456")
+
+    result_data = json.loads(response.content[0].text)
+    assert "metadata" in result_data
+    assert "comments" in result_data
+    assert len(result_data["comments"]) == 1
+    assert result_data["comments"][0]["id"] == "789"
+
+
+@pytest.mark.anyio
+async def test_get_page_include_labels(client, mock_confluence_fetcher):
+    """Test get_page with include='labels' inlines label data."""
+    response = await client.call_tool(
+        "confluence_get_page", {"page_id": "123456", "include": "labels"}
+    )
+
+    mock_confluence_fetcher.get_page_labels.assert_called_once_with("123456")
+
+    result_data = json.loads(response.content[0].text)
+    assert "metadata" in result_data
+    assert "labels" in result_data
+    assert len(result_data["labels"]) == 1
+    assert result_data["labels"][0]["name"] == "test-label"
+
+
+@pytest.mark.anyio
+async def test_get_page_include_views(client, mock_confluence_fetcher):
+    """Test get_page with include='views' inlines view statistics."""
+    from src.mcp_atlassian.models.confluence.analytics import PageViews
+
+    mock_confluence_fetcher.get_page_views.return_value = PageViews(
+        page_id="123456", total_views=42
+    )
+
+    response = await client.call_tool(
+        "confluence_get_page", {"page_id": "123456", "include": "views"}
+    )
+
+    mock_confluence_fetcher.get_page_views.assert_called_once_with(
+        page_id="123456", include_title=False
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert "metadata" in result_data
+    assert "views" in result_data
+    assert result_data["views"]["total_views"] == 42
+
+
+@pytest.mark.anyio
+async def test_get_page_include_multiple(client, mock_confluence_fetcher):
+    """Test get_page with include='comments, labels, views' inlines all three."""
+    from src.mcp_atlassian.models.confluence.analytics import PageViews
+
+    mock_confluence_fetcher.get_page_views.return_value = PageViews(
+        page_id="123456", total_views=10
+    )
+
+    response = await client.call_tool(
+        "confluence_get_page",
+        {"page_id": "123456", "include": "comments, labels, views"},
+    )
+
+    mock_confluence_fetcher.get_page_comments.assert_called_once_with("123456")
+    mock_confluence_fetcher.get_page_labels.assert_called_once_with("123456")
+    mock_confluence_fetcher.get_page_views.assert_called_once_with(
+        page_id="123456", include_title=False
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert "comments" in result_data
+    assert "labels" in result_data
+    assert "views" in result_data
+
+
+@pytest.mark.anyio
+async def test_get_page_include_views_graceful_degradation(
+    client, mock_confluence_fetcher
+):
+    """Test get_page with include='views' degrades gracefully on Server/DC."""
+    mock_confluence_fetcher.get_page_views.side_effect = ValueError(
+        "Page view analytics is only available for Confluence Cloud."
+    )
+
+    response = await client.call_tool(
+        "confluence_get_page", {"page_id": "123456", "include": "views"}
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert "metadata" in result_data
+    assert "views" in result_data
+    assert result_data["views"] == {}
+
+
+@pytest.mark.anyio
+async def test_get_page_include_none_no_enrichments(client, mock_confluence_fetcher):
+    """Test get_page without include param does not call enrichment methods."""
+    response = await client.call_tool("confluence_get_page", {"page_id": "123456"})
+
+    mock_confluence_fetcher.get_page_comments.assert_not_called()
+
+    result_data = json.loads(response.content[0].text)
+    assert "metadata" in result_data
+    assert "comments" not in result_data
+    assert "labels" not in result_data
+    assert "views" not in result_data
+
+
 # Phase 5: MCP Attachment Tools Tests (TDD RED Phase)
 @pytest.mark.anyio
 async def test_upload_attachment(client, mock_confluence_fetcher):
@@ -963,3 +1103,62 @@ async def test_get_page_images_fetch_failure(client, mock_confluence_fetcher):
     summary = json.loads(response.content[0].text)
     assert summary["downloaded"] == 0
     assert len(summary["failed"]) == 1
+
+
+@pytest.mark.anyio
+async def test_get_user_details_me(client, mock_confluence_fetcher):
+    """Test get_user_details with 'me' identifier returns current user."""
+    response = await client.call_tool(
+        "confluence_get_user_details", {"identifier": "me"}
+    )
+
+    mock_confluence_fetcher.get_current_user_info.assert_called_once()
+    result_data = json.loads(response.content[0].text)
+    assert result_data["accountId"] == "current-user-id"
+    assert result_data["displayName"] == "Current User"
+
+
+@pytest.mark.anyio
+async def test_get_user_details_me_case_insensitive(client, mock_confluence_fetcher):
+    """Test get_user_details with 'ME' identifier (case-insensitive)."""
+    response = await client.call_tool(
+        "confluence_get_user_details", {"identifier": "ME"}
+    )
+
+    mock_confluence_fetcher.get_current_user_info.assert_called_once()
+    result_data = json.loads(response.content[0].text)
+    assert result_data["accountId"] == "current-user-id"
+
+
+@pytest.mark.anyio
+async def test_get_user_details_cloud_account_id(client, mock_confluence_fetcher):
+    """Test get_user_details on Cloud routes to get_user_details_by_accountid."""
+    mock_confluence_fetcher.config.is_cloud = True
+
+    response = await client.call_tool(
+        "confluence_get_user_details", {"identifier": "a031248587011jasoidf9832jd8j1"}
+    )
+
+    mock_confluence_fetcher.get_user_details_by_accountid.assert_called_once_with(
+        "a031248587011jasoidf9832jd8j1"
+    )
+    result_data = json.loads(response.content[0].text)
+    assert result_data["accountId"] == "a031248587011jasoidf9832jd8j1"
+    assert result_data["displayName"] == "First Last"
+
+
+@pytest.mark.anyio
+async def test_get_user_details_server_username(client, mock_confluence_fetcher):
+    """Test get_user_details on Server/DC routes to get_user_details_by_username."""
+    mock_confluence_fetcher.config.is_cloud = False
+
+    response = await client.call_tool(
+        "confluence_get_user_details", {"identifier": "firstlast"}
+    )
+
+    mock_confluence_fetcher.get_user_details_by_username.assert_called_once_with(
+        "firstlast"
+    )
+    result_data = json.loads(response.content[0].text)
+    assert result_data["username"] == "firstlast"
+    assert result_data["displayName"] == "First Last"

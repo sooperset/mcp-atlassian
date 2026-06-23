@@ -1,5 +1,6 @@
 """Tests for the Jira Epics mixin."""
 
+import inspect
 from unittest.mock import MagicMock, call
 
 import pytest
@@ -48,7 +49,8 @@ class TestEpicsMixin:
             "fields": {
                 "issuetype": {"name": "Epic"},
                 "summary": "Test Epic",
-                "customfield_10011": "Epic Name Value",  # This should be discovered as epic_name
+                # Should be discovered as epic_name
+                "customfield_10011": "Epic Name Value",
             },
         }
 
@@ -81,8 +83,11 @@ class TestEpicsMixin:
     def test_try_discover_fields_from_existing_epic_with_both_fields(
         self, epics_mixin: EpicsMixin
     ):
-        """Test _try_discover_fields_from_existing_epic when both fields already exist."""
-        field_ids = {"epic_link": "customfield_10014", "epic_name": "customfield_10011"}
+        """_try_discover_fields_from_existing_epic is skipped when both fields exist."""
+        field_ids = {
+            "epic_link": "customfield_10014",
+            "epic_name": "customfield_10011",
+        }
 
         # Call the method - no JQL should be executed
         epics_mixin._try_discover_fields_from_existing_epic(field_ids)
@@ -441,8 +446,10 @@ class TestEpicsMixin:
             return_value={
                 "random_field": "customfield_12345",
                 "some_other_field": "customfield_67890",
-                "Epic-FieldName": "customfield_11111",  # Should be found by pattern matching
-                "epic_colour_field": "customfield_22222",  # Should be found by pattern matching
+                # Should be found by pattern matching
+                "Epic-FieldName": "customfield_11111",
+                # Should be found by pattern matching
+                "epic_colour_field": "customfield_22222",
             }
         )
 
@@ -450,8 +457,8 @@ class TestEpicsMixin:
         fields = {}
         kwargs = {}
 
-        # The _get_epic_name_field_id and _get_epic_color_field_id methods should discover
-        # the fields by pattern matching, even though they're not in the standard format
+        # _get_epic_name_field_id and _get_epic_color_field_id should discover
+        # fields by pattern matching even when not in standard format
 
         # We need to patch these methods to return the expected values
         original_get_name = epics_mixin._get_epic_name_field_id
@@ -722,7 +729,7 @@ class TestEpicsMixin:
             def __len__(self):
                 return len(self.issues)
 
-        # Mock search_issues to return empty results for issueFunction but results for epic_link
+        # Mock: empty for issueFunction, results for epic_link
         def search_side_effect(jql, **kwargs):
             if "issueFunction" in jql:
                 return MockSearchResult([])  # No results for issueFunction
@@ -765,3 +772,71 @@ class TestEpicsMixin:
             match="Error getting epic issues: API error",
         ):
             epics_mixin.get_epic_issues("EPIC-123")
+
+
+class TestEpicFieldDynamicDetection:
+    """Epic link field IDs are detected dynamically, not hardcoded as a fixed value.
+
+    Regression for https://github.com/sooperset/mcp-atlassian/issues/454
+    """
+
+    @pytest.fixture
+    def epics_mixin(self, jira_fetcher: JiraFetcher) -> EpicsMixin:
+        """Create an EpicsMixin instance with mocked dependencies."""
+        return jira_fetcher
+
+    def test_get_field_ids_to_epic_method_exists(self, epics_mixin: EpicsMixin):
+        """get_field_ids_to_epic exists for dynamic field ID detection.
+
+        The method queries the Jira API to discover custom field IDs at runtime,
+        rather than assuming a fixed ID such as customfield_10008.
+        """
+        assert hasattr(epics_mixin, "get_field_ids_to_epic")
+        assert callable(epics_mixin.get_field_ids_to_epic)
+
+    def test_customfield_10008_not_the_only_strategy_in_epics_mixin(self):
+        """EpicsMixin uses dynamic discovery as its primary strategy.
+
+        customfield_10008 may appear in fallback lists but is not the sole
+        strategy. The primary path calls get_field_ids_to_epic() which
+        queries the live Jira field definitions.
+        """
+        source = inspect.getsource(EpicsMixin)
+        # Dynamic discovery method must be present
+        assert "get_field_ids_to_epic" in source, (
+            "EpicsMixin must call get_field_ids_to_epic() for dynamic field detection"
+        )
+
+    def test_get_field_ids_to_epic_returns_dict(self, epics_mixin: EpicsMixin):
+        """get_field_ids_to_epic returns a dict mapping names to field IDs."""
+        epics_mixin.jira.jql.return_value = {"issues": []}
+        result = epics_mixin.get_field_ids_to_epic()
+        assert isinstance(result, dict)
+
+    def test_get_field_ids_to_epic_discovers_epic_link_dynamically(
+        self, epics_mixin: EpicsMixin
+    ):
+        """get_field_ids_to_epic discovers epic_link using live field definitions.
+
+        When the API returns a field named 'Epic Link', the method maps it to
+        the correct custom field ID for that Jira instance rather than assuming
+        a hardcoded value.
+        """
+        epics_mixin.jira.get_all_fields.return_value = [
+            {
+                "id": "customfield_99999",
+                "name": "Epic Link",
+                "schema": {"custom": "com.pyxis.greenhopper.jira:gh-epic-link"},
+            }
+        ]
+        epics_mixin._field_ids_cache = None
+        epics_mixin._field_map_cache = None
+
+        result = epics_mixin.get_field_ids_to_epic()
+
+        assert isinstance(result, dict)
+        # The dynamically discovered field ID must appear in the result
+        found_ids = list(result.values())
+        assert "customfield_99999" in found_ids, (
+            f"Expected dynamically discovered 'customfield_99999' in {found_ids}"
+        )

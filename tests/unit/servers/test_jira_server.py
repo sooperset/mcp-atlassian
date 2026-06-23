@@ -146,6 +146,23 @@ def mock_jira_fetcher():
 
     mock_fetcher.update_issue.side_effect = mock_update_issue
 
+    # Configure assign_issue
+    def mock_assign_issue(issue_key, assignee=None):
+        mock_issue = MagicMock()
+        mock_issue.to_simplified_dict.return_value = {
+            "key": issue_key,
+            "summary": "Test Issue",
+            "status": {"name": "Open"},
+            "assignee": (
+                {"displayName": "Test User", "accountId": "test-account-id"}
+                if assignee
+                else None
+            ),
+        }
+        return mock_issue
+
+    mock_fetcher.assign_issue.side_effect = mock_assign_issue
+
     # Configure batch_create_issues
     def mock_batch_create_issues(issues, validate_only=False):
         if not isinstance(issues, list):
@@ -383,6 +400,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         add_comment,
         add_issues_to_sprint,
         add_worklog,
+        assign_issue,
         batch_create_issues,
         batch_create_versions,
         batch_get_changelogs,
@@ -445,6 +463,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(batch_create_issues)
     jira_sub_mcp.add_tool(batch_get_changelogs)
     jira_sub_mcp.add_tool(update_issue)
+    jira_sub_mcp.add_tool(assign_issue)
     jira_sub_mcp.add_tool(delete_issue)
     jira_sub_mcp.add_tool(add_comment)
     jira_sub_mcp.add_tool(edit_comment)
@@ -1042,8 +1061,8 @@ async def test_get_all_projects_tool(jira_client, mock_jira_fetcher):
     ]
     # Reset the mock and set specific return value for this test
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        mock_projects
     )
 
     # Test with default parameters (include_archived=False)
@@ -1091,8 +1110,8 @@ async def test_get_all_projects_tool_with_archived(jira_client, mock_jira_fetche
     ]
     # Reset the mock and set specific return value for this test
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        mock_projects
     )
 
     # Test with include_archived=True
@@ -1145,8 +1164,8 @@ async def test_get_all_projects_tool_with_projects_filter(
 
     # Set up the mock to return all projects
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: all_mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        all_mock_projects
     )
 
     # Set up the projects filter in the config
@@ -1199,8 +1218,8 @@ async def test_get_all_projects_tool_no_projects_filter(jira_client, mock_jira_f
 
     # Set up the mock to return all projects
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: all_mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        all_mock_projects
     )
 
     # Ensure no projects filter is set
@@ -1260,8 +1279,8 @@ async def test_get_all_projects_tool_case_insensitive_filter(
 
     # Set up the mock to return all projects
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: all_mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        all_mock_projects
     )
 
     # Set up projects filter with mixed case and whitespace
@@ -2430,3 +2449,277 @@ async def test_get_field_options_combined(jira_client, mock_jira_fetcher):
     # return_limit=1 caps to first match
     assert len(result) == 1
     assert result[0] == "High"
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_remote_links(jira_client, mock_jira_fetcher):
+    """get_issue with include=remote_links fetches remote links."""
+    mock_jira_fetcher.get_remote_issue_links.return_value = [
+        {
+            "id": 1,
+            "object": {
+                "url": "https://example.com",
+                "title": "Link",
+            },
+        }
+    ]
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123", "include": "remote_links"},
+    )
+    content = json.loads(response.content[0].text)
+    assert "remote_links" in content
+    assert len(content["remote_links"]) == 1
+    mock_jira_fetcher.get_remote_issue_links.assert_called_once_with("TEST-123")
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_watchers(jira_client, mock_jira_fetcher):
+    """get_issue with include=watchers fetches watchers."""
+    mock_jira_fetcher.get_issue_watchers.return_value = {
+        "watchCount": 1,
+        "watchers": [{"name": "user1"}],
+    }
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123", "include": "watchers"},
+    )
+    content = json.loads(response.content[0].text)
+    assert "watchers" in content
+    assert content["watchers"]["watchCount"] == 1
+    mock_jira_fetcher.get_issue_watchers.assert_called_once_with("TEST-123")
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_transitions_adds_expand(
+    jira_client, mock_jira_fetcher
+):
+    """get_issue with include=transitions adds to expand."""
+    await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123", "include": "transitions"},
+    )
+    call_args = mock_jira_fetcher.get_issue.call_args
+    expand_val = call_args.kwargs.get("expand", "")
+    assert "transitions" in expand_val
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_changelog_adds_expand(jira_client, mock_jira_fetcher):
+    """get_issue with include=changelog adds to expand."""
+    await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123", "include": "changelog"},
+    )
+    call_args = mock_jira_fetcher.get_issue.call_args
+    expand_val = call_args.kwargs.get("expand", "")
+    assert "changelog" in expand_val
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_multiple(jira_client, mock_jira_fetcher):
+    """get_issue with multiple include sections."""
+    mock_jira_fetcher.get_remote_issue_links.return_value = []
+    mock_jira_fetcher.get_issue_watchers.return_value = {
+        "watchCount": 0,
+    }
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {
+            "issue_key": "TEST-123",
+            "include": "remote_links,watchers,transitions,changelog",
+        },
+    )
+    content = json.loads(response.content[0].text)
+    assert "remote_links" in content
+    assert "watchers" in content
+    call_args = mock_jira_fetcher.get_issue.call_args
+    expand_val = call_args.kwargs.get("expand", "")
+    assert "transitions" in expand_val
+    assert "changelog" in expand_val
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_preserves_existing_expand(
+    jira_client, mock_jira_fetcher
+):
+    """include merges with an existing expand parameter."""
+    await jira_client.call_tool(
+        "jira_get_issue",
+        {
+            "issue_key": "TEST-123",
+            "expand": "renderedFields",
+            "include": "transitions",
+        },
+    )
+    call_args = mock_jira_fetcher.get_issue.call_args
+    expand_val = call_args.kwargs.get("expand", "")
+    assert "renderedFields" in expand_val
+    assert "transitions" in expand_val
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_none_no_enrichments(jira_client, mock_jira_fetcher):
+    """Omitting include produces no enrichment keys."""
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123"},
+    )
+    content = json.loads(response.content[0].text)
+    assert "remote_links" not in content
+    assert "watchers" not in content
+
+
+# =============================================================================
+# assign_issue tests
+# =============================================================================
+
+
+@pytest.mark.anyio
+async def test_assign_issue(jira_client, mock_jira_fetcher):
+    """Test assigning an issue to a user."""
+    response = await jira_client.call_tool(
+        "jira_assign_issue",
+        {
+            "issue_key": "TEST-123",
+            "assignee": "user@example.com",
+        },
+    )
+    content = json.loads(response.content[0].text)
+    assert content["message"] == "Issue TEST-123 assigned successfully"
+    assert "issue" in content
+    mock_jira_fetcher.assign_issue.assert_called_once_with(
+        issue_key="TEST-123", assignee="user@example.com"
+    )
+
+
+@pytest.mark.anyio
+async def test_assign_issue_unassign(jira_client, mock_jira_fetcher):
+    """Test unassigning an issue (passing None)."""
+    response = await jira_client.call_tool(
+        "jira_assign_issue",
+        {
+            "issue_key": "TEST-123",
+            "assignee": None,
+        },
+    )
+    content = json.loads(response.content[0].text)
+    assert content["message"] == "Issue TEST-123 assigned successfully"
+    mock_jira_fetcher.assign_issue.assert_called_once_with(
+        issue_key="TEST-123", assignee=None
+    )
+
+
+@pytest.mark.anyio
+async def test_assign_issue_error(jira_client, mock_jira_fetcher):
+    """Test assign_issue error handling."""
+    mock_jira_fetcher.assign_issue.side_effect = ValueError("User not found")
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_assign_issue",
+            {
+                "issue_key": "TEST-123",
+                "assignee": "nonexistent@example.com",
+            },
+        )
+    assert "User not found" in str(excinfo.value)
+
+
+# ============================================================================
+# Display-Name Feature Tests
+# ============================================================================
+
+
+@pytest.mark.anyio
+async def test_get_issue_use_display_names(jira_client, mock_jira_fetcher):
+    """Test get_issue with use_display_names=True returns display-name keys."""
+    display_name_response = {
+        "key": "TEST-123",
+        "summary": "Test Issue Summary",
+        "status": {"name": "Open"},
+        "Story Points": {"value": 5, "field_id": "customfield_10243"},
+    }
+
+    def mock_get_issue_dn(
+        issue_key,
+        fields=None,
+        expand=None,
+        comment_limit=10,
+        properties=None,
+        update_history=True,
+    ):
+        mock_issue = MagicMock()
+        mock_issue.to_simplified_dict.return_value = {
+            "key": issue_key,
+            "summary": "Test Issue Summary",
+            "status": {"name": "Open"},
+            "customfield_10243": 5,
+        }
+        mock_issue.to_display_name_dict.return_value = {
+            **display_name_response,
+            "key": issue_key,
+        }
+        return mock_issue
+
+    mock_jira_fetcher.get_issue.side_effect = mock_get_issue_dn
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123", "use_display_names": True},
+    )
+    content = json.loads(response.content[0].text)
+    assert "Story Points" in content
+    assert "customfield_10243" not in content
+
+    mock_jira_fetcher.get_issue.assert_called_once()
+    call_kwargs = mock_jira_fetcher.get_issue.call_args
+    assert call_kwargs[1]["issue_key"] == "TEST-123"
+    assert call_kwargs[1]["expand"] == "names"
+
+
+@pytest.mark.anyio
+async def test_search_use_display_names(jira_client, mock_jira_fetcher):
+    """Test search with use_display_names=True returns display-name keys."""
+    display_name_issues = [
+        {
+            "key": "PROJ-123",
+            "summary": "First issue",
+            "Story Points": {"value": 3, "field_id": "customfield_10243"},
+        },
+    ]
+
+    def mock_search_dn(jql, **kwargs):
+        mock_search_result = MagicMock()
+        mock_search_result.to_simplified_dict.return_value = {
+            "total": 1,
+            "start_at": kwargs.get("start", 0),
+            "max_results": kwargs.get("limit", 50),
+            "issues": [
+                {"key": "PROJ-123", "summary": "First issue", "customfield_10243": 3},
+            ],
+        }
+        mock_search_result.to_display_name_dict.return_value = {
+            "total": 1,
+            "start_at": kwargs.get("start", 0),
+            "max_results": kwargs.get("limit", 50),
+            "issues": display_name_issues,
+        }
+        return mock_search_result
+
+    mock_jira_fetcher.search_issues.side_effect = mock_search_dn
+
+    response = await jira_client.call_tool(
+        "jira_search",
+        {"jql": "project = TEST", "use_display_names": True},
+    )
+    content = json.loads(response.content[0].text)
+    assert content["issues"][0].get("Story Points") is not None
+    assert "customfield_10243" not in content["issues"][0]
+
+    mock_jira_fetcher.search_issues.assert_called_once()
+    call_kwargs = mock_jira_fetcher.search_issues.call_args
+    assert call_kwargs[1]["jql"] == "project = TEST"
+    assert call_kwargs[1]["expand"] == "names"
