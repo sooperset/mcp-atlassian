@@ -9,6 +9,16 @@
 
 Model Context Protocol (MCP) server for Atlassian products (Confluence and Jira). Supports both Cloud and Server/Data Center deployments.
 
+> [!NOTE]
+> **This is an internal fork of [sooperset/mcp-atlassian](https://github.com/sooperset/mcp-atlassian)** (MIT licensed — see [`LICENSE`](LICENSE)), maintained for our team.
+> It adds the following Jira tools on top of upstream:
+> - `jira_upload_attachment` — add an attachment to an issue (local path or inline base64)
+> - `jira_delete_attachment` — delete an attachment by id
+> - `jira_delete_comment` — delete a comment from an issue
+> - `jira_add_comment_with_media` — post a Jira **Cloud** comment with screenshots embedded inline (text → image → text → image)
+>
+> All original copyright and the MIT license are preserved. To sync with upstream: `git fetch upstream && git merge upstream/main`.
+
 https://github.com/user-attachments/assets/35303504-14c6-4ae4-913b-7c25ea511c3e
 
 <details>
