@@ -1,0 +1,113 @@
+==========================================================================================
+GCF Benchmark Results: mcp-atlassian
+Date: 2026-06-18 00:36 UTC
+gcf-python version: 1.0.0
+Token estimation: len(text) // 4
+==========================================================================================
+
+Dataset                         Rows   JSON tok    GCF tok    Savings    JSON ms     GCF ms
+------------------------------------------------------------------------------------------
+Jira Issues (list)                10      2,409      1,713      28.9%      0.05      0.47
+Jira Issues (list)                50     12,047      8,416      30.1%      0.15      2.10
+Jira Issues (list)               100     23,760     16,631      30.0%      0.26      4.39
+Jira Issues (list)               200     48,010     33,577      30.1%      0.60      8.91
+Jira Search Result                10      2,560      1,694      33.8%      0.04      0.45
+Jira Search Result                50     12,766      8,317      34.9%      0.14      2.15
+Jira Search Result               100     25,695     16,694      35.0%      0.28      4.45
+Jira Search Result               200     51,400     33,416      35.0%      0.56      8.73
+Confluence Pages (list)           10      1,896      1,285      32.2%      0.03      0.37
+Confluence Pages (list)           50      9,643      6,446      33.2%      0.13      1.78
+Confluence Pages (list)          100     19,114     12,753      33.3%      0.22      3.54
+Confluence Pages (list)          200     38,045     25,383      33.3%      0.44      7.05
+
+Overall: 247,345 JSON tokens -> 166,325 GCF tokens (32.8% reduction)
+
+==========================================================================================
+Sample: 3 Jira issues
+==========================================================================================
+
+--- JSON ---
+[
+  {
+    "id": "10001",
+    "key": "PROJ-1",
+    "summary": "Fix timezone handling in scheduler",
+    "url": "https://company.atlassian.net/browse/PROJ-1",
+    "description": "Detailed description for issue PROJ-1. This involves changes to the search-engine component. Expected completion by end of sprint.",
+    "status": {
+      "name": "Done",
+      "category": "In Progress"
+    },
+    "issue_type": {
+      "name": "Epic"
+    },
+    "priority": {
+      "name": "Low"
+    },
+    "project": {
+      "key": "PROJ",
+      "name": "Main Project"
+    },
+    "assignee": {
+      "display_name": "Frank...
+
+--- GCF ---
+GCF profile=generic
+## [3]{id,key,summary,url,description,status,issue_type,priority,project,assignee,reporter,labels,components,created,updated}
+@0 "10001"|PROJ-1|Fix timezone handling in scheduler|https://company.atlassian.net/browse/PROJ-1|Detailed description for issue PROJ-1. This involves changes to the search-engine component. Expected completion by end of sprint.|^|^|^|^|^|^|^|^|2026-05-01T04:08:04.000+0000|2026-06-02T01:17:04.000+0000
+.status {}
+    name=Done
+    category=In Progress
+.issue_type {}
+    name=Epic
+.priority {}
+    name=Low
+.project {}
+    key=PROJ
+    name=Main Project
+.assignee {}
+    display_name=Frank Castle
+    email=frank.castle@company.com
+.reporter {}
+    display_name=Leo Messi
+    email=leo.messi@company.com
+.labels [1]: backend
+.components [2]: data-pipeline,web-app
+@1 "10002"|PROJ-2|Add audit logging for admin actions|https://company.atlassian.net/browse/PROJ-2|Detailed description for issue PROJ-2. This involves changes to the search-engine component. Expected completion by end of sprint.|^|^|^|^|^|^|^|^|2025-08-22T15:00:04.000+0000|2026-06-07T16:24:04.000+0000
+.status {}
+    name=In Progress
+    category=In Progress
+.issue_type {}
+    name=Sub-task
+.priority {}
+    name=Lowest
+.project {}
+    key=PROJ
+    name=Main Project
+.assignee {}
+    display_name=Eve Wilson
+    email=eve.wilson@company.com
+.reporter {}
+    display_name=Bob Smith
+    email=bob.smith@company.com
+.labels [1]: database
+.components [2]: admin-panel,auth-service
+@2 "10003"|PROJ-3|Add pagination to search results API|https://company.atlassian.net/browse/PROJ-3|Detailed description for issue PROJ-3. This involves changes to the admin-panel component. Expected completion by end of sprint.|^|^|^|^|^|^|^|^|2026-06-05T06:01:04.000+0000|2026-06-16T21:56:04.000+0000
+.status {}
+    name=To Do
+    category=To Do
+.issue_type {}
+    name=Sub-task
+.priority {}
+    name=Lowest
+.project {}
+    key=PROJ
+    name=Main Project
+.assignee {}
+    display_name=Charlie Brown
+    email=charlie.brown@company.com
+.reporter {}
+    display_name=Grace Hopper
+    email=grace.hopper@company.com
+.labels [0]
+.components [1]: data-pipeline

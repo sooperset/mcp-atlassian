@@ -16,6 +16,7 @@ from mcp_atlassian.servers.dependencies import get_confluence_fetcher
 from mcp_atlassian.utils.decorators import (
     check_write_access,
 )
+from mcp_atlassian.utils.gcf_serializer import serialize
 from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
     fetch_and_encode_attachment,
@@ -121,7 +122,7 @@ async def search(
             query, limit=limit, spaces_filter=spaces_filter
         )
     search_results = [page.to_simplified_dict() for page in pages]
-    return json.dumps(search_results, indent=2, ensure_ascii=False)
+    return serialize(search_results, indent=2, ensure_ascii=False)
 
 
 @confluence_mcp.tool(
@@ -208,7 +209,7 @@ async def get_page(
             )
         except Exception as e:
             logger.error(f"Error fetching page by ID '{page_id}': {e}")
-            return json.dumps(
+            return serialize(
                 {"error": f"Failed to retrieve page by ID '{page_id}': {e}"},
                 indent=2,
                 ensure_ascii=False,
@@ -218,7 +219,7 @@ async def get_page(
             space_key, title, convert_to_markdown=convert_to_markdown
         )
         if not page_object:
-            return json.dumps(
+            return serialize(
                 {
                     "error": f"Page with title '{title}' not found in space '{space_key}'."
                 },
@@ -231,7 +232,7 @@ async def get_page(
         )
 
     if not page_object:
-        return json.dumps(
+        return serialize(
             {"error": "Page not found with the provided identifiers."},
             indent=2,
             ensure_ascii=False,
@@ -242,7 +243,7 @@ async def get_page(
     else:
         result = {"content": {"value": page_object.content}}
 
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @confluence_mcp.tool(
@@ -342,7 +343,7 @@ async def get_page_children(
         )
         result = {"error": f"Failed to get child pages: {e}"}
 
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @confluence_mcp.tool(
@@ -394,7 +395,7 @@ async def get_space_page_tree(
             f"Results truncated at {limit} pages. Increase limit to see more."
         )
 
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @confluence_mcp.tool(
@@ -426,7 +427,7 @@ async def get_comments(
     confluence_fetcher = await get_confluence_fetcher(ctx)
     comments = confluence_fetcher.get_page_comments(page_id)
     formatted_comments = [comment.to_simplified_dict() for comment in comments]
-    return json.dumps(formatted_comments, indent=2, ensure_ascii=False)
+    return serialize(formatted_comments, indent=2, ensure_ascii=False)
 
 
 @confluence_mcp.tool(
@@ -459,7 +460,7 @@ async def get_labels(
     confluence_fetcher = await get_confluence_fetcher(ctx)
     labels = confluence_fetcher.get_page_labels(page_id)
     formatted_labels = [label.to_simplified_dict() for label in labels]
-    return json.dumps(formatted_labels, indent=2, ensure_ascii=False)
+    return serialize(formatted_labels, indent=2, ensure_ascii=False)
 
 
 @confluence_mcp.tool(
@@ -512,7 +513,7 @@ async def add_label(
     confluence_fetcher = await get_confluence_fetcher(ctx)
     labels = confluence_fetcher.add_page_label(page_id, name)
     formatted_labels = [label.to_simplified_dict() for label in labels]
-    return json.dumps(formatted_labels, indent=2, ensure_ascii=False)
+    return serialize(formatted_labels, indent=2, ensure_ascii=False)
 
 
 @confluence_mcp.tool(
@@ -622,7 +623,7 @@ async def create_page(
     result = page.to_simplified_dict()
     if not include_content:
         result.pop("content", None)
-    return json.dumps(
+    return serialize(
         {"message": "Page created successfully", "page": result},
         indent=2,
         ensure_ascii=False,
@@ -738,7 +739,7 @@ async def update_page(
     page_data = updated_page.to_simplified_dict()
     if not include_content:
         page_data.pop("content", None)
-    return json.dumps(
+    return serialize(
         {"message": "Page updated successfully", "page": page_data},
         indent=2,
         ensure_ascii=False,
@@ -787,7 +788,7 @@ async def delete_page(
             "error": str(e),
         }
 
-    return json.dumps(response, indent=2, ensure_ascii=False)
+    return serialize(response, indent=2, ensure_ascii=False)
 
 
 @confluence_mcp.tool(
@@ -852,7 +853,7 @@ async def move_page(
             position=position,
         )
         page_data = moved_page.to_simplified_dict()
-        return json.dumps(
+        return serialize(
             {"message": "Page moved successfully", "page": page_data},
             indent=2,
             ensure_ascii=False,
@@ -866,7 +867,7 @@ async def move_page(
             "message": f"Error moving page {page_id}",
             "error": str(e),
         }
-        return json.dumps(response, indent=2, ensure_ascii=False)
+        return serialize(response, indent=2, ensure_ascii=False)
 
 
 @confluence_mcp.tool(
@@ -917,7 +918,7 @@ async def add_comment(
             "error": str(e),
         }
 
-    return json.dumps(response, indent=2, ensure_ascii=False)
+    return serialize(response, indent=2, ensure_ascii=False)
 
 
 @confluence_mcp.tool(
@@ -970,7 +971,7 @@ async def reply_to_comment(
             "error": str(e),
         }
 
-    return json.dumps(response, indent=2, ensure_ascii=False)
+    return serialize(response, indent=2, ensure_ascii=False)
 
 
 @confluence_mcp.tool(
@@ -1038,10 +1039,10 @@ async def search_user(
             query, limit=limit, group_name=group_name
         )
         search_results = [user.to_simplified_dict() for user in user_results]
-        return json.dumps(search_results, indent=2, ensure_ascii=False)
+        return serialize(search_results, indent=2, ensure_ascii=False)
     except MCPAtlassianAuthenticationError as e:
         logger.error(f"Authentication error during user search: {e}", exc_info=False)
-        return json.dumps(
+        return serialize(
             {
                 "error": "Authentication failed. Please check your credentials.",
                 "details": str(e),
@@ -1051,7 +1052,7 @@ async def search_user(
         )
     except Exception as e:
         logger.error(f"Error searching users: {str(e)}")
-        return json.dumps(
+        return serialize(
             {
                 "error": f"An unexpected error occurred while searching for users: {str(e)}"
             },
@@ -1114,10 +1115,10 @@ async def get_page_history(
             convert_to_markdown=convert_to_markdown,
         )
         result = page.to_simplified_dict()
-        return json.dumps(result, indent=2, ensure_ascii=False)
+        return serialize(result, indent=2, ensure_ascii=False)
     except MCPAtlassianAuthenticationError as e:
         logger.error(f"Authentication error getting page history: {e}")
-        return json.dumps(
+        return serialize(
             {
                 "error": "Authentication failed. Please check your credentials.",
                 "details": str(e),
@@ -1129,7 +1130,7 @@ async def get_page_history(
         logger.error(
             f"Error getting page history for page {page_id} version {version}: {e}"
         )
-        return json.dumps(
+        return serialize(
             {
                 "error": f"Failed to get page history: {e}",
                 "page_id": page_id,
@@ -1189,10 +1190,10 @@ async def get_page_diff(
             from_version=from_version,
             to_version=to_version,
         )
-        return json.dumps(result, indent=2, ensure_ascii=False)
+        return serialize(result, indent=2, ensure_ascii=False)
     except MCPAtlassianAuthenticationError as e:
         logger.error(f"Authentication error getting page diff: {e}")
-        return json.dumps(
+        return serialize(
             {
                 "error": "Authentication failed. Please check your credentials.",
                 "details": str(e),
@@ -1205,7 +1206,7 @@ async def get_page_diff(
             f"Error getting diff for page {page_id} "
             f"(v{from_version} -> v{to_version}): {e}"
         )
-        return json.dumps(
+        return serialize(
             {
                 "error": f"Failed to get page diff: {e}",
                 "page_id": page_id,
@@ -1257,10 +1258,10 @@ async def get_page_views(
             page_id=page_id,
             include_title=include_title,
         )
-        return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+        return serialize(result.to_simplified_dict(), indent=2, ensure_ascii=False)
     except MCPAtlassianAuthenticationError as e:
         logger.error(f"Authentication error getting page views: {e}")
-        return json.dumps(
+        return serialize(
             {
                 "error": "Authentication failed. Please check your credentials.",
                 "details": str(e),
@@ -1270,14 +1271,14 @@ async def get_page_views(
         )
     except ValueError as e:
         logger.error(f"Error getting page views for {page_id}: {e}")
-        return json.dumps(
+        return serialize(
             {"error": str(e), "page_id": page_id},
             indent=2,
             ensure_ascii=False,
         )
     except Exception as e:
         logger.error(f"Unexpected error getting page views for {page_id}: {e}")
-        return json.dumps(
+        return serialize(
             {"error": f"Failed to get page views: {e}", "page_id": page_id},
             indent=2,
             ensure_ascii=False,
@@ -1362,7 +1363,7 @@ async def upload_attachment(
         minor_edit=minor_edit,
     )
 
-    return json.dumps(
+    return serialize(
         {"message": "Attachment uploaded successfully", "attachment": result},
         indent=2,
         ensure_ascii=False,
@@ -1448,7 +1449,7 @@ async def upload_attachments(
         minor_edit=minor_edit,
     )
 
-    return json.dumps(
+    return serialize(
         {
             "message": f"Uploaded {len(results)} attachment(s) successfully",
             "attachments": results,
@@ -1560,7 +1561,7 @@ async def get_attachments(
         media_type=media_type,
     )
 
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return serialize(result, indent=2, ensure_ascii=False)
 
 
 @confluence_mcp.tool(
@@ -1908,7 +1909,7 @@ async def delete_attachment(
 
     confluence_fetcher.delete_attachment(attachment_id=attachment_id)
 
-    return json.dumps(
+    return serialize(
         {
             "message": "Attachment deleted successfully",
             "attachment_id": attachment_id,
