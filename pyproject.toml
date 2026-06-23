@@ -37,7 +37,7 @@ name = "sooperset"
 email = "soomiles.dev@gmail.com"
 
 [project.optional-dependencies]
-gcf = ["gcf-python>=2.0.0"]
+gcf = ["gcf-python==2.2.1"]
 
 [build-system]
 requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]
