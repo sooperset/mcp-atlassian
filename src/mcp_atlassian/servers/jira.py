@@ -7,7 +7,7 @@ from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
 from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
@@ -1738,7 +1738,13 @@ async def add_comment(
             pattern=ISSUE_KEY_PATTERN,
         ),
     ],
-    body: Annotated[str, Field(description="Comment text in Markdown format")],
+    body: Annotated[
+        str,
+        Field(
+            description="Comment text in Markdown format",
+            validation_alias=AliasChoices("body", "comment"),
+        ),
+    ],
     visibility: Annotated[
         str | None,
         Field(
