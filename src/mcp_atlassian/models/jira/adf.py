@@ -14,21 +14,26 @@ def _parse_inline_formatting(text: str) -> list[dict[str, Any]]:
     """Parse inline Markdown formatting into ADF inline nodes.
 
     Handles: bold (**), italic (*), inline code (`), links ([text](url)),
-    and strikethrough (~~).
+    strikethrough (~~), and user mentions (``[~accountid:<id>]`` or the
+    ``@[Display Name](<id>)`` form), which become ADF ``mention`` nodes so
+    Jira Cloud renders a clickable @mention and notifies the user.
 
     Args:
         text: Raw text potentially containing inline Markdown formatting.
 
     Returns:
-        List of ADF inline nodes (text nodes with optional marks).
+        List of ADF inline nodes (text/mention nodes with optional marks).
     """
     if not text:
         return []
 
     nodes: list[dict[str, Any]] = []
-    # Pattern order matters: bold before italic, code before others
+    # Pattern order matters: mentions before links (so ``@[name](id)`` is not
+    # parsed as a link), bold before italic, code before others.
     inline_re = re.compile(
-        r"`(?P<code_inner>[^`]+)`"
+        r"\[~accountid:(?P<mention_acct>[^\]]+)\]"
+        r"|@\[(?P<mention_name>[^\]]+)\]\((?P<mention_id>[^)]+)\)"
+        r"|`(?P<code_inner>[^`]+)`"
         r"|\*\*(?P<bold_inner>.+?)\*\*"
         r"|~~(?P<strike_inner>.+?)~~"
         r"|\[(?P<link_text>[^\]]+)\]\((?P<link_href>[^)]+)\)"
@@ -43,7 +48,24 @@ def _parse_inline_formatting(text: str) -> list[dict[str, Any]]:
             if plain:
                 nodes.append({"type": "text", "text": plain})
 
-        if m.group("code_inner") is not None:
+        if m.group("mention_acct") is not None:
+            nodes.append(
+                {
+                    "type": "mention",
+                    "attrs": {"id": m.group("mention_acct")},
+                }
+            )
+        elif m.group("mention_id") is not None:
+            nodes.append(
+                {
+                    "type": "mention",
+                    "attrs": {
+                        "id": m.group("mention_id"),
+                        "text": f"@{m.group('mention_name')}",
+                    },
+                }
+            )
+        elif m.group("code_inner") is not None:
             nodes.append(
                 {
                     "type": "text",
@@ -272,6 +294,65 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
         doc["content"].append({"type": "paragraph", "content": []})
 
     return doc
+
+
+def build_media_comment_adf(segments: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build an ADF document interleaving text and inline media (images).
+
+    Used to compose a Jira Cloud comment whose body mixes rich text with
+    inline screenshots, e.g. text -> image -> text -> image.
+
+    Args:
+        segments: Ordered list of segment dicts. Each is either:
+            ``{"type": "text", "text": "<markdown>"}`` — converted to ADF
+            paragraphs/lists via :func:`markdown_to_adf`; or
+            ``{"type": "media", "media_id": "<uuid>"}`` — a Media Services
+            file UUID (NOT the REST attachment id) rendered as an inline
+            ``mediaSingle`` node. Media segments may also carry integer
+            ``width``/``height`` (pixel dimensions); when present they are
+            written to the ``media`` node so Jira Cloud renders the image
+            reliably (the ADF spec warns the media "isn't displayed"
+            without dimensions inside ``mediaSingle``).
+
+    Returns:
+        An ADF document dict (``version``/``type``/``content``).
+    """
+    content: list[dict[str, Any]] = []
+
+    for segment in segments:
+        seg_type = segment.get("type")
+        if seg_type == "text":
+            sub_doc = markdown_to_adf(segment.get("text", ""))
+            content.extend(sub_doc.get("content", []))
+        elif seg_type == "media":
+            media_attrs: dict[str, Any] = {
+                "id": segment.get("media_id"),
+                "type": "file",
+                "collection": "",
+            }
+            width = segment.get("width")
+            height = segment.get("height")
+            if (
+                isinstance(width, int)
+                and isinstance(height, int)
+                and width > 0
+                and height > 0
+            ):
+                media_attrs["width"] = width
+                media_attrs["height"] = height
+            content.append(
+                {
+                    "type": "mediaSingle",
+                    "attrs": {"layout": "center"},
+                    "content": [{"type": "media", "attrs": media_attrs}],
+                }
+            )
+
+    # ADF docs must contain at least one node.
+    if not content:
+        content.append({"type": "paragraph", "content": []})
+
+    return {"version": 1, "type": "doc", "content": content}
 
 
 def adf_to_text(adf_content: dict | list | str | None) -> str | None:

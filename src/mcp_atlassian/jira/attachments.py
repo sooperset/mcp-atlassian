@@ -1,19 +1,31 @@
 """Attachment operations for Jira API."""
 
+import io
 import logging
 import mimetypes
 import os
+import re
 from pathlib import Path
 from typing import Any
 
 from ..models.jira import JiraAttachment
 from ..utils.io import validate_safe_path
-from ..utils.media import ATTACHMENT_MAX_BYTES
+from ..utils.media import ATTACHMENT_MAX_BYTES, get_image_dimensions
 from .client import JiraClient
 from .protocols import AttachmentsOperationsProto
 
 # Configure logging
 logger = logging.getLogger("mcp-jira")
+
+# Jira Cloud's attachment-content endpoint redirects to the Media Services
+# download URL (e.g. ``https://api.media.atlassian.com/file/{uuid}/binary``).
+# The media file UUID is the path segment after ``/file/``. Match on this
+# fragment only — the host varies (api.media.atlassian.com, api-gev2.*, and
+# Forge outbound proxies all appear), so anchoring on the host is fragile.
+_MEDIA_FILE_UUID_RE = re.compile(
+    r"/file/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+)
 
 
 class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
@@ -467,3 +479,264 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             "uploaded": uploaded,
             "failed": failed,
         }
+
+    @staticmethod
+    def _extract_attachment_id(response: Any) -> str | None:
+        """Extract the attachment id from a Jira attachments API response.
+
+        The ``issue/{key}/attachments`` endpoint returns a list of attachment
+        objects, but some code paths/mocks return a single dict. Handle both.
+
+        Args:
+            response: The raw response from the attachments endpoint.
+
+        Returns:
+            The attachment id as a string, or None if it cannot be determined.
+        """
+        item: Any = None
+        if isinstance(response, list) and response:
+            item = response[0]
+        elif isinstance(response, dict):
+            item = response
+        if isinstance(item, dict):
+            attachment_id = item.get("id")
+            return str(attachment_id) if attachment_id is not None else None
+        return None
+
+    def upload_attachment_content(
+        self, issue_key: str, filename: str, content: bytes
+    ) -> dict[str, Any]:
+        """
+        Upload an attachment to a Jira issue from in-memory bytes.
+
+        Unlike :meth:`upload_attachment`, this does not require filesystem
+        access, so it works for remote/stdio servers and for content the LLM
+        generates inline (passed as base64 by the server layer).
+
+        Args:
+            issue_key: The Jira issue key (e.g., 'PROJ-123')
+            filename: The name to give the attachment in Jira
+            content: The raw bytes of the file to upload
+
+        Returns:
+            A dictionary with upload result information
+        """
+        if not issue_key:
+            logger.error("No issue key provided for attachment upload")
+            return {"success": False, "error": "No issue key provided"}
+
+        if not filename:
+            logger.error("No filename provided for attachment upload")
+            return {"success": False, "error": "No filename provided"}
+
+        if len(content) > ATTACHMENT_MAX_BYTES:
+            msg = (
+                f"Attachment '{filename}' is {len(content)} bytes which "
+                "exceeds the 50 MB limit."
+            )
+            logger.error(msg)
+            return {"success": False, "error": msg}
+
+        try:
+            safe_filename = os.path.basename(filename)
+            logger.info(
+                f"Uploading in-memory attachment '{safe_filename}' "
+                f"({len(content)} bytes) to issue {issue_key}"
+            )
+            # A named buffer makes requests send the correct multipart filename.
+            buffer = io.BytesIO(content)
+            buffer.name = safe_filename
+            response = self.jira.add_attachment_object(issue_key, buffer)
+
+            result: dict[str, Any] = {
+                "success": True,
+                "issue_key": issue_key,
+                "filename": safe_filename,
+                "size": len(content),
+                "id": self._extract_attachment_id(response),
+            }
+            # Surface pixel dimensions for images so callers embedding the
+            # attachment inline (ADF media nodes) can size it correctly.
+            dimensions = get_image_dimensions(content)
+            if dimensions is not None:
+                result["width"], result["height"] = dimensions
+            return result
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Error uploading attachment: {error_msg}")
+            return {"success": False, "error": error_msg}
+
+    def delete_attachment(self, attachment_id: str) -> dict[str, Any]:
+        """
+        Delete a Jira attachment by its ID.
+
+        Args:
+            attachment_id: The numeric ID of the attachment to delete
+
+        Returns:
+            A dictionary describing the result of the deletion
+        """
+        if not attachment_id:
+            logger.error("No attachment ID provided for deletion")
+            return {"success": False, "error": "No attachment ID provided"}
+
+        try:
+            logger.info(f"Deleting attachment {attachment_id}")
+            self.jira.remove_attachment(attachment_id)
+            return {
+                "success": True,
+                "attachment_id": attachment_id,
+                "message": f"Attachment {attachment_id} deleted successfully",
+            }
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Error deleting attachment {attachment_id}: {error_msg}")
+            return {
+                "success": False,
+                "attachment_id": attachment_id,
+                "error": error_msg,
+            }
+
+    def upload_attachment_from_path(
+        self, issue_key: str, file_path: str
+    ) -> dict[str, Any]:
+        """
+        Upload a local file to a Jira issue, returning a reliable attachment id.
+
+        Reads the file into memory and delegates to
+        :meth:`upload_attachment_content`, so the returned ``id`` is correct
+        (the legacy :meth:`upload_attachment` cannot report it because the
+        attachments endpoint returns a list).
+
+        Any absolute path is accepted (e.g. screenshots under ``/tmp`` or
+        ``/var/folders``); unlike the download helpers this read is not
+        confined to the working directory, since uploading is an explicit,
+        operator-initiated action.
+
+        Args:
+            issue_key: The Jira issue key (e.g., 'PROJ-123')
+            file_path: Path to the local file to upload
+
+        Returns:
+            A dictionary with upload result information
+        """
+        if not file_path:
+            logger.error("No file path provided for attachment upload")
+            return {"success": False, "error": "No file path provided"}
+
+        try:
+            if not os.path.isabs(file_path):
+                file_path = os.path.abspath(file_path)
+            if not os.path.exists(file_path):
+                logger.error(f"File not found: {file_path}")
+                return {"success": False, "error": f"File not found: {file_path}"}
+            with open(file_path, "rb") as fh:
+                content = fh.read()
+            return self.upload_attachment_content(
+                issue_key, os.path.basename(file_path), content
+            )
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Error uploading attachment from path: {error_msg}")
+            return {"success": False, "error": error_msg}
+
+    @staticmethod
+    def _extract_media_file_uuid(text: str | None) -> str | None:
+        """Return the media file UUID from a media-download URL, if present."""
+        if not text:
+            return None
+        match = _MEDIA_FILE_UUID_RE.search(text)
+        return match.group(1) if match else None
+
+    def get_attachment_media_id(self, attachment_id: str) -> str | None:
+        """
+        Resolve the Media Services file UUID for an uploaded attachment.
+
+        Inline ADF ``media`` nodes require the Media Services UUID, which
+        differs from the REST attachment id. Jira Cloud exposes it only
+        indirectly: the ``attachment/content/{id}`` endpoint redirects to the
+        media download URL (``.../file/{uuid}/binary``), and the UUID is the
+        ``/file/`` path segment.
+
+        Resolution is attempted in two passes:
+
+        1. Fast path — request the endpoint *without* following the redirect
+           and read the UUID from the ``Location`` header. This is the
+           documented single-hop behaviour.
+        2. Fallback — when the first ``Location`` is not the media URL (e.g.
+           behind the OAuth gateway ``api.atlassian.com/ex/jira/{cloudId}``, a
+           corporate proxy, or a multi-hop redirect), follow the whole chain
+           and scan every hop's URL for the ``/file/{uuid}`` fragment.
+           ``requests`` strips the ``Authorization`` header on cross-host
+           redirects, so following to the media host leaks no credentials.
+
+        Args:
+            attachment_id: The REST attachment id returned when uploading
+
+        Returns:
+            The media UUID string, or None if it cannot be resolved
+        """
+        if not attachment_id:
+            return None
+
+        # resource_url may return a path RELATIVE to the API base depending on
+        # the atlassian-python-api version. ``_session.get`` needs an absolute
+        # URL or requests raises ``MissingSchema``. Join against the base the
+        # library itself uses (``self.jira.url``) so the OAuth gateway host
+        # (``api.atlassian.com/ex/jira/{cloudId}``) is honoured too.
+        resource = self.jira.resource_url(
+            f"attachment/content/{attachment_id}", api_version="3"
+        )
+        if resource.startswith(("http://", "https://")):
+            url = resource
+        else:
+            url = f"{self.jira.url.rstrip('/')}/{resource.lstrip('/')}"
+
+        # --- Pass 1: documented single-hop redirect (no follow). ---
+        first_status: int | str = "unknown"
+        first_location = ""
+        try:
+            response = self.jira._session.get(url, allow_redirects=False, stream=True)
+            first_status = getattr(response, "status_code", "unknown")
+            first_location = response.headers.get("Location", "")
+            response.close()
+            media_id = self._extract_media_file_uuid(first_location)
+            if media_id:
+                return media_id
+        except Exception:
+            # Don't swallow the real cause: log the full traceback, then let
+            # the redirect-chain pass run (and surface any error it hits).
+            logger.warning(
+                "Media-id resolution pass 1 failed for attachment %s "
+                "(url=%s); trying the redirect chain.",
+                attachment_id,
+                url,
+                exc_info=True,
+            )
+
+        # --- Pass 2: follow the full redirect chain and scan every hop. ---
+        # A hard error here is intentionally NOT caught so the caller reports
+        # the real reason (e.g. a bad URL or network failure) rather than a
+        # vague "could not resolve".
+        followed = self.jira._session.get(url, allow_redirects=True, stream=True)
+        candidates: list[str] = []
+        for hop in followed.history or []:
+            candidates.append(hop.headers.get("Location", ""))
+            candidates.append(getattr(hop, "url", "") or "")
+        candidates.append(getattr(followed, "url", "") or "")
+        followed.close()
+        for candidate in candidates:
+            media_id = self._extract_media_file_uuid(candidate)
+            if media_id:
+                return media_id
+
+        logger.error(
+            "Could not resolve the media id for attachment %s: HTTP %s and no "
+            "hop exposed a '/file/{uuid}' media URL (first-hop Location: %s). "
+            "The instance may route attachment content through a gateway/proxy "
+            "that hides the media URL.",
+            attachment_id,
+            first_status,
+            (first_location[:120] or "<none>"),
+        )
+        return None

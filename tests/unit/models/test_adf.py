@@ -10,7 +10,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.mcp_atlassian.models.jira.adf import adf_to_text, markdown_to_adf
+from src.mcp_atlassian.models.jira.adf import (
+    adf_to_text,
+    build_media_comment_adf,
+    markdown_to_adf,
+)
 
 
 class TestAdfToText:
@@ -433,6 +437,50 @@ class TestMarkdownToAdf:
         link_mark = next(m for m in link_nodes[0]["marks"] if m["type"] == "link")
         assert link_mark["attrs"]["href"] == "https://example.com"
 
+    # -- Mentions -----------------------------------------------------------
+
+    def test_accountid_mention_becomes_mention_node(self):
+        """[~accountid:<id>] produces an ADF mention node, not text."""
+        result = markdown_to_adf("Hi [~accountid:712020:3420e1b4-xxxx] there")
+        para = result["content"][0]
+        mentions = [n for n in para["content"] if n["type"] == "mention"]
+        assert len(mentions) == 1
+        assert mentions[0]["attrs"]["id"] == "712020:3420e1b4-xxxx"
+        # The literal wiki syntax must not survive as a text node.
+        texts = " ".join(n.get("text", "") for n in para["content"])
+        assert "accountid" not in texts
+
+    def test_accountid_mention_at_line_start(self):
+        """A leading mention is converted and not markdown-escaped."""
+        result = markdown_to_adf("[~accountid:abc-123] ping")
+        para = result["content"][0]
+        assert para["content"][0]["type"] == "mention"
+        assert para["content"][0]["attrs"]["id"] == "abc-123"
+        texts = "".join(n.get("text", "") for n in para["content"])
+        assert "\\" not in texts
+
+    def test_named_mention_becomes_mention_node(self):
+        """@[Display Name](<id>) produces a mention node with text attr."""
+        result = markdown_to_adf("ping @[John Doe](5b10ac8d82e05) please")
+        para = result["content"][0]
+        mentions = [n for n in para["content"] if n["type"] == "mention"]
+        assert len(mentions) == 1
+        assert mentions[0]["attrs"]["id"] == "5b10ac8d82e05"
+        assert mentions[0]["attrs"]["text"] == "@John Doe"
+
+    def test_plain_link_not_treated_as_mention(self):
+        """A normal [text](url) link is unaffected by mention handling."""
+        result = markdown_to_adf("see [docs](https://example.com)")
+        para = result["content"][0]
+        assert not any(n["type"] == "mention" for n in para["content"])
+        link_nodes = [
+            n
+            for n in para["content"]
+            if n["type"] == "text"
+            and any(m["type"] == "link" for m in n.get("marks", []))
+        ]
+        assert link_nodes[0]["text"] == "docs"
+
     # -- Code blocks --------------------------------------------------------
 
     def test_code_block_with_lang(self):
@@ -664,3 +712,69 @@ class TestMarkdownToJiraDispatch:
         """Server/DC path with empty string returns empty string."""
         result = server_client._markdown_to_jira("")
         assert result == ""
+
+
+class TestBuildMediaCommentAdf:
+    """Tests for build_media_comment_adf (inline text + media composition)."""
+
+    def test_interleaves_text_and_media_in_order(self):
+        """text -> media -> text -> media renders in the same order."""
+        segments = [
+            {"type": "text", "text": "Before"},
+            {"type": "media", "media_id": "uuid-1"},
+            {"type": "text", "text": "Between"},
+            {"type": "media", "media_id": "uuid-2"},
+        ]
+        doc = build_media_comment_adf(segments)
+
+        assert doc["version"] == 1
+        assert doc["type"] == "doc"
+        node_types = [n["type"] for n in doc["content"]]
+        assert node_types == ["paragraph", "mediaSingle", "paragraph", "mediaSingle"]
+
+    def test_media_node_structure(self):
+        """media segment builds a mediaSingle > media node with file attrs."""
+        doc = build_media_comment_adf([{"type": "media", "media_id": "abc-123"}])
+        media_single = doc["content"][0]
+        assert media_single["type"] == "mediaSingle"
+        media = media_single["content"][0]
+        assert media["type"] == "media"
+        assert media["attrs"] == {
+            "id": "abc-123",
+            "type": "file",
+            "collection": "",
+        }
+
+    def test_media_node_includes_dimensions_when_present(self):
+        """Integer width/height are written to the media node attrs."""
+        doc = build_media_comment_adf(
+            [{"type": "media", "media_id": "abc-123", "width": 800, "height": 600}]
+        )
+        media = doc["content"][0]["content"][0]
+        assert media["attrs"] == {
+            "id": "abc-123",
+            "type": "file",
+            "collection": "",
+            "width": 800,
+            "height": 600,
+        }
+
+    def test_media_node_omits_invalid_dimensions(self):
+        """Missing/zero/None dimensions leave the media node without them."""
+        doc = build_media_comment_adf(
+            [{"type": "media", "media_id": "abc-123", "width": 0, "height": None}]
+        )
+        media = doc["content"][0]["content"][0]
+        assert media["attrs"] == {"id": "abc-123", "type": "file", "collection": ""}
+
+    def test_text_segment_uses_markdown(self):
+        """Text segments are converted through markdown_to_adf."""
+        doc = build_media_comment_adf([{"type": "text", "text": "# Title"}])
+        heading = doc["content"][0]
+        assert heading["type"] == "heading"
+
+    def test_empty_segments_yield_valid_doc(self):
+        """An empty segment list still yields a valid (non-empty) ADF doc."""
+        doc = build_media_comment_adf([])
+        assert doc["type"] == "doc"
+        assert doc["content"] == [{"type": "paragraph", "content": []}]
