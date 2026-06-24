@@ -188,3 +188,31 @@ class TestMainTransportSelection:
                             assert (
                                 mock_exit.call_args_list[1][0][0] == 0
                             )  # Finally exit
+
+    def test_deprecated_secret_cli_options_emit_warning(self):
+        """Deprecated secret flags should emit migration warnings."""
+        mock_logger = MagicMock()
+
+        with patch("mcp_atlassian.setup_logging", return_value=mock_logger):
+            with patch("asyncio.run"):
+                with patch.dict("os.environ", {"TRANSPORT": "stdio"}):
+                    with patch(
+                        "sys.argv",
+                        [
+                            "mcp-atlassian",
+                            "--jira-token",
+                            "secret-token",
+                        ],
+                    ):
+                        try:
+                            main()
+                        except SystemExit:
+                            pass
+
+        warning_calls = [call.args for call in mock_logger.warning.call_args_list]
+        assert any(
+            len(args) >= 2
+            and "--%s is deprecated" in str(args[0])
+            and args[1] == "jira-token"
+            for args in warning_calls
+        )
