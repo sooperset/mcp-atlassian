@@ -12,14 +12,63 @@ from datetime import datetime, timezone
 from typing import Any
 
 _MEDIA_NODE_TYPES = frozenset({"media", "mediaSingle", "mediaGroup"})
+_JIRA_ISSUE_KEY_RE = re.compile(r"(?<![A-Z0-9_/])([A-Z][A-Z0-9_]+-\d+)(?![A-Z0-9_])")
 
 
-def _parse_inline_formatting(text: str) -> list[dict[str, Any]]:
+def _append_text_nodes(
+    nodes: list[dict[str, Any]],
+    text: str,
+    jira_base_url: str = "",
+    marks: list[dict[str, Any]] | None = None,
+) -> None:
+    """Append text nodes, linking Jira issue keys when a base URL is known."""
+    if not text:
+        return
+
+    normalized_base_url = jira_base_url.rstrip("/")
+    if not normalized_base_url:
+        node: dict[str, Any] = {"type": "text", "text": text}
+        if marks:
+            node["marks"] = marks
+        nodes.append(node)
+        return
+
+    pos = 0
+    for match in _JIRA_ISSUE_KEY_RE.finditer(text):
+        if match.start() > pos:
+            node = {"type": "text", "text": text[pos : match.start()]}
+            if marks:
+                node["marks"] = marks
+            nodes.append(node)
+
+        issue_key = match.group(1)
+        link_marks = [
+            *(marks or []),
+            {
+                "type": "link",
+                "attrs": {"href": f"{normalized_base_url}/browse/{issue_key}"},
+            },
+        ]
+        nodes.append({"type": "text", "text": issue_key, "marks": link_marks})
+        pos = match.end()
+
+    if pos < len(text):
+        node = {"type": "text", "text": text[pos:]}
+        if marks:
+            node["marks"] = marks
+        nodes.append(node)
+
+
+def _parse_inline_formatting(
+    text: str, jira_base_url: str = ""
+) -> list[dict[str, Any]]:
     """Parse inline Markdown formatting into ADF inline nodes.
 
     Handles: bold (**), italic (*), inline code (`), links ([text](url)),
     strikethrough (~~), and Jira-flavored user mentions
     ([~accountid:ACCOUNT_ID] or @[Display Name](accountid:ACCOUNT_ID)).
+
+    Bare Jira issue keys are converted to links when ``jira_base_url`` is set.
 
     The [~accountid:...] mention syntax mirrors what Jira's v2 wiki text
     returns when a real ADF mention is read back, so the read and write paths
@@ -28,6 +77,7 @@ def _parse_inline_formatting(text: str) -> list[dict[str, Any]]:
 
     Args:
         text: Raw text potentially containing inline Markdown formatting.
+        jira_base_url: Jira base URL used to link bare issue keys.
 
     Returns:
         List of ADF inline nodes (text nodes with optional marks, plus
@@ -56,8 +106,7 @@ def _parse_inline_formatting(text: str) -> list[dict[str, Any]]:
         # Add any plain text before this match
         if m.start() > pos:
             plain = text[pos : m.start()]
-            if plain:
-                nodes.append({"type": "text", "text": plain})
+            _append_text_nodes(nodes, plain, jira_base_url)
 
         if m.group("wiki_mention_id") is not None:
             nodes.append(
@@ -85,20 +134,18 @@ def _parse_inline_formatting(text: str) -> list[dict[str, Any]]:
                 }
             )
         elif m.group("bold_inner") is not None:
-            nodes.append(
-                {
-                    "type": "text",
-                    "text": m.group("bold_inner"),
-                    "marks": [{"type": "strong"}],
-                }
+            _append_text_nodes(
+                nodes,
+                m.group("bold_inner"),
+                jira_base_url,
+                [{"type": "strong"}],
             )
         elif m.group("strike_inner") is not None:
-            nodes.append(
-                {
-                    "type": "text",
-                    "text": m.group("strike_inner"),
-                    "marks": [{"type": "strike"}],
-                }
+            _append_text_nodes(
+                nodes,
+                m.group("strike_inner"),
+                jira_base_url,
+                [{"type": "strike"}],
             )
         elif m.group("link_text") is not None:
             nodes.append(
@@ -114,12 +161,11 @@ def _parse_inline_formatting(text: str) -> list[dict[str, Any]]:
                 }
             )
         elif m.group("italic_inner") is not None:
-            nodes.append(
-                {
-                    "type": "text",
-                    "text": m.group("italic_inner"),
-                    "marks": [{"type": "em"}],
-                }
+            _append_text_nodes(
+                nodes,
+                m.group("italic_inner"),
+                jira_base_url,
+                [{"type": "em"}],
             )
 
         pos = m.end()
@@ -127,39 +173,44 @@ def _parse_inline_formatting(text: str) -> list[dict[str, Any]]:
     # Remaining plain text after last match
     if pos < len(text):
         remaining = text[pos:]
-        if remaining:
-            nodes.append({"type": "text", "text": remaining})
+        _append_text_nodes(nodes, remaining, jira_base_url)
 
     # If no patterns matched, return the whole thing as plain text
     if not nodes and text:
-        nodes.append({"type": "text", "text": text})
+        _append_text_nodes(nodes, text, jira_base_url)
 
     return nodes
 
 
-def _make_paragraph(text: str) -> dict[str, Any]:
+def _make_paragraph(text: str, jira_base_url: str = "") -> dict[str, Any]:
     """Create an ADF paragraph node from text with inline formatting."""
-    content = _parse_inline_formatting(text)
+    content = _parse_inline_formatting(text, jira_base_url)
     if not content:
         content = [{"type": "text", "text": ""}]
     return {"type": "paragraph", "content": content}
 
 
-def _make_list_item(text: str) -> dict[str, Any]:
+def _make_list_item(text: str, jira_base_url: str = "") -> dict[str, Any]:
     """Create an ADF listItem node wrapping a paragraph."""
-    return {"type": "listItem", "content": [_make_paragraph(text)]}
+    return {"type": "listItem", "content": [_make_paragraph(text, jira_base_url)]}
 
 
-def _make_task_item(text: str, checked: bool, local_id: str) -> dict[str, Any]:
+def _make_task_item(
+    text: str,
+    checked: bool,
+    local_id: str,
+    jira_base_url: str = "",
+) -> dict[str, Any]:
     """Create an ADF taskItem node."""
     return {
         "type": "taskItem",
         "attrs": {"localId": local_id, "state": "DONE" if checked else "TODO"},
-        "content": _parse_inline_formatting(text) or [{"type": "text", "text": text}],
+        "content": _parse_inline_formatting(text, jira_base_url)
+        or [{"type": "text", "text": text}],
     }
 
 
-def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
+def markdown_to_adf(markdown_text: str, jira_base_url: str = "") -> dict[str, Any]:
     """Convert Markdown text to ADF (Atlassian Document Format) document.
 
     Implements a line-by-line parser that handles common Markdown constructs.
@@ -168,6 +219,7 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
 
     Args:
         markdown_text: Markdown-formatted text to convert.
+        jira_base_url: Jira base URL used to link bare issue keys.
 
     Returns:
         ADF document dict with version, type, and content keys.
@@ -198,7 +250,7 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
                 i += 1
             # Recursively parse the inner content as ADF
             inner_markdown = "\n".join(expand_lines)
-            inner_doc = markdown_to_adf(inner_markdown)
+            inner_doc = markdown_to_adf(inner_markdown, jira_base_url)
             expand_node: dict[str, Any] = {
                 "type": "expand",
                 "attrs": {"title": expand_title},
@@ -247,7 +299,7 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
             heading_node: dict[str, Any] = {
                 "type": "heading",
                 "attrs": {"level": level},
-                "content": _parse_inline_formatting(text),
+                "content": _parse_inline_formatting(text, jira_base_url),
             }
             doc["content"].append(heading_node)
             i += 1
@@ -259,7 +311,7 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
             while i < len(lines) and lines[i].startswith("> "):
                 quote_lines.append(lines[i][2:])
                 i += 1
-            bq_content = [_make_paragraph(ln) for ln in quote_lines]
+            bq_content = [_make_paragraph(ln, jira_base_url) for ln in quote_lines]
             doc["content"].append({"type": "blockquote", "content": bq_content})
             continue
 
@@ -273,7 +325,10 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
                 task_counter += 1
                 task_items.append(
                     _make_task_item(
-                        item_text, checked, f"task-{id(doc)}-{task_counter}"
+                        item_text,
+                        checked,
+                        f"task-{id(doc)}-{task_counter}",
+                        jira_base_url,
                     )
                 )
                 i += 1
@@ -301,7 +356,7 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
                 if i < len(lines):
                     i += 1
                 # Recursively parse panel content
-                inner_doc = markdown_to_adf("\n".join(panel_lines))
+                inner_doc = markdown_to_adf("\n".join(panel_lines), jira_base_url)
                 panel_node: dict[str, Any] = {
                     "type": "panel",
                     "attrs": {"panelType": panel_type},
@@ -315,7 +370,7 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
             items: list[dict[str, Any]] = []
             while i < len(lines) and re.match(r"^[-*]\s+", lines[i]):
                 item_text = re.sub(r"^[-*]\s+", "", lines[i])
-                items.append(_make_list_item(item_text))
+                items.append(_make_list_item(item_text, jira_base_url))
                 i += 1
             doc["content"].append({"type": "bulletList", "content": items})
             continue
@@ -325,7 +380,7 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
             items_ol: list[dict[str, Any]] = []
             while i < len(lines) and re.match(r"^\d+\.\s+", lines[i]):
                 item_text = re.sub(r"^\d+\.\s+", "", lines[i])
-                items_ol.append(_make_list_item(item_text))
+                items_ol.append(_make_list_item(item_text, jira_base_url))
                 i += 1
             doc["content"].append({"type": "orderedList", "content": items_ol})
             continue
@@ -351,7 +406,7 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
                     cell_type = "tableHeader" if idx == 0 else "tableCell"
                     adf_cells = []
                     for cell_text in cells:
-                        content = _parse_inline_formatting(cell_text)
+                        content = _parse_inline_formatting(cell_text, jira_base_url)
                         if not content:
                             content = [{"type": "text", "text": ""}]
                         adf_cells.append(
@@ -377,7 +432,7 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
             continue
 
         # --- Paragraph (default) ---
-        doc["content"].append(_make_paragraph(line))
+        doc["content"].append(_make_paragraph(line, jira_base_url))
         i += 1
 
     # Ensure at least one content node
