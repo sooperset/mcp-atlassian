@@ -17,6 +17,7 @@ from starlette.requests import Request
 from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
 from mcp_atlassian.jira import JiraConfig, JiraFetcher
 from mcp_atlassian.servers.context import MainAppContext
+from mcp_atlassian.utils.env import is_env_ssl_verify
 from mcp_atlassian.utils.oauth import OAuthConfig
 from mcp_atlassian.utils.urls import validate_url_for_ssrf
 
@@ -541,16 +542,42 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 f"Creating header-based {spec.name}Fetcher "
                 f"with URL: {url_header_val} and PAT token"
             )
+            # Inherit ssl_verify & proxy settings from global config when
+            # available, so env-var / CLI flags (e.g. JIRA_SSL_VERIFY=false)
+            # are honoured even for header-based PAT connections.
+            try:
+                _global_cfg = _get_global_config(ctx, spec)
+            except ValueError:
+                _global_cfg = None
+
+            if _global_cfg:
+                _ssl = _global_cfg.ssl_verify
+                _http_proxy = _global_cfg.http_proxy
+                _https_proxy = _global_cfg.https_proxy
+                _no_proxy = _global_cfg.no_proxy
+                _socks_proxy = _global_cfg.socks_proxy
+                _custom_headers = _global_cfg.custom_headers
+            else:
+                # No global config (e.g. pure header-based mode):
+                # read SSL setting directly from the environment.
+                _ssl_env = f"{spec.name.upper()}_SSL_VERIFY"
+                _ssl = is_env_ssl_verify(_ssl_env)
+                _http_proxy = None
+                _https_proxy = None
+                _no_proxy = None
+                _socks_proxy = None
+                _custom_headers = None
+
             header_config = spec.config_class(
                 url=url_header_val,
                 auth_type="pat",
                 personal_token=token_header_val,
-                ssl_verify=True,
-                http_proxy=None,
-                https_proxy=None,
-                no_proxy=None,
-                socks_proxy=None,
-                custom_headers=None,
+                ssl_verify=_ssl,
+                http_proxy=_http_proxy,
+                https_proxy=_https_proxy,
+                no_proxy=_no_proxy,
+                socks_proxy=_socks_proxy,
+                custom_headers=_custom_headers,
                 **spec.filter_kwargs,
             )
             return _create_and_validate(
