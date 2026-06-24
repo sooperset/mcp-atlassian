@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "atlassian": {
+      "command": "uvx",
+      "args": [
+        "mcp-atlassian"
+      ]
+    }
+  }
+}
