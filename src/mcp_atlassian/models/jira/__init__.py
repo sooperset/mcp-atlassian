@@ -53,6 +53,14 @@ from .sla import (
     TimeInStatusMetric,
     WorkingHoursConfig,
 )
+from .transition_plan import (
+    TransitionFieldPlan,
+    TransitionFieldSource,
+    TransitionFieldValue,
+    TransitionPlan,
+    TransitionPlanStatus,
+    TransitionStaleChecks,
+)
 from .workflow import JiraTransition
 from .worklog import JiraWorklog
 
@@ -107,4 +115,11 @@ __all__ = [
     "ResolutionTimeMetric",
     "FirstResponseTimeMetric",
     "WorkingHoursConfig",
+    # Transition planning models
+    "TransitionFieldPlan",
+    "TransitionFieldSource",
+    "TransitionFieldValue",
+    "TransitionPlan",
+    "TransitionPlanStatus",
+    "TransitionStaleChecks",
 ]

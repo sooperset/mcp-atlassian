@@ -1,6 +1,8 @@
 """Module for Jira project operations."""
 
 import logging
+import time
+from copy import deepcopy
 from typing import Any
 
 from ..models import JiraProject
@@ -10,6 +12,8 @@ from .client import JiraClient
 from .protocols import SearchOperationsProto
 
 logger = logging.getLogger("mcp-jira")
+PROJECT_VERSIONS_CACHE_TTL_SECONDS = 300
+PROJECT_VERSION_INCLUDE_IDS_LIMIT = 20
 
 
 class ProjectsMixin(JiraClient, SearchOperationsProto):
@@ -115,16 +119,94 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             )
             return []
 
-    def get_project_versions(self, project_key: str) -> list[dict[str, Any]]:
+    def get_project_versions(
+        self, project_key: str, *, force_refresh: bool = False
+    ) -> list[dict[str, Any]]:
         """
         Get all versions for a project.
 
         Args:
             project_key: The project key.
+            force_refresh: Whether to bypass the local process cache.
 
         Returns:
             List of version data dictionaries
         """
+        cache = self._get_project_versions_cache()
+        now = time.monotonic()
+        cached = cache.get(project_key)
+        if not force_refresh and cached is not None:
+            expires_at, cached_versions = cached
+            if expires_at > now:
+                return deepcopy(cached_versions)
+
+        fetched_versions = self._fetch_project_versions(project_key)
+        if fetched_versions is None:
+            return []
+        cache[project_key] = (
+            now + PROJECT_VERSIONS_CACHE_TTL_SECONDS,
+            deepcopy(fetched_versions),
+        )
+        return fetched_versions
+
+    def search_project_versions(
+        self,
+        project_key: str,
+        query: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+        *,
+        released: bool | None = None,
+        archived: bool | None = None,
+        include_ids: list[str] | None = None,
+        force_refresh: bool = False,
+    ) -> dict[str, Any]:
+        """Search project versions from the local full-list cache."""
+        versions = self.get_project_versions(
+            project_key,
+            force_refresh=force_refresh,
+        )
+        stripped_query = query.strip() if query else ""
+        normalized_query = stripped_query.casefold() if stripped_query else None
+
+        filtered = [
+            version
+            for version in versions
+            if self._matches_version_filters(
+                version,
+                query=normalized_query,
+                released=released,
+                archived=archived,
+            )
+        ]
+
+        safe_limit = max(1, min(limit, 100))
+        safe_offset = max(0, offset)
+        requested_include_ids = include_ids or []
+        safe_include_ids = requested_include_ids[:PROJECT_VERSION_INCLUDE_IDS_LIMIT]
+        page = filtered[safe_offset : safe_offset + safe_limit]
+        page, included_selected_count = self._include_selected_versions(
+            page, versions, safe_include_ids
+        )
+
+        next_offset = safe_offset + safe_limit
+        has_more = next_offset < len(filtered)
+        return {
+            "items": page,
+            "count": len(filtered),
+            "limit": safe_limit,
+            "offset": safe_offset,
+            "has_more": has_more,
+            "next_offset": next_offset if has_more else None,
+            "include_ids_truncated": (
+                len(requested_include_ids) > PROJECT_VERSION_INCLUDE_IDS_LIMIT
+            ),
+            "requested_include_ids_count": len(requested_include_ids),
+            "included_selected_count": included_selected_count,
+        }
+
+    def _fetch_project_versions(self, project_key: str) -> list[dict[str, Any]] | None:
+        """Fetch project versions from Jira and simplify them."""
         try:
             raw_versions = self.jira.get_project_versions(key=project_key)
             if not isinstance(raw_versions, list):
@@ -134,9 +216,57 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
                 ver = JiraVersion.from_api_response(v)
                 versions.append(ver.to_simplified_dict())
             return versions
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Error getting versions for project {project_key}: {str(e)}")
-            return []
+            return None
+
+    def _invalidate_project_versions_cache(self, project_key: str) -> None:
+        """Invalidate cached versions for a project."""
+        self._get_project_versions_cache().pop(project_key, None)
+
+    def _get_project_versions_cache(
+        self,
+    ) -> dict[str, tuple[float, list[dict[str, Any]]]]:
+        """Return the lazily initialized local project-version cache."""
+        cache = getattr(self, "_project_versions_cache", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            self._project_versions_cache = cache
+        return cache
+
+    @staticmethod
+    def _matches_version_filters(
+        version: dict[str, Any],
+        *,
+        query: str | None,
+        released: bool | None,
+        archived: bool | None,
+    ) -> bool:
+        name = str(version.get("name", ""))
+        if query and query not in name.casefold():
+            return False
+        if released is not None and bool(version.get("released", False)) != released:
+            return False
+        if archived is not None and bool(version.get("archived", False)) != archived:
+            return False
+        return True
+
+    @staticmethod
+    def _include_selected_versions(
+        page: list[dict[str, Any]],
+        versions: list[dict[str, Any]],
+        include_ids: list[str],
+    ) -> tuple[list[dict[str, Any]], int]:
+        result = deepcopy(page)
+        present_ids = {str(version.get("id")) for version in result}
+        included_selected_count = 0
+        for version in versions:
+            version_id = str(version.get("id"))
+            if version_id in include_ids and version_id not in present_ids:
+                result.append(deepcopy(version))
+                present_ids.add(version_id)
+                included_selected_count += 1
+        return result, included_selected_count
 
     def get_project_roles(self, project_key: str) -> dict[str, Any]:
         """
@@ -257,14 +387,20 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
                 raise TypeError(msg)
 
             # The new createmeta endpoint returns paginated "values" array
-            issue_types = meta.get("values", [])
+            raw_issue_types = meta.get("values", [])
+            issue_types = raw_issue_types if isinstance(raw_issue_types, list) else []
             if not issue_types:
                 # Fallback for older response format
                 projects = meta.get("projects", [])
                 if projects and "issuetypes" in projects[0]:
-                    issue_types = projects[0]["issuetypes"]
+                    project_issue_types = projects[0]["issuetypes"]
+                    issue_types = (
+                        project_issue_types
+                        if isinstance(project_issue_types, list)
+                        else []
+                    )
 
-            return issue_types
+            return [item for item in issue_types if isinstance(item, dict)]
 
         except Exception as e:
             logger.error(
@@ -397,7 +533,7 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             # This requires admin permissions
             # For non-admins, a different approach might be needed
             all_projects = self.get_all_projects()
-            accessible_projects = []
+            accessible_projects: list[dict[str, Any]] = []
 
             for project in all_projects:
                 project_key = project.get("key")
@@ -406,7 +542,7 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
 
                 try:
                     # Check if user has browse permission for this project
-                    browse_users = (
+                    browse_users: Any = (
                         self.jira.get_users_with_browse_permission_to_a_project(
                             username=username, project_key=project_key, limit=1
                         )
@@ -456,10 +592,12 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
         Returns:
             The created version object as returned by Jira
         """
-        return self.create_version(
+        version = self.create_version(
             project=project_key,
             name=name,
             start_date=start_date,
             release_date=release_date,
             description=description,
         )
+        self._invalidate_project_versions_cache(project_key)
+        return version

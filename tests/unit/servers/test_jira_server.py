@@ -14,6 +14,11 @@ from starlette.requests import Request
 
 from src.mcp_atlassian.jira import JiraFetcher
 from src.mcp_atlassian.jira.config import JiraConfig
+from src.mcp_atlassian.models.jira.transition_plan import (
+    TransitionFieldPlan,
+    TransitionPlan,
+    TransitionPlanStatus,
+)
 from src.mcp_atlassian.servers.context import MainAppContext
 from src.mcp_atlassian.servers.main import AtlassianMCP
 from src.mcp_atlassian.utils.oauth import OAuthConfig
@@ -24,6 +29,29 @@ from tests.fixtures.jira_mocks import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _transition_plan_fixture() -> TransitionPlan:
+    return TransitionPlan(
+        plan_id="tp_server_test",
+        issue_key="TEST-123",
+        transition_id="761",
+        transition_name="更新信息",
+        to_status="处理中",
+        schema_hash="schema",
+        issue_updated="2026-06-16T10:00:00.000+0800",
+        fields=[
+            TransitionFieldPlan(
+                field_key="customfield_11405",
+                name="引入版本",
+                schema={"type": "array", "items": "version"},
+                interaction_type="version_picker",
+                value_format="array_of_id_objects",
+                lookup_tool="jira_search_transition_field_options",
+                current_value=[{"id": "20001", "name": "V2.13.1"}],
+            )
+        ],
+    )
 
 
 @pytest.fixture
@@ -383,6 +411,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         add_comment,
         add_issues_to_sprint,
         add_worklog,
+        apply_transition_plan,
         batch_create_issues,
         batch_create_versions,
         batch_get_changelogs,
@@ -411,12 +440,16 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         get_user_profile,
         get_worklog,
         link_to_epic,
+        prepare_transition,
+        preview_transition_plan,
         remove_issue_link,
         search,
         search_fields,
+        search_transition_field_options,
         transition_issue,
         update_issue,
         update_sprint,
+        update_transition_plan,
     )
 
     jira_sub_mcp = FastMCP(name="TestJiraSubMCP")
@@ -431,6 +464,11 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(get_service_desk_queues)
     jira_sub_mcp.add_tool(get_queue_issues)
     jira_sub_mcp.add_tool(get_transitions)
+    jira_sub_mcp.add_tool(prepare_transition)
+    jira_sub_mcp.add_tool(search_transition_field_options)
+    jira_sub_mcp.add_tool(update_transition_plan)
+    jira_sub_mcp.add_tool(preview_transition_plan)
+    jira_sub_mcp.add_tool(apply_transition_plan)
     jira_sub_mcp.add_tool(get_worklog)
     jira_sub_mcp.add_tool(download_attachments)
     jira_sub_mcp.add_tool(get_issue_images)
@@ -2135,6 +2173,373 @@ async def test_add_issues_to_sprint_single_key(jira_client, mock_jira_fetcher):
     result = json.loads(response.content[0].text)
     assert "1" in result["message"]
     assert result["sprint_id"] == "200"
+
+
+@pytest.mark.anyio
+async def test_transition_planning_tools_have_annotations():
+    """Test transition planning tools expose stable annotations."""
+    from src.mcp_atlassian.servers.jira import (
+        apply_transition_plan,
+        prepare_transition,
+        preview_transition_plan,
+        search_transition_field_options,
+        transition_issue,
+        update_transition_plan,
+    )
+
+    assert prepare_transition.name == "prepare_transition"
+    assert "write" not in prepare_transition.tags
+    assert search_transition_field_options.name == "search_transition_field_options"
+    assert update_transition_plan.name == "update_transition_plan"
+    assert "write" not in update_transition_plan.tags
+    assert preview_transition_plan.name == "preview_transition_plan"
+    assert "write" in apply_transition_plan.tags
+    assert transition_issue.name == "transition_issue"
+
+    expected_annotations = [
+        (
+            prepare_transition,
+            {
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": False,
+                "openWorldHint": True,
+            },
+        ),
+        (
+            search_transition_field_options,
+            {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": False,
+                "openWorldHint": True,
+            },
+        ),
+        (
+            update_transition_plan,
+            {
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": False,
+                "openWorldHint": False,
+            },
+        ),
+        (
+            preview_transition_plan,
+            {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": False,
+                "openWorldHint": False,
+            },
+        ),
+    ]
+    for tool, annotations in expected_annotations:
+        for key, expected in annotations.items():
+            assert getattr(tool.annotations, key) is expected
+
+    apply_annotations = apply_transition_plan.annotations
+    assert apply_annotations.readOnlyHint is False
+    assert apply_annotations.destructiveHint is True
+    assert apply_annotations.idempotentHint is False
+    assert apply_annotations.openWorldHint is True
+
+    direct_annotations = transition_issue.annotations
+    assert direct_annotations.readOnlyHint is False
+    assert direct_annotations.destructiveHint is True
+    assert direct_annotations.idempotentHint is False
+    assert direct_annotations.openWorldHint is True
+    assert "jira_prepare_transition" in transition_issue.description
+
+
+@pytest.mark.anyio
+async def test_transition_planning_tool_flow(jira_client, mock_jira_fetcher):
+    """Test prepare/update/preview/apply tools share one stored plan."""
+    plan = _transition_plan_fixture()
+    mock_jira_fetcher.prepare_transition_plan.return_value = plan
+
+    def update_plan_side_effect(
+        stored_plan, field_values, cleared_fields=None
+    ):
+        del field_values, cleared_fields
+        return stored_plan
+
+    def preview_side_effect(stored_plan):
+        stored_plan.status = TransitionPlanStatus.PREVIEWED
+        stored_plan.last_preview_id = "pv_abc"
+        stored_plan.last_payload_hash = "hash_abc"
+        return {
+            "payload": {
+                "transition": {"id": "761"},
+                "fields": {"customfield_11405": [{"id": "20001"}]},
+            },
+            "field_sources": {"customfield_11405": "current_issue"},
+            "changed_fields": [],
+            "unchanged_reused_fields": ["customfield_11405"],
+            "destructive_changes": [],
+            "missing_fields": [],
+            "preview_id": "pv_abc",
+            "payload_hash": "hash_abc",
+        }
+
+    def apply_side_effect(stored_plan, *, confirmed=False, payload_hash=None):
+        assert confirmed is True
+        assert payload_hash == "hash_abc"
+        stored_plan.status = TransitionPlanStatus.APPLIED
+        return {"success": True, "status": "applied"}
+
+    mock_jira_fetcher.update_transition_plan.side_effect = update_plan_side_effect
+    mock_jira_fetcher.preview_transition_plan.side_effect = preview_side_effect
+    mock_jira_fetcher.apply_transition_plan.side_effect = apply_side_effect
+    mock_jira_fetcher.search_project_versions.return_value = {
+        "items": [{"id": "20001", "name": "V2.13.1"}],
+        "count": 1,
+        "limit": 20,
+        "offset": 0,
+        "has_more": False,
+        "next_offset": None,
+    }
+
+    prepare_response = await jira_client.call_tool(
+        "jira_prepare_transition",
+        {
+            "issue_key": "TEST-123",
+            "target_transition_name": "更新信息",
+            "profile": "gyenno_defect_analysis",
+        },
+    )
+    prepare_content = json.loads(prepare_response.content[0].text)
+    assert prepare_content["success"] is True
+    assert prepare_content["plan"]["plan_id"] == "tp_server_test"
+
+    options_response = await jira_client.call_tool(
+        "jira_search_transition_field_options",
+        {
+            "plan_id": "tp_server_test",
+            "field_key": "customfield_11405",
+            "query": "V2.13",
+            "released": True,
+            "archived": False,
+            "include_ids": '["20001"]',
+        },
+    )
+    options_content = json.loads(options_response.content[0].text)
+    assert options_content["success"] is True
+    assert options_content["options"]["items"][0]["id"] == "20001"
+    mock_jira_fetcher.search_project_versions.assert_called_once_with(
+        project_key="TEST",
+        query="V2.13",
+        limit=20,
+        offset=0,
+        released=True,
+        archived=False,
+        include_ids=["20001"],
+        force_refresh=False,
+    )
+
+    update_response = await jira_client.call_tool(
+        "jira_update_transition_plan",
+        {
+            "plan_id": "tp_server_test",
+            "field_values": '{"customfield_11405": ["20001"]}',
+        },
+    )
+    update_content = json.loads(update_response.content[0].text)
+    assert update_content["success"] is True
+
+    preview_response = await jira_client.call_tool(
+        "jira_preview_transition_plan",
+        {"plan_id": "tp_server_test"},
+    )
+    preview_content = json.loads(preview_response.content[0].text)
+    assert preview_content["success"] is True
+    assert preview_content["preview"]["payload_hash"] == "hash_abc"
+
+    apply_response = await jira_client.call_tool(
+        "jira_apply_transition_plan",
+        {
+            "plan_id": "tp_server_test",
+            "confirmed": True,
+            "payload_hash": "hash_abc",
+        },
+    )
+    apply_content = json.loads(apply_response.content[0].text)
+    assert apply_content["success"] is True
+    assert apply_content["status"] == "applied"
+    mock_jira_fetcher.apply_transition_plan.assert_called_once()
+
+    duplicate_apply_response = await jira_client.call_tool(
+        "jira_apply_transition_plan",
+        {
+            "plan_id": "tp_server_test",
+            "confirmed": True,
+            "payload_hash": "hash_abc",
+        },
+    )
+    duplicate_apply_content = json.loads(duplicate_apply_response.content[0].text)
+    assert duplicate_apply_content["success"] is False
+    assert duplicate_apply_content["status"] == "not_found"
+    mock_jira_fetcher.apply_transition_plan.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_transition_plan_store_is_scoped_by_request_user(
+    jira_client, mock_jira_fetcher, mock_request
+):
+    """Test one request user cannot access another user's transition plan."""
+    plan = _transition_plan_fixture()
+    mock_jira_fetcher.prepare_transition_plan.return_value = plan
+    mock_request.state.user_atlassian_email = "owner@example.com"
+    mock_request.state.user_atlassian_cloud_id = "cloud-a"
+
+    await jira_client.call_tool(
+        "jira_prepare_transition",
+        {
+            "issue_key": "TEST-123",
+            "target_transition_name": "更新信息",
+        },
+    )
+
+    mock_request.state.user_atlassian_email = "other@example.com"
+    response = await jira_client.call_tool(
+        "jira_preview_transition_plan",
+        {"plan_id": "tp_server_test"},
+    )
+    content = json.loads(response.content[0].text)
+
+    assert content["success"] is False
+    assert content["status"] == "not_found"
+    assert content["next_actions"] == ["jira_prepare_transition"]
+
+
+@pytest.mark.anyio
+async def test_apply_transition_plan_requires_preview_before_hash_check(
+    jira_client, mock_jira_fetcher
+):
+    """Test confirmed apply without a stored preview asks for preview first."""
+    plan = _transition_plan_fixture()
+    mock_jira_fetcher.prepare_transition_plan.return_value = plan
+
+    await jira_client.call_tool(
+        "jira_prepare_transition",
+        {
+            "issue_key": "TEST-123",
+            "target_transition_name": "更新信息",
+        },
+    )
+    response = await jira_client.call_tool(
+        "jira_apply_transition_plan",
+        {
+            "plan_id": "tp_server_test",
+            "confirmed": True,
+            "payload_hash": "wrong",
+        },
+    )
+    content = json.loads(response.content[0].text)
+
+    assert content["success"] is False
+    assert content["status"] == "preview_required"
+    assert content["next_actions"] == ["jira_preview_transition_plan"]
+    mock_jira_fetcher.apply_transition_plan.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_apply_transition_plan_hash_mismatch_next_actions(
+    jira_client, mock_jira_fetcher
+):
+    """Test apply hash mismatch tells the agent how to recover after preview."""
+    plan = _transition_plan_fixture()
+    plan.status = TransitionPlanStatus.PREVIEWED
+    plan.last_payload_hash = "hash_abc"
+    mock_jira_fetcher.prepare_transition_plan.return_value = plan
+
+    await jira_client.call_tool(
+        "jira_prepare_transition",
+        {
+            "issue_key": "TEST-123",
+            "target_transition_name": "更新信息",
+        },
+    )
+    response = await jira_client.call_tool(
+        "jira_apply_transition_plan",
+        {
+            "plan_id": "tp_server_test",
+            "confirmed": True,
+            "payload_hash": "wrong",
+        },
+    )
+    content = json.loads(response.content[0].text)
+
+    assert content["success"] is False
+    assert content["status"] == "payload_hash_mismatch"
+    assert content["next_actions"] == [
+        "jira_preview_transition_plan",
+        "jira_apply_transition_plan",
+    ]
+    mock_jira_fetcher.apply_transition_plan.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_apply_transition_plan_restores_claimed_plan_on_failure(
+    jira_client, mock_jira_fetcher
+):
+    """Test claimed local plans remain recoverable after workflow apply errors."""
+    plan = _transition_plan_fixture()
+    plan.status = TransitionPlanStatus.PREVIEWED
+    plan.last_preview_id = "pv_abc"
+    plan.last_payload_hash = "hash_abc"
+    mock_jira_fetcher.prepare_transition_plan.return_value = plan
+    mock_jira_fetcher.apply_transition_plan.side_effect = RuntimeError(
+        "freshness check failed"
+    )
+
+    def preview_side_effect(stored_plan):
+        stored_plan.status = TransitionPlanStatus.PREVIEWED
+        stored_plan.last_preview_id = "pv_recovered"
+        stored_plan.last_payload_hash = "hash_recovered"
+        return {
+            "payload": {"transition": {"id": "761"}},
+            "field_sources": {},
+            "changed_fields": [],
+            "unchanged_reused_fields": [],
+            "destructive_changes": [],
+            "missing_fields": [],
+            "preview_id": "pv_recovered",
+            "payload_hash": "hash_recovered",
+        }
+
+    mock_jira_fetcher.preview_transition_plan.side_effect = preview_side_effect
+
+    await jira_client.call_tool(
+        "jira_prepare_transition",
+        {
+            "issue_key": "TEST-123",
+            "target_transition_name": "更新信息",
+        },
+    )
+    failed_apply_response = await jira_client.call_tool(
+        "jira_apply_transition_plan",
+        {
+            "plan_id": "tp_server_test",
+            "confirmed": True,
+            "payload_hash": "hash_abc",
+        },
+    )
+    failed_apply_content = json.loads(failed_apply_response.content[0].text)
+
+    assert failed_apply_content["success"] is False
+    assert failed_apply_content["status"] == "failed"
+    assert failed_apply_content["next_actions"] == ["retry_after_review"]
+
+    preview_response = await jira_client.call_tool(
+        "jira_preview_transition_plan",
+        {"plan_id": "tp_server_test"},
+    )
+    preview_content = json.loads(preview_response.content[0].text)
+
+    assert preview_content["success"] is True
+    assert preview_content["preview"]["payload_hash"] == "hash_recovered"
+    mock_jira_fetcher.preview_transition_plan.assert_called_once()
 
 
 # ============================================================================

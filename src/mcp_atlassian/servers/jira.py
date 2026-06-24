@@ -1,6 +1,7 @@
 """Jira FastMCP server instance and tool definitions."""
 
 import base64
+import hashlib
 import json
 import logging
 from typing import Annotated, Any
@@ -13,8 +14,13 @@ from requests.exceptions import HTTPError
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 from mcp_atlassian.jira.forms_common import convert_datetime_to_timestamp
+from mcp_atlassian.jira.transition_plan_store import TransitionPlanStore
 from mcp_atlassian.models.jira import JiraAttachment
 from mcp_atlassian.models.jira.common import JiraUser
+from mcp_atlassian.models.jira.transition_plan import (
+    TransitionPlan,
+    TransitionPlanStatus,
+)
 from mcp_atlassian.servers.dependencies import get_jira_fetcher
 from mcp_atlassian.utils.decorators import check_write_access
 from mcp_atlassian.utils.media import (
@@ -23,7 +29,10 @@ from mcp_atlassian.utils.media import (
     is_image_attachment,
 )
 
+from . import dependencies as server_dependencies
+
 logger = logging.getLogger(__name__)
+_transition_plan_store = TransitionPlanStore()
 
 
 # Regex patterns for Jira key validation.
@@ -101,6 +110,144 @@ def _parse_additional_fields(
         except json.JSONDecodeError as e:
             raise ValueError(f"additional_fields is not valid JSON: {e}") from e
     raise ValueError("additional_fields must be a dictionary or JSON string.")
+
+
+def _parse_json_list(value: str | list[Any] | None, field_name: str) -> list[Any]:
+    """Parse a JSON list parameter."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return list(value)
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as e:
+        error_message = f"{field_name} is not valid JSON: {e}"
+        raise ValueError(error_message) from e
+    if not isinstance(parsed, list):
+        error_message = f"{field_name} must be a JSON array."
+        raise ValueError(error_message)
+    return list(parsed)
+
+
+def _transition_plan_to_dict(plan: TransitionPlan) -> dict[str, Any]:
+    """Convert a transition plan to the stable JSON response shape."""
+    result = plan.to_simplified_dict()
+    return result if isinstance(result, dict) else {}
+
+
+def _transition_planning_response(
+    *,
+    success: bool,
+    status: str,
+    warnings: list[str] | None = None,
+    next_actions: list[str] | None = None,
+    **data: Any,
+) -> str:
+    """Build a standard JSON response for transition planning tools."""
+    resolved_next_actions = (
+        next_actions
+        if next_actions is not None
+        else _transition_next_actions_for_status(status)
+    )
+    response: dict[str, Any] = {
+        "success": success,
+        "status": status,
+        "warnings": warnings or [],
+        "next_actions": resolved_next_actions,
+    }
+    response.update(data)
+    return json.dumps(response, indent=2, ensure_ascii=False)
+
+
+def _transition_next_actions_for_status(status: str) -> list[str]:
+    """Return actionable recovery hints for transition planning statuses."""
+    action_map = {
+        "not_found": ["jira_prepare_transition"],
+        "field_not_found": ["inspect_plan_fields", "jira_update_transition_plan"],
+        "unsupported_field_type": ["provide_field_value_directly"],
+        "confirmation_required": [
+            "jira_preview_transition_plan",
+            "jira_apply_transition_plan",
+        ],
+        "payload_hash_mismatch": [
+            "jira_preview_transition_plan",
+            "jira_apply_transition_plan",
+        ],
+        "preview_required": ["jira_preview_transition_plan"],
+        "missing_fields": [
+            "jira_update_transition_plan",
+            "jira_preview_transition_plan",
+        ],
+        "reconfirmation_required": [
+            "review_new_context",
+            "jira_preview_transition_plan",
+        ],
+        "stale": ["jira_prepare_transition"],
+        "failed": ["retry_after_review"],
+    }
+    return action_map.get(status, [])
+
+
+def _transition_plan_scope(ctx: Context) -> tuple[str | None, str | None]:
+    """Build stable user and tenant scope keys for local transition plans."""
+    user_key = "global"
+    tenant_key = _global_jira_tenant_key(ctx)
+    request = getattr(ctx.request_context, "request", None)
+    if request is None:
+        try:
+            request = server_dependencies.get_http_request()
+        except (RuntimeError, LookupError):
+            request = None
+    if request is None:
+        return user_key, tenant_key
+
+    state = request.state
+    email = _state_str(state, "user_atlassian_email")
+    if email:
+        user_key = f"email:{email}"
+    else:
+        token = _state_str(state, "user_atlassian_token")
+        service_headers = getattr(state, "atlassian_service_headers", {})
+        if not token and isinstance(service_headers, dict):
+            token = service_headers.get("X-Atlassian-Jira-Personal-Token")
+        if token:
+            user_key = f"token:{_sha256_short(token)}"
+
+    cloud_id = _state_str(state, "user_atlassian_cloud_id")
+    if cloud_id:
+        tenant_key = f"cloud:{cloud_id}"
+    else:
+        service_headers = getattr(state, "atlassian_service_headers", {})
+        if isinstance(service_headers, dict):
+            jira_url = service_headers.get("X-Atlassian-Jira-Url")
+            if isinstance(jira_url, str) and jira_url:
+                tenant_key = f"url:{jira_url}"
+
+    return user_key, tenant_key
+
+
+def _state_str(state: Any, name: str) -> str | None:
+    value = getattr(state, name, None)
+    return value if isinstance(value, str) and value else None
+
+
+def _global_jira_tenant_key(ctx: Context) -> str:
+    request_context = ctx.request_context
+    if request_context is None:
+        return "global"
+    lifespan_ctx = getattr(request_context, "lifespan_context", None)
+    app_ctx = (
+        lifespan_ctx.get("app_lifespan_context")
+        if isinstance(lifespan_ctx, dict)
+        else None
+    )
+    jira_config = getattr(app_ctx, "full_jira_config", None) if app_ctx else None
+    jira_url = getattr(jira_config, "url", None)
+    return f"url:{jira_url}" if isinstance(jira_url, str) and jira_url else "global"
+
+
+def _sha256_short(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
 
 @jira_mcp.tool(
@@ -757,20 +904,427 @@ async def get_transitions(
             pattern=ISSUE_KEY_PATTERN,
         ),
     ],
+    response_mode: Annotated[
+        str,
+        Field(
+            description=(
+                "Response mode: 'compact' omits raw allowedValues and returns "
+                "samples/metadata; 'full' preserves the complete Jira payload."
+            ),
+            pattern="^(compact|full)$",
+        ),
+    ] = "compact",
 ) -> str:
     """Get available status transitions for a Jira issue.
 
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
+        response_mode: Use compact by default to avoid large allowedValues.
 
     Returns:
         JSON string representing a list of available transitions.
     """
     jira = await get_jira_fetcher(ctx)
     # Underlying method returns list[dict] in the desired format
-    transitions = jira.get_available_transitions(issue_key)
+    transitions = jira.get_available_transitions(
+        issue_key, response_mode=response_mode
+    )
     return json.dumps(transitions, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "toolset:jira_transitions"},
+    annotations={
+        "title": "Prepare Transition Plan",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def prepare_transition(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(description="Jira issue key.", pattern=ISSUE_KEY_PATTERN),
+    ],
+    target_transition_id: Annotated[
+        str | None,
+        Field(description="Optional transition id to prepare."),
+    ] = None,
+    target_transition_name: Annotated[
+        str | None,
+        Field(description="Optional transition name to prepare."),
+    ] = None,
+    target_status: Annotated[
+        str | None,
+        Field(description="Optional target status name to prepare."),
+    ] = None,
+    profile: Annotated[
+        str | None,
+        Field(description="Optional workflow profile name."),
+    ] = None,
+    work_context: Annotated[
+        str | None,
+        Field(description="Optional JSON object with additional work context."),
+    ] = None,
+) -> str:
+    """Prepare a local in-process Jira transition plan without writing Jira."""
+    user_key, tenant_key = _transition_plan_scope(ctx)
+    jira = await get_jira_fetcher(ctx)
+    try:
+        parsed_work_context = _parse_additional_fields(work_context)
+        plan = jira.prepare_transition_plan(
+            issue_key=issue_key,
+            target_transition_id=target_transition_id,
+            target_transition_name=target_transition_name,
+            target_status=target_status,
+            profile=profile,
+            work_context=parsed_work_context,
+        )
+        _transition_plan_store.put(plan, user_key=user_key, tenant_key=tenant_key)
+        return _transition_planning_response(
+            success=True,
+            status=str(plan.status.value),
+            warnings=plan.warnings,
+            next_actions=["review_fields", "preview_transition_plan"],
+            plan=_transition_plan_to_dict(plan),
+        )
+    except Exception as e:  # noqa: BLE001
+        return _transition_planning_response(
+            success=False,
+            status="failed",
+            error={"message": str(e), "type": type(e).__name__},
+        )
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_transitions"},
+    annotations={
+        "title": "Search Transition Field Options",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def search_transition_field_options(
+    ctx: Context,
+    plan_id: Annotated[str, Field(description="Prepared transition plan id.")],
+    field_key: Annotated[str, Field(description="Transition field key.")],
+    query: Annotated[
+        str | None,
+        Field(description="Optional text query for field options."),
+    ] = None,
+    limit: Annotated[int, Field(description="Maximum options.", ge=1, le=100)] = 20,
+    offset: Annotated[int, Field(description="Pagination offset.", ge=0)] = 0,
+    released: Annotated[
+        bool | None,
+        Field(description="Optional released-version filter."),
+    ] = None,
+    archived: Annotated[
+        bool | None,
+        Field(description="Optional archived-version filter."),
+    ] = None,
+    include_ids: Annotated[
+        str | None,
+        Field(description="Optional JSON array of selected option ids to include."),
+    ] = None,
+    *,
+    force_refresh: Annotated[
+        bool,
+        Field(description="Refresh any local option cache before searching."),
+    ] = False,
+) -> str:
+    """Search heavy transition field options such as project versions."""
+    user_key, tenant_key = _transition_plan_scope(ctx)
+    jira = await get_jira_fetcher(ctx)
+    try:
+        plan = _transition_plan_store.get(
+            plan_id, user_key=user_key, tenant_key=tenant_key
+        )
+        if plan is None:
+            return _transition_planning_response(
+                success=False,
+                status="not_found",
+                error={"message": f"Transition plan not found: {plan_id}"},
+            )
+
+        field = next(
+            (item for item in plan.fields if item.field_key == field_key),
+            None,
+        )
+        if field is None:
+            return _transition_planning_response(
+                success=False,
+                status="field_not_found",
+                error={"message": f"Transition field not found: {field_key}"},
+            )
+
+        selected_ids = [
+            str(item) for item in _parse_json_list(include_ids, "include_ids")
+        ]
+        project_key = plan.issue_key.split("-")[0]
+        if (
+            field.interaction_type == "version_picker"
+            and hasattr(jira, "search_project_versions")
+        ):
+            result = jira.search_project_versions(
+                project_key=project_key,
+                query=query,
+                limit=limit,
+                offset=offset,
+                released=released,
+                archived=archived,
+                include_ids=selected_ids,
+                force_refresh=force_refresh,
+            )
+        else:
+            return _transition_planning_response(
+                success=False,
+                status="unsupported_field_type",
+                next_actions=["provide_field_value_directly"],
+                error={
+                    "message": (
+                        "Transition field option lookup currently supports "
+                        "version_picker fields."
+                    ),
+                    "field_key": field_key,
+                    "interaction_type": field.interaction_type,
+                },
+            )
+
+        return _transition_planning_response(
+            success=True,
+            status="ok",
+            next_actions=["select_option", "update_transition_plan"],
+            options=result,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _transition_planning_response(
+            success=False,
+            status="failed",
+            error={"message": str(e), "type": type(e).__name__},
+        )
+
+
+@jira_mcp.tool(
+    tags={"jira", "toolset:jira_transitions"},
+    annotations={
+        "title": "Update Transition Plan",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def update_transition_plan(
+    ctx: Context,
+    plan_id: Annotated[str, Field(description="Prepared transition plan id.")],
+    field_values: Annotated[
+        str | None,
+        Field(description="JSON object of field values selected by the user."),
+    ] = None,
+    cleared_fields: Annotated[
+        str | None,
+        Field(description="Optional JSON array of field keys to clear."),
+    ] = None,
+) -> str:
+    """Update selected values on a local transition plan without writing Jira."""
+    user_key, tenant_key = _transition_plan_scope(ctx)
+    jira = await get_jira_fetcher(ctx)
+    try:
+        plan = _transition_plan_store.get(
+            plan_id, user_key=user_key, tenant_key=tenant_key
+        )
+        if plan is None:
+            return _transition_planning_response(
+                success=False,
+                status="not_found",
+                error={"message": f"Transition plan not found: {plan_id}"},
+            )
+
+        parsed_values = _parse_additional_fields(field_values)
+        parsed_cleared = [
+            str(item) for item in _parse_json_list(cleared_fields, "cleared_fields")
+        ]
+        updated_plan = jira.update_transition_plan(
+            plan,
+            field_values=parsed_values,
+            cleared_fields=parsed_cleared,
+        )
+        _transition_plan_store.put(
+            updated_plan, user_key=user_key, tenant_key=tenant_key
+        )
+        return _transition_planning_response(
+            success=True,
+            status=str(updated_plan.status.value),
+            warnings=updated_plan.warnings,
+            next_actions=["preview_transition_plan"],
+            plan=_transition_plan_to_dict(updated_plan),
+        )
+    except Exception as e:  # noqa: BLE001
+        return _transition_planning_response(
+            success=False,
+            status="failed",
+            error={"message": str(e), "type": type(e).__name__},
+        )
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_transitions"},
+    annotations={
+        "title": "Preview Transition Plan",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def preview_transition_plan(
+    ctx: Context,
+    plan_id: Annotated[str, Field(description="Prepared transition plan id.")],
+) -> str:
+    """Preview the Jira transition payload for a prepared plan."""
+    user_key, tenant_key = _transition_plan_scope(ctx)
+    jira = await get_jira_fetcher(ctx)
+    try:
+        plan = _transition_plan_store.get(
+            plan_id, user_key=user_key, tenant_key=tenant_key
+        )
+        if plan is None:
+            return _transition_planning_response(
+                success=False,
+                status="not_found",
+                error={"message": f"Transition plan not found: {plan_id}"},
+            )
+
+        preview = jira.preview_transition_plan(plan)
+        _transition_plan_store.put(plan, user_key=user_key, tenant_key=tenant_key)
+        if preview.get("status") == "stale":
+            return _transition_planning_response(
+                success=False,
+                status="stale",
+                warnings=plan.warnings,
+                preview=preview,
+                plan=_transition_plan_to_dict(plan),
+            )
+
+        return _transition_planning_response(
+            success=True,
+            status="previewed",
+            warnings=plan.warnings,
+            next_actions=(
+                ["review_new_context", "confirm_and_apply_transition_plan"]
+                if preview.get("freshness", {}).get("requires_reconfirmation")
+                else ["confirm_and_apply_transition_plan"]
+            ),
+            preview=preview,
+            plan=_transition_plan_to_dict(plan),
+        )
+    except Exception as e:  # noqa: BLE001
+        return _transition_planning_response(
+            success=False,
+            status="failed",
+            error={"message": str(e), "type": type(e).__name__},
+        )
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_transitions"},
+    annotations={
+        "title": "Apply Transition Plan",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+@check_write_access
+async def apply_transition_plan(
+    ctx: Context,
+    plan_id: Annotated[str, Field(description="Prepared transition plan id.")],
+    *,
+    confirmed: Annotated[
+        bool,
+        Field(description="Must be true after user confirmation."),
+    ] = False,
+    payload_hash: Annotated[
+        str | None,
+        Field(description="Payload hash returned by preview_transition_plan."),
+    ] = None,
+) -> str:
+    """Apply a prepared Jira transition plan after confirmation."""
+    user_key, tenant_key = _transition_plan_scope(ctx)
+    jira = await get_jira_fetcher(ctx)
+    claimed_plan: TransitionPlan | None = None
+    try:
+        if confirmed and payload_hash:
+            plan, claim_status = _transition_plan_store.claim_for_apply(
+                plan_id,
+                payload_hash,
+                user_key=user_key,
+                tenant_key=tenant_key,
+            )
+            if plan is None:
+                return _transition_planning_response(
+                    success=False,
+                    status=claim_status,
+                    error={"message": f"Transition plan cannot be applied: {plan_id}"},
+                )
+            claimed_plan = plan
+        else:
+            plan = _transition_plan_store.get(
+                plan_id, user_key=user_key, tenant_key=tenant_key
+            )
+        if plan is None:
+            return _transition_planning_response(
+                success=False,
+                status="not_found",
+                error={"message": f"Transition plan not found: {plan_id}"},
+            )
+
+        result = jira.apply_transition_plan(
+            plan,
+            confirmed=confirmed,
+            payload_hash=payload_hash,
+        )
+        if claimed_plan is None:
+            if result.get("success") or result.get("status") == "stale":
+                _transition_plan_store.delete(
+                    plan_id, user_key=user_key, tenant_key=tenant_key
+                )
+            else:
+                _transition_plan_store.put(
+                    plan, user_key=user_key, tenant_key=tenant_key
+                )
+        elif not result.get("success") and result.get("status") not in {
+            "stale",
+            "applied",
+        }:
+            _transition_plan_store.put(
+                plan, user_key=user_key, tenant_key=tenant_key
+            )
+        return _transition_planning_response(
+            success=bool(result.get("success")),
+            status=str(result.get("status", "unknown")),
+            warnings=plan.warnings,
+            next_actions=[] if result.get("success") else None,
+            result=result,
+            plan=_transition_plan_to_dict(plan),
+        )
+    except Exception as e:  # noqa: BLE001
+        if claimed_plan is not None:
+            claimed_plan.status = TransitionPlanStatus.FAILED
+            _transition_plan_store.put(
+                claimed_plan, user_key=user_key, tenant_key=tenant_key
+            )
+        return _transition_planning_response(
+            success=False,
+            status="failed",
+            error={"message": str(e), "type": type(e).__name__},
+        )
 
 
 @jira_mcp.tool(
@@ -1718,7 +2272,7 @@ async def delete_issue(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    deleted = jira.delete_issue(issue_key)
+    jira.delete_issue(issue_key)
     result = {"message": f"Issue {issue_key} has been deleted successfully."}
     # The underlying method raises on failure, so if we reach here, it's success.
     return json.dumps(result, indent=2, ensure_ascii=False)
@@ -2151,7 +2705,13 @@ async def remove_issue_link(
 
 @jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_transitions"},
-    annotations={"title": "Transition Issue", "destructiveHint": True},
+    annotations={
+        "title": "Transition Issue",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
 )
 @check_write_access
 async def transition_issue(
@@ -2167,8 +2727,11 @@ async def transition_issue(
         str,
         Field(
             description=(
-                "ID of the transition to perform. Use the jira_get_transitions tool first "
-                "to get the available transition IDs for the issue. Example values: '11', '21', '31'"
+                "ID of the transition to perform. This is the low-level direct "
+                "write path. For transitions with screens, required fields, "
+                "or high-cardinality pickers, prefer jira_prepare_transition "
+                "then jira_preview_transition_plan and jira_apply_transition_plan. "
+                "Example values: '11', '21', '31'."
             )
         ),
     ],
@@ -2178,8 +2741,8 @@ async def transition_issue(
             description=(
                 "(Optional) JSON string of fields to update during the transition. "
                 "Some transitions require specific fields to be set. "
-                "Use jira_get_transitions first to discover required fields "
-                "(look for 'has_screen' and 'required_fields' in the response). "
+                "For complex transition screens, prefer the planning workflow "
+                "because it previews payloads and validates freshness before apply. "
                 "Examples: "
                 '\'{"resolution": {"name": "Fixed"}}\', '
                 "'{\"customfield_10010\": 3600}'."
@@ -2210,7 +2773,13 @@ async def transition_issue(
         ),
     ] = None,
 ) -> str:
-    """Transition a Jira issue to a new status.
+    """Low-level direct transition of a Jira issue to a new status.
+
+    For complex transitions with required fields, large pickers, or user-facing
+    confirmation, prefer the safer planning workflow:
+    jira_prepare_transition -> jira_update_transition_plan /
+    jira_search_transition_field_options -> jira_preview_transition_plan ->
+    jira_apply_transition_plan.
 
     Args:
         ctx: The FastMCP context.

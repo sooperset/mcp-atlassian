@@ -282,6 +282,150 @@ def test_get_project_versions(projects_mixin: ProjectsMixin, mock_versions: list
     projects_mixin.jira.get_project_versions.assert_called_once_with(key="PROJ1")
 
 
+def test_get_project_versions_uses_local_cache(
+    projects_mixin: ProjectsMixin, mock_versions: list[dict]
+) -> None:
+    """Test project versions are cached in the local process."""
+    projects_mixin.jira.get_project_versions.return_value = mock_versions
+
+    first = projects_mixin.get_project_versions("PROJ1")
+    second = projects_mixin.get_project_versions("PROJ1")
+
+    assert first == second
+    projects_mixin.jira.get_project_versions.assert_called_once_with(key="PROJ1")
+
+
+def test_get_project_versions_force_refresh_bypasses_cache(
+    projects_mixin: ProjectsMixin, mock_versions: list[dict]
+) -> None:
+    """Test force_refresh bypasses the project version cache."""
+    projects_mixin.jira.get_project_versions.return_value = mock_versions
+
+    projects_mixin.get_project_versions("PROJ1")
+    projects_mixin.get_project_versions("PROJ1", force_refresh=True)
+
+    assert projects_mixin.jira.get_project_versions.call_count == 2
+
+
+def test_get_project_versions_does_not_cache_failed_fetch(
+    projects_mixin: ProjectsMixin,
+) -> None:
+    """Test failed version fetches do not poison the cache."""
+    projects_mixin.jira.get_project_versions.side_effect = [
+        Exception("temporary failure"),
+        [{"id": "10000", "name": "1.0", "released": True}],
+    ]
+
+    assert projects_mixin.get_project_versions("PROJ1") == []
+    assert projects_mixin.get_project_versions("PROJ1") == [
+        {"id": "10000", "name": "1.0", "released": True, "archived": False}
+    ]
+    assert projects_mixin.jira.get_project_versions.call_count == 2
+
+
+def test_project_version_cache_returns_copies(
+    projects_mixin: ProjectsMixin, mock_versions: list[dict]
+) -> None:
+    """Test callers cannot mutate cached project versions."""
+    projects_mixin.jira.get_project_versions.return_value = mock_versions
+
+    first = projects_mixin.get_project_versions("PROJ1")
+    first.append({"id": "mutated", "name": "mutated"})
+    second = projects_mixin.get_project_versions("PROJ1")
+
+    assert [version["id"] for version in second] == ["10000", "10001"]
+
+
+def test_create_project_version_invalidates_versions_cache(
+    projects_mixin: ProjectsMixin, mock_versions: list[dict]
+) -> None:
+    """Test creating a version invalidates cached versions for the project."""
+    projects_mixin.jira.get_project_versions.return_value = mock_versions
+
+    projects_mixin.get_project_versions("PROJ1")
+    with patch.object(
+        projects_mixin,
+        "create_version",
+        return_value={"id": "20000", "name": "3.0"},
+    ):
+        projects_mixin.create_project_version("PROJ1", "3.0")
+    projects_mixin.get_project_versions("PROJ1")
+
+    assert projects_mixin.jira.get_project_versions.call_count == 2
+
+
+def test_search_project_versions_filters_and_paginates(
+    projects_mixin: ProjectsMixin,
+) -> None:
+    """Test local project version search filters and paginates."""
+    projects_mixin.jira.get_project_versions.return_value = [
+        {"id": "1", "name": "通用版V2.13.1", "released": True},
+        {"id": "2", "name": "通用版V2.13.2", "released": True},
+        {"id": "3", "name": "通用版V2.14.0", "released": False},
+        {"id": "4", "name": "归档版本", "released": True, "archived": True},
+    ]
+
+    result = projects_mixin.search_project_versions(
+        "PROJ1",
+        query=" V2.13 ",
+        limit=1,
+        offset=0,
+        released=True,
+        archived=False,
+    )
+
+    assert result["items"] == [
+        {"id": "1", "name": "通用版V2.13.1", "released": True, "archived": False}
+    ]
+    assert result["count"] == 2
+    assert result["has_more"] is True
+    assert result["next_offset"] == 1
+
+
+def test_search_project_versions_includes_selected_ids(
+    projects_mixin: ProjectsMixin,
+) -> None:
+    """Test selected ids are included even outside the current page."""
+    projects_mixin.jira.get_project_versions.return_value = [
+        {"id": "1", "name": "通用版V2.13.1", "released": True},
+        {"id": "2", "name": "通用版V2.13.2", "released": True},
+        {"id": "3", "name": "通用版V2.14.0", "released": False},
+    ]
+
+    result = projects_mixin.search_project_versions(
+        "PROJ1",
+        query="V2.13",
+        limit=1,
+        include_ids=["3"],
+    )
+
+    assert [item["id"] for item in result["items"]] == ["1", "3"]
+
+
+def test_search_project_versions_limits_included_selected_ids(
+    projects_mixin: ProjectsMixin,
+) -> None:
+    """Test include_ids is bounded so it cannot bypass pagination limits."""
+    projects_mixin.jira.get_project_versions.return_value = [
+        {"id": str(index), "name": f"版本{index}", "released": True}
+        for index in range(1, 31)
+    ]
+
+    result = projects_mixin.search_project_versions(
+        "PROJ1",
+        query="no-page-match",
+        limit=1,
+        include_ids=[str(index) for index in range(1, 31)],
+    )
+
+    assert [item["id"] for item in result["items"]] == [
+        str(index) for index in range(1, 21)
+    ]
+    assert result["include_ids_truncated"] is True
+    assert result["requested_include_ids_count"] == 30
+    assert result["included_selected_count"] == 20
+
+
 def test_get_project_versions_exception(projects_mixin: ProjectsMixin):
     """Test get_project_versions method with exception."""
     projects_mixin.jira.get_project_versions.side_effect = Exception("API error")
