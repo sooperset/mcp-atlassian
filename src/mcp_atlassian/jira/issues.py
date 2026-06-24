@@ -1,5 +1,6 @@
 """Module for Jira issue operations."""
 
+import json
 import logging
 from collections import defaultdict
 from typing import Any
@@ -1146,8 +1147,24 @@ class IssuesMixin(
 
             # Get the updated issue data and convert to JiraIssue model
             issue_data = self.jira.get_issue(issue_key)
+            if isinstance(issue_data, str):
+                # atlassian-python-api can return a string on Jira Server/DC
+                # when response.json() fails. Try parsing it as JSON first.
+                try:
+                    issue_data = json.loads(issue_data)
+                except (ValueError, TypeError):
+                    logger.warning(
+                        f"get_issue returned a string for {issue_key}, "
+                        f"re-fetching via direct GET"
+                    )
+                    issue_data = self.jira.get(
+                        self.jira.resource_url("issue/" + issue_key)
+                    )
             if not isinstance(issue_data, dict):
-                msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
+                msg = (
+                    f"Unexpected return value type from `jira.get_issue`: "
+                    f"{type(issue_data)}"
+                )
                 logger.error(msg)
                 raise TypeError(msg)
             issue = JiraIssue.from_api_response(issue_data)
