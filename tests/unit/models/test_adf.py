@@ -437,6 +437,50 @@ class TestMarkdownToAdf:
         link_mark = next(m for m in link_nodes[0]["marks"] if m["type"] == "link")
         assert link_mark["attrs"]["href"] == "https://example.com"
 
+    # -- Mentions -----------------------------------------------------------
+
+    def test_accountid_mention_becomes_mention_node(self):
+        """[~accountid:<id>] produces an ADF mention node, not text."""
+        result = markdown_to_adf("Hi [~accountid:712020:3420e1b4-xxxx] there")
+        para = result["content"][0]
+        mentions = [n for n in para["content"] if n["type"] == "mention"]
+        assert len(mentions) == 1
+        assert mentions[0]["attrs"]["id"] == "712020:3420e1b4-xxxx"
+        # The literal wiki syntax must not survive as a text node.
+        texts = " ".join(n.get("text", "") for n in para["content"])
+        assert "accountid" not in texts
+
+    def test_accountid_mention_at_line_start(self):
+        """A leading mention is converted and not markdown-escaped."""
+        result = markdown_to_adf("[~accountid:abc-123] ping")
+        para = result["content"][0]
+        assert para["content"][0]["type"] == "mention"
+        assert para["content"][0]["attrs"]["id"] == "abc-123"
+        texts = "".join(n.get("text", "") for n in para["content"])
+        assert "\\" not in texts
+
+    def test_named_mention_becomes_mention_node(self):
+        """@[Display Name](<id>) produces a mention node with text attr."""
+        result = markdown_to_adf("ping @[John Doe](5b10ac8d82e05) please")
+        para = result["content"][0]
+        mentions = [n for n in para["content"] if n["type"] == "mention"]
+        assert len(mentions) == 1
+        assert mentions[0]["attrs"]["id"] == "5b10ac8d82e05"
+        assert mentions[0]["attrs"]["text"] == "@John Doe"
+
+    def test_plain_link_not_treated_as_mention(self):
+        """A normal [text](url) link is unaffected by mention handling."""
+        result = markdown_to_adf("see [docs](https://example.com)")
+        para = result["content"][0]
+        assert not any(n["type"] == "mention" for n in para["content"])
+        link_nodes = [
+            n
+            for n in para["content"]
+            if n["type"] == "text"
+            and any(m["type"] == "link" for m in n.get("marks", []))
+        ]
+        assert link_nodes[0]["text"] == "docs"
+
     # -- Code blocks --------------------------------------------------------
 
     def test_code_block_with_lang(self):
