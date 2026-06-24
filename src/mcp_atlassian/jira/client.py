@@ -158,6 +158,11 @@ class JiraClient:
         if self.config.custom_headers:
             self._apply_custom_headers()
 
+        # Apply cookie if configured
+        if self.config.cookie:
+            self.jira._session.headers["Cookie"] = self.config.cookie
+            logger.debug("Applied configured cookie to Jira session")
+
         # Initialize the text preprocessor for text processing capabilities
         self.preprocessor = JiraPreprocessor(
             base_url=self.config.url,

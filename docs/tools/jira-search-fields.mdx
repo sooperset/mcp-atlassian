@@ -18,6 +18,7 @@ Search Jira issues using JQL (Jira Query Language).
 | `projects_filter` | `string` | No | (Optional) Comma-separated list of project keys to filter results by. Overrides the environment variable JIRA_PROJECTS_FILTER if provided. |
 | `expand` | `string` | No | (Optional) fields to expand. Examples: 'renderedFields', 'transitions', 'changelog' |
 | `page_token` | `string` | No | Pagination token from a previous search result. Cloud only — Server/DC uses `start_at` for pagination. |
+| `use_display_names` | `boolean` | No | When true, custom field keys in the output use human-readable display names (e.g. 'Story Points') instead of opaque IDs (e.g. 'customfield_10243'). The `names` expansion is added automatically. Standard fields are unaffected. Default: false. |
 **Example:**
 
 ```json
@@ -26,6 +27,10 @@ Search Jira issues using JQL (Jira Query Language).
 
 <Tip>
 Always use `ORDER BY` for deterministic results. Use `fields` parameter to limit returned data for faster queries.
+</Tip>
+
+<Tip>
+Set `use_display_names: true` to get human-readable keys for custom fields instead of opaque IDs like `customfield_XXXXX`.
 </Tip>
 
 
