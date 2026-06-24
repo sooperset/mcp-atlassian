@@ -761,6 +761,95 @@ class JiraIssue(ApiModel, TimestampMixin):
 
         return None, None
 
+    def get_custom_field_by_name(
+        self, display_name: str, *, case_sensitive: bool = False
+    ) -> Any:
+        """Look up a custom field value by its human-readable display name.
+
+        This is a convenience wrapper over the internal ``custom_fields`` dict
+        (which is keyed by ``customfield_XXXXX``).  It searches the ``name``
+        entry stored inside each value object, so the underlying data structure
+        is completely untouched.
+
+        Args:
+            display_name: The human-readable name of the field
+                (e.g. ``"Story Points"``, ``"Severity"``).
+            case_sensitive: If *False* (default) the comparison is
+                case-insensitive.
+
+        Returns:
+            The processed field value if found, or *None*.
+        """
+        target = display_name if case_sensitive else display_name.lower()
+        for field_data in self.custom_fields.values():
+            if not isinstance(field_data, dict):
+                continue
+            stored_name = field_data.get("name")
+            if stored_name is None:
+                continue
+            candidate = stored_name if case_sensitive else stored_name.lower()
+            if candidate == target:
+                return self._process_custom_field_value(field_data.get("value"))
+        return None
+
+    @property
+    def custom_fields_by_display_name(self) -> dict[str, Any]:
+        """Return ``custom_fields`` re-keyed by display name.
+
+        Fields that do not carry a ``name`` entry keep their original
+        ``customfield_XXXXX`` key so nothing is silently dropped.
+
+        Each value retains the upstream structure
+        (``{"value": …, "name": …}``) with an additional ``"field_id"`` key
+        for reverse-lookup convenience.
+
+        Returns:
+            A **new** dict — the original ``custom_fields`` is never mutated.
+        """
+        result: dict[str, Any] = {}
+        for field_id, field_data in self.custom_fields.items():
+            if not isinstance(field_data, dict):
+                result[field_id] = field_data
+                continue
+            display_key = field_data.get("name", field_id)
+            entry = {**field_data, "field_id": field_id}
+            result[display_key] = entry
+        return result
+
+    def to_display_name_dict(self) -> dict[str, Any]:
+        """Like ``to_simplified_dict`` but with custom fields keyed by display name.
+
+        Standard fields (summary, status, etc.) are identical to
+        ``to_simplified_dict()``.  Only the custom-field section changes:
+        each ``customfield_XXXXX`` key is replaced by its human-readable
+        name when one is available.
+
+        Returns:
+            A simplified dict suitable for tool / API output where custom
+            fields use human-friendly keys.
+        """
+        base = self.to_simplified_dict()
+
+        rekeyed_customs: dict[str, Any] = {}
+        removed_keys: list[str] = []
+
+        for key, value in base.items():
+            if not key.startswith("customfield_"):
+                continue
+            removed_keys.append(key)
+            if isinstance(value, dict) and "name" in value:
+                display_key = value["name"]
+                entry = {**value, "field_id": key}
+                rekeyed_customs[display_key] = entry
+            else:
+                rekeyed_customs[key] = value
+
+        for k in removed_keys:
+            del base[k]
+
+        base.update(rekeyed_customs)
+        return base
+
     def _get_epic_name(self) -> str | None:
         """Get the epic name from custom fields if available."""
         # Try each pattern in order

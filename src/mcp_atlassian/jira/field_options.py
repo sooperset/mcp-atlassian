@@ -109,8 +109,8 @@ class FieldOptionsMixin(JiraClient):
             global_ctx = next((c for c in contexts if c.is_global_context), None)
             context_id = global_ctx.id if global_ctx else contexts[0].id
 
-        # Paginate through all options
-        all_options: list[FieldOption] = []
+        # Paginate through all option entries (Cloud returns a flat list).
+        raw_items: list[dict] = []
         start_at = 0
         max_results = 100
 
@@ -127,7 +127,7 @@ class FieldOptionsMixin(JiraClient):
                 values = response.get("values", [])
                 for item in values:
                     if isinstance(item, dict):
-                        all_options.append(FieldOption.from_api_response(item))
+                        raw_items.append(item)
 
                 total = response.get("total", len(values))
                 start_at += len(values)
@@ -141,7 +141,70 @@ class FieldOptionsMixin(JiraClient):
                 )
                 break
 
-        return all_options
+        # Build parent -> children mapping. Cloud main endpoint returns a
+        # flat list where child items include an "optionId" referencing
+        # their parent's id. Prefer calling the cascade-specific endpoint
+        # per parent (with pagination) to get authoritative child objects;
+        # fall back to grouping by optionId only when that endpoint is
+        # unreachable (exception), so an explicitly empty cascade response
+        # is trusted and does not trigger the fallback.
+        items_by_id = {str(item.get("id", "")): item for item in raw_items}
+        parent_ids = [iid for iid, it in items_by_id.items() if not it.get("optionId")]
+
+        result: list[FieldOption] = []
+
+        for pid in parent_ids:
+            parent_item = items_by_id.get(pid, {})
+            child_items: list[dict] = []
+            # True once the cascade endpoint responds (even with empty results),
+            # so an empty authoritative response is not confused with a failure.
+            cascade_fetched = False
+            cascade_start = 0
+            cascade_max = 100
+
+            while True:
+                try:
+                    cascade_resp = self.jira.get(
+                        f"rest/api/3/field/{field_id}/context/{context_id}"
+                        f"/option/{pid}/cascadingOption",
+                        params={"startAt": cascade_start, "maxResults": cascade_max},
+                    )
+                    cascade_fetched = True
+
+                    if isinstance(cascade_resp, dict):
+                        page = cascade_resp.get("values")
+                        page_items: list[dict] = (
+                            [c for c in page if isinstance(c, dict)]
+                            if page is not None
+                            else []
+                        )
+                        child_items.extend(page_items)
+                        total = cascade_resp.get("total", len(page_items))
+                        cascade_start += len(page_items)
+                        if cascade_start >= total or not page_items:
+                            break
+                    else:
+                        break
+
+                except Exception as e:
+                    logger.debug(
+                        f"Cascade endpoint unavailable for field {field_id} "
+                        f"option {pid}: {e}. Falling back to flat-list grouping."
+                    )
+                    break
+
+            # Fallback: reconstruct hierarchy from flat-list "optionId" references,
+            # but only when the cascade endpoint was not reachable.
+            if not cascade_fetched:
+                child_items = [it for it in raw_items if it.get("optionId") == pid]
+
+            children = [FieldOption.from_api_response(c) for c in child_items]
+            parent_opt = FieldOption.from_api_response(parent_item).model_copy(
+                update={"child_options": children}
+            )
+            result.append(parent_opt)
+
+        return result
 
     def _get_field_options_server(
         self,

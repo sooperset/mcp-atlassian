@@ -396,3 +396,83 @@ def test_jira_client_basic_auth_preserves_trust_env():
         JiraClient(config=config)
 
         assert mock_session.trust_env is True
+
+
+# ---------------------------------------------------------------------------
+# Service account (cloud_id) tests
+# ---------------------------------------------------------------------------
+
+
+def test_init_basic_auth_with_cloud_id():
+    """Test that basic auth with cloud_id routes through api.atlassian.com."""
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        config = JiraConfig(
+            url="https://company.atlassian.net",
+            auth_type="basic",
+            username="svc@company.atlassian.net",
+            api_token="svc_token",
+            cloud_id="test-cloud-uuid",
+        )
+
+        JiraClient(config=config)
+
+        mock_jira.assert_called_once_with(
+            url="https://api.atlassian.com/ex/jira/test-cloud-uuid",
+            username="svc@company.atlassian.net",
+            password="svc_token",
+            cloud=True,
+            verify_ssl=True,
+            timeout=75,
+        )
+
+
+def test_init_pat_auth_with_cloud_id():
+    """Test that PAT auth with cloud_id routes through api.atlassian.com."""
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        config = JiraConfig(
+            url="https://company.atlassian.net",
+            auth_type="pat",
+            personal_token="test_pat",
+            cloud_id="test-cloud-uuid",
+        )
+
+        JiraClient(config=config)
+
+        mock_jira.assert_called_once_with(
+            url="https://api.atlassian.com/ex/jira/test-cloud-uuid",
+            token="test_pat",
+            cloud=True,
+            verify_ssl=True,
+            timeout=75,
+        )
+
+
+def test_init_basic_auth_without_cloud_id_uses_direct_url():
+    """Test that basic auth without cloud_id uses the direct URL as before."""
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        config = JiraConfig(
+            url="https://company.atlassian.net",
+            auth_type="basic",
+            username="user@example.com",
+            api_token="token",
+        )
+
+        JiraClient(config=config)
+
+        mock_jira.assert_called_once_with(
+            url="https://company.atlassian.net",
+            username="user@example.com",
+            password="token",
+            cloud=True,
+            verify_ssl=True,
+            timeout=75,
+        )

@@ -459,3 +459,86 @@ def test_confluence_fetcher_mro_order():
     # Verify that attachment methods are accessible (the real test)
     assert hasattr(ConfluenceFetcher, "upload_attachment")
     assert hasattr(ConfluenceFetcher, "get_content_attachments")
+
+
+# ---------------------------------------------------------------------------
+# Service account (cloud_id) tests
+# ---------------------------------------------------------------------------
+
+
+def test_init_basic_auth_with_cloud_id():
+    """Test that basic auth with cloud_id routes through api.atlassian.com."""
+    config = ConfluenceConfig(
+        url="https://company.atlassian.net/wiki",
+        auth_type="basic",
+        username="svc@company.atlassian.net",
+        api_token="svc_token",
+        cloud_id="test-cloud-uuid",
+    )
+
+    with (
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+        patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+    ):
+        ConfluenceClient(config=config)
+
+        mock_confluence.assert_called_once_with(
+            url="https://api.atlassian.com/ex/confluence/test-cloud-uuid",
+            username="svc@company.atlassian.net",
+            password="svc_token",
+            cloud=True,
+            verify_ssl=True,
+            timeout=75,
+        )
+
+
+def test_init_pat_auth_with_cloud_id():
+    """Test that PAT auth with cloud_id routes through api.atlassian.com."""
+    config = ConfluenceConfig(
+        url="https://company.atlassian.net/wiki",
+        auth_type="pat",
+        personal_token="test_pat",
+        cloud_id="test-cloud-uuid",
+    )
+
+    with (
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+        patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+    ):
+        ConfluenceClient(config=config)
+
+        mock_confluence.assert_called_once_with(
+            url="https://api.atlassian.com/ex/confluence/test-cloud-uuid",
+            token="test_pat",
+            cloud=True,
+            verify_ssl=True,
+            timeout=75,
+        )
+
+
+def test_init_basic_auth_without_cloud_id_uses_direct_url():
+    """Test that basic auth without cloud_id uses the direct URL as before."""
+    config = ConfluenceConfig(
+        url="https://company.atlassian.net/wiki",
+        auth_type="basic",
+        username="user@example.com",
+        api_token="token",
+    )
+
+    with (
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+        patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+    ):
+        ConfluenceClient(config=config)
+
+        mock_confluence.assert_called_once_with(
+            url="https://company.atlassian.net/wiki",
+            username="user@example.com",
+            password="token",
+            cloud=True,
+            verify_ssl=True,
+            timeout=75,
+        )

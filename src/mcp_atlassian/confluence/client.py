@@ -76,11 +76,11 @@ class ConfluenceClient:
         elif self.config.auth_type == "pat":
             logger.debug(
                 f"Initializing Confluence client with Token (PAT) auth. "
-                f"URL: {self.config.url}, "
+                f"URL: {self.config.api_url}, "
                 f"Token (masked): {mask_sensitive(str(self.config.personal_token))}"
             )
             self.confluence = Confluence(
-                url=self.config.url,
+                url=self.config.api_url,
                 token=self.config.personal_token,
                 cloud=self.config.is_cloud,
                 verify_ssl=self.config.ssl_verify,
@@ -89,12 +89,12 @@ class ConfluenceClient:
         else:  # basic auth
             logger.debug(
                 f"Initializing Confluence client with Basic auth. "
-                f"URL: {self.config.url}, Username: {self.config.username}, "
+                f"URL: {self.config.api_url}, Username: {self.config.username}, "
                 f"API Token present: {bool(self.config.api_token)}, "
                 f"Is Cloud: {self.config.is_cloud}"
             )
             self.confluence = Confluence(
-                url=self.config.url,
+                url=self.config.api_url,
                 username=self.config.username,
                 password=self.config.api_token,  # API token is used as password
                 cloud=self.config.is_cloud,
@@ -144,6 +144,11 @@ class ConfluenceClient:
         # Apply custom headers if configured
         if self.config.custom_headers:
             self._apply_custom_headers()
+
+        # Apply cookie if configured
+        if self.config.cookie:
+            self.confluence._session.headers["Cookie"] = self.config.cookie
+            logger.debug("Applied configured cookie to Confluence session")
 
         # Import here to avoid circular imports
         from ..preprocessing.confluence import ConfluencePreprocessor

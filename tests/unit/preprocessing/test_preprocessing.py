@@ -592,6 +592,97 @@ More content.
     assert "<h2>" in result_with_anchors
 
 
+# Regression tests — bare-filename images produce "Preview unavailable"
+
+
+class TestFixAttachmentImages:
+    """Unit tests for ConfluencePreprocessor._fix_attachment_images."""
+
+    def setup_method(self):
+        from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
+
+        self.fix = ConfluencePreprocessor._fix_attachment_images
+
+    def test_bare_filename_replaced_with_attachment_macro(self):
+        html = '<img src="chart.png" alt="Revenue chart"/>'
+        result = self.fix(html)
+        assert result == (
+            '<ac:image ac:alt="Revenue chart">'
+            '<ri:attachment ri:filename="chart.png"/>'
+            "</ac:image>"
+        )
+        assert "<img" not in result
+
+    def test_alt_text_preserved(self):
+        html = '<img alt="My diagram" src="diagram.svg"/>'
+        result = self.fix(html)
+        assert 'ac:alt="My diagram"' in result
+        assert 'ri:filename="diagram.svg"' in result
+
+    def test_missing_alt_defaults_to_empty_string(self):
+        html = '<img src="figure.png"/>'
+        result = self.fix(html)
+        assert 'ac:alt=""' in result
+        assert 'ri:filename="figure.png"' in result
+
+    def test_https_url_left_untouched(self):
+        html = '<img src="https://example.com/logo.png" alt="logo"/>'
+        assert self.fix(html) == html
+
+    def test_http_url_left_untouched(self):
+        html = '<img src="http://example.com/img.jpg" alt="x"/>'
+        assert self.fix(html) == html
+
+    def test_data_uri_left_untouched(self):
+        html = '<img src="data:image/png;base64,abc123" alt="inline"/>'
+        assert self.fix(html) == html
+
+    def test_absolute_path_left_untouched(self):
+        html = '<img src="/images/logo.png" alt="logo"/>'
+        assert self.fix(html) == html
+
+    def test_mixed_content_only_bare_filenames_rewritten(self):
+        html = (
+            '<img src="local.png" alt="local"/>'
+            '<img src="https://cdn.example.com/remote.png" alt="remote"/>'
+        )
+        result = self.fix(html)
+        assert "ri:filename" in result
+        assert "https://cdn.example.com/remote.png" in result
+        assert '<img src="local.png"' not in result
+
+    def test_no_img_tags_unchanged(self):
+        html = "<p>No images here</p>"
+        assert self.fix(html) == html
+
+
+def test_markdown_to_confluence_storage_attachment_image():
+    """Regression: bare-filename images must produce ac:image attachment macros."""
+    from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
+
+    preprocessor = ConfluencePreprocessor(base_url="https://example.atlassian.net")
+    result = preprocessor.markdown_to_confluence_storage("![Revenue chart](chart.png)")
+    assert "ri:filename" in result, (
+        "Expected Confluence attachment macro, got: " + result
+    )
+    assert 'ri:filename="chart.png"' in result
+    assert "<img" not in result, (
+        "Raw <img> tag found — will show as 'Preview unavailable'"
+    )
+
+
+def test_markdown_to_confluence_storage_external_image_unchanged():
+    """External image URLs must not be rewritten to attachment macros."""
+    from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
+
+    preprocessor = ConfluencePreprocessor(base_url="https://example.atlassian.net")
+    result = preprocessor.markdown_to_confluence_storage(
+        "![Logo](https://example.com/logo.png)"
+    )
+    assert "https://example.com/logo.png" in result
+    assert 'ri:filename="https://example.com/logo.png"' not in result
+
+
 # Issue #786 regression tests - Wiki Markup Corruption
 
 

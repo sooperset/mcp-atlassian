@@ -684,6 +684,62 @@ class TestIssuesMixin:
         assert not issues_mixin._get_account_id.called
         assert document.key == "TEST-123"
 
+    def test_assign_issue(self, issues_mixin: IssuesMixin, make_issue_data):
+        """Test assigning an issue to a user via dedicated endpoint."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            description="This is a test"
+        )
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+        issues_mixin._get_account_id = MagicMock(return_value="account-123")
+
+        document = issues_mixin.assign_issue(
+            issue_key="TEST-123", assignee="user@example.com"
+        )
+
+        issues_mixin._get_account_id.assert_called_once_with("user@example.com")
+        issues_mixin.jira.assign_issue.assert_called_once_with(
+            "TEST-123", "account-123"
+        )
+        assert document.key == "TEST-123"
+
+    def test_assign_issue_unassign(self, issues_mixin: IssuesMixin, make_issue_data):
+        """Test unassigning an issue (passing None)."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            description="This is a test"
+        )
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+        issues_mixin._get_account_id = MagicMock()
+
+        document = issues_mixin.assign_issue(issue_key="TEST-123", assignee=None)
+
+        issues_mixin.jira.assign_issue.assert_called_once_with("TEST-123", None)
+        assert not issues_mixin._get_account_id.called
+        assert document.key == "TEST-123"
+
+    def test_assign_issue_empty_string(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Test unassigning an issue (passing empty string)."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            description="This is a test"
+        )
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+        issues_mixin._get_account_id = MagicMock()
+
+        document = issues_mixin.assign_issue(issue_key="TEST-123", assignee="")
+
+        issues_mixin.jira.assign_issue.assert_called_once_with("TEST-123", None)
+        assert not issues_mixin._get_account_id.called
+        assert document.key == "TEST-123"
+
+    def test_assign_issue_error(self, issues_mixin: IssuesMixin):
+        """Test error handling when assignment fails."""
+        issues_mixin.jira.assign_issue.side_effect = Exception("Permission denied")
+        issues_mixin._get_account_id = MagicMock(return_value="account-123")
+
+        with pytest.raises(ValueError, match="Failed to assign issue TEST-123"):
+            issues_mixin.assign_issue(issue_key="TEST-123", assignee="user@example.com")
+
     def test_update_issue_components(self, issues_mixin: IssuesMixin):
         """Test updating an issue's components field."""
         issue_data = {
@@ -779,6 +835,29 @@ class TestIssuesMixin:
         )
         assert document.key == "TEST-123"
 
+    def test_update_issue_clears_field_with_none(self, issues_mixin: IssuesMixin):
+        """Test update_issue passes None through kwargs to clear a field."""
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test Issue",
+                "description": "This is a test",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Bug"},
+            },
+        }
+        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+
+        issues_mixin.update_issue(issue_key="TEST-123", priority=None)
+
+        issues_mixin.jira.update_issue.assert_called_once()
+        call_kwargs = issues_mixin.jira.update_issue.call_args
+        fields = call_kwargs[1]["update"]["fields"]
+        assert "priority" in fields
+        assert fields["priority"] is None
+
     def test_delete_issue(self, issues_mixin: IssuesMixin):
         """Test deleting an issue."""
         # Call the method
@@ -813,6 +892,44 @@ class TestIssuesMixin:
         # Verify fixVersions was added correctly to fields
         assert "fixVersions" in fields
         assert fields["fixVersions"] == [{"name": "TestRelease"}]
+
+    def test_process_additional_fields_none_clears_field(
+        self, issues_mixin: IssuesMixin
+    ):
+        """Test _process_additional_fields passes None through to clear fields."""
+        fields = {}
+        kwargs = {"customfield_10013": None}  # Sprint field, set to null
+
+        issues_mixin._process_additional_fields(fields, kwargs)
+
+        # None must be preserved — it tells Jira API to clear the field
+        assert "customfield_10013" in fields
+        assert fields["customfield_10013"] is None
+
+    def test_process_additional_fields_none_clears_named_field(
+        self, issues_mixin: IssuesMixin
+    ):
+        """Test _process_additional_fields passes None through for named fields."""
+        fields = {}
+        kwargs = {"priority": None}
+
+        issues_mixin._process_additional_fields(fields, kwargs)
+
+        # priority=None should clear the priority field
+        assert "priority" in fields
+        assert fields["priority"] is None
+
+    def test_process_additional_fields_invalid_value_still_skipped(
+        self, issues_mixin: IssuesMixin
+    ):
+        """Test _process_additional_fields still skips fields with invalid format."""
+        fields = {}
+        kwargs = {"priority": 12345}  # Invalid: priority expects string or dict
+
+        issues_mixin._process_additional_fields(fields, kwargs)
+
+        # Invalid value should NOT be added to fields
+        assert "priority" not in fields
 
     def test_create_issue_with_parent_for_task(
         self, issues_mixin: IssuesMixin, make_issue_data
@@ -1737,3 +1854,46 @@ class TestIssuesMixin:
         assert isinstance(result, JiraIssue)
         assert result.key == "DEV-123"
         assert result.summary == "Development issue"
+
+    def test_find_issue_type_id_exact_match(self, issues_mixin: IssuesMixin):
+        """_find_issue_type_id resolves type name to ID."""
+        issues_mixin.get_project_issue_types = MagicMock(
+            return_value=[
+                {"id": "10000", "name": "Bug"},
+                {"id": "10001", "name": "Story"},
+            ]
+        )
+        assert issues_mixin._find_issue_type_id("PROJ", "Bug") == "10000"
+        assert issues_mixin._find_issue_type_id("PROJ", "Story") == "10001"
+
+    def test_find_issue_type_id_case_insensitive(self, issues_mixin: IssuesMixin):
+        """_find_issue_type_id matches case-insensitively."""
+        issues_mixin.get_project_issue_types = MagicMock(
+            return_value=[{"id": "10001", "name": "Story"}]
+        )
+        assert issues_mixin._find_issue_type_id("PROJ", "story") == "10001"
+        assert issues_mixin._find_issue_type_id("PROJ", "STORY") == "10001"
+
+    def test_find_issue_type_id_untranslated_fallback(self, issues_mixin: IssuesMixin):
+        """_find_issue_type_id falls back to untranslatedName for localized instances."""
+        issues_mixin.get_project_issue_types = MagicMock(
+            return_value=[
+                {"id": "10001", "name": "스토리", "untranslatedName": "Story"},
+            ]
+        )
+        # Korean name doesn't match "Story", but untranslatedName does
+        assert issues_mixin._find_issue_type_id("PROJ", "Story") == "10001"
+
+    def test_find_issue_type_id_not_found(self, issues_mixin: IssuesMixin):
+        """_find_issue_type_id returns None when type not found."""
+        issues_mixin.get_project_issue_types = MagicMock(
+            return_value=[{"id": "10000", "name": "Bug"}]
+        )
+        assert issues_mixin._find_issue_type_id("PROJ", "Nonexistent") is None
+
+    def test_find_issue_type_id_exception(self, issues_mixin: IssuesMixin):
+        """_find_issue_type_id returns None on exception."""
+        issues_mixin.get_project_issue_types = MagicMock(
+            side_effect=Exception("API error")
+        )
+        assert issues_mixin._find_issue_type_id("PROJ", "Bug") is None
