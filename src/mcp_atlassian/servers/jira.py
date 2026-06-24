@@ -1950,6 +1950,48 @@ async def link_to_epic(
 
 @jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_links"},
+    annotations={
+        "title": "Unlink from Epic",
+        "destructiveHint": True,
+    },
+)
+@check_write_access
+async def unlink_from_epic(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description=(
+                "The key of the issue to unlink from its epic (e.g., 'PROJ-123')"
+            ),
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+) -> str:
+    """Unlink an issue from its epic.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: The key of the issue to unlink.
+
+    Returns:
+        JSON string with the updated issue object.
+
+    Raises:
+        ValueError: If in read-only mode or Jira client
+            unavailable.
+    """
+    jira = await get_jira_fetcher(ctx)
+    issue = jira.unlink_issue_from_epic(issue_key)
+    result = {
+        "message": (f"Issue {issue_key} has been unlinked from its epic."),
+        "issue": issue.to_simplified_dict(),
+    }
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_links"},
     annotations={"title": "Create Issue Link", "destructiveHint": True},
 )
 @check_write_access
