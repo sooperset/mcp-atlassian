@@ -389,6 +389,17 @@ class TestCommentsMixin:
         assert result["type"] == "doc"
         comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
 
+    def test_markdown_to_jira_cloud_links_issue_keys(self, comments_mixin):
+        """Cloud ADF links bare Jira issue keys to the configured Jira site."""
+        result = comments_mixin._markdown_to_jira("Blocked by PROJ-123.")
+        assert isinstance(result, dict)
+        para = result["content"][0]
+        link_node = next(n for n in para["content"] if n.get("text") == "PROJ-123")
+        link_mark = next(m for m in link_node["marks"] if m["type"] == "link")
+        assert (
+            link_mark["attrs"]["href"] == "https://test.atlassian.net/browse/PROJ-123"
+        )
+
     def test_markdown_to_jira_cloud_empty(self, comments_mixin):
         """Test _markdown_to_jira with empty text on Cloud returns ADF."""
         result = comments_mixin._markdown_to_jira("")

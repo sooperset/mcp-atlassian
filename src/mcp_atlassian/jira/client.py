@@ -254,7 +254,7 @@ class JiraClient:
 
         if self.config.is_cloud:
             try:
-                return markdown_to_adf(markdown_text)
+                return markdown_to_adf(markdown_text, jira_base_url=self.config.url)
             except Exception as e:
                 logger.warning(f"Error converting markdown to ADF: {e}")
                 return {

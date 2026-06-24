@@ -433,6 +433,17 @@ class TestMarkdownToAdf:
         link_mark = next(m for m in link_nodes[0]["marks"] if m["type"] == "link")
         assert link_mark["attrs"]["href"] == "https://example.com"
 
+    def test_jira_issue_key_links_to_browse_url(self):
+        """Bare Jira issue keys become Jira links when a base URL is available."""
+        result = markdown_to_adf(
+            "Blocked by PROJ-123.",
+            jira_base_url="https://jira.example.com/",
+        )
+        para = result["content"][0]
+        link_node = next(n for n in para["content"] if n.get("text") == "PROJ-123")
+        link_mark = next(m for m in link_node["marks"] if m["type"] == "link")
+        assert link_mark["attrs"]["href"] == "https://jira.example.com/browse/PROJ-123"
+
     # -- Code blocks --------------------------------------------------------
 
     def test_code_block_with_lang(self):
