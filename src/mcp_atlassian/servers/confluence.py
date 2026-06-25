@@ -2515,8 +2515,8 @@ async def confluence_get_space_permissions(
         Field(
             description=(
                 "Numeric ID of the Confluence space. This is the internal space ID, "
-                "not the space key. Example: '98304'. You can find the space ID by "
-                "calling confluence_get_spaces or from the space URL."
+                "not the space key. Example: '98304'. You can find the space ID from "
+                "the Confluence REST API (GET /wiki/api/v2/spaces) or from the space URL."
             )
         ),
     ],
