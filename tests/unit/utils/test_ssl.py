@@ -39,10 +39,10 @@ def test_ssl_ignore_adapter_init_poolmanager():
     # Create a mock for PoolManager that will be returned by constructor
     mock_pool_manager = MagicMock()
 
-    # Mock ssl.create_default_context
-    with patch("ssl.create_default_context") as mock_create_context:
+    # Mock ssl.SSLContext
+    with patch("ssl.SSLContext") as mock_ssl_context:
         mock_context = MagicMock()
-        mock_create_context.return_value = mock_context
+        mock_ssl_context.return_value = mock_context
 
         # Patch the PoolManager constructor
         with patch(
@@ -52,9 +52,12 @@ def test_ssl_ignore_adapter_init_poolmanager():
             adapter.init_poolmanager(5, 10, block=True)
 
             # Assert
-            mock_create_context.assert_called_once()
+            mock_ssl_context.assert_called_once_with(ssl.PROTOCOL_TLS_CLIENT)
             assert mock_context.check_hostname is False
             assert mock_context.verify_mode == ssl.CERT_NONE
+
+            # Verify the SSL context methods were called
+            mock_context.set_ciphers.assert_called_once_with("DEFAULT@SECLEVEL=0")
 
             # Verify PoolManager was called with our context
             mock_pool_manager_cls.assert_called_once()
