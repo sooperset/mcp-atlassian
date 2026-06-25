@@ -92,14 +92,14 @@ class TestGetEnabledToolsets:
 
     def test_all_toolsets_count(self):
         """Verify ALL_TOOLSETS has exactly 21 entries."""
-        assert len(ALL_TOOLSETS) == 21
+        assert len(ALL_TOOLSETS) == 22
 
     def test_all_toolsets_contains_jira_and_confluence(self):
         """Verify ALL_TOOLSETS has both Jira and Confluence toolsets."""
         jira_toolsets = {k for k in ALL_TOOLSETS if k.startswith("jira_")}
         confluence_toolsets = {k for k in ALL_TOOLSETS if k.startswith("confluence_")}
         assert len(jira_toolsets) == 15
-        assert len(confluence_toolsets) == 6
+        assert len(confluence_toolsets) == 7
 
 
 class TestShouldIncludeToolByToolset:
@@ -253,6 +253,6 @@ class TestToolsetTagCompleteness:
 
     def test_confluence_tool_count(self, confluence_tools):
         """Verify expected number of Confluence tools."""
-        assert len(confluence_tools) == 24, (
-            f"Expected 24 Confluence tools, got {len(confluence_tools)}"
+        assert len(confluence_tools) == 26, (
+            f"Expected 26 Confluence tools, got {len(confluence_tools)}"
         )
