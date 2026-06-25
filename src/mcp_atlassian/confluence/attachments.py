@@ -471,7 +471,7 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             url = f"{base_url}/rest/api/content/{content_id}/child/attachment"
 
             # Prepare headers (X-Atlassian-Token required for file uploads)
-            headers = {"X-Atlassian-Token": "nocheck"}
+            headers = {"X-Atlassian-Token": "no-check"}
 
             # Prepare multipart form data
             files = {"file": (filename, open(file_path, "rb"))}
