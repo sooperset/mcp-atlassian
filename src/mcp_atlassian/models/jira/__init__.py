@@ -36,8 +36,17 @@ from .project import JiraProject
 from .queue import (
     JiraQueue,
     JiraQueueIssuesResult,
+    JiraRequestStatusEntry,
+    JiraRequestStatusResult,
+    JiraRequestTransition,
+    JiraRequestTransitionsResult,
+    JiraRequestType,
+    JiraRequestTypeField,
+    JiraRequestTypesResult,
     JiraServiceDesk,
     JiraServiceDeskQueuesResult,
+    JiraServiceDeskRequest,
+    JiraTemporaryAttachment,
 )
 from .search import JiraSearchResult
 from .sla import (
@@ -82,6 +91,16 @@ __all__ = [
     "JiraQueue",
     "JiraServiceDeskQueuesResult",
     "JiraQueueIssuesResult",
+    # Service Desk request models
+    "JiraRequestType",
+    "JiraRequestTypeField",
+    "JiraRequestTypesResult",
+    "JiraServiceDeskRequest",
+    "JiraRequestStatusEntry",
+    "JiraRequestStatusResult",
+    "JiraRequestTransition",
+    "JiraRequestTransitionsResult",
+    "JiraTemporaryAttachment",
     "JiraIssueLinkType",
     "JiraIssueLink",
     "JiraLinkedIssue",

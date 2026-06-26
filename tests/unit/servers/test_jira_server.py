@@ -291,6 +291,83 @@ def mock_jira_fetcher():
     }
     mock_fetcher.get_queue_issues.return_value = mock_queue_issues
 
+    # Service Desk request types + create request
+    mock_request_types = MagicMock()
+    mock_request_types.to_simplified_dict.return_value = {
+        "service_desk_id": "4",
+        "start": 0,
+        "limit": 50,
+        "size": 1,
+        "is_last_page": True,
+        "request_types": [
+            {"id": "10100", "name": "Get IT help"},
+        ],
+    }
+    mock_fetcher.get_request_types.return_value = mock_request_types
+
+    mock_request_type = MagicMock()
+    mock_request_type.to_simplified_dict.return_value = {
+        "id": "10100",
+        "service_desk_id": "4",
+        "fields": [
+            {"field_id": "summary", "name": "Summary", "required": True},
+            {"field_id": "description", "name": "Description", "required": False},
+        ],
+    }
+    mock_fetcher.get_request_type_fields.return_value = mock_request_type
+
+    mock_sd_request = MagicMock()
+    mock_sd_request.to_simplified_dict.return_value = {
+        "issue_id": "12345",
+        "issue_key": "SUP-7",
+        "service_desk_id": "4",
+        "request_type_id": "10100",
+        "request_type_name": "Get IT help",
+    }
+    mock_fetcher.create_service_desk_request.return_value = mock_sd_request
+    mock_fetcher.get_service_desk_request.return_value = mock_sd_request
+
+    mock_fetcher.add_request_participants.return_value = {"ok": True}
+
+    mock_status_result = MagicMock()
+    mock_status_result.to_simplified_dict.return_value = {
+        "issue_key": "SUP-7",
+        "start": 0,
+        "limit": 50,
+        "size": 1,
+        "is_last_page": True,
+        "statuses": [
+            {
+                "status": "Open",
+                "status_category": "NEW",
+                "status_date": "2026-01-02T03:04:05+0000",
+            }
+        ],
+    }
+    mock_fetcher.get_request_status.return_value = mock_status_result
+
+    mock_transitions_result = MagicMock()
+    mock_transitions_result.to_simplified_dict.return_value = {
+        "issue_key": "SUP-7",
+        "start": 0,
+        "limit": 50,
+        "size": 1,
+        "is_last_page": True,
+        "transitions": [{"id": "31", "name": "Resolve"}],
+    }
+    mock_fetcher.get_request_transitions.return_value = mock_transitions_result
+
+    mock_fetcher.transition_service_desk_request.return_value = None
+
+    mock_temp_attachment = MagicMock()
+    mock_temp_attachment.to_simplified_dict.return_value = {
+        "temporary_attachment_id": "tmp-1",
+        "file_name": "screenshot.png",
+    }
+    mock_temp_attachment.temporary_attachment_id = "tmp-1"
+    mock_fetcher.attach_temporary_files.return_value = [mock_temp_attachment]
+    mock_fetcher.create_request_attachment.return_value = {"ok": True}
+
     # Configure add_comment
     mock_fetcher.add_comment.return_value = {
         "id": "10001",
@@ -382,12 +459,15 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     from src.mcp_atlassian.servers.jira import (
         add_comment,
         add_issues_to_sprint,
+        add_request_participants,
         add_worklog,
+        attach_service_desk_request_files,
         batch_create_issues,
         batch_create_versions,
         batch_get_changelogs,
         create_issue,
         create_issue_link,
+        create_service_desk_request,
         create_sprint,
         delete_issue,
         download_attachments,
@@ -403,8 +483,13 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         get_project_issues,
         get_project_versions,
         get_queue_issues,
+        get_request_status,
+        get_request_transitions,
+        get_request_type_fields,
+        get_request_types,
         get_service_desk_for_project,
         get_service_desk_queues,
+        get_service_desk_request,
         get_sprint_issues,
         get_sprints_from_board,
         get_transitions,
@@ -415,6 +500,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         search,
         search_fields,
         transition_issue,
+        transition_service_desk_request,
         update_issue,
         update_sprint,
     )
@@ -430,6 +516,15 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(get_service_desk_for_project)
     jira_sub_mcp.add_tool(get_service_desk_queues)
     jira_sub_mcp.add_tool(get_queue_issues)
+    jira_sub_mcp.add_tool(get_request_types)
+    jira_sub_mcp.add_tool(get_request_type_fields)
+    jira_sub_mcp.add_tool(create_service_desk_request)
+    jira_sub_mcp.add_tool(get_service_desk_request)
+    jira_sub_mcp.add_tool(add_request_participants)
+    jira_sub_mcp.add_tool(get_request_status)
+    jira_sub_mcp.add_tool(get_request_transitions)
+    jira_sub_mcp.add_tool(transition_service_desk_request)
+    jira_sub_mcp.add_tool(attach_service_desk_request_files)
     jira_sub_mcp.add_tool(get_transitions)
     jira_sub_mcp.add_tool(get_worklog)
     jira_sub_mcp.add_tool(download_attachments)
@@ -662,6 +757,193 @@ async def test_get_queue_issues(jira_client, mock_jira_fetcher):
         queue_id="47",
         start_at=0,
         limit=2,
+    )
+
+
+@pytest.mark.anyio
+async def test_get_request_types(jira_client, mock_jira_fetcher):
+    """Listing service desk request types."""
+    response = await jira_client.call_tool(
+        "jira_get_request_types",
+        {"service_desk_id": "4"},
+    )
+    content = json.loads(response.content[0].text)
+
+    assert content["service_desk_id"] == "4"
+    assert content["request_types"][0]["id"] == "10100"
+    mock_jira_fetcher.get_request_types.assert_called_once_with(
+        service_desk_id="4",
+        start_at=0,
+        limit=50,
+        search_query=None,
+    )
+
+
+@pytest.mark.anyio
+async def test_get_request_type_fields(jira_client, mock_jira_fetcher):
+    """Getting field metadata for a request type."""
+    response = await jira_client.call_tool(
+        "jira_get_request_type_fields",
+        {"service_desk_id": "4", "request_type_id": "10100"},
+    )
+    content = json.loads(response.content[0].text)
+
+    assert content["id"] == "10100"
+    assert content["fields"][0]["field_id"] == "summary"
+    mock_jira_fetcher.get_request_type_fields.assert_called_once_with(
+        service_desk_id="4",
+        request_type_id="10100",
+    )
+
+
+@pytest.mark.anyio
+async def test_create_service_desk_request(jira_client, mock_jira_fetcher):
+    """Creating a service desk customer request."""
+    response = await jira_client.call_tool(
+        "jira_create_service_desk_request",
+        {
+            "service_desk_id": "4",
+            "request_type_id": "10100",
+            "request_field_values": '{"summary": "Need access", "description": "Please"}',
+            "request_participants": '["user1"]',
+        },
+    )
+    content = json.loads(response.content[0].text)
+
+    assert content["message"] == "Service desk request created successfully"
+    assert content["request"]["issue_key"] == "SUP-7"
+    mock_jira_fetcher.create_service_desk_request.assert_called_once_with(
+        service_desk_id="4",
+        request_type_id="10100",
+        request_field_values={"summary": "Need access", "description": "Please"},
+        raise_on_behalf_of=None,
+        request_participants=["user1"],
+        channel=None,
+    )
+
+
+@pytest.mark.anyio
+async def test_create_service_desk_request_invalid_json(jira_client):
+    """Invalid JSON in request_field_values should raise a ToolError."""
+    from fastmcp.exceptions import ToolError
+
+    with pytest.raises(ToolError):
+        await jira_client.call_tool(
+            "jira_create_service_desk_request",
+            {
+                "service_desk_id": "4",
+                "request_type_id": "10100",
+                "request_field_values": "not-json",
+            },
+        )
+
+
+@pytest.mark.anyio
+async def test_get_service_desk_request(jira_client, mock_jira_fetcher):
+    """Get a customer request by issue key."""
+    response = await jira_client.call_tool(
+        "jira_get_service_desk_request",
+        {"issue_key": "SUP-7"},
+    )
+    content = json.loads(response.content[0].text)
+
+    assert content["issue_key"] == "SUP-7"
+    mock_jira_fetcher.get_service_desk_request.assert_called_once_with(
+        issue_key="SUP-7"
+    )
+
+
+@pytest.mark.anyio
+async def test_add_request_participants(jira_client, mock_jira_fetcher):
+    """Adding participants to a customer request."""
+    response = await jira_client.call_tool(
+        "jira_add_request_participants",
+        {"issue_key": "SUP-7", "participants": '["user1","user2"]'},
+    )
+    content = json.loads(response.content[0].text)
+
+    assert content == {"ok": True}
+    mock_jira_fetcher.add_request_participants.assert_called_once_with(
+        issue_key="SUP-7", participants=["user1", "user2"]
+    )
+
+
+@pytest.mark.anyio
+async def test_get_request_status(jira_client, mock_jira_fetcher):
+    """Get request status history."""
+    response = await jira_client.call_tool(
+        "jira_get_request_status",
+        {"issue_key": "SUP-7"},
+    )
+    content = json.loads(response.content[0].text)
+
+    assert content["issue_key"] == "SUP-7"
+    assert content["statuses"][0]["status"] == "Open"
+    mock_jira_fetcher.get_request_status.assert_called_once_with(
+        issue_key="SUP-7", start_at=0, limit=50
+    )
+
+
+@pytest.mark.anyio
+async def test_get_request_transitions(jira_client, mock_jira_fetcher):
+    """List request transitions."""
+    response = await jira_client.call_tool(
+        "jira_get_request_transitions",
+        {"issue_key": "SUP-7"},
+    )
+    content = json.loads(response.content[0].text)
+
+    assert content["transitions"][0]["id"] == "31"
+    mock_jira_fetcher.get_request_transitions.assert_called_once_with(
+        issue_key="SUP-7", start_at=0, limit=50
+    )
+
+
+@pytest.mark.anyio
+async def test_transition_service_desk_request(jira_client, mock_jira_fetcher):
+    """Transition a customer request."""
+    response = await jira_client.call_tool(
+        "jira_transition_service_desk_request",
+        {"issue_key": "SUP-7", "transition_id": "31", "comment": "Done"},
+    )
+    content = json.loads(response.content[0].text)
+
+    assert content["message"] == "Service desk request transition applied"
+    mock_jira_fetcher.transition_service_desk_request.assert_called_once_with(
+        issue_key="SUP-7", transition_id="31", comment="Done"
+    )
+
+
+@pytest.mark.anyio
+async def test_attach_service_desk_request_files(
+    jira_client, mock_jira_fetcher, tmp_path
+):
+    """Attach files to a customer request."""
+    file_one = tmp_path / "screenshot.png"
+    file_one.write_bytes(b"png-bytes")
+
+    response = await jira_client.call_tool(
+        "jira_attach_service_desk_request_files",
+        {
+            "service_desk_id": "4",
+            "issue_key": "SUP-7",
+            "file_paths": json.dumps([str(file_one)]),
+            "public": True,
+            "comment": "see attached",
+        },
+    )
+    content = json.loads(response.content[0].text)
+
+    assert content["message"] == "Service desk request attachments added"
+    assert content["temporary_attachments"][0]["temporary_attachment_id"] == "tmp-1"
+    mock_jira_fetcher.attach_temporary_files.assert_called_once_with(
+        service_desk_id="4", files=[str(file_one)]
+    )
+    mock_jira_fetcher.create_request_attachment.assert_called_once_with(
+        issue_key="SUP-7",
+        temporary_attachment_ids=["tmp-1"],
+        public=True,
+        comment="see attached",
     )
 
 
