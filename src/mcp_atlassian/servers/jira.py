@@ -10,7 +10,7 @@ from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, Text
 from pydantic import Field
 from requests.exceptions import HTTPError
 
-from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
+from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError, MCPAtlassianError
 from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 from mcp_atlassian.jira.forms_common import convert_datetime_to_timestamp
 from mcp_atlassian.models.jira import JiraAttachment
@@ -2459,7 +2459,7 @@ async def get_all_projects(
             "error": error_message,
         }
         logger.log(log_level, f"get_all_projects failed: {error_message}")
-        return json.dumps(error_result, indent=2, ensure_ascii=False)
+        raise MCPAtlassianError(error_message) from e
 
     # Ensure all project keys are uppercase
     for project in projects:
@@ -3069,7 +3069,7 @@ async def get_issue_dates(
     except Exception as e:
         logger.error(f"Error getting issue dates for {issue_key}: {str(e)}")
         error_result = {"success": False, "error": str(e), "issue_key": issue_key}
-        return json.dumps(error_result, indent=2, ensure_ascii=False)
+        raise MCPAtlassianError(str(e)) from e
 
 
 @jira_mcp.tool(
@@ -3150,7 +3150,7 @@ async def get_issue_sla(
     except Exception as e:
         logger.error(f"Error calculating SLA for {issue_key}: {str(e)}")
         error_result = {"success": False, "error": str(e), "issue_key": issue_key}
-        return json.dumps(error_result, indent=2, ensure_ascii=False)
+        raise MCPAtlassianError(str(e)) from e
 
 
 @jira_mcp.tool(
@@ -3210,7 +3210,7 @@ async def get_issue_development_info(
     except Exception as e:
         logger.error(f"Error getting development info for {issue_key}: {str(e)}")
         error_result = {"success": False, "error": str(e), "issue_key": issue_key}
-        return json.dumps(error_result, indent=2, ensure_ascii=False)
+        raise MCPAtlassianError(str(e)) from e
 
 
 @jira_mcp.tool(
@@ -3272,4 +3272,4 @@ async def get_issues_development_info(
     except Exception as e:
         logger.error(f"Error getting development info for issues: {str(e)}")
         error_result = {"success": False, "error": str(e)}
-        return json.dumps(error_result, indent=2, ensure_ascii=False)
+        raise MCPAtlassianError(str(e)) from e
