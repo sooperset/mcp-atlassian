@@ -80,6 +80,38 @@ class TestTimestampMixin:
 
         assert result == invalid_timestamp  # Should return the original string
 
+    def test_format_timestamp_overflow_returns_original(self):
+        """Regression test for #1354: sentinel dates must not crash Confluence tools."""
+        from unittest.mock import patch
+
+        timestamp = "9999-12-31T23:59:59.000+0000"
+        formatter = TimestampMixin()
+
+        with patch("src.mcp_atlassian.models.base.parse_date", return_value=None):
+            result = formatter.format_timestamp(timestamp)
+
+        assert result == timestamp
+
+    def test_is_valid_timestamp_overflow_returns_false(self):
+        """Regression test for #1354: overflow timestamps are treated as invalid."""
+        from unittest.mock import patch
+
+        timestamp = "9999-12-31T23:59:59.000+0000"
+        formatter = TimestampMixin()
+
+        with patch("src.mcp_atlassian.models.base.parse_date", return_value=None):
+            assert formatter.is_valid_timestamp(timestamp) is False
+
+    def test_format_timestamp_epoch_overflow_returns_original(self):
+        """Regression test for #1354: out-of-range epoch strings do not crash."""
+        formatter = TimestampMixin()
+        overflow_epoch = "253402300800000"
+
+        result = formatter.format_timestamp(overflow_epoch)
+
+        assert result == overflow_epoch
+        assert formatter.is_valid_timestamp(overflow_epoch) is False
+
     def test_is_valid_timestamp_valid(self):
         """Test validating a valid ISO 8601 timestamp."""
         timestamp = "2024-01-01T12:34:56.789+0000"
