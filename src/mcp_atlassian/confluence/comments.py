@@ -172,13 +172,27 @@ class CommentsMixin(ConfluenceClient):
                 )
                 space_key = ""
             else:
-                # v1 API: POST /rest/api/content/ with container type "comment"
+                # v1 API (Server/DC): thread replies under the parent page with
+                # ancestors, not as a direct child of the parent comment.
+                # Using container.type="comment" creates an empty stub on Server/DC.
+                parent_comment = self.confluence.get_page_by_id(
+                    page_id=comment_id, expand="container"
+                )
+                page_id = parent_comment.get("container", {}).get("id")
+                if not page_id:
+                    logger.error(
+                        "Failed to resolve container page for parent comment %s",
+                        comment_id,
+                    )
+                    return None
+
                 data: dict[str, Any] = {
                     "type": "comment",
                     "container": {
-                        "id": comment_id,
-                        "type": "comment",
+                        "id": page_id,
+                        "type": "page",
                     },
+                    "ancestors": [{"id": comment_id}],
                     "body": {
                         "storage": {
                             "value": content,
