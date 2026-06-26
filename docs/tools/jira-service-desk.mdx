@@ -1,7 +1,9 @@
 ---
 title: "Jira Service Desk"
-description: "Service desk queues and queue issues"
+description: "Service desk queues, request types, and customer requests"
 ---
+
+## Queues (read)
 
 ### Get Service Desk For Project
 
@@ -41,5 +43,169 @@ Get issues from a Jira Service Desk queue.
 | `queue_id` | `string` | Yes | Queue ID (e.g., '47') |
 | `start_at` | `integer` | No | Starting index for pagination (0-based) |
 | `limit` | `integer` | No | Maximum number of results (1-50) |
+
+---
+
+## Customer requests
+
+The customer request endpoints work on both Jira Cloud and Server/Data Center.
+Use them to open, look up, transition, or attach files to a Jira Service
+Management ticket from the portal side (the same API that backs the
+`/servicedesk/customer/portal/...` UI).
+
+### Get Request Types
+
+List the request types available on a Service Desk. Use this first to discover
+the `request_type_id` for [Create Service Desk Request](#create-service-desk-request).
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `service_desk_id` | `string` | Yes | Service desk ID (e.g., '4') |
+| `start_at` | `integer` | No | Starting index for pagination (0-based) |
+| `limit` | `integer` | No | Maximum number of results (1-50) |
+| `search_query` | `string` | No | Optional text query to filter request type names |
+
+---
+
+### Get Request Type Fields
+
+Get the field schema for a request type — required and optional field ids,
+their valid values, and JIRA schema. Call this before
+[Create Service Desk Request](#create-service-desk-request) to learn which
+fields you must populate and how option fields expect their values.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `service_desk_id` | `string` | Yes | Service desk ID (e.g., '4') |
+| `request_type_id` | `string` | Yes | Request type ID (e.g., '10100') |
+
+---
+
+### Create Service Desk Request
+
+Create a customer request on a Jira Service Desk. Wraps
+`POST /rest/servicedeskapi/request`.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `service_desk_id` | `string` | Yes | Service desk ID |
+| `request_type_id` | `string` | Yes | Request type ID returned by [Get Request Types](#get-request-types) |
+| `request_field_values` | `string` (JSON object) | Yes | Field id → value map. At minimum include `summary` and `description` |
+| `raise_on_behalf_of` | `string` | No | Account ID (Cloud) or username (Server/DC) of the user the request is raised for |
+| `request_participants` | `string` (JSON array) | No | Account IDs (Cloud) or usernames (Server/DC) to add as participants |
+| `channel` | `string` | No | Request channel (e.g. `jira`, `api`) |
+
+<Tip>
+**Option-typed custom fields** (selects, multiselects, cascading selects) expect
+their values as objects, not bare strings. Both shapes work:
+
+```json
+{ "customfield_10177": [{"id": "10078"}] }
+{ "customfield_10177": [{"value": "Infra"}] }
+```
+
+Sending `[{"value": "10078"}]` (an option id under the `value` key) is
+rejected by the portal API with `unknown error`. Inspect
+[Get Request Type Fields](#get-request-type-fields) to see the valid option
+ids and labels.
+</Tip>
+
+---
+
+### Get Service Desk Request
+
+Look up a customer request by issue key or numeric id. Returns the request
+type, current status, reporter, and field values via the ServiceDesk API
+(which includes data the standard issue API does not, e.g. portal channel).
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Issue key (e.g. 'SUP-123') or numeric issue id |
+
+---
+
+### Add Request Participants
+
+Add participants to a customer request. The MCP server picks the right
+payload key based on the deployment — `accountIds` on Cloud, `usernames`
+on Server/Data Center.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Issue key (e.g. 'SUP-123') |
+| `participants` | `string` (JSON array) | Yes | Account IDs (Cloud) or usernames (Server/DC) to add |
+
+---
+
+### Get Request Status
+
+Get the status history of a customer request — useful for auditing how a
+ticket has moved through the workflow.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Issue key (e.g. 'SUP-123') |
+| `start_at` | `integer` | No | Starting index for pagination (0-based) |
+| `limit` | `integer` | No | Maximum number of results (1-50) |
+
+---
+
+### Get Request Transitions
+
+List transitions available on a customer request. Returns the transition
+IDs you can pass to [Transition Service Desk Request](#transition-service-desk-request).
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Issue key (e.g. 'SUP-123') |
+| `start_at` | `integer` | No | Starting index for pagination (0-based) |
+| `limit` | `integer` | No | Maximum number of results (1-50) |
+
+---
+
+### Transition Service Desk Request
+
+Apply a transition (e.g. *Resolve*, *Cancel request*) to a customer request,
+optionally with a public comment.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Issue key (e.g. 'SUP-123') |
+| `transition_id` | `string` | Yes | Transition ID from [Get Request Transitions](#get-request-transitions) |
+| `comment` | `string` | No | Optional public comment to post with the transition |
+
+---
+
+### Attach Service Desk Request Files
+
+Attach one or more files to a customer request. Two-step under the hood:
+files are first uploaded as *temporary attachments* on the service desk,
+then linked to the request — the same flow the JSM customer portal uses.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `service_desk_id` | `string` | Yes | Service desk ID |
+| `issue_key` | `string` | Yes | Issue key (e.g. 'SUP-123') |
+| `file_paths` | `string` (JSON array) | Yes | Absolute file paths to upload, e.g. `["/tmp/screenshot.png"]` |
+| `public` | `boolean` | No | `true` = customer-visible, `false` = internal/agent-only (default `true`) |
+| `comment` | `string` | No | Optional plain-text comment to post with the attachment |
 
 ---
