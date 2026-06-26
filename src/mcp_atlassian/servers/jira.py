@@ -2620,6 +2620,511 @@ async def get_queue_issues(
 
 
 @jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_service_desk"},
+    annotations={"title": "Get Service Desk Request Types", "readOnlyHint": True},
+)
+async def get_request_types(
+    ctx: Context,
+    service_desk_id: Annotated[
+        str,
+        Field(description="Service desk ID (e.g., '4')"),
+    ],
+    start_at: Annotated[
+        int,
+        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(description="Maximum number of results (1-50)", default=50, ge=1, le=50),
+    ] = 50,
+    search_query: Annotated[
+        str | None,
+        Field(
+            description="Optional text query to filter request type names",
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """List the request types available on a Service Desk.
+
+    Works on both Jira Cloud and Server/Data Center.
+
+    Args:
+        ctx: The FastMCP context.
+        service_desk_id: Service desk ID.
+        start_at: Starting index for pagination.
+        limit: Maximum number of request types to return.
+        search_query: Optional text query to filter results.
+
+    Returns:
+        JSON string with request types and pagination metadata.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_request_types(
+        service_desk_id=service_desk_id,
+        start_at=start_at,
+        limit=limit,
+        search_query=search_query,
+    )
+    return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_service_desk"},
+    annotations={"title": "Get Request Type Fields", "readOnlyHint": True},
+)
+async def get_request_type_fields(
+    ctx: Context,
+    service_desk_id: Annotated[
+        str,
+        Field(description="Service desk ID (e.g., '4')"),
+    ],
+    request_type_id: Annotated[
+        str,
+        Field(description="Request type ID (e.g., '10100')"),
+    ],
+) -> str:
+    """Get the field schema for a Service Desk request type.
+
+    Use this before calling ``jira_create_service_desk_request`` to discover
+    which fields are required and what valid values they accept.
+
+    Works on both Jira Cloud and Server/Data Center.
+
+    Args:
+        ctx: The FastMCP context.
+        service_desk_id: Service desk ID.
+        request_type_id: Request type ID.
+
+    Returns:
+        JSON string with the request type and its field definitions.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_request_type_fields(
+        service_desk_id=service_desk_id,
+        request_type_id=request_type_id,
+    )
+    return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_service_desk"},
+    annotations={
+        "title": "Create Service Desk Request",
+        "destructiveHint": True,
+    },
+)
+@check_write_access
+async def create_service_desk_request(
+    ctx: Context,
+    service_desk_id: Annotated[
+        str,
+        Field(description="Service desk ID (e.g., '4')"),
+    ],
+    request_type_id: Annotated[
+        str,
+        Field(description="Request type ID returned by jira_get_request_types"),
+    ],
+    request_field_values: Annotated[
+        str,
+        Field(
+            description=(
+                "JSON object mapping field id -> value. At minimum include "
+                '`summary` and `description`, e.g. {"summary": "Need access", '
+                '"description": "Please grant access to..."}. Use '
+                "jira_get_request_type_fields to discover required and "
+                "optional field ids and valid values."
+            ),
+        ),
+    ],
+    raise_on_behalf_of: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) account id (Cloud) or username (Server/DC) of the "
+                "user the request is raised for."
+            ),
+            default=None,
+        ),
+    ] = None,
+    request_participants: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) JSON array of account ids (Cloud) or usernames "
+                '(Server/DC) to add as participants, e.g. ["user1","user2"]'
+            ),
+            default=None,
+        ),
+    ] = None,
+    channel: Annotated[
+        str | None,
+        Field(
+            description="(Optional) Request channel (e.g. 'jira', 'api')",
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """Create a customer request on a Jira Service Desk.
+
+    Uses the ServiceDesk REST API (``POST /rest/servicedeskapi/request``).
+    Available on both Jira Cloud and Server/Data Center.
+
+    Args:
+        ctx: The FastMCP context.
+        service_desk_id: Service desk ID.
+        request_type_id: Request type ID.
+        request_field_values: JSON object of field id -> value.
+        raise_on_behalf_of: Optional account id or username.
+        request_participants: Optional JSON array of participants.
+        channel: Optional request channel.
+
+    Returns:
+        JSON string of the created request.
+    """
+    jira = await get_jira_fetcher(ctx)
+
+    try:
+        parsed_values = json.loads(request_field_values)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"request_field_values must be a JSON object: {e}") from e
+    if not isinstance(parsed_values, dict):
+        raise ValueError("request_field_values must decode to a JSON object")
+
+    participants: list[str] | None = None
+    if request_participants:
+        try:
+            parsed_participants = json.loads(request_participants)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"request_participants must be a JSON array: {e}") from e
+        if not isinstance(parsed_participants, list) or not all(
+            isinstance(item, str) for item in parsed_participants
+        ):
+            raise ValueError("request_participants must be a JSON array of strings")
+        participants = parsed_participants
+
+    request = jira.create_service_desk_request(
+        service_desk_id=service_desk_id,
+        request_type_id=request_type_id,
+        request_field_values=parsed_values,
+        raise_on_behalf_of=raise_on_behalf_of,
+        request_participants=participants,
+        channel=channel,
+    )
+    return json.dumps(
+        {
+            "message": "Service desk request created successfully",
+            "request": request.to_simplified_dict(),
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_service_desk"},
+    annotations={"title": "Get Service Desk Request", "readOnlyHint": True},
+)
+async def get_service_desk_request(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(description="Issue key (e.g. 'SUP-123') or numeric issue id"),
+    ],
+) -> str:
+    """Get a Service Desk customer request by issue key.
+
+    Works on both Jira Cloud and Server/Data Center.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Issue key or numeric id.
+
+    Returns:
+        JSON string of the request.
+    """
+    jira = await get_jira_fetcher(ctx)
+    request = jira.get_service_desk_request(issue_key=issue_key)
+    return json.dumps(request.to_simplified_dict(), indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_service_desk"},
+    annotations={"title": "Add Request Participants", "destructiveHint": True},
+)
+@check_write_access
+async def add_request_participants(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(description="Issue key (e.g. 'SUP-123')"),
+    ],
+    participants: Annotated[
+        str,
+        Field(
+            description=(
+                "JSON array of account ids (Cloud) or usernames (Server/DC) "
+                'to add as participants, e.g. ["user1","user2"]'
+            ),
+        ),
+    ],
+) -> str:
+    """Add participants to a Service Desk customer request.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Issue key.
+        participants: JSON array of account ids or usernames.
+
+    Returns:
+        JSON string of the raw API response.
+    """
+    jira = await get_jira_fetcher(ctx)
+
+    try:
+        parsed = json.loads(participants)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"participants must be a JSON array: {e}") from e
+    if not isinstance(parsed, list) or not all(isinstance(p, str) for p in parsed):
+        raise ValueError("participants must be a JSON array of strings")
+    if not parsed:
+        raise ValueError("participants must be a non-empty array")
+
+    result = jira.add_request_participants(issue_key=issue_key, participants=parsed)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_service_desk"},
+    annotations={"title": "Get Request Status", "readOnlyHint": True},
+)
+async def get_request_status(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(description="Issue key (e.g. 'SUP-123')"),
+    ],
+    start_at: Annotated[
+        int,
+        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(description="Maximum number of results (1-50)", default=50, ge=1, le=50),
+    ] = 50,
+) -> str:
+    """Get the status history of a Service Desk customer request.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Issue key.
+        start_at: Starting index for pagination.
+        limit: Maximum number of status entries.
+
+    Returns:
+        JSON string with status entries and pagination metadata.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_request_status(
+        issue_key=issue_key,
+        start_at=start_at,
+        limit=limit,
+    )
+    return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_service_desk"},
+    annotations={"title": "Get Request Transitions", "readOnlyHint": True},
+)
+async def get_request_transitions(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(description="Issue key (e.g. 'SUP-123')"),
+    ],
+    start_at: Annotated[
+        int,
+        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(description="Maximum number of results (1-50)", default=50, ge=1, le=50),
+    ] = 50,
+) -> str:
+    """List transitions available on a Service Desk customer request.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Issue key.
+        start_at: Starting index for pagination.
+        limit: Maximum number of transitions.
+
+    Returns:
+        JSON string with transitions and pagination metadata.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_request_transitions(
+        issue_key=issue_key,
+        start_at=start_at,
+        limit=limit,
+    )
+    return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_service_desk"},
+    annotations={
+        "title": "Transition Service Desk Request",
+        "destructiveHint": True,
+    },
+)
+@check_write_access
+async def transition_service_desk_request(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(description="Issue key (e.g. 'SUP-123')"),
+    ],
+    transition_id: Annotated[
+        str,
+        Field(
+            description=("Transition ID returned by jira_get_request_transitions"),
+        ),
+    ],
+    comment: Annotated[
+        str | None,
+        Field(
+            description=("(Optional) Public comment to post with the transition"),
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """Apply a transition to a Service Desk customer request.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Issue key.
+        transition_id: Transition ID.
+        comment: Optional comment to post with the transition.
+
+    Returns:
+        JSON string acknowledging the transition.
+    """
+    jira = await get_jira_fetcher(ctx)
+    jira.transition_service_desk_request(
+        issue_key=issue_key,
+        transition_id=transition_id,
+        comment=comment,
+    )
+    return json.dumps(
+        {
+            "message": "Service desk request transition applied",
+            "issue_key": issue_key,
+            "transition_id": transition_id,
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_service_desk"},
+    annotations={
+        "title": "Attach Files to Service Desk Request",
+        "destructiveHint": True,
+    },
+)
+@check_write_access
+async def attach_service_desk_request_files(
+    ctx: Context,
+    service_desk_id: Annotated[
+        str,
+        Field(description="Service desk ID (e.g., '4')"),
+    ],
+    issue_key: Annotated[
+        str,
+        Field(description="Issue key (e.g. 'SUP-123')"),
+    ],
+    file_paths: Annotated[
+        str,
+        Field(
+            description=(
+                "JSON array of absolute file paths to upload, e.g. "
+                '["/tmp/screenshot.png","/tmp/log.txt"]'
+            ),
+        ),
+    ],
+    public: Annotated[
+        bool,
+        Field(
+            description=("True = visible to customers, False = internal/agent-only"),
+            default=True,
+        ),
+    ] = True,
+    comment: Annotated[
+        str | None,
+        Field(
+            description="(Optional) Plain-text comment to post with the attachment",
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """Attach files from disk to a Service Desk customer request.
+
+    Two-step: uploads the files as temporary attachments on the service
+    desk, then links them to the request via the request attachment endpoint.
+
+    Args:
+        ctx: The FastMCP context.
+        service_desk_id: Service desk ID.
+        issue_key: Issue key.
+        file_paths: JSON array of absolute file paths.
+        public: True for customer-visible, False for internal.
+        comment: Optional plain-text comment.
+
+    Returns:
+        JSON string with the temporary attachment metadata and the API response.
+    """
+    jira = await get_jira_fetcher(ctx)
+
+    try:
+        parsed_paths = json.loads(file_paths)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"file_paths must be a JSON array: {e}") from e
+    if not isinstance(parsed_paths, list) or not all(
+        isinstance(p, str) for p in parsed_paths
+    ):
+        raise ValueError("file_paths must be a JSON array of strings")
+    if not parsed_paths:
+        raise ValueError("file_paths must be a non-empty array")
+
+    temporary = jira.attach_temporary_files(
+        service_desk_id=service_desk_id,
+        files=list(parsed_paths),
+    )
+    if not temporary:
+        raise ValueError("No temporary attachments were created")
+
+    response = jira.create_request_attachment(
+        issue_key=issue_key,
+        temporary_attachment_ids=[t.temporary_attachment_id for t in temporary],
+        public=public,
+        comment=comment,
+    )
+    return json.dumps(
+        {
+            "message": "Service desk request attachments added",
+            "issue_key": issue_key,
+            "temporary_attachments": [t.to_simplified_dict() for t in temporary],
+            "response": response,
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_projects"},
     annotations={"title": "Create Version", "destructiveHint": True},
 )
