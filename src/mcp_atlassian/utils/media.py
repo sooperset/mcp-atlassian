@@ -28,6 +28,69 @@ _IMAGE_EXTENSIONS = frozenset(
     {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp"}
 )
 
+_TEXT_MIME_TYPES = frozenset(
+    {
+        "application/xml",
+        "application/json",
+        "application/javascript",
+        "application/xhtml+xml",
+        "application/x-yaml",
+    }
+)
+
+_TEXT_EXTENSIONS = frozenset(
+    {
+        ".bpmn",
+        ".xml",
+        ".drawio",
+        ".json",
+        ".csv",
+        ".txt",
+        ".md",
+        ".yaml",
+        ".yml",
+        ".html",
+        ".htm",
+        ".js",
+        ".ts",
+        ".py",
+        ".java",
+        ".sql",
+    }
+)
+
+
+def is_text_attachment(media_type: str | None, filename: str | None) -> bool:
+    """Detect whether an attachment contains text-based content.
+
+    Text-based attachments (BPMN, XML, draw.io, JSON, CSV, etc.) should be
+    returned as ``TextContent`` so that MCP clients can pass the content
+    directly to the model context.  Binary blobs (``EmbeddedResource``) are
+    often not forwarded to the model by many clients.
+
+    Uses two-tier detection: explicit MIME type check, then filename extension
+    fallback for ambiguous or missing MIME types.
+
+    Args:
+        media_type: The MIME type reported by the API.
+        filename: The attachment filename.
+
+    Returns:
+        ``True`` if the attachment is text-based, ``False`` otherwise.
+    """
+    if media_type:
+        if media_type.startswith("text/"):
+            return True
+        if media_type in _TEXT_MIME_TYPES:
+            return True
+
+    if (not media_type or media_type in _AMBIGUOUS_MIME_TYPES) and filename:
+        ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        if ext in _TEXT_EXTENSIONS:
+            return True
+
+    return False
+
 
 def is_image_attachment(
     media_type: str | None, filename: str | None

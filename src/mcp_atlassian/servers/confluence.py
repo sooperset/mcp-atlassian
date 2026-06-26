@@ -20,6 +20,7 @@ from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
     fetch_and_encode_attachment,
     is_image_attachment,
+    is_text_attachment,
 )
 from mcp_atlassian.utils.urls import resolve_relative_url
 
@@ -1689,6 +1690,29 @@ async def download_attachment(
                 ),
             )
 
+        # For text-based formats (BPMN, XML, draw.io, JSON, CSV, etc.) return the
+        # decoded text directly.  Many MCP clients do not forward EmbeddedResource
+        # blob data to the model context, so binary blobs are invisible to the agent.
+        if is_text_attachment(mime_type, filename):
+            try:
+                text_content = data_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                text_content = data_bytes.decode("latin-1")
+            return TextContent(
+                type="text",
+                text=json.dumps(
+                    {
+                        "success": True,
+                        "attachment_id": attachment_id,
+                        "filename": filename,
+                        "mimeType": mime_type,
+                        "content": text_content,
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+            )
+
         encoded = base64.b64encode(data_bytes).decode("ascii")
         return EmbeddedResource(
             type="resource",
@@ -1836,16 +1860,46 @@ async def download_content_attachments(
             continue
 
         fetched.append({"filename": filename, "size": fetched_bytes})
-        contents.append(
-            EmbeddedResource(
-                type="resource",
-                resource=BlobResourceContents(
-                    uri=f"attachment:///{content_id}/{filename}",
-                    mimeType=mime_type,
-                    blob=encoded,
-                ),
+
+        # For text-based formats return TextContent so the model can read
+        # the content directly without relying on blob handling by the client.
+        if is_text_attachment(mime_type, filename):
+            try:
+                raw_bytes = base64.b64decode(encoded)
+                text_content = raw_bytes.decode("utf-8")
+            except (UnicodeDecodeError, Exception):
+                try:
+                    raw_bytes = base64.b64decode(encoded)
+                    text_content = raw_bytes.decode("latin-1")
+                except Exception:
+                    text_content = encoded  # fallback: keep base64
+            contents.append(
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {
+                            "success": True,
+                            "content_id": content_id,
+                            "filename": filename,
+                            "mimeType": mime_type,
+                            "content": text_content,
+                        },
+                        indent=2,
+                        ensure_ascii=False,
+                    ),
+                )
             )
-        )
+        else:
+            contents.append(
+                EmbeddedResource(
+                    type="resource",
+                    resource=BlobResourceContents(
+                        uri=f"attachment:///{content_id}/{filename}",
+                        mimeType=mime_type,
+                        blob=encoded,
+                    ),
+                )
+            )
 
     summary: dict[str, object] = {
         "success": True,
