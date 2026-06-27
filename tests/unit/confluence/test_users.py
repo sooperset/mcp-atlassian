@@ -293,6 +293,19 @@ class TestUsersMixin:
         ):
             users_mixin.get_current_user_info()
 
+    def test_get_current_user_info_http_error_429(self, users_mixin):
+        """Test get_current_user_info with 429 rate limit error."""
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        http_error = HTTPError(response=mock_response)
+        users_mixin.confluence.get.side_effect = http_error
+
+        with pytest.raises(
+            MCPAtlassianAuthenticationError,
+            match="Confluence token validation rate-limited \\(HTTP 429\\)",
+        ):
+            users_mixin.get_current_user_info()
+
     def test_get_current_user_info_http_error_other(self, users_mixin):
         """Test get_current_user_info with other HTTP error codes."""
         # Arrange

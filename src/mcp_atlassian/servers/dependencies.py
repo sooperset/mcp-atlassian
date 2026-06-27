@@ -6,10 +6,13 @@ Provides get_jira_fetcher and get_confluence_fetcher for use in tool functions.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import logging
+import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from cachetools import TTLCache
 from fastmcp import Context
 from fastmcp.server.dependencies import get_access_token, get_http_request
 from starlette.requests import Request
@@ -27,6 +30,38 @@ if TYPE_CHECKING:
     from mcp_atlassian.jira.config import JiraConfig as UserJiraConfigType
 
 logger = logging.getLogger("mcp-atlassian.servers.dependencies")
+
+_validation_cache: TTLCache[str, Any] | None = None
+
+
+def _get_validation_cache() -> TTLCache[str, Any] | None:
+    """Return the cross-request validation cache, or None when disabled."""
+    global _validation_cache
+    try:
+        ttl = int(os.getenv("MCP_ATLASSIAN_VALIDATION_CACHE_TTL", "300"))
+    except ValueError:
+        ttl = 300
+    if ttl <= 0:
+        return None
+
+    try:
+        maxsize = int(os.getenv("MCP_ATLASSIAN_VALIDATION_CACHE_MAXSIZE", "100"))
+    except ValueError:
+        maxsize = 100
+
+    if (
+        _validation_cache is None
+        or _validation_cache.ttl != ttl
+        or _validation_cache.maxsize != maxsize
+    ):
+        _validation_cache = TTLCache(maxsize=maxsize, ttl=ttl)
+    return _validation_cache
+
+
+def _clear_validation_cache_for_tests() -> None:
+    """Reset the validation cache (test helper)."""
+    global _validation_cache
+    _validation_cache = None
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +199,49 @@ def _confluence_spec() -> _ServiceSpec:
     )
 
 
+def _validation_cache_key(spec: _ServiceSpec, config: Any) -> str | None:
+    """Build a stable cache key from service name and hashed credentials."""
+    url = getattr(config, "url", None)
+    auth_type = getattr(config, "auth_type", None)
+    if not isinstance(url, str) or not isinstance(auth_type, str):
+        return None
+
+    secret_parts: list[str] = [spec.name, url, auth_type]
+
+    if auth_type == "pat":
+        token = getattr(config, "personal_token", None)
+        if not isinstance(token, str) or not token:
+            return None
+        secret_parts.append(token)
+    elif auth_type == "basic":
+        username = getattr(config, "username", None)
+        api_token = getattr(config, "api_token", None)
+        if (
+            not isinstance(username, str)
+            or not username
+            or not isinstance(api_token, str)
+            or not api_token
+        ):
+            return None
+        secret_parts.extend([username, api_token])
+    elif auth_type == "oauth":
+        oauth_config = getattr(config, "oauth_config", None)
+        if oauth_config is None:
+            return None
+        access_token = getattr(oauth_config, "access_token", None)
+        if not isinstance(access_token, str) or not access_token:
+            return None
+        secret_parts.append(access_token)
+        cloud_id = getattr(oauth_config, "cloud_id", None)
+        if isinstance(cloud_id, str) and cloud_id:
+            secret_parts.append(cloud_id)
+    else:
+        return None
+
+    digest = hashlib.sha256("|".join(secret_parts).encode()).hexdigest()
+    return digest
+
+
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
@@ -231,7 +309,17 @@ def _create_and_validate(
             session.hooks["response"].append(
                 _make_ssrf_safe_hook(validate_url_for_ssrf)
             )
-        validation_data = spec.validate_fn(fetcher)
+        cache_key = _validation_cache_key(spec, config)
+        validation_cache = _get_validation_cache()
+        validation_data = (
+            validation_cache.get(cache_key)
+            if cache_key and validation_cache is not None
+            else None
+        )
+        if validation_data is None:
+            validation_data = spec.validate_fn(fetcher)
+            if cache_key and validation_cache is not None:
+                validation_cache[cache_key] = validation_data
         spec.on_validated(
             fn_name,
             request,
