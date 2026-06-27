@@ -11,6 +11,7 @@ from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
 from mcp_atlassian.jira import JiraConfig, JiraFetcher
 from mcp_atlassian.servers.context import MainAppContext
 from mcp_atlassian.servers.dependencies import (
+    _clear_validation_cache_for_tests,
     _create_user_config_for_fetcher,
     _resolve_bearer_auth_type,
     get_confluence_fetcher,
@@ -23,6 +24,14 @@ from tests.utils.mocks import MockFastMCP
 
 # Configure pytest for async tests
 pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+def _reset_validation_cache():
+    """Prevent cross-request validation cache from leaking between tests."""
+    _clear_validation_cache_for_tests()
+    yield
+    _clear_validation_cache_for_tests()
 
 
 @pytest.fixture
@@ -1518,3 +1527,95 @@ class TestSsrfProtection:
 
         result = hook(mock_response)
         assert result == mock_response
+
+
+class TestValidationCache:
+    """Tests for cross-request token validation caching."""
+
+    def setup_method(self) -> None:
+        from mcp_atlassian.servers.dependencies import _clear_validation_cache_for_tests
+
+        _clear_validation_cache_for_tests()
+
+    def teardown_method(self) -> None:
+        from mcp_atlassian.servers.dependencies import _clear_validation_cache_for_tests
+
+        _clear_validation_cache_for_tests()
+
+    def test_create_and_validate_uses_cache_for_same_credentials(self, monkeypatch):
+        import dataclasses
+
+        from mcp_atlassian.jira import JiraConfig
+        from mcp_atlassian.servers.dependencies import (
+            _clear_validation_cache_for_tests,
+            _create_and_validate,
+            _jira_spec,
+        )
+
+        _clear_validation_cache_for_tests()
+        monkeypatch.setenv("MCP_ATLASSIAN_VALIDATION_CACHE_TTL", "300")
+
+        request = MagicMock()
+        request.state = MagicMock()
+        validate_fn = MagicMock(return_value="cached-account-id")
+        mock_fetcher = MagicMock()
+        spec = dataclasses.replace(
+            _jira_spec(),
+            validate_fn=validate_fn,
+            fetcher_class=MagicMock(return_value=mock_fetcher),
+        )
+        config = JiraConfig(
+            url="https://test.atlassian.net",
+            auth_type="pat",
+            personal_token="shared-pat",
+            ssl_verify=True,
+            http_proxy=None,
+            https_proxy=None,
+            no_proxy=None,
+            socks_proxy=None,
+            projects_filter=None,
+        )
+
+        _create_and_validate(request, spec, config, "header_pat")
+        _create_and_validate(request, spec, config, "header_pat")
+
+        assert validate_fn.call_count == 1
+
+    def test_create_and_validate_skips_cache_when_disabled(self, monkeypatch):
+        import dataclasses
+
+        from mcp_atlassian.jira import JiraConfig
+        from mcp_atlassian.servers.dependencies import (
+            _clear_validation_cache_for_tests,
+            _create_and_validate,
+            _jira_spec,
+        )
+
+        _clear_validation_cache_for_tests()
+        monkeypatch.setenv("MCP_ATLASSIAN_VALIDATION_CACHE_TTL", "0")
+
+        request = MagicMock()
+        request.state = MagicMock()
+        validate_fn = MagicMock(return_value="cached-account-id")
+        mock_fetcher = MagicMock()
+        spec = dataclasses.replace(
+            _jira_spec(),
+            validate_fn=validate_fn,
+            fetcher_class=MagicMock(return_value=mock_fetcher),
+        )
+        config = JiraConfig(
+            url="https://test.atlassian.net",
+            auth_type="pat",
+            personal_token="shared-pat",
+            ssl_verify=True,
+            http_proxy=None,
+            https_proxy=None,
+            no_proxy=None,
+            socks_proxy=None,
+            projects_filter=None,
+        )
+
+        _create_and_validate(request, spec, config, "header_pat")
+        _create_and_validate(request, spec, config, "header_pat")
+
+        assert validate_fn.call_count == 2

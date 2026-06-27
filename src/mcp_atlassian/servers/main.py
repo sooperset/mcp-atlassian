@@ -9,7 +9,6 @@ from contextlib import asynccontextmanager
 from typing import Any, Literal, Optional
 from urllib.parse import urlparse
 
-from cachetools import TTLCache
 from fastmcp import FastMCP
 from fastmcp import settings as fastmcp_settings
 from fastmcp.server.event_store import EventStore
@@ -358,11 +357,6 @@ class AtlassianMCP(FastMCP[MainAppContext]):
             retry_interval=retry_interval,
         )
         return app
-
-
-token_validation_cache: TTLCache[
-    int, tuple[bool, str | None, JiraFetcher | None, ConfluenceFetcher | None]
-] = TTLCache(maxsize=100, ttl=300)
 
 
 class UserTokenMiddleware:
