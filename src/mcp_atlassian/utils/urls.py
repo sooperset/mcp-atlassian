@@ -103,12 +103,14 @@ def validate_url_for_ssrf(url: str) -> str | None:
     if ip_error:
         return ip_error
 
-    # Domain allowlist check
+    # Domain allowlist check — gates by name but does NOT skip DNS/IP validation.
+    # An allowlisted hostname pointing to an internal IP would otherwise bypass
+    # the DNS check (e.g. attacker.allowed-domain.com → 10.0.0.1).
     allowlist = _get_domain_allowlist()
     if allowlist is not None:
         if not _hostname_matches_allowlist(hostname, allowlist):
             return f"Hostname {hostname} not in allowed domains"
-        return None  # explicitly allowlisted — skip DNS check
+        # Fall through to DNS check even for allowlisted hostnames
 
     # DNS resolution check - resolve hostname and check all IPs
     dns_error = _check_dns_resolution(hostname)
