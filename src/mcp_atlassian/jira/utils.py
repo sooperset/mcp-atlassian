@@ -44,6 +44,15 @@ def quote_jql_identifier_if_needed(identifier: str) -> str:
             f"Identifier '{identifier}' needs quoting (contains quotes/backslashes)."
         )
 
+    # Rule 4: Contains spaces, parentheses, or JQL operator characters.
+    # Without quoting, these would be interpreted as JQL syntax and allow
+    # injection (e.g. project = 'MY PROJ) OR (project = ~' breaks the query).
+    elif re.search(r"[\s()\[\]!<>=,]", identifier):
+        needs_quoting = True
+        logger.debug(
+            f"Identifier '{identifier}' needs quoting (contains special characters)."
+        )
+
     if needs_quoting:
         # Escape internal backslashes first, then double quotes
         escaped_identifier = identifier.replace("\\", "\\\\").replace('"', '\\"')
