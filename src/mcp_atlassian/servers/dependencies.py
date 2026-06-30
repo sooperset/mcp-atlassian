@@ -506,8 +506,10 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
     """
     fn_name = f"get_{spec.name.lower()}_fetcher"
     logger.debug(f"{fn_name}: ENTERED. Context ID: {id(ctx)}")
+    _in_http_context = False
     try:
         request: Request = get_http_request()
+        _in_http_context = True
         logger.debug(
             f"{fn_name}: In HTTP request context. "
             f"Request URL: {request.url}. "
@@ -642,12 +644,18 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
             )
 
         else:
-            logger.debug(
-                f"{fn_name}: No user-specific {spec.name}Fetcher. "
-                f"Auth type: {user_auth_type}. "
-                f"Token present: "
-                f"{hasattr(request.state, 'user_atlassian_token')}. "
-                "Will use global fallback."
+            # We are in an HTTP request context but no auth credentials were found.
+            # Falling through to the global server credentials here would use
+            # the server's own Atlassian identity as a confused deputy for any
+            # unauthenticated caller. Raise instead to require explicit auth.
+            logger.warning(
+                f"{fn_name}: HTTP request has no valid {spec.name} auth "
+                f"(user_auth_type={user_auth_type!r}). Refusing global fallback."
+            )
+            raise ValueError(
+                f"Authentication required: no valid {spec.name} credentials in this "
+                "request. Provide a Bearer token, Basic auth, or "
+                f"{spec.token_header} header."
             )
     except RuntimeError:
         logger.debug(
@@ -655,7 +663,17 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
             f"Attempting global {spec.name}Fetcher for non-HTTP."
         )
 
-    # Fallback to global fetcher
+    # Fallback to global fetcher — only for non-HTTP contexts (e.g. stdio mode).
+    # In HTTP mode the else-branch above already raised, so _in_http_context
+    # will only be True here if an unexpected exception escaped the try block.
+    if _in_http_context:
+        logger.error(
+            f"{fn_name}: Reached global fallback from HTTP context — refusing."
+        )
+        raise ValueError(
+            f"{spec.name} client not available: authentication required in HTTP mode."
+        )
+
     app_ctx = _get_app_lifespan_ctx(ctx)
     global_config_fallback = (
         getattr(app_ctx, spec.config_attr, None) if app_ctx else None
