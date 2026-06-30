@@ -974,6 +974,96 @@ async def reply_to_comment(
 
 
 @confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_comments"},
+    annotations={"title": "Add Inline Comment", "destructiveHint": True},
+)
+@check_write_access
+async def confluence_add_inline_comment(
+    ctx: Context,
+    page_id: Annotated[
+        str, Field(description="The ID of the page to add the inline comment to.")
+    ],
+    body: Annotated[
+        str,
+        Field(description="The inline comment content in Markdown format."),
+    ],
+    text_selection: Annotated[
+        str,
+        Field(
+            description=(
+                "The exact text on the page to anchor the comment to. "
+                "Must match text that exists in the current page body."
+            )
+        ),
+    ],
+    match_index: Annotated[
+        int,
+        Field(
+            default=0,
+            ge=0,
+            description=(
+                "Zero-based index of which occurrence of text_selection to anchor to "
+                "when the text appears more than once on the page (default: 0, first match)."
+            ),
+        ),
+    ] = 0,
+) -> str:
+    """Add an inline comment anchored to a specific text selection on a Confluence page.
+
+    Inline comments appear as highlighted text with a margin note while reading
+    the page.  They are fundamentally different from footer comments, which
+    appear at the bottom.
+
+    **Confluence Cloud only** — the v2 inline-comments API is not available on
+    Server/Data Center.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page to comment on.
+        body: The comment content in Markdown format.
+        text_selection: The exact text to anchor the comment to.
+        match_index: Which occurrence to target if the text appears multiple
+            times (0 = first).
+
+    Returns:
+        JSON string representing the created inline comment.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        comment = confluence_fetcher.add_inline_comment(
+            page_id=page_id,
+            content=body,
+            text_selection=text_selection,
+            text_selection_match_index=match_index,
+        )
+        if comment:
+            response = {
+                "success": True,
+                "message": "Inline comment added successfully",
+                "comment": comment.to_simplified_dict(),
+            }
+        else:
+            response = {
+                "success": False,
+                "message": (
+                    f"Unable to add inline comment to page {page_id}. "
+                    "API request completed but comment creation unsuccessful."
+                ),
+            }
+    except Exception as e:
+        logger.error(
+            f"Error adding inline comment to Confluence page {page_id}: {str(e)}"
+        )
+        response = {
+            "success": False,
+            "message": f"Error adding inline comment to page {page_id}",
+            "error": str(e),
+        }
+
+    return json.dumps(response, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
     tags={"confluence", "read", "toolset:confluence_users"},
     annotations={"title": "Search User", "readOnlyHint": True},
 )

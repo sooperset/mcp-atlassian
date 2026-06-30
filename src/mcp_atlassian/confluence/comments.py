@@ -147,6 +147,79 @@ class CommentsMixin(ConfluenceClient):
             logger.debug("Full exception details for adding comment:", exc_info=True)
             return None
 
+    def add_inline_comment(
+        self,
+        page_id: str,
+        content: str,
+        text_selection: str,
+        text_selection_match_index: int = 0,
+    ) -> ConfluenceComment | None:
+        """Add an inline comment anchored to a specific text selection on a page.
+
+        Inline comments are Confluence Cloud-only.  They are anchored to a
+        text fragment on the page and appear as margin highlights while reading.
+        This differs from footer comments, which appear at the bottom of the page.
+
+        Uses ``POST /wiki/api/v2/inline-comments``.  The v1 endpoint returns
+        405 on Confluence Cloud and is not supported.
+
+        Args:
+            page_id: The ID of the page to comment on.
+            content: The comment content (markdown or storage format).
+            text_selection: The exact text on the page to anchor the comment to.
+            text_selection_match_index: Zero-based index of which occurrence of
+                ``text_selection`` to anchor to (default: 0, the first match).
+
+        Returns:
+            ConfluenceComment object if the comment was created successfully,
+            None otherwise.
+
+        Raises:
+            ValueError: If the Confluence instance is not Cloud.
+        """
+        if not self.config.is_cloud:
+            raise ValueError(
+                "Inline comments are only supported on Confluence Cloud. "
+                "The v2 inline-comments API is not available on Server/DC."
+            )
+
+        try:
+            if not content.strip().startswith("<"):
+                content = self.preprocessor.markdown_to_confluence_storage(content)
+
+            # Always use v2 adapter for inline comments — there is no v1 path.
+            # Construct directly so both OAuth and basic-auth Cloud users are covered.
+            adapter = ConfluenceV2Adapter(
+                session=self.confluence._session, base_url=self.confluence.url
+            )
+            response = adapter.create_inline_comment(
+                page_id=page_id,
+                body=content,
+                text_selection=text_selection,
+                text_selection_match_index=text_selection_match_index,
+            )
+
+            if not response:
+                logger.error("Failed to add inline comment: empty response")
+                return None
+
+            return self._process_comment_response(response, space_key="")
+
+        except ValueError:
+            # Propagates both "not cloud" guard and API-level failures
+            # (e.g. text not found on page) so callers get actionable errors.
+            raise
+        except requests.RequestException as e:
+            logger.error(f"Network error when adding inline comment: {str(e)}")
+            return None
+        except (TypeError, KeyError) as e:
+            logger.error(f"Error processing inline comment data: {str(e)}")
+            return None
+        except Exception as e:  # noqa: BLE001 - Intentional fallback with full logging
+            logger.error(f"Unexpected error adding inline comment: {str(e)}")
+            logger.debug("Full exception details for inline comment:", exc_info=True)
+            return None
+
     def reply_to_comment(
         self, comment_id: str, content: str
     ) -> ConfluenceComment | None:
