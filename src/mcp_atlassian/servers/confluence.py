@@ -172,9 +172,9 @@ async def get_page(
         bool,
         Field(
             description=(
-                "Whether to convert page to markdown (true) or keep it in raw HTML format (false). "
-                "Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: "
-                "using HTML significantly increases token usage in AI responses."
+                "Whether to convert page to markdown (true) or return raw Confluence storage XHTML (false). "
+                "Storage output preserves macros, embedded Jira render modes, page layout, and task metadata "
+                "for safe round-tripping, but CAUTION: it significantly increases token usage in AI responses."
             ),
             default=True,
         ),
@@ -532,7 +532,11 @@ async def create_page(
     content: Annotated[
         str,
         Field(
-            description="The content of the page. Format depends on content_format parameter. Can be Markdown (default), wiki markup, or storage format"
+            description=(
+                "The content of the page. Format depends on content_format parameter. "
+                "Can be Markdown (default), wiki markup, or storage format. Use storage "
+                "when retransmitting macro-heavy pages or existing layout/render metadata."
+            )
         ),
     ],
     parent_id: Annotated[
@@ -546,7 +550,12 @@ async def create_page(
     content_format: Annotated[
         str,
         Field(
-            description="(Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', or 'storage'. Wiki format uses Confluence wiki markup syntax",
+            description=(
+                "(Optional) The format of the content parameter. Options: 'markdown' "
+                "(default), 'wiki', or 'storage'. Wiki format uses Confluence wiki "
+                "markup syntax. Choose 'storage' when embedded macros, Jira cards/lists, "
+                "task metadata, or page layout must round-trip unchanged."
+            ),
             default="markdown",
         ),
     ] = "markdown",
@@ -641,7 +650,11 @@ async def update_page(
     content: Annotated[
         str,
         Field(
-            description="The new content of the page. Format depends on content_format parameter"
+            description=(
+                "The new content of the page. Format depends on content_format parameter. "
+                "Use storage when retransmitting macro-heavy pages or existing layout/render "
+                "metadata."
+            )
         ),
     ],
     is_minor_edit: Annotated[
@@ -658,7 +671,12 @@ async def update_page(
     content_format: Annotated[
         str,
         Field(
-            description="(Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', or 'storage'. Wiki format uses Confluence wiki markup syntax",
+            description=(
+                "(Optional) The format of the content parameter. Options: 'markdown' "
+                "(default), 'wiki', or 'storage'. Wiki format uses Confluence wiki "
+                "markup syntax. Choose 'storage' when embedded macros, Jira cards/lists, "
+                "task metadata, or page layout must round-trip unchanged."
+            ),
             default="markdown",
         ),
     ] = "markdown",
@@ -1087,9 +1105,9 @@ async def get_page_history(
         bool,
         Field(
             description=(
-                "Whether to convert page to markdown (true) or keep it in raw HTML format (false). "
-                "Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: "
-                "using HTML significantly increases token usage in AI responses."
+                "Whether to convert page to markdown (true) or return raw Confluence storage XHTML (false). "
+                "Storage output preserves macros and task metadata for safe round-tripping, but CAUTION: "
+                "it significantly increases token usage in AI responses."
             ),
             default=True,
         ),
