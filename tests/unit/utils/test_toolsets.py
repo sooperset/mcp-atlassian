@@ -34,12 +34,12 @@ class TestGetEnabledToolsets:
         assert result == expected
 
     def test_all_keyword(self, monkeypatch):
-        """Test 'all' keyword returns all 21 toolset names."""
+        """Test 'all' keyword returns all 22 toolset names."""
         monkeypatch.setenv("TOOLSETS", "all")
         result = get_enabled_toolsets()
         assert result is not None
         assert result == set(ALL_TOOLSETS.keys())
-        assert len(result) == 21
+        assert len(result) == 22
 
     def test_all_keyword_case_insensitive(self, monkeypatch):
         """Test 'ALL' keyword is case-insensitive."""
@@ -47,7 +47,7 @@ class TestGetEnabledToolsets:
         result = get_enabled_toolsets()
         assert result is not None
         assert result == set(ALL_TOOLSETS.keys())
-        assert len(result) == 21
+        assert len(result) == 22
 
     def test_default_keyword(self, monkeypatch):
         """Test 'default' keyword returns 6 default toolset names."""

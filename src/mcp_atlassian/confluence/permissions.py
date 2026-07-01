@@ -41,9 +41,7 @@ class PermissionsMixin(ConfluenceClient):
             ValueError: If the API call fails or returns an unexpected response.
             HTTPError: If authentication fails (401/403 are propagated).
         """
-        url = (
-            f"{self.confluence.url}/rest/api/content/{content_id}/permission/check"
-        )
+        url = f"{self.confluence.url}/rest/api/content/{content_id}/permission/check"
         body = {
             "operation": {
                 "operation": operation,
@@ -67,9 +65,7 @@ class PermissionsMixin(ConfluenceClient):
             msg = f"Failed to check permissions for content '{content_id}': {e}"
             raise ValueError(msg) from e
         except Exception as e:
-            logger.error(
-                f"Error checking content permissions for '{content_id}': {e}"
-            )
+            logger.error(f"Error checking content permissions for '{content_id}': {e}")
             msg = f"Failed to check permissions for content '{content_id}': {e}"
             raise ValueError(msg) from e
 

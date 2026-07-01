@@ -18,15 +18,11 @@ class TestPermissionsMixin:
         mixin.confluence = MagicMock()
         mixin.confluence.url = "https://company.atlassian.net/wiki"
 
-        mixin.check_content_permissions = (
-            lambda *args, **kwargs: PermissionsMixin.check_content_permissions(
-                mixin, *args, **kwargs
-            )
+        mixin.check_content_permissions = lambda *args, **kwargs: (
+            PermissionsMixin.check_content_permissions(mixin, *args, **kwargs)
         )
-        mixin.get_space_permissions = (
-            lambda *args, **kwargs: PermissionsMixin.get_space_permissions(
-                mixin, *args, **kwargs
-            )
+        mixin.get_space_permissions = lambda *args, **kwargs: (
+            PermissionsMixin.get_space_permissions(mixin, *args, **kwargs)
         )
         return mixin
 
