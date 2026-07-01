@@ -590,6 +590,7 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 user_config,
                 "basic",
                 user_email=user_email,
+                attach_ssrf_hook=True,
             )
 
         # --- Branch 3: OAuth / PAT with token ---
@@ -639,6 +640,7 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 user_config,
                 "oauth_pat",
                 user_email=user_email,
+                attach_ssrf_hook=True,
             )
 
         else:
