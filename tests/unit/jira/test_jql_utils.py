@@ -171,3 +171,46 @@ class TestSanitizeJQL:
     )
     def test_sanitize(self, input_jql: str | None, expected_jql: str | None) -> None:
         assert sanitize_jql_reserved_words(input_jql) == expected_jql
+
+
+class TestJQLInjectionQuoting:
+    """Tests for injection-safe quoting of special-character JQL identifiers."""
+
+    @pytest.mark.parametrize(
+        "identifier, expected",
+        [
+            # Space triggers quoting
+            ("MY PROJECT", '"MY PROJECT"'),
+            # Parentheses trigger quoting
+            ("PROJ(X)", '"PROJ(X)"'),
+            # Comparison operators trigger quoting
+            ("PROJ=bad", '"PROJ=bad"'),
+            ("PROJ<bad", '"PROJ<bad"'),
+            ("PROJ>bad", '"PROJ>bad"'),
+            # Comma triggers quoting
+            ("A,B", '"A,B"'),
+        ],
+        ids=[
+            "space",
+            "parens",
+            "equals",
+            "less-than",
+            "greater-than",
+            "comma",
+        ],
+    )
+    def test_special_chars_get_quoted(self, identifier: str, expected: str) -> None:
+        assert quote_jql_identifier_if_needed(identifier) == expected
+
+    def test_jql_injection_payload_gets_quoted(self) -> None:
+        """A JQL injection payload in an identifier is quoted, not interpolated."""
+        # Without quoting, 'MY PROJ) OR (project = ~' would break the query.
+        payload = "MY PROJ) OR (project = ~"
+        result = quote_jql_identifier_if_needed(payload)
+        assert result.startswith('"')
+        assert result.endswith('"')
+
+    def test_clean_identifier_not_quoted(self) -> None:
+        """Normal identifiers without special chars are not quoted."""
+        assert quote_jql_identifier_if_needed("MYPROJECT") == "MYPROJECT"
+        assert quote_jql_identifier_if_needed("DEV123") == "DEV123"

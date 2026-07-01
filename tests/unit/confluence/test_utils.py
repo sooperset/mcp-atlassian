@@ -55,3 +55,33 @@ class TestCQLQuoting:
         assert quote_cql_identifier_if_needed("DEV") == "DEV"
         assert quote_cql_identifier_if_needed("MYSPACE") == "MYSPACE"
         assert quote_cql_identifier_if_needed("documentation") == "documentation"
+
+    def test_quote_identifier_with_spaces(self):
+        """Identifiers with spaces must be quoted to prevent CQL injection."""
+        result = quote_cql_identifier_if_needed("MY SPACE")
+        assert result == '"MY SPACE"'
+
+    def test_quote_identifier_with_parentheses(self):
+        """Identifiers with parentheses must be quoted."""
+        assert quote_cql_identifier_if_needed("PROJ(X)") == '"PROJ(X)"'
+
+    def test_quote_identifier_with_comparison_operators(self):
+        """Identifiers with < > = must be quoted to prevent injection."""
+        assert quote_cql_identifier_if_needed("PROJ=bad") == '"PROJ=bad"'
+        assert quote_cql_identifier_if_needed("PROJ<bad") == '"PROJ<bad"'
+        assert quote_cql_identifier_if_needed("PROJ>bad") == '"PROJ>bad"'
+
+    def test_cql_injection_payload_gets_quoted(self):
+        """A CQL injection payload in an identifier is quoted, not interpolated."""
+        # Without quoting, 'MY SPACE) OR (space = ~' would break the query.
+        payload = "MY SPACE) OR (space = ~"
+        result = quote_cql_identifier_if_needed(payload)
+        assert result.startswith('"')
+        assert result.endswith('"')
+        # The content is escaped — double-quotes inside are backslash-escaped.
+        assert "OR" in result  # The text is preserved, but wrapped in quotes
+
+    def test_no_quote_clean_alphanumeric(self):
+        """Normal alphanumeric identifiers are not quoted."""
+        assert quote_cql_identifier_if_needed("MYPROJECT") == "MYPROJECT"
+        assert quote_cql_identifier_if_needed("DEV123") == "DEV123"

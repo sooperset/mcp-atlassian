@@ -1,6 +1,7 @@
 """Utility functions specific to Confluence operations."""
 
 import logging
+import re
 from typing import Any
 
 from .constants import RESERVED_CQL_WORDS
@@ -106,9 +107,14 @@ def quote_cql_identifier_if_needed(identifier: str) -> str:
             f"Identifier '{identifier}' needs quoting (contains quotes/backslashes)."
         )
 
-    # Add more rules here if other characters prove problematic (e.g., spaces, hyphens)
-    # elif ' ' in identifier or '-' in identifier:
-    #    needs_quoting = True
+    # Rule 5: Contains spaces, parentheses, or CQL operator characters.
+    # Without quoting, these would be interpreted as CQL syntax and allow
+    # injection (e.g. identifier = 'MY SPACE) OR (space = ~') breaks the query).
+    elif re.search(r"[\s()\[\]!<>=,]", identifier):
+        needs_quoting = True
+        logger.debug(
+            f"Identifier '{identifier}' needs quoting (contains special characters)."
+        )
 
     if needs_quoting:
         # Escape internal backslashes first, then double quotes

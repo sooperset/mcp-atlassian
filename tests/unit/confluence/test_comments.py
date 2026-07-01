@@ -182,41 +182,67 @@ class TestCommentsMixin:
         assert result.id == "98765"
         assert result.body == "This is a test comment"
 
-    def test_add_comment_with_html_content(self, comments_mixin):
-        """Test adding a comment with HTML content."""
-        # Setup
+    def test_add_comment_with_html_content_always_sanitized(self, comments_mixin):
+        """HTML content always goes through markdown_to_confluence_storage (no bypass)."""
         page_id = "12345"
         content = "<p>This is an <strong>HTML</strong> comment</p>"
+        converted = "<p>Sanitized HTML</p>"
 
-        # Mock the page retrieval
         comments_mixin.confluence.get_page_by_id.return_value = {
             "space": {"key": "TEST"}
         }
-
-        # Configure the mock to return a successful response
         comments_mixin.confluence.add_comment.return_value = {
             "id": "98765",
-            "body": {
-                "view": {"value": "<p>This is an <strong>HTML</strong> comment</p>"}
-            },
+            "body": {"view": {"value": converted}},
             "version": {"number": 1},
             "author": {"displayName": "Test User"},
         }
-
-        # Mock the HTML processing
+        comments_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            converted
+        )
         comments_mixin.preprocessor.process_html_content.return_value = (
-            "<p>This is an <strong>HTML</strong> comment</p>",
-            "This is an **HTML** comment",
+            converted,
+            "Sanitized HTML",
         )
 
-        # Call the method
         result = comments_mixin.add_comment(page_id, content)
 
-        # Verify - should not call markdown conversion since content is already HTML
-        comments_mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
-        comments_mixin.confluence.add_comment.assert_called_once_with(page_id, content)
+        # Security fix: markdown_to_confluence_storage is ALWAYS called, even for
+        # content beginning with "<", preventing raw HTML/macro injection.
+        comments_mixin.preprocessor.markdown_to_confluence_storage.assert_called_once_with(
+            content.strip()
+        )
         assert result is not None
-        assert result.body == "This is an **HTML** comment"
+
+    def test_add_comment_html_injection_blocked(self, comments_mixin):
+        """Content with ac:* macros cannot bypass conversion and inject macros."""
+        page_id = "12345"
+        malicious = '<ac:structured-macro ac:name="html"><ac:plain-text-body><![CDATA[<script>alert(1)</script>]]></ac:plain-text-body></ac:structured-macro>'
+        safe_output = "<p>alert(1)</p>"
+
+        comments_mixin.confluence.get_page_by_id.return_value = {
+            "space": {"key": "TEST"}
+        }
+        comments_mixin.confluence.add_comment.return_value = {
+            "id": "1",
+            "body": {"view": {"value": safe_output}},
+            "version": {"number": 1},
+            "author": {"displayName": "User"},
+        }
+        comments_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            safe_output
+        )
+        comments_mixin.preprocessor.process_html_content.return_value = (
+            safe_output,
+            "alert(1)",
+        )
+
+        comments_mixin.add_comment(page_id, malicious)
+
+        # The macro payload must go through the converter, not be passed raw.
+        comments_mixin.preprocessor.markdown_to_confluence_storage.assert_called_once_with(
+            malicious.strip()
+        )
 
     def test_add_comment_api_error(self, comments_mixin):
         """Test handling of API errors when adding a comment."""
@@ -339,9 +365,13 @@ class TestReplyToComment:
             body="<p>This is a v2 reply</p>",
         )
 
-    def test_reply_with_html_content(self, comments_mixin):
-        """T3: Reply with HTML content skips markdown conversion."""
+    def test_reply_with_html_content_always_sanitized(self, comments_mixin):
+        """Reply with HTML content also goes through markdown_to_confluence_storage."""
+        safe_output = "<p>HTML reply</p>"
         comments_mixin.confluence.post.return_value = MOCK_COMMENT_REPLY_V1_RESPONSE
+        comments_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            safe_output
+        )
         comments_mixin.preprocessor.process_html_content.return_value = (
             "<p>HTML reply</p>",
             "HTML reply",
@@ -350,7 +380,10 @@ class TestReplyToComment:
         result = comments_mixin.reply_to_comment("456789123", "<p>HTML reply</p>")
 
         assert result is not None
-        comments_mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
+        # Security fix: conversion is always invoked, not skipped for HTML content.
+        comments_mixin.preprocessor.markdown_to_confluence_storage.assert_called_once_with(
+            "<p>HTML reply</p>"
+        )
 
     def test_reply_network_error(self, comments_mixin):
         """T4: Network error returns None."""

@@ -113,9 +113,10 @@ class CommentsMixin(ConfluenceClient):
             ConfluenceComment object if comment was added successfully, None otherwise
         """
         try:
-            # Convert markdown to Confluence storage format if needed
-            if not content.strip().startswith("<"):
-                content = self.preprocessor.markdown_to_confluence_storage(content)
+            # Always convert through markdown_to_confluence_storage.
+            # The previous startswith("<") shortcut allowed any content beginning
+            # with "<" to bypass conversion and inject raw HTML/ac:* macros.
+            content = self.preprocessor.markdown_to_confluence_storage(content.strip())
 
             # Route through v2 API for OAuth Cloud
             v2_adapter = self._v2_adapter
@@ -161,9 +162,9 @@ class CommentsMixin(ConfluenceClient):
             ConfluenceComment object if reply was added successfully, None otherwise
         """
         try:
-            # Convert markdown to Confluence storage format if needed
-            if not content.strip().startswith("<"):
-                content = self.preprocessor.markdown_to_confluence_storage(content)
+            # Always convert through markdown_to_confluence_storage.
+            # The previous startswith("<") shortcut allowed raw HTML injection.
+            content = self.preprocessor.markdown_to_confluence_storage(content.strip())
 
             v2_adapter = self._v2_adapter
             if v2_adapter:
