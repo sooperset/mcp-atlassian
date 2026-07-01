@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,13 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             # Convert to absolute path if relative
             if not os.path.isabs(file_path):
                 file_path = os.path.abspath(file_path)
+
+            # Guard against path traversal — reject paths outside CWD
+            try:
+                validate_safe_path(file_path)
+            except ValueError as exc:
+                logger.error(f"Path traversal attempt blocked: {exc}")
+                return {"success": False, "error": str(exc)}
 
             # Check if file exists
             if not os.path.exists(file_path):
@@ -524,6 +532,12 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
         if not attachment_id:
             logger.error("No attachment ID provided for deletion")
             return {"success": False, "error": "No attachment ID provided"}
+
+        # Confluence attachment IDs are numeric or att-prefixed numeric (e.g., "12345" or "att12345").
+        # Reject anything else to prevent path injection in the REST URL.
+        if not re.fullmatch(r"att\d+|\d+", attachment_id):
+            logger.error(f"Invalid attachment ID format: {attachment_id!r}")
+            return {"success": False, "error": "Invalid attachment ID format"}
 
         try:
             logger.info(f"Deleting attachment {attachment_id}")

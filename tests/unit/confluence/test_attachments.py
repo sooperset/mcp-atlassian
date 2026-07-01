@@ -1487,3 +1487,69 @@ class TestConfluenceAttachmentPathTraversal:
         """download_content_attachments rejects directory escape."""
         with pytest.raises(ValueError, match="Path traversal detected"):
             confluence_mixin.download_content_attachments("12345", "/etc")
+
+    def test_upload_attachment_path_traversal_rejected(
+        self, confluence_mixin: AttachmentsMixin
+    ) -> None:
+        """upload_attachment returns error dict when validate_safe_path raises."""
+        with patch(
+            "mcp_atlassian.confluence.attachments.validate_safe_path",
+            side_effect=ValueError("Path traversal detected: path escapes base dir"),
+        ):
+            result = confluence_mixin.upload_attachment("123456", "/etc/passwd")
+        assert result["success"] is False
+        assert "Path traversal" in result["error"]
+
+    @pytest.mark.parametrize(
+        "bad_id",
+        [
+            "../12345",
+            "../../etc/passwd",
+            "att../foo",
+            "att 123",
+            "att123xyz",
+            "<script>",
+            "",
+        ],
+        ids=[
+            "relative-traversal",
+            "deep-traversal",
+            "att-traversal",
+            "space-in-id",
+            "non-numeric-suffix",
+            "xss-payload",
+            "empty-after-no-id-check",
+        ],
+    )
+    def test_delete_attachment_invalid_id_format(
+        self, confluence_mixin: AttachmentsMixin, bad_id: str
+    ) -> None:
+        """delete_attachment rejects IDs that don't match att\\d+ or \\d+."""
+        # Empty string is caught by the earlier "no id" guard, not the format guard
+        if not bad_id:
+            result = confluence_mixin.delete_attachment(bad_id)
+            assert result["success"] is False
+            assert "No attachment ID" in result["error"]
+        else:
+            result = confluence_mixin.delete_attachment(bad_id)
+            assert result["success"] is False
+            assert "Invalid attachment ID format" in result["error"]
+
+    @pytest.mark.parametrize(
+        "valid_id",
+        ["12345", "att12345", "0", "att0"],
+        ids=["numeric", "att-prefixed", "zero", "att-zero"],
+    )
+    def test_delete_attachment_valid_id_passes_format_check(
+        self, confluence_mixin: AttachmentsMixin, valid_id: str
+    ) -> None:
+        """delete_attachment accepts well-formed IDs and attempts the API call."""
+        with patch.object(
+            type(confluence_mixin),
+            "_v2_adapter",
+            new_callable=lambda: property(lambda self: None),
+        ):
+            confluence_mixin.confluence.delete.side_effect = Exception("API gone")
+            result = confluence_mixin.delete_attachment(valid_id)
+        # The format check passed; failure is from the mocked API, not ID validation
+        assert result.get("error") != "Invalid attachment ID format"

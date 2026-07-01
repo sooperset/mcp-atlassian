@@ -374,6 +374,13 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             if not os.path.isabs(file_path):
                 file_path = os.path.abspath(file_path)
 
+            # Guard against path traversal — reject paths outside CWD
+            try:
+                validate_safe_path(file_path)
+            except ValueError as exc:
+                logger.error(f"Path traversal attempt blocked: {exc}")
+                return {"success": False, "error": str(exc)}
+
             # Check if file exists
             if not os.path.exists(file_path):
                 logger.error(f"File not found: {file_path}")

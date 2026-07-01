@@ -1316,3 +1316,47 @@ class TestAttachmentsMixin:
         assert result[1].filename == "report.pdf"
         # No download calls should have been made
         attachments_mixin.jira._session.get.assert_not_called()
+
+
+class TestJiraAttachmentPathTraversal:
+    """Security regression tests for path traversal in Jira upload_attachment."""
+
+    @pytest.fixture
+    def jira_mixin(self, jira_fetcher: "JiraFetcher") -> "AttachmentsMixin":
+        mixin = jira_fetcher
+        mixin.jira = MagicMock()
+        mixin.jira._session = MagicMock()
+        return mixin
+
+    def test_upload_attachment_path_traversal_rejected(
+        self, jira_mixin: "AttachmentsMixin"
+    ) -> None:
+        """upload_attachment returns error dict when validate_safe_path raises."""
+        with patch(
+            "mcp_atlassian.jira.attachments.validate_safe_path",
+            side_effect=ValueError("Path traversal detected: path escapes base dir"),
+        ):
+            result = jira_mixin.upload_attachment("TEST-1", "/etc/passwd")
+        assert result["success"] is False
+        assert "Path traversal" in result["error"]
+
+    @pytest.mark.parametrize(
+        "malicious_path",
+        [
+            "/etc/passwd",
+            "/var/log/auth.log",
+            "../../../etc/shadow",
+        ],
+        ids=["etc-passwd", "var-log", "relative-traversal"],
+    )
+    def test_upload_attachment_various_traversal_paths(
+        self, jira_mixin: "AttachmentsMixin", malicious_path: str
+    ) -> None:
+        """upload_attachment blocks multiple forms of path traversal."""
+        with patch(
+            "mcp_atlassian.jira.attachments.validate_safe_path",
+            side_effect=ValueError("Path traversal detected"),
+        ):
+            result = jira_mixin.upload_attachment("TEST-1", malicious_path)
+        assert result["success"] is False
+        assert "error" in result
