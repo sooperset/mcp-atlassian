@@ -692,7 +692,7 @@ class TestGetJiraFetcher:
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
-    async def test_global_fallback_scenarios(
+    async def test_global_fallback_non_http_context(
         self,
         mock_jira_fetcher_class,
         mock_get_http_request,
@@ -700,39 +700,43 @@ class TestGetJiraFetcher:
         mock_request,
         config_factory,
     ):
-        """Test fallback to global JiraFetcher in various scenarios."""
-        # Test both HTTP context without user token and non-HTTP context
-        test_scenarios = [
-            {"name": "no_user_token", "setup_http": True, "user_auth": None},
-            {"name": "no_http_context", "setup_http": False, "user_auth": None},
-        ]
+        """Non-HTTP (stdio) context still falls back to the global JiraFetcher."""
+        mock_get_http_request.side_effect = RuntimeError("No HTTP context")
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
+        mock_fetcher = _create_mock_fetcher(JiraFetcher)
+        mock_jira_fetcher_class.return_value = mock_fetcher
 
-        for scenario in test_scenarios:
-            # Setup request state
-            if scenario["setup_http"]:
-                _setup_mock_request_state(mock_request)
-                mock_get_http_request.return_value = mock_request
-            else:
-                mock_get_http_request.side_effect = RuntimeError("No HTTP context")
+        result = await get_jira_fetcher(mock_context)
 
-            # Setup context
-            app_context = config_factory.create_app_context()
-            _setup_mock_context(mock_context, app_context)
+        assert result == mock_fetcher
+        assert_mock_called_with_partial(
+            mock_jira_fetcher_class, config=app_context.full_jira_config
+        )
 
-            # Setup mock fetcher
-            mock_fetcher = _create_mock_fetcher(JiraFetcher)
-            mock_jira_fetcher_class.return_value = mock_fetcher
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_http_context_no_auth_raises(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ):
+        """HTTP request with no valid credentials raises ValueError (no confused deputy).
 
-            result = await get_jira_fetcher(mock_context)
+        Security fix: previously an unauthenticated HTTP caller would silently
+        inherit the server's global Jira identity.  Now a ValueError is raised
+        so the caller must provide explicit credentials.
+        """
+        _setup_mock_request_state(mock_request)  # no auth scenario
+        mock_get_http_request.return_value = mock_request
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
 
-            assert result == mock_fetcher
-            assert_mock_called_with_partial(
-                mock_jira_fetcher_class, config=app_context.full_jira_config
-            )
-
-            # Reset mocks for next iteration
-            mock_jira_fetcher_class.reset_mock()
-            mock_get_http_request.reset_mock()
+        with pytest.raises(ValueError, match="Authentication required"):
+            await get_jira_fetcher(mock_context)
 
     @pytest.mark.parametrize(
         "error_scenario,expected_error_match",
@@ -1031,7 +1035,7 @@ class TestGetConfluenceFetcher:
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
-    async def test_global_fallback_scenarios(
+    async def test_global_fallback_non_http_context(
         self,
         mock_confluence_fetcher_class,
         mock_get_http_request,
@@ -1039,39 +1043,43 @@ class TestGetConfluenceFetcher:
         mock_request,
         config_factory,
     ):
-        """Test fallback to global ConfluenceFetcher in various scenarios."""
-        # Test both HTTP context without user token and non-HTTP context
-        test_scenarios = [
-            {"name": "no_user_token", "setup_http": True, "user_auth": None},
-            {"name": "no_http_context", "setup_http": False, "user_auth": None},
-        ]
+        """Non-HTTP (stdio) context still falls back to the global ConfluenceFetcher."""
+        mock_get_http_request.side_effect = RuntimeError("No HTTP context")
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
+        mock_fetcher = _create_mock_fetcher(ConfluenceFetcher)
+        mock_confluence_fetcher_class.return_value = mock_fetcher
 
-        for scenario in test_scenarios:
-            # Setup request state
-            if scenario["setup_http"]:
-                _setup_mock_request_state(mock_request)
-                mock_get_http_request.return_value = mock_request
-            else:
-                mock_get_http_request.side_effect = RuntimeError("No HTTP context")
+        result = await get_confluence_fetcher(mock_context)
 
-            # Setup context
-            app_context = config_factory.create_app_context()
-            _setup_mock_context(mock_context, app_context)
+        assert result == mock_fetcher
+        assert_mock_called_with_partial(
+            mock_confluence_fetcher_class, config=app_context.full_confluence_config
+        )
 
-            # Setup mock fetcher
-            mock_fetcher = _create_mock_fetcher(ConfluenceFetcher)
-            mock_confluence_fetcher_class.return_value = mock_fetcher
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_http_context_no_auth_raises(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ):
+        """HTTP request with no valid credentials raises ValueError (no confused deputy).
 
-            result = await get_confluence_fetcher(mock_context)
+        Security fix: previously an unauthenticated HTTP caller would silently
+        inherit the server's global Confluence identity.  Now a ValueError is raised
+        so the caller must provide explicit credentials.
+        """
+        _setup_mock_request_state(mock_request)  # no auth scenario
+        mock_get_http_request.return_value = mock_request
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
 
-            assert result == mock_fetcher
-            assert_mock_called_with_partial(
-                mock_confluence_fetcher_class, config=app_context.full_confluence_config
-            )
-
-            # Reset mocks for next iteration
-            mock_confluence_fetcher_class.reset_mock()
-            mock_get_http_request.reset_mock()
+        with pytest.raises(ValueError, match="Authentication required"):
+            await get_confluence_fetcher(mock_context)
 
     @pytest.mark.parametrize(
         "email_scenario,expected_email",
