@@ -1,0 +1,20 @@
+{
+  "name": "mcp-atlassian-wrapper",
+  "version": "1.0.0",
+  "description": "Node/Bun wrapper for the Python MCP Atlassian server, running without uv dependency",
+  "main": "bin/mcp-atlassian.js",
+  "bin": {
+    "mcp-atlassian": "./bin/mcp-atlassian.js"
+  },
+  "scripts": {
+    "start": "node bin/mcp-atlassian.js"
+  },
+  "keywords": [
+    "mcp",
+    "atlassian",
+    "jira",
+    "confluence"
+  ],
+  "author": "",
+  "license": "MIT"
+}
