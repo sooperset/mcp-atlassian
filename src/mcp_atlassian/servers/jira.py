@@ -901,7 +901,7 @@ async def download_attachments(
                             "success": True,
                             "issue_key": issue_key,
                             "filename": filename,
-                            "mimeType": mime_type,
+                            "mime_type": mime_type,
                             "encoding": "base64",
                             "content": encoded,
                         },

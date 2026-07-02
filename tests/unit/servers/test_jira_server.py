@@ -1847,7 +1847,7 @@ async def test_download_attachments_binary_uses_text_content(
 ):
     """Non-image attachments (e.g. .zip) must be returned as TextContent
     carrying a base64 payload, not as an EmbeddedResource blob -- many MCP
-    clients reject non-image EmbeddedResource mimeTypes outright (#1419)."""
+    clients reject non-image EmbeddedResource mime types outright (#1419)."""
     import base64
 
     zip_data = b"PK\x03\x04fake zip bytes"
@@ -1874,12 +1874,12 @@ async def test_download_attachments_binary_uses_text_content(
 
     assert len(response.content) == 2
     payload_content = response.content[1]
-    # Must be TextContent, not an EmbeddedResource blob
-    assert not hasattr(payload_content, "resource")
+    # Must be TextContent (type="text"), not an EmbeddedResource (type="resource")
+    assert payload_content.type == "text"
     payload = json.loads(payload_content.text)
     assert payload["success"] is True
     assert payload["filename"] == "archive.zip"
-    assert payload["mimeType"] == "application/zip"
+    assert payload["mime_type"] == "application/zip"
     assert payload["encoding"] == "base64"
     assert base64.b64decode(payload["content"]) == zip_data
 
@@ -1914,7 +1914,8 @@ async def test_download_attachments_image_still_uses_embedded_resource(
 
     assert len(response.content) == 2
     resource_content = response.content[1]
-    assert hasattr(resource_content, "resource")
+    # Must be EmbeddedResource (type="resource"), unchanged from before #1419
+    assert resource_content.type == "resource"
     assert resource_content.resource.mimeType == "image/png"
 
 
