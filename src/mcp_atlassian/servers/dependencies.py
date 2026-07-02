@@ -6,10 +6,13 @@ Provides get_jira_fetcher and get_confluence_fetcher for use in tool functions.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import logging
+import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from cachetools import TTLCache
 from fastmcp import Context
 from fastmcp.server.dependencies import get_access_token, get_http_request
 from starlette.requests import Request
@@ -51,6 +54,65 @@ class _ServiceSpec:
     on_validated: Callable[
         [str, Request, Any, str, str | None], None
     ]  # logging + email backfill
+
+
+# ---------------------------------------------------------------------------
+# Cross-request credential validation cache (#1405)
+#
+# In multi-user HTTP transport, every request builds a fresh fetcher on
+# request.state, so credential validation (a network call to Atlassian) was
+# firing once per request instead of once per credential. This cache dedupes
+# that call across requests for the configured TTL. Only a SHA-256 digest of
+# the credential is ever used as a key -- raw tokens are never stored.
+# ---------------------------------------------------------------------------
+
+
+def _validation_cache_ttl() -> int:
+    """TTL in seconds for cached validation results. 0 disables the cache."""
+    try:
+        return int(os.getenv("MCP_ATLASSIAN_VALIDATION_CACHE_TTL", "300"))
+    except ValueError:
+        return 300
+
+
+def _validation_cache_maxsize() -> int:
+    try:
+        return int(os.getenv("MCP_ATLASSIAN_VALIDATION_CACHE_MAXSIZE", "100"))
+    except ValueError:
+        return 100
+
+
+_CACHE_TTL = _validation_cache_ttl()
+_validation_cache: TTLCache[tuple[str, str], Any] | None = (
+    TTLCache(maxsize=_validation_cache_maxsize(), ttl=_CACHE_TTL)
+    if _CACHE_TTL > 0
+    else None
+)
+
+
+def _credential_for_cache(config: JiraConfig | ConfluenceConfig) -> str | None:
+    """Extract the secret that authenticates ``config``, for cache-key hashing.
+
+    Returns None when no credential-bearing field is set, so the caller can
+    skip caching rather than key on an empty/ambiguous value.
+    """
+    if config.auth_type == "oauth":
+        oauth_cfg = getattr(config, "oauth_config", None)
+        return getattr(oauth_cfg, "access_token", None) if oauth_cfg else None
+    if config.auth_type == "pat":
+        return config.personal_token
+    if config.auth_type == "basic":
+        if not config.api_token:
+            return None
+        # Username + token together identify the credential; a token reused
+        # under a different username should still validate independently.
+        return f"{getattr(config, 'username', '') or ''}:{config.api_token}"
+    return None
+
+
+def _validation_cache_key(spec: _ServiceSpec, credential: str) -> tuple[str, str]:
+    digest = hashlib.sha256(credential.encode("utf-8")).hexdigest()
+    return (spec.name, digest)
 
 
 def _jira_on_validated(
@@ -208,6 +270,10 @@ def _create_and_validate(
 ) -> Any:
     """Create a fetcher, validate credentials, cache on request.state.
 
+    The validation network call itself is deduped across requests for the
+    same credential via ``_validation_cache`` (#1405) -- only fetcher
+    construction and ``request.state`` caching happen per-request.
+
     Args:
         request: The current Starlette request.
         spec: Service specification.
@@ -224,6 +290,12 @@ def _create_and_validate(
     """
     fn_name = f"get_{spec.name.lower()}_fetcher"
     auth_desc = "header-based" if auth_branch == "header_pat" else "user"
+    credential = _credential_for_cache(config)
+    cache_key = (
+        _validation_cache_key(spec, credential)
+        if credential and _validation_cache is not None
+        else None
+    )
     try:
         fetcher = spec.fetcher_class(config=config)
         if attach_ssrf_hook:
@@ -231,7 +303,16 @@ def _create_and_validate(
             session.hooks["response"].append(
                 _make_ssrf_safe_hook(validate_url_for_ssrf)
             )
-        validation_data = spec.validate_fn(fetcher)
+        if cache_key is not None and cache_key in _validation_cache:  # type: ignore[operator]
+            validation_data = _validation_cache[cache_key]  # type: ignore[index]
+            logger.debug(
+                f"{fn_name}: Reusing cached {spec.name} credential validation "
+                "(skipped network call)."
+            )
+        else:
+            validation_data = spec.validate_fn(fetcher)
+            if cache_key is not None:
+                _validation_cache[cache_key] = validation_data  # type: ignore[index]
         spec.on_validated(
             fn_name,
             request,
