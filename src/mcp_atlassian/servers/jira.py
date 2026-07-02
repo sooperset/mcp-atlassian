@@ -818,17 +818,22 @@ async def download_attachments(
 ) -> list[TextContent | EmbeddedResource]:
     """Download attachments from a Jira issue.
 
-    Returns attachment contents as base64-encoded embedded resources so that
-    they are available over the MCP protocol without requiring filesystem
-    access on the server.
+    Returns attachment contents as base64-encoded content so that they are
+    available over the MCP protocol without requiring filesystem access on
+    the server. Image attachments are returned as ``EmbeddedResource`` blobs;
+    all other attachments (documents, archives, etc.) are returned as
+    ``TextContent`` carrying a base64 payload, since many MCP clients only
+    forward ``EmbeddedResource`` blobs for recognized image MIME types and
+    otherwise drop the attachment (#1419).
 
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
 
     Returns:
-        A list containing a text summary and one EmbeddedResource per
-        successfully downloaded attachment.
+        A list containing a text summary, one EmbeddedResource per
+        downloaded image attachment, and one TextContent (base64 payload)
+        per downloaded non-image attachment.
     """
     jira = await get_jira_fetcher(ctx)
     result = jira.get_issue_attachment_contents(issue_key=issue_key)
@@ -869,16 +874,42 @@ async def download_attachments(
         mime_type = attachment.get("content_type", "application/octet-stream")
         downloaded += 1
 
-        contents.append(
-            EmbeddedResource(
-                type="resource",
-                resource=BlobResourceContents(
-                    uri=f"attachment:///{issue_key}/{filename}",
-                    mimeType=mime_type,
-                    blob=encoded,
-                ),
+        is_image, resolved_mime_type = is_image_attachment(mime_type, filename)
+        if is_image:
+            contents.append(
+                EmbeddedResource(
+                    type="resource",
+                    resource=BlobResourceContents(
+                        uri=f"attachment:///{issue_key}/{filename}",
+                        mimeType=resolved_mime_type,
+                        blob=encoded,
+                    ),
+                )
             )
-        )
+        else:
+            # Many MCP clients only forward EmbeddedResource blobs whose
+            # mimeType is a recognized image format, rejecting anything
+            # else (e.g. .zip) with "returned an image in an unsupported
+            # format" and dropping the attachment (#1419). TextContent is
+            # reliably forwarded, so non-image attachments carry their
+            # base64 payload there instead.
+            contents.append(
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {
+                            "success": True,
+                            "issue_key": issue_key,
+                            "filename": filename,
+                            "mimeType": mime_type,
+                            "encoding": "base64",
+                            "content": encoded,
+                        },
+                        indent=2,
+                        ensure_ascii=False,
+                    ),
+                )
+            )
 
     summary: dict[str, Any] = {
         "success": True,
