@@ -1289,6 +1289,40 @@ class TestValidationCache:
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_same_credential_different_url_both_validated(
+        self, mock_confluence_fetcher_class, mock_get_http_request, mock_context
+    ):
+        """The same PAT string against two different instance URLs must not
+        share a cached validation result (header-based PAT accepts the URL
+        per-request, so the credential alone isn't a safe cache key)."""
+        shared_token = "same-pat-token-different-instances"
+        request1 = self._header_pat_request(
+            {
+                "X-Atlassian-Confluence-Url": "https://instance-a.atlassian.net",
+                "X-Atlassian-Confluence-Personal-Token": shared_token,
+            }
+        )
+        request2 = self._header_pat_request(
+            {
+                "X-Atlassian-Confluence-Url": "https://instance-b.atlassian.net",
+                "X-Atlassian-Confluence-Personal-Token": shared_token,
+            }
+        )
+
+        fetcher1 = _create_mock_fetcher(ConfluenceFetcher)
+        fetcher2 = _create_mock_fetcher(ConfluenceFetcher)
+        mock_confluence_fetcher_class.side_effect = [fetcher1, fetcher2]
+
+        mock_get_http_request.return_value = request1
+        await get_confluence_fetcher(mock_context)
+        mock_get_http_request.return_value = request2
+        await get_confluence_fetcher(mock_context)
+
+        fetcher1.get_current_user_info.assert_called_once()
+        fetcher2.get_current_user_info.assert_called_once()
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
     async def test_cache_disabled_always_validates(
         self, mock_confluence_fetcher_class, mock_get_http_request, mock_context
     ):

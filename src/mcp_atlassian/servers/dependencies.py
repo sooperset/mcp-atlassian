@@ -63,7 +63,10 @@ class _ServiceSpec:
 # request.state, so credential validation (a network call to Atlassian) was
 # firing once per request instead of once per credential. This cache dedupes
 # that call across requests for the configured TTL. Only a SHA-256 digest of
-# the credential is ever used as a key -- raw tokens are never stored.
+# the credential AND target URL is ever used as a key -- raw tokens are never
+# stored, and the URL is included because header-based PAT auth accepts the
+# base URL per-request, so the same credential string could otherwise be
+# validated against the wrong instance's cached result.
 # ---------------------------------------------------------------------------
 
 
@@ -88,6 +91,7 @@ _validation_cache: TTLCache[tuple[str, str], Any] | None = (
     if _CACHE_TTL > 0
     else None
 )
+_CACHE_MISS = object()  # sentinel distinguishing "not cached" from a cached None
 
 
 def _credential_for_cache(config: JiraConfig | ConfluenceConfig) -> str | None:
@@ -110,8 +114,16 @@ def _credential_for_cache(config: JiraConfig | ConfluenceConfig) -> str | None:
     return None
 
 
-def _validation_cache_key(spec: _ServiceSpec, credential: str) -> tuple[str, str]:
-    digest = hashlib.sha256(credential.encode("utf-8")).hexdigest()
+def _validation_cache_key(
+    spec: _ServiceSpec, credential: str, url: str
+) -> tuple[str, str]:
+    """Build the cache key, scoped to both the credential and the target URL.
+
+    Header-based PAT auth accepts the base URL per-request (from
+    X-Atlassian-*-Url), so the same credential string reused against a
+    different instance must not share a cached validation result.
+    """
+    digest = hashlib.sha256(f"{url}\x00{credential}".encode()).hexdigest()
     return (spec.name, digest)
 
 
@@ -292,7 +304,7 @@ def _create_and_validate(
     auth_desc = "header-based" if auth_branch == "header_pat" else "user"
     credential = _credential_for_cache(config)
     cache_key = (
-        _validation_cache_key(spec, credential)
+        _validation_cache_key(spec, credential, getattr(config, "url", "") or "")
         if credential and _validation_cache is not None
         else None
     )
@@ -303,8 +315,13 @@ def _create_and_validate(
             session.hooks["response"].append(
                 _make_ssrf_safe_hook(validate_url_for_ssrf)
             )
-        if cache_key is not None and cache_key in _validation_cache:  # type: ignore[operator]
-            validation_data = _validation_cache[cache_key]  # type: ignore[index]
+        cached_validation = (
+            _validation_cache.get(cache_key, _CACHE_MISS)  # type: ignore[union-attr]
+            if cache_key is not None
+            else _CACHE_MISS
+        )
+        if cached_validation is not _CACHE_MISS:
+            validation_data = cached_validation
             logger.debug(
                 f"{fn_name}: Reusing cached {spec.name} credential validation "
                 "(skipped network call)."
