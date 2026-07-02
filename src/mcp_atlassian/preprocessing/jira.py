@@ -181,7 +181,9 @@ class JiraPreprocessor(BasePreprocessor):
             link_url = match.group(2)
 
             # Extract issue key if it's a Jira issue link
-            issue_key_match = re.search(r"browse/([A-Z][A-Z0-9_]+-\d+)", link_url)
+            issue_key_match = re.search(
+                r"browse/([A-Z][A-Z0-9_]+-\d+(?:-\d+)*)", link_url
+            )
             # Check if it's a Confluence wiki link
             confluence_match = re.search(
                 r"wiki/spaces/.+?/pages/\d+/(.+?)(?:\?|$)", link_url
@@ -194,7 +196,9 @@ class JiraPreprocessor(BasePreprocessor):
             elif confluence_match:
                 url_title = confluence_match.group(1)
                 readable_title = url_title.replace("+", " ")
-                readable_title = re.sub(r"^[A-Z][A-Z0-9_]+-\d+\s+", "", readable_title)
+                readable_title = re.sub(
+                    r"^[A-Z][A-Z0-9_]+-\d+(?:-\d+)*\s+", "", readable_title
+                )
                 text = text.replace(full_match, f"[{readable_title}]({link_url})")
             else:
                 clean_url = link_url.split("?")[0]
