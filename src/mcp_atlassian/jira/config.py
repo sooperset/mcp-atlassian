@@ -2,7 +2,7 @@
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from ..utils.env import get_custom_headers, is_env_ssl_verify
@@ -12,6 +12,29 @@ from ..utils.oauth import (
     get_oauth_config_from_env,
 )
 from ..utils.urls import is_atlassian_cloud_url
+
+
+def _parse_internal_only_projects(raw: str | None) -> frozenset[str]:
+    """Parse JIRA_INTERNAL_ONLY_PROJECTS into a set of normalized project keys.
+
+    Tolerant of malformed input: extra whitespace, blank entries from
+    double/trailing commas, and mixed case are all normalized away. An
+    unset or empty value returns an empty set, which is the semantic
+    "guard disabled" state used throughout the internal-only-projects
+    feature — this keeps the feature strictly opt-in and a no-op for
+    every other deployment of this server.
+
+    Args:
+        raw: Raw comma-separated project keys from the environment
+            (e.g. "CC" or "CC, HELP ,, support").
+
+    Returns:
+        A frozenset of upper-cased, stripped project keys. Empty when
+        raw is None, empty, or contains only blank entries.
+    """
+    if not raw:
+        return frozenset()
+    return frozenset(key.strip().upper() for key in raw.split(",") if key.strip())
 
 
 @dataclass
@@ -116,6 +139,11 @@ class JiraConfig:
     client_key_password: str | None = None  # Password for encrypted private key
     sla_config: SLAConfig | None = None  # Optional SLA configuration
     timeout: int = 75  # Connection timeout in seconds
+    internal_only_projects: frozenset[str] = field(
+        default_factory=frozenset
+    )  # Project keys where jira_add_comment/jira_edit_comment enforce
+    # internal-only (non-customer-visible) comments. See
+    # JIRA_INTERNAL_ONLY_PROJECTS. Empty by default (guard disabled).
 
     @property
     def is_cloud(self) -> bool:
@@ -238,6 +266,13 @@ class JiraConfig:
         # Get the projects filter if provided
         projects_filter = os.getenv("JIRA_PROJECTS_FILTER")
 
+        # Internal-only projects: server-side guard forcing
+        # jira_add_comment/jira_edit_comment to internal (non-customer-visible)
+        # comments for these JSM project keys. Unset/empty = no-op.
+        internal_only_projects = _parse_internal_only_projects(
+            os.getenv("JIRA_INTERNAL_ONLY_PROJECTS")
+        )
+
         # Proxy settings
         http_proxy = os.getenv("JIRA_HTTP_PROXY", os.getenv("HTTP_PROXY"))
         https_proxy = os.getenv("JIRA_HTTPS_PROXY", os.getenv("HTTPS_PROXY"))
@@ -281,6 +316,7 @@ class JiraConfig:
             client_key=client_key,
             client_key_password=client_key_password,
             timeout=timeout,
+            internal_only_projects=internal_only_projects,
         )
 
     def is_auth_configured(self) -> bool:

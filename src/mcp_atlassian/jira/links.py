@@ -54,6 +54,39 @@ class LinksMixin(JiraClient):
             )
             raise Exception(f"Error getting issue link types: {error_msg}") from e
 
+    def _enforce_internal_only_link_comment(
+        self, inward_key: str, outward_key: str
+    ) -> None:
+        """Reject link comments touching JIRA_INTERNAL_ONLY_PROJECTS projects.
+
+        A link comment is a standard Jira comment posted on one of the
+        linked issues, with no reliable way to force it internal on JSM.
+        The check deliberately errs safe by rejecting when EITHER side of
+        the link is a listed project (rather than resolving which side
+        Jira will attach the comment to): a false reject costs one extra
+        call, a false accept is a customer-visible leak.
+
+        Args:
+            inward_key: The inward issue key (e.g. 'CC-123')
+            outward_key: The outward issue key (e.g. 'PROJ-456')
+
+        Raises:
+            ValueError: If either issue's project is listed in
+                JIRA_INTERNAL_ONLY_PROJECTS
+        """
+        for key in (inward_key, outward_key):
+            if self._is_internal_only_project(key):
+                raise ValueError(
+                    f"Issue {key} belongs to a project configured as "
+                    "internal-only (JIRA_INTERNAL_ONLY_PROJECTS). Link "
+                    "comments are posted via the core Jira API and may "
+                    "be customer-visible on JSM, with no way to force "
+                    "them internal from this call — so they are blocked "
+                    "here. Create the link WITHOUT a comment, then post "
+                    "an internal note with add_comment(public=False) on "
+                    "the relevant issue."
+                )
+
     @handle_auth_errors("Jira API")
     def create_issue_link(self, data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -79,7 +112,9 @@ class LinksMixin(JiraClient):
             Dictionary with the created link information
 
         Raises:
-            ValueError: If required fields are missing
+            ValueError: If required fields are missing, or if a comment
+                is included and either linked issue belongs to a project
+                listed in JIRA_INTERNAL_ONLY_PROJECTS
             MCPAtlassianAuthenticationError: If authentication fails
                 with the Jira API (401/403)
             Exception: If there is an error creating the issue link
@@ -91,6 +126,11 @@ class LinksMixin(JiraClient):
             raise ValueError("Inward issue key is required")
         if not data.get("outwardIssue") or not data["outwardIssue"].get("key"):
             raise ValueError("Outward issue key is required")
+
+        if data.get("comment"):
+            self._enforce_internal_only_link_comment(
+                data["inwardIssue"]["key"], data["outwardIssue"]["key"]
+            )
 
         try:
             # Create the issue link

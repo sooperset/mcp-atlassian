@@ -1755,9 +1755,16 @@ async def add_comment(
             description=(
                 "(Optional) For JSM/Service Desk issues only. "
                 "Set to true for customer-visible comment, "
-                "false for internal agent-only comment. "
-                "Uses the ServiceDesk API (plain text, not "
-                "Markdown). Cannot be combined with visibility."
+                "false for internal agent-only comment. Posted "
+                "via the ServiceDesk API as a raw string; Jira "
+                "Cloud renders it server-side and stores ADF "
+                "(markdown observed to render on Cloud, without "
+                "the client-side markdown-to-ADF guarantees of "
+                "the regular comment path). Cannot be combined "
+                "with visibility. If the issue's project is "
+                "listed in JIRA_INTERNAL_ONLY_PROJECTS, only "
+                "public=false is accepted — public=true or "
+                "omitting this field is rejected."
             )
         ),
     ] = None,
@@ -1776,7 +1783,9 @@ async def add_comment(
         JSON string representing the added comment object.
 
     Raises:
-        ValueError: If in read-only mode or Jira client unavailable.
+        ValueError: If in read-only mode, Jira client unavailable, or
+            the issue's project is listed in JIRA_INTERNAL_ONLY_PROJECTS
+            and public is not exactly False.
     """
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
@@ -1820,7 +1829,10 @@ async def edit_comment(
         JSON string representing the updated comment object.
 
     Raises:
-        ValueError: If in read-only mode or Jira client unavailable.
+        ValueError: If in read-only mode, Jira client unavailable, or
+            the issue's project is listed in JIRA_INTERNAL_ONLY_PROJECTS
+            and the target comment is currently public (customer-visible)
+            — editing public comments there is blocked server-side.
     """
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
@@ -1976,7 +1988,17 @@ async def create_issue_link(
         ),
     ],
     comment: Annotated[
-        str | None, Field(description="(Optional) Comment to add to the link")
+        str | None,
+        Field(
+            description=(
+                "(Optional) Comment to add to the link. Rejected when either "
+                "linked issue belongs to a project listed in "
+                "JIRA_INTERNAL_ONLY_PROJECTS (a link comment may be "
+                "customer-visible on JSM and cannot be forced internal): "
+                "create the link without a comment, then post an internal note "
+                "with jira_add_comment(public=false) on the relevant issue."
+            )
+        ),
     ] = None,
     comment_visibility: Annotated[
         str | None,
@@ -2003,7 +2025,9 @@ async def create_issue_link(
         JSON string indicating success or failure.
 
     Raises:
-        ValueError: If required fields are missing, invalid input, in read-only mode, or Jira client unavailable.
+        ValueError: If required fields are missing, invalid input, in read-only
+            mode, Jira client unavailable, or a comment is included and either
+            linked issue's project is listed in JIRA_INTERNAL_ONLY_PROJECTS.
     """
     jira = await get_jira_fetcher(ctx)
     if not all([link_type, inward_issue_key, outward_issue_key]):
@@ -2188,7 +2212,11 @@ async def transition_issue(
         Field(
             description=(
                 "(Optional) Comment to add during the transition in Markdown format. "
-                "This will be visible in the issue history."
+                "This will be visible in the issue history. Rejected for projects "
+                "listed in JIRA_INTERNAL_ONLY_PROJECTS (a transition comment may be "
+                "customer-visible on JSM and cannot be forced internal): transition "
+                "without a comment, then post an internal note with "
+                "jira_add_comment(public=false)."
             ),
         ),
     ] = None,
@@ -2206,7 +2234,9 @@ async def transition_issue(
         JSON string representing the updated issue object.
 
     Raises:
-        ValueError: If required fields missing, invalid input, in read-only mode, or Jira client unavailable.
+        ValueError: If required fields missing, invalid input, in read-only mode,
+            Jira client unavailable, or a comment is provided for an issue whose
+            project is listed in JIRA_INTERNAL_ONLY_PROJECTS.
     """
     jira = await get_jira_fetcher(ctx)
     if not issue_key or not transition_id:
