@@ -172,8 +172,8 @@ class CommentsMixin(ConfluenceClient):
                 )
                 space_key = ""
             else:
-                # v1 API: attach the reply to the page and link the parent via ancestors.
-                # Using container.type="comment" creates empty comment stubs on Cloud/DC.
+                # v1 API: attach reply to page; parent via ancestors.
+                # container.type="comment" creates empty stubs on Cloud/DC.
                 page_id = self._resolve_page_id_for_parent_comment(comment_id)
                 page = self.confluence.get_page_by_id(page_id=page_id, expand="space")
                 space_key = page.get("space", {}).get("key", "")

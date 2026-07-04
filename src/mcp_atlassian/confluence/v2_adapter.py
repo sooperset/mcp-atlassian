@@ -507,7 +507,7 @@ class ConfluenceV2Adapter:
             response = self.session.get(url, params={"body-format": "storage"})
             response.raise_for_status()
             return response.json()
-        except Exception as e:
+        except requests.RequestException as e:
             logger.debug(
                 "Failed to refresh footer comment %s after create: %s",
                 comment_id,

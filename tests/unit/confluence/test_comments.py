@@ -300,7 +300,9 @@ class TestReplyToComment:
         assert result.parent_comment_id == "456789123"
         comments_mixin.confluence.post.assert_called_once()
         call_args = comments_mixin.confluence.post.call_args
-        payload = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs["data"]
+        payload = (
+            call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs["data"]
+        )
         assert payload["container"] == {"id": "12345", "type": "page"}
         assert payload["ancestors"] == [{"id": "456789123"}]
 
