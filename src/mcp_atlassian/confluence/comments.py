@@ -17,12 +17,12 @@ class CommentsMixin(ConfluenceClient):
 
     @property
     def _v2_adapter(self) -> ConfluenceV2Adapter | None:
-        """Get v2 API adapter for OAuth authentication.
+        """Get v2 API adapter for Confluence Cloud OAuth/PAT authentication.
 
         Returns:
-            ConfluenceV2Adapter instance if OAuth is configured, None otherwise
+            ConfluenceV2Adapter instance when Cloud auth supports v2, else None
         """
-        if self.config.auth_type == "oauth" and self.config.is_cloud:
+        if self.config.is_cloud and self.config.auth_type in ("oauth", "pat"):
             return ConfluenceV2Adapter(
                 session=self.confluence._session, base_url=self.confluence.url
             )
@@ -172,13 +172,18 @@ class CommentsMixin(ConfluenceClient):
                 )
                 space_key = ""
             else:
-                # v1 API: POST /rest/api/content/ with container type "comment"
+                # v1 API: attach the reply to the page and link the parent via ancestors.
+                # Using container.type="comment" creates empty comment stubs on Cloud/DC.
+                page_id = self._resolve_page_id_for_parent_comment(comment_id)
+                page = self.confluence.get_page_by_id(page_id=page_id, expand="space")
+                space_key = page.get("space", {}).get("key", "")
                 data: dict[str, Any] = {
                     "type": "comment",
                     "container": {
-                        "id": comment_id,
-                        "type": "comment",
+                        "id": page_id,
+                        "type": "page",
                     },
+                    "ancestors": [{"id": comment_id}],
                     "body": {
                         "storage": {
                             "value": content,
@@ -187,7 +192,6 @@ class CommentsMixin(ConfluenceClient):
                     },
                 }
                 response = self.confluence.post("rest/api/content/", data=data)
-                space_key = ""
 
             if not response:
                 logger.error("Failed to reply to comment: empty response")
@@ -206,6 +210,26 @@ class CommentsMixin(ConfluenceClient):
             logger.debug("Full exception details for comment reply:", exc_info=True)
             return None
 
+    def _resolve_page_id_for_parent_comment(self, comment_id: str) -> str:
+        """Resolve the page ID that owns a comment thread parent."""
+        parent = self.confluence.get_page_by_id(
+            page_id=comment_id, expand="container,ancestors"
+        )
+        container = parent.get("container", {})
+        if container.get("type") == "page" and container.get("id"):
+            return str(container["id"])
+
+        ancestors = parent.get("ancestors") or []
+        for ancestor in reversed(ancestors):
+            if ancestor.get("type") == "page" and ancestor.get("id"):
+                return str(ancestor["id"])
+
+        if ancestors and ancestors[-1].get("id"):
+            return str(ancestors[-1]["id"])
+
+        msg = f"Could not resolve page for parent comment {comment_id}"
+        raise ValueError(msg)
+
     def _process_comment_response(
         self, response: dict[str, Any], space_key: str
     ) -> ConfluenceComment:
@@ -218,8 +242,13 @@ class CommentsMixin(ConfluenceClient):
         Returns:
             Processed ConfluenceComment instance
         """
+        body = response.get("body", {})
+        body_html = body.get("view", {}).get("value", "")
+        if not body_html:
+            body_html = body.get("storage", {}).get("value", "")
+
         _, processed_markdown = self.preprocessor.process_html_content(
-            response.get("body", {}).get("view", {}).get("value", ""),
+            body_html,
             space_key=space_key,
             confluence_client=self.confluence,
         )

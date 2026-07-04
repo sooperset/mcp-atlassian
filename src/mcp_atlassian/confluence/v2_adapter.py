@@ -484,13 +484,36 @@ class ConfluenceV2Adapter:
             result = response.json()
             logger.debug("Successfully created footer comment with v2 API")
 
-            return self._convert_v2_comment_to_v1_format(result)
+            converted = self._convert_v2_comment_to_v1_format(result)
+            if not converted.get("body", {}).get("view", {}).get("value"):
+                comment_id = result.get("id")
+                if comment_id:
+                    refreshed = self.get_footer_comment(str(comment_id))
+                    if refreshed:
+                        converted = self._convert_v2_comment_to_v1_format(refreshed)
+
+            return converted
 
         except Exception as e:
             if isinstance(e, ValueError | HTTPError):
                 raise
             logger.error(f"Error creating footer comment: {e}")
             raise ValueError(f"Failed to create footer comment: {e}") from e
+
+    def get_footer_comment(self, comment_id: str) -> dict[str, Any] | None:
+        """Fetch a footer comment, including body content."""
+        try:
+            url = f"{self.base_url}/api/v2/footer-comments/{comment_id}"
+            response = self.session.get(url, params={"body-format": "storage"})
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.debug(
+                "Failed to refresh footer comment %s after create: %s",
+                comment_id,
+                e,
+            )
+            return None
 
     def _convert_v2_comment_to_v1_format(
         self, v2_response: dict[str, Any]

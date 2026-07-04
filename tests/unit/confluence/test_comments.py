@@ -276,7 +276,14 @@ class TestReplyToComment:
 
     def test_reply_to_comment_v1_success(self, comments_mixin):
         """T1: reply_to_comment v1 success - parent_comment_id set."""
-        # Mock the POST call for v1 API
+        comments_mixin.confluence.get_page_by_id.side_effect = [
+            {
+                "id": "456789123",
+                "container": {"id": "12345", "type": "page"},
+                "ancestors": [],
+            },
+            {"id": "12345", "space": {"key": "TEST"}},
+        ]
         comments_mixin.confluence.post.return_value = MOCK_COMMENT_REPLY_V1_RESPONSE
         # Mock preprocessor
         comments_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
@@ -292,6 +299,10 @@ class TestReplyToComment:
         assert result is not None
         assert result.parent_comment_id == "456789123"
         comments_mixin.confluence.post.assert_called_once()
+        call_args = comments_mixin.confluence.post.call_args
+        payload = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs["data"]
+        assert payload["container"] == {"id": "12345", "type": "page"}
+        assert payload["ancestors"] == [{"id": "456789123"}]
 
     def test_reply_to_comment_v2_oauth_success(self, comments_mixin):
         """T2: reply_to_comment v2/OAuth routes through v2_adapter."""
@@ -341,6 +352,14 @@ class TestReplyToComment:
 
     def test_reply_with_html_content(self, comments_mixin):
         """T3: Reply with HTML content skips markdown conversion."""
+        comments_mixin.confluence.get_page_by_id.side_effect = [
+            {
+                "id": "456789123",
+                "container": {"id": "12345", "type": "page"},
+                "ancestors": [],
+            },
+            {"id": "12345", "space": {"key": "TEST"}},
+        ]
         comments_mixin.confluence.post.return_value = MOCK_COMMENT_REPLY_V1_RESPONSE
         comments_mixin.preprocessor.process_html_content.return_value = (
             "<p>HTML reply</p>",
@@ -354,6 +373,11 @@ class TestReplyToComment:
 
     def test_reply_network_error(self, comments_mixin):
         """T4: Network error returns None."""
+        comments_mixin.confluence.get_page_by_id.return_value = {
+            "id": "456789123",
+            "container": {"id": "12345", "type": "page"},
+            "ancestors": [],
+        }
         comments_mixin.confluence.post.side_effect = requests.RequestException(
             "Connection error"
         )
@@ -367,6 +391,14 @@ class TestReplyToComment:
 
     def test_reply_empty_response(self, comments_mixin):
         """T5: Empty API response returns None."""
+        comments_mixin.confluence.get_page_by_id.side_effect = [
+            {
+                "id": "456789123",
+                "container": {"id": "12345", "type": "page"},
+                "ancestors": [],
+            },
+            {"id": "12345", "space": {"key": "TEST"}},
+        ]
         comments_mixin.confluence.post.return_value = None
         comments_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
             "<p>Test</p>"
