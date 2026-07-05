@@ -2713,6 +2713,57 @@ class TestPageHierarchy:
         assert pages[1]["id"] == "456"  # position 1
         assert pages[2]["id"] == "789"  # position 2
 
+    def test_get_space_page_tree_string_position_none(self, pages_mixin):
+        """Test that string 'none' positions don't cause TypeError.
+
+        Confluence DC/Server returns position as the string "none" for
+        pages without explicit ordering. Mixed with integer positions,
+        this previously caused TypeError in the sort key (gh-1319).
+        """
+        mock_pages = [
+            {
+                "id": "1",
+                "title": "Ordered Page",
+                "ancestors": [],
+                "extensions": {"position": 0},
+            },
+            {
+                "id": "2",
+                "title": "Unordered Page",
+                "ancestors": [],
+                "extensions": {"position": "none"},
+            },
+            {
+                "id": "3",
+                "title": "Another Ordered",
+                "ancestors": [],
+                "extensions": {"position": 1},
+            },
+            {
+                "id": "4",
+                "title": "Numeric String",
+                "ancestors": [],
+                "extensions": {"position": "5"},
+            },
+        ]
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            return_value=self._raw_response(mock_pages)
+        )
+
+        result = pages_mixin.get_space_page_tree("TEST")
+
+        pages = result["pages"]
+        assert len(pages) == 4
+        # Integer positions are preserved
+        assert pages[0]["id"] == "1"
+        assert pages[0]["position"] == 0
+        # Numeric string is coerced to int
+        p4 = next(p for p in pages if p["id"] == "4")
+        assert p4["position"] == 5
+        # String "none" is normalized to None and sorted last
+        p2 = next(p for p in pages if p["id"] == "2")
+        assert p2["position"] is None
+
     def test_pagination_multiple_batches(self, pages_mixin):
         """Test that pagination fetches across multiple API batches."""
         batch1 = [
