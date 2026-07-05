@@ -190,6 +190,24 @@ class TestADFCreateIssue:
         finally:
             await _delete_issue(mcp_client, key)
 
+    async def test_create_issue_panel(
+        self,
+        mcp_client: Client,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        """Panel markdown is accepted by Jira Cloud and survives readback."""
+        key = await _create_issue_with_description(
+            mcp_client,
+            cloud_instance.project_key,
+            ":::warning\nPanel body survives Cloud write.\n- panel bullet\n:::",
+        )
+        try:
+            desc = await _read_issue_description(mcp_client, key)
+            assert "Panel body survives Cloud write." in desc
+            assert "panel bullet" in desc
+        finally:
+            await _delete_issue(mcp_client, key)
+
     async def test_create_issue_mixed(
         self,
         mcp_client: Client,

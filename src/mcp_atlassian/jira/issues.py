@@ -986,6 +986,14 @@ class IssuesMixin(
                 logger.debug(f"Identified field '{key}' as standard system field ID.")
 
             if api_field_id:
+                # Allow None values to pass through for clearing fields
+                if value is None:
+                    fields[api_field_id] = None
+                    logger.debug(
+                        f"Setting field '{api_field_id}' to None from kwarg '{key}' (clearing field)."
+                    )
+                    continue
+
                 # Get the full field definition for formatting context if needed
                 field_definition = self.get_field_by_id(
                     api_field_id
@@ -1050,6 +1058,7 @@ class IssuesMixin(
                 - assignee: New assignee for the issue
                 - parent: Parent issue key (str or {"key": "..."} dict)
                 - epicKey/epic_link/epicLink: Epic link alias
+                Pass None to clear a field (e.g., priority=None).
 
         Returns:
             JiraIssue model representing the updated issue
@@ -1097,7 +1106,13 @@ class IssuesMixin(
                             account_id = self._get_account_id(value)
                             self._add_assignee_to_fields(update_fields, account_id)
                         except ValueError as e:
-                            logger.warning(f"Could not update assignee: {str(e)}")
+                            # An explicit assignee update that cannot be resolved
+                            # must fail loudly. Swallowing it here means the PUT is
+                            # skipped (or runs without the assignee) while the call
+                            # still reports the issue as updated successfully.
+                            raise ValueError(
+                                f"Could not update assignee: {str(e)}"
+                            ) from e
                 elif key == "parent":
                     if isinstance(value, dict) and value.get("key"):
                         update_fields["parent"] = {"key": str(value["key"])}
