@@ -398,9 +398,10 @@ class OAuthConfig:
                         will use the current object attributes.
         """
         try:
-            # Create the directory if it doesn't exist
+            # Create the directory if it doesn't exist (owner-only)
             token_dir = Path.home() / ".mcp-atlassian"
             token_dir.mkdir(exist_ok=True)
+            os.chmod(token_dir, 0o700)
 
             # Save the tokens to a file
             token_path = token_dir / f"oauth-{self.client_id}.json"
@@ -414,8 +415,12 @@ class OAuthConfig:
                     "base_url": self.base_url,
                 }
 
-            with open(token_path, "w") as f:
+            # Persisted tokens are secrets: create/truncate owner-only so they are
+            # never group/world-readable, independent of the process umask.
+            fd = os.open(token_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
                 json.dump(token_data, f)
+            os.chmod(token_path, 0o600)
 
             logger.debug(f"Saved OAuth tokens to file {token_path} (fallback storage)")
         except Exception as e:
