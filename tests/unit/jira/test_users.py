@@ -939,26 +939,18 @@ class TestSearchAssignableUsers:
         mixin.jira = jira_client.jira
         return mixin
 
-    @staticmethod
-    def _mock_response(payload):
-        response = MagicMock()
-        response.json.return_value = payload
-        response.raise_for_status = MagicMock()
-        return response
-
     def test_search_assignable_users_by_project(self, users_mixin):
         """Cloud search uses query= and project= params."""
-        users_mixin.jira._session.get.return_value = self._mock_response(
-            [
-                {
-                    "name": "jsmith@example.com",
-                    "key": "JIRAUSER1001",
-                    "displayName": "John Smith",
-                    "emailAddress": "jsmith@example.com",
-                    "active": True,
-                }
-            ]
-        )
+        users_mixin.jira.resource_url.return_value = "rest/api/2/user/assignable/search"
+        users_mixin.jira.get.return_value = [
+            {
+                "name": "jsmith@example.com",
+                "key": "JIRAUSER1001",
+                "displayName": "John Smith",
+                "emailAddress": "jsmith@example.com",
+                "active": True,
+            }
+        ]
 
         users = users_mixin.search_assignable_users(
             query="Smith", project_key="PROJ", limit=5
@@ -969,9 +961,10 @@ class TestSearchAssignableUsers:
         assert users[0].user_key == "JIRAUSER1001"
         assert users[0].display_name == "John Smith"
 
-        users_mixin.jira._session.get.assert_called_once()
-        call_args = users_mixin.jira._session.get.call_args
-        assert call_args.args[0].endswith("/rest/api/2/user/assignable/search")
+        users_mixin.jira.resource_url.assert_called_once_with("user/assignable/search")
+        users_mixin.jira.get.assert_called_once()
+        call_args = users_mixin.jira.get.call_args
+        assert call_args.args[0] == "rest/api/2/user/assignable/search"
         params = call_args.kwargs["params"]
         assert params["project"] == "PROJ"
         assert params["query"] == "Smith"
@@ -986,35 +979,33 @@ class TestSearchAssignableUsers:
             auth_type="pat",
             personal_token="test-token",
         )
-        users_mixin.jira._session.get.return_value = self._mock_response([])
+        users_mixin.jira.get.return_value = []
 
         users_mixin.search_assignable_users(query="Smith", project_key="PROJ")
 
-        params = users_mixin.jira._session.get.call_args.kwargs["params"]
+        params = users_mixin.jira.get.call_args.kwargs["params"]
         assert params["username"] == "Smith"
         assert "query" not in params
 
     def test_search_assignable_users_by_issue_key(self, users_mixin):
         """When issue_key is given, project param is omitted."""
-        users_mixin.jira._session.get.return_value = self._mock_response([])
+        users_mixin.jira.get.return_value = []
 
         users_mixin.search_assignable_users(
             query="Smith", issue_key="PROJ-42", limit=20
         )
 
-        params = users_mixin.jira._session.get.call_args.kwargs["params"]
+        params = users_mixin.jira.get.call_args.kwargs["params"]
         assert params["issueKey"] == "PROJ-42"
         assert "project" not in params
 
     def test_search_assignable_users_returns_multiple(self, users_mixin):
         """All matching users are returned in API order."""
-        users_mixin.jira._session.get.return_value = self._mock_response(
-            [
-                {"name": "a", "key": "K1", "displayName": "Alice Smith"},
-                {"name": "b", "key": "K2", "displayName": "Bob Smith"},
-                {"name": "c", "key": "K3", "displayName": "Carol Smith"},
-            ]
-        )
+        users_mixin.jira.get.return_value = [
+            {"name": "a", "key": "K1", "displayName": "Alice Smith"},
+            {"name": "b", "key": "K2", "displayName": "Bob Smith"},
+            {"name": "c", "key": "K3", "displayName": "Carol Smith"},
+        ]
 
         users = users_mixin.search_assignable_users(query="Smith", project_key="PROJ")
 
@@ -1030,7 +1021,7 @@ class TestSearchAssignableUsers:
         with pytest.raises(ValueError, match="Exactly one"):
             users_mixin.search_assignable_users(query="Smith")
 
-        users_mixin.jira._session.get.assert_not_called()
+        users_mixin.jira.get.assert_not_called()
 
     def test_search_assignable_users_rejects_multiple_scopes(self, users_mixin):
         """Providing both project_key and issue_key raises ValueError."""
@@ -1039,13 +1030,11 @@ class TestSearchAssignableUsers:
                 query="Smith", project_key="PROJ", issue_key="PROJ-42"
             )
 
-        users_mixin.jira._session.get.assert_not_called()
+        users_mixin.jira.get.assert_not_called()
 
     def test_search_assignable_users_non_list_response(self, users_mixin):
         """A non-list response (e.g. error envelope) yields an empty result."""
-        users_mixin.jira._session.get.return_value = self._mock_response(
-            {"errorMessages": ["nope"]}
-        )
+        users_mixin.jira.get.return_value = {"errorMessages": ["nope"]}
 
         users = users_mixin.search_assignable_users(query="Smith", project_key="PROJ")
 
@@ -1053,31 +1042,24 @@ class TestSearchAssignableUsers:
 
     def test_search_assignable_users_limit_clamped(self, users_mixin):
         """Limit is clamped to [1, 1000]; falsy is treated as default 20."""
-        users_mixin.jira._session.get.return_value = self._mock_response([])
+        users_mixin.jira.get.return_value = []
 
         # Falsy → default 20
         users_mixin.search_assignable_users(query="Smith", project_key="PROJ", limit=0)
-        assert (
-            users_mixin.jira._session.get.call_args.kwargs["params"]["maxResults"] == 20
-        )
+        assert users_mixin.jira.get.call_args.kwargs["params"]["maxResults"] == 20
 
         # Above ceiling → clamped to 1000
-        users_mixin.jira._session.get.reset_mock()
+        users_mixin.jira.get.reset_mock()
         users_mixin.search_assignable_users(
             query="Smith", project_key="PROJ", limit=5000
         )
-        assert (
-            users_mixin.jira._session.get.call_args.kwargs["params"]["maxResults"]
-            == 1000
-        )
+        assert users_mixin.jira.get.call_args.kwargs["params"]["maxResults"] == 1000
 
     def test_search_assignable_users_http_error_propagates(self, users_mixin):
-        """HTTPError from the session bubbles up so the auth decorator can handle 401/403."""
-        response = MagicMock()
-        response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+        """HTTPError from the wrapper bubbles up so the auth decorator can handle 401/403."""
+        users_mixin.jira.get.side_effect = requests.exceptions.HTTPError(
             "403 Forbidden"
         )
-        users_mixin.jira._session.get.return_value = response
 
         with pytest.raises(requests.exceptions.HTTPError):
             users_mixin.search_assignable_users(query="Smith", project_key="PROJ")

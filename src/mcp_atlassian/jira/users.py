@@ -417,7 +417,7 @@ class UsersMixin(JiraClient):
             )
 
         limit = max(1, min(int(limit or 20), 1000))
-        url = f"{self.config.url}/rest/api/2/user/assignable/search"
+        url = self.jira.resource_url("user/assignable/search")
         query_param = "query" if self.config.is_cloud else "username"
         params: dict[str, str | int] = {
             query_param: query,
@@ -426,15 +426,11 @@ class UsersMixin(JiraClient):
         }
         if issue_key:
             params["issueKey"] = issue_key
-        else:
-            params["project"] = project_key  # type: ignore[assignment]
+        elif project_key is not None:
+            params["project"] = project_key
 
         try:
-            response = self.jira._session.get(
-                url, params=params, verify=self.config.ssl_verify
-            )
-            response.raise_for_status()
-            data = response.json()
+            data = self.jira.get(url, params=params)
         except HTTPError as http_err:
             logger.warning(
                 f"jira_search_assignable_users HTTPError for query={query!r}: {http_err}"
