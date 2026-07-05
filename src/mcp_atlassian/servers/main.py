@@ -442,6 +442,28 @@ class UserTokenMiddleware:
             await self._send_json_error_response(safe_send, 401, auth_error)
             return  # Don't call self.app - request is rejected
 
+        # Reject unauthenticated MCP requests at the transport boundary: with no
+        # user identity, the downstream handler would fall back to the operator's
+        # global credentials, so any unauthenticated caller would transact as the
+        # operator. Refuse unless explicitly opted in (opt-in global-fallback gate).
+        if (
+            not ignore_header_auth
+            and self.mcp_server_ref
+            and self._should_process_auth(scope_copy)
+            and not scope_copy["state"].get("user_atlassian_auth_type")
+            and not is_env_truthy("ALLOW_GLOBAL_CRED_FALLBACK")
+        ):
+            logger.warning(
+                "UserTokenMiddleware: rejecting unauthenticated MCP request "
+                "(no user identity and ALLOW_GLOBAL_CRED_FALLBACK is off)"
+            )
+            await self._send_json_error_response(
+                safe_send,
+                401,
+                "Authentication required: no Atlassian credentials were provided.",
+            )
+            return  # Don't call self.app - request is rejected
+
         # Call the next application with modified scope and safe send wrapper
         await self.app(scope_copy, receive, safe_send)
 

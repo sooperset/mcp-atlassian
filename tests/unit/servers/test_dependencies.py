@@ -788,7 +788,15 @@ class TestGetJiraFetcher:
             mock_fetcher = _create_mock_fetcher(JiraFetcher)
             mock_jira_fetcher_class.return_value = mock_fetcher
 
-            result = await get_jira_fetcher(mock_context)
+            # The HTTP path now requires an explicit opt-in to fall back to the
+            # operator's global credentials; the non-HTTP (stdio) path does not.
+            env = (
+                {"ALLOW_GLOBAL_CRED_FALLBACK": "true"}
+                if scenario["setup_http"]
+                else {}
+            )
+            with patch.dict("os.environ", env):
+                result = await get_jira_fetcher(mock_context)
 
             assert result == mock_fetcher
             assert_mock_called_with_partial(
@@ -1127,7 +1135,15 @@ class TestGetConfluenceFetcher:
             mock_fetcher = _create_mock_fetcher(ConfluenceFetcher)
             mock_confluence_fetcher_class.return_value = mock_fetcher
 
-            result = await get_confluence_fetcher(mock_context)
+            # The HTTP path now requires an explicit opt-in to fall back to the
+            # operator's global credentials; the non-HTTP (stdio) path does not.
+            env = (
+                {"ALLOW_GLOBAL_CRED_FALLBACK": "true"}
+                if scenario["setup_http"]
+                else {}
+            )
+            with patch.dict("os.environ", env):
+                result = await get_confluence_fetcher(mock_context)
 
             assert result == mock_fetcher
             assert_mock_called_with_partial(
@@ -1778,12 +1794,6 @@ class TestUnauthenticatedGlobalFallbackRegression:
     """
 
     @pytest.mark.security_regression
-    @pytest.mark.xfail(
-        strict=True,
-        reason="SP5 fam2 GHSA-wrhw/vc8m: dependencies.py:658-670 global credential "
-        "fallback is unconditional in an HTTP context — no ALLOW_GLOBAL_CRED_FALLBACK "
-        "gate for unauthenticated requests",
-    )
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
     async def test_unauthenticated_http_request_refuses_global_jira_fetcher(
@@ -1805,12 +1815,6 @@ class TestUnauthenticatedGlobalFallbackRegression:
             await get_jira_fetcher(mock_context)
 
     @pytest.mark.security_regression
-    @pytest.mark.xfail(
-        strict=True,
-        reason="SP5 fam2 GHSA-wrhw/vc8m: dependencies.py:658-670 global credential "
-        "fallback is unconditional in an HTTP context — no ALLOW_GLOBAL_CRED_FALLBACK "
-        "gate for unauthenticated requests",
-    )
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
     async def test_unauthenticated_http_request_refuses_global_confluence_fetcher(

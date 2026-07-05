@@ -318,12 +318,6 @@ class TestUserTokenMiddleware:
         middleware.app.assert_not_called()
 
     @pytest.mark.security_regression
-    @pytest.mark.xfail(
-        strict=True,
-        reason="SP5 fam2 GHSA-wrhw/vc8m/cc5h: main.py:438-446 a POST to the MCP "
-        "endpoint with NO Authorization header is not rejected — the middleware "
-        "calls self.app (which falls back to operator credentials) instead of 401",
-    )
     @pytest.mark.anyio
     async def test_missing_authorization_header_returns_401(
         self, middleware, mock_scope, mock_receive, mock_send
