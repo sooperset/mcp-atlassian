@@ -226,6 +226,20 @@ class TestSearchMixin:
             f"names a space; CQL was {sent_cql!r}"
         )
 
+    @pytest.mark.security_regression
+    def test_spaces_filter_param_cannot_replace_config_allowlist(self, search_mixin):
+        """The spaces_filter tool arg may narrow, not replace, the config allowlist."""
+        search_mixin.confluence.cql.return_value = {"results": [], "size": 0}
+        search_mixin.config.spaces_filter = "SECSPACE"
+
+        search_mixin.search("type = page", spaces_filter="EVIL")
+
+        sent_cql = search_mixin.confluence.cql.call_args.kwargs["cql"]
+        assert "SECSPACE" in sent_cql, (
+            "config allowlist must still be applied even when a spaces_filter arg "
+            f"is supplied; CQL was {sent_cql!r}"
+        )
+
     def test_search_with_config_spaces_filter(self, search_mixin):
         """Test search using spaces filter from config."""
         # Prepare the mock
@@ -266,13 +280,18 @@ class TestSearchMixin:
         )
         assert len(result) == 1
 
-        # Test that explicit filter overrides config filter
+        # A spaces_filter arg narrows within the config allowlist (hard boundary):
+        # the config filter is still ANDed, it cannot be replaced.
         result = search_mixin.search("test query", spaces_filter="OVERRIDE")
 
-        # Verify space was properly quoted in the CQL query
+        quoted_dev = quote_cql_identifier_if_needed("DEV")
+        quoted_team = quote_cql_identifier_if_needed("TEAM")
         quoted_override = quote_cql_identifier_if_needed("OVERRIDE")
         search_mixin.confluence.cql.assert_called_with(
-            cql=f"(test query) AND (space = {quoted_override})",
+            cql=(
+                f"((test query) AND (space = {quoted_dev} OR space = {quoted_team}))"
+                f" AND (space = {quoted_override})"
+            ),
             limit=10,
         )
         assert len(result) == 1

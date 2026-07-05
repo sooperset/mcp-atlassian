@@ -23,6 +23,29 @@ logger = logging.getLogger("mcp-atlassian")
 class SearchMixin(ConfluenceClient):
     """Mixin for Confluence search operations."""
 
+    def _and_spaces_filter(self, cql: str, filter_to_use: str) -> str:
+        """AND a single comma-separated spaces allowlist into ``cql``.
+
+        Always ANDs the allowlist, even when the caller's CQL already names a
+        space, so a caller-supplied ``space = X`` cannot escape it.
+        """
+        spaces = [s.strip() for s in filter_to_use.split(",")]
+        space_query = " OR ".join(
+            [f"space = {quote_cql_identifier_if_needed(space)}" for space in spaces]
+        )
+        if not cql:
+            return space_query
+        # Extract a trailing ORDER BY so the AND does not produce invalid CQL.
+        order_match = re.search(r"\s+(ORDER\s+BY\s+.*)$", cql, re.IGNORECASE)
+        if order_match:
+            order_clause = order_match.group(1)
+            cql_without_order = cql[: order_match.start()]
+            cql = f"({cql_without_order}) AND ({space_query}) {order_clause}"
+        else:
+            cql = f"({cql}) AND ({space_query})"
+        logger.info(f"Applied spaces filter to query: {cql}")
+        return cql
+
     @handle_atlassian_api_errors("Confluence API")
     def search(
         self, cql: str, limit: int = 10, spaces_filter: str | None = None
@@ -45,35 +68,13 @@ class SearchMixin(ConfluenceClient):
         """
         limit = clamp_limit(limit, context="confluence.search")
 
-        # Use spaces_filter parameter if provided, otherwise fall back to config
-        filter_to_use = spaces_filter or self.config.spaces_filter
-
-        # Apply spaces filter if present
-        if filter_to_use:
-            # Split spaces filter by commas and handle possible whitespace
-            spaces = [s.strip() for s in filter_to_use.split(",")]
-
-            # Build the space filter query part using proper quoting for each space key
-            space_query = " OR ".join(
-                [f"space = {quote_cql_identifier_if_needed(space)}" for space in spaces]
-            )
-
-            # Always AND the allowlist, even when the caller's CQL already names a
-            # space: a caller-supplied `space = X` must not escape the configured
-            # spaces allowlist (out-of-allowlist queries then return empty).
-            if not cql:
-                cql = space_query
-            else:
-                # Extract a trailing ORDER BY so the AND does not produce invalid CQL.
-                order_match = re.search(r"\s+(ORDER\s+BY\s+.*)$", cql, re.IGNORECASE)
-                if order_match:
-                    order_clause = order_match.group(1)
-                    cql_without_order = cql[: order_match.start()]
-                    cql = f"({cql_without_order}) AND ({space_query}) {order_clause}"
-                else:
-                    cql = f"({cql}) AND ({space_query})"
-
-            logger.info(f"Applied spaces filter to query: {cql}")
+        # config.spaces_filter is a hard boundary and is always applied; a
+        # caller-supplied spaces_filter may only *narrow* within it (both ANDed),
+        # never replace it — otherwise the tool argument would defeat the
+        # operator's allowlist in shared-credential deployments.
+        for filter_str in (self.config.spaces_filter, spaces_filter):
+            if filter_str:
+                cql = self._and_spaces_filter(cql, filter_str)
 
         # Execute the CQL search query
         results = self.confluence.cql(cql=cql, limit=limit)

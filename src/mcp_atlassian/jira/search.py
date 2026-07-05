@@ -27,12 +27,18 @@ class SearchMixin(JiraClient, IssueOperationsProto):
         """Constrain a JQL query to the allowed projects (JIRA_PROJECTS_FILTER).
 
         Every JQL-issuing path routes through here so none can escape the project
-        allowlist. ``projects_filter`` overrides ``config.projects_filter``.
+        allowlist. ``config.projects_filter`` is a hard boundary and is always
+        applied; a caller-supplied ``projects_filter`` may only *narrow* within it
+        (both are ANDed), never replace it — otherwise the tool argument would
+        defeat the operator's allowlist in shared-credential deployments.
         """
-        filter_to_use = projects_filter or self.config.projects_filter
-        if not filter_to_use:
-            return jql
+        for filter_str in (self.config.projects_filter, projects_filter):
+            if filter_str:
+                jql = self._and_projects_filter(jql, filter_str)
+        return jql
 
+    def _and_projects_filter(self, jql: str, filter_to_use: str) -> str:
+        """AND a single comma-separated project allowlist into ``jql``."""
         # Split by commas, and escape backslashes before double-quotes to prevent
         # JQL-injection bypass of the quoting below.
         projects = [p.strip() for p in filter_to_use.split(",")]

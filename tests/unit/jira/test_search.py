@@ -347,10 +347,11 @@ class TestSearchMixin:
         assert len(result.issues) == 1
         assert result.total == 1
 
-        # Test with override
+        # A projects_filter arg narrows within the config allowlist (hard boundary):
+        # the config filter is still ANDed, it cannot be replaced.
         result = search_mixin.search_issues("text ~ 'test'", projects_filter="OVERRIDE")
         search_mixin.jira.jql.assert_called_with(
-            "(text ~ 'test') AND project = OVERRIDE",
+            "((text ~ 'test') AND project IN (TEST, DEV)) AND project = OVERRIDE",
             fields=ANY,
             start=0,
             limit=50,
@@ -359,12 +360,12 @@ class TestSearchMixin:
         assert len(result.issues) == 1
         assert result.total == 1
 
-        # Test with override - multiple projects
+        # Same with a multi-project narrowing arg.
         result = search_mixin.search_issues(
             "text ~ 'test'", projects_filter="OVER1,OVER2"
         )
         search_mixin.jira.jql.assert_called_with(
-            "(text ~ 'test') AND project IN (OVER1, OVER2)",
+            "((text ~ 'test') AND project IN (TEST, DEV)) AND project IN (OVER1, OVER2)",
             fields=ANY,
             start=0,
             limit=50,
@@ -729,10 +730,12 @@ class TestSearchMixin:
         search_mixin.jira.post.reset_mock()
         search_mixin.jira.jql.reset_mock()
 
-        # Act: Override config filter with parameter
+        # Act: a projects_filter arg narrows within the config allowlist; it cannot
+        # replace it, so the config filter is still ANDed (hard boundary).
         search_mixin.search_issues("text ~ 'test'", projects_filter="OVERRIDE")
-        # Assert: JQL verification
-        assert get_jql_from_call() == "(text ~ 'test') AND project = OVERRIDE"
+        assert get_jql_from_call() == (
+            "((text ~ 'test') AND project IN (CONF1, CONF2)) AND project = OVERRIDE"
+        )
 
     @pytest.mark.parametrize("is_cloud", [True, False])
     def test_search_issues_with_empty_jql_and_projects_filter(
@@ -1294,4 +1297,24 @@ class TestSearchFilterAndInjectionRegression:
         assert "SECPROJ" in sent_jql, (
             "config projects_filter must be ANDed even when the caller already "
             f"names a project; JQL was {sent_jql!r}"
+        )
+
+    @pytest.mark.security_regression
+    def test_projects_filter_param_cannot_replace_config_allowlist(
+        self, search_mixin: SearchMixin, mock_issues_response: dict
+    ) -> None:
+        """The projects_filter tool arg may narrow, not replace, the config allowlist.
+
+        Previously ``projects_filter or config.projects_filter`` let a caller pass
+        projects_filter="SECRET" to drop the operator's allowlist entirely.
+        """
+        search_mixin.config.projects_filter = "SECPROJ"
+        search_mixin.jira.jql.return_value = mock_issues_response
+
+        search_mixin.search_issues("text ~ 'x'", projects_filter="SECRET")
+
+        sent_jql = search_mixin.jira.jql.call_args[0][0]
+        assert "SECPROJ" in sent_jql, (
+            "config allowlist must still be applied even when a projects_filter arg "
+            f"is supplied; JQL was {sent_jql!r}"
         )
