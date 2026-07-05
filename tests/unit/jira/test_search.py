@@ -1204,3 +1204,85 @@ class TestSearchMixin:
         )
         # The result should not have a next_page_token from Server/DC
         assert result.next_page_token is None
+
+
+class TestSearchFilterAndInjectionRegression:
+    """SP5 fam5 (filter bypass) + fam7 (JQL injection) for Jira search.
+
+    fam5 (GHSA-w66g, rqwg): ``search_issues`` applies ``config.projects_filter``,
+    but ``get_board_issues`` (``jira/search.py:208``) never does — board issues
+    escape the project allowlist. fam7 (GHSA-6rrj): ``get_sprint_issues``
+    (``:298``) interpolates ``sprint_id`` straight into JQL
+    (``f"sprint = {sprint_id}"``), so a non-numeric value injects JQL.
+
+    Assertions follow the weakest fix-agnostic invariant: fam5 asserts the project
+    key appears *somewhere* in the outgoing JQL (not an exact string); fam7 asserts a
+    non-numeric sprint_id is rejected (fix-7b contract = numeric-only), with
+    ``search_issues`` mocked so the only thing that can reject it is sprint_id
+    validation. Both currently xfail; Phase B fix-5 / fix-7b flip them green.
+    """
+
+    @pytest.fixture
+    def search_mixin(self, jira_fetcher: JiraFetcher) -> SearchMixin:
+        """SearchMixin with a mocked Jira client and config (Server/DC default)."""
+        mixin = jira_fetcher
+        mixin._clean_text = MagicMock(side_effect=lambda text: text if text else "")
+        mixin.config = MagicMock()
+        mixin.config.is_cloud = False
+        mixin.config.projects_filter = None
+        mixin.config.url = "https://example.atlassian.net"
+        return mixin
+
+    @pytest.mark.security_regression
+    @pytest.mark.xfail(
+        strict=True,
+        reason="SP5 fam5 GHSA-w66g/rqwg: jira/search.py:208 get_board_issues never "
+        "applies config.projects_filter — board issues bypass the project allowlist",
+    )
+    def test_get_board_issues_applies_projects_filter(
+        self,
+        search_mixin: SearchMixin,
+        mock_issues_response: dict,
+    ) -> None:
+        """Board issues must be restricted to the configured projects_filter."""
+        search_mixin.config.projects_filter = "SECPROJ"
+        search_mixin.jira.get_issues_for_board.return_value = mock_issues_response
+
+        search_mixin.get_board_issues("123", jql="status = Open")
+
+        sent_jql = search_mixin.jira.get_issues_for_board.call_args.kwargs.get(
+            "jql", ""
+        )
+        assert "SECPROJ" in sent_jql, (
+            "board issues must be constrained to the configured projects_filter; "
+            f"outgoing JQL was {sent_jql!r}"
+        )
+
+    @pytest.fixture
+    def mock_issues_response(self) -> dict:
+        """Minimal valid Jira board response so from_api_response succeeds."""
+        return {
+            "issues": [],
+            "total": 0,
+            "startAt": 0,
+            "maxResults": 50,
+        }
+
+    @pytest.mark.security_regression
+    @pytest.mark.xfail(
+        strict=True,
+        reason="SP5 fam7 GHSA-6rrj: jira/search.py:298 get_sprint_issues "
+        'interpolates sprint_id into JQL unsanitized (f"sprint = {sprint_id}") — '
+        "JQL injection",
+    )
+    def test_get_sprint_issues_rejects_non_numeric_sprint_id(
+        self,
+        search_mixin: SearchMixin,
+    ) -> None:
+        """A non-numeric sprint_id (injection payload) must be rejected."""
+        # search_issues is mocked, so the ONLY thing that can reject the payload is
+        # validation of sprint_id itself — pinning fix-7b's numeric-only contract.
+        search_mixin.search_issues = MagicMock(return_value=MagicMock())
+
+        with pytest.raises(Exception):
+            search_mixin.get_sprint_issues("1 OR project = SECRET")

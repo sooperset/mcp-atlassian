@@ -1583,3 +1583,252 @@ class TestSsrfProtection:
 
         result = hook(mock_response)
         assert result == mock_response
+
+
+class TestSsrfHookCoverageRegression:
+    """SP5 fam4 (GHSA-6529) — SSRF redirect hook must cover the basic-auth and OAuth
+    per-user fetcher sessions, not only the header-PAT branch.
+
+    ``_create_and_validate`` is called with ``attach_ssrf_hook=True`` only on the
+    header-PAT branch (``dependencies.py:561``); the basic (``:587``) and oauth_pat
+    (``:636``) branches omit it, so per-user fetchers built from those branches follow
+    HTTP redirects without SSRF validation. These tests assert the secure outcome — a
+    redirect hook is attached to the fetcher's session — and currently xfail. Phase B
+    fix-4a (pass ``attach_ssrf_hook=True`` on every auth branch) flips them green; the
+    strict marker then forces removal of the xfail.
+    """
+
+    @pytest.mark.security_regression
+    @pytest.mark.xfail(
+        strict=True,
+        reason="SP5 fam4 GHSA-6529: dependencies.py:587 basic-auth branch omits "
+        "attach_ssrf_hook — user session carries no SSRF redirect hook",
+    )
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_basic_auth_jira_session_has_ssrf_hook(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ) -> None:
+        """A basic-auth Jira fetcher must follow redirects through the SSRF hook."""
+        mock_request.state.jira_fetcher = None
+        mock_request.state.confluence_fetcher = None
+        mock_request.state.atlassian_service_headers = {}
+        mock_request.state.user_atlassian_auth_type = "basic"
+        mock_request.state.user_atlassian_email = "user@example.com"
+        mock_request.state.user_atlassian_api_token = "user-api-token"
+        mock_request.state.user_atlassian_token = None
+        mock_request.state.user_atlassian_cloud_id = None
+        mock_get_http_request.return_value = mock_request
+
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(JiraFetcher)
+        mock_jira_fetcher_class.return_value = mock_fetcher
+
+        await get_jira_fetcher(mock_context)
+
+        response_hooks = mock_fetcher.jira._session.hooks["response"]
+        assert len(response_hooks) > 0, (
+            "basic-auth user fetcher session must carry the SSRF redirect hook"
+        )
+
+    @pytest.mark.security_regression
+    @pytest.mark.xfail(
+        strict=True,
+        reason="SP5 fam4 GHSA-6529: dependencies.py:636 oauth_pat branch omits "
+        "attach_ssrf_hook — user session carries no SSRF redirect hook",
+    )
+    @patch("mcp_atlassian.servers.dependencies.get_access_token")
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_oauth_jira_session_has_ssrf_hook(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_get_access_token,
+        mock_context,
+        mock_request,
+        config_factory,
+        auth_scenarios,
+    ) -> None:
+        """An OAuth Jira fetcher must follow redirects through the SSRF hook."""
+        _setup_mock_request_state(mock_request, auth_scenarios["oauth"])
+        mock_get_http_request.return_value = mock_request
+        mock_get_access_token.side_effect = RuntimeError("no auth context")
+
+        app_context = config_factory.create_app_context(
+            jira_config=config_factory.create_jira_config(auth_type="oauth")
+        )
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(JiraFetcher)
+        mock_jira_fetcher_class.return_value = mock_fetcher
+
+        await get_jira_fetcher(mock_context)
+
+        response_hooks = mock_fetcher.jira._session.hooks["response"]
+        assert len(response_hooks) > 0, (
+            "oauth user fetcher session must carry the SSRF redirect hook"
+        )
+
+    @pytest.mark.security_regression
+    @pytest.mark.xfail(
+        strict=True,
+        reason="SP5 fam4 GHSA-6529: dependencies.py:587 basic-auth branch omits "
+        "attach_ssrf_hook — Confluence user session carries no SSRF redirect hook",
+    )
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_basic_auth_confluence_session_has_ssrf_hook(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ) -> None:
+        """A basic-auth Confluence fetcher must follow redirects through the hook."""
+        mock_request.state.jira_fetcher = None
+        mock_request.state.confluence_fetcher = None
+        mock_request.state.atlassian_service_headers = {}
+        mock_request.state.user_atlassian_auth_type = "basic"
+        mock_request.state.user_atlassian_email = "user@example.com"
+        mock_request.state.user_atlassian_api_token = "user-api-token"
+        mock_request.state.user_atlassian_token = None
+        mock_request.state.user_atlassian_cloud_id = None
+        mock_get_http_request.return_value = mock_request
+
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(ConfluenceFetcher)
+        mock_confluence_fetcher_class.return_value = mock_fetcher
+
+        await get_confluence_fetcher(mock_context)
+
+        response_hooks = mock_fetcher.confluence._session.hooks["response"]
+        assert len(response_hooks) > 0, (
+            "basic-auth user fetcher session must carry the SSRF redirect hook"
+        )
+
+    @pytest.mark.security_regression
+    @pytest.mark.xfail(
+        strict=True,
+        reason="SP5 fam4 GHSA-6529: dependencies.py:636 oauth_pat branch omits "
+        "attach_ssrf_hook — Confluence user session carries no SSRF redirect hook",
+    )
+    @patch("mcp_atlassian.servers.dependencies.get_access_token")
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_oauth_confluence_session_has_ssrf_hook(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_get_access_token,
+        mock_context,
+        mock_request,
+        config_factory,
+        auth_scenarios,
+    ) -> None:
+        """An OAuth Confluence fetcher must follow redirects through the hook."""
+        _setup_mock_request_state(mock_request, auth_scenarios["oauth"])
+        mock_get_http_request.return_value = mock_request
+        mock_get_access_token.side_effect = RuntimeError("no auth context")
+
+        app_context = config_factory.create_app_context(
+            confluence_config=config_factory.create_confluence_config(auth_type="oauth")
+        )
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(ConfluenceFetcher)
+        mock_confluence_fetcher_class.return_value = mock_fetcher
+
+        await get_confluence_fetcher(mock_context)
+
+        response_hooks = mock_fetcher.confluence._session.hooks["response"]
+        assert len(response_hooks) > 0, (
+            "oauth user fetcher session must carry the SSRF redirect hook"
+        )
+
+
+class TestUnauthenticatedGlobalFallbackRegression:
+    """SP5 fam2 (GHSA-wrhw, vc8m, cc5h auth half) — an unauthenticated HTTP request
+    must not silently fall back to the operator's global credentials.
+
+    In an HTTP request context with no user identity, ``_get_fetcher`` falls through
+    to the global fallback at ``dependencies.py:658-670`` and returns
+    ``spec.fetcher_class(config=global_config_fallback)`` unconditionally, so any
+    unauthenticated caller on a remotely-exposed streamable-http server transacts as
+    the operator. These tests assert the secure outcome — the global fallback is
+    refused for unauthenticated HTTP requests unless ``ALLOW_GLOBAL_CRED_FALLBACK``
+    is explicitly enabled — and currently xfail. Phase B fix-2 (opt-in gate) flips
+    them green; the strict marker then forces removing the xfail.
+
+    The companion ``test_global_fallback_scenarios`` above pins the *current*
+    behavior (returns the global fetcher), so this xfail's red is genuinely the
+    fallback firing, not an incidental setup error. The assertion uses
+    ``pytest.raises`` so that when the fix refuses by raising, the test flips to
+    XPASS (a raised exception in the body would otherwise keep it xfailed).
+    """
+
+    @pytest.mark.security_regression
+    @pytest.mark.xfail(
+        strict=True,
+        reason="SP5 fam2 GHSA-wrhw/vc8m: dependencies.py:658-670 global credential "
+        "fallback is unconditional in an HTTP context — no ALLOW_GLOBAL_CRED_FALLBACK "
+        "gate for unauthenticated requests",
+    )
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_unauthenticated_http_request_refuses_global_jira_fetcher(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ) -> None:
+        """No user identity + HTTP context must not yield the global Jira fetcher."""
+        _setup_mock_request_state(mock_request)  # no scenario -> no user identity
+        mock_get_http_request.return_value = mock_request
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
+        mock_jira_fetcher_class.return_value = _create_mock_fetcher(JiraFetcher)
+
+        with pytest.raises(ValueError):
+            await get_jira_fetcher(mock_context)
+
+    @pytest.mark.security_regression
+    @pytest.mark.xfail(
+        strict=True,
+        reason="SP5 fam2 GHSA-wrhw/vc8m: dependencies.py:658-670 global credential "
+        "fallback is unconditional in an HTTP context — no ALLOW_GLOBAL_CRED_FALLBACK "
+        "gate for unauthenticated requests",
+    )
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_unauthenticated_http_request_refuses_global_confluence_fetcher(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ) -> None:
+        """No user identity + HTTP context must not yield the global Confluence fetcher."""
+        _setup_mock_request_state(mock_request)  # no scenario -> no user identity
+        mock_get_http_request.return_value = mock_request
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
+        mock_confluence_fetcher_class.return_value = _create_mock_fetcher(
+            ConfluenceFetcher
+        )
+
+        with pytest.raises(ValueError):
+            await get_confluence_fetcher(mock_context)
