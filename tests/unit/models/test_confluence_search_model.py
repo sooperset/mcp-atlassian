@@ -40,3 +40,33 @@ class TestConfluenceSearchResult:
         assert search_result.cql_query is None
         assert search_result.search_duration is None
         assert len(search_result.results) == 0
+
+    def test_from_api_response_with_space_type_results(self):
+        """Space-type CQL results (``type=space``) carry their data under a
+        ``space`` key instead of ``content`` and must not be dropped.
+
+        Regression for https://github.com/sooperset/mcp-atlassian/issues/907
+        """
+        data = {
+            "results": [
+                {
+                    "space": {"id": 98765, "key": "DEV", "name": "Development"},
+                    "title": "Development",
+                    "excerpt": "",
+                }
+            ],
+            "totalSize": 1,
+            "start": 0,
+            "limit": 25,
+        }
+
+        search_result = ConfluenceSearchResult.from_api_response(data)
+
+        assert search_result.total_size == 1
+        assert len(search_result.results) == 1
+
+        page = search_result.results[0]
+        assert isinstance(page, ConfluencePage)
+        # Space id is mapped onto the page id so excerpt matching can resolve it
+        assert page.id == "98765"
+        assert page.title == "Development"
