@@ -156,6 +156,30 @@ class TestUsersMixin:
         # Verify no lookups were performed
         users_mixin.jira.user_find_by_user_string.assert_not_called()
 
+    def test_get_account_id_modern_cloud_format(self, users_mixin):
+        """Test that _get_account_id returns modern Cloud account IDs unchanged."""
+        # Call the method with a modern Atlassian Cloud account ID
+        account_id = users_mixin._get_account_id(
+            "712020:f653aab5-cc61-4c57-8fa8-f7d73b94499d"
+        )
+
+        # Verify result
+        assert account_id == "712020:f653aab5-cc61-4c57-8fa8-f7d73b94499d"
+        # Verify no lookups were performed
+        users_mixin.jira.user_find_by_user_string.assert_not_called()
+
+    def test_get_account_id_strips_accountid_prefix(self, users_mixin):
+        """Test that _get_account_id strips the accountid: prefix."""
+        # Call the method with an accountid:-prefixed Cloud account ID
+        account_id = users_mixin._get_account_id(
+            "accountid:712020:f653aab5-cc61-4c57-8fa8-f7d73b94499d"
+        )
+
+        # Verify result
+        assert account_id == "712020:f653aab5-cc61-4c57-8fa8-f7d73b94499d"
+        # Verify no lookups were performed
+        users_mixin.jira.user_find_by_user_string.assert_not_called()
+
     def test_get_account_id_direct_lookup(self, users_mixin):
         """Test that _get_account_id uses direct lookup."""
         # Mock both methods to avoid AttributeError
@@ -923,7 +947,7 @@ class TestSearchAssignableUsers:
         return response
 
     def test_search_assignable_users_by_project(self, users_mixin):
-        """search_assignable_users hits /user/assignable/search with project= param."""
+        """Cloud search uses query= and project= params."""
         users_mixin.jira._session.get.return_value = self._mock_response(
             [
                 {
@@ -950,12 +974,28 @@ class TestSearchAssignableUsers:
         assert call_args.args[0].endswith("/rest/api/2/user/assignable/search")
         params = call_args.kwargs["params"]
         assert params["project"] == "PROJ"
-        assert params["username"] == "Smith"
+        assert params["query"] == "Smith"
         assert params["maxResults"] == 5
+        assert "username" not in params
         assert "issueKey" not in params
 
+    def test_search_assignable_users_server_dc_uses_username_param(self, users_mixin):
+        """Server/DC search uses the username= parameter."""
+        users_mixin.config = JiraConfig(
+            url="https://jira.example.com",
+            auth_type="pat",
+            personal_token="test-token",
+        )
+        users_mixin.jira._session.get.return_value = self._mock_response([])
+
+        users_mixin.search_assignable_users(query="Smith", project_key="PROJ")
+
+        params = users_mixin.jira._session.get.call_args.kwargs["params"]
+        assert params["username"] == "Smith"
+        assert "query" not in params
+
     def test_search_assignable_users_by_issue_key(self, users_mixin):
-        """When issue_key is given, it takes precedence and project param is omitted."""
+        """When issue_key is given, project param is omitted."""
         users_mixin.jira._session.get.return_value = self._mock_response([])
 
         users_mixin.search_assignable_users(
@@ -987,8 +1027,17 @@ class TestSearchAssignableUsers:
 
     def test_search_assignable_users_requires_scope(self, users_mixin):
         """Missing both project_key and issue_key raises ValueError."""
-        with pytest.raises(ValueError, match="project_key or issue_key"):
+        with pytest.raises(ValueError, match="Exactly one"):
             users_mixin.search_assignable_users(query="Smith")
+
+        users_mixin.jira._session.get.assert_not_called()
+
+    def test_search_assignable_users_rejects_multiple_scopes(self, users_mixin):
+        """Providing both project_key and issue_key raises ValueError."""
+        with pytest.raises(ValueError, match="Exactly one"):
+            users_mixin.search_assignable_users(
+                query="Smith", project_key="PROJ", issue_key="PROJ-42"
+            )
 
         users_mixin.jira._session.get.assert_not_called()
 
@@ -1032,3 +1081,47 @@ class TestSearchAssignableUsers:
 
         with pytest.raises(requests.exceptions.HTTPError):
             users_mixin.search_assignable_users(query="Smith", project_key="PROJ")
+
+
+class TestUserProfileMeIdentifier:
+    """get_user_profile_by_identifier handles 'me' identifier.
+
+    Regression for https://github.com/sooperset/mcp-atlassian/issues/596
+    Also addresses https://github.com/sooperset/mcp-atlassian/issues/459
+    """
+
+    def test_me_resolves_to_current_user(self, jira_fetcher):
+        """'me' identifier resolves via get_current_user_account_id."""
+        user_response = {
+            "accountId": "5b10ac8d82e05b22cc7d4ef5",
+            "displayName": "Test User",
+            "emailAddress": "test@example.com",
+            "active": True,
+        }
+        with patch.object(
+            jira_fetcher,
+            "get_current_user_account_id",
+            return_value="5b10ac8d82e05b22cc7d4ef5",
+        ) as mock_get_current:
+            jira_fetcher.jira.user = MagicMock(return_value=user_response)
+            result = jira_fetcher.get_user_profile_by_identifier("me")
+            assert result is not None
+            assert result.account_id == "5b10ac8d82e05b22cc7d4ef5"
+            mock_get_current.assert_called_once()
+
+    def test_me_case_insensitive(self, jira_fetcher):
+        """'Me', 'ME', 'mE' all resolve to current user."""
+        user_response = {
+            "accountId": "5b10ac8d82e05b22cc7d4ef5",
+            "displayName": "Test User",
+            "active": True,
+        }
+        with patch.object(
+            jira_fetcher,
+            "get_current_user_account_id",
+            return_value="5b10ac8d82e05b22cc7d4ef5",
+        ):
+            jira_fetcher.jira.user = MagicMock(return_value=user_response)
+            for variant in ["Me", "ME", "mE"]:
+                result = jira_fetcher.get_user_profile_by_identifier(variant)
+                assert result is not None

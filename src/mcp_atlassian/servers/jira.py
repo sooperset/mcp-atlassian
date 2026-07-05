@@ -238,11 +238,11 @@ async def search_assignable_users(
         or an error object on failure.
     """
     jira = await get_jira_fetcher(ctx)
-    if not project_key and not issue_key:
+    if bool(project_key) == bool(issue_key):
         return json.dumps(
             {
                 "success": False,
-                "error": "Either project_key or issue_key must be provided.",
+                "error": "Exactly one of project_key or issue_key must be provided.",
                 "query": query,
             },
             indent=2,
@@ -3333,8 +3333,8 @@ async def get_issue_development_info(
         str | None,
         Field(
             description=(
-                "(Optional) Filter by application type. "
-                "Examples: 'stash' (Bitbucket Server), 'bitbucket', 'github', 'gitlab'"
+                "(Optional) Filter by application type (case-sensitive). "
+                "Examples: 'stash' (Bitbucket Server), 'bitbucket', 'GitHub', 'GitLab'"
             )
         ),
     ] = None,
@@ -3398,8 +3398,8 @@ async def get_issues_development_info(
         str | None,
         Field(
             description=(
-                "(Optional) Filter by application type. "
-                "Examples: 'stash' (Bitbucket Server), 'bitbucket', 'github', 'gitlab'"
+                "(Optional) Filter by application type (case-sensitive). "
+                "Examples: 'stash' (Bitbucket Server), 'bitbucket', 'GitHub', 'GitLab'"
             )
         ),
     ] = None,

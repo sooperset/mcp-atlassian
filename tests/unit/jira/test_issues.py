@@ -714,7 +714,7 @@ class TestIssuesMixin:
             update={"fields": {"assignee": {"accountId": "5b10ac8d82e05b22cc7d4ef5"}}},
         )
 
-    def test_update_issue_assignee_unresolvable_raises(
+    def test_update_issue_assignee_unresolvable_does_not_update(
         self, issues_mixin: IssuesMixin, make_issue_data
     ):
         """An unresolvable assignee must not silently turn into a no-op update."""
@@ -724,7 +724,7 @@ class TestIssuesMixin:
         issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
         issues_mixin._get_account_id = MagicMock(side_effect=ValueError("not found"))
 
-        with pytest.raises(ValueError, match="Could not resolve assignee"):
+        with pytest.raises(ValueError, match="Could not update assignee"):
             issues_mixin.update_issue(
                 issue_key="TEST-123", assignee="ghost@example.com"
             )
@@ -746,6 +746,17 @@ class TestIssuesMixin:
         )
         assert not issues_mixin._get_account_id.called
         assert document.key == "TEST-123"
+
+    def test_update_issue_assignee_unresolvable_raises(self, issues_mixin: IssuesMixin):
+        """Test that update_issue raises when assignee cannot be resolved."""
+        issues_mixin._get_account_id = MagicMock(
+            side_effect=ValueError("Could not find account ID for user: ghost")
+        )
+
+        with pytest.raises(ValueError, match="Could not update assignee"):
+            issues_mixin.update_issue(issue_key="TEST-123", assignee="ghost")
+
+        issues_mixin.jira.update_issue.assert_not_called()
 
     def test_update_issue_components(self, issues_mixin: IssuesMixin):
         """Test updating an issue's components field."""
@@ -842,6 +853,29 @@ class TestIssuesMixin:
         )
         assert document.key == "TEST-123"
 
+    def test_update_issue_clears_field_with_none(self, issues_mixin: IssuesMixin):
+        """Test update_issue passes None through kwargs to clear a field."""
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test Issue",
+                "description": "This is a test",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Bug"},
+            },
+        }
+        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+
+        issues_mixin.update_issue(issue_key="TEST-123", priority=None)
+
+        issues_mixin.jira.update_issue.assert_called_once()
+        call_kwargs = issues_mixin.jira.update_issue.call_args
+        fields = call_kwargs[1]["update"]["fields"]
+        assert "priority" in fields
+        assert fields["priority"] is None
+
     def test_delete_issue(self, issues_mixin: IssuesMixin):
         """Test deleting an issue."""
         # Call the method
@@ -876,6 +910,44 @@ class TestIssuesMixin:
         # Verify fixVersions was added correctly to fields
         assert "fixVersions" in fields
         assert fields["fixVersions"] == [{"name": "TestRelease"}]
+
+    def test_process_additional_fields_none_clears_field(
+        self, issues_mixin: IssuesMixin
+    ):
+        """Test _process_additional_fields passes None through to clear fields."""
+        fields = {}
+        kwargs = {"customfield_10013": None}  # Sprint field, set to null
+
+        issues_mixin._process_additional_fields(fields, kwargs)
+
+        # None must be preserved — it tells Jira API to clear the field
+        assert "customfield_10013" in fields
+        assert fields["customfield_10013"] is None
+
+    def test_process_additional_fields_none_clears_named_field(
+        self, issues_mixin: IssuesMixin
+    ):
+        """Test _process_additional_fields passes None through for named fields."""
+        fields = {}
+        kwargs = {"priority": None}
+
+        issues_mixin._process_additional_fields(fields, kwargs)
+
+        # priority=None should clear the priority field
+        assert "priority" in fields
+        assert fields["priority"] is None
+
+    def test_process_additional_fields_invalid_value_still_skipped(
+        self, issues_mixin: IssuesMixin
+    ):
+        """Test _process_additional_fields still skips fields with invalid format."""
+        fields = {}
+        kwargs = {"priority": 12345}  # Invalid: priority expects string or dict
+
+        issues_mixin._process_additional_fields(fields, kwargs)
+
+        # Invalid value should NOT be added to fields
+        assert "priority" not in fields
 
     def test_create_issue_with_parent_for_task(
         self, issues_mixin: IssuesMixin, make_issue_data
@@ -1449,6 +1521,7 @@ class TestIssuesMixin:
                 "changelogs": [
                     {
                         "author": {
+                            "account_id": "user123",
                             "avatar_url": None,
                             "display_name": "Test User 1",
                             "email": None,
@@ -1474,6 +1547,7 @@ class TestIssuesMixin:
                 "changelogs": [
                     {
                         "author": {
+                            "account_id": "user456",
                             "avatar_url": None,
                             "display_name": "Test User 2",
                             "email": None,
@@ -1491,6 +1565,7 @@ class TestIssuesMixin:
                     },
                     {
                         "author": {
+                            "account_id": "user789",
                             "avatar_url": None,
                             "display_name": "Test User 3",
                             "email": None,
@@ -1510,6 +1585,7 @@ class TestIssuesMixin:
                     },
                     {
                         "author": {
+                            "account_id": "user123",
                             "avatar_url": None,
                             "display_name": "Test User 1",
                             "email": None,

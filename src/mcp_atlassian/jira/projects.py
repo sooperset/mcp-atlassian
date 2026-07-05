@@ -30,9 +30,7 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             List of project data dictionaries
         """
         try:
-            # expand=description so each project carries its description ("for what
-            # it is"); the bare /project list omits it otherwise. Used by the kg
-            # graph (053) and harmless for other callers.
+            # The bare /project list omits descriptions unless explicitly expanded.
             projects = self.jira.projects(
                 included_archived=include_archived, expand="description"
             )
@@ -327,6 +325,8 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
                                 "issue_types": [],
                             }
                             merged[fid] = rec
+                        elif entry.get("required", False):
+                            rec["required"] = True
                         if it_name and it_name not in rec["issue_types"]:
                             rec["issue_types"].append(it_name)
                     # Paginate: stop when we've seen all values.
@@ -337,9 +337,7 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             return list(merged.values())
 
         except Exception as e:
-            logger.error(
-                f"Error getting fields for project {project_key}: {str(e)}"
-            )
+            logger.error(f"Error getting fields for project {project_key}: {str(e)}")
             return []
 
     def get_project_issues_count(self, project_key: str) -> int:

@@ -120,8 +120,17 @@ class UsersMixin(JiraClient):
         Raises:
             ValueError: If the account ID could not be found.
         """
-        # If it looks like an account ID already, return it
+        # If it looks like an account ID already, return it.
+        # Cloud account IDs come in two shapes: the legacy 24-char hex format
+        # (e.g. "5b10ac8d82e05b22cc7d4ef5") and the current "<digits>:<uuid>"
+        # format (e.g. "712020:f653aab5-cc61-4c57-8fa8-f7d73b94499d").
+        # An explicit "accountid:" prefix is also accepted, matching the
+        # format documented in the create_issue/update_issue tool schemas.
+        if assignee.startswith("accountid:"):
+            return assignee[len("accountid:") :]
         if assignee.startswith("5") and len(assignee) >= 10:
+            return assignee
+        if re.match(r"^\d+:[0-9a-fA-F][0-9a-fA-F-]{7,}$", assignee):
             return assignee
 
         account_id = self._lookup_user_directly(assignee)
@@ -398,17 +407,20 @@ class UsersMixin(JiraClient):
             from the API.
 
         Raises:
-            ValueError: If neither project_key nor issue_key is provided.
+            ValueError: If exactly one of project_key or issue_key is not provided.
             MCPAtlassianAuthenticationError: If authentication fails (decorator).
             Exception: For other API errors.
         """
-        if not project_key and not issue_key:
-            raise ValueError("Either project_key or issue_key must be provided.")
+        if bool(project_key) == bool(issue_key):
+            raise ValueError(
+                "Exactly one of project_key or issue_key must be provided."
+            )
 
         limit = max(1, min(int(limit or 20), 1000))
         url = f"{self.config.url}/rest/api/2/user/assignable/search"
+        query_param = "query" if self.config.is_cloud else "username"
         params: dict[str, str | int] = {
-            "username": query,
+            query_param: query,
             "maxResults": limit,
             "startAt": 0,
         }
@@ -464,6 +476,11 @@ class UsersMixin(JiraClient):
                 fails.
             Exception: For other API errors.
         """
+        # Handle 'me' as a special case — resolve to current user's account ID
+        if identifier.lower() == "me":
+            resolved_id = self.get_current_user_account_id()
+            return self.get_user_profile_by_identifier(resolved_id)
+
         api_kwargs = self._determine_user_api_params(identifier)
 
         try:
