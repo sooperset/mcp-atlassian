@@ -1106,7 +1106,13 @@ class IssuesMixin(
                             account_id = self._get_account_id(value)
                             self._add_assignee_to_fields(update_fields, account_id)
                         except ValueError as e:
-                            logger.warning(f"Could not update assignee: {str(e)}")
+                            # An explicit assignee update that cannot be resolved
+                            # must fail loudly. Swallowing it here means the PUT is
+                            # skipped (or runs without the assignee) while the call
+                            # still reports the issue as updated successfully.
+                            raise ValueError(
+                                f"Could not update assignee: {str(e)}"
+                            ) from e
                 elif key == "parent":
                     if isinstance(value, dict) and value.get("key"):
                         update_fields["parent"] = {"key": str(value["key"])}

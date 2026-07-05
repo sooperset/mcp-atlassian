@@ -684,6 +684,17 @@ class TestIssuesMixin:
         assert not issues_mixin._get_account_id.called
         assert document.key == "TEST-123"
 
+    def test_update_issue_assignee_unresolvable_raises(self, issues_mixin: IssuesMixin):
+        """Test that update_issue raises when assignee cannot be resolved."""
+        issues_mixin._get_account_id = MagicMock(
+            side_effect=ValueError("Could not find account ID for user: ghost")
+        )
+
+        with pytest.raises(ValueError, match="Could not update assignee"):
+            issues_mixin.update_issue(issue_key="TEST-123", assignee="ghost")
+
+        issues_mixin.jira.update_issue.assert_not_called()
+
     def test_update_issue_components(self, issues_mixin: IssuesMixin):
         """Test updating an issue's components field."""
         issue_data = {
@@ -1447,6 +1458,7 @@ class TestIssuesMixin:
                 "changelogs": [
                     {
                         "author": {
+                            "account_id": "user123",
                             "avatar_url": None,
                             "display_name": "Test User 1",
                             "email": None,
@@ -1472,6 +1484,7 @@ class TestIssuesMixin:
                 "changelogs": [
                     {
                         "author": {
+                            "account_id": "user456",
                             "avatar_url": None,
                             "display_name": "Test User 2",
                             "email": None,
@@ -1489,6 +1502,7 @@ class TestIssuesMixin:
                     },
                     {
                         "author": {
+                            "account_id": "user789",
                             "avatar_url": None,
                             "display_name": "Test User 3",
                             "email": None,
@@ -1508,6 +1522,7 @@ class TestIssuesMixin:
                     },
                     {
                         "author": {
+                            "account_id": "user123",
                             "avatar_url": None,
                             "display_name": "Test User 1",
                             "email": None,
