@@ -370,9 +370,10 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             return {"success": False, "error": "No file path provided"}
 
         try:
-            # Convert to absolute path if relative
-            if not os.path.isabs(file_path):
-                file_path = os.path.abspath(file_path)
+            # Confine the upload source to the workspace before it is read: reject
+            # traversal/absolute paths that escape CWD (arbitrary file read /
+            # exfiltration via a caller-supplied file_path).
+            file_path = str(validate_safe_path(file_path))
 
             # Check if file exists
             if not os.path.exists(file_path):

@@ -379,6 +379,7 @@ def test_confluence_fetcher_attachment_method_calls():
 
         # Test upload_attachment can be called
         with (
+            patch("os.getcwd", return_value="/path/to"),
             patch("os.path.exists", return_value=True),
             patch("os.path.isabs", return_value=True),
             patch("os.path.basename", return_value="test.txt"),

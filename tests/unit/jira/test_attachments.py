@@ -507,9 +507,10 @@ class TestAttachmentsMixin:
                 issue_key="TEST-123", filename="/absolute/path/test_file.txt"
             )
 
-    def test_upload_attachment_relative_path(self, attachments_mixin: AttachmentsMixin):
-        """Test attachment upload with a relative path."""
-        # Mock the Jira API response
+    def test_upload_attachment_relative_path(
+        self, attachments_mixin: AttachmentsMixin, tmp_path: Path
+    ):
+        """A relative path inside the workspace resolves and uploads."""
         mock_attachment_response = {
             "id": "12345",
             "filename": "test_file.txt",
@@ -517,31 +518,16 @@ class TestAttachmentsMixin:
         }
         attachments_mixin.jira.add_attachment.return_value = mock_attachment_response
 
-        # Mock file operations
-        with (
-            patch("os.path.exists") as mock_exists,
-            patch("os.path.getsize") as mock_getsize,
-            patch("os.path.isabs") as mock_isabs,
-            patch("os.path.abspath") as mock_abspath,
-            patch("os.path.basename") as mock_basename,
-            patch("builtins.open", mock_open(read_data=b"test content")),
-        ):
-            mock_exists.return_value = True
-            mock_getsize.return_value = 100
-            mock_isabs.return_value = False
-            mock_abspath.return_value = "/absolute/path/test_file.txt"
-            mock_basename.return_value = "test_file.txt"
+        (tmp_path / "test_file.txt").write_bytes(b"test content")
+        resolved = str((tmp_path / "test_file.txt").resolve())
 
-            # Call the method with a relative path
+        with patch("os.getcwd", return_value=str(tmp_path)):
             result = attachments_mixin.upload_attachment("TEST-123", "test_file.txt")
 
-            # Assertions
-            assert result["success"] is True
-            mock_isabs.assert_called_once_with("test_file.txt")
-            mock_abspath.assert_called_once_with("test_file.txt")
-            attachments_mixin.jira.add_attachment.assert_called_once_with(
-                issue_key="TEST-123", filename="/absolute/path/test_file.txt"
-            )
+        assert result["success"] is True
+        attachments_mixin.jira.add_attachment.assert_called_once_with(
+            issue_key="TEST-123", filename=resolved
+        )
 
     def test_upload_attachment_no_issue_key(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with no issue key."""
@@ -1316,3 +1302,105 @@ class TestAttachmentsMixin:
         assert result[1].filename == "report.pdf"
         # No download calls should have been made
         attachments_mixin.jira._session.get.assert_not_called()
+
+
+class TestUploadPathTraversalRegression:
+    """SP5 fam1 — upload-side attachment path traversal / arbitrary file read.
+
+    Covers GHSA-wm45, vc25, 93xw, 6cr4, f4p7, f6pj, 2xj6, mrq8, wv8v, p6hp, h7wj,
+    mfv2, f26r, 9547, cc5h (read half), and the 6vmq download-overwrite variant.
+
+    The download side gained ``validate_safe_path`` (CVE-2026-27825), but the upload
+    path still feeds any caller-supplied ``file_path`` to the API after only an
+    ``os.path.exists`` check (``jira/attachments.py:378`` →
+    ``add_attachment(filename=file_path)`` at ``:387``), so a path outside the
+    workspace is read and exfiltrated. These tests assert the secure outcome — a
+    traversal/absolute path never reaches the upload sink — and currently xfail.
+    Phase B fix-1a (``validate_safe_path`` on the upload ``file_path``) flips them
+    green; the strict marker then forces removing the xfail.
+
+    Assertions target the *sink* (``add_attachment`` not called), not an exception
+    type, because ``upload_attachment`` wraps its body in ``except Exception`` and
+    returns an error dict — so the fix may reject by raising or by returning a dict,
+    and either way the secret must never reach the API.
+    """
+
+    @pytest.fixture
+    def attachments_mixin(self, jira_fetcher: JiraFetcher) -> AttachmentsMixin:
+        """AttachmentsMixin with a mocked Jira client (Cloud by default)."""
+        mixin = jira_fetcher
+        mixin.jira = MagicMock()
+        mixin.jira._session = MagicMock()
+        return mixin
+
+    @pytest.mark.security_regression
+    @pytest.mark.parametrize("attack", ["absolute_outside_cwd", "relative_traversal"])
+    def test_upload_attachment_does_not_read_outside_workspace(
+        self,
+        attachments_mixin: AttachmentsMixin,
+        tmp_path: Path,
+        attack: str,
+    ) -> None:
+        """A file_path resolving outside the workspace must not reach the API."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        secret = tmp_path / "secret.txt"  # sibling of workspace -> outside it
+        secret.write_bytes(b"SP5-SECRET-EXFIL")
+        malicious = str(secret) if attack == "absolute_outside_cwd" else "../secret.txt"
+
+        with patch("os.getcwd", return_value=str(workspace)):
+            attachments_mixin.upload_attachment("PROJ-1", malicious)
+
+        attachments_mixin.jira.add_attachment.assert_not_called()
+
+    @pytest.mark.security_regression
+    def test_upload_attachments_list_does_not_read_outside_workspace(
+        self,
+        attachments_mixin: AttachmentsMixin,
+        tmp_path: Path,
+    ) -> None:
+        """The list/confused-deputy path (update_issue -> upload_attachments)."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        secret = tmp_path / "secret.txt"
+        secret.write_bytes(b"SP5-SECRET-EXFIL")
+
+        with patch("os.getcwd", return_value=str(workspace)):
+            attachments_mixin.upload_attachments("PROJ-1", [str(secret)])
+
+        attachments_mixin.jira.add_attachment.assert_not_called()
+
+    @pytest.mark.security_regression
+    @pytest.mark.xfail(
+        strict=True,
+        reason="SP5 fam1 GHSA-6vmq: validate_safe_path base_dir defaults to CWD "
+        "(utils/io.py:44) so downloads can overwrite an importable module in CWD "
+        "-> RCE; fix-1b confines downloads to a dedicated dir (dir contract TBD)",
+    )
+    def test_download_into_cwd_module_is_rejected(
+        self,
+        attachments_mixin: AttachmentsMixin,
+        tmp_path: Path,
+    ) -> None:
+        """Downloading onto a source file inside CWD must be confined/rejected."""
+        mock_response = MagicMock()
+        mock_response.iter_content.return_value = [b"import os; os.system('id')\n"]
+        mock_response.raise_for_status = MagicMock()
+        attachments_mixin.jira._session.get.return_value = mock_response
+
+        with (
+            patch("builtins.open", mock_open()),
+            patch("os.path.exists", return_value=True),
+            patch("os.path.getsize", return_value=27),
+            patch("os.makedirs"),
+            patch("os.getcwd", return_value=str(tmp_path)),
+        ):
+            result = attachments_mixin.download_attachment(
+                "https://test.url/evil",
+                "important_module.py",  # relative -> resolves inside CWD
+            )
+
+        assert result is False, (
+            "download targeting the CWD (where Python imports modules) must be "
+            "confined to a dedicated directory, not allowed to overwrite source files"
+        )

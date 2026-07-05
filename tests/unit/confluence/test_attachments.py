@@ -3,6 +3,7 @@
 import json
 import os
 import tempfile
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, mock_open, patch
 
 import pytest
@@ -228,33 +229,19 @@ class TestAttachmentsMixin:
             "/rest/api/content/123456/child/attachment"
         )
 
-    def test_upload_attachment_relative_path(self, attachments_mixin: AttachmentsMixin):
-        """Test attachment upload with a relative path."""
-        # Mock the REST API call
+    def test_upload_attachment_relative_path(
+        self, attachments_mixin: AttachmentsMixin, tmp_path: Path
+    ):
+        """A relative path inside the workspace resolves and uploads."""
         self._mock_rest_api_upload(attachments_mixin)
 
-        # Mock file operations
-        with (
-            patch("os.path.exists") as mock_exists,
-            patch("os.path.getsize") as mock_getsize,
-            patch("os.path.isabs") as mock_isabs,
-            patch("os.path.abspath") as mock_abspath,
-            patch("os.path.basename") as mock_basename,
-            patch("builtins.open", mock_open(read_data=b"test content")),
-        ):
-            mock_exists.return_value = True
-            mock_getsize.return_value = 100
-            mock_isabs.return_value = False
-            mock_abspath.return_value = "/absolute/path/test_file.txt"
-            mock_basename.return_value = "test_file.txt"
+        (tmp_path / "test_file.txt").write_bytes(b"test content")
 
-            # Call the method with a relative path
+        with patch("os.getcwd", return_value=str(tmp_path)):
             result = attachments_mixin.upload_attachment("123456", "test_file.txt")
 
-            # Assertions
-            assert result["success"] is True
-            mock_isabs.assert_called_once_with("test_file.txt")
-            mock_abspath.assert_called_once_with("test_file.txt")
+        assert result["success"] is True
+        attachments_mixin.confluence._session.put.assert_called_once()
 
     def test_upload_attachment_no_content_id(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with no content ID."""
@@ -1787,6 +1774,38 @@ class TestConfluenceAttachmentPathTraversal:
         with pytest.raises(ValueError, match="Path traversal detected"):
             confluence_mixin.download_content_attachments("12345", "/etc")
 
+    # --- SP5 fam1: upload-side path traversal (currently UNFIXED) ---------------
+    # The download tests above are green (CVE-2026-27825 fix). The upload path still
+    # feeds any caller-supplied file_path to the sink after only an os.path.exists
+    # check (confluence/attachments.py:68 -> _upload_attachment_direct at :78, real
+    # open at :477). These tests assert the secure outcome — the sink is never
+    # reached with a path outside the workspace — and currently xfail. Phase B
+    # fix-1a (validate_safe_path on the upload file_path) flips them green.
+    # Covers GHSA-wm45, vc25, 93xw, 6cr4, f4p7, f6pj, mrq8, wv8v, p6hp, h7wj, mfv2,
+    # f26r, 9547, cc5h (read half). Asserts on the sink (not an exception type)
+    # because upload_attachment wraps its body in except Exception -> error dict.
+
+    @pytest.mark.security_regression
+    @pytest.mark.parametrize("attack", ["absolute_outside_cwd", "relative_traversal"])
+    def test_upload_attachment_does_not_read_outside_workspace(
+        self,
+        confluence_mixin: AttachmentsMixin,
+        tmp_path: Path,
+        attack: str,
+    ) -> None:
+        """A file_path resolving outside the workspace must not reach the sink."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        secret = tmp_path / "secret.txt"  # sibling of workspace -> outside it
+        secret.write_bytes(b"SP5-SECRET-EXFIL")
+        malicious = str(secret) if attack == "absolute_outside_cwd" else "../secret.txt"
+
+        confluence_mixin._upload_attachment_direct = MagicMock(return_value={"id": "1"})
+
+        with patch("os.getcwd", return_value=str(workspace)):
+            confluence_mixin.upload_attachment("123456", malicious)
+
+        confluence_mixin._upload_attachment_direct.assert_not_called()
 
 class TestResolveAttachmentDownloadUrl:
     """Tests for AttachmentsMixin._resolve_attachment_download_url.
