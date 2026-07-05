@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+import requests
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.jira import JiraFetcher
@@ -60,6 +61,38 @@ class TestJiraDCEpicOperations:
             raise
         resource_tracker.add_jira_issue(epic.key)
         assert epic.key.startswith(dc_instance.project_key)
+
+
+class TestJiraDCVersionOperations:
+    """Version creation on DC."""
+
+    def test_create_project_version(
+        self,
+        jira_fetcher: JiraFetcher,
+        dc_instance: DCInstanceInfo,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        name = f"dc-e2e-version-{uid}"
+        version: dict[str, object] | None = None
+
+        try:
+            version = jira_fetcher.create_project_version(
+                project_key=dc_instance.project_key,
+                name=name,
+                description="Auto-created for DC version endpoint testing.",
+            )
+
+            assert version["name"] == name
+            assert version.get("id")
+        finally:
+            if version and version.get("id"):
+                requests.post(
+                    f"{dc_instance.jira_url}/rest/api/2/version/"
+                    f"{version['id']}/removeAndSwap",
+                    auth=(dc_instance.admin_username, dc_instance.admin_password),
+                    json={},
+                    timeout=30,
+                ).raise_for_status()
 
 
 class TestJiraDCSubtask:
