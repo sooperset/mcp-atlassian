@@ -254,10 +254,10 @@ class TestConfluenceUser:
         simplified = user.to_simplified_dict()
 
         assert isinstance(simplified, dict)
+        assert simplified["account_id"] == "user123"
         assert simplified["display_name"] == "Test User"
         assert simplified["email"] == "test@example.com"
         assert simplified["profile_picture"] == "/wiki/aa-avatar/user123"
-        assert "account_id" not in simplified  # Not included in simplified dict
         assert "locale" not in simplified  # Not included in simplified dict
 
 
