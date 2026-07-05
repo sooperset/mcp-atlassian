@@ -33,6 +33,20 @@ class TestJiraCloudBehavior:
             # does NOT expose accountId
             assert issue.assignee.account_id is not None
 
+    def test_search_assignable_users_by_project(
+        self,
+        jira_fetcher: JiraFetcher,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        """Cloud assignable-user search accepts query= with project scope."""
+        users = jira_fetcher.search_assignable_users(
+            query=cloud_instance.username.split("@", maxsplit=1)[0],
+            project_key=cloud_instance.project_key,
+            limit=5,
+        )
+
+        assert isinstance(users, list)
+
 
 class TestJiraCloudEpicOperations:
     """Epic creation on Cloud."""
