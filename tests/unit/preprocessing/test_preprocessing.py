@@ -592,7 +592,7 @@ More content.
     assert "<h2>" in result_with_anchors
 
 
-# Regression tests — bare-filename images produce "Preview unavailable"
+# Regression tests: bare-filename images produce "Preview unavailable"
 
 
 class TestFixAttachmentImages:
@@ -606,11 +606,8 @@ class TestFixAttachmentImages:
     def test_bare_filename_replaced_with_attachment_macro(self):
         html = '<img src="chart.png" alt="Revenue chart"/>'
         result = self.fix(html)
-        assert result == (
-            '<ac:image ac:alt="Revenue chart">'
-            '<ri:attachment ri:filename="chart.png"/>'
-            "</ac:image>"
-        )
+        assert 'ac:alt="Revenue chart"' in result
+        assert 'ri:filename="chart.png"' in result
         assert "<img" not in result
 
     def test_alt_text_preserved(self):
@@ -641,6 +638,31 @@ class TestFixAttachmentImages:
         html = '<img src="/images/logo.png" alt="logo"/>'
         assert self.fix(html) == html
 
+    def test_protocol_relative_url_left_untouched(self):
+        html = '<img src="//cdn.example.com/logo.png" alt="logo"/>'
+        assert self.fix(html) == html
+
+    def test_anchor_reference_left_untouched(self):
+        html = '<img src="#inline-image" alt="logo"/>'
+        assert self.fix(html) == html
+
+    def test_relative_path_uses_md2conf_attachment_name(self):
+        html = '<img src="images/chart 1.png" alt="Chart"/>'
+        result = self.fix(html)
+        assert 'ri:filename="images_chart_1.png"' in result
+
+    def test_xml_sensitive_values_are_escaped(self):
+        html = '<img src="chart & q.png" alt="A & B"/>'
+        result = self.fix(html)
+        assert 'ac:alt="A &amp; B"' in result
+        assert 'ri:filename="chart___q.png"' in result
+
+    def test_dimensions_are_preserved(self):
+        html = '<img src="chart.png" alt="Chart" width="600" height="400"/>'
+        result = self.fix(html)
+        assert 'ac:width="600"' in result
+        assert 'ac:height="400"' in result
+
     def test_mixed_content_only_bare_filenames_rewritten(self):
         html = (
             '<img src="local.png" alt="local"/>'
@@ -667,7 +689,7 @@ def test_markdown_to_confluence_storage_attachment_image():
     )
     assert 'ri:filename="chart.png"' in result
     assert "<img" not in result, (
-        "Raw <img> tag found — will show as 'Preview unavailable'"
+        "Raw <img> tag found - will show as 'Preview unavailable'"
     )
 
 

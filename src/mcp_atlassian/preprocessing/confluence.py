@@ -1,14 +1,16 @@
 """Confluence-specific text preprocessing module."""
 
 import logging
-import re
 import shutil
 import tempfile
 from pathlib import Path
+from urllib.parse import urlparse
 
+from bs4 import BeautifulSoup
 from md2conf.converter import (
     ConfluenceConverterOptions,
     ConfluenceStorageFormatConverter,
+    attachment_name,
     elements_to_string,
     markdown_to_html,
 )
@@ -101,7 +103,13 @@ class ConfluencePreprocessor(BasePreprocessor):
             # This creates a proper Confluence storage format document
             storage_format = f"""<p>{html_content}</p>"""
 
-            return str(storage_format)
+            return self._fix_attachment_images(str(storage_format))
+
+    @staticmethod
+    def _is_attachment_image_source(src: str) -> bool:
+        """Return whether an image source should resolve as an attachment."""
+        parsed_src = urlparse(src)
+        return not parsed_src.scheme and not src.startswith(("/", "#"))
 
     @staticmethod
     def _fix_attachment_images(storage_html: str) -> str:
@@ -118,22 +126,35 @@ class ConfluencePreprocessor(BasePreprocessor):
         Returns:
             Storage HTML with bare-filename img tags replaced by attachment macros.
         """
+        if "<img" not in storage_html.lower():
+            return storage_html
 
-        def _replace(match: re.Match) -> str:  # type: ignore[type-arg]
-            tag = match.group(0)
-            src_match = re.search(r'src="([^"]+)"', tag)
-            alt_match = re.search(r'alt="([^"]+)"', tag)
-            if not src_match:
-                return tag
-            src = src_match.group(1)
-            # Leave external URLs and absolute paths untouched
-            if src.startswith(("http://", "https://", "data:", "/")):
-                return tag
-            alt = alt_match.group(1) if alt_match else ""
-            return (
-                f'<ac:image ac:alt="{alt}">'
-                f'<ri:attachment ri:filename="{src}"/>'
-                f"</ac:image>"
-            )
+        soup = BeautifulSoup(storage_html, "html.parser")
+        rewritten = False
 
-        return re.sub(r"<img\b[^>]*/?>", _replace, storage_html)
+        for image in soup.find_all("img"):
+            src = image.get("src")
+            if not isinstance(src, str):
+                continue
+            if not ConfluencePreprocessor._is_attachment_image_source(src):
+                continue
+
+            attachment_image = soup.new_tag("ac:image")
+            alt = image.get("alt", "")
+            attachment_image["ac:alt"] = alt if isinstance(alt, str) else ""
+
+            for html_attr, confluence_attr in (
+                ("width", "ac:width"),
+                ("height", "ac:height"),
+            ):
+                value = image.get(html_attr)
+                if isinstance(value, str):
+                    attachment_image[confluence_attr] = value
+
+            attachment = soup.new_tag("ri:attachment")
+            attachment["ri:filename"] = attachment_name(src)
+            attachment_image.append(attachment)
+            image.replace_with(attachment_image)
+            rewritten = True
+
+        return str(soup) if rewritten else storage_html
