@@ -63,6 +63,17 @@ services:
       ATL_JDBC_PASSWORD: ${CONFLUENCE_DB_PASSWORD}
       ATL_DB_DRIVER: org.postgresql.Driver
       ATL_DB_TYPE: postgresql
+      # Confluence 7.9+ reads the license from ATL_LICENSE_KEY at first-time setup,
+      # skipping the wizard's license step. Written to confluence.cfg.xml on FIRST
+      # start only — NOT re-read on restart (ATL_FORCE_CFG_UPDATE defaults false), so a
+      # restart does not reset the 3h timebomb. Empty -> wizard prompts for a key.
+      # Docs: https://atlassian.github.io/data-center-helm-charts/containers/CONFLUENCE/
+      # (Verified 2026-06-18 on confluence:9.2.21: a fresh blank-DB start with this set
+      #  skips the wizard license step. The no-restart-refresh detail above is per those docs.)
+      ATL_LICENSE_KEY: ${CONFLUENCE_LICENSE_KEY:-}
+      # After the 3h timebomb expires, re-apply the key by regenerating confluence.cfg.xml:
+      #   ATL_FORCE_CFG_UPDATE=true docker compose up -d confluence
+      ATL_FORCE_CFG_UPDATE: ${ATL_FORCE_CFG_UPDATE:-false}
       JVM_MINIMUM_MEMORY: 1024m
       JVM_MAXIMUM_MEMORY: 2048m
       CLUSTERED: "false"
