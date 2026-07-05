@@ -67,7 +67,7 @@ class DevelopmentMixin(JiraClient):
                 )
 
             # Otherwise, try common application types and merge results
-            # Values are case-sensitive — the dev-status API requires the
+            # Values are case-sensitive; the dev-status API requires the
             # exact casing registered by each DVCS connector plugin.
             app_types = ["stash", "bitbucket", "GitHub", "GitLab"]
             # Data types to try for each app type
@@ -135,7 +135,8 @@ class DevelopmentMixin(JiraClient):
         Args:
             issue_key: The issue key
             issue_id: The numeric issue ID
-            application_type: The application type (stash, GitHub, etc.) — case-sensitive
+            application_type: The case-sensitive application type
+                (stash, GitHub, etc.)
             data_type: Optional data type filter
 
         Returns:
