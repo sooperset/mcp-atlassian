@@ -1234,11 +1234,6 @@ class TestSearchFilterAndInjectionRegression:
         return mixin
 
     @pytest.mark.security_regression
-    @pytest.mark.xfail(
-        strict=True,
-        reason="SP5 fam5 GHSA-w66g/rqwg: jira/search.py:208 get_board_issues never "
-        "applies config.projects_filter — board issues bypass the project allowlist",
-    )
     def test_get_board_issues_applies_projects_filter(
         self,
         search_mixin: SearchMixin,
@@ -1269,12 +1264,6 @@ class TestSearchFilterAndInjectionRegression:
         }
 
     @pytest.mark.security_regression
-    @pytest.mark.xfail(
-        strict=True,
-        reason="SP5 fam7 GHSA-6rrj: jira/search.py:298 get_sprint_issues "
-        'interpolates sprint_id into JQL unsanitized (f"sprint = {sprint_id}") — '
-        "JQL injection",
-    )
     def test_get_sprint_issues_rejects_non_numeric_sprint_id(
         self,
         search_mixin: SearchMixin,
