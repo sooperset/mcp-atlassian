@@ -61,11 +61,6 @@ class TestCallbackHandlerXssRegression:
     """
 
     @pytest.mark.security_regression
-    @pytest.mark.xfail(
-        strict=True,
-        reason="SP5 fam7 GHSA-g2r2: oauth_setup.py:125 interpolates message into "
-        "HTML without escaping — reflected XSS",
-    )
     def test_send_response_escapes_html_in_message(self) -> None:
         """A ``<script>`` payload in the callback message must not be reflected raw."""
         handler = CallbackHandler.__new__(CallbackHandler)
