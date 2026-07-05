@@ -1615,11 +1615,6 @@ class TestSsrfHookCoverageRegression:
     """
 
     @pytest.mark.security_regression
-    @pytest.mark.xfail(
-        strict=True,
-        reason="SP5 fam4 GHSA-6529: dependencies.py:587 basic-auth branch omits "
-        "attach_ssrf_hook — user session carries no SSRF redirect hook",
-    )
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
     async def test_basic_auth_jira_session_has_ssrf_hook(
@@ -1655,11 +1650,6 @@ class TestSsrfHookCoverageRegression:
         )
 
     @pytest.mark.security_regression
-    @pytest.mark.xfail(
-        strict=True,
-        reason="SP5 fam4 GHSA-6529: dependencies.py:636 oauth_pat branch omits "
-        "attach_ssrf_hook — user session carries no SSRF redirect hook",
-    )
     @patch("mcp_atlassian.servers.dependencies.get_access_token")
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
@@ -1694,11 +1684,6 @@ class TestSsrfHookCoverageRegression:
         )
 
     @pytest.mark.security_regression
-    @pytest.mark.xfail(
-        strict=True,
-        reason="SP5 fam4 GHSA-6529: dependencies.py:587 basic-auth branch omits "
-        "attach_ssrf_hook — Confluence user session carries no SSRF redirect hook",
-    )
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
     async def test_basic_auth_confluence_session_has_ssrf_hook(
@@ -1734,11 +1719,6 @@ class TestSsrfHookCoverageRegression:
         )
 
     @pytest.mark.security_regression
-    @pytest.mark.xfail(
-        strict=True,
-        reason="SP5 fam4 GHSA-6529: dependencies.py:636 oauth_pat branch omits "
-        "attach_ssrf_hook — Confluence user session carries no SSRF redirect hook",
-    )
     @patch("mcp_atlassian.servers.dependencies.get_access_token")
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
