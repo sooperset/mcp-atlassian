@@ -344,12 +344,6 @@ class TestSsrfBackslashBypassRegression:
     """
 
     @pytest.mark.security_regression
-    @pytest.mark.xfail(
-        strict=True,
-        reason="SP5 fam4 GHSA-hgcf: validate_url_for_ssrf uses urlparse().hostname "
-        "(urls.py:92) which disagrees with requests on backslash authority — an "
-        "internal connection target is approved as external",
-    )
     @pytest.mark.parametrize(
         "url",
         ["http://localhost\\@evil.com/", "http://127.0.0.1\\@evil.com/"],

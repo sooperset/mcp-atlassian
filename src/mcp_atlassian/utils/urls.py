@@ -89,6 +89,12 @@ def validate_url_for_ssrf(url: str) -> str | None:
     if parsed.scheme not in ("http", "https"):
         return f"Blocked scheme: {parsed.scheme} (only http/https allowed)"
 
+    # requests (and browsers, per WHATWG) treat a backslash in the authority as a
+    # path separator, so "http://localhost\@evil.com/" parses (urlparse) to host
+    # evil.com but actually connects to localhost. Reject the parse mismatch.
+    if "\\" in parsed.netloc:
+        return f"Blocked backslash in URL authority: {url}"
+
     hostname = parsed.hostname
     if not hostname:
         return "No hostname in URL"
