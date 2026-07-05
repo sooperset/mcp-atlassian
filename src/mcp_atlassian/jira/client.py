@@ -46,6 +46,7 @@ class JiraClient:
         """
         # Load configuration from environment variables if not provided
         self.config = config or JiraConfig.from_env()
+        transport_url = self.config.url
 
         # Initialize the Jira client based on auth type
         if self.config.auth_type == "oauth":
@@ -78,6 +79,7 @@ class JiraClient:
                 # Cloud: use the Atlassian Cloud API URL
                 api_url = f"https://api.atlassian.com/ex/jira/{self.config.oauth_config.cloud_id}"
                 is_cloud = True
+            transport_url = api_url
 
             # Initialize Jira with the session
             self.jira = Jira(
@@ -125,10 +127,14 @@ class JiraClient:
         if self.config.auth_type in ("pat", "oauth"):
             self.jira._session.trust_env = False
 
+        if self.config.no_proxy and isinstance(self.config.no_proxy, str):
+            os.environ["NO_PROXY"] = self.config.no_proxy
+            log_config_param(logger, "Jira", "NO_PROXY", self.config.no_proxy)
+
         # Configure SSL verification using the shared utility
         configure_ssl_verification(
             service_name="Jira",
-            url=self.config.url,
+            url=transport_url,
             session=self.jira._session,
             ssl_verify=self.config.ssl_verify,
             client_cert=self.config.client_cert,
@@ -150,9 +156,6 @@ class JiraClient:
                 log_config_param(
                     logger, "Jira", f"{k.upper()}_PROXY", v, sensitive=True
                 )
-        if self.config.no_proxy and isinstance(self.config.no_proxy, str):
-            os.environ["NO_PROXY"] = self.config.no_proxy
-            log_config_param(logger, "Jira", "NO_PROXY", self.config.no_proxy)
 
         # Apply custom headers if configured
         if self.config.custom_headers:

@@ -6,9 +6,11 @@ from typing import Literal
 from unittest.mock import MagicMock, call, patch
 
 import pytest
+from requests.sessions import Session
 
 from mcp_atlassian.jira.client import JiraClient
 from mcp_atlassian.jira.config import JiraConfig
+from mcp_atlassian.utils.ssl import NoProxyAdapter
 
 
 class DeepcopyMock(MagicMock):
@@ -275,6 +277,33 @@ def test_init_sets_proxies_and_no_proxy(monkeypatch):
     assert mock_session.proxies["https"] == "https://proxy:8443"
     assert mock_session.proxies["socks"] == "socks5://user:pass@proxy:1080"
     assert os.environ["NO_PROXY"] == "localhost,127.0.0.1"
+
+
+def test_init_configures_no_proxy_adapter_from_config(monkeypatch):
+    """Test that client no_proxy config is visible during SSL setup."""
+    mock_jira = MagicMock()
+    mock_jira._session = Session()
+    monkeypatch.setattr("mcp_atlassian.jira.client.Jira", lambda **kwargs: mock_jira)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+
+    config = JiraConfig(
+        url="https://test.atlassian.net",
+        auth_type="basic",
+        username="user",
+        api_token="pat",
+        http_proxy="http://proxy:8080",
+        no_proxy="test.atlassian.net",
+    )
+
+    JiraClient(config=config)
+
+    assert os.environ["NO_PROXY"] == "test.atlassian.net"
+    assert mock_jira._session.proxies["http"] == "http://proxy:8080"
+    assert isinstance(
+        mock_jira._session.get_adapter("https://test.atlassian.net"),
+        NoProxyAdapter,
+    )
 
 
 def test_init_no_proxies(monkeypatch):
