@@ -406,7 +406,9 @@ def test_jira_client_basic_auth_preserves_trust_env():
     ],
     ids=["cloud", "server_dc"],
 )
-def test_create_version_uses_correct_api_version(url: str, expected_api_version: str):
+def test_create_version_uses_correct_api_version(
+    url: str, expected_api_version: str
+) -> None:
     """Test that create_version uses API v3 for Cloud and v2 for Server/DC."""
     with (
         patch("mcp_atlassian.jira.client.Jira") as mock_jira,
