@@ -240,8 +240,8 @@ def _create_jira_pat(info: DCInstanceInfo) -> Any:
 def _create_confluence_pat(info: DCInstanceInfo) -> Any:
     """Create a Confluence PAT via REST API."""
     resp = requests.post(
-        (f"{info.confluence_url}/rest/de.resolution.apitokenauth/1.0/user/token"),
-        json={"tokenName": "e2e-pytest"},
+        f"{info.confluence_url}/rest/pat/latest/tokens",
+        json={"name": "e2e-pytest", "expirationDuration": 90},
         auth=(info.admin_username, info.admin_password),
         timeout=30,
     )
