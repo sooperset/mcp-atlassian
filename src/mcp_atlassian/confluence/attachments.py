@@ -32,6 +32,23 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             )
         return None
 
+    def _rest_base_url(self) -> str:
+        """Return the REST API base URL, adding the Cloud ``/wiki`` prefix.
+
+        On Confluence Cloud, ``config.url`` is the bare site URL
+        (``https://site.atlassian.net``) but the REST API is served under
+        ``/wiki``. Hand-built URLs must include this prefix or requests 404.
+        The ``endswith`` guard avoids producing ``/wiki/wiki`` when the
+        configured URL already includes the prefix.
+
+        Returns:
+            The base URL to use for direct REST API calls.
+        """
+        base_url = self.config.url.rstrip("/")
+        if self.config.is_cloud and not base_url.endswith("/wiki"):
+            base_url = f"{base_url}/wiki"
+        return base_url
+
     def upload_attachment(
         self,
         content_id: str,
@@ -467,7 +484,7 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
         """
         try:
             # Build the API endpoint URL
-            base_url = self.config.url.rstrip("/")
+            base_url = self._rest_base_url()
             url = f"{base_url}/rest/api/content/{content_id}/child/attachment"
 
             # Prepare headers (X-Atlassian-Token required for file uploads)
@@ -540,7 +557,7 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                     f"Using v1 API for token/basic authentication to delete attachment '{attachment_id}'"
                 )
                 # Use v1 API endpoint for deletion
-                base_url = self.config.url.rstrip("/")
+                base_url = self._rest_base_url()
                 url = f"{base_url}/rest/api/content/{attachment_id}"
                 response = self.confluence._session.delete(url)
                 response.raise_for_status()
