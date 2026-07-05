@@ -198,13 +198,33 @@ class TestSearchMixin:
         )
         assert len(result) == 1
 
-        # Test with filter when query already has space
+        # Filter is always ANDed, even when the caller's CQL already names a space,
+        # so a caller-supplied `space = X` cannot escape the configured allowlist.
         result = search_mixin.search('space = "EXISTING"', spaces_filter="DEV")
+        quoted_dev = quote_cql_identifier_if_needed("DEV")
         search_mixin.confluence.cql.assert_called_with(
-            cql='space = "EXISTING"',  # Should not add filter when space already exists
+            cql=f'(space = "EXISTING") AND (space = {quoted_dev})',
             limit=10,
         )
         assert len(result) == 1
+
+    @pytest.mark.security_regression
+    def test_spaces_filter_not_bypassed_by_caller_space_clause(self, search_mixin):
+        """A caller-supplied space clause must not escape the config allowlist.
+
+        The old code skipped the filter when the CQL already named a space, so
+        `space = EVIL` bypassed CONFLUENCE_SPACES_FILTER entirely.
+        """
+        search_mixin.confluence.cql.return_value = {"results": [], "size": 0}
+        search_mixin.config.spaces_filter = "SECSPACE"
+
+        search_mixin.search('space = "EVIL"')
+
+        sent_cql = search_mixin.confluence.cql.call_args.kwargs["cql"]
+        assert "SECSPACE" in sent_cql, (
+            "config spaces_filter must be ANDed even when the caller already "
+            f"names a space; CQL was {sent_cql!r}"
+        )
 
     def test_search_with_config_spaces_filter(self, search_mixin):
         """Test search using spaces filter from config."""

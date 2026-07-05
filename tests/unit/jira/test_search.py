@@ -694,10 +694,10 @@ class TestSearchMixin:
         search_mixin.jira.post.reset_mock()
         search_mixin.jira.jql.reset_mock()
 
-        # Act: Call with both JQL and filter
+        # Act: Call with both JQL and filter — the allowlist is always ANDed, so a
+        # caller-supplied project clause cannot escape the configured filter.
         search_mixin.search_issues("project = OTHER", projects_filter="TEST")
-        # Assert: JQL verification (existing JQL has priority)
-        assert get_jql_from_call() == "project = OTHER"
+        assert get_jql_from_call() == "(project = OTHER) AND project = TEST"
 
     @pytest.mark.parametrize("is_cloud", [True, False])
     def test_search_issues_with_config_projects_filter_jql_construction(
@@ -1275,3 +1275,23 @@ class TestSearchFilterAndInjectionRegression:
 
         with pytest.raises(Exception):
             search_mixin.get_sprint_issues("1 OR project = SECRET")
+
+    @pytest.mark.security_regression
+    def test_projects_filter_not_bypassed_by_caller_project_clause(
+        self, search_mixin: SearchMixin, mock_issues_response: dict
+    ) -> None:
+        """A caller-supplied project clause must not escape the config allowlist.
+
+        The old code skipped adding the filter when the query already named a
+        project, so `project = EVIL` bypassed JIRA_PROJECTS_FILTER entirely.
+        """
+        search_mixin.config.projects_filter = "SECPROJ"
+        search_mixin.jira.jql.return_value = mock_issues_response
+
+        search_mixin.search_issues("project = EVIL")
+
+        sent_jql = search_mixin.jira.jql.call_args[0][0]
+        assert "SECPROJ" in sent_jql, (
+            "config projects_filter must be ANDed even when the caller already "
+            f"names a project; JQL was {sent_jql!r}"
+        )

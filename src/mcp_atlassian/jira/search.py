@@ -50,7 +50,10 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             jql = project_query
         elif jql.strip().upper().startswith("ORDER BY"):
             jql = f"{project_query} {jql}"
-        elif "project = " not in jql.lower() and "project in" not in jql.lower():
+        else:
+            # Always AND the allowlist, even when the caller's query already names a
+            # project: a caller-supplied `project = X` must not be able to escape the
+            # configured allowlist (out-of-allowlist queries then return empty).
             # Extract a trailing ORDER BY so the AND does not produce invalid JQL.
             order_match = re.search(r"\s+(ORDER\s+BY\s+.*)$", jql, re.IGNORECASE)
             if order_match:

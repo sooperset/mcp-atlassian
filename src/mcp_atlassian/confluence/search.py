@@ -58,12 +58,20 @@ class SearchMixin(ConfluenceClient):
                 [f"space = {quote_cql_identifier_if_needed(space)}" for space in spaces]
             )
 
-            # Add the space filter to existing query with parentheses
-            if cql and space_query:
-                if "space = " not in cql:  # Only add if not already filtering by space
-                    cql = f"({cql}) AND ({space_query})"
-            else:
+            # Always AND the allowlist, even when the caller's CQL already names a
+            # space: a caller-supplied `space = X` must not escape the configured
+            # spaces allowlist (out-of-allowlist queries then return empty).
+            if not cql:
                 cql = space_query
+            else:
+                # Extract a trailing ORDER BY so the AND does not produce invalid CQL.
+                order_match = re.search(r"\s+(ORDER\s+BY\s+.*)$", cql, re.IGNORECASE)
+                if order_match:
+                    order_clause = order_match.group(1)
+                    cql_without_order = cql[: order_match.start()]
+                    cql = f"({cql_without_order}) AND ({space_query}) {order_clause}"
+                else:
+                    cql = f"({cql}) AND ({space_query})"
 
             logger.info(f"Applied spaces filter to query: {cql}")
 
