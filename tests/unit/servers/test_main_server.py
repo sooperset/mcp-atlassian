@@ -650,7 +650,7 @@ class TestUserTokenMiddlewareSsrfValidation:
         header_name,
         url_value,
     ):
-        """Exploit URL in Jira/Confluence header must produce a 401 and skip the inner app."""
+        """Exploit URL in Jira/Confluence header returns 401 and skips the app."""
         mock_scope["headers"] = [
             (b"authorization", b"Bearer test-token"),
             (header_name, url_value),
@@ -716,7 +716,7 @@ class TestUserTokenMiddlewareSsrfValidation:
     async def test_no_service_headers_does_not_trigger_ssrf_check(
         self, middleware, mock_scope, mock_receive, mock_send
     ):
-        """Requests without Jira/Confluence URL headers must skip the validator entirely."""
+        """Requests without Jira/Confluence URL headers skip the validator."""
         mock_scope["headers"] = [(b"authorization", b"Bearer test-token")]
 
         await middleware(mock_scope, mock_receive, mock_send)
