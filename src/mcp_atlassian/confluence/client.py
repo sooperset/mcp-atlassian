@@ -18,6 +18,7 @@ from ..utils.logging import get_masked_session_headers, log_config_param, mask_s
 from ..utils.oauth import configure_oauth_session
 from ..utils.ssl import configure_ssl_verification
 from ..utils.user_agent import get_default_user_agent
+from ..utils.urls import make_ssrf_redirect_hook
 from .config import ConfluenceConfig
 
 # Configure logging
@@ -136,6 +137,11 @@ class ConfluenceClient:
         configure_concurrency(self.confluence._session, service="Confluence")
         configure_rate_limit(self.confluence._session, service="Confluence")
         configure_circuit_breaker(self.confluence._session, service="Confluence")
+
+        # Validate redirects for SSRF on every outbound call from this session
+        # (covers direct _session.get() paths and global/stdio fetchers, not just
+        # the per-user HTTP path).
+        self.confluence._session.hooks["response"].append(make_ssrf_redirect_hook())
 
         # Proxy configuration
         proxies = {}

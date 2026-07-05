@@ -4,7 +4,26 @@ import ipaddress
 import os
 import re
 import socket
+from typing import Any, Callable
 from urllib.parse import urlparse
+
+
+def make_ssrf_redirect_hook() -> Callable[..., Any]:
+    """Return a requests ``response`` hook that blocks SSRF-unsafe redirects.
+
+    Attach to any session (``session.hooks["response"].append(...)``) so that an
+    open redirect cannot steer an outbound request to an internal/metadata host.
+    """
+
+    def hook(response: Any, **kwargs: Any) -> Any:
+        if response.is_redirect:
+            error = validate_url_for_ssrf(response.headers.get("Location", ""))
+            if error:
+                response.close()
+                raise ValueError(f"Redirect blocked (SSRF): {error}")
+        return response
+
+    return hook
 
 
 def resolve_relative_url(url: str, base_url: str) -> str:
