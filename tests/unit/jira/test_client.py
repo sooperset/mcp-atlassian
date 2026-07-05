@@ -97,6 +97,14 @@ def test_base_session_has_ssrf_redirect_hook():
         for hook in hooks:
             hook(internal_redirect)
 
+    # And the base session must use the DNS-pinning adapter (rebind protection).
+    from mcp_atlassian.utils.ssrf_adapter import SsrfPinningAdapter
+
+    assert isinstance(
+        client.jira._session.get_adapter("https://example.atlassian.net"),
+        SsrfPinningAdapter,
+    ), "base session must mount the SSRF DNS-pinning adapter for https"
+
 
 def test_init_with_token_auth():
     """Test initializing the client with token auth configuration."""

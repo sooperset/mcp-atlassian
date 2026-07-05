@@ -18,6 +18,7 @@ from ..utils.logging import get_masked_session_headers, log_config_param, mask_s
 from ..utils.oauth import configure_oauth_session
 from ..utils.ssl import configure_ssl_verification
 from ..utils.user_agent import get_default_user_agent
+from ..utils.ssrf_adapter import mount_ssrf_pinning
 from ..utils.urls import make_ssrf_redirect_hook
 from .config import ConfluenceConfig
 
@@ -142,6 +143,9 @@ class ConfluenceClient:
         # (covers direct _session.get() paths and global/stdio fetchers, not just
         # the per-user HTTP path).
         self.confluence._session.hooks["response"].append(make_ssrf_redirect_hook())
+        # Pin DNS resolution against rebinding: resolve+validate once and connect
+        # to that address, closing the validate→reconnect TOCTOU. Preserves TLS SNI.
+        mount_ssrf_pinning(self.confluence._session)
 
         # Proxy configuration
         proxies = {}
