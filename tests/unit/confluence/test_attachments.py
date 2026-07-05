@@ -1682,6 +1682,16 @@ class TestResolveAttachmentDownloadUrl:
         )
         assert "/rest/api/content/123/child/attachment/att999/download" in url
 
+    def test_auto_cloud_adds_wiki_prefix_for_bare_site_url(self) -> None:
+        mixin = self._make_mixin(use_v1=None, url="https://example.atlassian.net")
+        url = mixin._resolve_attachment_download_url(
+            "/download/attachments/123/foo.png", attachment_id="att999"
+        )
+        assert url == (
+            "https://example.atlassian.net/wiki"
+            "/rest/api/content/123/child/attachment/att999/download"
+        )
+
     def test_auto_server_dc_returns_legacy(self) -> None:
         mixin = self._make_mixin(use_v1=None, url="https://confluence.example.com")
         url = mixin._resolve_attachment_download_url(
