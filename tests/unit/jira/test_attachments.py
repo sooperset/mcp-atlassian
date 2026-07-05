@@ -69,7 +69,8 @@ class TestAttachmentsMixin:
         mock_response.raise_for_status = MagicMock()
         attachments_mixin.jira._session.get.return_value = mock_response
 
-        download_path = "/tmp/test_file.txt"
+        # A subdirectory of CWD (downloads may not land in the CWD root itself).
+        download_path = "/tmp/downloads/test_file.txt"
         expected_path = os.path.abspath(download_path)
 
         # Mock file operations
@@ -121,20 +122,25 @@ class TestAttachmentsMixin:
             mock_exists.return_value = True
             mock_getsize.return_value = 12
             mock_isabs.return_value = False
+            # Target a subdirectory (downloads may not land in the CWD root itself).
             mock_abspath.side_effect = lambda p: (
-                "/absolute/path/test_file.txt" if p == "test_file.txt" else p
+                "/absolute/path/downloads/test_file.txt"
+                if p == "downloads/test_file.txt"
+                else p
             )
 
             # Call the method with a relative path
             result = attachments_mixin.download_attachment(
-                "https://test.url/attachment", "test_file.txt"
+                "https://test.url/attachment", "downloads/test_file.txt"
             )
 
             # Assertions
             assert result is True
-            mock_isabs.assert_called_once_with("test_file.txt")
-            mock_abspath.assert_any_call("test_file.txt")
-            mock_file.assert_called_once_with("/absolute/path/test_file.txt", "wb")
+            mock_isabs.assert_any_call("downloads/test_file.txt")
+            mock_abspath.assert_any_call("downloads/test_file.txt")
+            mock_file.assert_called_once_with(
+                "/absolute/path/downloads/test_file.txt", "wb"
+            )
 
     def test_download_attachment_no_url(self, attachments_mixin: AttachmentsMixin):
         """Test attachment download with no URL."""
@@ -1371,12 +1377,6 @@ class TestUploadPathTraversalRegression:
         attachments_mixin.jira.add_attachment.assert_not_called()
 
     @pytest.mark.security_regression
-    @pytest.mark.xfail(
-        strict=True,
-        reason="SP5 fam1 GHSA-6vmq: validate_safe_path base_dir defaults to CWD "
-        "(utils/io.py:44) so downloads can overwrite an importable module in CWD "
-        "-> RCE; fix-1b confines downloads to a dedicated dir (dir contract TBD)",
-    )
     def test_download_into_cwd_module_is_rejected(
         self,
         attachments_mixin: AttachmentsMixin,
