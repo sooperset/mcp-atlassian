@@ -296,6 +296,10 @@ def mock_preprocessor():
         "<p>Processed HTML</p>",
         "Processed Markdown",
     )
+    preprocessor_instance.process_rendered_html_content.return_value = (
+        "<p>Rendered HTML</p>",
+        "Rendered Markdown",
+    )
 
     # Additional processing methods
     preprocessor_instance.clean_html.return_value = "<p>Clean HTML</p>"

@@ -316,7 +316,8 @@ async def get_page_children(
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
     if include_content and "body" not in expand:
-        expand = f"{expand},body.storage" if expand else "body.storage"
+        body_expand = "body.view" if convert_to_markdown else "body.storage"
+        expand = f"{expand},{body_expand}" if expand else body_expand
 
     try:
         pages = confluence_fetcher.get_page_children(

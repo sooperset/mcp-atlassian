@@ -67,6 +67,37 @@ class TestPagesMixin:
         assert result.attachments[0].id is not None
         assert result.attachments[1].id is not None
 
+    def test_get_page_content_prefers_rendered_view_for_markdown(self, pages_mixin):
+        """Test that body.view is preferred over storage for markdown conversion."""
+        page_id = "987654321"
+        view_html = (
+            '<p>See <a href="https://example.atlassian.net/wiki/x/abc">Docs</a></p>'
+        )
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+        pages_mixin.confluence.get_page_by_id.return_value = {
+            "id": page_id,
+            "title": "Rendered Page",
+            "space": {"key": "PROJ"},
+            "version": {"number": 1},
+            "body": {
+                "view": {"value": view_html},
+                "storage": {"value": "<p><ac:link>Docs</ac:link></p>"},
+            },
+            "children": {"attachment": {"results": []}},
+        }
+        pages_mixin.preprocessor.process_rendered_html_content.return_value = (
+            view_html,
+            "[Docs](https://example.atlassian.net/wiki/x/abc)",
+        )
+
+        result = pages_mixin.get_page_content(page_id, convert_to_markdown=True)
+
+        assert result.content == "[Docs](https://example.atlassian.net/wiki/x/abc)"
+        pages_mixin.preprocessor.process_rendered_html_content.assert_called_once_with(
+            view_html
+        )
+        pages_mixin.preprocessor.process_html_content.assert_not_called()
+
     def test_get_page_ancestors(self, pages_mixin):
         """Test getting page ancestors (parent pages)."""
         # Arrange
@@ -573,6 +604,7 @@ class TestPagesMixin:
         # Arrange
         parent_id = "123456"
         pages_mixin.config.url = "https://example.atlassian.net/wiki"
+        view_html = "<p>This is some rendered content</p>"
 
         # Mock the response with body content
         child_pages_data = {
@@ -582,7 +614,7 @@ class TestPagesMixin:
                     "title": "Child Page With Content",
                     "space": {"key": "DEMO"},
                     "version": {"number": 1},
-                    "body": {"storage": {"value": "<p>This is some content</p>"}},
+                    "body": {"view": {"value": view_html}},
                 }
             ]
         }
@@ -594,10 +626,9 @@ class TestPagesMixin:
             child_folders_data,
         ]
 
-        # Mock the preprocessor
-        pages_mixin.preprocessor.process_html_content.return_value = (
-            "<p>Processed HTML</p>",
-            "Processed Markdown",
+        pages_mixin.preprocessor.process_rendered_html_content.return_value = (
+            view_html,
+            "Rendered Markdown",
         )
 
         # Act
@@ -607,13 +638,11 @@ class TestPagesMixin:
 
         # Assert
         assert len(results) == 1
-        assert results[0].content == "Processed Markdown"
-        pages_mixin.preprocessor.process_html_content.assert_called_once_with(
-            "<p>This is some content</p>",
-            space_key="DEMO",
-            confluence_client=pages_mixin.confluence,
-            content_id="789012",
+        assert results[0].content == "Rendered Markdown"
+        pages_mixin.preprocessor.process_rendered_html_content.assert_called_once_with(
+            view_html
         )
+        pages_mixin.preprocessor.process_html_content.assert_not_called()
 
     def test_get_page_children_empty(self, pages_mixin):
         """Test getting child pages when there are none."""
@@ -1039,6 +1068,41 @@ class TestPagesMixin:
         assert result.version.number == version
         assert result.content == "## Historical Content\n\nThis is historical content"
         assert result.space.key == "PROJ"
+
+    def test_get_page_history_prefers_rendered_view_v1(self, pages_mixin):
+        """Test historical markdown conversion uses body.view when available."""
+        page_id = "987654321"
+        version = 2
+        view_html = (
+            '<p>See <a href="https://example.atlassian.net/wiki/x/hist">History</a></p>'
+        )
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+        pages_mixin.confluence.get_page_by_id.return_value = {
+            "id": page_id,
+            "title": "Historical Rendered Page",
+            "space": {"key": "PROJ", "name": "Project Space"},
+            "version": {"number": version},
+            "body": {
+                "view": {"value": view_html},
+                "storage": {"value": "<p><ac:link>History</ac:link></p>"},
+            },
+            "children": {"attachment": {"results": []}},
+        }
+        pages_mixin.preprocessor.process_rendered_html_content.return_value = (
+            view_html,
+            "[History](https://example.atlassian.net/wiki/x/hist)",
+        )
+        pages_mixin.confluence.get_page_properties.return_value = {"results": []}
+
+        result = pages_mixin.get_page_history(
+            page_id, version, convert_to_markdown=True
+        )
+
+        assert result.content == "[History](https://example.atlassian.net/wiki/x/hist)"
+        pages_mixin.preprocessor.process_rendered_html_content.assert_called_once_with(
+            view_html
+        )
+        pages_mixin.preprocessor.process_html_content.assert_not_called()
 
     def test_get_page_history_html_v1(self, pages_mixin):
         """Test retrieving historical version with HTML format (convert_to_markdown=False)."""
