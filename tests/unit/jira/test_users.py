@@ -903,3 +903,47 @@ class TestUnicodeLookup:
         # Searching with the email should match (case insensitive)
         account_id = users_mixin._lookup_user_directly("TËST@EXAMPLE.COM")
         assert account_id == "email-account-id"
+
+
+class TestUserProfileMeIdentifier:
+    """get_user_profile_by_identifier handles 'me' identifier.
+
+    Regression for https://github.com/sooperset/mcp-atlassian/issues/596
+    Also addresses https://github.com/sooperset/mcp-atlassian/issues/459
+    """
+
+    def test_me_resolves_to_current_user(self, jira_fetcher):
+        """'me' identifier resolves via get_current_user_account_id."""
+        user_response = {
+            "accountId": "5b10ac8d82e05b22cc7d4ef5",
+            "displayName": "Test User",
+            "emailAddress": "test@example.com",
+            "active": True,
+        }
+        with patch.object(
+            jira_fetcher,
+            "get_current_user_account_id",
+            return_value="5b10ac8d82e05b22cc7d4ef5",
+        ) as mock_get_current:
+            jira_fetcher.jira.user = MagicMock(return_value=user_response)
+            result = jira_fetcher.get_user_profile_by_identifier("me")
+            assert result is not None
+            assert result.account_id == "5b10ac8d82e05b22cc7d4ef5"
+            mock_get_current.assert_called_once()
+
+    def test_me_case_insensitive(self, jira_fetcher):
+        """'Me', 'ME', 'mE' all resolve to current user."""
+        user_response = {
+            "accountId": "5b10ac8d82e05b22cc7d4ef5",
+            "displayName": "Test User",
+            "active": True,
+        }
+        with patch.object(
+            jira_fetcher,
+            "get_current_user_account_id",
+            return_value="5b10ac8d82e05b22cc7d4ef5",
+        ):
+            jira_fetcher.jira.user = MagicMock(return_value=user_response)
+            for variant in ["Me", "ME", "mE"]:
+                result = jira_fetcher.get_user_profile_by_identifier(variant)
+                assert result is not None
