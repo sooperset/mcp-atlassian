@@ -143,7 +143,7 @@ class ConfluenceClient:
             log_config_param(logger, "Confluence", "NO_PROXY", self.config.no_proxy)
 
         # Set an explicit User-Agent so requests aren't blocked by WAFs that
-        # reject the default ``python-requests/X.Y`` header (#TBD). User-supplied
+        # reject the default ``python-requests/X.Y`` header. User-supplied
         # custom headers below can still override this.
         self.confluence._session.headers["User-Agent"] = get_default_user_agent()
 
