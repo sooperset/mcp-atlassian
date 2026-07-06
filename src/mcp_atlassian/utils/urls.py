@@ -41,15 +41,17 @@ def is_atlassian_cloud_url(url: str) -> bool:
     parsed_url = urlparse(url)
     hostname = parsed_url.hostname or ""
 
-    # Check for localhost or IP address
-    if (
-        hostname == "localhost"
-        or re.match(r"^127\.", hostname)
-        or re.match(r"^192\.168\.", hostname)
-        or re.match(r"^10\.", hostname)
-        or re.match(r"^172\.(1[6-9]|2[0-9]|3[0-1])\.", hostname)
-    ):
+    # Check for localhost or IP address (including IPv6-mapped)
+    if hostname == "localhost":
         return False
+    try:
+        addr = ipaddress.ip_address(hostname)
+        if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
+            addr = addr.ipv4_mapped
+        if not addr.is_global:
+            return False
+    except ValueError:
+        pass  # Not an IP literal, continue with domain checks
 
     # The standard check for Atlassian cloud domains
     # Use endswith() to prevent URL validation bypass via substring matching
