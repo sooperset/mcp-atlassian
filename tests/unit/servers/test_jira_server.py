@@ -2144,6 +2144,77 @@ async def test_add_comment(jira_client, mock_jira_fetcher):
 
 
 @pytest.mark.anyio
+async def test_add_comment_ignores_empty_optional_fields(
+    jira_client, mock_jira_fetcher
+):
+    """Test add_comment treats client default optional fields as omitted."""
+    response = await jira_client.call_tool(
+        "jira_add_comment",
+        {
+            "issue_key": "TEST-123",
+            "body": "Test comment body",
+            "visibility": "",
+            "public": False,
+        },
+    )
+
+    mock_jira_fetcher.add_comment.assert_called_once_with(
+        "TEST-123", "Test comment body", None, public=None
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["id"] == "10001"
+    assert result["body"] == "Test comment body"
+
+
+@pytest.mark.anyio
+async def test_add_comment_restricted_visibility_ignores_false_public_default(
+    jira_client, mock_jira_fetcher
+):
+    """Test add_comment can combine visibility with client default public=false."""
+    response = await jira_client.call_tool(
+        "jira_add_comment",
+        {
+            "issue_key": "TEST-123",
+            "body": "Test comment body",
+            "visibility": '{"type":"role","value":"Developer"}',
+            "public": False,
+        },
+    )
+
+    mock_jira_fetcher.add_comment.assert_called_once_with(
+        "TEST-123",
+        "Test comment body",
+        {"type": "role", "value": "Developer"},
+        public=None,
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["id"] == "10001"
+    assert result["body"] == "Test comment body"
+
+
+@pytest.mark.anyio
+async def test_add_comment_public_true_keeps_servicedesk_routing(
+    jira_client, mock_jira_fetcher
+):
+    """Test add_comment preserves explicit public=true for JSM comments."""
+    await jira_client.call_tool(
+        "jira_add_comment",
+        {
+            "issue_key": "TEST-123",
+            "body": "Test comment body",
+            "visibility": "",
+            "public": True,
+        },
+    )
+
+    mock_jira_fetcher.add_comment.assert_called_once_with(
+        "TEST-123", "Test comment body", None, public=True
+    )
+
+
+@pytest.mark.anyio
 async def test_edit_comment(jira_client, mock_jira_fetcher):
     """Test edit_comment accepts 'body' parameter matching response field name."""
     response = await jira_client.call_tool(
