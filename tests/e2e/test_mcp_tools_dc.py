@@ -121,6 +121,27 @@ class TestMCPJiraTools:
             {"issue_key": issue_key},
         )
 
+    @pytest.mark.anyio
+    async def test_jira_assign_issue(
+        self,
+        mcp_client: Client,
+        dc_instance: DCInstanceInfo,
+    ) -> None:
+        assign_result = await call_tool(
+            mcp_client,
+            "jira_assign_issue",
+            {
+                "issue_key": dc_instance.test_issue_key,
+                "assignee": dc_instance.admin_username,
+            },
+        )
+        assert not assign_result.is_error
+        assert assign_result.content
+        assign_data = json.loads(assign_result.content[0].text)
+        assignee = assign_data["issue"].get("assignee")
+        assert isinstance(assignee, dict)
+        assert assignee.get("name") or assignee.get("display_name")
+
 
 class TestMCPConfluenceTools:
     """MCP Confluence tool tests against DC."""
