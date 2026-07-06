@@ -660,6 +660,37 @@ async def test_create_page_include_content(client, mock_confluence_fetcher):
 
 
 @pytest.mark.anyio
+async def test_create_page_with_xhtml_format(client, mock_confluence_fetcher):
+    """Test create_page maps xhtml content format to storage representation."""
+    xhtml_body = (
+        "<ac:structured-macro ac:name='code'>"
+        "<ac:plain-text-body>hello</ac:plain-text-body>"
+        "</ac:structured-macro>"
+    )
+
+    response = await client.call_tool(
+        "confluence_create_page",
+        {
+            "space_key": "TEST",
+            "title": "XHTML Page",
+            "content": xhtml_body,
+            "content_format": "xhtml",
+            "enable_heading_anchors": True,
+        },
+    )
+
+    mock_confluence_fetcher.create_page.assert_called_once()
+    call_kwargs = mock_confluence_fetcher.create_page.call_args.kwargs
+    assert call_kwargs["body"] == xhtml_body
+    assert call_kwargs["is_markdown"] is False
+    assert call_kwargs["content_representation"] == "storage"
+    assert call_kwargs["enable_heading_anchors"] is False
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["message"] == "Page created successfully"
+
+
+@pytest.mark.anyio
 async def test_update_page_with_numeric_parent_id(client, mock_confluence_fetcher):
     """Test updating a page with numeric parent_id (integer) - should convert to string."""
     response = await client.call_tool(
@@ -726,6 +757,37 @@ async def test_update_page_include_content(client, mock_confluence_fetcher):
     assert result_data["message"] == "Page updated successfully"
     assert result_data["page"]["title"] == "Test Page Mock Title"
     assert "content" in result_data["page"]
+
+
+@pytest.mark.anyio
+async def test_update_page_with_xhtml_format(client, mock_confluence_fetcher):
+    """Test update_page maps xhtml content format to storage representation."""
+    xhtml_body = (
+        "<ac:structured-macro ac:name='info'>"
+        "<ac:rich-text-body><p>hello</p></ac:rich-text-body>"
+        "</ac:structured-macro>"
+    )
+
+    response = await client.call_tool(
+        "confluence_update_page",
+        {
+            "page_id": "999999",
+            "title": "Updated XHTML Page",
+            "content": xhtml_body,
+            "content_format": "xhtml",
+            "enable_heading_anchors": True,
+        },
+    )
+
+    mock_confluence_fetcher.update_page.assert_called_once()
+    call_kwargs = mock_confluence_fetcher.update_page.call_args.kwargs
+    assert call_kwargs["body"] == xhtml_body
+    assert call_kwargs["is_markdown"] is False
+    assert call_kwargs["content_representation"] == "storage"
+    assert call_kwargs["enable_heading_anchors"] is False
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["message"] == "Page updated successfully"
 
 
 @pytest.mark.anyio
