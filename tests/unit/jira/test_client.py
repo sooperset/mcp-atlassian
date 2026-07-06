@@ -428,3 +428,65 @@ def test_create_version_uses_correct_api_version(
         mock_jira.return_value.post.assert_called_once_with(
             expected_url, json={"project": "PROJ", "name": "v1.0"}
         )
+
+
+def test_update_version_sends_only_provided_fields() -> None:
+    """Test that update_version sends only fields explicitly provided."""
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        mock_response = {"id": "10001", "name": "v2.0", "archived": False}
+        mock_jira.return_value.put.return_value = mock_response
+
+        config = JiraConfig(
+            url="https://test.atlassian.net",
+            auth_type="pat",
+            personal_token="test_token",
+        )
+        client = JiraClient(config=config)
+        result = client.update_version("10001", name="v2.0", archived=False)
+
+        assert result == mock_response
+        mock_jira.return_value.put.assert_called_once_with(
+            "/rest/api/2/version/10001",
+            data={"name": "v2.0", "archived": False},
+        )
+
+
+def test_update_version_requires_at_least_one_field() -> None:
+    """Test that update_version rejects empty update payloads."""
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        config = JiraConfig(
+            url="https://test.atlassian.net",
+            auth_type="pat",
+            personal_token="test_token",
+        )
+        client = JiraClient(config=config)
+
+        with pytest.raises(ValueError, match="requires at least one field"):
+            client.update_version("10001")
+
+        mock_jira.return_value.put.assert_not_called()
+
+
+def test_update_version_rejects_non_dict_response() -> None:
+    """Test that update_version rejects unexpected Jira responses."""
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        mock_jira.return_value.put.return_value = ["not", "a", "dict"]
+
+        config = JiraConfig(
+            url="https://test.atlassian.net",
+            auth_type="pat",
+            personal_token="test_token",
+        )
+        client = JiraClient(config=config)
+
+        with pytest.raises(ValueError, match="Unexpected response from Jira API"):
+            client.update_version("10001", released=True)
