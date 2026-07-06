@@ -198,6 +198,21 @@ class TestMCPConfluenceTools:
         assert result.content and isinstance(result.content[0], TextContent)
 
     @pytest.mark.anyio
+    async def test_confluence_get_user_details_me(
+        self,
+        mcp_client: Client,
+    ) -> None:
+        result = await call_tool(
+            mcp_client,
+            "confluence_get_user_details",
+            {"identifier": "me"},
+        )
+        assert not result.is_error
+        assert result.content and isinstance(result.content[0], TextContent)
+        data = json.loads(result.content[0].text)
+        assert data.get("displayName") or data.get("accountId")
+
+    @pytest.mark.anyio
     async def test_confluence_create_and_delete_page(
         self,
         mcp_client: Client,
