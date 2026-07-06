@@ -598,6 +598,11 @@ async def get_issue(
     )
     result = issue.to_simplified_dict()
 
+    if "comments" in include_sections:
+        result.setdefault("comments", [])
+    if "changelog" in include_sections:
+        result.setdefault("changelogs", [])
+
     # Enrichments that require separate API calls
     if "remote_links" in include_sections:
         try:

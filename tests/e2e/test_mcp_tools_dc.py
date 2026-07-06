@@ -72,6 +72,28 @@ class TestMCPJiraTools:
         assert data["key"] == dc_instance.test_issue_key
 
     @pytest.mark.anyio
+    async def test_jira_get_issue_include_remote_links(
+        self,
+        mcp_client: Client,
+        dc_instance: DCInstanceInfo,
+    ) -> None:
+        result = await call_tool(
+            mcp_client,
+            "jira_get_issue",
+            {
+                "issue_key": dc_instance.test_issue_key,
+                "fields": "summary,status",
+                "include": "remote_links",
+            },
+        )
+
+        assert not result.is_error
+        assert result.content and isinstance(result.content[0], TextContent)
+        data = json.loads(result.content[0].text)
+        assert data["key"] == dc_instance.test_issue_key
+        assert isinstance(data["remote_links"], list)
+
+    @pytest.mark.anyio
     async def test_jira_search(
         self,
         mcp_client: Client,

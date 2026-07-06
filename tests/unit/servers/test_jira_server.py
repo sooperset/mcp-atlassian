@@ -2714,10 +2714,12 @@ async def test_get_issue_include_transitions_fetches_transitions(
 @pytest.mark.anyio
 async def test_get_issue_include_changelog_adds_expand(jira_client, mock_jira_fetcher):
     """get_issue with include=changelog adds to expand."""
-    await jira_client.call_tool(
+    response = await jira_client.call_tool(
         "jira_get_issue",
         {"issue_key": "TEST-123", "include": "changelog"},
     )
+    content = json.loads(response.content[0].text)
+    assert content["changelogs"] == []
     call_args = mock_jira_fetcher.get_issue.call_args
     expand_val = call_args.kwargs.get("expand", "")
     assert "changelog" in expand_val
@@ -2728,7 +2730,7 @@ async def test_get_issue_include_comments_adds_comment_field(
     jira_client, mock_jira_fetcher
 ):
     """get_issue with include=comments requests the comment field."""
-    await jira_client.call_tool(
+    response = await jira_client.call_tool(
         "jira_get_issue",
         {
             "issue_key": "TEST-123",
@@ -2736,6 +2738,8 @@ async def test_get_issue_include_comments_adds_comment_field(
             "include": "comments",
         },
     )
+    content = json.loads(response.content[0].text)
+    assert content["comments"] == []
     call_args = mock_jira_fetcher.get_issue.call_args
     assert call_args.kwargs["fields"] == ["summary", "status", "comment"]
 
@@ -2806,6 +2810,8 @@ async def test_get_issue_include_all(jira_client, mock_jira_fetcher):
     assert content["transitions"] == [{"id": "11"}]
     assert content["watchers"] == {"watchCount": 1}
     assert content["worklogs"] == [{"id": "10001"}]
+    assert content["comments"] == []
+    assert content["changelogs"] == []
 
     call_args = mock_jira_fetcher.get_issue.call_args
     assert call_args.kwargs["fields"] == ["summary", "status", "comment"]
