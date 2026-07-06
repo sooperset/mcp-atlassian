@@ -206,6 +206,29 @@ class TestCommentsMixin:
         comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
         assert result["body"] == "Heading and content"
 
+    def test_add_comment_with_accountid_mention_uses_adf_node(
+        self, comments_mixin: CommentsMixin
+    ) -> None:
+        """Test [~accountid:...] comments become ADF mention nodes on Cloud."""
+        mock_response = {
+            "id": "10001",
+            "body": "Mention comment",
+            "created": "2024-01-01T10:00:00.000+0000",
+            "author": {"displayName": "John Doe"},
+        }
+        comments_mixin._post_api3 = Mock(return_value=mock_response)
+
+        account_id = "712020:1cfc6d16-950f-4096-8e57-f2c6c60d8ffa"
+        comments_mixin.add_comment("TEST-123", f"Hello [~accountid:{account_id}]")
+
+        call_args = comments_mixin._post_api3.call_args
+        adf_body = call_args[0][1]["body"]
+        assert adf_body["content"][0]["content"] == [
+            {"type": "text", "text": "Hello "},
+            {"type": "mention", "attrs": {"id": account_id}},
+        ]
+        comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
+
     def test_add_comment_with_empty_comment(self, comments_mixin):
         """Test add_comment with an empty comment (Cloud → minimal ADF)."""
         # Setup mock response for v3 API path
