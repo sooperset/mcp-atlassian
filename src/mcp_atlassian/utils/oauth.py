@@ -414,7 +414,7 @@ class OAuthConfig:
                     "base_url": self.base_url,
                 }
 
-            with open(token_path, "w") as f:
+            with open(token_path, "w", opener=lambda path, flags: os.open(path, flags, 0o600)) as f:
                 json.dump(token_data, f)
 
             logger.debug(f"Saved OAuth tokens to file {token_path} (fallback storage)")
