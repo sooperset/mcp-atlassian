@@ -21,7 +21,6 @@ from mcp_atlassian.utils.media import (
     fetch_and_encode_attachment,
     is_image_attachment,
 )
-from mcp_atlassian.utils.urls import resolve_relative_url
 
 logger = logging.getLogger(__name__)
 
@@ -1763,7 +1762,9 @@ async def download_attachment(
                 ),
             )
 
-        download_url = resolve_relative_url(download_url, confluence_fetcher.config.url)
+        download_url = confluence_fetcher._resolve_attachment_download_url(
+            download_url, attachment_id=attachment_id
+        )
 
         filename = attachment_data.get("title") or attachment_id
         mime_type = (
@@ -1951,8 +1952,10 @@ async def download_content_attachments(
             )
             continue
 
-        download_url = resolve_relative_url(
-            attachment.download_url, confluence_fetcher.config.url
+        download_url = confluence_fetcher._resolve_attachment_download_url(
+            attachment.download_url,
+            attachment_id=attachment.id,
+            content_id=content_id,
         )
 
         encoded, mime_type, fetched_bytes = fetch_and_encode_attachment(
@@ -2165,7 +2168,11 @@ async def get_page_images(
             failed.append({"filename": filename, "error": "No download URL"})
             continue
 
-        download_url = resolve_relative_url(download_url, confluence_fetcher.config.url)
+        download_url = confluence_fetcher._resolve_attachment_download_url(
+            download_url,
+            attachment_id=attachment.id,
+            content_id=content_id,
+        )
 
         encoded, _, fetched_bytes = fetch_and_encode_attachment(
             fetch_fn=confluence_fetcher.fetch_attachment_content,
