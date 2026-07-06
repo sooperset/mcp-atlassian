@@ -55,10 +55,12 @@ def _parse_visibility(
     Raises:
         ValueError: If the input is not valid JSON or not a dict.
     """
-    if visibility is None:
+    if visibility is None or not visibility.strip():
         return None
     try:
         parsed = json.loads(visibility)
+        if parsed is None:
+            return None
         if not isinstance(parsed, dict):
             raise ValueError(
                 f"{field_name} must be a valid JSON object, e.g. "
@@ -1967,7 +1969,12 @@ async def add_comment(
     """
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
-    result = jira.add_comment(issue_key, body, visibility_dict, public=public)
+    public_value = public
+    if public is False and visibility is not None:
+        # Some MCP clients send omitted optional fields as "" plus false. In
+        # that shape, preserve the Jira comments path and any visibility value.
+        public_value = None
+    result = jira.add_comment(issue_key, body, visibility_dict, public=public_value)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
