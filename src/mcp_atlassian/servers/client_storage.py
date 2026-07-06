@@ -36,7 +36,20 @@ REQUIRED_STORAGE_METHODS = (
 )
 
 
+# Allowed import paths for ATLASSIAN_OAUTH_CLIENT_STORAGE_FACTORY.
+# Restricts importlib.import_module to known-safe modules only.
+ALLOWED_STORAGE_FACTORIES: set[str] = {
+    "mcp_atlassian.storage.redis:factory",
+    "mcp_atlassian.storage.postgres:factory",
+}
+
+
 def _load_storage_factory(import_path: str) -> Callable[..., AsyncKeyValue]:
+    if import_path not in ALLOWED_STORAGE_FACTORIES:
+        raise ValueError(
+            f"{CLIENT_STORAGE_FACTORY_ENV}=\'{import_path}\' is not in the allowed list. "
+            f"Allowed: {', '.join(sorted(ALLOWED_STORAGE_FACTORIES))}"
+        )
     module_path, separator, attribute_name = import_path.partition(":")
     if not separator or not module_path or not attribute_name:
         raise ValueError(
