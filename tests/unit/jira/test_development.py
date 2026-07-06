@@ -209,6 +209,42 @@ class TestDevelopmentMixin:
         assert development_mixin.jira._session.get.call_count > 1
         assert result["issue_key"] == "TEST-123"
 
+    def test_get_issue_development_info_auto_discovery_uses_app_type_casing(
+        self, development_mixin
+    ):
+        """Test auto-discovery uses case-sensitive dev-status app types."""
+        development_mixin.jira.get_issue.return_value = {
+            "id": "12345",
+            "key": "TEST-123",
+        }
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"detail": []}
+        mock_response.raise_for_status = MagicMock()
+        development_mixin.jira._session.get.return_value = mock_response
+
+        development_mixin.get_issue_development_info("TEST-123")
+
+        application_types = [
+            call.kwargs["params"]["applicationType"]
+            for call in development_mixin.jira._session.get.call_args_list
+        ]
+
+        assert application_types == [
+            "stash",
+            "stash",
+            "stash",
+            "bitbucket",
+            "bitbucket",
+            "bitbucket",
+            "GitHub",
+            "GitHub",
+            "GitHub",
+            "GitLab",
+            "GitLab",
+            "GitLab",
+        ]
+
     def test_get_issues_development_info_success(
         self, development_mixin, mock_dev_status_response
     ):

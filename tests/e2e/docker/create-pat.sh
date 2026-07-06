@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Create Personal Access Tokens (PATs) for Jira and Confluence DC.
 # Jira PAT: POST /rest/pat/latest/tokens (Jira 8.14+)
-# Confluence PAT: POST /rest/de.resolution.apitokenauth/1.0/user/token
+# Confluence PAT: POST /rest/pat/latest/tokens (Confluence 7.9+)
 # Usage: bash create-pat.sh
 
 set -euo pipefail
@@ -44,9 +44,10 @@ echo ""
 echo "=== Confluence: Create Personal Access Token ==="
 confluence_pat_response=$(curl -s -u "$AUTH" \
   -H "Content-Type: application/json" \
-  -X POST "${CONFLUENCE_BASE}/rest/de.resolution.apitokenauth/1.0/user/token" \
+  -X POST "${CONFLUENCE_BASE}/rest/pat/latest/tokens" \
   -d "{
-    \"tokenName\": \"${TOKEN_NAME}\"
+    \"name\": \"${TOKEN_NAME}\",
+    \"expirationDuration\": 90
   }")
 
 CONFLUENCE_PAT=$(echo "$confluence_pat_response" | python3 -c "

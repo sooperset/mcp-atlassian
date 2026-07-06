@@ -4,10 +4,13 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
+from urllib.parse import urlparse
 
+from bs4 import BeautifulSoup
 from md2conf.converter import (
     ConfluenceConverterOptions,
     ConfluenceStorageFormatConverter,
+    attachment_name,
     elements_to_string,
     markdown_to_html,
 )
@@ -84,7 +87,7 @@ class ConfluencePreprocessor(BasePreprocessor):
                 # Convert the element tree back to a string
                 storage_format = elements_to_string(root)
 
-                return str(storage_format)
+                return self._fix_attachment_images(str(storage_format))
             finally:
                 # Clean up the temporary directory
                 shutil.rmtree(temp_dir, ignore_errors=True)
@@ -100,6 +103,58 @@ class ConfluencePreprocessor(BasePreprocessor):
             # This creates a proper Confluence storage format document
             storage_format = f"""<p>{html_content}</p>"""
 
-            return str(storage_format)
+            return self._fix_attachment_images(str(storage_format))
 
-    # Confluence-specific methods can be added here
+    @staticmethod
+    def _is_attachment_image_source(src: str) -> bool:
+        """Return whether an image source should resolve as an attachment."""
+        parsed_src = urlparse(src)
+        return not parsed_src.scheme and not src.startswith(("/", "#"))
+
+    @staticmethod
+    def _fix_attachment_images(storage_html: str) -> str:
+        """Replace bare-filename ``<img>`` tags with Confluence attachment macros.
+
+        Confluence Storage Format cannot resolve bare filenames in
+        ``<img src="filename.ext"/>``. Attachment references must use the
+        ``ac:image`` / ``ri:attachment`` macro instead. External URLs
+        (``http``/``https``/``data``) and absolute paths are left untouched.
+
+        Args:
+            storage_html: Confluence storage format HTML string.
+
+        Returns:
+            Storage HTML with bare-filename img tags replaced by attachment macros.
+        """
+        if "<img" not in storage_html.lower():
+            return storage_html
+
+        soup = BeautifulSoup(storage_html, "html.parser")
+        rewritten = False
+
+        for image in soup.find_all("img"):
+            src = image.get("src")
+            if not isinstance(src, str):
+                continue
+            if not ConfluencePreprocessor._is_attachment_image_source(src):
+                continue
+
+            attachment_image = soup.new_tag("ac:image")
+            alt = image.get("alt", "")
+            attachment_image["ac:alt"] = alt if isinstance(alt, str) else ""
+
+            for html_attr, confluence_attr in (
+                ("width", "ac:width"),
+                ("height", "ac:height"),
+            ):
+                value = image.get(html_attr)
+                if isinstance(value, str):
+                    attachment_image[confluence_attr] = value
+
+            attachment = soup.new_tag("ri:attachment")
+            attachment["ri:filename"] = attachment_name(src)
+            attachment_image.append(attachment)
+            image.replace_with(attachment_image)
+            rewritten = True
+
+        return str(soup) if rewritten else storage_html
