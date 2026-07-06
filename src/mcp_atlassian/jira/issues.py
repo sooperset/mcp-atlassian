@@ -986,6 +986,14 @@ class IssuesMixin(
                 logger.debug(f"Identified field '{key}' as standard system field ID.")
 
             if api_field_id:
+                # Allow None values to pass through for clearing fields
+                if value is None:
+                    fields[api_field_id] = None
+                    logger.debug(
+                        f"Setting field '{api_field_id}' to None from kwarg '{key}' (clearing field)."
+                    )
+                    continue
+
                 # Get the full field definition for formatting context if needed
                 field_definition = self.get_field_by_id(
                     api_field_id
@@ -1050,6 +1058,7 @@ class IssuesMixin(
                 - assignee: New assignee for the issue
                 - parent: Parent issue key (str or {"key": "..."} dict)
                 - epicKey/epic_link/epicLink: Epic link alias
+                Pass None to clear a field (e.g., priority=None).
 
         Returns:
             JiraIssue model representing the updated issue
@@ -1092,12 +1101,28 @@ class IssuesMixin(
                     # Handle assignee updates, allow unassignment with None or empty string
                     if value is None or value == "":
                         update_fields["assignee"] = None
+                    elif isinstance(value, dict):
+                        # Caller already has a fully-shaped assignee — most
+                        # commonly the output of search_assignable_users /
+                        # get_user_profile. Forward it as-is without going
+                        # through _get_account_id: the lookup endpoints used
+                        # there (/user/search, /user/permission/search) need
+                        # the global "Browse Users" permission that many bot
+                        # accounts on hardened DC instances lack, and we
+                        # already have the canonical shape Jira wants.
+                        update_fields["assignee"] = value
                     else:
                         try:
                             account_id = self._get_account_id(value)
                             self._add_assignee_to_fields(update_fields, account_id)
                         except ValueError as e:
-                            logger.warning(f"Could not update assignee: {str(e)}")
+                            # An explicit assignee update that cannot be resolved
+                            # must fail loudly. Swallowing it here means the PUT is
+                            # skipped (or runs without the assignee) while the call
+                            # still reports the issue as updated successfully.
+                            raise ValueError(
+                                f"Could not update assignee: {str(e)}"
+                            ) from e
                 elif key == "parent":
                     if isinstance(value, dict) and value.get("key"):
                         update_fields["parent"] = {"key": str(value["key"])}
@@ -1162,6 +1187,71 @@ class IssuesMixin(
             error_msg = str(e)
             logger.error(f"Error updating issue {issue_key}: {error_msg}")
             raise ValueError(f"Failed to update issue {issue_key}: {error_msg}") from e
+
+    def assign_issue(
+        self,
+        issue_key: str,
+        assignee: str | dict[str, Any] | None,
+    ) -> JiraIssue:
+        """
+        Assign a Jira issue to a user using the dedicated assignment endpoint.
+
+        Unlike update_issue (which sets assignee via the fields update and is
+        silently ignored by some Jira configurations), this method calls
+        PUT /rest/api/3/issue/{key}/assignee directly.
+
+        Pass None or empty string to unassign.
+
+        Args:
+            issue_key: The key of the issue to assign (e.g., 'PROJ-123')
+            assignee: User identifier (email, display name, or account ID), or a
+                resolved user dict containing ``accountId``/``account_id`` for
+                Cloud or ``name``/``username``/``key`` for Server/DC. Pass None
+                or "" to unassign.
+
+        Returns:
+            JiraIssue model representing the updated issue
+
+        Raises:
+            ValueError: If the user cannot be resolved or assignment fails
+        """
+        try:
+            if assignee is None or assignee == "":
+                # Unassign: the atlassian-python-api accepts None for unassignment
+                self.jira.assign_issue(issue_key, None)
+            elif isinstance(assignee, dict):
+                if self.config.is_cloud:
+                    assignee_identifier = assignee.get("accountId") or assignee.get(
+                        "account_id"
+                    )
+                    if not assignee_identifier:
+                        raise ValueError(
+                            "Cloud assignee dict must include accountId or account_id"
+                        )
+                else:
+                    assignee_identifier = (
+                        assignee.get("name")
+                        or assignee.get("username")
+                        or assignee.get("key")
+                        or assignee.get("accountId")
+                        or assignee.get("account_id")
+                    )
+                    if not assignee_identifier:
+                        raise ValueError(
+                            "Server/DC assignee dict must include name, username, "
+                            "key, accountId, or account_id"
+                        )
+                self.jira.assign_issue(issue_key, str(assignee_identifier))
+            else:
+                account_id = self._get_account_id(assignee)
+                self.jira.assign_issue(issue_key, account_id)
+
+            # Return the updated issue
+            return self.get_issue(issue_key)
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Error assigning issue {issue_key}: {error_msg}")
+            raise ValueError(f"Failed to assign issue {issue_key}: {error_msg}") from e
 
     def _update_issue_with_status(
         self, issue_key: str, fields: dict[str, Any]

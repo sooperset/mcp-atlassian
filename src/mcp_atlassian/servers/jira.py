@@ -55,10 +55,12 @@ def _parse_visibility(
     Raises:
         ValueError: If the input is not valid JSON or not a dict.
     """
-    if visibility is None:
+    if visibility is None or not visibility.strip():
         return None
     try:
         parsed = json.loads(visibility)
+        if parsed is None:
+            return None
         if not isinstance(parsed, dict):
             raise ValueError(
                 f"{field_name} must be a valid JSON object, e.g. "
@@ -161,6 +163,126 @@ async def get_user_profile(
             f"get_user_profile failed for '{user_identifier}': {error_message}",
         )
         response_data = error_result
+    return json.dumps(response_data, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_users"},
+    annotations={"title": "Search Assignable Users", "readOnlyHint": True},
+)
+async def search_assignable_users(
+    ctx: Context,
+    query: Annotated[
+        str,
+        Field(
+            description=(
+                "Free-form text to search Jira users by: display name, "
+                "username, or email substring (e.g. 'Smith', 'jane.doe', "
+                "'doe@example.com'). Server-side match is case-insensitive "
+                "and partial."
+            ),
+        ),
+    ],
+    project_key: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Project key to scope the search to (e.g. 'DT'). "
+                "Required if issue_key is not given."
+            ),
+            default=None,
+        ),
+    ] = None,
+    issue_key: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Issue key to scope the search to (e.g. 'DT-779'). "
+                "Required if project_key is not given."
+            ),
+            default=None,
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        Field(
+            description="Maximum number of users to return (default 20).",
+            default=20,
+            ge=1,
+            le=1000,
+        ),
+    ] = 20,
+) -> str:
+    """Search Jira users assignable in a given project or issue.
+
+    Use this when you have a display name / partial name / email fragment
+    and need a concrete identifier (``name`` / ``key`` for Server/DC,
+    ``accountId`` for Cloud) to feed into assignee, reporter, watcher, etc.
+
+    Returns the full result set so the caller can disambiguate when several
+    users match — ``get_user_profile`` only resolves one identifier and is
+    not designed for human-name search.
+
+    Exactly one of ``project_key`` or ``issue_key`` must be provided — the
+    underlying API (``/user/assignable/search``) requires a project or issue
+    context and works without the global "Browse Users" permission that bot
+    accounts in locked-down DC instances often lack.
+
+    Args:
+        ctx: The FastMCP context.
+        query: Display name / username / email substring.
+        project_key: Project key (e.g. 'DT') to scope the search.
+        issue_key: Issue key (e.g. 'DT-779') to scope the search.
+        limit: Maximum number of users to return.
+
+    Returns:
+        JSON string: {"success": true, "count": N, "users": [...]} on success,
+        or an error object on failure.
+    """
+    jira = await get_jira_fetcher(ctx)
+    if bool(project_key) == bool(issue_key):
+        return json.dumps(
+            {
+                "success": False,
+                "error": "Exactly one of project_key or issue_key must be provided.",
+                "query": query,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    try:
+        users = jira.search_assignable_users(
+            query=query,
+            project_key=project_key,
+            issue_key=issue_key,
+            limit=limit,
+        )
+        result_users = [u.to_simplified_dict() for u in users]
+        response_data = {
+            "success": True,
+            "count": len(result_users),
+            "users": result_users,
+        }
+    except Exception as e:
+        error_message = ""
+        log_level = logging.ERROR
+        if isinstance(e, MCPAtlassianAuthenticationError):
+            error_message = f"Authentication/Permission Error: {str(e)}"
+        elif isinstance(e, OSError | HTTPError):
+            error_message = f"Network or API Error: {str(e)}"
+        else:
+            error_message = "An unexpected error occurred while searching users."
+            logger.exception(
+                f"Unexpected error in search_assignable_users for {query!r}:"
+            )
+        logger.log(
+            log_level, f"search_assignable_users failed for {query!r}: {error_message}"
+        )
+        response_data = {
+            "success": False,
+            "error": str(e),
+            "query": query,
+        }
     return json.dumps(response_data, indent=2, ensure_ascii=False)
 
 
@@ -1692,6 +1814,73 @@ async def update_issue(
 
 @jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_issues"},
+    annotations={"title": "Assign Issue", "readOnlyHint": False},
+)
+@check_write_access
+async def assign_issue(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+    assignee: Annotated[
+        str | None,
+        Field(
+            description=(
+                "User identifier to assign (email, display name, or account ID), "
+                "or a JSON object string from jira_search_assignable_users. "
+                "Pass null or empty string to unassign the issue."
+            ),
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """Assign a Jira issue to a user using the dedicated assignment endpoint.
+
+    This is more reliable than setting assignee via update_issue, which is
+    silently ignored by some Jira configurations. Uses PUT /issue/{key}/assignee.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+        assignee: User identifier (email, display name, or account ID), or a
+            JSON object string from jira_search_assignable_users. Pass None or
+            empty string to unassign.
+
+    Returns:
+        JSON string representing the updated issue object.
+
+    Raises:
+        ValueError: If in read-only mode, Jira client unavailable, or user not found.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        parsed_assignee: str | dict[str, Any] | None = assignee
+        if assignee and assignee.strip().startswith("{"):
+            try:
+                parsed_assignee = json.loads(assignee)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"assignee is not valid JSON: {e}") from e
+            if not isinstance(parsed_assignee, dict):
+                raise ValueError("assignee JSON must be an object.")
+
+        issue = jira.assign_issue(issue_key=issue_key, assignee=parsed_assignee)
+        result = issue.to_simplified_dict()
+        return json.dumps(
+            {"message": f"Issue {issue_key} assigned successfully", "issue": result},
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(f"Error assigning issue {issue_key}: {str(e)}", exc_info=True)
+        raise ValueError(f"Failed to assign issue {issue_key}: {str(e)}")
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_issues"},
     annotations={"title": "Delete Issue", "destructiveHint": True},
 )
 @check_write_access
@@ -1780,7 +1969,10 @@ async def add_comment(
     """
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
-    result = jira.add_comment(issue_key, body, visibility_dict, public=public)
+    # Some MCP clients send omitted optional booleans as false. Keep normal
+    # Jira comments as the default and reserve ServiceDesk routing for true.
+    public_value = True if public is True else None
+    result = jira.add_comment(issue_key, body, visibility_dict, public=public_value)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
@@ -2479,6 +2671,55 @@ async def get_all_projects(
         ]
 
     return json.dumps(projects, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_projects"},
+    annotations={"title": "Get Project Fields", "readOnlyHint": True},
+)
+async def get_project_fields(
+    ctx: Context,
+    project_key: Annotated[
+        str,
+        Field(description="The project key, e.g. 'PROJ'."),
+    ],
+) -> str:
+    """Get the fields available on issues of a project (the create schema),
+    deduplicated across the project's issue types — i.e. which fields tickets in
+    this project have, regardless of whether they are filled.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: The project key.
+
+    Returns:
+        JSON string with a list of fields: each {field_id, name, required,
+        schema_type, custom, issue_types}. Empty list if none / on error.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    try:
+        jira = await get_jira_fetcher(ctx)
+        fields = jira.get_project_fields(project_key)
+    except (MCPAtlassianAuthenticationError, HTTPError, OSError, ValueError) as e:
+        error_message = ""
+        log_level = logging.ERROR
+        if isinstance(e, MCPAtlassianAuthenticationError):
+            error_message = f"Authentication/Permission Error: {str(e)}"
+        elif isinstance(e, OSError | HTTPError):
+            error_message = f"Network or API Error: {str(e)}"
+        elif isinstance(e, ValueError):
+            error_message = f"Configuration Error: {str(e)}"
+        logger.log(
+            log_level, f"get_project_fields failed for '{project_key}': {error_message}"
+        )
+        return json.dumps(
+            {"success": False, "error": error_message, "project_key": project_key},
+            indent=2,
+            ensure_ascii=False,
+        )
+    return json.dumps(fields, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -3237,8 +3478,8 @@ async def get_issue_development_info(
         str | None,
         Field(
             description=(
-                "(Optional) Filter by application type. "
-                "Examples: 'stash' (Bitbucket Server), 'bitbucket', 'github', 'gitlab'"
+                "(Optional) Filter by application type (case-sensitive). "
+                "Examples: 'stash' (Bitbucket Server), 'bitbucket', 'GitHub', 'GitLab'"
             )
         ),
     ] = None,
@@ -3302,8 +3543,8 @@ async def get_issues_development_info(
         str | None,
         Field(
             description=(
-                "(Optional) Filter by application type. "
-                "Examples: 'stash' (Bitbucket Server), 'bitbucket', 'github', 'gitlab'"
+                "(Optional) Filter by application type (case-sensitive). "
+                "Examples: 'stash' (Bitbucket Server), 'bitbucket', 'GitHub', 'GitLab'"
             )
         ),
     ] = None,

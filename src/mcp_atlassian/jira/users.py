@@ -120,8 +120,17 @@ class UsersMixin(JiraClient):
         Raises:
             ValueError: If the account ID could not be found.
         """
-        # If it looks like an account ID already, return it
+        # If it looks like an account ID already, return it.
+        # Cloud account IDs come in two shapes: the legacy 24-char hex format
+        # (e.g. "5b10ac8d82e05b22cc7d4ef5") and the current "<digits>:<uuid>"
+        # format (e.g. "712020:f653aab5-cc61-4c57-8fa8-f7d73b94499d").
+        # An explicit "accountid:" prefix is also accepted, matching the
+        # format documented in the create_issue/update_issue tool schemas.
+        if assignee.startswith("accountid:"):
+            return assignee[len("accountid:") :]
         if assignee.startswith("5") and len(assignee) >= 10:
+            return assignee
+        if re.match(r"^\d+:[0-9a-fA-F][0-9a-fA-F-]{7,}$", assignee):
             return assignee
 
         account_id = self._lookup_user_directly(assignee)
@@ -367,6 +376,84 @@ class UsersMixin(JiraClient):
         return api_kwargs
 
     @handle_auth_errors("Jira API")
+    def search_assignable_users(
+        self,
+        query: str,
+        project_key: str | None = None,
+        issue_key: str | None = None,
+        limit: int = 20,
+    ) -> list["JiraUser"]:
+        """
+        Search Jira users assignable in a given project or issue.
+
+        Uses GET /rest/api/2/user/assignable/search — the project-scoped
+        assignee picker. Unlike /user/search (needs global "Browse Users")
+        or /user/picker (often locked down on hardened DC instances), this
+        endpoint only requires the caller to be able to assign issues in
+        the target project / browse the target issue, which any bot that
+        already works with that project will have.
+
+        Exactly one of ``project_key`` or ``issue_key`` must be provided.
+
+        Args:
+            query: Free-form text matched against username, displayName,
+                and emailAddress (case-insensitive substring on Server/DC).
+            project_key: Project key (e.g. "DT") to scope the search.
+            issue_key: Issue key (e.g. "DT-779") to scope the search.
+            limit: Maximum number of users to return (1..1000, clamped).
+
+        Returns:
+            List of JiraUser models (possibly empty). Order is preserved
+            from the API.
+
+        Raises:
+            ValueError: If exactly one of project_key or issue_key is not provided.
+            MCPAtlassianAuthenticationError: If authentication fails (decorator).
+            Exception: For other API errors.
+        """
+        if bool(project_key) == bool(issue_key):
+            raise ValueError(
+                "Exactly one of project_key or issue_key must be provided."
+            )
+
+        limit = max(1, min(int(limit or 20), 1000))
+        url = self.jira.resource_url("user/assignable/search")
+        query_param = "query" if self.config.is_cloud else "username"
+        params: dict[str, str | int] = {
+            query_param: query,
+            "maxResults": limit,
+            "startAt": 0,
+        }
+        if issue_key:
+            params["issueKey"] = issue_key
+        elif project_key is not None:
+            params["project"] = project_key
+
+        try:
+            data = self.jira.get(url, params=params)
+        except HTTPError as http_err:
+            logger.warning(
+                f"jira_search_assignable_users HTTPError for query={query!r}: {http_err}"
+            )
+            raise
+        except Exception as e:
+            logger.exception(f"jira_search_assignable_users failed for query={query!r}")
+            raise Exception(f"Error searching users for query '{query}': {e}") from e
+
+        if not isinstance(data, list):
+            logger.error(
+                f"Unexpected response type from /user/assignable/search: {type(data)}"
+            )
+            return []
+
+        users: list[JiraUser] = []
+        for raw in data:
+            if not isinstance(raw, dict):
+                continue
+            users.append(JiraUser.from_api_response(raw))
+        return users
+
+    @handle_auth_errors("Jira API")
     def get_user_profile_by_identifier(self, identifier: str) -> "JiraUser":
         """
         Retrieve Jira user profile information by identifier.
@@ -385,6 +472,11 @@ class UsersMixin(JiraClient):
                 fails.
             Exception: For other API errors.
         """
+        # Handle 'me' as a special case — resolve to current user's account ID
+        if identifier.lower() == "me":
+            resolved_id = self.get_current_user_account_id()
+            return self.get_user_profile_by_identifier(resolved_id)
+
         api_kwargs = self._determine_user_api_params(identifier)
 
         try:
