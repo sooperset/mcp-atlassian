@@ -1,26 +1,22 @@
 """Confluence-specific text preprocessing module."""
 
 import logging
-import shutil
 import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 from md2conf.converter import (
-    ConfluenceConverterOptions,
+    ConfluencePageCollection,
     ConfluenceStorageFormatConverter,
+    ConfluenceUserCollection,
+    ConverterOptions,
     attachment_name,
+    elements_from_strings,
     elements_to_string,
     markdown_to_html,
 )
 from md2conf.metadata import ConfluenceSiteMetadata
-
-# Handle md2conf API changes: elements_from_string may be renamed to elements_from_strings
-try:
-    from md2conf.converter import elements_from_string
-except ImportError:
-    from md2conf.converter import elements_from_strings as elements_from_string
 
 from .base import BasePreprocessor
 
@@ -54,18 +50,23 @@ class ConfluencePreprocessor(BasePreprocessor):
         """
         try:
             # First convert markdown to HTML
-            html_content = markdown_to_html(markdown_content)
+            html_content = self._fix_attachment_images(
+                markdown_to_html(markdown_content)
+            )
 
-            # Create a temporary directory for any potential attachments
-            temp_dir = tempfile.mkdtemp()
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root_dir = Path(temp_dir)
+                path = root_dir / "temp.md"
+                path.write_text(markdown_content, encoding="utf-8")
 
-            try:
                 # Parse the HTML into an element tree
-                root = elements_from_string(html_content)
+                root = elements_from_strings([html_content])
+
+                parsed_url = urlparse(self.base_url)
 
                 # Create converter options
-                options = ConfluenceConverterOptions(
-                    ignore_invalid_url=True,
+                options = ConverterOptions(
+                    force_valid_url=False,
                     heading_anchors=enable_heading_anchors,
                     render_mermaid=False,
                 )
@@ -73,12 +74,15 @@ class ConfluencePreprocessor(BasePreprocessor):
                 # Create a converter
                 converter = ConfluenceStorageFormatConverter(
                     options=options,
-                    path=Path(temp_dir) / "temp.md",
-                    root_dir=Path(temp_dir),
+                    path=path,
+                    root_dir=root_dir,
                     site_metadata=ConfluenceSiteMetadata(
-                        domain="", base_path="", space_key=None
+                        domain=parsed_url.netloc,
+                        base_path=parsed_url.path or "/wiki",
+                        space_key=None,
                     ),
-                    page_metadata={},
+                    page_metadata=ConfluencePageCollection(),
+                    user_metadata=ConfluenceUserCollection(),
                 )
 
                 # Transform the HTML to Confluence storage format
@@ -88,9 +92,6 @@ class ConfluencePreprocessor(BasePreprocessor):
                 storage_format = elements_to_string(root)
 
                 return self._fix_attachment_images(str(storage_format))
-            finally:
-                # Clean up the temporary directory
-                shutil.rmtree(temp_dir, ignore_errors=True)
 
         except Exception as e:
             logger.error(f"Error converting markdown to Confluence storage format: {e}")
