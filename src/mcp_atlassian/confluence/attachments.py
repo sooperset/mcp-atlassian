@@ -575,12 +575,25 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             if minor_edit is not None:
                 data["minorEdit"] = str(minor_edit).lower()
 
-            # Use PUT to support creating new versions of existing attachments
-            # PUT will create a new attachment if it doesn't exist, OR create a new
-            # version if an attachment with the same filename already exists
-            response = self.confluence._session.put(
-                url, headers=headers, files=files, data=data
-            )
+            # HTTP method differs by deployment (see #1163 / #1202):
+            #   * Confluence Cloud accepts PUT on the collection endpoint, which
+            #     creates the attachment, or a new version if the filename exists.
+            #   * Confluence Server/Data Center rejects PUT here with
+            #     405 Method Not Allowed and requires POST (POST also creates a new
+            #     version when the filename already exists on Server/DC).
+            # Official REST API docs:
+            #   Cloud (PUT create-or-update + POST):
+            #     https://developer.atlassian.com/cloud/confluence/rest/v1/api-group-content---attachments/
+            #   Server/Data Center (POST only; PUT on collection -> 405):
+            #     https://developer.atlassian.com/server/confluence/rest/v1010/api-group-attachments/
+            if self.config.is_cloud:
+                response = self.confluence._session.put(
+                    url, headers=headers, files=files, data=data
+                )
+            else:
+                response = self.confluence._session.post(
+                    url, headers=headers, files=files, data=data
+                )
             response.raise_for_status()
 
             # Parse response

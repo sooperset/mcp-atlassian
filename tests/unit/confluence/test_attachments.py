@@ -105,13 +105,14 @@ class TestAttachmentsMixin:
 
         mock_response = Mock()
         if raise_error:
-            # Changed from .post to .put to match implementation
+            # Mock both verbs: Cloud uses PUT, Server/DC uses POST.
             attachments_mixin.confluence._session.put.side_effect = raise_error
+            attachments_mixin.confluence._session.post.side_effect = raise_error
         else:
             mock_response.json.return_value = response_data
             mock_response.raise_for_status.return_value = None
-            # Changed from .post to .put to match implementation
             attachments_mixin.confluence._session.put.return_value = mock_response
+            attachments_mixin.confluence._session.post.return_value = mock_response
 
         return mock_response
 
@@ -171,7 +172,8 @@ class TestAttachmentsMixin:
         """Run an upload with the given config URL and return the request URL.
 
         Sets ``config.url`` (which drives ``is_cloud``), performs an upload with
-        all file I/O mocked, and returns the URL passed to ``session.put``.
+        all file I/O mocked, and returns the URL passed to the upload request
+        (PUT on Cloud, POST on Server/DC).
         """
         attachments_mixin.config.url = config_url
         self._mock_rest_api_upload(attachments_mixin)
@@ -188,7 +190,9 @@ class TestAttachmentsMixin:
                 "123456", "/absolute/path/test_file.txt"
             )
 
-        return attachments_mixin.confluence._session.put.call_args[0][0]
+        session = attachments_mixin.confluence._session
+        verb = session.put if attachments_mixin.config.is_cloud else session.post
+        return verb.call_args[0][0]
 
     def test_upload_attachment_cloud_adds_wiki_prefix(
         self, attachments_mixin: AttachmentsMixin
@@ -228,6 +232,52 @@ class TestAttachmentsMixin:
             url == "https://confluence.example.com"
             "/rest/api/content/123456/child/attachment"
         )
+
+    def test_upload_attachment_cloud_uses_put(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Cloud uses HTTP PUT (create-or-new-version) on the attachment endpoint."""
+        attachments_mixin.config.url = "https://test.atlassian.net/wiki"
+        self._mock_rest_api_upload(attachments_mixin)
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("os.path.getsize", return_value=100),
+            patch("os.path.isabs", return_value=True),
+            patch("os.path.abspath", return_value="/absolute/path/test_file.txt"),
+            patch("os.path.basename", return_value="test_file.txt"),
+            patch("builtins.open", mock_open(read_data=b"test content")),
+        ):
+            result = attachments_mixin.upload_attachment(
+                "123456", "/absolute/path/test_file.txt"
+            )
+
+        assert result["success"] is True
+        attachments_mixin.confluence._session.put.assert_called_once()
+        attachments_mixin.confluence._session.post.assert_not_called()
+
+    def test_upload_attachment_server_dc_uses_post(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Server/DC must use HTTP POST - DC returns 405 for PUT (see #1163)."""
+        attachments_mixin.config.url = "https://confluence.example.com"
+        self._mock_rest_api_upload(attachments_mixin)
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("os.path.getsize", return_value=100),
+            patch("os.path.isabs", return_value=True),
+            patch("os.path.abspath", return_value="/absolute/path/test_file.txt"),
+            patch("os.path.basename", return_value="test_file.txt"),
+            patch("builtins.open", mock_open(read_data=b"test content")),
+        ):
+            result = attachments_mixin.upload_attachment(
+                "123456", "/absolute/path/test_file.txt"
+            )
+
+        assert result["success"] is True
+        attachments_mixin.confluence._session.post.assert_called_once()
+        attachments_mixin.confluence._session.put.assert_not_called()
 
     def test_upload_attachment_relative_path(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with a relative path."""
