@@ -1025,8 +1025,20 @@ class PagesMixin(ConfluenceClient):
                 page_id = page.get("id")
                 title = page.get("title", "Untitled")
 
-                # Position is auto-included via extensions in the v1 API
-                position = page.get("extensions", {}).get("position")
+                # Position is auto-included via extensions in the v1 API.
+                # Confluence DC/Server can return position as the string
+                # "none" (or other non-numeric strings) instead of int/null.
+                # Normalize to int | None so sorting never mixes types.
+                raw_position = page.get("extensions", {}).get("position")
+                if raw_position is None:
+                    position = None
+                elif isinstance(raw_position, int):
+                    position = raw_position
+                else:
+                    try:
+                        position = int(str(raw_position))
+                    except (TypeError, ValueError):
+                        position = None
 
                 # Determine parent and depth from ancestors
                 ancestors = page.get("ancestors", [])
@@ -1047,13 +1059,13 @@ class PagesMixin(ConfluenceClient):
                     }
                 )
 
-            # Sort by depth first (breadth-first), then by position
-            # Note: position can be 0 (valid), so check for None explicitly
+            # Sort by depth first (breadth-first), then by position.
+            # Position is now always int | None after normalization above.
             result_pages.sort(
                 key=lambda p: (
                     p["depth"],
                     p["position"] if p["position"] is not None else 999999,
-                    p["title"],
+                    p["title"] or "",
                 )
             )
 

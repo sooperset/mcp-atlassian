@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+import requests
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.jira import JiraFetcher
@@ -31,6 +32,20 @@ class TestJiraCloudBehavior:
             # Check the model field directly — to_simplified_dict()
             # does NOT expose accountId
             assert issue.assignee.account_id is not None
+
+    def test_search_assignable_users_by_project(
+        self,
+        jira_fetcher: JiraFetcher,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        """Cloud assignable-user search accepts query= with project scope."""
+        users = jira_fetcher.search_assignable_users(
+            query=cloud_instance.username.split("@", maxsplit=1)[0],
+            project_key=cloud_instance.project_key,
+            limit=5,
+        )
+
+        assert isinstance(users, list)
 
 
 class TestJiraCloudEpicOperations:
@@ -59,6 +74,36 @@ class TestJiraCloudEpicOperations:
             raise
         resource_tracker.add_jira_issue(epic.key)
         assert epic.key.startswith(cloud_instance.project_key)
+
+
+class TestJiraCloudVersionOperations:
+    """Version creation on Cloud."""
+
+    def test_create_project_version(
+        self,
+        jira_fetcher: JiraFetcher,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        name = f"cloud-e2e-version-{uid}"
+        version: dict[str, object] | None = None
+
+        try:
+            version = jira_fetcher.create_project_version(
+                project_key=cloud_instance.project_key,
+                name=name,
+                description="Auto-created for Cloud version endpoint testing.",
+            )
+
+            assert version["name"] == name
+            assert version.get("id")
+        finally:
+            if version and version.get("id"):
+                requests.delete(
+                    f"{cloud_instance.jira_url}/rest/api/3/version/{version['id']}",
+                    auth=(cloud_instance.username, cloud_instance.api_token),
+                    timeout=30,
+                ).raise_for_status()
 
 
 class TestJiraCloudSubtask:
