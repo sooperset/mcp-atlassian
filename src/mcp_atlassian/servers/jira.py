@@ -1828,7 +1828,8 @@ async def assign_issue(
         str | None,
         Field(
             description=(
-                "User identifier to assign (email, display name, or account ID). "
+                "User identifier to assign (email, display name, or account ID), "
+                "or a JSON object string from jira_search_assignable_users. "
                 "Pass null or empty string to unassign the issue."
             ),
             default=None,
@@ -1843,8 +1844,9 @@ async def assign_issue(
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        assignee: User identifier (email, display name, or account ID).
-                  Pass None or empty string to unassign.
+        assignee: User identifier (email, display name, or account ID), or a
+            JSON object string from jira_search_assignable_users. Pass None or
+            empty string to unassign.
 
     Returns:
         JSON string representing the updated issue object.
@@ -1854,7 +1856,16 @@ async def assign_issue(
     """
     jira = await get_jira_fetcher(ctx)
     try:
-        issue = jira.assign_issue(issue_key=issue_key, assignee=assignee)
+        parsed_assignee: str | dict[str, Any] | None = assignee
+        if assignee and assignee.strip().startswith("{"):
+            try:
+                parsed_assignee = json.loads(assignee)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"assignee is not valid JSON: {e}") from e
+            if not isinstance(parsed_assignee, dict):
+                raise ValueError("assignee JSON must be an object.")
+
+        issue = jira.assign_issue(issue_key=issue_key, assignee=parsed_assignee)
         result = issue.to_simplified_dict()
         return json.dumps(
             {"message": f"Issue {issue_key} assigned successfully", "issue": result},

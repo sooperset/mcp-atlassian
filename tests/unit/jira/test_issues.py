@@ -806,6 +806,47 @@ class TestIssuesMixin:
         assert not issues_mixin._get_account_id.called
         assert document.key == "TEST-123"
 
+    def test_assign_issue_assignee_dict_passthrough_account_id(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Cloud-shaped assignee dict is unwrapped without user lookup."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            description="This is a test"
+        )
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+        issues_mixin._get_account_id = MagicMock()
+
+        document = issues_mixin.assign_issue(
+            issue_key="TEST-123",
+            assignee={"account_id": "5b10ac8d82e05b22cc7d4ef5"},
+        )
+
+        issues_mixin._get_account_id.assert_not_called()
+        issues_mixin.jira.assign_issue.assert_called_once_with(
+            "TEST-123", "5b10ac8d82e05b22cc7d4ef5"
+        )
+        assert document.key == "TEST-123"
+
+    def test_assign_issue_assignee_dict_passthrough_name(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Server/DC-shaped assignee dict is unwrapped without user lookup."""
+        issues_mixin.config.url = "https://jira.example.com"
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            description="This is a test"
+        )
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+        issues_mixin._get_account_id = MagicMock()
+
+        document = issues_mixin.assign_issue(
+            issue_key="TEST-123",
+            assignee={"name": "jdoe"},
+        )
+
+        issues_mixin._get_account_id.assert_not_called()
+        issues_mixin.jira.assign_issue.assert_called_once_with("TEST-123", "jdoe")
+        assert document.key == "TEST-123"
+
     def test_assign_issue_error(self, issues_mixin: IssuesMixin):
         """Test error handling when assignment fails."""
         issues_mixin.jira.assign_issue.side_effect = Exception("Permission denied")

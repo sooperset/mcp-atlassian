@@ -4,6 +4,7 @@ import json
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -147,7 +148,9 @@ def mock_jira_fetcher():
     mock_fetcher.update_issue.side_effect = mock_update_issue
 
     # Configure assign_issue
-    def mock_assign_issue(issue_key: str, assignee: str | None = None) -> MagicMock:
+    def mock_assign_issue(
+        issue_key: str, assignee: str | dict[str, Any] | None = None
+    ) -> MagicMock:
         mock_issue = MagicMock()
         mock_issue.to_simplified_dict.return_value = {
             "key": issue_key,
@@ -2609,6 +2612,28 @@ async def test_assign_issue_unassign(jira_client, mock_jira_fetcher):
     assert content["message"] == "Issue TEST-123 assigned successfully"
     mock_jira_fetcher.assign_issue.assert_called_once_with(
         issue_key="TEST-123", assignee=None
+    )
+
+
+@pytest.mark.anyio
+async def test_assign_issue_with_resolved_user_dict(jira_client, mock_jira_fetcher):
+    """Test assigning an issue with a resolved user object JSON string."""
+    assignee = {
+        "account_id": "5b10ac8d82e05b22cc7d4ef5",
+        "display_name": "Test User",
+    }
+
+    response = await jira_client.call_tool(
+        "jira_assign_issue",
+        {
+            "issue_key": "TEST-123",
+            "assignee": json.dumps(assignee),
+        },
+    )
+    content = json.loads(response.content[0].text)
+    assert content["message"] == "Issue TEST-123 assigned successfully"
+    mock_jira_fetcher.assign_issue.assert_called_once_with(
+        issue_key="TEST-123", assignee=assignee
     )
 
 
