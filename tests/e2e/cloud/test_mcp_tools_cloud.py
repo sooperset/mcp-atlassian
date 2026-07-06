@@ -13,6 +13,7 @@ from fastmcp import Client
 from fastmcp.client import FastMCPTransport
 from mcp.types import CallToolResult, TextContent
 
+from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.servers import main_mcp
 
 from .conftest import CloudInstanceInfo
@@ -120,6 +121,49 @@ class TestMCPJiraTools:
             "jira_delete_issue",
             {"issue_key": issue_key},
         )
+
+    @pytest.mark.anyio
+    async def test_jira_assign_issue(
+        self,
+        mcp_client: Client,
+        cloud_instance: CloudInstanceInfo,
+        jira_fetcher: JiraFetcher,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        result = await call_tool(
+            mcp_client,
+            "jira_create_issue",
+            {
+                "project_key": cloud_instance.project_key,
+                "summary": f"Cloud MCP Assign Test {uid}",
+                "description": "Created for MCP assign_issue test.",
+                "issue_type": "Task",
+            },
+        )
+        assert not result.is_error
+        assert result.content and isinstance(result.content[0], TextContent)
+        data = json.loads(result.content[0].text)
+        issue_key = data["issue"]["key"]
+
+        try:
+            account_id = jira_fetcher.get_current_user_account_id()
+            assign_result = await call_tool(
+                mcp_client,
+                "jira_assign_issue",
+                {"issue_key": issue_key, "assignee": account_id},
+            )
+            assert not assign_result.is_error
+            assert assign_result.content
+            assign_data = json.loads(assign_result.content[0].text)
+            assignee = assign_data["issue"].get("assignee")
+            assert isinstance(assignee, dict)
+            assert assignee.get("account_id") == account_id
+        finally:
+            await call_tool(
+                mcp_client,
+                "jira_delete_issue",
+                {"issue_key": issue_key},
+            )
 
 
 class TestMCPConfluenceTools:
