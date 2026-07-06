@@ -11,7 +11,7 @@ from ..utils.oauth import (
     OAuthConfig,
     get_oauth_config_from_env,
 )
-from ..utils.urls import is_atlassian_cloud_url
+from ..utils.urls import is_atlassian_cloud_url, validate_url_for_ssrf
 
 
 @dataclass
@@ -98,6 +98,10 @@ class ConfluenceConfig:
             ValueError: If any required environment variable is missing
         """
         url = os.getenv("CONFLUENCE_URL")
+        if url:
+            ssrf_error = validate_url_for_ssrf(url)
+            if ssrf_error:
+                raise ValueError(f"CONFLUENCE_URL failed SSRF validation: {ssrf_error}")
         if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE"):
             error_msg = (
                 "Missing required CONFLUENCE_URL environment variable. "
