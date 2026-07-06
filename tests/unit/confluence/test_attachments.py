@@ -9,6 +9,7 @@ import pytest
 from mcp.types import EmbeddedResource, TextContent
 
 from mcp_atlassian.confluence.attachments import AttachmentsMixin
+from mcp_atlassian.confluence.config import ConfluenceConfig
 
 # Test scenarios for AttachmentsMixin
 #
@@ -1592,3 +1593,108 @@ class TestConfluenceAttachmentPathTraversal:
         """download_content_attachments rejects directory escape."""
         with pytest.raises(ValueError, match="Path traversal detected"):
             confluence_mixin.download_content_attachments("12345", "/etc")
+
+
+class TestResolveAttachmentDownloadUrl:
+    """Tests for AttachmentsMixin._resolve_attachment_download_url.
+
+    Covers the CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1 Cloud workaround: when
+    enabled, the (removed) legacy /download/attachments/... link is rewritten to
+    the v1 REST endpoint; otherwise the original link is preserved.
+    """
+
+    def _make_mixin(
+        self, *, use_v1: bool | None, url: str = "https://example.atlassian.net/wiki"
+    ) -> AttachmentsMixin:
+        with patch(
+            "mcp_atlassian.confluence.attachments.ConfluenceClient.__init__",
+            return_value=None,
+        ):
+            mixin = AttachmentsMixin()
+        config = ConfluenceConfig(url=url, auth_type="basic")
+        config.attachment_download_use_v1 = use_v1
+        mixin.config = config
+        return mixin
+
+    def test_v1_enabled_builds_rest_endpoint(self) -> None:
+        mixin = self._make_mixin(use_v1=True)
+        url = mixin._resolve_attachment_download_url(
+            "/download/attachments/123/foo.png?version=1&api=v2",
+            attachment_id="att999",
+        )
+        assert url == (
+            "https://example.atlassian.net/wiki"
+            "/rest/api/content/123/child/attachment/att999/download?version=1"
+        )
+
+    def test_v1_preserves_only_version_param(self) -> None:
+        # The v1 download endpoint documents only ``version``; keep that (so a
+        # version-specific link doesn't fall back to latest) and drop the other
+        # legacy query params (cacheVersion / api / ...).
+        mixin = self._make_mixin(use_v1=True)
+        url = mixin._resolve_attachment_download_url(
+            "/download/attachments/123/foo.png?version=3&cacheVersion=1&api=v2",
+            attachment_id="att999",
+        )
+        assert url.endswith("/att999/download?version=3")
+        assert "cacheVersion" not in url
+        assert "api=v2" not in url
+
+    def test_v1_handles_relative_url_without_leading_slash(self) -> None:
+        mixin = self._make_mixin(use_v1=True)
+        url = mixin._resolve_attachment_download_url(
+            "download/attachments/123/foo.png?version=2",
+            attachment_id="att999",
+        )
+        assert url.endswith(
+            "/rest/api/content/123/child/attachment/att999/download?version=2"
+        )
+
+    def test_v1_enabled_uses_explicit_content_id(self) -> None:
+        mixin = self._make_mixin(use_v1=True)
+        url = mixin._resolve_attachment_download_url(
+            "/download/attachments/123/foo.png",
+            attachment_id="att999",
+            content_id="555",
+        )
+        assert "/rest/api/content/555/child/attachment/att999/download" in url
+
+    def test_disabled_returns_legacy_link(self) -> None:
+        mixin = self._make_mixin(use_v1=False)
+        url = mixin._resolve_attachment_download_url(
+            "/download/attachments/123/foo.png", attachment_id="att999"
+        )
+        assert "/download/attachments/123/" in url
+        assert "/child/attachment/" not in url
+
+    def test_missing_attachment_id_falls_back_to_legacy(self) -> None:
+        mixin = self._make_mixin(use_v1=True)
+        url = mixin._resolve_attachment_download_url(
+            "/download/attachments/123/foo.png", attachment_id=None
+        )
+        assert "/download/attachments/123/" in url
+        assert "/child/attachment/" not in url
+
+    def test_auto_cloud_uses_v1(self) -> None:
+        mixin = self._make_mixin(use_v1=None)
+        url = mixin._resolve_attachment_download_url(
+            "/download/attachments/123/foo.png", attachment_id="att999"
+        )
+        assert "/rest/api/content/123/child/attachment/att999/download" in url
+
+    def test_auto_cloud_adds_wiki_prefix_for_bare_site_url(self) -> None:
+        mixin = self._make_mixin(use_v1=None, url="https://example.atlassian.net")
+        url = mixin._resolve_attachment_download_url(
+            "/download/attachments/123/foo.png", attachment_id="att999"
+        )
+        assert url == (
+            "https://example.atlassian.net/wiki"
+            "/rest/api/content/123/child/attachment/att999/download"
+        )
+
+    def test_auto_server_dc_returns_legacy(self) -> None:
+        mixin = self._make_mixin(use_v1=None, url="https://confluence.example.com")
+        url = mixin._resolve_attachment_download_url(
+            "/download/attachments/123/foo.png", attachment_id="att999"
+        )
+        assert "/child/attachment/" not in url
