@@ -400,6 +400,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         get_issue_images,
         get_link_types,
         get_project_components,
+        get_project_fields,
         get_project_issues,
         get_project_versions,
         get_queue_issues,
@@ -413,6 +414,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         link_to_epic,
         remove_issue_link,
         search,
+        search_assignable_users,
         search_fields,
         transition_issue,
         update_issue,
@@ -426,6 +428,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(get_project_issues)
     jira_sub_mcp.add_tool(get_project_versions)
     jira_sub_mcp.add_tool(get_project_components)
+    jira_sub_mcp.add_tool(get_project_fields)
     jira_sub_mcp.add_tool(get_all_projects)
     jira_sub_mcp.add_tool(get_service_desk_for_project)
     jira_sub_mcp.add_tool(get_service_desk_queues)
@@ -441,6 +444,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(get_sprint_issues)
     jira_sub_mcp.add_tool(get_link_types)
     jira_sub_mcp.add_tool(get_user_profile)
+    jira_sub_mcp.add_tool(search_assignable_users)
     jira_sub_mcp.add_tool(create_issue)
     jira_sub_mcp.add_tool(batch_create_issues)
     jira_sub_mcp.add_tool(batch_get_changelogs)
@@ -870,6 +874,78 @@ async def test_get_user_profile_tool_not_found(jira_client, mock_jira_fetcher):
 
 
 @pytest.mark.anyio
+async def test_search_assignable_users_tool_success(jira_client, mock_jira_fetcher):
+    """Test the search_assignable_users tool returns assignable users."""
+    user = MagicMock()
+    user.to_simplified_dict.return_value = {
+        "account_id": "5b10ac8d82e05b22cc7d4ef5",
+        "display_name": "John Smith",
+        "name": "jsmith",
+        "email": "jsmith@example.com",
+    }
+    mock_jira_fetcher.search_assignable_users.return_value = [user]
+
+    response = await jira_client.call_tool(
+        "jira_search_assignable_users",
+        {"query": "Smith", "project_key": "TEST", "limit": 5},
+    )
+
+    mock_jira_fetcher.search_assignable_users.assert_called_once_with(
+        query="Smith",
+        project_key="TEST",
+        issue_key=None,
+        limit=5,
+    )
+    result_data = json.loads(response.content[0].text)
+    assert result_data == {
+        "success": True,
+        "count": 1,
+        "users": [
+            {
+                "account_id": "5b10ac8d82e05b22cc7d4ef5",
+                "display_name": "John Smith",
+                "name": "jsmith",
+                "email": "jsmith@example.com",
+            }
+        ],
+    }
+
+
+@pytest.mark.anyio
+async def test_search_assignable_users_tool_requires_scope(
+    jira_client, mock_jira_fetcher
+):
+    """Test search_assignable_users requires project_key or issue_key."""
+    response = await jira_client.call_tool(
+        "jira_search_assignable_users",
+        {"query": "Smith"},
+    )
+
+    mock_jira_fetcher.search_assignable_users.assert_not_called()
+    result_data = json.loads(response.content[0].text)
+    assert result_data["success"] is False
+    assert "project_key or issue_key" in result_data["error"]
+    assert result_data["query"] == "Smith"
+
+
+@pytest.mark.anyio
+async def test_search_assignable_users_tool_rejects_multiple_scopes(
+    jira_client, mock_jira_fetcher
+):
+    """Test search_assignable_users rejects ambiguous project and issue scopes."""
+    response = await jira_client.call_tool(
+        "jira_search_assignable_users",
+        {"query": "Smith", "project_key": "TEST", "issue_key": "TEST-1"},
+    )
+
+    mock_jira_fetcher.search_assignable_users.assert_not_called()
+    result_data = json.loads(response.content[0].text)
+    assert result_data["success"] is False
+    assert "Exactly one" in result_data["error"]
+    assert result_data["query"] == "Smith"
+
+
+@pytest.mark.anyio
 async def test_no_fetcher_get_issue(no_fetcher_client_fixture, mock_request):
     """Test that get_issue fails when Jira client is not configured (global config missing)."""
 
@@ -1042,8 +1118,8 @@ async def test_get_all_projects_tool(jira_client, mock_jira_fetcher):
     ]
     # Reset the mock and set specific return value for this test
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        mock_projects
     )
 
     # Test with default parameters (include_archived=False)
@@ -1091,8 +1167,8 @@ async def test_get_all_projects_tool_with_archived(jira_client, mock_jira_fetche
     ]
     # Reset the mock and set specific return value for this test
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        mock_projects
     )
 
     # Test with include_archived=True
@@ -1145,8 +1221,8 @@ async def test_get_all_projects_tool_with_projects_filter(
 
     # Set up the mock to return all projects
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: all_mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        all_mock_projects
     )
 
     # Set up the projects filter in the config
@@ -1199,8 +1275,8 @@ async def test_get_all_projects_tool_no_projects_filter(jira_client, mock_jira_f
 
     # Set up the mock to return all projects
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: all_mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        all_mock_projects
     )
 
     # Ensure no projects filter is set
@@ -1260,8 +1336,8 @@ async def test_get_all_projects_tool_case_insensitive_filter(
 
     # Set up the mock to return all projects
     mock_jira_fetcher.get_all_projects.reset_mock()
-    mock_jira_fetcher.get_all_projects.side_effect = (
-        lambda include_archived=False: all_mock_projects
+    mock_jira_fetcher.get_all_projects.side_effect = lambda include_archived=False: (
+        all_mock_projects
     )
 
     # Set up projects filter with mixed case and whitespace
@@ -1369,6 +1445,51 @@ async def test_get_all_projects_tool_configuration_error_handling(
 
     data = json.loads(msg.text)
     assert data["success"] is False
+    assert "Configuration Error" in data["error"]
+
+
+@pytest.mark.anyio
+async def test_get_project_fields_tool(jira_client, mock_jira_fetcher):
+    """Test the jira_get_project_fields tool returns project field schema."""
+    mock_fields = [
+        {
+            "field_id": "summary",
+            "name": "Summary",
+            "required": True,
+            "schema_type": "string",
+            "custom": False,
+            "issue_types": ["Bug", "Task"],
+        }
+    ]
+    mock_jira_fetcher.get_project_fields.return_value = mock_fields
+
+    response = await jira_client.call_tool(
+        "jira_get_project_fields",
+        {"project_key": "TEST"},
+    )
+
+    mock_jira_fetcher.get_project_fields.assert_called_once_with("TEST")
+    data = json.loads(response.content[0].text)
+    assert data == mock_fields
+
+
+@pytest.mark.anyio
+async def test_get_project_fields_tool_configuration_error(
+    jira_client, mock_jira_fetcher
+):
+    """Test jira_get_project_fields handles configuration errors."""
+    mock_jira_fetcher.get_project_fields.side_effect = ValueError(
+        "Jira client not configured"
+    )
+
+    response = await jira_client.call_tool(
+        "jira_get_project_fields",
+        {"project_key": "TEST"},
+    )
+
+    data = json.loads(response.content[0].text)
+    assert data["success"] is False
+    assert data["project_key"] == "TEST"
     assert "Configuration Error" in data["error"]
 
 
