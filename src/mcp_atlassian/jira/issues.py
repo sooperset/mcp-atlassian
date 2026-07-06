@@ -1101,6 +1101,16 @@ class IssuesMixin(
                     # Handle assignee updates, allow unassignment with None or empty string
                     if value is None or value == "":
                         update_fields["assignee"] = None
+                    elif isinstance(value, dict):
+                        # Caller already has a fully-shaped assignee — most
+                        # commonly the output of search_assignable_users /
+                        # get_user_profile. Forward it as-is without going
+                        # through _get_account_id: the lookup endpoints used
+                        # there (/user/search, /user/permission/search) need
+                        # the global "Browse Users" permission that many bot
+                        # accounts on hardened DC instances lack, and we
+                        # already have the canonical shape Jira wants.
+                        update_fields["assignee"] = value
                     else:
                         try:
                             account_id = self._get_account_id(value)

@@ -668,6 +668,69 @@ class TestIssuesMixin:
             issue_key="TEST-123", update={"fields": {"summary": "Updated"}}
         )
 
+    def test_update_issue_assignee_dict_passthrough_name(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Dict-shaped assignee (Server/DC name form) is forwarded as-is.
+
+        _get_account_id must NOT be called — caller already has the canonical
+        shape (typically from search_assignable_users / get_user_profile) and
+        we must not require global "Browse Users" permission just to relay it.
+        """
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            description="This is a test"
+        )
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+        issues_mixin._get_account_id = MagicMock()
+
+        issues_mixin.update_issue(
+            issue_key="TEST-123", assignee={"name": "jdoe@example.com"}
+        )
+
+        issues_mixin._get_account_id.assert_not_called()
+        issues_mixin.jira.update_issue.assert_called_once_with(
+            issue_key="TEST-123",
+            update={"fields": {"assignee": {"name": "jdoe@example.com"}}},
+        )
+
+    def test_update_issue_assignee_dict_passthrough_accountid(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Cloud-shape assignee dict ({"accountId": ...}) is forwarded as-is too."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            description="This is a test"
+        )
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+        issues_mixin._get_account_id = MagicMock()
+
+        issues_mixin.update_issue(
+            issue_key="TEST-123",
+            assignee={"accountId": "5b10ac8d82e05b22cc7d4ef5"},
+        )
+
+        issues_mixin._get_account_id.assert_not_called()
+        issues_mixin.jira.update_issue.assert_called_once_with(
+            issue_key="TEST-123",
+            update={"fields": {"assignee": {"accountId": "5b10ac8d82e05b22cc7d4ef5"}}},
+        )
+
+    def test_update_issue_assignee_unresolvable_does_not_update(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """An unresolvable assignee must not silently turn into a no-op update."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            description="This is a test"
+        )
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+        issues_mixin._get_account_id = MagicMock(side_effect=ValueError("not found"))
+
+        with pytest.raises(ValueError, match="Could not update assignee"):
+            issues_mixin.update_issue(
+                issue_key="TEST-123", assignee="ghost@example.com"
+            )
+
+        issues_mixin.jira.update_issue.assert_not_called()
+
     def test_update_issue_unassign(self, issues_mixin: IssuesMixin, make_issue_data):
         """Test unassigning an issue."""
         issues_mixin.jira.get_issue.return_value = make_issue_data(
