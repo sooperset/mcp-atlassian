@@ -772,13 +772,15 @@ async def update_page_section(
             )
         ),
     ],
+    *,
     content_format: Annotated[
         str,
         Field(
             description=(
                 "(Optional) Format of new_content. "
-                "Options: 'markdown' (default) or 'storage' (raw Confluence storage XML). "
-                "Use 'storage' to insert macros or elements that markdown cannot express."
+                "Options: 'markdown' (default) or 'storage' "
+                "(raw Confluence storage XML). Use 'storage' to insert "
+                "macros or elements that markdown cannot express."
             ),
             default="markdown",
         ),
@@ -817,9 +819,11 @@ async def update_page_section(
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
     if content_format not in ("markdown", "storage"):
-        raise ValueError(
-            f"Invalid content_format '{content_format}'. Must be 'markdown' or 'storage'."
+        error_msg = (
+            f"Invalid content_format '{content_format}'. Must be "
+            "'markdown' or 'storage'."
         )
+        raise ValueError(error_msg)
 
     updated_page = confluence_fetcher.update_page_section(
         page_id=page_id,

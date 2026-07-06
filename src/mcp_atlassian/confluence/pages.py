@@ -759,10 +759,11 @@ class PagesMixin(ConfluenceClient):
             Exception: If retrieving or updating the page fails.
         """
         if content_format not in ("markdown", "storage"):
-            raise ValueError(
-                f"Invalid content_format '{content_format}'. "
-                "Must be 'markdown' or 'storage'."
+            error_msg = (
+                f"Invalid content_format '{content_format}'. Must be "
+                "'markdown' or 'storage'."
             )
+            raise ValueError(error_msg)
 
         # 1. Fetch raw storage XML — no markdown conversion so nothing is lost.
         page = self.get_page_content(page_id, convert_to_markdown=False)
@@ -790,10 +791,11 @@ class PagesMixin(ConfluenceClient):
                 break
 
         if target_heading is None:
-            raise ValueError(
+            error_msg = (
                 f"Heading '{heading_text.strip()}' not found in page {page_id}. "
                 "Heading text must match exactly (case-sensitive)."
             )
+            raise ValueError(error_msg)
 
         heading_level = int(target_heading.name[1])  # e.g. "h2" → 2
 
@@ -801,7 +803,7 @@ class PagesMixin(ConfluenceClient):
         #    this heading and the next heading of the same or higher level).
         #    NavigableString nodes (whitespace, text) are included alongside
         #    Tag nodes, so we type the list broadly.
-        siblings_to_remove: list = []
+        siblings_to_remove: list[Any] = []
         current = target_heading.next_sibling
         while current is not None:
             if isinstance(current, Tag) and current.name in heading_tags:
@@ -822,10 +824,11 @@ class PagesMixin(ConfluenceClient):
         if heading_pos == -1:
             # Should not happen: heading was found by BS4 and serialised above.
             # Guard against unexpected BS4 serialisation edge cases.
-            raise ValueError(
+            error_msg = (
                 f"Internal error: could not locate heading '{heading_text.strip()}' "
                 "in serialised page HTML. Please report this as a bug."
             )
+            raise ValueError(error_msg)
         insert_at = heading_pos + len(heading_html)
         final_html = (
             pruned_html[:insert_at] + new_storage_fragment + pruned_html[insert_at:]

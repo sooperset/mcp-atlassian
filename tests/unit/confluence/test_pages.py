@@ -3137,7 +3137,7 @@ class TestUpdatePageSection:
         assert 'ac:name="toc"' in body
 
     def test_storage_format_content_not_converted(self, pages_mixin):
-        """When content_format='storage', markdown_to_confluence_storage is not called."""
+        """Storage content is inserted without markdown conversion."""
         raw_page = self._make_page("1", "P", "<h2>Section</h2><p>old</p>")
         updated_page = self._make_page("1", "P", "")
 
