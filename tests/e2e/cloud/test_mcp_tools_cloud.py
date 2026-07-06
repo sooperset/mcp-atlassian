@@ -225,3 +225,64 @@ class TestMCPConfluenceTools:
             "confluence_delete_page",
             {"page_id": page_id},
         )
+
+    @pytest.mark.anyio
+    async def test_confluence_update_page_section(
+        self,
+        mcp_client: Client,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        page_id = None
+        create_result = await call_tool(
+            mcp_client,
+            "confluence_create_page",
+            {
+                "space_key": cloud_instance.space_key,
+                "title": f"Cloud MCP Section Update Test {uid}",
+                "content": (
+                    "# Summary\n\nKeep summary.\n\n"
+                    "## Target Section\n\nOld target body.\n\n"
+                    "## Next Section\n\nKeep next."
+                ),
+            },
+        )
+        assert not create_result.is_error
+        assert create_result.content and isinstance(
+            create_result.content[0], TextContent
+        )
+        page_id = json.loads(create_result.content[0].text)["page"]["id"]
+
+        try:
+            update_result = await call_tool(
+                mcp_client,
+                "confluence_update_page_section",
+                {
+                    "page_id": page_id,
+                    "heading_text": "Target Section",
+                    "new_content": "New target body.",
+                    "is_minor_edit": True,
+                    "version_comment": "Cloud MCP e2e section update",
+                },
+            )
+            assert not update_result.is_error
+
+            get_result = await call_tool(
+                mcp_client,
+                "confluence_get_page",
+                {"page_id": page_id, "include_metadata": False},
+            )
+            assert not get_result.is_error
+            assert get_result.content and isinstance(get_result.content[0], TextContent)
+            content = json.loads(get_result.content[0].text)["content"]["value"]
+            assert "New target body" in content
+            assert "Old target body" not in content
+            assert "Keep summary" in content
+            assert "Keep next" in content
+        finally:
+            if page_id:
+                await call_tool(
+                    mcp_client,
+                    "confluence_delete_page",
+                    {"page_id": page_id},
+                )
