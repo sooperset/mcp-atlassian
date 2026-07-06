@@ -634,7 +634,7 @@ def hello():
     assert '<a href="https://example.com">Link text</a>' in result
     assert "ac:structured-macro" in result  # Code block macro
     assert 'ac:name="code"' in result
-    assert "python" in result
+    assert '<ac:parameter ac:name="language">py</ac:parameter>' in result
 
 
 def test_markdown_to_confluence_optional_anchor_generation():
