@@ -440,6 +440,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         transition_issue,
         update_issue,
         update_sprint,
+        update_version,
     )
 
     jira_sub_mcp = FastMCP(name="TestJiraSubMCP")
@@ -483,6 +484,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(update_sprint)
     jira_sub_mcp.add_tool(add_issues_to_sprint)
     jira_sub_mcp.add_tool(batch_create_versions)
+    jira_sub_mcp.add_tool(update_version)
     test_mcp.mount(jira_sub_mcp, prefix="jira")
     return test_mcp
 
@@ -1597,6 +1599,60 @@ async def test_batch_create_versions_empty(jira_client, mock_jira_fetcher):
     )
     content = json.loads(response.content[0].text)
     assert content == []
+
+
+@pytest.mark.anyio
+async def test_update_version_success(jira_client, mock_jira_fetcher):
+    """Test updating a Jira version forwards provided fields."""
+    mock_jira_fetcher.update_project_version.return_value = {
+        "id": "10001",
+        "name": "v1.0-renamed",
+        "archived": False,
+    }
+
+    response = await jira_client.call_tool(
+        "jira_update_version",
+        {
+            "version_id": "10001",
+            "name": "v1.0-renamed",
+            "archived": False,
+        },
+    )
+
+    content = json.loads(response.content[0].text)
+    assert content == {
+        "id": "10001",
+        "name": "v1.0-renamed",
+        "archived": False,
+    }
+    mock_jira_fetcher.update_project_version.assert_called_once_with(
+        version_id="10001",
+        name="v1.0-renamed",
+        description=None,
+        start_date=None,
+        release_date=None,
+        archived=False,
+        released=None,
+    )
+
+
+@pytest.mark.anyio
+async def test_update_version_error(jira_client, mock_jira_fetcher):
+    """Test updating a Jira version returns an error payload on failure."""
+    mock_jira_fetcher.update_project_version.side_effect = ValueError(
+        "update_version requires at least one field to update"
+    )
+
+    response = await jira_client.call_tool(
+        "jira_update_version",
+        {"version_id": "10001"},
+    )
+
+    content = json.loads(response.content[0].text)
+    assert content == {
+        "success": False,
+        "error": "update_version requires at least one field to update",
+    }
 
 
 # Regression tests for issue #883: project keys with 4+ characters
