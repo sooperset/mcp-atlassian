@@ -531,7 +531,11 @@ async def create_page(
     content: Annotated[
         str,
         Field(
-            description="The content of the page. Format depends on content_format parameter. Can be Markdown (default), wiki markup, or storage format"
+            description=(
+                "The content of the page. Format depends on content_format "
+                "parameter. Can be Markdown (default), wiki markup, storage "
+                "format, or XHTML storage format"
+            )
         ),
     ],
     parent_id: Annotated[
@@ -545,7 +549,13 @@ async def create_page(
     content_format: Annotated[
         str,
         Field(
-            description="(Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', or 'storage'. Wiki format uses Confluence wiki markup syntax",
+            description=(
+                "(Optional) The format of the content parameter. Options: "
+                "'markdown' (default), 'wiki', 'storage', or 'xhtml'. Use "
+                "'xhtml' when providing Confluence XHTML storage format "
+                "(same as 'storage'). Wiki format uses Confluence wiki "
+                "markup syntax"
+            ),
             default="markdown",
         ),
     ] = "markdown",
@@ -579,7 +589,8 @@ async def create_page(
         title: The title of the page.
         content: The content of the page (format depends on content_format).
         parent_id: Optional parent page ID.
-        content_format: The format of the content ('markdown', 'wiki', or 'storage').
+        content_format: The format of the content ('markdown', 'wiki',
+            'storage', or 'xhtml').
         enable_heading_anchors: Whether to enable heading anchors (markdown only).
         include_content: Whether to include page content in the response.
         emoji: Optional page title emoji (icon shown in navigation).
@@ -593,9 +604,10 @@ async def create_page(
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
     # Validate content_format
-    if content_format not in ["markdown", "wiki", "storage"]:
+    if content_format not in ["markdown", "wiki", "storage", "xhtml"]:
         raise ValueError(
-            f"Invalid content_format: {content_format}. Must be 'markdown', 'wiki', or 'storage'"
+            f"Invalid content_format: {content_format}. Must be "
+            "'markdown', 'wiki', 'storage', or 'xhtml'"
         )
 
     # Determine parameters based on content format
@@ -604,7 +616,10 @@ async def create_page(
         content_representation = None  # Will be converted to storage
     else:
         is_markdown = False
-        content_representation = content_format  # Pass 'wiki' or 'storage' directly
+        # Map 'xhtml' to 'storage' (both use storage format)
+        content_representation = (
+            "storage" if content_format == "xhtml" else content_format
+        )
 
     page = confluence_fetcher.create_page(
         space_key=space_key,
@@ -657,7 +672,13 @@ async def update_page(
     content_format: Annotated[
         str,
         Field(
-            description="(Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', or 'storage'. Wiki format uses Confluence wiki markup syntax",
+            description=(
+                "(Optional) The format of the content parameter. Options: "
+                "'markdown' (default), 'wiki', 'storage', or 'xhtml'. Use "
+                "'xhtml' when providing Confluence XHTML storage format "
+                "(same as 'storage'). Wiki format uses Confluence wiki "
+                "markup syntax"
+            ),
             default="markdown",
         ),
     ] = "markdown",
@@ -693,7 +714,8 @@ async def update_page(
         is_minor_edit: Whether this is a minor edit.
         version_comment: Optional comment for this version.
         parent_id: Optional new parent page ID.
-        content_format: The format of the content ('markdown', 'wiki', or 'storage').
+        content_format: The format of the content ('markdown', 'wiki',
+            'storage', or 'xhtml').
         enable_heading_anchors: Whether to enable heading anchors (markdown only).
         include_content: Whether to include page content in the response.
         emoji: Optional page title emoji (icon shown in navigation).
@@ -707,9 +729,10 @@ async def update_page(
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
     # Validate content_format
-    if content_format not in ["markdown", "wiki", "storage"]:
+    if content_format not in ["markdown", "wiki", "storage", "xhtml"]:
         raise ValueError(
-            f"Invalid content_format: {content_format}. Must be 'markdown', 'wiki', or 'storage'"
+            f"Invalid content_format: {content_format}. Must be "
+            "'markdown', 'wiki', 'storage', or 'xhtml'"
         )
 
     # Determine parameters based on content format
@@ -718,7 +741,10 @@ async def update_page(
         content_representation = None  # Will be converted to storage
     else:
         is_markdown = False
-        content_representation = content_format  # Pass 'wiki' or 'storage' directly
+        # Map 'xhtml' to 'storage' (both use storage format)
+        content_representation = (
+            "storage" if content_format == "xhtml" else content_format
+        )
 
     updated_page = confluence_fetcher.update_page(
         page_id=page_id,
@@ -1068,6 +1094,145 @@ async def reply_to_comment(
         response = {
             "success": False,
             "message": f"Error replying to comment {comment_id}",
+            "error": str(e),
+        }
+
+    return json.dumps(response, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_comments"},
+    annotations={"title": "Get Inline Comments", "readOnlyHint": True},
+)
+async def get_inline_comments(
+    ctx: Context,
+    page_id: Annotated[
+        str, Field(description="The ID of the page to get inline comments from")
+    ],
+) -> str:
+    """Get all inline comments for a Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page to get inline comments from.
+
+    Returns:
+        JSON string with a list of inline comments.
+
+    Raises:
+        ValueError: If Confluence client is unavailable.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        comments = confluence_fetcher.get_inline_comments(page_id)
+        response = {
+            "success": True,
+            "page_id": page_id,
+            "count": len(comments),
+            "comments": [c.to_simplified_dict() for c in comments],
+        }
+    except Exception as e:
+        logger.error(
+            f"Error getting inline comments for Confluence page {page_id}: {str(e)}"
+        )
+        response = {
+            "success": False,
+            "message": f"Error getting inline comments for page {page_id}",
+            "error": str(e),
+        }
+
+    return json.dumps(response, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_comments"},
+    annotations={"title": "Add Inline Comment", "destructiveHint": True},
+)
+@check_write_access
+async def add_inline_comment(
+    ctx: Context,
+    page_id: Annotated[
+        str, Field(description="The ID of the page to add the inline comment to")
+    ],
+    body: Annotated[str, Field(description="The comment content in Markdown format")],
+    text_selection: Annotated[
+        str,
+        Field(
+            description=(
+                "The exact text on the page to anchor the inline comment to. "
+                "Must match text that exists in the page content."
+            )
+        ),
+    ],
+    text_selection_match_count: Annotated[
+        int,
+        Field(
+            description=(
+                "Total number of times the selected text appears on the page. "
+                "Defaults to 1."
+            ),
+            ge=1,
+        ),
+    ] = 1,
+    text_selection_match_index: Annotated[
+        int,
+        Field(
+            description=(
+                "Zero-based index of which occurrence of the text to anchor to. "
+                "Defaults to 0 (first occurrence)."
+            ),
+            ge=0,
+        ),
+    ] = 0,
+) -> str:
+    """Add an inline comment anchored to a text selection on a page.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page to add the inline comment to.
+        body: The comment content in Markdown format.
+        text_selection: The exact text on the page to anchor the comment to.
+        text_selection_match_count: Total occurrences of the selected text on the
+            page.
+        text_selection_match_index: Zero-based index of which occurrence to anchor
+            to.
+
+    Returns:
+        JSON string representing the created inline comment.
+
+    Raises:
+        ValueError: If in read-only mode or Confluence client is unavailable.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        comment = confluence_fetcher.add_inline_comment(
+            page_id=page_id,
+            content=body,
+            text_selection=text_selection,
+            text_selection_match_count=text_selection_match_count,
+            text_selection_match_index=text_selection_match_index,
+        )
+        if comment:
+            response = {
+                "success": True,
+                "message": "Inline comment added successfully",
+                "comment": comment.to_simplified_dict(),
+            }
+        else:
+            response = {
+                "success": False,
+                "message": (
+                    f"Unable to add inline comment to page {page_id}. "
+                    "API request completed but comment creation unsuccessful."
+                ),
+            }
+    except Exception as e:
+        logger.error(
+            f"Error adding inline comment to Confluence page {page_id}: {str(e)}"
+        )
+        response = {
+            "success": False,
+            "message": f"Error adding inline comment to page {page_id}",
             "error": str(e),
         }
 
