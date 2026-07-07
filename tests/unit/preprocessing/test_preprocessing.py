@@ -813,6 +813,38 @@ def test_markdown_to_jira_underscore_in_inline_code_untouched(preprocessor_with_
     )
 
 
+def test_markdown_to_jira_preserves_underscores_in_url_targets(
+    preprocessor_with_jira,
+):
+    """URL targets keep literal underscores while visible text is escaped."""
+    assert (
+        preprocessor_with_jira.markdown_to_jira(
+            "[runbook](https://example.com/foo_bar)"
+        )
+        == "[runbook|https://example.com/foo_bar]"
+    )
+    assert (
+        preprocessor_with_jira.markdown_to_jira(
+            "[foo_bar](https://example.com/foo_bar)"
+        )
+        == "[foo\\_bar|https://example.com/foo_bar]"
+    )
+    assert (
+        preprocessor_with_jira.markdown_to_jira(
+            "![diagram](https://example.com/foo_bar.png)"
+        )
+        == "!https://example.com/foo_bar.png|alt=diagram!"
+    )
+    assert (
+        preprocessor_with_jira.markdown_to_jira("![](https://example.com/foo_bar.png)")
+        == "!https://example.com/foo_bar.png!"
+    )
+    assert (
+        preprocessor_with_jira.markdown_to_jira("<https://example.com/foo_bar>")
+        == "[https://example.com/foo_bar]"
+    )
+
+
 def test_md2conf_elements_from_string_available():
     """Test that elements_from_string is importable with fallback (issue #817)."""
     from mcp_atlassian.preprocessing.confluence import elements_from_string
