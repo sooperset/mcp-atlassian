@@ -96,23 +96,48 @@ def mock_issue_types():
     ]
 
 
-def test_get_all_projects(projects_mixin: ProjectsMixin, mock_projects: list[dict]):
-    """Test get_all_projects method."""
-    projects_mixin.jira.projects.return_value = mock_projects
+def test_get_all_projects(projects_mixin: ProjectsMixin):
+    """Test get_all_projects returns simplified project dictionaries."""
+    raw_projects = [
+        {
+            "id": "10000",
+            "key": "PROJ1",
+            "name": "Project One",
+            "expand": "description,lead",
+            "projectCategory": {"name": "Engineering"},
+            "lead": {
+                "self": "https://test.atlassian.net/rest/api/2/user?accountId=abc",
+                "name": "user1",
+                "displayName": "User One",
+            },
+        }
+    ]
+    expected_projects = [
+        {
+            "key": "PROJ1",
+            "name": "Project One",
+            "category": "Engineering",
+            "lead": {
+                "account_id": None,
+                "display_name": "User One",
+                "name": "user1",
+                "email": None,
+                "avatar_url": None,
+            },
+        }
+    ]
+    projects_mixin.jira.projects.return_value = raw_projects
 
-    # Test with default value (include_archived=False)
     result = projects_mixin.get_all_projects()
-    assert result == mock_projects
+    assert result == expected_projects
     projects_mixin.jira.projects.assert_called_once_with(
         included_archived=False, expand="description"
     )
 
-    # Reset mock and test with include_archived=True
     projects_mixin.jira.projects.reset_mock()
-    projects_mixin.jira.projects.return_value = mock_projects
 
     result = projects_mixin.get_all_projects(include_archived=True)
-    assert result == mock_projects
+    assert result == expected_projects
     projects_mixin.jira.projects.assert_called_once_with(
         included_archived=True, expand="description"
     )
