@@ -593,8 +593,9 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                     f"Attachment '{filename}' already exists on content {content_id}, "
                     "updating existing attachment version"
                 )
+                encoded_filename = urllib.parse.quote(filename, safe="")
                 att_list = self.confluence._session.get(
-                    f"{url}?filename={filename}",
+                    f"{url}?filename={encoded_filename}",
                     headers={"X-Atlassian-Token": "no-check"},
                 )
                 att_list.raise_for_status()

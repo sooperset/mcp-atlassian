@@ -170,7 +170,7 @@ class TestAttachmentsMixin:
         """Run an upload with the given config URL and return the request URL.
 
         Sets ``config.url`` (which drives ``is_cloud``), performs an upload with
-        all file I/O mocked, and returns the URL passed to ``session.put``.
+        all file I/O mocked, and returns the URL passed to ``session.post``.
         """
         attachments_mixin.config.url = config_url
         self._mock_rest_api_upload(attachments_mixin)
@@ -187,7 +187,7 @@ class TestAttachmentsMixin:
                 "123456", "/absolute/path/test_file.txt"
             )
 
-        return attachments_mixin.confluence._session.put.call_args[0][0]
+        return attachments_mixin.confluence._session.post.call_args[0][0]
 
     def test_upload_attachment_cloud_adds_wiki_prefix(
         self, attachments_mixin: AttachmentsMixin
@@ -343,12 +343,13 @@ class TestAttachmentsMixin:
         then GET the existing attachment ID and POST to /child/attachment/{id}/data
         to create a new version.
         """
+        filename = "test file & notes #1.txt"
         updated_attachment = {
             "id": "att12345",
             "type": "attachment",
-            "title": "test_file.txt",
+            "title": filename,
             "extensions": {"mediaType": "text/plain", "fileSize": 200},
-            "_links": {"download": "/download/attachments/123/test_file.txt"},
+            "_links": {"download": f"/download/attachments/123/{filename}"},
             "version": {"number": 2},
         }
 
@@ -356,7 +357,7 @@ class TestAttachmentsMixin:
         conflict_response = Mock()
         conflict_response.status_code = 400
         conflict_response.text = (
-            "Attachment with same file name already exists: test_file.txt"
+            f"Attachment with same file name already exists: {filename}"
         )
 
         # GET list returns existing attachment
@@ -381,16 +382,20 @@ class TestAttachmentsMixin:
             patch("os.path.exists", return_value=True),
             patch("os.path.getsize", return_value=200),
             patch("os.path.isabs", return_value=True),
-            patch("os.path.abspath", return_value="/absolute/path/test_file.txt"),
-            patch("os.path.basename", return_value="test_file.txt"),
+            patch("os.path.abspath", return_value=f"/absolute/path/{filename}"),
+            patch("os.path.basename", return_value=filename),
             patch("builtins.open", mock_open(read_data=b"updated content")),
         ):
             result = attachments_mixin.upload_attachment(
-                "123456", "/absolute/path/test_file.txt"
+                "123456", f"/absolute/path/{filename}"
             )
 
         assert result["success"] is True
-        assert result["filename"] == "test_file.txt"
+        assert result["filename"] == filename
+
+        # Verify the lookup URL escapes query-special filename characters.
+        list_call_url = attachments_mixin.confluence._session.get.call_args[0][0]
+        assert "filename=test%20file%20%26%20notes%20%231.txt" in list_call_url
 
         # Verify the versioning POST was made to the /data endpoint
         assert attachments_mixin.confluence._session.post.call_count == 2
