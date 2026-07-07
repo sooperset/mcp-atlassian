@@ -67,6 +67,46 @@ class TestSearchMixin:
         assert result[0].title == "Test Page"
         assert result[0].content == "Processed content"
 
+    def test_search_with_space_type_result(self, search_mixin) -> None:
+        """Test CQL space results that use the space key instead of content."""
+        search_mixin.confluence.cql.return_value = {
+            "results": [
+                {
+                    "space": {
+                        "id": 98765,
+                        "key": "DEV",
+                        "name": "Development",
+                    },
+                    "title": "Development",
+                    "excerpt": "<strong>Space excerpt</strong>",
+                }
+            ],
+            "totalSize": 1,
+            "start": 0,
+            "limit": 10,
+        }
+
+        search_mixin.preprocessor.process_html_content.return_value = (
+            "<strong>Space excerpt</strong>",
+            "Space excerpt",
+        )
+
+        result = search_mixin.search("type=space")
+
+        search_mixin.confluence.cql.assert_called_once_with(cql="type=space", limit=10)
+        assert len(result) == 1
+        assert result[0].id == "98765"
+        assert result[0].title == "Development"
+        assert result[0].type == "space"
+        assert result[0].space is not None
+        assert result[0].space.key == "DEV"
+        assert result[0].content == "Space excerpt"
+        search_mixin.preprocessor.process_html_content.assert_called_once_with(
+            "<strong>Space excerpt</strong>",
+            space_key="DEV",
+            confluence_client=search_mixin.confluence,
+        )
+
     def test_search_with_empty_results(self, search_mixin):
         """Test handling of empty search results."""
         # Mock an empty result set
