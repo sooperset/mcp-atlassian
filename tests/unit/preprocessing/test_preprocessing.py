@@ -213,6 +213,39 @@ def test_process_rendered_html_content_empty_input(preprocessor_with_confluence)
 
 
 @pytest.mark.parametrize(
+    "base_url,href,expected",
+    [
+        (
+            "https://example.atlassian.net/wiki",
+            "/wiki/spaces/PROJ/pages/123/Linked+Page",
+            "https://example.atlassian.net/wiki/spaces/PROJ/pages/123/Linked+Page",
+        ),
+        (
+            "https://example.atlassian.net/wiki",
+            "/spaces/PROJ/pages/123/Linked+Page",
+            "https://example.atlassian.net/wiki/spaces/PROJ/pages/123/Linked+Page",
+        ),
+        (
+            "http://localhost:8090",
+            "/spaces/E2E/pages/123/Linked+Page",
+            "http://localhost:8090/spaces/E2E/pages/123/Linked+Page",
+        ),
+    ],
+)
+def test_process_rendered_html_content_normalizes_relative_links(
+    base_url: str, href: str, expected: str
+):
+    """Rendered body.view page links get absolute URLs before markdown conversion."""
+    preprocessor = ConfluencePreprocessor(base_url=base_url)
+    html = f'<p>See <a href="{href}">Linked Page</a> for details.</p>'
+
+    returned_html, markdown = preprocessor.process_rendered_html_content(html)
+
+    assert f'href="{expected}"' in returned_html
+    assert f"[Linked Page]({expected})" in markdown
+
+
+@pytest.mark.parametrize(
     "base_url,src,expected",
     [
         (

@@ -148,8 +148,11 @@ class BasePreprocessor:
         """
         try:
             soup = BeautifulSoup(html_content, "html.parser")
+            links_normalized = self._normalize_rendered_links_in_soup(soup)
             images_normalized = self._normalize_rendered_images_in_soup(soup)
-            processed_html = str(soup) if images_normalized else html_content
+            processed_html = (
+                str(soup) if links_normalized or images_normalized else html_content
+            )
             processed_markdown = md(processed_html, heading_style="ATX", bullets="-")
             return processed_html, processed_markdown
         except Exception as e:
@@ -166,6 +169,24 @@ class BasePreprocessor:
         if base_path and url.startswith(f"{base_path}/"):
             return f"{parsed_base.scheme}://{parsed_base.netloc}{url}"
         return f"{self.base_url.rstrip('/')}{url}"
+
+    def _normalize_rendered_links_in_soup(self, soup: BeautifulSoup) -> bool:
+        """Normalize standard ``body.view`` links before markdown conversion."""
+        changed = False
+        for link in soup.find_all("a"):
+            if not isinstance(link, Tag):
+                continue
+
+            href = link.get("href")
+            if not isinstance(href, str):
+                continue
+
+            resolved_href = self._resolve_confluence_relative_url(href)
+            if resolved_href != href:
+                link["href"] = resolved_href
+                changed = True
+
+        return changed
 
     def _normalize_rendered_images_in_soup(self, soup: BeautifulSoup) -> bool:
         """Normalize standard ``body.view`` image tags before markdown conversion."""
