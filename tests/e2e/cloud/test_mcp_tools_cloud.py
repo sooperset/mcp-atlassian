@@ -227,6 +227,51 @@ class TestMCPConfluenceTools:
         )
 
     @pytest.mark.anyio
+    async def test_confluence_create_update_xhtml_page(
+        self,
+        mcp_client: Client,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        page_id = None
+        create_result = await call_tool(
+            mcp_client,
+            "confluence_create_page",
+            {
+                "space_key": cloud_instance.space_key,
+                "title": f"Cloud MCP XHTML Tool Test {uid}",
+                "content": "<p>Created via MCP XHTML tool test.</p>",
+                "content_format": "xhtml",
+            },
+        )
+        assert not create_result.is_error
+        assert create_result.content and isinstance(
+            create_result.content[0], TextContent
+        )
+        page_id = json.loads(create_result.content[0].text)["page"]["id"]
+        assert page_id is not None
+
+        try:
+            update_result = await call_tool(
+                mcp_client,
+                "confluence_update_page",
+                {
+                    "page_id": page_id,
+                    "title": f"Cloud MCP XHTML Tool Test {uid}",
+                    "content": "<p>Updated via MCP XHTML tool test.</p>",
+                    "content_format": "xhtml",
+                },
+            )
+            assert not update_result.is_error
+        finally:
+            if page_id:
+                await call_tool(
+                    mcp_client,
+                    "confluence_delete_page",
+                    {"page_id": page_id},
+                )
+
+    @pytest.mark.anyio
     async def test_confluence_update_page_section(
         self,
         mcp_client: Client,
