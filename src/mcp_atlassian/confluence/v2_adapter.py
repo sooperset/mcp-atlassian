@@ -53,6 +53,13 @@ class ConfluenceV2Adapter:
             }
         return converted
 
+    @staticmethod
+    def _user_ref_from_account_id(account_id: str | None) -> dict[str, str] | None:
+        """Build a v1-compatible user reference from a v2 account ID."""
+        if not account_id:
+            return None
+        return {"accountId": account_id, "displayName": account_id}
+
     def _get_space_id(self, space_key: str) -> str:
         """Get space ID from space key using v2 API.
 
@@ -358,12 +365,6 @@ class ConfluenceV2Adapter:
                     "id": space_id,
                 }
 
-            # Add version information
-            if "version" in v2_response:
-                v1_compatible["version"] = {
-                    "number": v2_response["version"].get("number", 1)
-                }
-
             return v1_compatible
 
         except Exception as e:
@@ -430,6 +431,18 @@ class ConfluenceV2Adapter:
         Returns:
             Response formatted like v1 API for compatibility
         """
+        version = v2_response.get("version") or {}
+        version_author = self._user_ref_from_account_id(version.get("authorId"))
+        version_data: dict[str, Any] = {
+            "number": version.get("number", 1),
+        }
+        if version_created_at := version.get("createdAt"):
+            version_data["when"] = version_created_at
+        if version_message := version.get("message"):
+            version_data["message"] = version_message
+        if version_author:
+            version_data["by"] = version_author
+
         # Map v2 response fields to v1 format
         v1_compatible = {
             "id": v2_response.get("id"),
@@ -440,11 +453,23 @@ class ConfluenceV2Adapter:
                 "key": space_key,
                 "id": v2_response.get("spaceId"),
             },
-            "version": {
-                "number": v2_response.get("version", {}).get("number", 1),
-            },
+            "version": version_data,
             "_links": v2_response.get("_links", {}),
         }
+
+        history: dict[str, Any] = {}
+        if created_at := v2_response.get("createdAt"):
+            history["createdDate"] = created_at
+        if created_by := self._user_ref_from_account_id(v2_response.get("authorId")):
+            history["createdBy"] = created_by
+        if version_created_at or version_author:
+            history["lastUpdated"] = {}
+            if version_created_at:
+                history["lastUpdated"]["when"] = version_created_at
+            if version_author:
+                history["lastUpdated"]["by"] = version_author
+        if history:
+            v1_compatible["history"] = history
 
         # Add body if present in v2 response
         if "body" in v2_response:
@@ -874,13 +899,22 @@ class ConfluenceV2Adapter:
             # Add version information from version response
             # In versions API, version info is at the top level
             if "number" in v2_response:
-                v1_compatible["version"] = {
+                version_data: dict[str, Any] = {
                     "number": v2_response.get("number"),
                 }
+                if created_at := v2_response.get("createdAt"):
+                    version_data["when"] = created_at
+                if message := v2_response.get("message"):
+                    version_data["message"] = message
+                if author := self._user_ref_from_account_id(
+                    v2_response.get("authorId")
+                ):
+                    version_data["by"] = author
+                v1_compatible["version"] = version_data
             elif "version" in v2_response and "number" in v2_response["version"]:
-                v1_compatible["version"] = {
-                    "number": v2_response["version"].get("number"),
-                }
+                v1_compatible["version"] = self._convert_v2_to_v1_format(
+                    v2_response, space_key
+                )["version"]
 
             # Add space information
             if space_id:

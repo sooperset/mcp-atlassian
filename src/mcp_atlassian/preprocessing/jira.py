@@ -480,9 +480,53 @@ class JiraPreprocessor(BasePreprocessor):
             flags=re.MULTILINE,
         )
 
+        markdown_url_targets: list[str] = []
+
+        def store_markdown_url_target(target: str) -> str:
+            placeholder = f"\x00MARKDOWNURL{len(markdown_url_targets)}\x00"
+            markdown_url_targets.append(target)
+            return placeholder
+
+        def protect_markdown_link_target(match: re.Match[str]) -> str:
+            return (
+                match.group(1)
+                + store_markdown_url_target(match.group(2))
+                + match.group(3)
+            )
+
+        def protect_markdown_autolink_target(match: re.Match[str]) -> str:
+            return "<" + store_markdown_url_target(match.group(1)) + ">"
+
+        output = re.sub(
+            r"(!?\[[^\]\n]*\]\()([^)]+)(\))",
+            protect_markdown_link_target,
+            output,
+        )
+        output = re.sub(
+            r"<((?:[A-Za-z][A-Za-z0-9+.-]*:[^>\s]+|[^<>\s@]+@[^<>\s@]+))>",
+            protect_markdown_autolink_target,
+            output,
+        )
+
         # Bold and italic - skip lines starting with
         # asterisks+space (Jira list syntax, issue #786)
+        def escape_intraword_underscore_runs(match: re.Match[str]) -> str:
+            return r"\_" * len(match.group(0))
+
         def convert_bold_italic_line(line: str) -> str:
+            # CommonMark treats underscores between two word characters as
+            # literal text, not emphasis. The Jira wiki renderer does not:
+            # it italicizes any ``_word_`` span, so identifiers such as
+            # snake_case, customfield_10101 or foo_bar_baz would render with
+            # spurious italics (and adjacent identifiers can pair into a
+            # cross-token italic span). Escape intraword underscore runs as
+            # ``\_`` so Jira renders them literally; genuine word-boundary
+            # ``_emphasis_``/``__strong__`` is left intact for conversion below.
+            line = re.sub(
+                r"(?<=[^\W_])_+(?=[^\W_])",
+                escape_intraword_underscore_runs,
+                line,
+            )
             if re.match(r"^[*_]+\s", line):
                 return line
             return re.sub(
@@ -495,6 +539,7 @@ class JiraPreprocessor(BasePreprocessor):
 
         lines = output.split("\n")
         output = "\n".join(convert_bold_italic_line(line) for line in lines)
+        output = _restore_blocks(output, markdown_url_targets, "MARKDOWNURL")
 
         # Multi-level bulleted list
         def bulleted_list_fn(match: re.Match[str]) -> str:

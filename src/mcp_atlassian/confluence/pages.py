@@ -116,7 +116,7 @@ class PagesMixin(ConfluenceClient):
             # Request only the format needed: body.view for markdown (rendered
             # HTML with real links/macros), body.storage for raw XML callers.
             body_expand = self._get_body_expand(convert_to_markdown=convert_to_markdown)
-            expand = f"{body_expand},version,space,children.attachment"
+            expand = f"{body_expand},version,space,children.attachment,history"
 
             # Use v2 API for OAuth, v1 API for token/basic auth
             v2_adapter = self._v2_adapter
@@ -1214,7 +1214,7 @@ class PagesMixin(ConfluenceClient):
                 page = v2_adapter.get_page_by_version(
                     page_id=page_id,
                     version=version,
-                    expand=f"{body_expand},version,space,children.attachment",
+                    expand=f"{body_expand},version,space,children.attachment,history",
                 )
             else:
                 logger.debug(
@@ -1226,7 +1226,7 @@ class PagesMixin(ConfluenceClient):
                     page_id=page_id,
                     status="historical",
                     version=version,
-                    expand=f"{body_expand},version,space,children.attachment",
+                    expand=f"{body_expand},version,space,children.attachment,history",
                 )
 
             if isinstance(page, str):

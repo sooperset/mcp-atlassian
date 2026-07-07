@@ -34,7 +34,14 @@ class TestConfluenceV2Adapter:
             "status": "current",
             "title": "Test Page",
             "spaceId": "789",
-            "version": {"number": 5},
+            "authorId": "creator-account-id",
+            "createdAt": "2024-01-01T09:00:00.000Z",
+            "version": {
+                "number": 5,
+                "createdAt": "2024-01-02T10:00:00.000Z",
+                "authorId": "updater-account-id",
+                "message": "Updated page content",
+            },
             "body": {
                 "storage": {"value": "<p>Test content</p>", "representation": "storage"}
             },
@@ -65,6 +72,11 @@ class TestConfluenceV2Adapter:
         assert result["space"]["key"] == "TEST"
         assert result["space"]["id"] == "789"
         assert result["version"]["number"] == 5
+        assert result["version"]["when"] == "2024-01-02T10:00:00.000Z"
+        assert result["version"]["by"]["accountId"] == "updater-account-id"
+        assert result["history"]["createdDate"] == "2024-01-01T09:00:00.000Z"
+        assert result["history"]["createdBy"]["accountId"] == "creator-account-id"
+        assert result["history"]["lastUpdated"]["when"] == "2024-01-02T10:00:00.000Z"
         assert result["body"]["storage"]["value"] == "<p>Test content</p>"
         assert result["body"]["storage"]["representation"] == "storage"
 
