@@ -128,6 +128,14 @@ class TestConfluenceDCPageHierarchy:
         resource_tracker.add_confluence_page(child.id)
         assert child.id is not None
 
+        fetched = confluence_fetcher.get_page_content(child.id)
+        assert fetched.ancestors
+        assert parent.id in [ancestor.get("id") for ancestor in fetched.ancestors]
+
+        simplified = fetched.to_simplified_dict()
+        assert "ancestors" in simplified
+        assert parent.id in [ancestor["id"] for ancestor in simplified["ancestors"]]
+
 
 class TestConfluenceDCLabels:
     """Label operations."""
