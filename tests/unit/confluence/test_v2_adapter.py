@@ -179,6 +179,44 @@ class TestConfluenceV2Adapter:
         )
         assert result["body"]["view"]["representation"] == "view"
 
+    def test_get_page_by_version_keeps_storage_body_format_for_history(
+        self, v2_adapter, mock_session
+    ):
+        """Test v2 historical page reads keep the storage-only fallback scoped."""
+        versions_response = Mock()
+        versions_response.status_code = 200
+        versions_response.json.return_value = {
+            "results": [{"id": "version-id-2", "number": 2}]
+        }
+
+        version_response = Mock()
+        version_response.status_code = 200
+        version_response.json.return_value = {
+            "id": "123456",
+            "status": "current",
+            "title": "Historical Page",
+            "number": 2,
+            "body": {
+                "storage": {
+                    "value": "<p>Historical storage</p>",
+                    "representation": "storage",
+                }
+            },
+        }
+        mock_session.get.side_effect = [versions_response, version_response]
+
+        result = v2_adapter.get_page_by_version("123456", 2, expand="body.view,version")
+
+        mock_session.get.assert_any_call(
+            "https://example.atlassian.net/wiki/api/v2/pages/123456/versions"
+        )
+        mock_session.get.assert_any_call(
+            "https://example.atlassian.net/wiki/api/v2/versions/version-id-2",
+            params={"body-format": "storage"},
+        )
+        assert result["body"]["storage"]["value"] == "<p>Historical storage</p>"
+        assert "view" not in result["body"]
+
     @pytest.mark.parametrize(
         "method,call_kwargs,expected_path",
         [

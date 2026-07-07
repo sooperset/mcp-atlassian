@@ -212,6 +212,44 @@ def test_process_rendered_html_content_empty_input(preprocessor_with_confluence)
     assert markdown == ""
 
 
+@pytest.mark.parametrize(
+    "base_url,src,expected",
+    [
+        (
+            "https://example.atlassian.net/wiki",
+            "/wiki/download/attachments/123/test.png?version=1",
+            "https://example.atlassian.net/wiki/download/attachments/123/test.png?version=1",
+        ),
+        (
+            "https://example.atlassian.net/wiki",
+            "/download/attachments/123/test.png?version=1",
+            "https://example.atlassian.net/wiki/download/attachments/123/test.png?version=1",
+        ),
+        (
+            "http://localhost:8090",
+            "/download/attachments/123/test.png?version=1",
+            "http://localhost:8090/download/attachments/123/test.png?version=1",
+        ),
+    ],
+)
+def test_process_rendered_html_content_normalizes_images(
+    base_url: str, src: str, expected: str
+):
+    """Rendered body.view image tags get stable alt text and absolute URLs."""
+    preprocessor = ConfluencePreprocessor(base_url=base_url)
+    html = (
+        "<p>Before</p>"
+        f'<img src="{src}" data-linked-resource-default-alias="test.png"/>'
+        "<p>After</p>"
+    )
+
+    returned_html, markdown = preprocessor.process_rendered_html_content(html)
+
+    assert f'src="{expected}"' in returned_html
+    assert 'alt="test.png"' in returned_html
+    assert f"![test.png]({expected})" in markdown
+
+
 def test_clean_jira_text_with_invalid_html(preprocessor_with_jira):
     """Test cleaning Jira text with invalid HTML."""
     text = "<p>Unclosed paragraph with <b>bold</b"

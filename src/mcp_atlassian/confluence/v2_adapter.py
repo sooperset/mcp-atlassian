@@ -873,7 +873,9 @@ class ConfluenceV2Adapter:
             # Step 2: Fetch the specific version using its version ID
             url = f"{self.base_url}/api/v2/versions/{version_id}"
 
-            # Convert v1 expand parameters to v2 format
+            # The v2 version-detail endpoint used here does not accept the
+            # rendered view body format. Keep the storage fallback scoped to
+            # historical page reads; current page reads use body-format=view.
             params = {"body-format": "storage"}
 
             response = self.session.get(url, params=params)
