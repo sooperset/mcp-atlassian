@@ -121,6 +121,27 @@ class TestMCPJiraTools:
             {"issue_key": issue_key},
         )
 
+    @pytest.mark.anyio
+    async def test_jira_assign_issue(
+        self,
+        mcp_client: Client,
+        dc_instance: DCInstanceInfo,
+    ) -> None:
+        assign_result = await call_tool(
+            mcp_client,
+            "jira_assign_issue",
+            {
+                "issue_key": dc_instance.test_issue_key,
+                "assignee": dc_instance.admin_username,
+            },
+        )
+        assert not assign_result.is_error
+        assert assign_result.content
+        assign_data = json.loads(assign_result.content[0].text)
+        assignee = assign_data["issue"].get("assignee")
+        assert isinstance(assignee, dict)
+        assert assignee.get("name") or assignee.get("display_name")
+
 
 class TestMCPConfluenceTools:
     """MCP Confluence tool tests against DC."""
@@ -189,6 +210,7 @@ class TestMCPConfluenceTools:
         dc_instance: DCInstanceInfo,
     ) -> None:
         uid = uuid.uuid4().hex[:8]
+        page_id = None
         create_result = await call_tool(
             mcp_client,
             "confluence_create_page",
@@ -219,8 +241,70 @@ class TestMCPConfluenceTools:
             )
             assert not update_result.is_error
         finally:
-            await call_tool(
+            if page_id:
+                await call_tool(
+                    mcp_client,
+                    "confluence_delete_page",
+                    {"page_id": page_id},
+                )
+
+    @pytest.mark.anyio
+    async def test_confluence_update_page_section(
+        self,
+        mcp_client: Client,
+        dc_instance: DCInstanceInfo,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        page_id = None
+        create_result = await call_tool(
+            mcp_client,
+            "confluence_create_page",
+            {
+                "space_key": dc_instance.space_key,
+                "title": f"MCP Section Update Test {uid}",
+                "content": (
+                    "# Summary\n\nKeep summary.\n\n"
+                    "## Target Section\n\nOld target body.\n\n"
+                    "## Next Section\n\nKeep next."
+                ),
+            },
+        )
+        assert not create_result.is_error
+        assert create_result.content and isinstance(
+            create_result.content[0], TextContent
+        )
+        page_id = json.loads(create_result.content[0].text)["page"]["id"]
+
+        try:
+            update_result = await call_tool(
                 mcp_client,
-                "confluence_delete_page",
-                {"page_id": page_id},
+                "confluence_update_page_section",
+                {
+                    "page_id": page_id,
+                    "heading_text": "Target Section",
+                    "new_content": "New target body.",
+                    "is_minor_edit": True,
+                    "version_comment": "DC MCP e2e section update",
+                },
             )
+            assert not update_result.is_error
+
+            get_result = await call_tool(
+                mcp_client,
+                "confluence_get_page",
+                {"page_id": page_id, "include_metadata": False},
+            )
+            assert not get_result.is_error
+            assert get_result.content and isinstance(get_result.content[0], TextContent)
+            content = json.loads(get_result.content[0].text)["content"]["value"]
+            assert "New target body" in content
+            assert "Old target body" not in content
+            assert "Keep summary" in content
+            assert "Keep next" in content
+        finally:
+            if page_id:
+                await call_tool(
+                    mcp_client,
+                    "confluence_delete_page",
+                    {"page_id": page_id},
+                )
