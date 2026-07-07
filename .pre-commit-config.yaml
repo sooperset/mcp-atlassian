@@ -52,7 +52,7 @@ repos:
             'types-requests',
             'types-setuptools',
             'types-urllib3',
-            'types-cachetools',
+            'types-cachetools==6.2.0.20251022',  # pin: newer stubs make TTLCache 3-arg
             'types-PyYAML',
             'atlassian-python-api',
             'beautifulsoup4',
