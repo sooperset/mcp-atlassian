@@ -197,6 +197,38 @@ class TestFormatConversionIntegration:
         assert heading["type"] == "heading"
         assert heading["attrs"]["level"] == 2
 
+    def test_create_issue_converts_task_list_to_adf_on_cloud(
+        self, jira_fetcher_with_real_preprocessor
+    ):
+        """Test that task-list Markdown becomes ADF taskList on Cloud."""
+        jira_fetcher_with_real_preprocessor._post_api3 = Mock(
+            return_value={
+                "id": "12345",
+                "key": "TEST-123",
+                "self": "https://test.atlassian.net/rest/api/3/issue/TEST-123",
+            }
+        )
+
+        jira_fetcher_with_real_preprocessor.create_issue(
+            project_key="TEST",
+            summary="Task List Test",
+            issue_type="Task",
+            description="- [x] done\n- [ ] todo",
+        )
+
+        call_args = jira_fetcher_with_real_preprocessor._post_api3.call_args
+        sent_fields = call_args[0][1]["fields"]
+        sent_description = sent_fields["description"]
+        task_list = next(
+            node for node in sent_description["content"] if node["type"] == "taskList"
+        )
+
+        assert task_list["content"][0]["type"] == "taskItem"
+        assert task_list["content"][0]["attrs"]["state"] == "DONE"
+        assert task_list["content"][0]["content"][0]["text"] == "done"
+        assert task_list["content"][1]["attrs"]["state"] == "TODO"
+        assert task_list["content"][1]["content"][0]["text"] == "todo"
+
     def test_numbered_list_not_converted_to_heading(
         self, jira_fetcher_with_real_preprocessor
     ):
