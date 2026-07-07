@@ -200,6 +200,11 @@ class ConfluencePage(ApiModel, TimestampMixin):
             if not updated and version and version.when:
                 updated = version.when
 
+            # Fall back to history.createdBy if no top-level author
+            if not author:
+                if created_by := history.get("createdBy"):
+                    author = ConfluenceUser.from_api_response(created_by)
+
         # Construct URL if base_url is provided
         url = None
         if base_url := kwargs.get("base_url"):

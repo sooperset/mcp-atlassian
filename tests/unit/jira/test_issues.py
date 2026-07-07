@@ -668,6 +668,69 @@ class TestIssuesMixin:
             issue_key="TEST-123", update={"fields": {"summary": "Updated"}}
         )
 
+    def test_update_issue_assignee_dict_passthrough_name(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Dict-shaped assignee (Server/DC name form) is forwarded as-is.
+
+        _get_account_id must NOT be called — caller already has the canonical
+        shape (typically from search_assignable_users / get_user_profile) and
+        we must not require global "Browse Users" permission just to relay it.
+        """
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            description="This is a test"
+        )
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+        issues_mixin._get_account_id = MagicMock()
+
+        issues_mixin.update_issue(
+            issue_key="TEST-123", assignee={"name": "jdoe@example.com"}
+        )
+
+        issues_mixin._get_account_id.assert_not_called()
+        issues_mixin.jira.update_issue.assert_called_once_with(
+            issue_key="TEST-123",
+            update={"fields": {"assignee": {"name": "jdoe@example.com"}}},
+        )
+
+    def test_update_issue_assignee_dict_passthrough_accountid(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Cloud-shape assignee dict ({"accountId": ...}) is forwarded as-is too."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            description="This is a test"
+        )
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+        issues_mixin._get_account_id = MagicMock()
+
+        issues_mixin.update_issue(
+            issue_key="TEST-123",
+            assignee={"accountId": "5b10ac8d82e05b22cc7d4ef5"},
+        )
+
+        issues_mixin._get_account_id.assert_not_called()
+        issues_mixin.jira.update_issue.assert_called_once_with(
+            issue_key="TEST-123",
+            update={"fields": {"assignee": {"accountId": "5b10ac8d82e05b22cc7d4ef5"}}},
+        )
+
+    def test_update_issue_assignee_unresolvable_does_not_update(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """An unresolvable assignee must not silently turn into a no-op update."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            description="This is a test"
+        )
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+        issues_mixin._get_account_id = MagicMock(side_effect=ValueError("not found"))
+
+        with pytest.raises(ValueError, match="Could not update assignee"):
+            issues_mixin.update_issue(
+                issue_key="TEST-123", assignee="ghost@example.com"
+            )
+
+        issues_mixin.jira.update_issue.assert_not_called()
+
     def test_update_issue_unassign(self, issues_mixin: IssuesMixin, make_issue_data):
         """Test unassigning an issue."""
         issues_mixin.jira.get_issue.return_value = make_issue_data(
@@ -683,6 +746,114 @@ class TestIssuesMixin:
         )
         assert not issues_mixin._get_account_id.called
         assert document.key == "TEST-123"
+
+    def test_update_issue_assignee_unresolvable_raises(self, issues_mixin: IssuesMixin):
+        """Test that update_issue raises when assignee cannot be resolved."""
+        issues_mixin._get_account_id = MagicMock(
+            side_effect=ValueError("Could not find account ID for user: ghost")
+        )
+
+        with pytest.raises(ValueError, match="Could not update assignee"):
+            issues_mixin.update_issue(issue_key="TEST-123", assignee="ghost")
+
+        issues_mixin.jira.update_issue.assert_not_called()
+
+    def test_assign_issue(self, issues_mixin: IssuesMixin, make_issue_data):
+        """Test assigning an issue to a user via dedicated endpoint."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            description="This is a test"
+        )
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+        issues_mixin._get_account_id = MagicMock(return_value="account-123")
+
+        document = issues_mixin.assign_issue(
+            issue_key="TEST-123", assignee="user@example.com"
+        )
+
+        issues_mixin._get_account_id.assert_called_once_with("user@example.com")
+        issues_mixin.jira.assign_issue.assert_called_once_with(
+            "TEST-123", "account-123"
+        )
+        assert document.key == "TEST-123"
+
+    def test_assign_issue_unassign(self, issues_mixin: IssuesMixin, make_issue_data):
+        """Test unassigning an issue (passing None)."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            description="This is a test"
+        )
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+        issues_mixin._get_account_id = MagicMock()
+
+        document = issues_mixin.assign_issue(issue_key="TEST-123", assignee=None)
+
+        issues_mixin.jira.assign_issue.assert_called_once_with("TEST-123", None)
+        assert not issues_mixin._get_account_id.called
+        assert document.key == "TEST-123"
+
+    def test_assign_issue_empty_string(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Test unassigning an issue (passing empty string)."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            description="This is a test"
+        )
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+        issues_mixin._get_account_id = MagicMock()
+
+        document = issues_mixin.assign_issue(issue_key="TEST-123", assignee="")
+
+        issues_mixin.jira.assign_issue.assert_called_once_with("TEST-123", None)
+        assert not issues_mixin._get_account_id.called
+        assert document.key == "TEST-123"
+
+    def test_assign_issue_assignee_dict_passthrough_account_id(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Cloud-shaped assignee dict is unwrapped without user lookup."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            description="This is a test"
+        )
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+        issues_mixin._get_account_id = MagicMock()
+
+        document = issues_mixin.assign_issue(
+            issue_key="TEST-123",
+            assignee={"account_id": "5b10ac8d82e05b22cc7d4ef5"},
+        )
+
+        issues_mixin._get_account_id.assert_not_called()
+        issues_mixin.jira.assign_issue.assert_called_once_with(
+            "TEST-123", "5b10ac8d82e05b22cc7d4ef5"
+        )
+        assert document.key == "TEST-123"
+
+    def test_assign_issue_assignee_dict_passthrough_name(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Server/DC-shaped assignee dict is unwrapped without user lookup."""
+        issues_mixin.config.url = "https://jira.example.com"
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            description="This is a test"
+        )
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+        issues_mixin._get_account_id = MagicMock()
+
+        document = issues_mixin.assign_issue(
+            issue_key="TEST-123",
+            assignee={"name": "jdoe"},
+        )
+
+        issues_mixin._get_account_id.assert_not_called()
+        issues_mixin.jira.assign_issue.assert_called_once_with("TEST-123", "jdoe")
+        assert document.key == "TEST-123"
+
+    def test_assign_issue_error(self, issues_mixin: IssuesMixin):
+        """Test error handling when assignment fails."""
+        issues_mixin.jira.assign_issue.side_effect = Exception("Permission denied")
+        issues_mixin._get_account_id = MagicMock(return_value="account-123")
+
+        with pytest.raises(ValueError, match="Failed to assign issue TEST-123"):
+            issues_mixin.assign_issue(issue_key="TEST-123", assignee="user@example.com")
 
     def test_update_issue_components(self, issues_mixin: IssuesMixin):
         """Test updating an issue's components field."""
@@ -1447,6 +1618,7 @@ class TestIssuesMixin:
                 "changelogs": [
                     {
                         "author": {
+                            "account_id": "user123",
                             "avatar_url": None,
                             "display_name": "Test User 1",
                             "email": None,
@@ -1472,6 +1644,7 @@ class TestIssuesMixin:
                 "changelogs": [
                     {
                         "author": {
+                            "account_id": "user456",
                             "avatar_url": None,
                             "display_name": "Test User 2",
                             "email": None,
@@ -1489,6 +1662,7 @@ class TestIssuesMixin:
                     },
                     {
                         "author": {
+                            "account_id": "user789",
                             "avatar_url": None,
                             "display_name": "Test User 3",
                             "email": None,
@@ -1508,6 +1682,7 @@ class TestIssuesMixin:
                     },
                     {
                         "author": {
+                            "account_id": "user123",
                             "avatar_url": None,
                             "display_name": "Test User 1",
                             "email": None,
