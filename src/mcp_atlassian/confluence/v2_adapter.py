@@ -29,6 +29,30 @@ class ConfluenceV2Adapter:
         self.session = session
         self.base_url = base_url
 
+    @staticmethod
+    def _body_format_from_expand(expand: str | None) -> str:
+        """Translate v1 body expand fields to the v2 body-format parameter."""
+        if not expand:
+            return "storage"
+
+        expand_parts = {part.strip() for part in expand.split(",")}
+        if "body.view" in expand_parts:
+            return "view"
+        return "storage"
+
+    @staticmethod
+    def _convert_body_representations(body: dict[str, Any]) -> dict[str, Any]:
+        """Convert v2 body representations to v1-compatible body fields."""
+        converted: dict[str, Any] = {}
+        for representation, body_data in body.items():
+            if not isinstance(body_data, dict):
+                continue
+            converted[representation] = {
+                "value": body_data.get("value", ""),
+                "representation": body_data.get("representation", representation),
+            }
+        return converted
+
     def _get_space_id(self, space_key: str) -> str:
         """Get space ID from space key using v2 API.
 
@@ -306,7 +330,7 @@ class ConfluenceV2Adapter:
             url = f"{self.base_url}/api/v2/pages/{page_id}"
 
             # Convert v1 expand parameters to v2 format
-            params = {"body-format": "storage"}
+            params = {"body-format": self._body_format_from_expand(expand)}
 
             response = self.session.get(url, params=params)
             response.raise_for_status()
@@ -321,12 +345,11 @@ class ConfluenceV2Adapter:
             # Convert v2 response to v1-compatible format
             v1_compatible = self._convert_v2_to_v1_format(v2_response, space_key)
 
-            # Add body.storage structure if body content exists
-            if "body" in v2_response and v2_response["body"].get("storage"):
-                storage_value = v2_response["body"]["storage"].get("value", "")
-                v1_compatible["body"] = {
-                    "storage": {"value": storage_value, "representation": "storage"}
-                }
+            # Add requested body representation if body content exists
+            if "body" in v2_response:
+                body = self._convert_body_representations(v2_response["body"])
+                if body:
+                    v1_compatible["body"] = body
 
             # Add space information with more details
             if space_id:
@@ -425,12 +448,9 @@ class ConfluenceV2Adapter:
 
         # Add body if present in v2 response
         if "body" in v2_response:
-            v1_compatible["body"] = {
-                "storage": {
-                    "value": v2_response["body"].get("storage", {}).get("value", ""),
-                    "representation": "storage",
-                }
-            }
+            body = self._convert_body_representations(v2_response["body"])
+            if body:
+                v1_compatible["body"] = body
 
         return v1_compatible
 

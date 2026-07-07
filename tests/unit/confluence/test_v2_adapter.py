@@ -113,7 +113,7 @@ class TestConfluenceV2Adapter:
             v2_adapter.get_page("123456")
 
     def test_get_page_with_expand_parameter(self, v2_adapter, mock_session):
-        """Test that expand parameter is accepted but not used."""
+        """Test that body.storage expand maps to storage body-format."""
         # Mock the v2 API response
         mock_response = Mock()
         mock_response.status_code = 200
@@ -127,7 +127,7 @@ class TestConfluenceV2Adapter:
         # Call with expand parameter
         result = v2_adapter.get_page("123456", expand="body.storage,version")
 
-        # Verify the API call doesn't include expand in params
+        # Verify the API call doesn't include v1 expand in params
         mock_session.get.assert_called_once_with(
             "https://example.atlassian.net/wiki/api/v2/pages/123456",
             params={"body-format": "storage"},
@@ -135,6 +135,37 @@ class TestConfluenceV2Adapter:
 
         # Verify we still get a result
         assert result["id"] == "123456"
+
+    def test_get_page_with_view_expand_parameter(self, v2_adapter, mock_session):
+        """Test that body.view expand maps to view body-format."""
+        # Mock the v2 API response
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "id": "123456",
+            "status": "current",
+            "title": "Rendered Page",
+            "body": {
+                "view": {
+                    "value": '<p>See <a href="/wiki/x/abc">linked page</a></p>',
+                    "representation": "view",
+                }
+            },
+        }
+        mock_session.get.return_value = mock_response
+
+        # Call with rendered body expand parameter
+        result = v2_adapter.get_page("123456", expand="body.view,version")
+
+        # Verify the v2 body-format requests rendered HTML
+        mock_session.get.assert_called_once_with(
+            "https://example.atlassian.net/wiki/api/v2/pages/123456",
+            params={"body-format": "view"},
+        )
+        assert result["body"]["view"]["value"] == (
+            '<p>See <a href="/wiki/x/abc">linked page</a></p>'
+        )
+        assert result["body"]["view"]["representation"] == "view"
 
     @pytest.mark.parametrize(
         "method,call_kwargs,expected_path",
