@@ -55,10 +55,12 @@ def _parse_visibility(
     Raises:
         ValueError: If the input is not valid JSON or not a dict.
     """
-    if visibility is None:
+    if visibility is None or not visibility.strip():
         return None
     try:
         parsed = json.loads(visibility)
+        if parsed is None:
+            return None
         if not isinstance(parsed, dict):
             raise ValueError(
                 f"{field_name} must be a valid JSON object, e.g. "
@@ -1812,6 +1814,73 @@ async def update_issue(
 
 @jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_issues"},
+    annotations={"title": "Assign Issue", "readOnlyHint": False},
+)
+@check_write_access
+async def assign_issue(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+    assignee: Annotated[
+        str | None,
+        Field(
+            description=(
+                "User identifier to assign (email, display name, or account ID), "
+                "or a JSON object string from jira_search_assignable_users. "
+                "Pass null or empty string to unassign the issue."
+            ),
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """Assign a Jira issue to a user using the dedicated assignment endpoint.
+
+    This is more reliable than setting assignee via update_issue, which is
+    silently ignored by some Jira configurations. Uses PUT /issue/{key}/assignee.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+        assignee: User identifier (email, display name, or account ID), or a
+            JSON object string from jira_search_assignable_users. Pass None or
+            empty string to unassign.
+
+    Returns:
+        JSON string representing the updated issue object.
+
+    Raises:
+        ValueError: If in read-only mode, Jira client unavailable, or user not found.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        parsed_assignee: str | dict[str, Any] | None = assignee
+        if assignee and assignee.strip().startswith("{"):
+            try:
+                parsed_assignee = json.loads(assignee)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"assignee is not valid JSON: {e}") from e
+            if not isinstance(parsed_assignee, dict):
+                raise ValueError("assignee JSON must be an object.")
+
+        issue = jira.assign_issue(issue_key=issue_key, assignee=parsed_assignee)
+        result = issue.to_simplified_dict()
+        return json.dumps(
+            {"message": f"Issue {issue_key} assigned successfully", "issue": result},
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(f"Error assigning issue {issue_key}: {str(e)}", exc_info=True)
+        raise ValueError(f"Failed to assign issue {issue_key}: {str(e)}")
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_issues"},
     annotations={"title": "Delete Issue", "destructiveHint": True},
 )
 @check_write_access
@@ -1900,7 +1969,10 @@ async def add_comment(
     """
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
-    result = jira.add_comment(issue_key, body, visibility_dict, public=public)
+    # Some MCP clients send omitted optional booleans as false. Keep normal
+    # Jira comments as the default and reserve ServiceDesk routing for true.
+    public_value = True if public is True else None
+    result = jira.add_comment(issue_key, body, visibility_dict, public=public_value)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 

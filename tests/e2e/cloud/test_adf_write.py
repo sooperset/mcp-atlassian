@@ -138,6 +138,24 @@ class TestADFCreateIssue:
         finally:
             await _delete_issue(mcp_client, key)
 
+    async def test_create_issue_task_list(
+        self,
+        mcp_client: Client,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        """Task-list markdown is accepted by Jira Cloud and survives readback."""
+        key = await _create_issue_with_description(
+            mcp_client,
+            cloud_instance.project_key,
+            "- [x] completed cloud task\n- [ ] pending cloud task",
+        )
+        try:
+            desc = await _read_issue_description(mcp_client, key)
+            assert "completed cloud task" in desc
+            assert "pending cloud task" in desc
+        finally:
+            await _delete_issue(mcp_client, key)
+
     async def test_create_issue_code_block(
         self,
         mcp_client: Client,

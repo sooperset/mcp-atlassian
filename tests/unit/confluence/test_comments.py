@@ -804,7 +804,10 @@ class TestAddInlineComment:
             "12345", html_content, "some text"
         )
 
-        comments_mixin_dc.preprocessor.markdown_to_confluence_storage.assert_not_called()
+        markdown_to_storage = (
+            comments_mixin_dc.preprocessor.markdown_to_confluence_storage
+        )
+        markdown_to_storage.assert_not_called()
         assert result is not None
 
     def test_add_inline_comment_empty_response(self, comments_mixin_dc):

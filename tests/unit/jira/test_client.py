@@ -399,32 +399,26 @@ def test_jira_client_basic_auth_preserves_trust_env():
 
 
 @pytest.mark.parametrize(
-    ("url", "expected_api_version"),
+    "url",
     [
-        ("https://test.atlassian.net", "3"),
-        ("https://jira.example.com", "2"),
+        "https://test.atlassian.net",
+        "https://jira.example.com",
     ],
     ids=["cloud", "server_dc"],
 )
-def test_create_version_uses_correct_api_version(
-    url: str, expected_api_version: str
-) -> None:
-    """Test that create_version uses API v3 for Cloud and v2 for Server/DC."""
+def test_create_version_uses_rest_v2_endpoint(url: str) -> None:
+    """Test that create_version uses the REST v2 endpoint on all Jira platforms."""
     with (
         patch("mcp_atlassian.jira.client.Jira") as mock_jira,
         patch("mcp_atlassian.jira.client.configure_ssl_verification"),
     ):
-        expected_url = f"{url}/rest/api/{expected_api_version}/version"
-        mock_jira.return_value.resource_url.return_value = expected_url
         mock_jira.return_value.post.return_value = {"id": "100", "name": "v1.0"}
 
         config = JiraConfig(url=url, auth_type="pat", personal_token="test_token")
         client = JiraClient(config=config)
         client.create_version(project="PROJ", name="v1.0")
 
-        mock_jira.return_value.resource_url.assert_called_once_with(
-            "version", api_version=expected_api_version
-        )
+        mock_jira.return_value.resource_url.assert_not_called()
         mock_jira.return_value.post.assert_called_once_with(
-            expected_url, json={"project": "PROJ", "name": "v1.0"}
+            "/rest/api/2/version", json={"project": "PROJ", "name": "v1.0"}
         )
