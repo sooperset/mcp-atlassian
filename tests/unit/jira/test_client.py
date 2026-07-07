@@ -398,6 +398,45 @@ def test_jira_client_basic_auth_preserves_trust_env():
         assert mock_session.trust_env is True
 
 
+def test_jira_client_sets_default_user_agent() -> None:
+    """An explicit User-Agent is set so WAFs don't block the requests default."""
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        headers: dict[str, str] = {}
+        mock_jira.return_value._session.headers = headers
+
+        config = JiraConfig(
+            url="https://jira.example.com",
+            auth_type="pat",
+            personal_token="pat",
+        )
+        JiraClient(config=config)
+
+        assert headers["User-Agent"].startswith("mcp-atlassian/")
+
+
+def test_jira_client_custom_user_agent_overrides_default() -> None:
+    """Custom headers must still win over the built-in User-Agent default."""
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        headers: dict[str, str] = {}
+        mock_jira.return_value._session.headers = headers
+
+        config = JiraConfig(
+            url="https://jira.example.com",
+            auth_type="pat",
+            personal_token="pat",
+            custom_headers={"User-Agent": "my-app/1.0"},
+        )
+        JiraClient(config=config)
+
+        assert headers["User-Agent"] == "my-app/1.0"
+
+
 @pytest.mark.parametrize(
     "url",
     [
@@ -412,6 +451,7 @@ def test_create_version_uses_rest_v2_endpoint(url: str) -> None:
         patch("mcp_atlassian.jira.client.Jira") as mock_jira,
         patch("mcp_atlassian.jira.client.configure_ssl_verification"),
     ):
+        mock_jira.return_value._session.headers = {}
         mock_jira.return_value.post.return_value = {"id": "100", "name": "v1.0"}
 
         config = JiraConfig(url=url, auth_type="pat", personal_token="test_token")
