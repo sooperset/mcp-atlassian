@@ -781,6 +781,16 @@ def test_markdown_to_jira_preserves_intraword_underscores(preprocessor_with_jira
         preprocessor_with_jira.markdown_to_jira("netflow_ap and sre_analytics")
         == "netflow\\_ap and sre\\_analytics"
     )
+    # Double underscore runs inside identifiers are also literal in CommonMark.
+    assert (
+        preprocessor_with_jira.markdown_to_jira("the foo__bar__baz identifier")
+        == "the foo\\_\\_bar\\_\\_baz identifier"
+    )
+    # Jira list lines still need escaping inside the item text.
+    assert (
+        preprocessor_with_jira.markdown_to_jira("* customfield_10101 item")
+        == "* customfield\\_10101 item"
+    )
 
 
 def test_markdown_to_jira_word_boundary_underscore_still_italicizes(
@@ -792,6 +802,7 @@ def test_markdown_to_jira_word_boundary_underscore_still_italicizes(
         == "an _italic phrase_ here"
     )
     assert preprocessor_with_jira.markdown_to_jira("_italic text_") == "_italic text_"
+    assert preprocessor_with_jira.markdown_to_jira("__bold text__") == "*bold text*"
 
 
 def test_markdown_to_jira_underscore_in_inline_code_untouched(preprocessor_with_jira):
