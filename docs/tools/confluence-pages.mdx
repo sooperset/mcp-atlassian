@@ -93,6 +93,40 @@ Set `is_minor_edit: true` to skip notification emails. The page version is auto-
 
 ---
 
+### Update Page Section
+
+Update a single section of a Confluence page without affecting the rest.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | Yes | The ID of the page to update |
+| `heading_text` | `string` | Yes | Exact text of the heading that starts the section to replace. Matching is case-sensitive. Use `confluence_get_page` with `convert_to_markdown=false` to inspect exact heading text when unsure. |
+| `new_content` | `string` | Yes | Replacement content for the section body. Do not include the heading itself — only the body beneath it. Format is controlled by `content_format`. |
+| `content_format` | `string` | No | Format of `new_content`. Options: `'markdown'` (default) or `'storage'` (raw Confluence storage XML). Use `'storage'` to insert macros or elements that markdown cannot express. |
+| `is_minor_edit` | `boolean` | No | Whether this is a minor edit |
+| `version_comment` | `string` | No | Optional comment for this version |
+
+**Example:**
+
+```json
+{"page_id": "12345678", "heading_text": "Weekly Update", "new_content": "- Shipped v2.1\n- Started v2.2 planning", "version_comment": "Weekly sync"}
+```
+
+<Tip>
+Use this instead of `confluence_update_page` when the page contains macros, layouts, task lists, or other Confluence-specific elements you don't want to lose. The tool fetches the page as raw storage XML, surgically replaces only the target section, and writes the full XML back — so everything outside the section is preserved exactly.
+</Tip>
+
+<Warning>
+`heading_text` must match the heading exactly as it appears in Confluence (case-sensitive, no surrounding emoji — emoji in headings are stripped automatically). If the heading is not found, a `ValueError` is raised.
+</Warning>
+
+
+---
+
 ### Delete Page
 
 Delete an existing Confluence page.

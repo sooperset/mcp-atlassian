@@ -34,6 +34,20 @@ class TestJiraDCBehavior:
             if isinstance(assignee, dict):
                 assert "name" in assignee or "displayName" in assignee
 
+    def test_search_assignable_users_by_project(
+        self,
+        jira_fetcher: JiraFetcher,
+        dc_instance: DCInstanceInfo,
+    ) -> None:
+        """DC assignable-user search accepts username= with project scope."""
+        users = jira_fetcher.search_assignable_users(
+            query=dc_instance.admin_username,
+            project_key=dc_instance.project_key,
+            limit=5,
+        )
+
+        assert isinstance(users, list)
+
 
 class TestJiraDCEpicOperations:
     """Epic creation with DC custom fields."""
