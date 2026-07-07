@@ -150,6 +150,7 @@ This guide covers IDE integration, environment variables, and advanced configura
 | `MCP_VERBOSE` | Enable verbose logging (`true`/`false`) |
 | `MCP_VERY_VERBOSE` | Enable debug logging (`true`/`false`) |
 | `MCP_LOGGING_STDOUT` | Log to stdout instead of stderr (`true`/`false`) |
+| `CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1` | Download Confluence attachments via the v1 REST endpoint instead of the legacy `/download/` link (removed on Cloud). Unset = auto (v1 on Cloud, legacy on Server/DC); `true`/`false` to force. |
 | `ATLASSIAN_OAUTH_PROXY_ENABLE` | Enable OAuth proxy + DCR + `/.well-known/*` routes (`true`/`false`) |
 | `PUBLIC_BASE_URL` | Public base URL for OAuth discovery metadata |
 | `ATLASSIAN_OAUTH_ALLOWED_CLIENT_REDIRECT_URIS` | Comma-separated allowed redirect URI patterns for DCR clients |
