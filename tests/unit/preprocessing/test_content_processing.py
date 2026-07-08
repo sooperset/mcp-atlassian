@@ -462,16 +462,40 @@ def process():
     <ri:user ri:account-id="5b10a2844c20165700ede21g"/>
 </ac:link>"""
 
-        processed_html, processed_markdown = (
-            confluence_preprocessor.process_html_content(html_content)
+        class ServerDcUserClient:
+            def __init__(self) -> None:
+                self.account_ids: list[str] = []
+                self.userkeys: list[str] = []
+                self.usernames: list[str] = []
+
+            def get_user_details_by_accountid(self, account_id: str) -> dict[str, str]:
+                self.account_ids.append(account_id)
+                return {"displayName": f"Cloud User {account_id}"}
+
+            def get_user_details_by_userkey(self, userkey: str) -> dict[str, str]:
+                self.userkeys.append(userkey)
+                return {"displayName": f"Server Userkey {userkey}"}
+
+            def get_user_details_by_username(self, username: str) -> dict[str, str]:
+                self.usernames.append(username)
+                return {"displayName": f"Server Username {username}"}
+
+        client = ServerDcUserClient()
+        _processed_html, processed_markdown = (
+            confluence_preprocessor.process_html_content(
+                html_content, confluence_client=client
+            )
         )
 
         # Verify Server/DC userkey mention is resolved
-        assert "@Test User 8a286d85984c4df30198bc47dba33367" in processed_markdown
+        assert "@Server Userkey 8a286d85984c4df30198bc47dba33367" in processed_markdown
         # Verify Server/DC username mention is resolved
-        assert "@Test User test.user" in processed_markdown
+        assert "@Server Username test.user" in processed_markdown
         # Verify Cloud mention still works
-        assert "@Test User 5b10a2844c20165700ede21g" in processed_markdown
+        assert "@Cloud User 5b10a2844c20165700ede21g" in processed_markdown
+        assert client.userkeys == ["8a286d85984c4df30198bc47dba33367"]
+        assert client.usernames == ["test.user"]
+        assert client.account_ids == ["5b10a2844c20165700ede21g"]
 
     def test_confluence_markdown_roundtrip(self, confluence_preprocessor):
         """Test Markdown to Confluence storage format and processing."""

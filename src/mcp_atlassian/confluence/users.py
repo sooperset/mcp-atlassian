@@ -67,7 +67,8 @@ class UsersMixin(ConfluenceClient):
             User details as a dictionary.
 
         Raises:
-            Various exceptions from the Atlassian API if user doesn't exist or if there are permission issues.
+            Various exceptions from the Atlassian API if user doesn't exist or
+            if there are permission issues.
         """
         return self.confluence.get_user_details_by_userkey(userkey, expand)
 
