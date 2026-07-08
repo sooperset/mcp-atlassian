@@ -41,6 +41,7 @@ class ConfluenceFetcher(
     - UsersMixin: User operations
     - AnalyticsMixin: Page view analytics (Cloud only)
     - AttachmentsMixin: Attachment operations
+    - PermissionsMixin: Permission inspection operations (Cloud only)
     """
 
     pass

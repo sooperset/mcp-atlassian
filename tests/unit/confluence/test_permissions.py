@@ -17,7 +17,17 @@ class TestPermissionsMixin:
         mixin = MagicMock(spec=PermissionsMixin)
         mixin.confluence = MagicMock()
         mixin.confluence.url = "https://company.atlassian.net/wiki"
+        mixin.config = MagicMock()
+        mixin.config.auth_type = "basic"
+        mixin.config.is_cloud = True
+        mixin.config.url = "https://company.atlassian.net"
 
+        mixin._require_cloud_permissions_api = lambda *args, **kwargs: (
+            PermissionsMixin._require_cloud_permissions_api(mixin, *args, **kwargs)
+        )
+        mixin._permissions_rest_base_url = lambda *args, **kwargs: (
+            PermissionsMixin._permissions_rest_base_url(mixin, *args, **kwargs)
+        )
         mixin.check_content_permissions = lambda *args, **kwargs: (
             PermissionsMixin.check_content_permissions(mixin, *args, **kwargs)
         )
@@ -27,6 +37,17 @@ class TestPermissionsMixin:
         return mixin
 
     # ---- check_content_permissions ----
+
+    def test_check_content_permissions_requires_cloud(self, permissions_mixin):
+        """Test that content permission checks require a Cloud instance."""
+        permissions_mixin.config.is_cloud = False
+
+        with pytest.raises(ValueError, match="only available for Confluence Cloud"):
+            permissions_mixin.check_content_permissions(
+                content_id="1",
+                user_identifier="u",
+                operation="read",
+            )
 
     def test_check_content_permissions_has_permission(self, permissions_mixin):
         """Test successful permission check returning hasPermission=True."""
@@ -45,7 +66,7 @@ class TestPermissionsMixin:
         permissions_mixin.confluence._session.post.assert_called_once_with(
             "https://company.atlassian.net/wiki/rest/api/content/123456/permission/check",
             json={
-                "operation": {"operation": "read", "targetType": "page"},
+                "operation": "read",
                 "subject": {"type": "user", "identifier": "accountid123"},
             },
         )
@@ -65,10 +86,8 @@ class TestPermissionsMixin:
 
         assert result == {"hasPermission": False}
 
-    def test_check_content_permissions_custom_target_and_subject(
-        self, permissions_mixin
-    ):
-        """Test permission check with explicit target_type and subject_type."""
+    def test_check_content_permissions_custom_subject_type(self, permissions_mixin):
+        """Test permission check with an explicit subject_type."""
         mock_response = MagicMock()
         mock_response.json.return_value = {"hasPermission": True}
         mock_response.raise_for_status = MagicMock()
@@ -78,13 +97,12 @@ class TestPermissionsMixin:
             content_id="42",
             user_identifier="dev-team",
             operation="read",
-            target_type="blogpost",
             subject_type="group",
         )
 
         _, call_kwargs = permissions_mixin.confluence._session.post.call_args
         body = call_kwargs["json"]
-        assert body["operation"]["targetType"] == "blogpost"
+        assert body["operation"] == "read"
         assert body["subject"]["type"] == "group"
         assert body["subject"]["identifier"] == "dev-team"
 
@@ -120,6 +138,13 @@ class TestPermissionsMixin:
 
     # ---- get_space_permissions ----
 
+    def test_get_space_permissions_requires_cloud(self, permissions_mixin):
+        """Test that space permission checks require a Cloud instance."""
+        permissions_mixin.config.is_cloud = False
+
+        with pytest.raises(ValueError, match="only available for Confluence Cloud"):
+            permissions_mixin.get_space_permissions(space_id="1")
+
     def test_get_space_permissions_returns_results(self, permissions_mixin):
         """Test successful retrieval of space permission assignments."""
         mock_payload = {
@@ -144,17 +169,21 @@ class TestPermissionsMixin:
             params={"limit": 25},
         )
 
-    def test_get_space_permissions_custom_limit(self, permissions_mixin):
-        """Test that a custom limit is forwarded to the API."""
+    def test_get_space_permissions_custom_limit_and_cursor(self, permissions_mixin):
+        """Test that a custom limit and cursor are forwarded to the API."""
         mock_response = MagicMock()
         mock_response.json.return_value = {"results": []}
         mock_response.raise_for_status = MagicMock()
         permissions_mixin.confluence._session.get.return_value = mock_response
 
-        permissions_mixin.get_space_permissions(space_id="1", limit=50)
+        permissions_mixin.get_space_permissions(
+            space_id="1",
+            limit=50,
+            cursor="next-page",
+        )
 
         _, call_kwargs = permissions_mixin.confluence._session.get.call_args
-        assert call_kwargs["params"] == {"limit": 50}
+        assert call_kwargs["params"] == {"limit": 50, "cursor": "next-page"}
 
     def test_get_space_permissions_propagates_403(self, permissions_mixin):
         """Test that 403 HTTPError is re-raised."""
@@ -177,3 +206,34 @@ class TestPermissionsMixin:
 
         with pytest.raises(ValueError, match="Failed to get permissions"):
             permissions_mixin.get_space_permissions(space_id="999")
+
+    def test_permissions_rest_base_url_adds_wiki_for_cloud_basic(
+        self, permissions_mixin
+    ):
+        """Cloud site URLs need the /wiki prefix for direct REST calls."""
+        permissions_mixin.config.url = "https://company.atlassian.net"
+
+        assert (
+            permissions_mixin._permissions_rest_base_url()
+            == "https://company.atlassian.net/wiki"
+        )
+
+    def test_permissions_rest_base_url_avoids_double_wiki(self, permissions_mixin):
+        """Cloud URLs already ending in /wiki must not become /wiki/wiki."""
+        permissions_mixin.config.url = "https://company.atlassian.net/wiki"
+
+        assert (
+            permissions_mixin._permissions_rest_base_url()
+            == "https://company.atlassian.net/wiki"
+        )
+
+    def test_permissions_rest_base_url_uses_oauth_gateway(self, permissions_mixin):
+        """Cloud OAuth uses the Atlassian API gateway URL without /wiki."""
+        permissions_mixin.config.auth_type = "oauth"
+        permissions_mixin.confluence.url = (
+            "https://api.atlassian.com/ex/confluence/cloud-id"
+        )
+
+        assert permissions_mixin._permissions_rest_base_url() == (
+            "https://api.atlassian.com/ex/confluence/cloud-id"
+        )

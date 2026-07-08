@@ -125,6 +125,10 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "confluence_add_label",
         "confluence_get_page_views",
     ],
+    "confluence-permissions": [
+        "confluence_check_content_permissions",
+        "confluence_get_space_permissions",
+    ],
 }
 
 CATEGORY_META: dict[str, dict[str, str]] = {
@@ -177,6 +181,10 @@ CATEGORY_META: dict[str, dict[str, str]] = {
     "confluence-comments": {
         "title": "Confluence Comments & Labels",
         "description": "Comments, labels, and page analytics",
+    },
+    "confluence-permissions": {
+        "title": "Confluence Permissions",
+        "description": "Inspect content and space permissions",
     },
 }
 
