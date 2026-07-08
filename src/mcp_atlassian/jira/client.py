@@ -17,6 +17,7 @@ from mcp_atlassian.utils.logging import (
 )
 from mcp_atlassian.utils.oauth import configure_oauth_session
 from mcp_atlassian.utils.ssl import configure_ssl_verification
+from mcp_atlassian.utils.user_agent import get_default_user_agent
 
 from ..models.jira.adf import markdown_to_adf
 from .config import JiraConfig
@@ -153,6 +154,11 @@ class JiraClient:
         if self.config.no_proxy and isinstance(self.config.no_proxy, str):
             os.environ["NO_PROXY"] = self.config.no_proxy
             log_config_param(logger, "Jira", "NO_PROXY", self.config.no_proxy)
+
+        # Set an explicit User-Agent so requests aren't blocked by WAFs that
+        # reject the default ``python-requests/X.Y`` header. User-supplied
+        # custom headers below can still override this.
+        self.jira._session.headers["User-Agent"] = get_default_user_agent()
 
         # Apply custom headers if configured
         if self.config.custom_headers:
@@ -382,9 +388,7 @@ class JiraClient:
         if description:
             payload["description"] = description
         logger.info(f"Creating Jira version: {payload}")
-        api_version = "3" if self.config.is_cloud else "2"
-        url = self.jira.resource_url("version", api_version=api_version)
-        result = self.jira.post(url, json=payload)
+        result = self.jira.post("/rest/api/2/version", json=payload)
         if not isinstance(result, dict):
             error_message = f"Unexpected response from Jira API: {result}"
             raise ValueError(error_message)

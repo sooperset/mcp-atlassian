@@ -109,8 +109,9 @@ class TestConfluenceClientCustomHeaders:
 
         client = ConfluenceClient(config=config)
 
-        # Verify no custom headers were applied
-        assert mock_session.headers == {}
+        # Only the default User-Agent should be present; no custom headers added.
+        assert set(mock_session.headers.keys()) == {"User-Agent"}
+        assert mock_session.headers["User-Agent"].startswith("mcp-atlassian/")
 
     def test_custom_headers_applied_to_session(self, monkeypatch):
         """Test that custom headers are applied to the Confluence session."""

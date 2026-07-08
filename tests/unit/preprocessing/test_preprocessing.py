@@ -753,6 +753,98 @@ def test_markdown_to_jira_bold_without_space_still_converts(preprocessor_with_ji
     assert preprocessor_with_jira.markdown_to_jira("*italic text*") == "_italic text_"
 
 
+def test_markdown_to_jira_preserves_intraword_underscores(preprocessor_with_jira):
+    """Intraword underscores are literal per CommonMark, not emphasis.
+
+    The Jira wiki renderer italicizes ``_word_``, so identifiers containing
+    underscores (snake_case, customfield IDs, etc.) must be emitted with the
+    underscores escaped (``\\_``) — otherwise ``foo_bar_baz`` renders with a
+    spurious italic span around ``bar``.
+    """
+    # Single intraword underscore.
+    assert (
+        preprocessor_with_jira.markdown_to_jira("the foo_bar identifier")
+        == "the foo\\_bar identifier"
+    )
+    # Multiple intraword underscores in one token.
+    assert (
+        preprocessor_with_jira.markdown_to_jira("baseline_samples_5m paused")
+        == "baseline\\_samples\\_5m paused"
+    )
+    # Custom field IDs are a common real-world case.
+    assert (
+        preprocessor_with_jira.markdown_to_jira("set customfield_10101 to 5")
+        == "set customfield\\_10101 to 5"
+    )
+    # Two identifiers on one line must not pair into a cross-token italic span.
+    assert (
+        preprocessor_with_jira.markdown_to_jira("netflow_ap and sre_analytics")
+        == "netflow\\_ap and sre\\_analytics"
+    )
+    # Double underscore runs inside identifiers are also literal in CommonMark.
+    assert (
+        preprocessor_with_jira.markdown_to_jira("the foo__bar__baz identifier")
+        == "the foo\\_\\_bar\\_\\_baz identifier"
+    )
+    # Jira list lines still need escaping inside the item text.
+    assert (
+        preprocessor_with_jira.markdown_to_jira("* customfield_10101 item")
+        == "* customfield\\_10101 item"
+    )
+
+
+def test_markdown_to_jira_word_boundary_underscore_still_italicizes(
+    preprocessor_with_jira,
+):
+    """Genuine ``_emphasis_`` at word boundaries must still convert to italic."""
+    assert (
+        preprocessor_with_jira.markdown_to_jira("an _italic phrase_ here")
+        == "an _italic phrase_ here"
+    )
+    assert preprocessor_with_jira.markdown_to_jira("_italic text_") == "_italic text_"
+    assert preprocessor_with_jira.markdown_to_jira("__bold text__") == "*bold text*"
+
+
+def test_markdown_to_jira_underscore_in_inline_code_untouched(preprocessor_with_jira):
+    """Underscores inside inline code spans stay inside monospace, unescaped."""
+    assert (
+        preprocessor_with_jira.markdown_to_jira("call `find_provider_by_url` now")
+        == "call {{find_provider_by_url}} now"
+    )
+
+
+def test_markdown_to_jira_preserves_underscores_in_url_targets(
+    preprocessor_with_jira,
+):
+    """URL targets keep literal underscores while visible text is escaped."""
+    assert (
+        preprocessor_with_jira.markdown_to_jira(
+            "[runbook](https://example.com/foo_bar)"
+        )
+        == "[runbook|https://example.com/foo_bar]"
+    )
+    assert (
+        preprocessor_with_jira.markdown_to_jira(
+            "[foo_bar](https://example.com/foo_bar)"
+        )
+        == "[foo\\_bar|https://example.com/foo_bar]"
+    )
+    assert (
+        preprocessor_with_jira.markdown_to_jira(
+            "![diagram](https://example.com/foo_bar.png)"
+        )
+        == "!https://example.com/foo_bar.png|alt=diagram!"
+    )
+    assert (
+        preprocessor_with_jira.markdown_to_jira("![](https://example.com/foo_bar.png)")
+        == "!https://example.com/foo_bar.png!"
+    )
+    assert (
+        preprocessor_with_jira.markdown_to_jira("<https://example.com/foo_bar>")
+        == "[https://example.com/foo_bar]"
+    )
+
+
 def test_md2conf_elements_from_string_available():
     """Test that elements_from_string is importable with fallback (issue #817)."""
     from mcp_atlassian.preprocessing.confluence import elements_from_string
