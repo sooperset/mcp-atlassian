@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 import mimetypes
+from pathlib import Path
 from typing import Annotated
 
 from fastmcp import Context, FastMCP
@@ -23,6 +24,45 @@ from mcp_atlassian.utils.media import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_page_content(content: str | None, content_file: str | None) -> str:
+    """Resolve page body from either an inline string or a file path.
+
+    Exactly one of ``content`` / ``content_file`` must be supplied. ``content_file``
+    exists so callers (especially MCP clients transporting large bodies over stdio
+    JSON) can hand off content via the filesystem instead of marshalling it as a
+    tool-call argument.
+
+    Args:
+        content: Inline page body (any supported content_format).
+        content_file: Absolute or relative filesystem path to read the body from.
+            Read as UTF-8.
+
+    Returns:
+        The resolved page body as a string.
+
+    Raises:
+        ValueError: If neither or both arguments are supplied, or if the file does
+            not exist / is not a regular file.
+        OSError: If the file exists but cannot be read.
+    """
+    has_content = content is not None
+    has_file = content_file is not None and content_file != ""
+    if has_content and has_file:
+        raise ValueError("Provide either 'content' or 'content_file', not both.")
+    if not has_content and not has_file:
+        raise ValueError("One of 'content' or 'content_file' must be provided.")
+    if has_content:
+        return content
+    if content_file is None or content_file == "":
+        raise ValueError("One of 'content' or 'content_file' must be provided.")
+
+    path = Path(content_file).expanduser()
+    if not path.is_file():
+        msg = f"content_file does not exist or is not a regular file: {path}"
+        raise ValueError(msg)
+    return path.read_text(encoding="utf-8")
 
 
 confluence_mcp = FastMCP(
@@ -529,15 +569,17 @@ async def create_page(
     ],
     title: Annotated[str, Field(description="The title of the page")],
     content: Annotated[
-        str,
+        str | None,
         Field(
             description=(
                 "The content of the page. Format depends on content_format "
                 "parameter. Can be Markdown (default), wiki markup, storage "
-                "format, or XHTML storage format"
-            )
+                "format, or XHTML storage format. Either 'content' or "
+                "'content_file' must be provided, but not both."
+            ),
+            default=None,
         ),
-    ],
+    ] = None,
     parent_id: Annotated[
         str | None,
         Field(
@@ -580,6 +622,18 @@ async def create_page(
             default=None,
         ),
     ] = None,
+    content_file: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Absolute or relative filesystem path to read the "
+                "page body from (UTF-8). Use this instead of 'content' when "
+                "the body is too large to pass comfortably as a tool "
+                "argument. Mutually exclusive with 'content'."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Create a new Confluence page.
 
@@ -588,6 +642,10 @@ async def create_page(
         space_key: The key of the space.
         title: The title of the page.
         content: The content of the page (format depends on content_format).
+            Mutually exclusive with content_file; exactly one must be
+            supplied.
+        content_file: Filesystem path to read the page body from (UTF-8).
+            Useful for bodies too large to pass as an inline tool argument.
         parent_id: Optional parent page ID.
         content_format: The format of the content ('markdown', 'wiki',
             'storage', or 'xhtml').
@@ -610,6 +668,8 @@ async def create_page(
             "'markdown', 'wiki', 'storage', or 'xhtml'"
         )
 
+    resolved_content = _resolve_page_content(content, content_file)
+
     # Determine parameters based on content format
     if content_format == "markdown":
         is_markdown = True
@@ -624,7 +684,7 @@ async def create_page(
     page = confluence_fetcher.create_page(
         space_key=space_key,
         title=title,
-        body=content,
+        body=resolved_content,
         parent_id=parent_id,
         is_markdown=is_markdown,
         enable_heading_anchors=enable_heading_anchors
@@ -653,11 +713,17 @@ async def update_page(
     page_id: Annotated[str, Field(description="The ID of the page to update")],
     title: Annotated[str, Field(description="The new title of the page")],
     content: Annotated[
-        str,
+        str | None,
         Field(
-            description="The new content of the page. Format depends on content_format parameter"
+            description=(
+                "The new content of the page. Format depends on "
+                "content_format parameter and may be Markdown (default), wiki "
+                "markup, storage format, or XHTML storage format. Either "
+                "'content' or 'content_file' must be provided, but not both."
+            ),
+            default=None,
         ),
-    ],
+    ] = None,
     is_minor_edit: Annotated[
         bool, Field(description="Whether this is a minor edit", default=False)
     ] = False,
@@ -703,6 +769,18 @@ async def update_page(
             default=None,
         ),
     ] = None,
+    content_file: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Absolute or relative filesystem path to read the "
+                "new page body from (UTF-8). Use this instead of 'content' "
+                "when the body is too large to pass comfortably as a tool "
+                "argument. Mutually exclusive with 'content'."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Update an existing Confluence page.
 
@@ -710,7 +788,12 @@ async def update_page(
         ctx: The FastMCP context.
         page_id: The ID of the page to update.
         title: The new title of the page.
-        content: The new content of the page (format depends on content_format).
+        content: The new content of the page (format depends on
+            content_format). Mutually exclusive with content_file; exactly
+            one must be supplied.
+        content_file: Filesystem path to read the new page body from
+            (UTF-8). Useful for bodies too large to pass as an inline tool
+            argument.
         is_minor_edit: Whether this is a minor edit.
         version_comment: Optional comment for this version.
         parent_id: Optional new parent page ID.
@@ -735,6 +818,8 @@ async def update_page(
             "'markdown', 'wiki', 'storage', or 'xhtml'"
         )
 
+    resolved_content = _resolve_page_content(content, content_file)
+
     # Determine parameters based on content format
     if content_format == "markdown":
         is_markdown = True
@@ -749,7 +834,7 @@ async def update_page(
     updated_page = confluence_fetcher.update_page(
         page_id=page_id,
         title=title,
-        body=content,
+        body=resolved_content,
         is_minor_edit=is_minor_edit,
         version_comment=version_comment,
         is_markdown=is_markdown,
