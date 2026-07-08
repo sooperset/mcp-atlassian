@@ -883,7 +883,10 @@ async def test_update_page_accepts_empty_content(client, mock_confluence_fetcher
 
 def test_page_content_file_parameters_preserve_positional_order():
     """content_file should not shift existing positional parameters."""
-    create_params = list(inspect.signature(confluence_server.create_page.fn).parameters)
+    create_impl = inspect.unwrap(
+        getattr(confluence_server.create_page, "fn", confluence_server.create_page)
+    )
+    create_params = list(inspect.signature(create_impl).parameters)
     assert create_params == [
         "ctx",
         "space_key",
@@ -897,7 +900,10 @@ def test_page_content_file_parameters_preserve_positional_order():
         "content_file",
     ]
 
-    update_params = list(inspect.signature(confluence_server.update_page.fn).parameters)
+    update_impl = inspect.unwrap(
+        getattr(confluence_server.update_page, "fn", confluence_server.update_page)
+    )
+    update_params = list(inspect.signature(update_impl).parameters)
     assert update_params == [
         "ctx",
         "page_id",
