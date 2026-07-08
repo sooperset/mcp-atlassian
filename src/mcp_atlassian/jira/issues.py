@@ -1,5 +1,6 @@
 """Module for Jira issue operations."""
 
+import json
 import logging
 from collections import defaultdict
 from typing import Any
@@ -337,9 +338,9 @@ class IssuesMixin(
 
                 comments = response["comments"]
 
-                # Limit comments if needed
+                # Jira returns comments oldest-first; keep the newest comments.
                 if comment_limit is not None:
-                    comments = comments[:comment_limit]
+                    comments = comments[-comment_limit:]
 
                 return comments
             except Exception as e:
@@ -613,7 +614,7 @@ class IssuesMixin(
                 if epic_type_id:
                     actual_issue_id = epic_type_id
                     logger.info(f"Using localized Epic issue type id: {epic_type_id}")
-            elif issue_type.lower() in ["subtask", "sub-task"]:
+            elif self._normalize_issue_type_name(issue_type) == "subtask":
                 # If the user provided "Subtask" but we need to find the localized name
                 subtask_type_id = self._find_subtask_issue_type_id(project_key)
                 if subtask_type_id:
@@ -788,20 +789,43 @@ class IssuesMixin(
             logger.warning(f"Could not get issue types for project {project_key}: {e}")
             return None
 
+    def _normalize_issue_type_name(self, issue_type: str) -> str:
+        """
+        Normalize an issue type name for comparison.
+
+        Args:
+            issue_type: The issue type name to normalize
+
+        Returns:
+            Normalized issue type name
+        """
+        return issue_type.lower().replace("-", "").replace(" ", "")
+
     def _find_subtask_issue_type_id(self, project_key: str) -> str | None:
         """
-        Find the actual Subtask issue type name for a project.
+        Find the best matching subtask issue type id for a project.
 
         Args:
             project_key: The project key
 
         Returns:
-            The Subtask issue type name if found, None otherwise
+            The best matching subtask issue type id if found, None otherwise
         """
         try:
             issue_types = self.get_project_issue_types(project_key)
+
+            # Prefer a server-returned subtask issue type name that
+            # normalizes to "subtask" before falling back.
             for issue_type in issue_types:
-                # Check the subtask field - this is the most reliable way
+                type_name = issue_type.get("name", "")
+                if (
+                    issue_type.get("subtask", False)
+                    and self._normalize_issue_type_name(type_name) == "subtask"
+                ):
+                    return issue_type.get("id")
+
+            # Final fallback: first available subtask-capable issue type.
+            for issue_type in issue_types:
                 if issue_type.get("subtask", False):
                     return issue_type.get("id")
             return None
@@ -1101,12 +1125,28 @@ class IssuesMixin(
                     # Handle assignee updates, allow unassignment with None or empty string
                     if value is None or value == "":
                         update_fields["assignee"] = None
+                    elif isinstance(value, dict):
+                        # Caller already has a fully-shaped assignee — most
+                        # commonly the output of search_assignable_users /
+                        # get_user_profile. Forward it as-is without going
+                        # through _get_account_id: the lookup endpoints used
+                        # there (/user/search, /user/permission/search) need
+                        # the global "Browse Users" permission that many bot
+                        # accounts on hardened DC instances lack, and we
+                        # already have the canonical shape Jira wants.
+                        update_fields["assignee"] = value
                     else:
                         try:
                             account_id = self._get_account_id(value)
                             self._add_assignee_to_fields(update_fields, account_id)
                         except ValueError as e:
-                            logger.warning(f"Could not update assignee: {str(e)}")
+                            # An explicit assignee update that cannot be resolved
+                            # must fail loudly. Swallowing it here means the PUT is
+                            # skipped (or runs without the assignee) while the call
+                            # still reports the issue as updated successfully.
+                            raise ValueError(
+                                f"Could not update assignee: {str(e)}"
+                            ) from e
                 elif key == "parent":
                     if isinstance(value, dict) and value.get("key"):
                         update_fields["parent"] = {"key": str(value["key"])}
@@ -1155,8 +1195,24 @@ class IssuesMixin(
 
             # Get the updated issue data and convert to JiraIssue model
             issue_data = self.jira.get_issue(issue_key)
+            if isinstance(issue_data, str):
+                # atlassian-python-api can return a string on Jira Server/DC
+                # when response.json() fails. Try parsing it as JSON first.
+                try:
+                    issue_data = json.loads(issue_data)
+                except (ValueError, TypeError):
+                    logger.warning(
+                        f"get_issue returned a string for {issue_key}, "
+                        f"re-fetching via direct GET"
+                    )
+                    issue_data = self.jira.get(
+                        self.jira.resource_url("issue/" + issue_key)
+                    )
             if not isinstance(issue_data, dict):
-                msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
+                msg = (
+                    f"Unexpected return value type from `jira.get_issue`: "
+                    f"{type(issue_data)}"
+                )
                 logger.error(msg)
                 raise TypeError(msg)
             issue = JiraIssue.from_api_response(issue_data)
@@ -1171,6 +1227,71 @@ class IssuesMixin(
             error_msg = str(e)
             logger.error(f"Error updating issue {issue_key}: {error_msg}")
             raise ValueError(f"Failed to update issue {issue_key}: {error_msg}") from e
+
+    def assign_issue(
+        self,
+        issue_key: str,
+        assignee: str | dict[str, Any] | None,
+    ) -> JiraIssue:
+        """
+        Assign a Jira issue to a user using the dedicated assignment endpoint.
+
+        Unlike update_issue (which sets assignee via the fields update and is
+        silently ignored by some Jira configurations), this method calls
+        PUT /rest/api/3/issue/{key}/assignee directly.
+
+        Pass None or empty string to unassign.
+
+        Args:
+            issue_key: The key of the issue to assign (e.g., 'PROJ-123')
+            assignee: User identifier (email, display name, or account ID), or a
+                resolved user dict containing ``accountId``/``account_id`` for
+                Cloud or ``name``/``username``/``key`` for Server/DC. Pass None
+                or "" to unassign.
+
+        Returns:
+            JiraIssue model representing the updated issue
+
+        Raises:
+            ValueError: If the user cannot be resolved or assignment fails
+        """
+        try:
+            if assignee is None or assignee == "":
+                # Unassign: the atlassian-python-api accepts None for unassignment
+                self.jira.assign_issue(issue_key, None)
+            elif isinstance(assignee, dict):
+                if self.config.is_cloud:
+                    assignee_identifier = assignee.get("accountId") or assignee.get(
+                        "account_id"
+                    )
+                    if not assignee_identifier:
+                        raise ValueError(
+                            "Cloud assignee dict must include accountId or account_id"
+                        )
+                else:
+                    assignee_identifier = (
+                        assignee.get("name")
+                        or assignee.get("username")
+                        or assignee.get("key")
+                        or assignee.get("accountId")
+                        or assignee.get("account_id")
+                    )
+                    if not assignee_identifier:
+                        raise ValueError(
+                            "Server/DC assignee dict must include name, username, "
+                            "key, accountId, or account_id"
+                        )
+                self.jira.assign_issue(issue_key, str(assignee_identifier))
+            else:
+                account_id = self._get_account_id(assignee)
+                self.jira.assign_issue(issue_key, account_id)
+
+            # Return the updated issue
+            return self.get_issue(issue_key)
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Error assigning issue {issue_key}: {error_msg}")
+            raise ValueError(f"Failed to assign issue {issue_key}: {error_msg}") from e
 
     def _update_issue_with_status(
         self, issue_key: str, fields: dict[str, Any]

@@ -11,6 +11,7 @@ from ..exceptions import MCPAtlassianAuthenticationError
 from ..utils.logging import get_masked_session_headers, log_config_param, mask_sensitive
 from ..utils.oauth import configure_oauth_session
 from ..utils.ssl import configure_ssl_verification
+from ..utils.user_agent import get_default_user_agent
 from .config import ConfluenceConfig
 
 # Configure logging
@@ -140,6 +141,11 @@ class ConfluenceClient:
         if self.config.no_proxy and isinstance(self.config.no_proxy, str):
             os.environ["NO_PROXY"] = self.config.no_proxy
             log_config_param(logger, "Confluence", "NO_PROXY", self.config.no_proxy)
+
+        # Set an explicit User-Agent so requests aren't blocked by WAFs that
+        # reject the default ``python-requests/X.Y`` header. User-supplied
+        # custom headers below can still override this.
+        self.confluence._session.headers["User-Agent"] = get_default_user_agent()
 
         # Apply custom headers if configured
         if self.config.custom_headers:
