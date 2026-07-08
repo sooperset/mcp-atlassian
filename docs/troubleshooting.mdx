@@ -255,7 +255,12 @@ Header values containing sensitive information are automatically masked in logs.
     CONFLUENCE_SSL_VERIFY=false
     ```
 
-    For mTLS (mutual TLS) authentication:
+    For mTLS (mutual TLS) authentication, set either a combined cert/key PEM:
+    ```bash
+    JIRA_CLIENT_CERT=/path/to/client-combined.pem
+    ```
+
+    Or set separate certificate and key files:
     ```bash
     JIRA_CLIENT_CERT=/path/to/client-cert.pem
     JIRA_CLIENT_KEY=/path/to/client-key.pem

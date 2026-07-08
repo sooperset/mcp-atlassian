@@ -477,7 +477,9 @@ def test_init_cert_auth() -> None:
     with (
         patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
         patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
-        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+        patch(
+            "mcp_atlassian.confluence.client.configure_ssl_verification"
+        ) as mock_configure_ssl,
     ):
         mock_session = MagicMock()
         mock_session.headers = {}
@@ -492,6 +494,15 @@ def test_init_cert_auth() -> None:
             timeout=75,
         )
         assert mock_session.trust_env is False
+        mock_configure_ssl.assert_called_once_with(
+            service_name="Confluence",
+            url="https://confluence.example.com",
+            session=mock_session,
+            ssl_verify=True,
+            client_cert="/path/to/cert.pem",
+            client_key=None,
+            client_key_password=None,
+        )
 
 
 def test_confluence_client_sets_default_user_agent() -> None:

@@ -407,7 +407,9 @@ def test_init_cert_auth() -> None:
     """Test that cert auth initializes without credentials and disables trust_env."""
     with (
         patch("mcp_atlassian.jira.client.Jira") as mock_jira,
-        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+        patch(
+            "mcp_atlassian.jira.client.configure_ssl_verification"
+        ) as mock_configure_ssl,
     ):
         mock_session = MagicMock()
         mock_session.headers = {}
@@ -428,6 +430,15 @@ def test_init_cert_auth() -> None:
             timeout=75,
         )
         assert mock_session.trust_env is False
+        mock_configure_ssl.assert_called_once_with(
+            service_name="Jira",
+            url="https://jira.example.com",
+            session=mock_session,
+            ssl_verify=True,
+            client_cert="/path/to/cert.pem",
+            client_key=None,
+            client_key_password=None,
+        )
 
 
 def test_jira_client_sets_default_user_agent() -> None:
