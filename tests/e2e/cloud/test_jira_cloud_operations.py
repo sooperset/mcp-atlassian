@@ -47,6 +47,22 @@ class TestJiraCloudBehavior:
 
         assert isinstance(users, list)
 
+    def test_search_projects_by_key(
+        self,
+        jira_fetcher: JiraFetcher,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        """Cloud project search returns the configured test project."""
+        projects = jira_fetcher.search_projects(
+            query=cloud_instance.project_key,
+            max_results=10,
+        )
+
+        assert any(
+            project.get("key", "").upper() == cloud_instance.project_key
+            for project in projects
+        )
+
 
 class TestJiraCloudEpicOperations:
     """Epic creation on Cloud."""
