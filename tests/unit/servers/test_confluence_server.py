@@ -32,6 +32,7 @@ def mock_confluence_fetcher():
         "id": "123456",
         "title": "Test Page Mock Title",
         "url": "https://example.atlassian.net/wiki/spaces/TEST/pages/123456/Test+Page",
+        "space": {"key": "TEST", "name": "Test Space"},
         "content": {
             "value": "This is a test page content in Markdown",
             "format": "markdown",
@@ -59,6 +60,7 @@ def mock_confluence_fetcher():
     }
     mock_fetcher.create_page.return_value = mock_page
     mock_fetcher.update_page.return_value = mock_page
+    mock_fetcher.update_page_section.return_value = mock_page
     mock_fetcher.delete_page.return_value = True
 
     # Mock comment
@@ -204,6 +206,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         search,
         search_user,
         update_page,
+        update_page_section,
         upload_attachment,
         upload_attachments,
     )
@@ -235,6 +238,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(add_label)
     confluence_sub_mcp.add_tool(create_page)
     confluence_sub_mcp.add_tool(update_page)
+    confluence_sub_mcp.add_tool(update_page_section)
     confluence_sub_mcp.add_tool(delete_page)
     confluence_sub_mcp.add_tool(search_user)
     confluence_sub_mcp.add_tool(upload_attachment)
@@ -273,6 +277,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         search,
         search_user,
         update_page,
+        update_page_section,
         upload_attachment,
         upload_attachments,
     )
@@ -306,6 +311,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.add_tool(add_label)
     confluence_sub_mcp.add_tool(create_page)
     confluence_sub_mcp.add_tool(update_page)
+    confluence_sub_mcp.add_tool(update_page_section)
     confluence_sub_mcp.add_tool(delete_page)
     confluence_sub_mcp.add_tool(search_user)
     confluence_sub_mcp.add_tool(upload_attachment)
@@ -458,6 +464,13 @@ async def test_get_page_children(client, mock_confluence_fetcher):
     assert "results" in result_data
     assert len(result_data["results"]) > 0
     assert result_data["results"][0]["title"] == "Test Page Mock Title"
+    assert result_data["results"][0]["space"] == {
+        "key": "TEST",
+        "name": "Test Space",
+    }
+    assert result_data["results"][0]["url"] == (
+        "https://example.atlassian.net/wiki/spaces/TEST/pages/123456/Test+Page"
+    )
 
 
 @pytest.mark.anyio
@@ -660,6 +673,37 @@ async def test_create_page_include_content(client, mock_confluence_fetcher):
 
 
 @pytest.mark.anyio
+async def test_create_page_with_xhtml_format(client, mock_confluence_fetcher):
+    """Test create_page maps xhtml content format to storage representation."""
+    xhtml_body = (
+        "<ac:structured-macro ac:name='code'>"
+        "<ac:plain-text-body>hello</ac:plain-text-body>"
+        "</ac:structured-macro>"
+    )
+
+    response = await client.call_tool(
+        "confluence_create_page",
+        {
+            "space_key": "TEST",
+            "title": "XHTML Page",
+            "content": xhtml_body,
+            "content_format": "xhtml",
+            "enable_heading_anchors": True,
+        },
+    )
+
+    mock_confluence_fetcher.create_page.assert_called_once()
+    call_kwargs = mock_confluence_fetcher.create_page.call_args.kwargs
+    assert call_kwargs["body"] == xhtml_body
+    assert call_kwargs["is_markdown"] is False
+    assert call_kwargs["content_representation"] == "storage"
+    assert call_kwargs["enable_heading_anchors"] is False
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["message"] == "Page created successfully"
+
+
+@pytest.mark.anyio
 async def test_update_page_with_numeric_parent_id(client, mock_confluence_fetcher):
     """Test updating a page with numeric parent_id (integer) - should convert to string."""
     response = await client.call_tool(
@@ -726,6 +770,87 @@ async def test_update_page_include_content(client, mock_confluence_fetcher):
     assert result_data["message"] == "Page updated successfully"
     assert result_data["page"]["title"] == "Test Page Mock Title"
     assert "content" in result_data["page"]
+
+
+@pytest.mark.anyio
+async def test_update_page_with_xhtml_format(client, mock_confluence_fetcher):
+    """Test update_page maps xhtml content format to storage representation."""
+    xhtml_body = (
+        "<ac:structured-macro ac:name='info'>"
+        "<ac:rich-text-body><p>hello</p></ac:rich-text-body>"
+        "</ac:structured-macro>"
+    )
+
+    response = await client.call_tool(
+        "confluence_update_page",
+        {
+            "page_id": "999999",
+            "title": "Updated XHTML Page",
+            "content": xhtml_body,
+            "content_format": "xhtml",
+            "enable_heading_anchors": True,
+        },
+    )
+
+    mock_confluence_fetcher.update_page.assert_called_once()
+    call_kwargs = mock_confluence_fetcher.update_page.call_args.kwargs
+    assert call_kwargs["body"] == xhtml_body
+    assert call_kwargs["is_markdown"] is False
+    assert call_kwargs["content_representation"] == "storage"
+    assert call_kwargs["enable_heading_anchors"] is False
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["message"] == "Page updated successfully"
+
+
+@pytest.mark.anyio
+async def test_update_page_section(client, mock_confluence_fetcher):
+    """Test update_page_section passes section update parameters."""
+    response = await client.call_tool(
+        "confluence_update_page_section",
+        {
+            "page_id": "999999",
+            "heading_text": "Weekly Update",
+            "new_content": "- Shipped v2.1",
+            "content_format": "markdown",
+            "is_minor_edit": True,
+            "version_comment": "Weekly sync",
+        },
+    )
+
+    mock_confluence_fetcher.update_page_section.assert_called_once_with(
+        page_id="999999",
+        heading_text="Weekly Update",
+        new_content="- Shipped v2.1",
+        content_format="markdown",
+        is_minor_edit=True,
+        version_comment="Weekly sync",
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["message"] == "Section 'Weekly Update' updated successfully"
+    assert result_data["page"]["title"] == "Test Page Mock Title"
+    assert "content" not in result_data["page"]
+
+
+@pytest.mark.anyio
+async def test_update_page_section_default_version_comment(
+    client, mock_confluence_fetcher
+):
+    """Test update_page_section sends an empty version comment by default."""
+    await client.call_tool(
+        "confluence_update_page_section",
+        {
+            "page_id": "999999",
+            "heading_text": "Weekly Update",
+            "new_content": "- Shipped v2.1",
+        },
+    )
+
+    call_kwargs = mock_confluence_fetcher.update_page_section.call_args.kwargs
+    assert call_kwargs["content_format"] == "markdown"
+    assert call_kwargs["is_minor_edit"] is False
+    assert call_kwargs["version_comment"] == ""
 
 
 @pytest.mark.anyio
