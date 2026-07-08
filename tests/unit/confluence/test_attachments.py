@@ -328,10 +328,9 @@ class TestAttachmentsMixin:
                 "123456", "/absolute/path/test_file.txt"
             )
 
-            # Assertions
+            # Assertions: exception is caught by upload_attachment and returned as failure dict
             assert result["success"] is False
-            # When direct API fails, we get generic failure message
-            assert "Failed to upload attachment" in result["error"]
+            assert "API Error" in result["error"]
 
     def test_upload_attachment_versioning_fallback(
         self, attachments_mixin: AttachmentsMixin

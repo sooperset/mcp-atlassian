@@ -5,7 +5,7 @@ description: "Create, read, update, delete, and transition Jira issues"
 
 ### Get Issue
 
-Get details of a specific Jira issue including its Epic links and relationship information.
+Get details of a specific Jira issue.
 
 **Parameters:**
 
@@ -17,6 +17,7 @@ Get details of a specific Jira issue including its Epic links and relationship i
 | `comment_limit` | `integer` | No | Maximum number of comments to include (0 or null for no comments) |
 | `properties` | `object` | No | Issue properties to return. |
 | `update_history` | `boolean` | No | Whether to update the issue view history for the requesting user |
+| `include` | `object` | No | Comma-separated enrichment sections to inline. |
 **Example:**
 
 ```json
@@ -107,6 +108,21 @@ Delete an existing Jira issue.
 
 ---
 
+### Move Issue to Project
+
+Move a Jira issue to a different project (Jira Cloud only).
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key to move (e.g., 'PROJ-123') |
+| `target_project_key` | `string` | Yes | Key of the target project (e.g., 'OTHERPROJ'). The issue will keep its current issue type and may receive a new key in the target project. |
+
+---
+
 ### Batch Create Issues
 
 Create multiple Jira issues in a batch.
@@ -184,6 +200,20 @@ Get all Jira projects accessible to the current user.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `include_archived` | `boolean` | No | Whether to include archived projects in the results |
+
+---
+
+### Search Projects
+
+Search for Jira projects by name or key prefix.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | `string` | Yes | Name or key prefix to search for |
+| `max_results` | `integer` | No | Maximum number of results to return |
+| `current_project_ids` | `object` | No | Comma-separated project IDs to exclude. |
 
 ---
 

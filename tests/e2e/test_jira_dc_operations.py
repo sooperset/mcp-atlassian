@@ -48,6 +48,33 @@ class TestJiraDCBehavior:
 
         assert isinstance(users, list)
 
+    def test_search_projects_by_key(
+        self,
+        jira_fetcher: JiraFetcher,
+        dc_instance: DCInstanceInfo,
+    ) -> None:
+        """DC project picker returns the configured test project."""
+        projects = jira_fetcher.search_projects(
+            query=dc_instance.project_key,
+            max_results=10,
+        )
+
+        assert any(
+            project.get("key", "").upper() == dc_instance.project_key
+            for project in projects
+        )
+
+    def test_move_issue_not_supported(
+        self,
+        jira_fetcher: JiraFetcher,
+        dc_instance: DCInstanceInfo,
+    ) -> None:
+        with pytest.raises(NotImplementedError, match="Jira Cloud"):
+            jira_fetcher.move_issue(
+                dc_instance.test_issue_key,
+                dc_instance.project_key,
+            )
+
 
 class TestJiraDCEpicOperations:
     """Epic creation with DC custom fields."""
@@ -78,9 +105,9 @@ class TestJiraDCEpicOperations:
 
 
 class TestJiraDCVersionOperations:
-    """Version creation on DC."""
+    """Version creation and updates on DC."""
 
-    def test_create_project_version(
+    def test_create_and_update_project_version(
         self,
         jira_fetcher: JiraFetcher,
         dc_instance: DCInstanceInfo,
@@ -98,6 +125,15 @@ class TestJiraDCVersionOperations:
 
             assert version["name"] == name
             assert version.get("id")
+
+            updated_name = f"{name}-updated"
+            updated_version = jira_fetcher.update_project_version(
+                version_id=str(version["id"]),
+                name=updated_name,
+            )
+
+            assert updated_version["name"] == updated_name
+            assert str(updated_version["id"]) == str(version["id"])
         finally:
             if version and version.get("id"):
                 requests.post(

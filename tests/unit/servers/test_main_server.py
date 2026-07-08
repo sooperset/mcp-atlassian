@@ -248,12 +248,13 @@ class TestUserTokenMiddleware:
 
     @pytest.mark.anyio
     async def test_unsupported_auth_type_returns_401(
-        self, middleware, mock_scope, mock_receive, mock_send
+        self, middleware, mock_scope, mock_receive, mock_send, caplog
     ):
         """Test that unsupported auth types (e.g., Digest) return 401 Unauthorized."""
         mock_scope["headers"] = [(b"authorization", b"Digest username=test")]
 
-        await middleware(mock_scope, mock_receive, mock_send)
+        with caplog.at_level(logging.WARNING, logger="mcp-atlassian.server.main"):
+            await middleware(mock_scope, mock_receive, mock_send)
 
         # Verify 401 response was sent
         assert mock_send.call_count == 2
@@ -270,6 +271,31 @@ class TestUserTokenMiddleware:
 
         # Verify app was NOT called
         middleware.app.assert_not_called()
+        assert "Unsupported Authorization type: Digest" in caplog.text
+        assert "username=test" not in caplog.text
+
+    @pytest.mark.anyio
+    async def test_raw_auth_token_is_redacted_in_warning(
+        self, middleware, mock_scope, mock_receive, mock_send, caplog
+    ):
+        """Test that raw Authorization values are redacted from warning logs."""
+        raw_token = "raw-token-without-prefix"
+        mock_scope["headers"] = [(b"authorization", raw_token.encode())]
+
+        with caplog.at_level(logging.WARNING, logger="mcp-atlassian.server.main"):
+            await middleware(mock_scope, mock_receive, mock_send)
+
+        assert mock_send.call_count == 2
+        start_call = mock_send.call_args_list[0][0][0]
+        assert start_call["status"] == 401
+
+        body_call = mock_send.call_args_list[1][0][0]
+        body = json.loads(body_call["body"].decode())
+        assert "Bearer" in body["error"]
+
+        middleware.app.assert_not_called()
+        assert "Unsupported Authorization type: <redacted>" in caplog.text
+        assert raw_token not in caplog.text
 
     @pytest.mark.anyio
     async def test_whitespace_only_auth_returns_401(

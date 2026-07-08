@@ -48,6 +48,70 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             logger.error(f"Error getting all projects: {str(e)}")
             return []
 
+    def search_projects(
+        self,
+        query: str,
+        max_results: int = 20,
+        current_project_ids: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Search for projects by name or key prefix.
+
+        Uses Jira Cloud's project search endpoint or Server/DC's project picker
+        endpoint to return matching projects without fetching every visible
+        project.
+
+        Args:
+            query: Name or key prefix to search for
+            max_results: Maximum number of results to return
+            current_project_ids: Project IDs to exclude from results
+
+        Returns:
+            List of matching project data dictionaries
+        """
+        try:
+            is_cloud = self.config.is_cloud
+            endpoint = (
+                "rest/api/3/project/search"
+                if is_cloud
+                else "rest/api/2/projects/picker"
+            )
+            params: dict[str, Any] = {"query": query, "maxResults": max_results}
+            if current_project_ids and not is_cloud:
+                params["currentProjectIds"] = ",".join(current_project_ids)
+
+            response = self.jira.get(endpoint, params=params)
+            if not isinstance(response, dict):
+                logger.error(
+                    f"Unexpected return type from {endpoint}: {type(response)}"
+                )
+                return []
+
+            projects = response.get("values" if is_cloud else "projects", [])
+            if not isinstance(projects, list):
+                return []
+
+            if current_project_ids and is_cloud:
+                excluded_project_ids = set(current_project_ids)
+                projects = [
+                    p for p in projects if str(p.get("id")) not in excluded_project_ids
+                ]
+
+            # Apply project filter if configured
+            if self.config.projects_filter:
+                allowed_keys = {
+                    k.strip().upper() for k in self.config.projects_filter.split(",")
+                }
+                projects = [
+                    p for p in projects if p.get("key", "").upper() in allowed_keys
+                ]
+
+            return projects
+
+        except Exception as e:
+            logger.error(f"Error searching projects with query '{query}': {str(e)}")
+            return []
+
     def get_project(self, project_key: str) -> dict[str, Any] | None:
         """
         Get project information by key.
@@ -265,6 +329,10 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
 
             # The new createmeta endpoint returns paginated "values" array
             issue_types = meta.get("values", [])
+            if not issue_types:
+                # atlassian-python-api's issue_createmeta_issuetypes endpoint
+                # returns a paginated "issueTypes" array on Jira Cloud.
+                issue_types = meta.get("issueTypes", [])
             if not issue_types:
                 # Fallback for older response format
                 projects = meta.get("projects", [])
@@ -538,4 +606,42 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             start_date=start_date,
             release_date=release_date,
             description=description,
+        )
+
+    def update_project_version(
+        self,
+        version_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        start_date: str | None = None,
+        release_date: str | None = None,
+        archived: bool | None = None,
+        released: bool | None = None,
+    ) -> dict[str, Any]:
+        """
+        Update an existing version in a Jira project.
+
+        Only fields that are not None are sent to Jira, so callers can flip a
+        single attribute (e.g. ``archived``) without overwriting the others.
+
+        Args:
+            version_id: The numeric ID of the version to update.
+            name: New name for the version (optional).
+            description: New description for the version (optional).
+            start_date: New start date (YYYY-MM-DD, optional).
+            release_date: New release date (YYYY-MM-DD, optional).
+            archived: Archived flag (optional).
+            released: Released flag (optional).
+
+        Returns:
+            The updated version object as returned by Jira.
+        """
+        return self.update_version(
+            version_id=version_id,
+            name=name,
+            description=description,
+            start_date=start_date,
+            release_date=release_date,
+            archived=archived,
+            released=released,
         )

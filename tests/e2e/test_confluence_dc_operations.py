@@ -175,3 +175,31 @@ class TestConfluenceDCComments:
 
         comments = confluence_fetcher.get_page_comments(page.id)
         assert len(comments) > 0
+
+    def test_add_and_get_inline_comments(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        dc_instance: DCInstanceInfo,
+        resource_tracker: DCResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        anchor = f"inline anchor {uid}"
+        page = confluence_fetcher.create_page(
+            space_key=dc_instance.space_key,
+            title=f"E2E Inline Comment Test {uid}",
+            body=f"<p>Before {anchor} after.</p>",
+            is_markdown=False,
+            content_representation="storage",
+        )
+        resource_tracker.add_confluence_page(page.id)
+
+        comment = confluence_fetcher.add_inline_comment(
+            page_id=page.id,
+            content=f"E2E inline test comment {uid}",
+            text_selection=anchor,
+        )
+        assert comment is not None
+        assert comment.location == "inline"
+
+        comments = confluence_fetcher.get_inline_comments(page.id)
+        assert any(inline_comment.id == comment.id for inline_comment in comments)

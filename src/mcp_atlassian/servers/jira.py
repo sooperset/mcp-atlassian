@@ -1,5 +1,6 @@
 """Jira FastMCP server instance and tool definitions."""
 
+import asyncio
 import base64
 import json
 import logging
@@ -37,6 +38,68 @@ jira_mcp = FastMCP(
     name="Jira MCP Service",
     instructions="Provides tools for interacting with Atlassian Jira.",
 )
+
+_GET_ISSUE_INCLUDE_SECTIONS = frozenset(
+    {
+        "remote_links",
+        "transitions",
+        "watchers",
+        "changelog",
+        "comments",
+        "worklogs",
+    }
+)
+_GET_ISSUE_INCLUDE_ALIASES = {
+    "comment": "comments",
+    "worklog": "worklogs",
+}
+
+
+def _parse_get_issue_include(include: str | None) -> set[str]:
+    """Parse jira_get_issue include sections."""
+    if not include:
+        return set()
+
+    sections: set[str] = set()
+    for raw_section in include.split(","):
+        section = raw_section.strip().lower()
+        if not section:
+            continue
+        if section == "all":
+            sections.update(_GET_ISSUE_INCLUDE_SECTIONS)
+            continue
+
+        section = _GET_ISSUE_INCLUDE_ALIASES.get(section, section)
+        if section in _GET_ISSUE_INCLUDE_SECTIONS:
+            sections.add(section)
+        else:
+            logger.warning(
+                "Ignoring unsupported jira_get_issue include section: %s",
+                raw_section.strip(),
+            )
+    return sections
+
+
+def _merge_expand(expand: str | None, additions: list[str]) -> str | None:
+    """Merge Jira expand values while preserving order."""
+    if not additions:
+        return expand
+
+    merged: list[str] = []
+    seen: set[str] = set()
+    if expand:
+        for raw_section in expand.split(","):
+            section = raw_section.strip()
+            if section and section not in seen:
+                merged.append(section)
+                seen.add(section)
+
+    for section in additions:
+        if section not in seen:
+            merged.append(section)
+            seen.add(section)
+
+    return ",".join(merged) if merged else None
 
 
 def _parse_visibility(
@@ -466,33 +529,66 @@ async def get_issue(
     update_history: Annotated[
         bool,
         Field(
-            description="Whether to update the issue view history for the requesting user",
+            description=(
+                "Whether to update the issue view history for the requesting user"
+            ),
             default=True,
         ),
     ] = True,
+    include: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Comma-separated sections to inline "
+                "in the response, avoiding extra tool calls. "
+                "Supported: all, remote_links, transitions, "
+                "watchers, changelog, comments, worklogs"
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
-    """Get details of a specific Jira issue including its Epic links and relationship information.
+    """Get details of a specific Jira issue.
+
+    Includes Epic links and relationship information. Use the
+    ``include`` parameter to inline enrichments (remote_links,
+    transitions, watchers, changelog, comments, worklogs) so that
+    separate tool calls are not needed.
 
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        fields: Comma-separated list of fields to return (e.g., 'summary,status,customfield_10010'), a single field as a string (e.g., 'duedate'), '*all' for all fields, or omitted for essentials.
+        fields: Comma-separated fields to return.
         expand: Optional fields to expand.
         comment_limit: Maximum number of comments.
         properties: Issue properties to return.
         update_history: Whether to update issue view history.
+        include: Comma-separated enrichment sections to inline.
 
     Returns:
         JSON string representing the Jira issue object.
 
     Raises:
-        ValueError: If the Jira client is not configured or available.
+        ValueError: If the Jira client is not configured.
     """
     jira = await get_jira_fetcher(ctx)
     fields_list: str | list[str] | None = fields
     if fields and fields != "*all":
-        fields_list = [f.strip() for f in fields.split(",")]
+        fields_list = [f.strip() for f in fields.split(",") if f.strip()]
 
+    include_sections = _parse_get_issue_include(include)
+    if "comments" in include_sections and fields_list != "*all":
+        if not isinstance(fields_list, list):
+            fields_list = []
+        if "comment" not in fields_list:
+            fields_list.append("comment")
+
+    expand_additions = []
+    if "changelog" in include_sections:
+        expand_additions.append("changelog")
+    expand = _merge_expand(expand, expand_additions)
+
+    # Fetch the issue (with augmented expand)
     issue = jira.get_issue(
         issue_key=issue_key,
         fields=fields_list,
@@ -502,6 +598,37 @@ async def get_issue(
         update_history=update_history,
     )
     result = issue.to_simplified_dict()
+
+    if "comments" in include_sections:
+        result.setdefault("comments", [])
+    if "changelog" in include_sections:
+        result.setdefault("changelogs", [])
+
+    # Enrichments that require separate API calls
+    if "remote_links" in include_sections:
+        try:
+            result["remote_links"] = jira.get_remote_issue_links(issue_key)
+        except Exception:  # noqa: BLE001
+            result["remote_links"] = []
+
+    if "transitions" in include_sections:
+        try:
+            result["transitions"] = jira.get_available_transitions(issue_key)
+        except Exception:  # noqa: BLE001
+            result["transitions"] = []
+
+    if "watchers" in include_sections:
+        try:
+            result["watchers"] = jira.get_issue_watchers(issue_key)
+        except Exception:  # noqa: BLE001
+            result["watchers"] = {}
+
+    if "worklogs" in include_sections:
+        try:
+            result["worklogs"] = jira.get_worklogs(issue_key)
+        except Exception:  # noqa: BLE001
+            result["worklogs"] = []
+
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
@@ -1914,6 +2041,78 @@ async def delete_issue(
 
 
 @jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_issues"},
+    annotations={"title": "Move Issue to Project", "destructiveHint": True},
+)
+@check_write_access
+async def move_issue(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key to move (e.g., 'PROJ-123')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+    target_project_key: Annotated[
+        str,
+        Field(
+            description=(
+                "Key of the target project (e.g., 'OTHERPROJ'). "
+                "The issue will keep its current issue type and may receive "
+                "a new key in the target project."
+            ),
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
+) -> str:
+    """Move a Jira issue to a different project (Jira Cloud only).
+
+    Uses Jira Cloud's bulk move API to perform a cross-project move.
+    The issue keeps its current issue type and may be assigned a new key in the
+    target project (e.g., OLDPROJ-123 becomes NEWPROJ-456).
+
+    The move is processed asynchronously on Jira's side; this tool polls
+    until confirmed or times out after 30 seconds.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key of the issue to move.
+        target_project_key: Key of the target project.
+
+    Returns:
+        JSON string representing the moved issue with its new key and project.
+
+    Raises:
+        ValueError: If in read-only mode, Jira client unavailable, or the move fails.
+        NotImplementedError: If not running on Jira Cloud.
+    """
+    jira = await get_jira_fetcher(ctx)
+
+    try:
+        result = await asyncio.to_thread(jira.move_issue, issue_key, target_project_key)
+        return json.dumps(
+            {
+                "message": (
+                    f"Issue moved successfully from {issue_key} "
+                    f"to project {target_project_key}"
+                ),
+                "issue": result.to_simplified_dict(),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except (NotImplementedError, ValueError):
+        raise
+    except Exception as e:
+        logger.error(
+            f"Error moving issue {issue_key} to project {target_project_key}: {str(e)}",
+            exc_info=True,
+        )
+        raise ValueError(f"Failed to move issue {issue_key}: {str(e)}")
+
+
+@jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_comments"},
     annotations={"title": "Add Comment", "destructiveHint": True},
 )
@@ -2566,6 +2765,40 @@ async def add_issues_to_sprint(
 
 
 @jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_agile"},
+    annotations={"title": "Move Issues to Backlog", "readOnlyHint": False},
+)
+@check_write_access
+async def move_issues_to_backlog(
+    ctx: Context,
+    issue_keys: Annotated[
+        str,
+        Field(description="Comma-separated issue keys (e.g., 'PROJ-1,PROJ-2')"),
+    ],
+) -> str:
+    """Move issues to the backlog, removing them from any sprint.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_keys: Comma-separated issue keys.
+
+    Returns:
+        JSON string with success message.
+
+    Raises:
+        ValueError: If in read-only mode or Jira client unavailable.
+    """
+    jira = await get_jira_fetcher(ctx)
+    keys_list = [k.strip() for k in issue_keys.split(",") if k.strip()]
+    jira.move_issues_to_backlog(keys_list)
+    result = {
+        "message": f"Successfully moved {len(keys_list)} issue(s) to backlog",
+        "issue_keys": keys_list,
+    }
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
     tags={"jira", "read", "toolset:jira_projects"},
     annotations={"title": "Get Project Versions", "readOnlyHint": True},
 )
@@ -2669,6 +2902,91 @@ async def get_all_projects(
             for project in projects
             if project.get("key") in allowed_project_keys
         ]
+
+    return json.dumps(projects, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_projects"},
+    annotations={"title": "Search Projects", "readOnlyHint": True},
+)
+async def search_projects(
+    ctx: Context,
+    query: Annotated[
+        str,
+        Field(
+            description="Name or key prefix to search for",
+        ),
+    ],
+    max_results: Annotated[
+        int,
+        Field(
+            description="Maximum number of results to return",
+            default=20,
+            ge=1,
+            le=50,
+        ),
+    ] = 20,
+    current_project_ids: Annotated[
+        str | None,
+        Field(
+            description=("Comma-separated list of project IDs to exclude from results"),
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """Search for Jira projects by name or key prefix.
+
+    Uses the projects picker endpoint to return a ranked list of matching
+    projects without fetching every visible project on the instance.
+
+    Args:
+        ctx: The FastMCP context.
+        query: Name or key prefix to search for.
+        max_results: Maximum number of results to return.
+        current_project_ids: Comma-separated project IDs to exclude.
+
+    Returns:
+        JSON string representing a list of matching project objects.
+        Project keys are always returned in uppercase.
+        If JIRA_PROJECTS_FILTER is configured, only returns projects matching those keys.
+    """
+    try:
+        jira = await get_jira_fetcher(ctx)
+
+        # Parse comma-separated project IDs into list
+        parsed_ids: list[str] | None = None
+        if current_project_ids:
+            parsed_ids = [
+                pid.strip() for pid in current_project_ids.split(",") if pid.strip()
+            ]
+
+        projects = jira.search_projects(
+            query=query,
+            max_results=max_results,
+            current_project_ids=parsed_ids,
+        )
+    except (MCPAtlassianAuthenticationError, HTTPError, OSError, ValueError) as e:
+        error_message = ""
+        log_level = logging.ERROR
+        if isinstance(e, MCPAtlassianAuthenticationError):
+            error_message = f"Authentication/Permission Error: {str(e)}"
+        elif isinstance(e, OSError | HTTPError):
+            error_message = f"Network or API Error: {str(e)}"
+        elif isinstance(e, ValueError):
+            error_message = f"Configuration Error: {str(e)}"
+
+        error_result = {
+            "success": False,
+            "error": error_message,
+        }
+        logger.log(log_level, f"search_projects failed: {error_message}")
+        return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+    # Ensure all project keys are uppercase
+    for project in projects:
+        if "key" in project:
+            project["key"] = project["key"].upper()
 
     return json.dumps(projects, indent=2, ensure_ascii=False)
 
@@ -2999,6 +3317,79 @@ async def batch_create_versions(
             )
             results.append({"success": False, "error": str(e), "input": v})
     return json.dumps(results, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_projects"},
+    annotations={"title": "Update Version", "destructiveHint": True},
+)
+@check_write_access
+async def update_version(
+    ctx: Context,
+    version_id: Annotated[
+        str,
+        Field(description="Numeric ID of the version to update (e.g. '10001')"),
+    ],
+    name: Annotated[
+        str | None, Field(description="New name for the version", default=None)
+    ] = None,
+    description: Annotated[
+        str | None,
+        Field(description="New description for the version", default=None),
+    ] = None,
+    start_date: Annotated[
+        str | None,
+        Field(description="New start date (YYYY-MM-DD)", default=None),
+    ] = None,
+    release_date: Annotated[
+        str | None,
+        Field(description="New release date (YYYY-MM-DD)", default=None),
+    ] = None,
+    archived: Annotated[
+        bool | None,
+        Field(description="Set archived flag (true to archive)", default=None),
+    ] = None,
+    released: Annotated[
+        bool | None,
+        Field(description="Set released flag (true to mark released)", default=None),
+    ] = None,
+) -> str:
+    """Update an existing fix version in a Jira project.
+
+    Only fields explicitly provided are modified; other attributes of the
+    version are left untouched. Useful for archiving/unarchiving versions,
+    renaming, or shifting release dates without recreating them.
+
+    Args:
+        ctx: The FastMCP context.
+        version_id: Numeric ID of the version to update.
+        name: New name (optional).
+        description: New description (optional).
+        start_date: New start date YYYY-MM-DD (optional).
+        release_date: New release date YYYY-MM-DD (optional).
+        archived: Archived flag (optional).
+        released: Released flag (optional).
+
+    Returns:
+        JSON string of the updated version object.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        version = jira.update_project_version(
+            version_id=version_id,
+            name=name,
+            description=description,
+            start_date=start_date,
+            release_date=release_date,
+            archived=archived,
+            released=released,
+        )
+        return json.dumps(version, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Error updating version {version_id}: {str(e)}", exc_info=True)
+        return json.dumps(
+            {"success": False, "error": str(e)}, indent=2, ensure_ascii=False
+        )
 
 
 @jira_mcp.tool(

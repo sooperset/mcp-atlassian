@@ -15,26 +15,31 @@ def _parse_inline_formatting(text: str) -> list[dict[str, Any]]:
 
     Handles: bold (**), italic (*), inline code (`), links ([text](url)),
     strikethrough (~~), and Jira-flavored user mentions
-    ([~accountid:ACCOUNT_ID]).
+    ([~accountid:ACCOUNT_ID] or @[Display Name](accountid:ACCOUNT_ID)).
 
-    The mention syntax mirrors what Jira's v2 wiki text returns when a real
-    ADF mention is read back, so the read and write paths are symmetric.
+    The [~accountid:...] mention syntax mirrors what Jira's v2 wiki text
+    returns when a real ADF mention is read back, so the read and write paths
+    are symmetric. The display-name syntax also includes the mention text in
+    the ADF node.
 
     Args:
         text: Raw text potentially containing inline Markdown formatting.
 
     Returns:
         List of ADF inline nodes (text nodes with optional marks, plus
-        mention nodes when [~accountid:...] is present).
+        mention nodes when [~accountid:...] or
+        @[Display Name](accountid:...) is present).
     """
     if not text:
         return []
 
     nodes: list[dict[str, Any]] = []
-    # Pattern order matters: mention before link (both start with `[`),
-    # bold before italic, code before others
+    # Pattern order matters: mention before link, bold before italic,
+    # code before others.
     inline_re = re.compile(
-        r"\[~accountid:(?P<mention_id>[^\]]+)\]"
+        r"\[~accountid:(?P<wiki_mention_id>[^\]]+)\]"
+        r"|@\[(?P<display_mention_text>[^\]]+)\]"
+        r"\(accountid:(?P<display_mention_id>[^)]+)\)"
         r"|`(?P<code_inner>[^`]+)`"
         r"|\*\*(?P<bold_inner>.+?)\*\*"
         r"|~~(?P<strike_inner>.+?)~~"
@@ -50,11 +55,21 @@ def _parse_inline_formatting(text: str) -> list[dict[str, Any]]:
             if plain:
                 nodes.append({"type": "text", "text": plain})
 
-        if m.group("mention_id") is not None:
+        if m.group("wiki_mention_id") is not None:
             nodes.append(
                 {
                     "type": "mention",
-                    "attrs": {"id": m.group("mention_id")},
+                    "attrs": {"id": m.group("wiki_mention_id")},
+                }
+            )
+        elif m.group("display_mention_id") is not None:
+            nodes.append(
+                {
+                    "type": "mention",
+                    "attrs": {
+                        "id": m.group("display_mention_id"),
+                        "text": f"@{m.group('display_mention_text')}",
+                    },
                 }
             )
         elif m.group("code_inner") is not None:

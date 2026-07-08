@@ -34,11 +34,13 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_create_issue",
         "jira_update_issue",
         "jira_delete_issue",
+        "jira_move_issue",
         "jira_batch_create_issues",
         "jira_assign_issue",
         "jira_transition_issue",
         "jira_get_transitions",
         "jira_get_all_projects",
+        "jira_search_projects",
         "jira_get_project_issues",
     ],
     "jira-search-fields": [
@@ -55,6 +57,7 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_create_sprint",
         "jira_update_sprint",
         "jira_add_issues_to_sprint",
+        "jira_move_issues_to_backlog",
     ],
     "jira-comments-worklogs": [
         "jira_add_comment",
@@ -78,6 +81,7 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_get_project_components",
         "jira_create_version",
         "jira_batch_create_versions",
+        "jira_update_version",
     ],
     "jira-attachments": [
         "jira_download_attachments",
@@ -126,6 +130,8 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "confluence_add_comment",
         "confluence_get_comments",
         "confluence_reply_to_comment",
+        "confluence_get_inline_comments",
+        "confluence_add_inline_comment",
         "confluence_get_labels",
         "confluence_add_label",
         "confluence_get_page_views",

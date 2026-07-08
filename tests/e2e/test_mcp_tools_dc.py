@@ -72,6 +72,28 @@ class TestMCPJiraTools:
         assert data["key"] == dc_instance.test_issue_key
 
     @pytest.mark.anyio
+    async def test_jira_get_issue_include_remote_links(
+        self,
+        mcp_client: Client,
+        dc_instance: DCInstanceInfo,
+    ) -> None:
+        result = await call_tool(
+            mcp_client,
+            "jira_get_issue",
+            {
+                "issue_key": dc_instance.test_issue_key,
+                "fields": "summary,status",
+                "include": "remote_links",
+            },
+        )
+
+        assert not result.is_error
+        assert result.content and isinstance(result.content[0], TextContent)
+        data = json.loads(result.content[0].text)
+        assert data["key"] == dc_instance.test_issue_key
+        assert isinstance(data["remote_links"], list)
+
+    @pytest.mark.anyio
     async def test_jira_search(
         self,
         mcp_client: Client,
@@ -202,6 +224,51 @@ class TestMCPConfluenceTools:
             "confluence_delete_page",
             {"page_id": page_id},
         )
+
+    @pytest.mark.anyio
+    async def test_confluence_create_update_xhtml_page(
+        self,
+        mcp_client: Client,
+        dc_instance: DCInstanceInfo,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        page_id = None
+        create_result = await call_tool(
+            mcp_client,
+            "confluence_create_page",
+            {
+                "space_key": dc_instance.space_key,
+                "title": f"MCP XHTML Tool Test {uid}",
+                "content": "<p>Created via MCP XHTML tool test.</p>",
+                "content_format": "xhtml",
+            },
+        )
+        assert not create_result.is_error
+        assert create_result.content and isinstance(
+            create_result.content[0], TextContent
+        )
+        page_id = json.loads(create_result.content[0].text)["page"]["id"]
+        assert page_id is not None
+
+        try:
+            update_result = await call_tool(
+                mcp_client,
+                "confluence_update_page",
+                {
+                    "page_id": page_id,
+                    "title": f"MCP XHTML Tool Test {uid}",
+                    "content": "<p>Updated via MCP XHTML tool test.</p>",
+                    "content_format": "xhtml",
+                },
+            )
+            assert not update_result.is_error
+        finally:
+            if page_id:
+                await call_tool(
+                    mcp_client,
+                    "confluence_delete_page",
+                    {"page_id": page_id},
+                )
 
     @pytest.mark.anyio
     async def test_confluence_update_page_section(
