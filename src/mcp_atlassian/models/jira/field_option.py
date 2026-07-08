@@ -91,15 +91,16 @@ class FieldOption(ApiModel):
         # "cascadingOptions". Use key presence so an explicit empty list
         # is never mistaken for a missing key.
         if "cascadingOptions" in data:
-            raw_children: list[Any] = data["cascadingOptions"]
+            raw_children_data = data["cascadingOptions"]
         elif "children" in data:
-            raw_children = data["children"]
+            raw_children_data = data["children"]
         else:
-            raw_children = []
+            raw_children_data = []
 
+        raw_children = raw_children_data if isinstance(raw_children_data, list) else []
         children: list[FieldOption] = []
         for c in raw_children:
-            if isinstance(c, dict):
+            if isinstance(c, dict | str):
                 children.append(cls.from_api_response(c))
 
         return cls(

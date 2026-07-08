@@ -278,10 +278,12 @@ class FieldOptionsMixin(JiraClient):
                 for entry in field_entries:
                     if isinstance(entry, dict) and entry.get("fieldId") == field_id:
                         allowed_values = entry.get("allowedValues", [])
+                        if not isinstance(allowed_values, list):
+                            return []
                         return [
                             FieldOption.from_api_response(item)
                             for item in allowed_values
-                            if isinstance(item, dict)
+                            if isinstance(item, dict | str)
                         ]
 
                 total = meta.get("total", len(field_entries))

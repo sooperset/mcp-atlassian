@@ -130,6 +130,13 @@ class TestFieldOptionModel:
                 "",
                 False,
             ),
+            (
+                "string_value",
+                "String option",
+                "",
+                "String option",
+                False,
+            ),
         ],
     )
     def test_from_api_response(
@@ -169,6 +176,24 @@ class TestFieldOptionModel:
         assert opt.value == "North America"
         assert len(opt.child_options) == 2
         assert opt.child_options[0].value == "United States"
+        assert opt.child_options[1].value == "Canada"
+
+    def test_children_key_with_string_children(self):
+        """String children are parsed as value-only child options."""
+        data = {
+            "id": "10200",
+            "value": "North America",
+            "children": [
+                "United States",
+                {"id": "10202", "value": "Canada"},
+            ],
+        }
+        opt = FieldOption.from_api_response(data)
+        assert opt.value == "North America"
+        assert len(opt.child_options) == 2
+        assert opt.child_options[0].id == ""
+        assert opt.child_options[0].value == "United States"
+        assert opt.child_options[1].id == "10202"
         assert opt.child_options[1].value == "Canada"
 
     def test_cascading_options_empty_list_not_shadowed_by_children(self):
@@ -693,3 +718,33 @@ class TestFieldOptionsMixin:
         assert len(result[0].child_options) == 2
         assert result[0].child_options[0].value == "US"
         assert result[0].child_options[1].value == "Canada"
+
+    def test_options_server_string_allowed_values(self, mixin):
+        """Server/DC allowedValues may contain simple string option entries."""
+        mixin.config.is_cloud = False
+        mixin.get_project_issue_types = MagicMock(
+            return_value=[{"id": "10001", "name": "Bug"}]
+        )
+        mixin.jira.issue_createmeta_fieldtypes = MagicMock(
+            return_value={
+                "maxResults": 50,
+                "startAt": 0,
+                "total": 1,
+                "isLast": True,
+                "values": [
+                    {
+                        "fieldId": "customfield_10021",
+                        "allowedValues": ["US", "Canada"],
+                    }
+                ],
+            }
+        )
+
+        result = mixin.get_field_options(
+            "customfield_10021", project_key="TEST", issue_type="Bug"
+        )
+        assert len(result) == 2
+        assert result[0].id == ""
+        assert result[0].value == "US"
+        assert result[1].id == ""
+        assert result[1].value == "Canada"
