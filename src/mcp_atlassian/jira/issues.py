@@ -338,9 +338,9 @@ class IssuesMixin(
 
                 comments = response["comments"]
 
-                # Limit comments if needed
+                # Jira returns comments oldest-first; keep the newest comments.
                 if comment_limit is not None:
-                    comments = comments[:comment_limit]
+                    comments = comments[-comment_limit:]
 
                 return comments
             except Exception as e:
