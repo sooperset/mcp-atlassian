@@ -292,6 +292,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         get_page_children,
         get_page_images,
         get_space_page_tree,
+        get_user_details,
         search,
         search_user,
         update_page,
@@ -332,6 +333,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.add_tool(update_page_section)
     confluence_sub_mcp.add_tool(delete_page)
     confluence_sub_mcp.add_tool(search_user)
+    confluence_sub_mcp.add_tool(get_user_details)
     confluence_sub_mcp.add_tool(upload_attachment)
     confluence_sub_mcp.add_tool(upload_attachments)
     confluence_sub_mcp.add_tool(get_attachments)
