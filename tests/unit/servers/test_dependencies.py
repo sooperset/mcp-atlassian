@@ -16,7 +16,7 @@ from mcp_atlassian.servers.dependencies import (
     get_confluence_fetcher,
     get_jira_fetcher,
 )
-from mcp_atlassian.utils.oauth import OAuthConfig
+from mcp_atlassian.utils.oauth import BYOAccessTokenOAuthConfig, OAuthConfig
 from tests.utils.assertions import assert_mock_called_with_partial
 from tests.utils.factories import AuthConfigFactory
 from tests.utils.mocks import MockFastMCP
@@ -249,6 +249,71 @@ class TestCreateUserConfigForFetcher:
         assert (
             result_config.oauth_config.client_secret == ""
         )  # Should preserve minimal config
+
+    @pytest.mark.parametrize(
+        "byo_config,cloud_id_arg,expected_cloud_id,expected_base_url",
+        [
+            pytest.param(
+                BYOAccessTokenOAuthConfig(
+                    access_token="placeholder-startup-token",
+                    base_url="https://jira.dc.example.com",
+                ),
+                None,
+                None,
+                "https://jira.dc.example.com",
+                id="data-center-byo-global-config",
+            ),
+            pytest.param(
+                BYOAccessTokenOAuthConfig(
+                    access_token="placeholder-startup-token",
+                    cloud_id="global-cloud-id",
+                ),
+                "user-cloud-id",
+                "user-cloud-id",
+                None,
+                id="cloud-byo-global-config",
+            ),
+        ],
+    )
+    def test_oauth_user_config_with_byo_global_config(
+        self, byo_config, cloud_id_arg, expected_cloud_id, expected_base_url
+    ):
+        """Regression: global oauth_config may be a BYOAccessTokenOAuthConfig.
+
+        When a placeholder ``*_OAUTH_ACCESS_TOKEN`` suppresses the headless OAuth
+        setup flow, ``get_oauth_config_from_env()`` returns a
+        ``BYOAccessTokenOAuthConfig`` (BYO takes precedence over ``OAuthConfig``).
+        That dataclass has no ``client_id``/``client_secret``/``redirect_uri``/
+        ``scope`` attributes. With per-request OAuth proxy auth enabled, this
+        function previously read those attributes directly off the global config,
+        raising ``AttributeError`` at request time. They must fall back to empty
+        strings (the real client credentials come from the OAuth proxy config).
+        """
+        base_config = JiraConfig(
+            url="https://jira.dc.example.com",
+            auth_type="oauth",
+            oauth_config=byo_config,
+        )
+        credentials = {"oauth_access_token": "user-access-token"}
+
+        # Must not raise AttributeError on the BYO global config.
+        result_config = _create_user_config_for_fetcher(
+            base_config=base_config,
+            auth_type="oauth",
+            credentials=credentials,
+            cloud_id=cloud_id_arg,
+        )
+
+        assert isinstance(result_config, JiraConfig)
+        assert result_config.oauth_config is not None
+        assert result_config.oauth_config.access_token == "user-access-token"
+        # Client credentials fall back to empty strings (supplied by the proxy).
+        assert result_config.oauth_config.client_id == ""
+        assert result_config.oauth_config.client_secret == ""
+        assert result_config.oauth_config.redirect_uri == ""
+        assert result_config.oauth_config.scope == ""
+        assert result_config.oauth_config.cloud_id == expected_cloud_id
+        assert result_config.oauth_config.base_url == expected_base_url
 
     def test_multi_tenant_config_isolation(self):
         """Test that user configs are completely isolated from each other."""
