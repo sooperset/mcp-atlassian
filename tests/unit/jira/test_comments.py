@@ -280,6 +280,34 @@ class TestCommentsMixin:
         assert result["created"] == "2024-01-01 10:00:00+00:00"
         assert result["author"] == "John Doe"
 
+    def test_add_comment_with_role_visibility(self, comments_mixin):
+        """Test add_comment with role visibility set (Cloud → ADF via v3)."""
+        mock_response = {
+            "id": "10002",
+            "body": "Admin-only comment",
+            "created": "2024-01-01T10:00:00.000+0000",
+            "author": {"displayName": "Jane Smith"},
+        }
+        comments_mixin._post_api3 = Mock(return_value=mock_response)
+
+        result = comments_mixin.add_comment(
+            "TEST-456",
+            "Admin-only comment",
+            visibility={"type": "role", "value": "Administrators"},
+        )
+
+        call_args = comments_mixin._post_api3.call_args
+        assert call_args[0][0] == "issue/TEST-456/comment"
+        payload = call_args[0][1]
+        assert isinstance(payload["body"], dict)
+        assert payload["body"]["version"] == 1
+        assert payload["visibility"] == {"type": "role", "value": "Administrators"}
+        comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
+        assert result["id"] == "10002"
+        assert result["body"] == "Admin-only comment"
+        assert result["created"] == "2024-01-01 10:00:00+00:00"
+        assert result["author"] == "Jane Smith"
+
     def test_add_comment_with_error(self, comments_mixin):
         """Test add_comment with an error response."""
         # Setup mock to raise exception (Cloud uses _post_api3)
