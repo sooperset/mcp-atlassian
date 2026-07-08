@@ -36,6 +36,25 @@ class TestConfluencePage:
         # Check timestamps
         assert page.version.when == "2024-01-01T09:00:00.000Z"
 
+    def test_from_api_response_uses_history_created_by_as_author(self):
+        """Test author fallback from history.createdBy when author is absent."""
+        page = ConfluencePage.from_api_response(
+            {
+                "id": "123456",
+                "title": "History Author Page",
+                "history": {
+                    "createdBy": {
+                        "accountId": "abc-123",
+                        "displayName": "History Author",
+                    }
+                },
+            }
+        )
+
+        assert page.author is not None
+        assert page.author.account_id == "abc-123"
+        assert page.author.display_name == "History Author"
+
     def test_from_api_response_with_empty_data(self):
         """Test creating a ConfluencePage from empty data."""
         page = ConfluencePage.from_api_response({})
