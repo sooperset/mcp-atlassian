@@ -23,7 +23,25 @@ class NoProxyAdapter(HTTPAdapter):
     proxies are explicitly configured on the session. By default, the requests
     library only checks NO_PROXY during auto-detection from environment variables,
     not when proxies are explicitly set on session.proxies.
+
+    The no-proxy list is captured on the adapter when it is mounted. This keeps
+    each mounted adapter bound to its own configuration, so multiple clients
+    running in the same process (e.g. Jira and Confluence with different
+    ``JIRA_NO_PROXY`` / ``CONFLUENCE_NO_PROXY`` values) cannot overwrite one
+    another via the shared process environment. When no value is captured, the
+    adapter falls back to the ``NO_PROXY`` environment variable.
     """
+
+    def __init__(self, *args: Any, no_proxy: str | None = None, **kwargs: Any) -> None:
+        """Initialize the adapter, capturing the configured no-proxy list.
+
+        Args:
+            no_proxy: The no-proxy list this adapter should honor. When omitted,
+                the adapter falls back to the ``NO_PROXY`` environment variable
+                at send time.
+        """
+        self._no_proxy = no_proxy
+        super().__init__(*args, **kwargs)
 
     def send(
         self,
@@ -50,8 +68,12 @@ class NoProxyAdapter(HTTPAdapter):
         Returns:
             The response from the server
         """
-        # Check if we should bypass proxies for this URL
-        no_proxy = os.environ.get("NO_PROXY") or os.environ.get("no_proxy")
+        # Check if we should bypass proxies for this URL. Prefer the value
+        # captured when the adapter was mounted so concurrent clients with
+        # different no-proxy lists stay isolated; fall back to the environment.
+        no_proxy = (
+            self._no_proxy or os.environ.get("NO_PROXY") or os.environ.get("no_proxy")
+        )
         if (
             request.url
             and proxies
@@ -164,18 +186,23 @@ def configure_proxy_bypass(
     service_name: str,
     url: str,
     session: Session,
+    no_proxy: str | None = None,
 ) -> None:
     """Configure the session to respect NO_PROXY environment variable.
 
     This function mounts a custom adapter that ensures NO_PROXY is honored
-    even when proxies are explicitly configured on the session.
+    even when proxies are explicitly configured on the session. The no-proxy
+    list is captured on the mounted adapter so it is not affected by later
+    changes to the process environment made by other clients.
 
     Args:
         service_name: Name of the service for logging (e.g., "Confluence", "Jira")
         url: The base URL of the service
         session: The requests session to configure
+        no_proxy: The no-proxy list to honor. Defaults to the ``NO_PROXY``
+            environment variable when not provided.
     """
-    no_proxy = os.environ.get("NO_PROXY") or os.environ.get("no_proxy")
+    no_proxy = no_proxy or os.environ.get("NO_PROXY") or os.environ.get("no_proxy")
     if no_proxy:
         logger.debug(
             f"{service_name}: Configuring proxy bypass adapter for NO_PROXY={no_proxy}"
@@ -184,7 +211,7 @@ def configure_proxy_bypass(
         domain = urlparse(url).netloc
 
         # Mount the adapter to handle requests to this domain
-        adapter = NoProxyAdapter()
+        adapter = NoProxyAdapter(no_proxy=no_proxy)
         session.mount(f"https://{domain}", adapter)
         session.mount(f"http://{domain}", adapter)
 
@@ -197,6 +224,7 @@ def configure_ssl_verification(
     client_cert: str | None = None,
     client_key: str | None = None,
     client_key_password: str | None = None,
+    no_proxy: str | None = None,
 ) -> None:
     """Configure SSL verification and client certificates for a specific service.
 
@@ -218,7 +246,10 @@ def configure_ssl_verification(
         client_cert: Path to client certificate file (.pem)
         client_key: Path to client private key file (.pem)
         client_key_password: Password for encrypted private key (optional)
+        no_proxy: The no-proxy list to honor on the mounted adapter. Defaults to
+            the ``NO_PROXY`` environment variable when not provided.
     """
+    no_proxy = no_proxy or os.environ.get("NO_PROXY") or os.environ.get("no_proxy")
     # Configure client certificate if provided (must be actual string paths)
     if isinstance(client_cert, str) and isinstance(client_key, str):
         # Encrypted private keys are not supported by the requests library
@@ -243,17 +274,16 @@ def configure_ssl_verification(
 
         # Mount the SSL ignore adapter which also handles NO_PROXY
         domain = urlparse(url).netloc
-        adapter = SSLIgnoreAdapter()
+        adapter = SSLIgnoreAdapter(no_proxy=no_proxy)
         session.mount(f"https://{domain}", adapter)
         session.mount(f"http://{domain}", adapter)
     else:
         # Even with SSL verification enabled, we may need to handle NO_PROXY
-        no_proxy = os.environ.get("NO_PROXY") or os.environ.get("no_proxy")
         if no_proxy:
             logger.debug(
                 f"{service_name}: Mounting proxy bypass adapter for NO_PROXY={no_proxy}"
             )
             domain = urlparse(url).netloc
-            adapter = NoProxyAdapter()
+            adapter = NoProxyAdapter(no_proxy=no_proxy)
             session.mount(f"https://{domain}", adapter)
             session.mount(f"http://{domain}", adapter)

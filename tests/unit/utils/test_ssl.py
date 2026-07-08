@@ -300,6 +300,95 @@ def test_ssl_ignore_adapter_send_respects_no_proxy(monkeypatch):
         assert kwargs["proxies"] is None
 
 
+def test_no_proxy_adapter_prefers_captured_value_over_env(monkeypatch):
+    """A captured no-proxy list takes precedence over the process environment.
+
+    Regression for the multi-client blocker: the adapter must honor the list it
+    was mounted with rather than re-reading NO_PROXY at send time, so another
+    client overwriting the environment cannot change its behavior.
+    """
+    # Environment points at a different host than the adapter was configured for.
+    monkeypatch.setenv("NO_PROXY", "other.example.com")
+    adapter = NoProxyAdapter(no_proxy="internal.example.com")
+    request = MagicMock()
+    request.url = "https://internal.example.com/api"
+    proxies = {"https": "https://proxy:8443"}
+
+    with patch.object(HTTPAdapter, "send") as mock_base_send:
+        mock_base_send.return_value = MagicMock()
+        adapter.send(request, proxies=proxies)
+        _, kwargs = mock_base_send.call_args
+        # Bypassed because the captured list matches, despite the env not matching.
+        assert kwargs["proxies"] is None
+
+
+def test_no_proxy_adapter_falls_back_to_env_when_uncaptured(monkeypatch):
+    """With no captured value, the adapter still honors the NO_PROXY env var."""
+    monkeypatch.setenv("NO_PROXY", "internal.example.com")
+    adapter = NoProxyAdapter()
+    request = MagicMock()
+    request.url = "https://internal.example.com/api"
+    proxies = {"https": "https://proxy:8443"}
+
+    with patch.object(HTTPAdapter, "send") as mock_base_send:
+        mock_base_send.return_value = MagicMock()
+        adapter.send(request, proxies=proxies)
+        _, kwargs = mock_base_send.call_args
+        assert kwargs["proxies"] is None
+
+
+def test_two_adapters_with_different_no_proxy_lists_stay_isolated(monkeypatch):
+    """Two mounted adapters with different lists do not interfere with each other.
+
+    Simulates Jira and Confluence running in the same process: each adapter keeps
+    the no-proxy list it was mounted with even after the shared NO_PROXY env var is
+    later overwritten by the other client.
+    """
+    # Jira is configured first for jira.internal.
+    jira_adapter = NoProxyAdapter(no_proxy="jira.internal")
+    # Confluence is configured later and overwrites the shared environment.
+    confluence_adapter = NoProxyAdapter(no_proxy="confluence.internal")
+    monkeypatch.setenv("NO_PROXY", "confluence.internal")
+
+    proxies = {"https": "https://proxy:8443"}
+
+    def send_to(adapter, host):
+        request = MagicMock()
+        request.url = f"https://{host}/api"
+        with patch.object(HTTPAdapter, "send") as mock_base_send:
+            mock_base_send.return_value = MagicMock()
+            adapter.send(request, proxies=dict(proxies))
+            _, kwargs = mock_base_send.call_args
+            return kwargs["proxies"]
+
+    # Jira request to its own host bypasses the proxy...
+    assert send_to(jira_adapter, "jira.internal") is None
+    # ...and Jira does NOT bypass for the Confluence host, despite the env value.
+    assert send_to(jira_adapter, "confluence.internal") == proxies
+    # Confluence bypasses for its own host, not for Jira's.
+    assert send_to(confluence_adapter, "confluence.internal") is None
+    assert send_to(confluence_adapter, "jira.internal") == proxies
+
+
+def test_configure_ssl_verification_captures_no_proxy_on_adapter(monkeypatch):
+    """configure_ssl_verification passes the explicit no_proxy through to the adapter."""
+    # Env intentionally differs from the explicit argument.
+    monkeypatch.setenv("NO_PROXY", "env.example.com")
+    session = Session()
+
+    configure_ssl_verification(
+        service_name="TestService",
+        url="https://test.example.com/path",
+        session=session,
+        ssl_verify=True,
+        no_proxy="explicit.example.com",
+    )
+
+    adapter = session.get_adapter("https://test.example.com")
+    assert isinstance(adapter, NoProxyAdapter)
+    assert adapter._no_proxy == "explicit.example.com"
+
+
 def test_configure_ssl_verification_enabled_with_no_proxy_mounts_adapter(monkeypatch):
     """configure_ssl_verification mounts NoProxyAdapter when ssl_verify=True and NO_PROXY is set."""
     monkeypatch.setenv("NO_PROXY", "test.example.com")

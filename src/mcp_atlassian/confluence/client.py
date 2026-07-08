@@ -127,6 +127,7 @@ class ConfluenceClient:
             client_cert=self.config.client_cert,
             client_key=self.config.client_key,
             client_key_password=self.config.client_key_password,
+            no_proxy=self.config.no_proxy,
         )
 
         # Proxy configuration
