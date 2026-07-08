@@ -627,8 +627,11 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             return result
 
         except Exception as e:
-            logger.error(f"Direct API upload failed: {e}")
-            return None
+            logger.error(
+                f"Direct API upload failed: {type(e).__name__}: {e}", exc_info=True
+            )
+            # Propagate error details instead of swallowing them
+            raise
         finally:
             # Close file handles (only for actual file objects, not text fields like comment)
             if "files" in locals() and "file" in files:
