@@ -16,7 +16,7 @@ from mcp.types import CallToolResult, TextContent
 
 from mcp_atlassian.servers import main_mcp
 
-from .conftest import DCInstanceInfo
+from .conftest import DCInstanceInfo, _check_dc_health
 
 pytestmark = [pytest.mark.dc_e2e, pytest.mark.anyio]
 
@@ -47,6 +47,41 @@ def dc_env(dc_instance: DCInstanceInfo) -> dict[str, str]:
 async def mcp_client(dc_env: dict[str, str]) -> Any:
     """MCP client connected to the server configured for DC."""
     with patch.dict(os.environ, dc_env, clear=False):
+        transport = FastMCPTransport(main_mcp)
+        client = Client(transport=transport)
+        async with client as connected_client:
+            yield connected_client
+
+
+@pytest.fixture
+def confluence_dc_instance() -> DCInstanceInfo:
+    """Connection info for Confluence-only DC MCP checks."""
+    info = DCInstanceInfo()
+    if not _check_dc_health(info.confluence_url):
+        pytest.skip(f"Confluence DC not reachable at {info.confluence_url}")
+    return info
+
+
+@pytest.fixture
+def confluence_dc_env(confluence_dc_instance: DCInstanceInfo) -> dict[str, str]:
+    """Environment variables for configuring only Confluence against DC."""
+    return {
+        "JIRA_URL": "",
+        "JIRA_USERNAME": "",
+        "JIRA_API_TOKEN": "",
+        "JIRA_PERSONAL_TOKEN": "",
+        "CONFLUENCE_URL": confluence_dc_instance.confluence_url,
+        "CONFLUENCE_USERNAME": confluence_dc_instance.admin_username,
+        "CONFLUENCE_API_TOKEN": confluence_dc_instance.admin_password,
+        "READ_ONLY_MODE": "false",
+        "TOOLSETS": "all",
+    }
+
+
+@pytest.fixture
+async def confluence_mcp_client(confluence_dc_env: dict[str, str]) -> Any:
+    """MCP client connected to the server with only Confluence configured."""
+    with patch.dict(os.environ, confluence_dc_env, clear=False):
         transport = FastMCPTransport(main_mcp)
         client = Client(transport=transport)
         async with client as connected_client:
@@ -196,6 +231,22 @@ class TestMCPConfluenceTools:
         )
         assert not result.is_error
         assert result.content and isinstance(result.content[0], TextContent)
+
+    @pytest.mark.anyio
+    async def test_confluence_get_user_details_by_username(
+        self,
+        confluence_mcp_client: Client,
+        confluence_dc_instance: DCInstanceInfo,
+    ) -> None:
+        result = await call_tool(
+            confluence_mcp_client,
+            "confluence_get_user_details",
+            {"identifier": confluence_dc_instance.admin_username},
+        )
+        assert not result.is_error
+        assert result.content and isinstance(result.content[0], TextContent)
+        data = json.loads(result.content[0].text)
+        assert data.get("displayName") or data.get("username") or data.get("name")
 
     @pytest.mark.anyio
     async def test_confluence_create_and_delete_page(
