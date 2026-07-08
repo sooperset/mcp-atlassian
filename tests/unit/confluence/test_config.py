@@ -26,6 +26,37 @@ def test_from_env_success():
         assert config.api_token == "test_token"
 
 
+def test_from_env_attachment_download_use_v1_tristate():
+    """unset/empty -> None (auto); only an explicit value forces True/False."""
+    base = {
+        "CONFLUENCE_URL": "https://test.atlassian.net/wiki",
+        "CONFLUENCE_USERNAME": "test_username",
+        "CONFLUENCE_API_TOKEN": "test_token",
+    }
+    with patch.dict("os.environ", base, clear=True):
+        assert ConfluenceConfig.from_env().attachment_download_use_v1 is None
+    # Present-but-empty (e.g. injected as "") must stay auto, not force legacy.
+    for empty in ("", "   "):
+        with patch.dict(
+            "os.environ",
+            {**base, "CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1": empty},
+            clear=True,
+        ):
+            assert ConfluenceConfig.from_env().attachment_download_use_v1 is None
+    with patch.dict(
+        "os.environ",
+        {**base, "CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1": "true"},
+        clear=True,
+    ):
+        assert ConfluenceConfig.from_env().attachment_download_use_v1 is True
+    with patch.dict(
+        "os.environ",
+        {**base, "CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1": "false"},
+        clear=True,
+    ):
+        assert ConfluenceConfig.from_env().attachment_download_use_v1 is False
+
+
 def test_from_env_missing_url():
     """Test that from_env raises ValueError when URL is missing."""
     original_env = os.environ.copy()

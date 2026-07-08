@@ -466,7 +466,7 @@ def test_confluence_fetcher_mro_order():
 # ---------------------------------------------------------------------------
 
 
-def test_init_cert_auth():
+def test_init_cert_auth() -> None:
     """Test that cert auth initializes without credentials and disables trust_env."""
     config = ConfluenceConfig(
         url="https://confluence.example.com",
@@ -480,6 +480,7 @@ def test_init_cert_auth():
         patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
     ):
         mock_session = MagicMock()
+        mock_session.headers = {}
         mock_confluence.return_value._session = mock_session
 
         ConfluenceClient(config=config)
@@ -491,3 +492,44 @@ def test_init_cert_auth():
             timeout=75,
         )
         assert mock_session.trust_env is False
+
+
+def test_confluence_client_sets_default_user_agent() -> None:
+    """An explicit User-Agent is set so WAFs don't block the requests default."""
+    with (
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+        patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+    ):
+        headers: dict[str, str] = {}
+        mock_confluence.return_value._session.headers = headers
+
+        config = ConfluenceConfig(
+            url="https://confluence.example.com",
+            auth_type="pat",
+            personal_token="pat",
+        )
+        ConfluenceClient(config=config)
+
+        assert headers["User-Agent"].startswith("mcp-atlassian/")
+
+
+def test_confluence_client_custom_user_agent_overrides_default():
+    """Custom headers must still win over the built-in User-Agent default."""
+    with (
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+        patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+    ):
+        headers: dict[str, str] = {}
+        mock_confluence.return_value._session.headers = headers
+
+        config = ConfluenceConfig(
+            url="https://confluence.example.com",
+            auth_type="pat",
+            personal_token="pat",
+            custom_headers={"User-Agent": "my-app/1.0"},
+        )
+        ConfluenceClient(config=config)
+
+        assert headers["User-Agent"] == "my-app/1.0"

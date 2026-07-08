@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import time
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -64,6 +66,59 @@ class TestConfluenceCloudStorageFormat:
         assert page.id is not None
 
 
+class TestConfluenceCloudAttachments:
+    """Attachment upload/versioning through the fetcher API."""
+
+    def test_upload_attachment_creates_new_version(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        cloud_instance: CloudInstanceInfo,
+        resource_tracker: CloudResourceTracker,
+        tmp_path: Path,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        page = confluence_fetcher.create_page(
+            space_key=cloud_instance.space_key,
+            title=f"Cloud E2E Attachment Test {uid}",
+            body="<p>For attachment upload testing.</p>",
+        )
+        resource_tracker.add_confluence_page(page.id)
+
+        attachment_path = tmp_path / f"cloud upload {uid} & notes #1.txt"
+        attachment_path.write_text(f"first upload {uid}", encoding="utf-8")
+
+        first = confluence_fetcher.upload_attachment(
+            content_id=page.id,
+            file_path=str(attachment_path),
+            comment="first upload",
+        )
+        assert first["success"] is True
+        assert first["filename"] == attachment_path.name
+        assert first["id"]
+
+        attachment_path.write_text(f"second upload {uid}", encoding="utf-8")
+        second = confluence_fetcher.upload_attachment(
+            content_id=page.id,
+            file_path=str(attachment_path),
+            comment="second upload",
+        )
+        assert second["success"] is True
+        assert second["id"] == first["id"]
+
+        attachments = confluence_fetcher.get_content_attachments(
+            content_id=page.id,
+            filename=attachment_path.name,
+        )
+        matching = [
+            attachment
+            for attachment in attachments["attachments"]
+            if attachment["title"] == attachment_path.name
+        ]
+        assert len(matching) == 1
+        if "version" in matching[0]:
+            assert matching[0]["version"]["number"] >= 2
+
+
 class TestConfluenceCloudPageHierarchy:
     """Page hierarchy (parent/child pages)."""
 
@@ -89,6 +144,18 @@ class TestConfluenceCloudPageHierarchy:
         )
         resource_tracker.add_confluence_page(child.id)
         assert child.id is not None
+
+        children = []
+        for _ in range(6):
+            children = confluence_fetcher.get_page_children(
+                page_id=parent.id,
+                include_folders=False,
+            )
+            if any(page.id == child.id for page in children):
+                break
+            time.sleep(2)
+
+        assert any(page.id == child.id for page in children)
 
 
 class TestConfluenceCloudLabels:
@@ -137,3 +204,31 @@ class TestConfluenceCloudComments:
 
         comments = confluence_fetcher.get_page_comments(page.id)
         assert len(comments) > 0
+
+    def test_add_and_get_inline_comments(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        cloud_instance: CloudInstanceInfo,
+        resource_tracker: CloudResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        anchor = f"cloud inline anchor {uid}"
+        page = confluence_fetcher.create_page(
+            space_key=cloud_instance.space_key,
+            title=f"Cloud E2E Inline Comment Test {uid}",
+            body=f"<p>Before {anchor} after.</p>",
+            is_markdown=False,
+            content_representation="storage",
+        )
+        resource_tracker.add_confluence_page(page.id)
+
+        comment = confluence_fetcher.add_inline_comment(
+            page_id=page.id,
+            content=f"Cloud E2E inline test comment {uid}",
+            text_selection=anchor,
+        )
+        assert comment is not None
+        assert comment.location == "inline"
+
+        comments = confluence_fetcher.get_inline_comments(page.id)
+        assert any(inline_comment.id == comment.id for inline_comment in comments)
