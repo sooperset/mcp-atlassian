@@ -39,7 +39,7 @@ class TestPagesMixin:
         # Assert
         pages_mixin.confluence.get_page_by_id.assert_called_once_with(
             page_id=page_id,
-            expand="body.storage,version,space,children.attachment,history",
+            expand="body.view,version,space,children.attachment,history",
         )
 
         # Verify result structure
@@ -67,6 +67,37 @@ class TestPagesMixin:
         assert len(result.attachments) == 2
         assert result.attachments[0].id is not None
         assert result.attachments[1].id is not None
+
+    def test_get_page_content_prefers_rendered_view_for_markdown(self, pages_mixin):
+        """Test that body.view is preferred over storage for markdown conversion."""
+        page_id = "987654321"
+        view_html = (
+            '<p>See <a href="https://example.atlassian.net/wiki/x/abc">Docs</a></p>'
+        )
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+        pages_mixin.confluence.get_page_by_id.return_value = {
+            "id": page_id,
+            "title": "Rendered Page",
+            "space": {"key": "PROJ"},
+            "version": {"number": 1},
+            "body": {
+                "view": {"value": view_html},
+                "storage": {"value": "<p><ac:link>Docs</ac:link></p>"},
+            },
+            "children": {"attachment": {"results": []}},
+        }
+        pages_mixin.preprocessor.process_rendered_html_content.return_value = (
+            view_html,
+            "[Docs](https://example.atlassian.net/wiki/x/abc)",
+        )
+
+        result = pages_mixin.get_page_content(page_id, convert_to_markdown=True)
+
+        assert result.content == "[Docs](https://example.atlassian.net/wiki/x/abc)"
+        pages_mixin.preprocessor.process_rendered_html_content.assert_called_once_with(
+            view_html
+        )
+        pages_mixin.preprocessor.process_html_content.assert_not_called()
 
     def test_get_page_ancestors(self, pages_mixin):
         """Test getting page ancestors (parent pages)."""
@@ -182,7 +213,7 @@ class TestPagesMixin:
 
         # Verify API calls
         pages_mixin.confluence.get_page_by_title.assert_called_once_with(
-            space=space_key, title=title, expand="body.storage,version"
+            space=space_key, title=title, expand="body.view,version"
         )
 
         # Verify result
@@ -201,7 +232,7 @@ class TestPagesMixin:
         # Assert
         assert result is None
         pages_mixin.confluence.get_page_by_title.assert_called_once_with(
-            space="NONEXISTENT", title="Page Title", expand="body.storage,version"
+            space="NONEXISTENT", title="Page Title", expand="body.view,version"
         )
 
     def test_get_page_by_title_page_not_found(self, pages_mixin):
@@ -215,7 +246,7 @@ class TestPagesMixin:
         # Assert
         assert result is None
         pages_mixin.confluence.get_page_by_title.assert_called_once_with(
-            space="PROJ", title="Nonexistent Page", expand="body.storage,version"
+            space="PROJ", title="Nonexistent Page", expand="body.view,version"
         )
 
     def test_get_page_by_title_error_handling(self, pages_mixin):
@@ -242,7 +273,7 @@ class TestPagesMixin:
 
         # Assert
         pages_mixin.confluence.get_all_pages_from_space.assert_called_once_with(
-            space=space_key, start=0, limit=10, expand="body.storage"
+            space=space_key, start=0, limit=10, expand="body.view"
         )
 
         # Verify results
@@ -574,6 +605,7 @@ class TestPagesMixin:
         # Arrange
         parent_id = "123456"
         pages_mixin.config.url = "https://example.atlassian.net/wiki"
+        view_html = "<p>This is some rendered content</p>"
 
         # Mock the response with body content
         child_pages_data = {
@@ -583,7 +615,7 @@ class TestPagesMixin:
                     "title": "Child Page With Content",
                     "space": {"key": "DEMO"},
                     "version": {"number": 1},
-                    "body": {"storage": {"value": "<p>This is some content</p>"}},
+                    "body": {"view": {"value": view_html}},
                 }
             ]
         }
@@ -595,26 +627,23 @@ class TestPagesMixin:
             child_folders_data,
         ]
 
-        # Mock the preprocessor
-        pages_mixin.preprocessor.process_html_content.return_value = (
-            "<p>Processed HTML</p>",
-            "Processed Markdown",
+        pages_mixin.preprocessor.process_rendered_html_content.return_value = (
+            view_html,
+            "Rendered Markdown",
         )
 
         # Act
         results = pages_mixin.get_page_children(
-            page_id=parent_id, expand="body.storage", convert_to_markdown=True
+            page_id=parent_id, expand="body.view", convert_to_markdown=True
         )
 
         # Assert
         assert len(results) == 1
-        assert results[0].content == "Processed Markdown"
-        pages_mixin.preprocessor.process_html_content.assert_called_once_with(
-            "<p>This is some content</p>",
-            space_key="DEMO",
-            confluence_client=pages_mixin.confluence,
-            content_id="789012",
+        assert results[0].content == "Rendered Markdown"
+        pages_mixin.preprocessor.process_rendered_html_content.assert_called_once_with(
+            view_html
         )
+        pages_mixin.preprocessor.process_html_content.assert_not_called()
 
     def test_get_page_children_empty(self, pages_mixin):
         """Test getting child pages when there are none."""
@@ -700,7 +729,7 @@ class TestPagesMixin:
         # Verify the API call
         pages_mixin.confluence.get_page_by_id.assert_called_once_with(
             page_id=page_id,
-            expand="body.storage,version,space,children.attachment,history",
+            expand="body.view,version,space,children.attachment,history",
         )
 
         # Verify the result
@@ -1031,7 +1060,7 @@ class TestPagesMixin:
             page_id=page_id,
             status="historical",
             version=version,
-            expand="body.storage,version,space,children.attachment,history",
+            expand="body.view,version,space,children.attachment,history",
         )
 
         # Verify result is a ConfluencePage
@@ -1041,6 +1070,41 @@ class TestPagesMixin:
         assert result.version.number == version
         assert result.content == "## Historical Content\n\nThis is historical content"
         assert result.space.key == "PROJ"
+
+    def test_get_page_history_prefers_rendered_view_v1(self, pages_mixin):
+        """Test historical markdown conversion uses body.view when available."""
+        page_id = "987654321"
+        version = 2
+        view_html = (
+            '<p>See <a href="https://example.atlassian.net/wiki/x/hist">History</a></p>'
+        )
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+        pages_mixin.confluence.get_page_by_id.return_value = {
+            "id": page_id,
+            "title": "Historical Rendered Page",
+            "space": {"key": "PROJ", "name": "Project Space"},
+            "version": {"number": version},
+            "body": {
+                "view": {"value": view_html},
+                "storage": {"value": "<p><ac:link>History</ac:link></p>"},
+            },
+            "children": {"attachment": {"results": []}},
+        }
+        pages_mixin.preprocessor.process_rendered_html_content.return_value = (
+            view_html,
+            "[History](https://example.atlassian.net/wiki/x/hist)",
+        )
+        pages_mixin.confluence.get_page_properties.return_value = {"results": []}
+
+        result = pages_mixin.get_page_history(
+            page_id, version, convert_to_markdown=True
+        )
+
+        assert result.content == "[History](https://example.atlassian.net/wiki/x/hist)"
+        pages_mixin.preprocessor.process_rendered_html_content.assert_called_once_with(
+            view_html
+        )
+        pages_mixin.preprocessor.process_html_content.assert_not_called()
 
     def test_get_page_history_html_v1(self, pages_mixin):
         """Test retrieving historical version with HTML format (convert_to_markdown=False)."""
@@ -1456,7 +1520,7 @@ class TestPagesOAuthMixin:
             # Assert that v2 API was used instead of v1
             mock_v2_adapter.get_page.assert_called_once_with(
                 page_id=page_id,
-                expand="body.storage,version,space,children.attachment,history",
+                expand="body.view,version,space,children.attachment,history",
             )
 
             # Verify v1 API was NOT called
@@ -1547,7 +1611,7 @@ class TestPagesOAuthMixin:
             mock_v2_adapter.get_page_by_version.assert_called_once_with(
                 page_id=page_id,
                 version=version,
-                expand="body.storage,version,space,children.attachment,history",
+                expand="body.view,version,space,children.attachment,history",
             )
 
             # Verify v1 API was NOT called

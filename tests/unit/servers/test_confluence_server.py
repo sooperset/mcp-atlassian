@@ -466,6 +466,38 @@ async def test_get_page_children(client, mock_confluence_fetcher):
 
 
 @pytest.mark.anyio
+async def test_get_page_children_include_content_markdown(
+    client, mock_confluence_fetcher
+):
+    """Test child content requests expand rendered view HTML for markdown."""
+    await client.call_tool(
+        "confluence_get_page_children",
+        {"parent_id": "123456", "include_content": True},
+    )
+
+    call_kwargs = mock_confluence_fetcher.get_page_children.call_args.kwargs
+    assert call_kwargs["expand"] == "version,body.view"
+    assert call_kwargs["convert_to_markdown"] is True
+
+
+@pytest.mark.anyio
+async def test_get_page_children_include_content_html(client, mock_confluence_fetcher):
+    """Test child content requests storage when markdown conversion is disabled."""
+    await client.call_tool(
+        "confluence_get_page_children",
+        {
+            "parent_id": "123456",
+            "include_content": True,
+            "convert_to_markdown": False,
+        },
+    )
+
+    call_kwargs = mock_confluence_fetcher.get_page_children.call_args.kwargs
+    assert call_kwargs["expand"] == "version,body.storage"
+    assert call_kwargs["convert_to_markdown"] is False
+
+
+@pytest.mark.anyio
 async def test_get_space_page_tree(client, mock_confluence_fetcher):
     """Test the get_space_page_tree tool."""
     response = await client.call_tool(

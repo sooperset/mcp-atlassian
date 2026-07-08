@@ -135,6 +135,94 @@ class BasePreprocessor:
             logger.error(f"Error in process_html_content: {str(e)}")
             raise
 
+    def process_rendered_html_content(self, html_content: str) -> tuple[str, str]:
+        """Process Confluence-rendered HTML (``body.view`` format) to markdown.
+
+        Unlike :meth:`process_html_content`, which parses Confluence storage XML
+        (``body.storage``) containing ``<ac:link>``, ``<ac:structured-macro>``, and
+        other proprietary tags, this method operates on the HTML that Confluence has
+        already rendered to standard HTML with real ``<a href>`` links, proper tables,
+        and ordinary HTML elements.  No Confluence-specific macro parsing is needed.
+
+        Args:
+            html_content: Rendered HTML from the Confluence ``body.view`` API field.
+
+        Returns:
+            Tuple of ``(html_content, markdown)`` where markdown is the converted text.
+        """
+        try:
+            soup = BeautifulSoup(html_content, "html.parser")
+            links_normalized = self._normalize_rendered_links_in_soup(soup)
+            images_normalized = self._normalize_rendered_images_in_soup(soup)
+            processed_html = (
+                str(soup) if links_normalized or images_normalized else html_content
+            )
+            processed_markdown = md(processed_html, heading_style="ATX", bullets="-")
+            return processed_html, processed_markdown
+        except Exception as e:
+            logger.error(f"Error in process_rendered_html_content: {str(e)}")
+            raise
+
+    def _resolve_confluence_relative_url(self, url: str) -> str:
+        """Resolve a Confluence-rendered relative URL against ``base_url``."""
+        if not self.base_url or not url.startswith("/") or url.startswith("//"):
+            return url
+
+        parsed_base = urllib.parse.urlparse(self.base_url)
+        base_path = parsed_base.path.rstrip("/")
+        if base_path and url.startswith(f"{base_path}/"):
+            return f"{parsed_base.scheme}://{parsed_base.netloc}{url}"
+        return f"{self.base_url.rstrip('/')}{url}"
+
+    def _normalize_rendered_links_in_soup(self, soup: BeautifulSoup) -> bool:
+        """Normalize standard ``body.view`` links before markdown conversion."""
+        changed = False
+        for link in soup.find_all("a"):
+            if not isinstance(link, Tag):
+                continue
+
+            href = link.get("href")
+            if not isinstance(href, str):
+                continue
+
+            resolved_href = self._resolve_confluence_relative_url(href)
+            if resolved_href != href:
+                link["href"] = resolved_href
+                changed = True
+
+        return changed
+
+    def _normalize_rendered_images_in_soup(self, soup: BeautifulSoup) -> bool:
+        """Normalize standard ``body.view`` image tags before markdown conversion."""
+        changed = False
+        for img in soup.find_all("img"):
+            if not isinstance(img, Tag):
+                continue
+
+            src = img.get("src")
+            if isinstance(src, str):
+                resolved_src = self._resolve_confluence_relative_url(src)
+                if resolved_src != src:
+                    img["src"] = resolved_src
+                    changed = True
+
+            alt = img.get("alt")
+            if alt:
+                continue
+
+            alias = img.get("data-linked-resource-default-alias")
+            if not isinstance(alias, str) or not alias:
+                image_src = img.get("src")
+                if isinstance(image_src, str):
+                    path = urllib.parse.urlparse(image_src).path
+                    alias = urllib.parse.unquote(path.rsplit("/", 1)[-1])
+
+            if alias:
+                img["alt"] = alias
+                changed = True
+
+        return changed
+
     def _process_user_mentions_in_soup(
         self, soup: BeautifulSoup, confluence_client: ConfluenceClient | None = None
     ) -> None:
