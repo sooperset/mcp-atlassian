@@ -940,3 +940,66 @@ def test_create_project_version_error(projects_mixin: ProjectsMixin) -> None:
     ):
         with pytest.raises(Exception):
             projects_mixin.create_project_version("PROJ4", "v6.0")
+
+
+def test_update_project_version_single_field(projects_mixin: ProjectsMixin) -> None:
+    """Test update_project_version forwards a single field change."""
+    mock_response = {"id": "301", "name": "v4.0", "archived": False}
+    with patch.object(
+        projects_mixin, "update_version", return_value=mock_response
+    ) as mock_update_version:
+        result = projects_mixin.update_project_version(version_id="301", archived=False)
+        assert result == mock_response
+        mock_update_version.assert_called_once_with(
+            version_id="301",
+            name=None,
+            description=None,
+            start_date=None,
+            release_date=None,
+            archived=False,
+            released=None,
+        )
+
+
+def test_update_project_version_all_fields(projects_mixin: ProjectsMixin) -> None:
+    """Test update_project_version forwards every field when provided."""
+    mock_response = {
+        "id": "302",
+        "name": "v5.1",
+        "description": "Patched",
+        "startDate": "2025-09-01",
+        "releaseDate": "2025-09-15",
+        "archived": True,
+        "released": True,
+    }
+    with patch.object(
+        projects_mixin, "update_version", return_value=mock_response
+    ) as mock_update_version:
+        result = projects_mixin.update_project_version(
+            version_id="302",
+            name="v5.1",
+            description="Patched",
+            start_date="2025-09-01",
+            release_date="2025-09-15",
+            archived=True,
+            released=True,
+        )
+        assert result == mock_response
+        mock_update_version.assert_called_once_with(
+            version_id="302",
+            name="v5.1",
+            description="Patched",
+            start_date="2025-09-01",
+            release_date="2025-09-15",
+            archived=True,
+            released=True,
+        )
+
+
+def test_update_project_version_error(projects_mixin: ProjectsMixin) -> None:
+    """Test update_project_version propagates errors from the client."""
+    with patch.object(
+        projects_mixin, "update_version", side_effect=Exception("API failure")
+    ):
+        with pytest.raises(Exception):
+            projects_mixin.update_project_version("303", archived=True)
