@@ -478,7 +478,7 @@ class TestPagesMixin:
         """Test successfully getting child pages and folders."""
         # Arrange
         parent_id = "123456"
-        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+        pages_mixin.config.url = "https://confluence.example.com"
 
         # Mock the response from get_page_child_by_type for pages
         child_pages_data = {
@@ -540,7 +540,7 @@ class TestPagesMixin:
         """Test getting child pages only (without folders)."""
         # Arrange
         parent_id = "123456"
-        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+        pages_mixin.config.url = "https://confluence.example.com"
 
         # Mock the response from get_page_child_by_type
         child_pages_data = {
@@ -573,7 +573,7 @@ class TestPagesMixin:
         """Test getting child pages with content."""
         # Arrange
         parent_id = "123456"
-        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+        pages_mixin.config.url = "https://confluence.example.com"
 
         # Mock the response with body content
         child_pages_data = {
@@ -620,6 +620,7 @@ class TestPagesMixin:
         """Test getting child pages when there are none."""
         # Arrange
         parent_id = "123456"
+        pages_mixin.config.url = "https://confluence.example.com"
 
         # Mock empty response for both pages and folders
         pages_mixin.confluence.get_page_child_by_type.return_value = {"results": []}
@@ -634,6 +635,7 @@ class TestPagesMixin:
         """Test error handling when getting child pages."""
         # Arrange
         parent_id = "123456"
+        pages_mixin.config.url = "https://confluence.example.com"
 
         # Mock an exception on the first call (pages)
         pages_mixin.confluence.get_page_child_by_type.side_effect = Exception(
@@ -674,7 +676,7 @@ class TestPagesMixin:
         }
 
         with patch.object(
-            PagesMixin, "_v2_adapter", new_callable=PropertyMock
+            PagesMixin, "_page_children_v2_adapter", new_callable=PropertyMock
         ) as mock_prop:
             mock_prop.return_value = mock_v2_adapter
             results = pages_mixin.get_page_children(page_id=parent_id, limit=10)
@@ -694,6 +696,47 @@ class TestPagesMixin:
             "https://example.atlassian.net/wiki/spaces/TEST/pages/789012"
         )
 
+    def test_get_page_children_cloud_basic_uses_v2_direct_children(self, pages_mixin):
+        """Test all Cloud auth modes use the v2 direct-children endpoint."""
+        parent_id = "123456"
+        pages_mixin.config = MagicMock(url="https://example.atlassian.net/wiki")
+        pages_mixin.config.auth_type = "basic"
+        pages_mixin.config.is_cloud = True
+        pages_mixin.confluence.url = "https://example.atlassian.net/wiki"
+
+        mock_v2_adapter = MagicMock()
+        mock_v2_adapter.get_page_direct_children.return_value = {
+            "results": [
+                {
+                    "id": "789012",
+                    "title": "Child Page 1",
+                    "type": "page",
+                    "space": {"id": "42", "key": "TEST", "name": "Test Space"},
+                    "spaceId": "42",
+                    "status": "current",
+                }
+            ]
+        }
+
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceV2Adapter",
+            return_value=mock_v2_adapter,
+        ) as adapter_cls:
+            results = pages_mixin.get_page_children(page_id=parent_id, limit=10)
+
+        adapter_cls.assert_called_once_with(
+            session=pages_mixin.confluence._session,
+            base_url="https://example.atlassian.net/wiki",
+        )
+        mock_v2_adapter.get_page_direct_children.assert_called_once_with(
+            page_id=parent_id,
+            limit=10,
+            cursor=None,
+        )
+        pages_mixin.confluence.get_page_child_by_type.assert_not_called()
+        assert len(results) == 1
+        assert results[0].id == "789012"
+
     def test_get_page_children_cloud_filters_folders_when_disabled(self, pages_mixin):
         """Test Cloud OAuth child lookup filters folders client-side."""
         pages_mixin.config = MagicMock(url="https://example.atlassian.net/wiki")
@@ -709,7 +752,7 @@ class TestPagesMixin:
         }
 
         with patch.object(
-            PagesMixin, "_v2_adapter", new_callable=PropertyMock
+            PagesMixin, "_page_children_v2_adapter", new_callable=PropertyMock
         ) as mock_prop:
             mock_prop.return_value = mock_v2_adapter
             results = pages_mixin.get_page_children(
@@ -718,6 +761,129 @@ class TestPagesMixin:
 
         assert len(results) == 1
         assert results[0].type == "page"
+
+    def test_get_page_children_cloud_filters_to_pages_and_folders(self, pages_mixin):
+        """Test v2 direct children keep the tool scoped to pages and folders."""
+        pages_mixin.config = MagicMock(url="https://example.atlassian.net/wiki")
+        pages_mixin.config.auth_type = "oauth"
+        pages_mixin.config.is_cloud = True
+
+        mock_v2_adapter = MagicMock()
+        mock_v2_adapter.get_page_direct_children.return_value = {
+            "results": [
+                {"id": "1", "title": "Page Child", "type": "page"},
+                {"id": "2", "title": "Database Child", "type": "database"},
+                {"id": "3", "title": "Folder Child", "type": "folder"},
+                {"id": "4", "title": "Whiteboard Child", "type": "whiteboard"},
+            ]
+        }
+
+        with patch.object(
+            PagesMixin, "_page_children_v2_adapter", new_callable=PropertyMock
+        ) as mock_prop:
+            mock_prop.return_value = mock_v2_adapter
+            results = pages_mixin.get_page_children(page_id="123456")
+
+        assert [page.id for page in results] == ["1", "3"]
+        assert [page.type for page in results] == ["page", "folder"]
+
+    def test_get_page_children_cloud_emulates_start_with_v2_cursor(self, pages_mixin):
+        """Test numeric start pagination is translated to v2 cursor traversal."""
+        pages_mixin.config = MagicMock(url="https://example.atlassian.net/wiki")
+        pages_mixin.config.auth_type = "oauth"
+        pages_mixin.config.is_cloud = True
+
+        mock_v2_adapter = MagicMock()
+        mock_v2_adapter.get_page_direct_children.side_effect = [
+            {
+                "results": [
+                    {"id": "1", "title": "First", "type": "page"},
+                    {"id": "2", "title": "Second", "type": "page"},
+                ],
+                "_links": {
+                    "next": ("/wiki/api/v2/pages/123456/direct-children?cursor=abc123")
+                },
+            },
+            {
+                "results": [
+                    {"id": "3", "title": "Third", "type": "page"},
+                    {"id": "4", "title": "Fourth", "type": "page"},
+                ],
+            },
+        ]
+
+        with patch.object(
+            PagesMixin, "_page_children_v2_adapter", new_callable=PropertyMock
+        ) as mock_prop:
+            mock_prop.return_value = mock_v2_adapter
+            results = pages_mixin.get_page_children(page_id="123456", start=1, limit=2)
+
+        assert [page.id for page in results] == ["2", "3"]
+        assert mock_v2_adapter.get_page_direct_children.call_args_list[0].kwargs == {
+            "page_id": "123456",
+            "limit": 2,
+            "cursor": None,
+        }
+        assert mock_v2_adapter.get_page_direct_children.call_args_list[1].kwargs == {
+            "page_id": "123456",
+            "limit": 2,
+            "cursor": "abc123",
+        }
+
+    def test_get_page_children_cloud_fetches_page_content_when_requested(
+        self, pages_mixin
+    ):
+        """Test v2 direct children fetch page details when body content is requested."""
+        pages_mixin.config = MagicMock(url="https://example.atlassian.net/wiki")
+        pages_mixin.config.auth_type = "oauth"
+        pages_mixin.config.is_cloud = True
+
+        mock_v2_adapter = MagicMock()
+        mock_v2_adapter.get_page_direct_children.return_value = {
+            "results": [
+                {
+                    "id": "789012",
+                    "title": "Child Page",
+                    "type": "page",
+                    "space": {"id": "42", "key": "TEST", "name": "Test Space"},
+                    "spaceId": "42",
+                    "status": "current",
+                }
+            ]
+        }
+        mock_v2_adapter.get_page.return_value = {
+            "id": "789012",
+            "title": "Child Page",
+            "type": "page",
+            "space": {"id": "42", "key": "TEST", "name": "Test Space"},
+            "body": {"storage": {"value": "<p>Cloud content</p>"}},
+            "version": {"number": 1},
+        }
+        pages_mixin.preprocessor.process_html_content.return_value = (
+            "<p>Cloud content</p>",
+            "Cloud content",
+        )
+
+        with patch.object(
+            PagesMixin, "_page_children_v2_adapter", new_callable=PropertyMock
+        ) as mock_prop:
+            mock_prop.return_value = mock_v2_adapter
+            results = pages_mixin.get_page_children(
+                page_id="123456", expand="body.storage"
+            )
+
+        assert len(results) == 1
+        assert results[0].content == "Cloud content"
+        mock_v2_adapter.get_page.assert_called_once_with(
+            page_id="789012",
+            expand="body.storage,version,space",
+        )
+        pages_mixin.preprocessor.process_html_content.assert_called_once_with(
+            "<p>Cloud content</p>",
+            space_key="TEST",
+            confluence_client=pages_mixin.confluence,
+            content_id="789012",
+        )
 
     def test_get_page_children_cloud_partial_space_uses_expandable_fallback(
         self, pages_mixin
@@ -742,7 +908,7 @@ class TestPagesMixin:
         }
 
         with patch.object(
-            PagesMixin, "_v2_adapter", new_callable=PropertyMock
+            PagesMixin, "_page_children_v2_adapter", new_callable=PropertyMock
         ) as mock_prop:
             mock_prop.return_value = mock_v2_adapter
             results = pages_mixin.get_page_children(page_id="123456")
@@ -758,7 +924,7 @@ class TestPagesMixin:
         """Test that folder fetch errors don't fail the whole operation."""
         # Arrange
         parent_id = "123456"
-        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+        pages_mixin.config.url = "https://confluence.example.com"
 
         # Mock pages success, folders failure
         child_pages_data = {

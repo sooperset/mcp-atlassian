@@ -32,6 +32,7 @@ def mock_confluence_fetcher():
         "id": "123456",
         "title": "Test Page Mock Title",
         "url": "https://example.atlassian.net/wiki/spaces/TEST/pages/123456/Test+Page",
+        "space": {"key": "TEST", "name": "Test Space"},
         "content": {
             "value": "This is a test page content in Markdown",
             "format": "markdown",
@@ -463,8 +464,13 @@ async def test_get_page_children(client, mock_confluence_fetcher):
     assert "results" in result_data
     assert len(result_data["results"]) > 0
     assert result_data["results"][0]["title"] == "Test Page Mock Title"
-    assert "space" not in result_data["results"][0]
-    assert "url" not in result_data["results"][0]
+    assert result_data["results"][0]["space"] == {
+        "key": "TEST",
+        "name": "Test Space",
+    }
+    assert result_data["results"][0]["url"] == (
+        "https://example.atlassian.net/wiki/spaces/TEST/pages/123456/Test+Page"
+    )
 
 
 @pytest.mark.anyio

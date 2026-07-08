@@ -1,8 +1,7 @@
-"""Confluence REST API v2 adapter for OAuth authentication.
+"""Confluence REST API v2 adapter.
 
-This module provides direct v2 API calls to handle the deprecated v1 endpoints
-when using OAuth authentication. The v1 endpoints have been removed for OAuth
-but still work for API token authentication.
+This module provides direct v2 API calls for Cloud endpoints where the
+corresponding v1 endpoints are deprecated or unavailable.
 """
 
 import logging
@@ -17,7 +16,7 @@ logger = logging.getLogger("mcp-atlassian")
 
 
 class ConfluenceV2Adapter:
-    """Adapter for Confluence REST API v2 operations when using OAuth."""
+    """Adapter for Confluence REST API v2 operations."""
 
     def __init__(self, session: requests.Session, base_url: str) -> None:
         """Initialize the v2 adapter.
@@ -400,6 +399,21 @@ class ConfluenceV2Adapter:
             )
 
             data: dict[str, Any] = response.json()
+            response_links = getattr(response, "links", None)
+            if isinstance(response_links, dict):
+                next_link_data = response_links.get("next", {})
+                next_link = (
+                    next_link_data.get("url")
+                    if isinstance(next_link_data, dict)
+                    else None
+                )
+                if next_link:
+                    links = data.get("_links", {})
+                    if not isinstance(links, dict):
+                        links = {}
+                    links.setdefault("next", next_link)
+                    data["_links"] = links
+
             results = data.get("results", [])
             if isinstance(results, list):
                 spaces_by_id: dict[str, dict[str, str]] = {}

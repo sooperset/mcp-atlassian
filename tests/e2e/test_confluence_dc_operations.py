@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 from pathlib import Path
 
@@ -127,6 +128,18 @@ class TestConfluenceDCPageHierarchy:
         )
         resource_tracker.add_confluence_page(child.id)
         assert child.id is not None
+
+        children = []
+        for _ in range(6):
+            children = confluence_fetcher.get_page_children(
+                page_id=parent.id,
+                include_folders=False,
+            )
+            if any(page.id == child.id for page in children):
+                break
+            time.sleep(2)
+
+        assert any(page.id == child.id for page in children)
 
 
 class TestConfluenceDCLabels:

@@ -240,6 +240,30 @@ class TestConfluenceV2Adapter:
         }
         assert mock_session.get.call_args_list[1][0][0].endswith("/api/v2/spaces/789")
 
+    def test_get_page_direct_children_preserves_next_link_header(
+        self, v2_adapter, mock_session
+    ):
+        """Test v2 pagination can use the response Link header."""
+        children_response = Mock()
+        children_response.status_code = 200
+        children_response.links = {
+            "next": {
+                "url": (
+                    "https://example.atlassian.net/wiki/api/v2/pages/999/"
+                    "direct-children?cursor=next-token"
+                )
+            }
+        }
+        children_response.json.return_value = {
+            "results": [{"id": "123456", "status": "current", "title": "Child Page"}]
+        }
+
+        mock_session.get.return_value = children_response
+
+        result = v2_adapter.get_page_direct_children("999")
+
+        assert result["_links"]["next"].endswith("cursor=next-token")
+
     @pytest.mark.parametrize(
         "method,call_kwargs,expected_path",
         [

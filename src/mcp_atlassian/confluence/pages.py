@@ -3,6 +3,7 @@
 import difflib
 import logging
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import requests
 from bs4 import BeautifulSoup, Tag
@@ -32,6 +33,134 @@ class PagesMixin(ConfluenceClient):
                 session=self.confluence._session, base_url=self.confluence.url
             )
         return None
+
+    @property
+    def _page_children_v2_adapter(self) -> ConfluenceV2Adapter | None:
+        """Get v2 API adapter for Cloud page-children lookups.
+
+        Returns:
+            ConfluenceV2Adapter instance for Cloud, None for Server/Data Center.
+        """
+        if self.config.is_cloud:
+            return ConfluenceV2Adapter(
+                session=self.confluence._session, base_url=self.confluence.url
+            )
+        return None
+
+    @staticmethod
+    def _v2_next_cursor(response: dict[str, Any]) -> str | None:
+        """Extract the next cursor from a Confluence v2 paginated response."""
+        links = response.get("_links", {})
+        if not isinstance(links, dict):
+            return None
+
+        next_link = links.get("next")
+        if not isinstance(next_link, str) or not next_link:
+            return None
+
+        cursor = parse_qs(urlparse(next_link).query).get("cursor", [None])[0]
+        return cursor or None
+
+    @staticmethod
+    def _is_requested_child_type(
+        item: dict[str, Any], *, include_folders: bool
+    ) -> bool:
+        """Return whether a v2 direct-child item matches the tool contract."""
+        item_type = item.get("type", "page")
+        return item_type == "page" or (include_folders and item_type == "folder")
+
+    def _get_v2_page_children_items(
+        self,
+        v2_adapter: ConfluenceV2Adapter,
+        page_id: str,
+        start: int,
+        limit: int,
+        expand: str,
+        *,
+        include_folders: bool,
+    ) -> list[dict[str, Any]]:
+        """Fetch v2 direct children while preserving the v1 start/limit contract."""
+        if limit <= 0:
+            return []
+
+        child_items: list[dict[str, Any]] = []
+        cursor: str | None = None
+        seen_cursors: set[str | None] = set()
+        items_to_skip = max(start, 0)
+
+        while len(child_items) < limit:
+            if cursor in seen_cursors:
+                logger.warning(
+                    "Stopping v2 child pagination for page '%s' after repeated "
+                    "cursor '%s'",
+                    page_id,
+                    cursor,
+                )
+                break
+            seen_cursors.add(cursor)
+
+            page_results = v2_adapter.get_page_direct_children(
+                page_id=page_id,
+                limit=limit,
+                cursor=cursor,
+            )
+            raw_items = page_results.get("results", [])
+            if not isinstance(raw_items, list):
+                break
+
+            requested_items = [
+                item
+                for item in raw_items
+                if isinstance(item, dict)
+                and self._is_requested_child_type(item, include_folders=include_folders)
+            ]
+
+            if items_to_skip:
+                if len(requested_items) <= items_to_skip:
+                    items_to_skip -= len(requested_items)
+                    cursor = self._v2_next_cursor(page_results)
+                    if not cursor:
+                        break
+                    continue
+
+                requested_items = requested_items[items_to_skip:]
+                items_to_skip = 0
+
+            remaining = limit - len(child_items)
+            child_items.extend(requested_items[:remaining])
+
+            if len(child_items) >= limit:
+                break
+
+            cursor = self._v2_next_cursor(page_results)
+            if not cursor:
+                break
+
+        if "body" in expand:
+            return self._enrich_v2_child_pages_with_content(v2_adapter, child_items)
+
+        return child_items
+
+    def _enrich_v2_child_pages_with_content(
+        self,
+        v2_adapter: ConfluenceV2Adapter,
+        child_items: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Fetch page details for v2 direct-child page items when body is requested."""
+        enriched_items: list[dict[str, Any]] = []
+
+        for item in child_items:
+            if item.get("type", "page") != "page" or not item.get("id"):
+                enriched_items.append(item)
+                continue
+
+            page = v2_adapter.get_page(
+                page_id=str(item["id"]),
+                expand="body.storage,version,space",
+            )
+            enriched_items.append({**item, **page})
+
+        return enriched_items
 
     @handle_auth_errors("Confluence API")
     def get_page_content(
@@ -876,23 +1005,17 @@ class PagesMixin(ConfluenceClient):
             List of ConfluencePage models containing the child pages and folders
         """
         try:
-            v2_adapter = self._v2_adapter
+            v2_adapter = self._page_children_v2_adapter
             if v2_adapter:
-                logger.debug(
-                    "Using v2 API for OAuth authentication to get children "
-                    f"for '{page_id}'"
-                )
-                page_results = v2_adapter.get_page_direct_children(
+                logger.debug(f"Using v2 API to get children for Cloud page '{page_id}'")
+                child_items = self._get_v2_page_children_items(
+                    v2_adapter=v2_adapter,
                     page_id=page_id,
+                    start=start,
                     limit=limit,
-                    cursor=str(start) if start > 0 else None,
+                    expand=expand,
+                    include_folders=include_folders,
                 )
-                child_items = page_results.get("results", [])
-
-                if not include_folders:
-                    child_items = [
-                        item for item in child_items if item.get("type") == "page"
-                    ]
             else:
                 # Use the Atlassian Python API's get_page_child_by_type method
                 # First, get child pages
