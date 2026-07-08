@@ -2692,6 +2692,40 @@ async def add_issues_to_sprint(
 
 
 @jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_agile"},
+    annotations={"title": "Move Issues to Backlog", "readOnlyHint": False},
+)
+@check_write_access
+async def move_issues_to_backlog(
+    ctx: Context,
+    issue_keys: Annotated[
+        str,
+        Field(description="Comma-separated issue keys (e.g., 'PROJ-1,PROJ-2')"),
+    ],
+) -> str:
+    """Move issues to the backlog, removing them from any sprint.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_keys: Comma-separated issue keys.
+
+    Returns:
+        JSON string with success message.
+
+    Raises:
+        ValueError: If in read-only mode or Jira client unavailable.
+    """
+    jira = await get_jira_fetcher(ctx)
+    keys_list = [k.strip() for k in issue_keys.split(",") if k.strip()]
+    jira.move_issues_to_backlog(keys_list)
+    result = {
+        "message": f"Successfully moved {len(keys_list)} issue(s) to backlog",
+        "issue_keys": keys_list,
+    }
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
     tags={"jira", "read", "toolset:jira_projects"},
     annotations={"title": "Get Project Versions", "readOnlyHint": True},
 )
