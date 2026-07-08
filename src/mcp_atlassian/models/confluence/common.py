@@ -73,6 +73,7 @@ class ConfluenceUser(ApiModel):
     def to_simplified_dict(self) -> dict[str, Any]:
         """Convert to simplified dictionary for API response."""
         return {
+            "account_id": self.account_id,
             "display_name": self.display_name,
             "email": self.email,
             "profile_picture": self.profile_picture,

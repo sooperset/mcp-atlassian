@@ -607,6 +607,119 @@ More content.
     assert "<h2>" in result_with_anchors
 
 
+# Regression tests: bare-filename images produce "Preview unavailable"
+
+
+class TestFixAttachmentImages:
+    """Unit tests for ConfluencePreprocessor._fix_attachment_images."""
+
+    def setup_method(self):
+        from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
+
+        self.fix = ConfluencePreprocessor._fix_attachment_images
+
+    def test_bare_filename_replaced_with_attachment_macro(self):
+        html = '<img src="chart.png" alt="Revenue chart"/>'
+        result = self.fix(html)
+        assert 'ac:alt="Revenue chart"' in result
+        assert 'ri:filename="chart.png"' in result
+        assert "<img" not in result
+
+    def test_alt_text_preserved(self):
+        html = '<img alt="My diagram" src="diagram.svg"/>'
+        result = self.fix(html)
+        assert 'ac:alt="My diagram"' in result
+        assert 'ri:filename="diagram.svg"' in result
+
+    def test_missing_alt_defaults_to_empty_string(self):
+        html = '<img src="figure.png"/>'
+        result = self.fix(html)
+        assert 'ac:alt=""' in result
+        assert 'ri:filename="figure.png"' in result
+
+    def test_https_url_left_untouched(self):
+        html = '<img src="https://example.com/logo.png" alt="logo"/>'
+        assert self.fix(html) == html
+
+    def test_http_url_left_untouched(self):
+        html = '<img src="http://example.com/img.jpg" alt="x"/>'
+        assert self.fix(html) == html
+
+    def test_data_uri_left_untouched(self):
+        html = '<img src="data:image/png;base64,abc123" alt="inline"/>'
+        assert self.fix(html) == html
+
+    def test_absolute_path_left_untouched(self):
+        html = '<img src="/images/logo.png" alt="logo"/>'
+        assert self.fix(html) == html
+
+    def test_protocol_relative_url_left_untouched(self):
+        html = '<img src="//cdn.example.com/logo.png" alt="logo"/>'
+        assert self.fix(html) == html
+
+    def test_anchor_reference_left_untouched(self):
+        html = '<img src="#inline-image" alt="logo"/>'
+        assert self.fix(html) == html
+
+    def test_relative_path_uses_md2conf_attachment_name(self):
+        html = '<img src="images/chart 1.png" alt="Chart"/>'
+        result = self.fix(html)
+        assert 'ri:filename="images_chart_1.png"' in result
+
+    def test_xml_sensitive_values_are_escaped(self):
+        html = '<img src="chart & q.png" alt="A & B"/>'
+        result = self.fix(html)
+        assert 'ac:alt="A &amp; B"' in result
+        assert 'ri:filename="chart___q.png"' in result
+
+    def test_dimensions_are_preserved(self):
+        html = '<img src="chart.png" alt="Chart" width="600" height="400"/>'
+        result = self.fix(html)
+        assert 'ac:width="600"' in result
+        assert 'ac:height="400"' in result
+
+    def test_mixed_content_only_bare_filenames_rewritten(self):
+        html = (
+            '<img src="local.png" alt="local"/>'
+            '<img src="https://cdn.example.com/remote.png" alt="remote"/>'
+        )
+        result = self.fix(html)
+        assert "ri:filename" in result
+        assert "https://cdn.example.com/remote.png" in result
+        assert '<img src="local.png"' not in result
+
+    def test_no_img_tags_unchanged(self):
+        html = "<p>No images here</p>"
+        assert self.fix(html) == html
+
+
+def test_markdown_to_confluence_storage_attachment_image():
+    """Regression: bare-filename images must produce ac:image attachment macros."""
+    from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
+
+    preprocessor = ConfluencePreprocessor(base_url="https://example.atlassian.net")
+    result = preprocessor.markdown_to_confluence_storage("![Revenue chart](chart.png)")
+    assert "ri:filename" in result, (
+        "Expected Confluence attachment macro, got: " + result
+    )
+    assert 'ri:filename="chart.png"' in result
+    assert "<img" not in result, (
+        "Raw <img> tag found - will show as 'Preview unavailable'"
+    )
+
+
+def test_markdown_to_confluence_storage_external_image_unchanged():
+    """External image URLs must not be rewritten to attachment macros."""
+    from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
+
+    preprocessor = ConfluencePreprocessor(base_url="https://example.atlassian.net")
+    result = preprocessor.markdown_to_confluence_storage(
+        "![Logo](https://example.com/logo.png)"
+    )
+    assert "https://example.com/logo.png" in result
+    assert 'ri:filename="https://example.com/logo.png"' not in result
+
+
 # Issue #786 regression tests - Wiki Markup Corruption
 
 
@@ -653,6 +766,98 @@ def test_markdown_to_jira_bold_without_space_still_converts(preprocessor_with_ji
     # These should still be converted (existing behavior preserved)
     assert preprocessor_with_jira.markdown_to_jira("**bold text**") == "*bold text*"
     assert preprocessor_with_jira.markdown_to_jira("*italic text*") == "_italic text_"
+
+
+def test_markdown_to_jira_preserves_intraword_underscores(preprocessor_with_jira):
+    """Intraword underscores are literal per CommonMark, not emphasis.
+
+    The Jira wiki renderer italicizes ``_word_``, so identifiers containing
+    underscores (snake_case, customfield IDs, etc.) must be emitted with the
+    underscores escaped (``\\_``) — otherwise ``foo_bar_baz`` renders with a
+    spurious italic span around ``bar``.
+    """
+    # Single intraword underscore.
+    assert (
+        preprocessor_with_jira.markdown_to_jira("the foo_bar identifier")
+        == "the foo\\_bar identifier"
+    )
+    # Multiple intraword underscores in one token.
+    assert (
+        preprocessor_with_jira.markdown_to_jira("baseline_samples_5m paused")
+        == "baseline\\_samples\\_5m paused"
+    )
+    # Custom field IDs are a common real-world case.
+    assert (
+        preprocessor_with_jira.markdown_to_jira("set customfield_10101 to 5")
+        == "set customfield\\_10101 to 5"
+    )
+    # Two identifiers on one line must not pair into a cross-token italic span.
+    assert (
+        preprocessor_with_jira.markdown_to_jira("netflow_ap and sre_analytics")
+        == "netflow\\_ap and sre\\_analytics"
+    )
+    # Double underscore runs inside identifiers are also literal in CommonMark.
+    assert (
+        preprocessor_with_jira.markdown_to_jira("the foo__bar__baz identifier")
+        == "the foo\\_\\_bar\\_\\_baz identifier"
+    )
+    # Jira list lines still need escaping inside the item text.
+    assert (
+        preprocessor_with_jira.markdown_to_jira("* customfield_10101 item")
+        == "* customfield\\_10101 item"
+    )
+
+
+def test_markdown_to_jira_word_boundary_underscore_still_italicizes(
+    preprocessor_with_jira,
+):
+    """Genuine ``_emphasis_`` at word boundaries must still convert to italic."""
+    assert (
+        preprocessor_with_jira.markdown_to_jira("an _italic phrase_ here")
+        == "an _italic phrase_ here"
+    )
+    assert preprocessor_with_jira.markdown_to_jira("_italic text_") == "_italic text_"
+    assert preprocessor_with_jira.markdown_to_jira("__bold text__") == "*bold text*"
+
+
+def test_markdown_to_jira_underscore_in_inline_code_untouched(preprocessor_with_jira):
+    """Underscores inside inline code spans stay inside monospace, unescaped."""
+    assert (
+        preprocessor_with_jira.markdown_to_jira("call `find_provider_by_url` now")
+        == "call {{find_provider_by_url}} now"
+    )
+
+
+def test_markdown_to_jira_preserves_underscores_in_url_targets(
+    preprocessor_with_jira,
+):
+    """URL targets keep literal underscores while visible text is escaped."""
+    assert (
+        preprocessor_with_jira.markdown_to_jira(
+            "[runbook](https://example.com/foo_bar)"
+        )
+        == "[runbook|https://example.com/foo_bar]"
+    )
+    assert (
+        preprocessor_with_jira.markdown_to_jira(
+            "[foo_bar](https://example.com/foo_bar)"
+        )
+        == "[foo\\_bar|https://example.com/foo_bar]"
+    )
+    assert (
+        preprocessor_with_jira.markdown_to_jira(
+            "![diagram](https://example.com/foo_bar.png)"
+        )
+        == "!https://example.com/foo_bar.png|alt=diagram!"
+    )
+    assert (
+        preprocessor_with_jira.markdown_to_jira("![](https://example.com/foo_bar.png)")
+        == "!https://example.com/foo_bar.png!"
+    )
+    assert (
+        preprocessor_with_jira.markdown_to_jira("<https://example.com/foo_bar>")
+        == "[https://example.com/foo_bar]"
+    )
 
 
 def test_md2conf_elements_from_string_available():

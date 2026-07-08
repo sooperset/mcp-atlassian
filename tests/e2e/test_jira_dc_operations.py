@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+import requests
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.jira import JiraFetcher
@@ -33,6 +34,20 @@ class TestJiraDCBehavior:
             if isinstance(assignee, dict):
                 assert "name" in assignee or "displayName" in assignee
 
+    def test_search_assignable_users_by_project(
+        self,
+        jira_fetcher: JiraFetcher,
+        dc_instance: DCInstanceInfo,
+    ) -> None:
+        """DC assignable-user search accepts username= with project scope."""
+        users = jira_fetcher.search_assignable_users(
+            query=dc_instance.admin_username,
+            project_key=dc_instance.project_key,
+            limit=5,
+        )
+
+        assert isinstance(users, list)
+
 
 class TestJiraDCEpicOperations:
     """Epic creation with DC custom fields."""
@@ -60,6 +75,47 @@ class TestJiraDCEpicOperations:
             raise
         resource_tracker.add_jira_issue(epic.key)
         assert epic.key.startswith(dc_instance.project_key)
+
+
+class TestJiraDCVersionOperations:
+    """Version creation and updates on DC."""
+
+    def test_create_and_update_project_version(
+        self,
+        jira_fetcher: JiraFetcher,
+        dc_instance: DCInstanceInfo,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        name = f"dc-e2e-version-{uid}"
+        version: dict[str, object] | None = None
+
+        try:
+            version = jira_fetcher.create_project_version(
+                project_key=dc_instance.project_key,
+                name=name,
+                description="Auto-created for DC version endpoint testing.",
+            )
+
+            assert version["name"] == name
+            assert version.get("id")
+
+            updated_name = f"{name}-updated"
+            updated_version = jira_fetcher.update_project_version(
+                version_id=str(version["id"]),
+                name=updated_name,
+            )
+
+            assert updated_version["name"] == updated_name
+            assert str(updated_version["id"]) == str(version["id"])
+        finally:
+            if version and version.get("id"):
+                requests.post(
+                    f"{dc_instance.jira_url}/rest/api/2/version/"
+                    f"{version['id']}/removeAndSwap",
+                    auth=(dc_instance.admin_username, dc_instance.admin_password),
+                    json={},
+                    timeout=30,
+                ).raise_for_status()
 
 
 class TestJiraDCSubtask:
