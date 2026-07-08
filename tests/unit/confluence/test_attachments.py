@@ -9,6 +9,7 @@ import pytest
 from mcp.types import EmbeddedResource, TextContent
 
 from mcp_atlassian.confluence.attachments import AttachmentsMixin
+from mcp_atlassian.confluence.config import ConfluenceConfig
 
 # Test scenarios for AttachmentsMixin
 #
@@ -106,6 +107,7 @@ class TestAttachmentsMixin:
         if raise_error:
             attachments_mixin.confluence._session.post.side_effect = raise_error
         else:
+            mock_response.status_code = 200
             mock_response.json.return_value = response_data
             mock_response.raise_for_status.return_value = None
             attachments_mixin.confluence._session.post.return_value = mock_response
@@ -156,12 +158,75 @@ class TestAttachmentsMixin:
             # Check URL
             assert "/rest/api/content/123456/child/attachment" in call_args[0][0]
 
-            # Check headers include X-Atlassian-Token
-            assert call_args[1]["headers"]["X-Atlassian-Token"] == "nocheck"
+            # Check headers include X-Atlassian-Token with correct value (hyphen required
+            # by Confluence Server/DC to bypass XSRF validation)
+            assert call_args[1]["headers"]["X-Atlassian-Token"] == "no-check"
 
             # Check minorEdit was passed in data
             assert call_args[1]["data"]["minorEdit"] == "false"
             # Note: comment is now in files dict as multipart form data, not in data dict
+
+    def _capture_upload_url(self, attachments_mixin, config_url: str) -> str:
+        """Run an upload with the given config URL and return the request URL.
+
+        Sets ``config.url`` (which drives ``is_cloud``), performs an upload with
+        all file I/O mocked, and returns the URL passed to ``session.post``.
+        """
+        attachments_mixin.config.url = config_url
+        self._mock_rest_api_upload(attachments_mixin)
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("os.path.getsize", return_value=100),
+            patch("os.path.isabs", return_value=True),
+            patch("os.path.abspath", return_value="/absolute/path/test_file.txt"),
+            patch("os.path.basename", return_value="test_file.txt"),
+            patch("builtins.open", mock_open(read_data=b"test content")),
+        ):
+            attachments_mixin.upload_attachment(
+                "123456", "/absolute/path/test_file.txt"
+            )
+
+        return attachments_mixin.confluence._session.post.call_args[0][0]
+
+    def test_upload_attachment_cloud_adds_wiki_prefix(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Cloud bare site URL gets the /wiki prefix (otherwise the call 404s)."""
+        url = self._capture_upload_url(attachments_mixin, "https://test.atlassian.net")
+
+        assert (
+            url == "https://test.atlassian.net/wiki"
+            "/rest/api/content/123456/child/attachment"
+        )
+
+    def test_upload_attachment_cloud_no_double_wiki_prefix(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Cloud URL already ending in /wiki must not become /wiki/wiki."""
+        url = self._capture_upload_url(
+            attachments_mixin, "https://test.atlassian.net/wiki"
+        )
+
+        assert "/wiki/wiki" not in url
+        assert (
+            url == "https://test.atlassian.net/wiki"
+            "/rest/api/content/123456/child/attachment"
+        )
+
+    def test_upload_attachment_server_dc_no_wiki_prefix(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Server/DC URLs are unchanged — no /wiki prefix is added."""
+        url = self._capture_upload_url(
+            attachments_mixin, "https://confluence.example.com"
+        )
+
+        assert "/wiki" not in url
+        assert (
+            url == "https://confluence.example.com"
+            "/rest/api/content/123456/child/attachment"
+        )
 
     def test_upload_attachment_relative_path(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with a relative path."""
@@ -266,6 +331,77 @@ class TestAttachmentsMixin:
             # Assertions: exception is caught by upload_attachment and returned as failure dict
             assert result["success"] is False
             assert "API Error" in result["error"]
+
+    def test_upload_attachment_versioning_fallback(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test that re-uploading an existing file triggers the versioning fallback.
+
+        On Confluence Server/DC, uploading a file with the same name as an existing
+        attachment returns HTTP 400 with 'same file name' in the body. The code must
+        then GET the existing attachment ID and POST to /child/attachment/{id}/data
+        to create a new version.
+        """
+        filename = "test file & notes #1.txt"
+        updated_attachment = {
+            "id": "att12345",
+            "type": "attachment",
+            "title": filename,
+            "extensions": {"mediaType": "text/plain", "fileSize": 200},
+            "_links": {"download": f"/download/attachments/123/{filename}"},
+            "version": {"number": 2},
+        }
+
+        # First POST returns 400 "same file name"
+        conflict_response = Mock()
+        conflict_response.status_code = 400
+        conflict_response.text = (
+            f"Attachment with same file name already exists: {filename}"
+        )
+
+        # GET list returns existing attachment
+        list_response = Mock()
+        list_response.status_code = 200
+        list_response.raise_for_status.return_value = None
+        list_response.json.return_value = {"results": [{"id": "att12345"}]}
+
+        # Second POST (to /data endpoint) returns the updated attachment
+        update_response = Mock()
+        update_response.status_code = 200
+        update_response.raise_for_status.return_value = None
+        update_response.json.return_value = updated_attachment
+
+        attachments_mixin.confluence._session.post.side_effect = [
+            conflict_response,
+            update_response,
+        ]
+        attachments_mixin.confluence._session.get.return_value = list_response
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("os.path.getsize", return_value=200),
+            patch("os.path.isabs", return_value=True),
+            patch("os.path.abspath", return_value=f"/absolute/path/{filename}"),
+            patch("os.path.basename", return_value=filename),
+            patch("builtins.open", mock_open(read_data=b"updated content")),
+        ):
+            result = attachments_mixin.upload_attachment(
+                "123456", f"/absolute/path/{filename}"
+            )
+
+        assert result["success"] is True
+        assert result["filename"] == filename
+
+        # Verify the lookup URL escapes query-special filename characters.
+        list_call_url = attachments_mixin.confluence._session.get.call_args[0][0]
+        assert "filename=test%20file%20%26%20notes%20%231.txt" in list_call_url
+
+        # Verify the versioning POST was made to the /data endpoint
+        assert attachments_mixin.confluence._session.post.call_count == 2
+        second_call_url = attachments_mixin.confluence._session.post.call_args_list[1][
+            0
+        ][0]
+        assert "/child/attachment/att12345/data" in second_call_url
 
     # Tests for upload_attachments method
 
@@ -1090,6 +1226,49 @@ class TestAttachmentsMixin:
         assert "deleted successfully" in result["message"]
         attachments_mixin.confluence._session.delete.assert_called_once()
 
+    def _capture_delete_url(self, attachments_mixin, config_url: str) -> str:
+        """Run a v1 delete with the given config URL and return the request URL."""
+        attachments_mixin.config.auth_type = "basic"  # force v1 path
+        attachments_mixin.config.url = config_url
+
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        attachments_mixin.confluence._session.delete.return_value = mock_response
+
+        attachments_mixin.delete_attachment("att123")
+
+        return attachments_mixin.confluence._session.delete.call_args[0][0]
+
+    def test_delete_attachment_v1_cloud_adds_wiki_prefix(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Cloud bare site URL gets the /wiki prefix on the v1 delete endpoint."""
+        url = self._capture_delete_url(attachments_mixin, "https://test.atlassian.net")
+
+        assert url == "https://test.atlassian.net/wiki/rest/api/content/att123"
+
+    def test_delete_attachment_v1_cloud_no_double_wiki_prefix(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Cloud URL already ending in /wiki must not become /wiki/wiki."""
+        url = self._capture_delete_url(
+            attachments_mixin, "https://test.atlassian.net/wiki"
+        )
+
+        assert "/wiki/wiki" not in url
+        assert url == "https://test.atlassian.net/wiki/rest/api/content/att123"
+
+    def test_delete_attachment_v1_server_dc_no_wiki_prefix(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Server/DC URLs are unchanged — no /wiki prefix is added."""
+        url = self._capture_delete_url(
+            attachments_mixin, "https://confluence.example.com"
+        )
+
+        assert "/wiki" not in url
+        assert url == "https://confluence.example.com/rest/api/content/att123"
+
     def test_delete_attachment_success_v2(self, attachments_mixin: AttachmentsMixin):
         """Test successful deletion using v2 API (OAuth)."""
         # Mock config URL to be cloud and OAuth
@@ -1483,3 +1662,108 @@ class TestConfluenceAttachmentPathTraversal:
         """download_content_attachments rejects directory escape."""
         with pytest.raises(ValueError, match="Path traversal detected"):
             confluence_mixin.download_content_attachments("12345", "/etc")
+
+
+class TestResolveAttachmentDownloadUrl:
+    """Tests for AttachmentsMixin._resolve_attachment_download_url.
+
+    Covers the CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1 Cloud workaround: when
+    enabled, the (removed) legacy /download/attachments/... link is rewritten to
+    the v1 REST endpoint; otherwise the original link is preserved.
+    """
+
+    def _make_mixin(
+        self, *, use_v1: bool | None, url: str = "https://example.atlassian.net/wiki"
+    ) -> AttachmentsMixin:
+        with patch(
+            "mcp_atlassian.confluence.attachments.ConfluenceClient.__init__",
+            return_value=None,
+        ):
+            mixin = AttachmentsMixin()
+        config = ConfluenceConfig(url=url, auth_type="basic")
+        config.attachment_download_use_v1 = use_v1
+        mixin.config = config
+        return mixin
+
+    def test_v1_enabled_builds_rest_endpoint(self) -> None:
+        mixin = self._make_mixin(use_v1=True)
+        url = mixin._resolve_attachment_download_url(
+            "/download/attachments/123/foo.png?version=1&api=v2",
+            attachment_id="att999",
+        )
+        assert url == (
+            "https://example.atlassian.net/wiki"
+            "/rest/api/content/123/child/attachment/att999/download?version=1"
+        )
+
+    def test_v1_preserves_only_version_param(self) -> None:
+        # The v1 download endpoint documents only ``version``; keep that (so a
+        # version-specific link doesn't fall back to latest) and drop the other
+        # legacy query params (cacheVersion / api / ...).
+        mixin = self._make_mixin(use_v1=True)
+        url = mixin._resolve_attachment_download_url(
+            "/download/attachments/123/foo.png?version=3&cacheVersion=1&api=v2",
+            attachment_id="att999",
+        )
+        assert url.endswith("/att999/download?version=3")
+        assert "cacheVersion" not in url
+        assert "api=v2" not in url
+
+    def test_v1_handles_relative_url_without_leading_slash(self) -> None:
+        mixin = self._make_mixin(use_v1=True)
+        url = mixin._resolve_attachment_download_url(
+            "download/attachments/123/foo.png?version=2",
+            attachment_id="att999",
+        )
+        assert url.endswith(
+            "/rest/api/content/123/child/attachment/att999/download?version=2"
+        )
+
+    def test_v1_enabled_uses_explicit_content_id(self) -> None:
+        mixin = self._make_mixin(use_v1=True)
+        url = mixin._resolve_attachment_download_url(
+            "/download/attachments/123/foo.png",
+            attachment_id="att999",
+            content_id="555",
+        )
+        assert "/rest/api/content/555/child/attachment/att999/download" in url
+
+    def test_disabled_returns_legacy_link(self) -> None:
+        mixin = self._make_mixin(use_v1=False)
+        url = mixin._resolve_attachment_download_url(
+            "/download/attachments/123/foo.png", attachment_id="att999"
+        )
+        assert "/download/attachments/123/" in url
+        assert "/child/attachment/" not in url
+
+    def test_missing_attachment_id_falls_back_to_legacy(self) -> None:
+        mixin = self._make_mixin(use_v1=True)
+        url = mixin._resolve_attachment_download_url(
+            "/download/attachments/123/foo.png", attachment_id=None
+        )
+        assert "/download/attachments/123/" in url
+        assert "/child/attachment/" not in url
+
+    def test_auto_cloud_uses_v1(self) -> None:
+        mixin = self._make_mixin(use_v1=None)
+        url = mixin._resolve_attachment_download_url(
+            "/download/attachments/123/foo.png", attachment_id="att999"
+        )
+        assert "/rest/api/content/123/child/attachment/att999/download" in url
+
+    def test_auto_cloud_adds_wiki_prefix_for_bare_site_url(self) -> None:
+        mixin = self._make_mixin(use_v1=None, url="https://example.atlassian.net")
+        url = mixin._resolve_attachment_download_url(
+            "/download/attachments/123/foo.png", attachment_id="att999"
+        )
+        assert url == (
+            "https://example.atlassian.net/wiki"
+            "/rest/api/content/123/child/attachment/att999/download"
+        )
+
+    def test_auto_server_dc_returns_legacy(self) -> None:
+        mixin = self._make_mixin(use_v1=None, url="https://confluence.example.com")
+        url = mixin._resolve_attachment_download_url(
+            "/download/attachments/123/foo.png", attachment_id="att999"
+        )
+        assert "/child/attachment/" not in url
