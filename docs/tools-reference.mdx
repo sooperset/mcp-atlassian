@@ -3,7 +3,7 @@ title: "Tools Reference"
 description: "Overview of all 80 MCP tools for Jira and Confluence — organized by category with quick links"
 ---
 
-MCP Atlassian provides **80 tools** for interacting with Jira and Confluence. Tools are organized by category below.
+MCP Atlassian provides **81 tools** for interacting with Jira and Confluence. Tools are organized by category below.
 
 ## Jira Tools
 
@@ -61,7 +61,7 @@ Toolsets group related tools for easier management via `TOOLSETS` env var or `--
 
 | Toolset | Core | Tools |
 |---------|:----:|-------|
-| `jira_issues` | Yes | `jira_get_issue`, `jira_search`, `jira_get_project_issues`, `jira_create_issue`, `jira_update_issue`, `jira_delete_issue`, `jira_batch_create_issues`, `jira_batch_get_changelogs` |
+| `jira_issues` | Yes | `jira_get_issue`, `jira_search`, `jira_get_project_issues`, `jira_create_issue`, `jira_update_issue`, `jira_delete_issue`, `jira_move_issue`, `jira_batch_create_issues`, `jira_batch_get_changelogs` |
 | `jira_fields` | Yes | `jira_search_fields`, `jira_get_field_options` |
 | `jira_comments` | Yes | `jira_add_comment`, `jira_edit_comment` |
 | `jira_transitions` | Yes | `jira_get_transitions`, `jira_transition_issue` |
@@ -93,7 +93,7 @@ Toolsets group related tools for easier management via `TOOLSETS` env var or `--
 # To restrict to core toolsets plus specific extras:
 TOOLSETS=default,jira_agile,jira_attachments
 
-# Enable all toolsets (80 tools)
+# Enable all toolsets (81 tools)
 TOOLSETS=all
 
 # Command line

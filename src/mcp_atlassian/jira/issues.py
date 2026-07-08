@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 from collections import defaultdict
 from typing import Any
 
@@ -1444,6 +1445,198 @@ class IssuesMixin(
             msg = f"Error deleting issue {issue_key}: {str(e)}"
             logger.error(msg)
             raise Exception(msg) from e
+
+    def move_issue(self, issue_key: str, target_project_key: str) -> JiraIssue:
+        """
+        Move a Jira issue to a different project.
+
+        Uses Jira Cloud's bulk move API. The issue can be assigned a new key in
+        the target project (e.g., OLDPROJ-123 becomes NEWPROJ-456). The move is
+        processed asynchronously on Jira's side; this method polls until the
+        task completes or times out after 30 seconds.
+
+        Warning:
+            This function is only available on Jira Cloud.
+
+        Args:
+            issue_key: The key of the issue to move (e.g., 'PROJ-123')
+            target_project_key: The key of the target project (e.g., 'OTHERPROJ').
+                The target project must support the source issue's type.
+
+        Returns:
+            JiraIssue model representing the moved issue with its new key
+
+        Raises:
+            NotImplementedError: If not running on Jira Cloud
+            ValueError: If the move fails or times out
+        """
+        issue_key = issue_key.strip()
+        target_project_key = target_project_key.strip()
+        if not issue_key:
+            raise ValueError("Issue key is required")
+        if not target_project_key:
+            raise ValueError("Target project key is required")
+
+        if not self.config.is_cloud:
+            raise NotImplementedError(
+                "Cross-project issue move is only available on Jira Cloud."
+            )
+
+        try:
+            target_issue_type_id = self._get_target_issue_type_id(
+                issue_key, target_project_key
+            )
+
+            data: dict[str, Any] = {
+                "sendBulkNotification": False,
+                "targetToSourcesMapping": {
+                    f"{target_project_key},{target_issue_type_id}": {
+                        "inferClassificationDefaults": True,
+                        "inferFieldDefaults": True,
+                        "inferStatusDefaults": True,
+                        "inferSubtaskTypeDefault": True,
+                        "issueIdsOrKeys": [issue_key],
+                    }
+                },
+            }
+
+            response = self._post_api3("bulk/issues/move", data)
+
+            if not isinstance(response, dict):
+                raise ValueError(f"Unexpected response from bulk move API: {response}")
+
+            task_id = response.get("taskId")
+            if not task_id:
+                raise ValueError(f"No task ID in bulk move response: {response}")
+
+            logger.info(
+                f"Bulk move submitted for {issue_key} -> {target_project_key}, "
+                f"task ID: {task_id}"
+            )
+
+            task_url = self.jira.resource_url(f"bulk/queue/{task_id}", api_version="3")
+            completed_task: dict[str, Any] | None = None
+
+            for attempt in range(15):
+                task_response = self.jira.get(task_url)
+
+                if not isinstance(task_response, dict):
+                    logger.warning(
+                        f"Unexpected task response on attempt {attempt + 1}: "
+                        f"{type(task_response)}"
+                    )
+                    continue
+
+                status = task_response.get("status")
+                logger.info(
+                    f"Move task {task_id} status (attempt {attempt + 1}): {status}"
+                )
+
+                if status == "COMPLETE":
+                    completed_task = task_response
+                    break
+
+                elif status == "FAILED":
+                    errors = task_response.get("errorMessages", ["Unknown error"])
+                    raise ValueError(f"Bulk move task failed: {errors}")
+
+                elif status in ("CANCELLED", "CANCEL_REQUESTED"):
+                    raise ValueError(f"Bulk move task was cancelled (status: {status})")
+
+                if attempt < 14:
+                    time.sleep(2)
+
+            else:
+                raise ValueError(
+                    f"Move task timed out after 30 seconds (task ID: {task_id})"
+                )
+
+            if completed_task is None:
+                raise ValueError(
+                    f"Move task timed out after 30 seconds (task ID: {task_id})"
+                )
+
+            invalid_count = completed_task.get("invalidOrInaccessibleIssueCount") or 0
+            if int(invalid_count) > 0:
+                raise ValueError(
+                    "Bulk move task completed with "
+                    f"{invalid_count} invalid or inaccessible issue(s)"
+                )
+
+            processed_issues = completed_task.get("processedAccessibleIssues")
+            lookup_key = issue_key
+            if isinstance(processed_issues, list) and processed_issues:
+                lookup_key = str(processed_issues[0])
+
+            issue_data = self.jira.get_issue(lookup_key)
+            if not isinstance(issue_data, dict):
+                msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
+                logger.error(msg)
+                raise TypeError(msg)
+            return JiraIssue.from_api_response(issue_data)
+
+        except (ValueError, NotImplementedError, TypeError):
+            raise
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(
+                f"Error moving issue {issue_key} to project {target_project_key}: {error_msg}"
+            )
+            raise ValueError(
+                f"Failed to move issue {issue_key} to project {target_project_key}: {error_msg}"
+            ) from e
+
+    def _get_target_issue_type_id(self, issue_key: str, target_project_key: str) -> str:
+        """Resolve the target issue type ID for a bulk issue move.
+
+        Jira's bulk move mapping key is ``projectKey,issueTypeId``. Because the
+        public tool accepts only a target project, preserve the source issue type
+        by resolving the same type in the target project before submitting.
+        """
+        source_issue = self.jira.get_issue(issue_key, fields="issuetype")
+        if not isinstance(source_issue, dict):
+            msg = (
+                f"Unexpected return value type from `jira.get_issue`: "
+                f"{type(source_issue)}"
+            )
+            logger.error(msg)
+            raise TypeError(msg)
+
+        source_issue_type = source_issue.get("fields", {}).get("issuetype")
+        if not isinstance(source_issue_type, dict):
+            raise ValueError(f"Could not determine issue type for {issue_key}")
+
+        source_type_id = source_issue_type.get("id")
+        source_type_name = source_issue_type.get("name")
+        source_is_subtask = source_issue_type.get("subtask")
+        target_issue_types = self.get_project_issue_types(target_project_key)
+        for issue_type in target_issue_types:
+            if source_type_id and str(issue_type.get("id")) == str(source_type_id):
+                return str(issue_type["id"])
+
+        normalized_source_name = (
+            self._normalize_issue_type_name(str(source_type_name))
+            if source_type_name
+            else ""
+        )
+        for issue_type in target_issue_types:
+            type_name = str(issue_type.get("name", ""))
+            if (
+                normalized_source_name
+                and self._normalize_issue_type_name(type_name) == normalized_source_name
+                and (
+                    source_is_subtask is None
+                    or bool(issue_type.get("subtask", False)) == bool(source_is_subtask)
+                )
+            ):
+                issue_type_id = issue_type.get("id")
+                if issue_type_id:
+                    return str(issue_type_id)
+
+        raise ValueError(
+            f"Target project {target_project_key} does not support issue type "
+            f"{source_type_name or source_type_id or 'unknown'}"
+        )
 
     def _log_available_fields(self, fields: list[dict]) -> None:
         """

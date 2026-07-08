@@ -1,6 +1,6 @@
 ---
 title: "Jira Issues"
-description: "Create, read, update, delete, and transition Jira issues"
+description: "Create, read, update, move, delete, and transition Jira issues"
 ---
 
 ### Get Issue
@@ -110,6 +110,31 @@ Delete an existing Jira issue.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
+
+---
+
+### Move Issue
+
+Move a Jira Cloud issue to a different project.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+<Warning>
+This tool is only available for Jira Cloud. The target project must support the issue's current type. Jira may assign a new issue key in the target project.
+</Warning>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key to move (e.g., 'PROJ-123') |
+| `target_project_key` | `string` | Yes | Target project key (e.g., 'OTHERPROJ') |
+
+**Example:**
+
+```json
+{"issue_key": "PROJ-123", "target_project_key": "OTHERPROJ"}
+```
 
 ---
 

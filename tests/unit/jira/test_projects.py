@@ -466,6 +466,25 @@ def test_get_project_issue_types(
     )
 
 
+def test_get_project_issue_types_issue_types_format(
+    projects_mixin: ProjectsMixin, mock_issue_types: list[dict]
+):
+    """Test get_project_issue_types with Cloud issueTypes format."""
+    createmeta = {
+        "maxResults": 50,
+        "startAt": 0,
+        "total": len(mock_issue_types),
+        "issueTypes": mock_issue_types,
+    }
+    projects_mixin.jira.issue_createmeta_issuetypes.return_value = createmeta
+
+    result = projects_mixin.get_project_issue_types("PROJ1")
+    assert result == mock_issue_types
+    projects_mixin.jira.issue_createmeta_issuetypes.assert_called_once_with(
+        project="PROJ1"
+    )
+
+
 def test_get_project_issue_types_old_format(
     projects_mixin: ProjectsMixin, mock_issue_types: list[dict]
 ):

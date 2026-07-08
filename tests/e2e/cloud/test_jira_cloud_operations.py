@@ -92,6 +92,31 @@ class TestJiraCloudEpicOperations:
         assert epic.key.startswith(cloud_instance.project_key)
 
 
+class TestJiraCloudMoveOperations:
+    """Issue move operations on Cloud."""
+
+    def test_move_issue_same_project(
+        self,
+        jira_fetcher: JiraFetcher,
+        cloud_instance: CloudInstanceInfo,
+        resource_tracker: CloudResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        issue = jira_fetcher.create_issue(
+            project_key=cloud_instance.project_key,
+            summary=f"Cloud E2E Move Test {uid}",
+            issue_type="Task",
+            description="Issue for Cloud move testing.",
+        )
+        resource_tracker.add_jira_issue(issue.key)
+
+        moved = jira_fetcher.move_issue(issue.key, cloud_instance.project_key)
+        if moved.key != issue.key:
+            resource_tracker.add_jira_issue(moved.key)
+
+        assert moved.key.startswith(cloud_instance.project_key)
+
+
 class TestJiraCloudVersionOperations:
     """Version creation and updates on Cloud."""
 
