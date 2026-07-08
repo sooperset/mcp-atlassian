@@ -338,7 +338,7 @@ class IssuesMixin(
 
                 comments = response["comments"]
 
-                # Return the most recent comments (newest) by slicing from the end
+                # Jira returns comments oldest-first; keep the newest comments.
                 if comment_limit is not None:
                     comments = comments[-comment_limit:]
 

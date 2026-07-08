@@ -1,5 +1,6 @@
 """Tests for the Jira Issues mixin."""
 
+from typing import Any
 from unittest.mock import ANY, MagicMock, patch
 
 import pytest
@@ -99,6 +100,50 @@ class TestIssuesMixin:
         assert hasattr(issue, "comments")
         assert len(issue.comments) == 1
         assert issue.comments[0].body == "This is a comment"
+
+    def test_get_issue_with_comment_limit_returns_newest_comments(
+        self, issues_mixin: IssuesMixin, make_issue_data: Any
+    ) -> None:
+        """Test that comment_limit keeps the newest comments from Jira."""
+        comments_data = {
+            "comments": [
+                {
+                    "id": "1",
+                    "body": "Oldest comment",
+                    "author": {"displayName": "John Doe"},
+                    "created": "2023-01-01T00:00:00.000+0000",
+                    "updated": "2023-01-01T00:00:00.000+0000",
+                },
+                {
+                    "id": "2",
+                    "body": "Middle comment",
+                    "author": {"displayName": "Jane Doe"},
+                    "created": "2023-01-02T00:00:00.000+0000",
+                    "updated": "2023-01-02T00:00:00.000+0000",
+                },
+                {
+                    "id": "3",
+                    "body": "Newest comment",
+                    "author": {"displayName": "Bob Doe"},
+                    "created": "2023-01-03T00:00:00.000+0000",
+                    "updated": "2023-01-03T00:00:00.000+0000",
+                },
+            ]
+        }
+
+        issue_data = make_issue_data(comment={"comments": []})
+
+        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.issue_get_comments.return_value = comments_data
+
+        issue = issues_mixin.get_issue("TEST-123", comment_limit=2)
+
+        issues_mixin.jira.issue_get_comments.assert_called_once_with("TEST-123")
+        assert [comment.id for comment in issue.comments] == ["2", "3"]
+        assert [comment.body for comment in issue.comments] == [
+            "Middle comment",
+            "Newest comment",
+        ]
 
     def test_get_issue_includes_comment_field_when_comment_limit_positive(
         self, issues_mixin: IssuesMixin
