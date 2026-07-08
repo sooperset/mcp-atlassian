@@ -38,6 +38,68 @@ jira_mcp = FastMCP(
     instructions="Provides tools for interacting with Atlassian Jira.",
 )
 
+_GET_ISSUE_INCLUDE_SECTIONS = frozenset(
+    {
+        "remote_links",
+        "transitions",
+        "watchers",
+        "changelog",
+        "comments",
+        "worklogs",
+    }
+)
+_GET_ISSUE_INCLUDE_ALIASES = {
+    "comment": "comments",
+    "worklog": "worklogs",
+}
+
+
+def _parse_get_issue_include(include: str | None) -> set[str]:
+    """Parse jira_get_issue include sections."""
+    if not include:
+        return set()
+
+    sections: set[str] = set()
+    for raw_section in include.split(","):
+        section = raw_section.strip().lower()
+        if not section:
+            continue
+        if section == "all":
+            sections.update(_GET_ISSUE_INCLUDE_SECTIONS)
+            continue
+
+        section = _GET_ISSUE_INCLUDE_ALIASES.get(section, section)
+        if section in _GET_ISSUE_INCLUDE_SECTIONS:
+            sections.add(section)
+        else:
+            logger.warning(
+                "Ignoring unsupported jira_get_issue include section: %s",
+                raw_section.strip(),
+            )
+    return sections
+
+
+def _merge_expand(expand: str | None, additions: list[str]) -> str | None:
+    """Merge Jira expand values while preserving order."""
+    if not additions:
+        return expand
+
+    merged: list[str] = []
+    seen: set[str] = set()
+    if expand:
+        for raw_section in expand.split(","):
+            section = raw_section.strip()
+            if section and section not in seen:
+                merged.append(section)
+                seen.add(section)
+
+    for section in additions:
+        if section not in seen:
+            merged.append(section)
+            seen.add(section)
+
+    return ",".join(merged) if merged else None
+
 
 def _parse_visibility(
     visibility: str | None,
@@ -466,33 +528,66 @@ async def get_issue(
     update_history: Annotated[
         bool,
         Field(
-            description="Whether to update the issue view history for the requesting user",
+            description=(
+                "Whether to update the issue view history for the requesting user"
+            ),
             default=True,
         ),
     ] = True,
+    include: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Comma-separated sections to inline "
+                "in the response, avoiding extra tool calls. "
+                "Supported: all, remote_links, transitions, "
+                "watchers, changelog, comments, worklogs"
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
-    """Get details of a specific Jira issue including its Epic links and relationship information.
+    """Get details of a specific Jira issue.
+
+    Includes Epic links and relationship information. Use the
+    ``include`` parameter to inline enrichments (remote_links,
+    transitions, watchers, changelog, comments, worklogs) so that
+    separate tool calls are not needed.
 
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        fields: Comma-separated list of fields to return (e.g., 'summary,status,customfield_10010'), a single field as a string (e.g., 'duedate'), '*all' for all fields, or omitted for essentials.
+        fields: Comma-separated fields to return.
         expand: Optional fields to expand.
         comment_limit: Maximum number of comments.
         properties: Issue properties to return.
         update_history: Whether to update issue view history.
+        include: Comma-separated enrichment sections to inline.
 
     Returns:
         JSON string representing the Jira issue object.
 
     Raises:
-        ValueError: If the Jira client is not configured or available.
+        ValueError: If the Jira client is not configured.
     """
     jira = await get_jira_fetcher(ctx)
     fields_list: str | list[str] | None = fields
     if fields and fields != "*all":
-        fields_list = [f.strip() for f in fields.split(",")]
+        fields_list = [f.strip() for f in fields.split(",") if f.strip()]
 
+    include_sections = _parse_get_issue_include(include)
+    if "comments" in include_sections and fields_list != "*all":
+        if not isinstance(fields_list, list):
+            fields_list = []
+        if "comment" not in fields_list:
+            fields_list.append("comment")
+
+    expand_additions = []
+    if "changelog" in include_sections:
+        expand_additions.append("changelog")
+    expand = _merge_expand(expand, expand_additions)
+
+    # Fetch the issue (with augmented expand)
     issue = jira.get_issue(
         issue_key=issue_key,
         fields=fields_list,
@@ -502,6 +597,37 @@ async def get_issue(
         update_history=update_history,
     )
     result = issue.to_simplified_dict()
+
+    if "comments" in include_sections:
+        result.setdefault("comments", [])
+    if "changelog" in include_sections:
+        result.setdefault("changelogs", [])
+
+    # Enrichments that require separate API calls
+    if "remote_links" in include_sections:
+        try:
+            result["remote_links"] = jira.get_remote_issue_links(issue_key)
+        except Exception:  # noqa: BLE001
+            result["remote_links"] = []
+
+    if "transitions" in include_sections:
+        try:
+            result["transitions"] = jira.get_available_transitions(issue_key)
+        except Exception:  # noqa: BLE001
+            result["transitions"] = []
+
+    if "watchers" in include_sections:
+        try:
+            result["watchers"] = jira.get_issue_watchers(issue_key)
+        except Exception:  # noqa: BLE001
+            result["watchers"] = {}
+
+    if "worklogs" in include_sections:
+        try:
+            result["worklogs"] = jira.get_worklogs(issue_key)
+        except Exception:  # noqa: BLE001
+            result["worklogs"] = []
+
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 

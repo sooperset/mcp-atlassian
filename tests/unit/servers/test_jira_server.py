@@ -76,6 +76,10 @@ def mock_jira_fetcher():
         return MOCK_JIRA_COMMENTS_SIMPLIFIED["comments"][:limit]
 
     mock_fetcher.get_issue_comments.side_effect = mock_get_issue_comments
+    mock_fetcher.get_remote_issue_links.return_value = []
+    mock_fetcher.get_available_transitions.return_value = []
+    mock_fetcher.get_issue_watchers.return_value = {"watchCount": 0, "watchers": []}
+    mock_fetcher.get_worklogs.return_value = []
 
     # Configure search_issues to return fixture data
     def mock_search_issues(jql, **kwargs):
@@ -2644,6 +2648,226 @@ async def test_get_field_options_combined(jira_client, mock_jira_fetcher):
     # return_limit=1 caps to first match
     assert len(result) == 1
     assert result[0] == "High"
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_remote_links(jira_client, mock_jira_fetcher):
+    """get_issue with include=remote_links fetches remote links."""
+    mock_jira_fetcher.get_remote_issue_links.return_value = [
+        {
+            "id": 1,
+            "object": {
+                "url": "https://example.com",
+                "title": "Link",
+            },
+        }
+    ]
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123", "include": "remote_links"},
+    )
+    content = json.loads(response.content[0].text)
+    assert "remote_links" in content
+    assert len(content["remote_links"]) == 1
+    mock_jira_fetcher.get_remote_issue_links.assert_called_once_with("TEST-123")
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_watchers(jira_client, mock_jira_fetcher):
+    """get_issue with include=watchers fetches watchers."""
+    mock_jira_fetcher.get_issue_watchers.return_value = {
+        "watchCount": 1,
+        "watchers": [{"name": "user1"}],
+    }
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123", "include": "watchers"},
+    )
+    content = json.loads(response.content[0].text)
+    assert "watchers" in content
+    assert content["watchers"]["watchCount"] == 1
+    mock_jira_fetcher.get_issue_watchers.assert_called_once_with("TEST-123")
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_transitions_fetches_transitions(
+    jira_client, mock_jira_fetcher
+):
+    """get_issue with include=transitions fetches available transitions."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "11", "name": "Done", "to_status": "Done"}
+    ]
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123", "include": "transitions"},
+    )
+    content = json.loads(response.content[0].text)
+    assert content["transitions"] == [{"id": "11", "name": "Done", "to_status": "Done"}]
+    mock_jira_fetcher.get_available_transitions.assert_called_once_with("TEST-123")
+    call_args = mock_jira_fetcher.get_issue.call_args
+    assert call_args.kwargs.get("expand") is None
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_changelog_adds_expand(jira_client, mock_jira_fetcher):
+    """get_issue with include=changelog adds to expand."""
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123", "include": "changelog"},
+    )
+    content = json.loads(response.content[0].text)
+    assert content["changelogs"] == []
+    call_args = mock_jira_fetcher.get_issue.call_args
+    expand_val = call_args.kwargs.get("expand", "")
+    assert "changelog" in expand_val
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_comments_adds_comment_field(
+    jira_client, mock_jira_fetcher
+):
+    """get_issue with include=comments requests the comment field."""
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": "summary,status",
+            "include": "comments",
+        },
+    )
+    content = json.loads(response.content[0].text)
+    assert content["comments"] == []
+    call_args = mock_jira_fetcher.get_issue.call_args
+    assert call_args.kwargs["fields"] == ["summary", "status", "comment"]
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_worklogs(jira_client, mock_jira_fetcher):
+    """get_issue with include=worklogs fetches worklogs."""
+    mock_jira_fetcher.get_worklogs.return_value = [
+        {"id": "10001", "time_spent": "1h", "time_spent_seconds": 3600}
+    ]
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123", "include": "worklogs"},
+    )
+    content = json.loads(response.content[0].text)
+    assert content["worklogs"] == [
+        {"id": "10001", "time_spent": "1h", "time_spent_seconds": 3600}
+    ]
+    mock_jira_fetcher.get_worklogs.assert_called_once_with("TEST-123")
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_multiple(jira_client, mock_jira_fetcher):
+    """get_issue with multiple include sections."""
+    mock_jira_fetcher.get_remote_issue_links.return_value = []
+    mock_jira_fetcher.get_issue_watchers.return_value = {
+        "watchCount": 0,
+    }
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "11", "name": "Done"}
+    ]
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {
+            "issue_key": "TEST-123",
+            "include": "remote_links,watchers,transitions,changelog",
+        },
+    )
+    content = json.loads(response.content[0].text)
+    assert "remote_links" in content
+    assert "watchers" in content
+    assert content["transitions"] == [{"id": "11", "name": "Done"}]
+    call_args = mock_jira_fetcher.get_issue.call_args
+    expand_val = call_args.kwargs.get("expand", "")
+    assert "changelog" in expand_val
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_all(jira_client, mock_jira_fetcher):
+    """get_issue with include=all enables every supported include section."""
+    mock_jira_fetcher.get_remote_issue_links.return_value = [{"id": 1}]
+    mock_jira_fetcher.get_available_transitions.return_value = [{"id": "11"}]
+    mock_jira_fetcher.get_issue_watchers.return_value = {"watchCount": 1}
+    mock_jira_fetcher.get_worklogs.return_value = [{"id": "10001"}]
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": "summary,status",
+            "include": "all",
+        },
+    )
+    content = json.loads(response.content[0].text)
+    assert content["remote_links"] == [{"id": 1}]
+    assert content["transitions"] == [{"id": "11"}]
+    assert content["watchers"] == {"watchCount": 1}
+    assert content["worklogs"] == [{"id": "10001"}]
+    assert content["comments"] == []
+    assert content["changelogs"] == []
+
+    call_args = mock_jira_fetcher.get_issue.call_args
+    assert call_args.kwargs["fields"] == ["summary", "status", "comment"]
+    assert call_args.kwargs["expand"] == "changelog"
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_unknown_sections_are_ignored(
+    jira_client, mock_jira_fetcher, caplog
+):
+    """Unknown include sections are ignored without failing the tool call."""
+    mock_jira_fetcher.get_remote_issue_links.return_value = [{"id": 1}]
+
+    with caplog.at_level(logging.WARNING):
+        response = await jira_client.call_tool(
+            "jira_get_issue",
+            {"issue_key": "TEST-123", "include": "remote_links,nope"},
+        )
+
+    content = json.loads(response.content[0].text)
+    assert content["remote_links"] == [{"id": 1}]
+    assert "Ignoring unsupported jira_get_issue include section: nope" in caplog.text
+    mock_jira_fetcher.get_issue_watchers.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_preserves_existing_expand(
+    jira_client, mock_jira_fetcher
+):
+    """include merges with an existing expand parameter."""
+    await jira_client.call_tool(
+        "jira_get_issue",
+        {
+            "issue_key": "TEST-123",
+            "expand": "renderedFields",
+            "include": "changelog",
+        },
+    )
+    call_args = mock_jira_fetcher.get_issue.call_args
+    expand_val = call_args.kwargs.get("expand", "")
+    assert "renderedFields" in expand_val
+    assert "changelog" in expand_val
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_none_no_enrichments(jira_client, mock_jira_fetcher):
+    """Omitting include produces no enrichment keys."""
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123"},
+    )
+    content = json.loads(response.content[0].text)
+    assert "remote_links" not in content
+    assert "transitions" not in content
+    assert "watchers" not in content
+    assert "worklogs" not in content
 
 
 # =============================================================================
