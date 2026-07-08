@@ -166,6 +166,25 @@ class ConfluenceClient:
                     "continuing anyway"
                 )
 
+    def _v1_rest_base_url(self) -> str:
+        """Return the base URL for direct Confluence REST API v1 calls.
+
+        Confluence Cloud OAuth uses the Atlassian API gateway base URL stored on
+        the underlying client. V1 REST calls through that gateway require the
+        ``/wiki`` product prefix before ``/rest/api``.
+
+        Returns:
+            Base URL suitable for appending ``/rest/api/...``.
+        """
+        if self.config.auth_type == "oauth" and self.config.is_cloud:
+            base_url = self.confluence.url.rstrip("/")
+        else:
+            base_url = self.config.url.rstrip("/")
+
+        if self.config.is_cloud and not base_url.endswith("/wiki"):
+            base_url = f"{base_url}/wiki"
+        return base_url
+
     def _validate_authentication(self) -> None:
         """Validate authentication by making a simple API call."""
         try:

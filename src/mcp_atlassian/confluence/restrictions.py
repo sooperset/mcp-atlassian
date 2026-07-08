@@ -1,6 +1,5 @@
 """Module for Confluence page restriction operations."""
 
-import json
 import logging
 from typing import Any
 
@@ -35,7 +34,11 @@ class RestrictionsMixin(ConfluenceClient):
             Exception: If the API call fails.
         """
         try:
-            data = self.confluence.get_all_restrictions_for_content(page_id)
+            data = self.confluence.get(
+                f"{self._v1_rest_base_url()}/rest/api/content/"
+                f"{page_id}/restriction/byOperation",
+                absolute=True,
+            )
 
             result: dict[str, Any] = {
                 "read": {"users": [], "groups": []},
@@ -146,13 +149,15 @@ class RestrictionsMixin(ConfluenceClient):
                 },
             ]
 
-            # The atlassian library's put() only accepts dict|str for data;
-            # the restrictions endpoint expects a JSON array, so serialise manually.
-            self.confluence.put(
-                f"rest/api/content/{page_id}/restriction",
-                data=json.dumps(payload),
-                headers={"Content-Type": "application/json"},
+            response = self.confluence._session.put(
+                f"{self._v1_rest_base_url()}/rest/api/content/{page_id}/restriction",
+                json=payload,
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                },
             )
+            response.raise_for_status()
 
             return {
                 "read": {"users": read_users, "groups": read_groups},

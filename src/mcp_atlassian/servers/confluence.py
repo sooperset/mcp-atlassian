@@ -637,14 +637,22 @@ async def create_page(
     page_width: Annotated[
         str | None,
         Field(
-            description="(Optional) Page layout width. Options: 'full-width', 'default'. Defaults to null (Confluence default).",
+            description=(
+                "(Optional) Page layout width. Options: 'full-width', "
+                "'default'. Defaults to null (Confluence default)."
+            ),
             default=None,
         ),
     ] = None,
     table_layout: Annotated[
         str | None,
         Field(
-            description="(Optional) Table width preset applied to all markdown tables. Options: 'full-width' (1800 px), 'wide' (960 px), 'default' (760 px). Only applies when content_format is 'markdown'.",
+            description=(
+                "(Optional) Table width preset applied to all markdown tables. "
+                "Options: 'full-width' (1800 px), 'wide' (960 px), "
+                "'default' (760 px). Only applies when content_format is "
+                "'markdown'."
+            ),
             default=None,
         ),
     ] = None,
@@ -802,14 +810,22 @@ async def update_page(
     page_width: Annotated[
         str | None,
         Field(
-            description="(Optional) Page layout width. Options: 'full-width', 'default'. Defaults to null (preserve existing).",
+            description=(
+                "(Optional) Page layout width. Options: 'full-width', "
+                "'default'. Defaults to null (preserve existing)."
+            ),
             default=None,
         ),
     ] = None,
     table_layout: Annotated[
         str | None,
         Field(
-            description="(Optional) Table width preset applied to all markdown tables. Options: 'full-width' (1800 px), 'wide' (960 px), 'default' (760 px). Only applies when content_format is 'markdown'.",
+            description=(
+                "(Optional) Table width preset applied to all markdown tables. "
+                "Options: 'full-width' (1800 px), 'wide' (960 px), "
+                "'default' (760 px). Only applies when content_format is "
+                "'markdown'."
+            ),
             default=None,
         ),
     ] = None,
@@ -2508,7 +2524,10 @@ async def set_page_restrictions(
     read_users: Annotated[
         list[str] | None,
         Field(
-            description="(Optional) Account IDs (Cloud) or usernames (Server/DC) allowed to view the page. Empty list = unrestricted.",
+            description=(
+                "(Optional) Account IDs (Cloud) or usernames (Server/DC) "
+                "allowed to view the page. Empty list = unrestricted."
+            ),
             default=None,
         ),
     ] = None,
@@ -2522,7 +2541,10 @@ async def set_page_restrictions(
     edit_users: Annotated[
         list[str] | None,
         Field(
-            description="(Optional) Account IDs (Cloud) or usernames (Server/DC) allowed to edit the page.",
+            description=(
+                "(Optional) Account IDs (Cloud) or usernames (Server/DC) "
+                "allowed to edit the page."
+            ),
             default=None,
         ),
     ] = None,
@@ -2584,7 +2606,10 @@ async def copy_page(
     destination_parent_id: Annotated[
         str | None,
         Field(
-            description="(Optional) Parent page ID in the destination space. When omitted the page is created at the space root.",
+            description=(
+                "(Optional) Parent page ID in the destination space. "
+                "When omitted the page is created at the space root."
+            ),
             default=None,
         ),
         BeforeValidator(lambda x: str(x) if x is not None else None),
@@ -2592,7 +2617,10 @@ async def copy_page(
     copy_attachments: Annotated[
         bool,
         Field(
-            description="(Optional) Whether to copy attachments to the new page. Defaults to true. Only supported on Confluence Cloud.",
+            description=(
+                "(Optional) Whether to copy attachments to the new page. "
+                "Defaults to true. Only supported on Confluence Cloud."
+            ),
             default=True,
         ),
     ] = True,

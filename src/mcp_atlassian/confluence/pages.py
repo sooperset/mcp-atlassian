@@ -1556,8 +1556,10 @@ class PagesMixin(ConfluenceClient):
                     },
                 }
                 result = self.confluence.post(
-                    f"rest/api/content/{source_page_id}/copy",
+                    f"{self._v1_rest_base_url()}/rest/api/content/"
+                    f"{source_page_id}/copy",
                     data=payload,
+                    absolute=True,
                 )
             else:
                 # Server/DC: manual GET + POST (no native copy endpoint)

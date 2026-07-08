@@ -41,6 +41,7 @@ class ConfluenceFetcher(
     - UsersMixin: User operations
     - AnalyticsMixin: Page view analytics (Cloud only)
     - AttachmentsMixin: Attachment operations
+    - RestrictionsMixin: Page restriction operations
     """
 
     pass
@@ -51,4 +52,5 @@ __all__ = [
     "ConfluenceConfig",
     "ConfluenceClient",
     "AnalyticsMixin",
+    "RestrictionsMixin",
 ]

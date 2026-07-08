@@ -40,7 +40,7 @@ class ConfluencePreprocessor(BasePreprocessor):
         """
         super().__init__(base_url=base_url)
 
-    # Table width (px) and layout name keyed by the caller-supplied table_layout value.
+    # Table width and layout keyed by the caller-supplied table_layout value.
     _TABLE_WIDTHS: dict[str, str] = {
         "full-width": "1800",
         "wide": "960",
@@ -108,7 +108,7 @@ class ConfluencePreprocessor(BasePreprocessor):
                 storage_format = self._fix_attachment_images(
                     str(elements_to_string(root))
                 )
-                if table_layout in self._TABLE_WIDTHS:
+                if table_layout is not None and table_layout in self._TABLE_WIDTHS:
                     storage_format = self._apply_table_layout(
                         storage_format, table_layout
                     )
@@ -127,10 +127,8 @@ class ConfluencePreprocessor(BasePreprocessor):
 
             # This creates a proper Confluence storage format document
             storage_format = self._fix_attachment_images(f"""<p>{html_content}</p>""")
-            if table_layout in self._TABLE_WIDTHS:
-                storage_format = self._apply_table_layout(
-                    storage_format, table_layout
-                )
+            if table_layout is not None and table_layout in self._TABLE_WIDTHS:
+                storage_format = self._apply_table_layout(storage_format, table_layout)
 
             return storage_format
 
