@@ -454,6 +454,52 @@ class TestMarkdownToAdf:
         assert len(mentions) == 1
         assert mentions[0]["attrs"]["id"] == account_id
 
+    def test_mention_display_name_account_id(self) -> None:
+        """@[Name](accountid:...) emits an ADF mention node with text attr."""
+        account_id = "712020:abc-123-def-456"
+        result = markdown_to_adf(f"@[John Doe](accountid:{account_id})")
+        para = result["content"][0]
+        mentions = [n for n in para["content"] if n["type"] == "mention"]
+        assert len(mentions) == 1
+        assert mentions[0]["attrs"] == {
+            "id": account_id,
+            "text": "@John Doe",
+        }
+
+    def test_mention_display_name_inline_with_link(self) -> None:
+        """Display-name mentions coexist with normal Markdown links."""
+        account_id = "712020:abc-def"
+        result = markdown_to_adf(
+            f"Ask @[Jane Doe](accountid:{account_id}) via "
+            "[the runbook](https://example.com)."
+        )
+        para = result["content"][0]
+        mentions = [n for n in para["content"] if n["type"] == "mention"]
+        links = [
+            n
+            for n in para["content"]
+            if n["type"] == "text"
+            and any(m["type"] == "link" for m in n.get("marks", []))
+        ]
+
+        assert len(mentions) == 1
+        assert mentions[0]["attrs"]["id"] == account_id
+        assert mentions[0]["attrs"]["text"] == "@Jane Doe"
+        assert len(links) == 1
+        assert links[0]["text"] == "the runbook"
+
+    def test_mixed_mention_syntaxes_in_one_paragraph(self) -> None:
+        """Both supported mention syntaxes can appear in the same paragraph."""
+        first = "712020:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        second = "712020:bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+        result = markdown_to_adf(f"@[Ada](accountid:{first}) and [~accountid:{second}]")
+        para = result["content"][0]
+        mentions = [n for n in para["content"] if n["type"] == "mention"]
+
+        assert [n["attrs"]["id"] for n in mentions] == [first, second]
+        assert mentions[0]["attrs"]["text"] == "@Ada"
+        assert "text" not in mentions[1]["attrs"]
+
     def test_mention_inline_with_surrounding_text(self):
         """Mention preserves surrounding text nodes in the same paragraph."""
         account_id = "712020:abc-def"

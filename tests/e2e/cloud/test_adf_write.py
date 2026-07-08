@@ -315,12 +315,21 @@ class TestADFUpdateAndComment:
         finally:
             await _delete_issue(mcp_client, key)
 
+    @pytest.mark.parametrize(
+        "mention_template",
+        [
+            "[~accountid:{account_id}]",
+            "@[Current User](accountid:{account_id})",
+        ],
+        ids=["wiki-accountid", "display-name-accountid"],
+    )
     async def test_add_comment_accountid_mention(
         self,
+        mention_template: str,
         mcp_client: Client,
         cloud_instance: CloudInstanceInfo,
     ) -> None:
-        """[~accountid:...] comment syntax creates a real Cloud mention."""
+        """Account-id comment syntaxes create real Cloud mentions."""
         profile_result = await call_tool(
             mcp_client,
             "jira_get_user_profile",
@@ -338,7 +347,7 @@ class TestADFUpdateAndComment:
             "issue for mention comment test",
         )
         try:
-            mention_token = f"[~accountid:{account_id}]"
+            mention_token = mention_template.format(account_id=account_id)
             comment_result = await call_tool(
                 mcp_client,
                 "jira_add_comment",
