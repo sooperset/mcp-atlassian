@@ -17,14 +17,15 @@ Get details of a specific Jira issue including its Epic links and relationship i
 | `comment_limit` | `integer` | No | Maximum number of comments to include (0 or null for no comments) |
 | `properties` | `string` | No | (Optional) A comma-separated list of issue properties to return |
 | `update_history` | `boolean` | No | Whether to update the issue view history for the requesting user |
+| `include` | `string` | No | (Optional) Comma-separated sections to inline in the response. Supported values: `all`, `remote_links`, `transitions`, `watchers`, `changelog`, `comments`, `worklogs`. |
 **Example:**
 
 ```json
-{"issue_key": "PROJ-123", "fields": "summary,status,assignee", "comment_limit": 5}
+{"issue_key": "PROJ-123", "fields": "summary,status,assignee", "comment_limit": 5, "include": "remote_links,transitions"}
 ```
 
 <Tip>
-Use `fields: "*all"` to get all fields including custom ones. Use `expand: "renderedFields"` for rendered HTML content.
+Use `fields: "*all"` to get all fields including custom ones. Use `expand: "renderedFields"` for rendered HTML content. Use `include: "all"` to inline common enrichments that otherwise require separate tool calls.
 </Tip>
 
 

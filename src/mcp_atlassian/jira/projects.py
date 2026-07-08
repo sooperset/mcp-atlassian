@@ -23,19 +23,26 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
         """
         Get all projects visible to the current user.
 
+        Returns simplified project dictionaries.
+
         Args:
             include_archived: Whether to include archived projects
 
         Returns:
-            List of project data dictionaries
+            List of simplified project data dictionaries
         """
         try:
-            params = {}
-            if include_archived:
-                params["includeArchived"] = "true"
-
-            projects = self.jira.projects(included_archived=include_archived)
-            return projects if isinstance(projects, list) else []
+            # The bare /project list omits descriptions unless explicitly expanded.
+            projects = self.jira.projects(
+                included_archived=include_archived, expand="description"
+            )
+            if not isinstance(projects, list):
+                return []
+            return [
+                JiraProject.from_api_response(p).to_simplified_dict()
+                for p in projects
+                if isinstance(p, dict)
+            ]
 
         except Exception as e:
             logger.error(f"Error getting all projects: {str(e)}")
@@ -272,6 +279,75 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             )
             return []
 
+    def get_project_fields(self, project_key: str) -> list[dict[str, Any]]:
+        """
+        Get the fields available on issues of a project (the full create schema),
+        deduplicated across the project's issue types.
+
+        This answers "which fields do tickets in this project have" regardless of
+        whether they are filled. Uses the createmeta fieldtypes endpoint per issue
+        type (``/rest/api/2/issue/createmeta/{project}/issuetypes/{issueTypeId}``)
+        and merges the results, recording on which issue types each field appears.
+
+        Args:
+            project_key: The project key
+
+        Returns:
+            List of field dicts: {field_id, name, required, schema_type, custom,
+            issue_types: [names]}. Empty list on error.
+        """
+        try:
+            issue_types = self.get_project_issue_types(project_key)
+            merged: dict[str, dict[str, Any]] = {}
+            for it in issue_types:
+                it_id = it.get("id")
+                it_name = it.get("name", "")
+                if not it_id:
+                    continue
+                start_at = 0
+                while True:
+                    meta = self.jira.issue_createmeta_fieldtypes(
+                        project=project_key,
+                        issue_type_id=it_id,
+                        start=start_at,
+                        limit=50,
+                    )
+                    if not isinstance(meta, dict):
+                        break
+                    entries = meta.get("values", [])
+                    for entry in entries:
+                        if not isinstance(entry, dict):
+                            continue
+                        fid = entry.get("fieldId") or entry.get("key")
+                        if not fid:
+                            continue
+                        rec = merged.get(fid)
+                        if rec is None:
+                            schema = entry.get("schema") or {}
+                            rec = {
+                                "field_id": fid,
+                                "name": entry.get("name", ""),
+                                "required": bool(entry.get("required", False)),
+                                "schema_type": schema.get("type", ""),
+                                "custom": bool(schema.get("custom")),
+                                "issue_types": [],
+                            }
+                            merged[fid] = rec
+                        elif entry.get("required", False):
+                            rec["required"] = True
+                        if it_name and it_name not in rec["issue_types"]:
+                            rec["issue_types"].append(it_name)
+                    # Paginate: stop when we've seen all values.
+                    total = meta.get("total", 0)
+                    start_at += len(entries)
+                    if not entries or start_at >= total:
+                        break
+            return list(merged.values())
+
+        except Exception as e:
+            logger.error(f"Error getting fields for project {project_key}: {str(e)}")
+            return []
+
     def get_project_issues_count(self, project_key: str) -> int:
         """
         Get the total number of issues in a project.
@@ -462,4 +538,42 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             start_date=start_date,
             release_date=release_date,
             description=description,
+        )
+
+    def update_project_version(
+        self,
+        version_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        start_date: str | None = None,
+        release_date: str | None = None,
+        archived: bool | None = None,
+        released: bool | None = None,
+    ) -> dict[str, Any]:
+        """
+        Update an existing version in a Jira project.
+
+        Only fields that are not None are sent to Jira, so callers can flip a
+        single attribute (e.g. ``archived``) without overwriting the others.
+
+        Args:
+            version_id: The numeric ID of the version to update.
+            name: New name for the version (optional).
+            description: New description for the version (optional).
+            start_date: New start date (YYYY-MM-DD, optional).
+            release_date: New release date (YYYY-MM-DD, optional).
+            archived: Archived flag (optional).
+            released: Released flag (optional).
+
+        Returns:
+            The updated version object as returned by Jira.
+        """
+        return self.update_version(
+            version_id=version_id,
+            name=name,
+            description=description,
+            start_date=start_date,
+            release_date=release_date,
+            archived=archived,
+            released=released,
         )
