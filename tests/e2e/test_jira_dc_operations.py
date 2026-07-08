@@ -48,6 +48,22 @@ class TestJiraDCBehavior:
 
         assert isinstance(users, list)
 
+    def test_search_projects_by_key(
+        self,
+        jira_fetcher: JiraFetcher,
+        dc_instance: DCInstanceInfo,
+    ) -> None:
+        """DC project picker returns the configured test project."""
+        projects = jira_fetcher.search_projects(
+            query=dc_instance.project_key,
+            max_results=10,
+        )
+
+        assert any(
+            project.get("key", "").upper() == dc_instance.project_key
+            for project in projects
+        )
+
 
 class TestJiraDCEpicOperations:
     """Epic creation with DC custom fields."""
