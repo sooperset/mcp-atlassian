@@ -50,12 +50,15 @@ class JiraSearchResult(ApiModel):
         issues = []
         issues_data = data.get("issues", [])
         if isinstance(issues_data, list):
+            base_url = kwargs.get("base_url")
             for issue_data in issues_data:
                 if issue_data:
                     requested_fields = kwargs.get("requested_fields")
                     issues.append(
                         JiraIssue.from_api_response(
-                            issue_data, requested_fields=requested_fields
+                            issue_data,
+                            base_url=base_url,
+                            requested_fields=requested_fields,
                         )
                     )
 
