@@ -177,10 +177,18 @@ class TestMCPConfluenceTools:
         result = await call_tool(
             mcp_client,
             "confluence_get_page",
-            {"page_id": dc_instance.test_page_id},
+            {
+                "page_id": dc_instance.test_page_id,
+                "include": "comments, labels, views",
+            },
         )
         assert not result.is_error
         assert result.content and isinstance(result.content[0], TextContent)
+        data = json.loads(result.content[0].text)
+        assert data["metadata"]["id"] == dc_instance.test_page_id
+        assert isinstance(data["comments"], list)
+        assert isinstance(data["labels"], list)
+        assert data["views"] == {}
 
     @pytest.mark.anyio
     async def test_confluence_search(
