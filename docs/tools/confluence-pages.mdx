@@ -11,9 +11,9 @@ Get content of a specific Confluence page by its ID, or by its title and space k
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `page_id` | `string` | No | Confluence page ID (numeric ID, can be found in the page URL). For example, in the URL 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', the page ID is '123456789'. Provide this OR both 'title' and 'space_key'. If page_id is provided, title and space_key will be ignored. |
-| `title` | `string` | No | The exact title of the Confluence page. Use this with 'space_key' if 'page_id' is not known. |
-| `space_key` | `string` | No | The key of the Confluence space where the page resides (e.g., 'DEV', 'TEAM'). Required if using 'title'. |
+| `page_id` | `object` | No | Confluence page ID. If provided, 'title' and 'space_key' are ignored. |
+| `title` | `object` | No | The exact title of the page. Must be used with 'space_key'. |
+| `space_key` | `object` | No | The key of the space. Must be used with 'title'. |
 | `include_metadata` | `boolean` | No | Whether to include page metadata such as creation date, last update, version, and labels. |
 | `convert_to_markdown` | `boolean` | No | Whether to convert page to markdown (true) or keep it in raw HTML format (false). Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: using HTML significantly increases token usage in AI responses. |
 **Example:**
@@ -25,7 +25,6 @@ Get content of a specific Confluence page by its ID, or by its title and space k
 <Tip>
 Content is returned in Markdown format (auto-converted from Confluence storage format). Use `include_metadata` for labels, version info, and last modified date.
 </Tip>
-
 
 ---
 
@@ -45,7 +44,7 @@ Create a new Confluence page.
 | `parent_id` | `string` | No | (Optional) parent page ID. If provided, this page will be created as a child of the specified page |
 | `content_format` | `string` | No | (Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', or 'storage'. Wiki format uses Confluence wiki markup syntax |
 | `enable_heading_anchors` | `boolean` | No | (Optional) Whether to enable automatic heading anchor generation. Only applies when content_format is 'markdown' |
-| `include_content` | `boolean` | No | (Optional) Whether to include page content in the response. Defaults to false since callers already have the content at create time. |
+| `include_content` | `boolean` | No | (Optional) Whether to include page content in the response. Defaults to false since callers already have the content at create time |
 | `emoji` | `string` | No | (Optional) Page title emoji (icon shown in navigation). Can be any emoji character like '📝', '🚀', '📚'. Set to null/None to remove. |
 **Example:**
 
@@ -56,7 +55,6 @@ Create a new Confluence page.
 <Tip>
 Use Markdown for content — it's auto-converted to Confluence storage format. Specify `parent_id` to create as a child page.
 </Tip>
-
 
 ---
 
@@ -78,7 +76,7 @@ Update an existing Confluence page.
 | `parent_id` | `string` | No | Optional the new parent page ID |
 | `content_format` | `string` | No | (Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', or 'storage'. Wiki format uses Confluence wiki markup syntax |
 | `enable_heading_anchors` | `boolean` | No | (Optional) Whether to enable automatic heading anchor generation. Only applies when content_format is 'markdown' |
-| `include_content` | `boolean` | No | (Optional) Whether to include page content in the response. Defaults to false since callers already have the content at update time. |
+| `include_content` | `boolean` | No | (Optional) Whether to include page content in the response. Defaults to false since callers already have the content at update time |
 | `emoji` | `string` | No | (Optional) Page title emoji (icon shown in navigation). Can be any emoji character like '📝', '🚀', '📚'. Set to null/None to remove. |
 **Example:**
 
@@ -89,41 +87,6 @@ Update an existing Confluence page.
 <Tip>
 Set `is_minor_edit: true` to skip notification emails. The page version is auto-incremented.
 </Tip>
-
-
----
-
-### Update Page Section
-
-Update a single section of a Confluence page without affecting the rest.
-
-<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `page_id` | `string` | Yes | The ID of the page to update |
-| `heading_text` | `string` | Yes | Exact text of the heading that starts the section to replace. Matching is case-sensitive. Use `confluence_get_page` with `convert_to_markdown=false` to inspect exact heading text when unsure. |
-| `new_content` | `string` | Yes | Replacement content for the section body. Do not include the heading itself — only the body beneath it. Format is controlled by `content_format`. |
-| `content_format` | `string` | No | Format of `new_content`. Options: `'markdown'` (default) or `'storage'` (raw Confluence storage XML). Use `'storage'` to insert macros or elements that markdown cannot express. |
-| `is_minor_edit` | `boolean` | No | Whether this is a minor edit |
-| `version_comment` | `string` | No | Optional comment for this version |
-
-**Example:**
-
-```json
-{"page_id": "12345678", "heading_text": "Weekly Update", "new_content": "- Shipped v2.1\n- Started v2.2 planning", "version_comment": "Weekly sync"}
-```
-
-<Tip>
-Use this instead of `confluence_update_page` when the page contains macros, layouts, task lists, or other Confluence-specific elements you don't want to lose. The tool fetches the page as raw storage XML, surgically replaces only the target section, and writes the full XML back — so everything outside the section is preserved exactly.
-</Tip>
-
-<Warning>
-`heading_text` must match the heading exactly as it appears in Confluence (case-sensitive, no surrounding emoji — emoji in headings are stripped automatically). If the heading is not found, a `ValueError` is raised.
-</Warning>
-
 
 ---
 
@@ -159,6 +122,19 @@ Get child pages and folders of a specific Confluence page.
 
 ---
 
+### Get Space Page Tree
+
+Get page hierarchy for a Confluence space as a flat list.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `space_key` | `string` | Yes | Space key |
+| `limit` | `integer` | No | Max pages to fetch |
+
+---
+
 ### Get Page History
 
 Get a historical version of a specific Confluence page.
@@ -184,28 +160,13 @@ Move a Confluence page to a new parent or space.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `page_id` | `string` | Yes | ID of the page to move |
-| `target_parent_id` | `string` | No* | Target parent page ID. If omitted with `target_space_key`, moves to space root. |
-| `target_space_key` | `string` | No* | Target space key for cross-space moves |
+| `target_parent_id` | `string` | No | Target parent page ID. If omitted with target_space_key, moves to space root. |
+| `target_space_key` | `string` | No | Target space key for cross-space moves |
 | `position` | `string` | No | Position: 'append' (default, move as child of target), 'above' (move before target as sibling), or 'below' (move after target as sibling) |
-
-**Example:**
-
-```json
-{"page_id": "12345678", "target_parent_id": "98765432"}
-```
-
-<Warning>
-At least one of `target_parent_id` or `target_space_key` must be provided.
-</Warning>
-
-<Tip>
-Use `target_space_key` to move pages between spaces. Omit `target_parent_id` with a space key to move to the space root.
-</Tip>
-
 
 ---
 
-### Get Page Diff
+### Get Page Version Diff
 
 Get a unified diff between two versions of a Confluence page.
 
@@ -214,18 +175,26 @@ Get a unified diff between two versions of a Confluence page.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `page_id` | `string` | Yes | Confluence page ID (numeric ID, can be found in the page URL). For example, in 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', the page ID is '123456789'. |
-| `from_version` | `integer` | Yes | Source version number (>=1) |
-| `to_version` | `integer` | Yes | Target version number (>=1) |
+| `from_version` | `integer` | Yes | Source version number |
+| `to_version` | `integer` | Yes | Target version number |
 
-**Example:**
+---
 
-```json
-{"page_id": "12345678", "from_version": 1, "to_version": 3}
-```
+### Update Page Section
 
-<Tip>
-Use `confluence_get_page_history` to discover available version numbers. The diff is in unified format, showing additions and removals between versions.
-</Tip>
+Update a single section of a Confluence page without affecting the rest.
 
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | Yes | The ID of the page to update |
+| `heading_text` | `string` | Yes | Exact text of the heading that starts the section to replace. Matching is case-sensitive. Use confluence_get_page with convert_to_markdown=false to inspect exact heading text when unsure. |
+| `new_content` | `string` | Yes | Replacement content for the section body. Do NOT include the heading itself — only the body beneath it. Format is controlled by content_format. |
+| `content_format` | `string` | No | (Optional) Format of new_content. Options: 'markdown' (default) or 'storage' (raw Confluence storage XML). Use 'storage' to insert macros or elements that markdown cannot express. |
+| `is_minor_edit` | `boolean` | No | Whether this is a minor edit |
+| `version_comment` | `string` | No | Optional comment for this version |
 
 ---

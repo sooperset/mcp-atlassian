@@ -15,9 +15,9 @@ Search Jira issues using JQL (Jira Query Language).
 | `fields` | `string` | No | (Optional) Comma-separated fields to return in the results. Use '*all' for all fields, or specify individual fields like 'summary,status,assignee,priority' |
 | `limit` | `integer` | No | Maximum number of results (1-50) |
 | `start_at` | `integer` | No | Starting index for pagination (0-based) |
-| `projects_filter` | `string` | No | (Optional) Comma-separated list of project keys to filter results by. Overrides the environment variable JIRA_PROJECTS_FILTER if provided. |
-| `expand` | `string` | No | (Optional) fields to expand. Examples: 'renderedFields', 'transitions', 'changelog' |
-| `page_token` | `string` | No | Pagination token from a previous search result. Cloud only — Server/DC uses `start_at` for pagination. |
+| `projects_filter` | `object` | No | Comma-separated list of project keys to filter by. |
+| `expand` | `object` | No | Optional fields to expand. |
+| `page_token` | `object` | No | Pagination token from a previous search result (Cloud only). |
 **Example:**
 
 ```json
@@ -28,15 +28,9 @@ Search Jira issues using JQL (Jira Query Language).
 Always use `ORDER BY` for deterministic results. Use `fields` parameter to limit returned data for faster queries.
 </Tip>
 
-
 <Warning>
 Some JQL functions (e.g., `issueHistory()`) are Cloud-only.
 </Warning>
-
-<Tip>
-Cloud supports cursor-based pagination via `page_token` for deterministic results across large datasets. The token is returned in the `next_page_token` field of search results.
-</Tip>
-
 
 ---
 
@@ -61,7 +55,6 @@ Search Jira fields by keyword with fuzzy match.
 Use this to discover custom field IDs before using them in `jira_create_issue` or `jira_update_issue`.
 </Tip>
 
-
 ---
 
 ### Get Field Options
@@ -73,21 +66,23 @@ Get allowed option values for a custom field.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `field_id` | `string` | Yes | Custom field ID (e.g., 'customfield_10001'). Use jira_search_fields to find field IDs. |
-| `context_id` | `string` | No | Field context ID (Cloud only). If omitted, auto-resolves to the global context. |
-| `project_key` | `string` | No | Project key (required for Server/DC). Example: 'PROJ' |
-| `issue_type` | `string` | No | Issue type name (required for Server/DC). Example: 'Bug' |
-| `contains` | `string` | No | Case-insensitive substring filter on option values. Also matches child values in cascading selects. |
-| `return_limit` | `integer` | No | Maximum number of results to return (applied after filtering). |
+| `context_id` | `object` | No | Field context ID (Cloud only, auto-resolved if omitted). |
+| `project_key` | `object` | No | Project key (required for Server/DC). |
+| `issue_type` | `object` | No | Issue type name (required for Server/DC). |
+| `contains` | `object` | No | Case-insensitive substring filter on option values. |
+| `return_limit` | `object` | No | Cap on number of results after filtering. |
 | `values_only` | `boolean` | No | If true, return only value strings in a compact JSON format instead of full option objects. |
 
-**Example:**
+---
 
-```json
-{"field_id": "customfield_10001", "contains": "high", "return_limit": 5, "values_only": true}
-```
+### Get Project Fields
 
-<Tip>
-Use `contains` to filter large option lists (e.g., hundreds of values). Combine with `values_only: true` for a compact response.
-</Tip>
+Get the fields available on issues of a project (the create schema),
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `project_key` | `string` | Yes | The project key, e.g. 'PROJ'. |
 
 ---

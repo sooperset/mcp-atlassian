@@ -11,9 +11,9 @@ Get jira agile boards by name, project key, or type.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `board_name` | `string` | No | (Optional) The name of board, support fuzzy search |
-| `project_key` | `string` | No | (Optional) Jira project key (e.g., 'PROJ', 'ACV2') |
-| `board_type` | `string` | No | (Optional) The type of jira board (e.g., 'scrum', 'kanban') |
+| `board_name` | `object` | No | Name of the board (fuzzy search). |
+| `project_key` | `object` | No | Project key. |
+| `board_type` | `object` | No | Board type ('scrum' or 'kanban'). |
 | `start_at` | `integer` | No | Starting index for pagination (0-based) |
 | `limit` | `integer` | No | Maximum number of results (1-50) |
 **Example:**
@@ -25,7 +25,6 @@ Get jira agile boards by name, project key, or type.
 <Tip>
 Supports fuzzy search by board name. Combine with `project_key` to narrow results.
 </Tip>
-
 
 ---
 
@@ -55,7 +54,7 @@ Get jira sprints from board by state.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `board_id` | `string` | Yes | The id of board (e.g., '1000') |
-| `state` | `string` | No | Sprint state (e.g., 'active', 'future', 'closed') |
+| `state` | `object` | No | Sprint state ('active', 'future', 'closed'). If None, returns all sprints. |
 | `start_at` | `integer` | No | Starting index for pagination (0-based) |
 | `limit` | `integer` | No | Maximum number of results (1-50) |
 
@@ -82,7 +81,6 @@ Get jira issues from sprint.
 <Tip>
 Get the sprint ID from `jira_get_sprints_from_board` first.
 </Tip>
-
 
 ---
 
@@ -135,16 +133,5 @@ Add issues to a Jira sprint.
 |-----------|------|----------|-------------|
 | `sprint_id` | `string` | Yes | Sprint ID to add issues to |
 | `issue_keys` | `string` | Yes | Comma-separated issue keys (e.g., 'PROJ-1,PROJ-2') |
-
-**Example:**
-
-```json
-{"sprint_id": "42", "issue_keys": "PROJ-1,PROJ-2,PROJ-3"}
-```
-
-<Tip>
-Get sprint IDs from `jira_get_sprints_from_board`. Issue keys are validated server-side — invalid keys will cause an error.
-</Tip>
-
 
 ---

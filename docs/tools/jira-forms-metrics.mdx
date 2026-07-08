@@ -67,8 +67,8 @@ Calculate SLA metrics for a Jira issue.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
-| `metrics` | `string` | No | Comma-separated list of SLA metrics to calculate. Available: cycle_time, lead_time, time_in_status, due_date_compliance, resolution_time, first_response_time. Defaults to configured metrics or 'cycle_time,time_in_status'. |
-| `working_hours_only` | `boolean` | No | Calculate using working hours only (excludes weekends/non-business hours). Defaults to value from JIRA_SLA_WORKING_HOURS_ONLY environment variable. |
+| `metrics` | `object` | No | Comma-separated list of metrics to calculate. |
+| `working_hours_only` | `object` | No | Use working hours only for calculations. |
 | `include_raw_dates` | `boolean` | No | Include raw date values in the response |
 **Example:**
 
@@ -79,7 +79,6 @@ Calculate SLA metrics for a Jira issue.
 <Tip>
 Configure SLA calculation via `JIRA_SLA_*` environment variables. Set `JIRA_SLA_WORKING_HOURS_ONLY=true` for business hours only.
 </Tip>
-
 
 ---
 
@@ -92,8 +91,8 @@ Get development information (PRs, commits, branches) linked to a Jira issue.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123') |
-| `application_type` | `string` | No | (Optional) Filter by application type. Examples: 'stash' (Bitbucket Server), 'bitbucket', 'github', 'gitlab' |
-| `data_type` | `string` | No | (Optional) Filter by data type. Examples: 'pullrequest', 'branch', 'repository' |
+| `application_type` | `object` | No | Optional filter by source control type. |
+| `data_type` | `object` | No | Optional filter by data type (pullrequest, branch, etc.). |
 
 ---
 
@@ -106,7 +105,7 @@ Get development information for multiple Jira issues.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `issue_keys` | `string` | Yes | Comma-separated list of Jira issue keys (e.g., 'PROJ-123,PROJ-456') |
-| `application_type` | `string` | No | (Optional) Filter by application type. Examples: 'stash' (Bitbucket Server), 'bitbucket', 'github', 'gitlab' |
-| `data_type` | `string` | No | (Optional) Filter by data type. Examples: 'pullrequest', 'branch', 'repository' |
+| `application_type` | `object` | No | Optional filter by source control type. |
+| `data_type` | `object` | No | Optional filter by data type. |
 
 ---

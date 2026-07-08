@@ -35,6 +35,7 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_update_issue",
         "jira_delete_issue",
         "jira_batch_create_issues",
+        "jira_assign_issue",
         "jira_transition_issue",
         "jira_get_transitions",
         "jira_get_all_projects",
@@ -44,6 +45,7 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_search",
         "jira_search_fields",
         "jira_get_field_options",
+        "jira_get_project_fields",
     ],
     "jira-agile": [
         "jira_get_agile_boards",
@@ -61,6 +63,7 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_add_worklog",
         "jira_batch_get_changelogs",
         "jira_get_user_profile",
+        "jira_search_assignable_users",
         "jira_get_issue_watchers",
         "jira_add_watcher",
         "jira_remove_watcher",
@@ -100,9 +103,11 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "confluence_update_page",
         "confluence_delete_page",
         "confluence_get_page_children",
+        "confluence_get_space_page_tree",
         "confluence_get_page_history",
         "confluence_move_page",
         "confluence_get_page_diff",
+        "confluence_update_page_section",
     ],
     "confluence-search": [
         "confluence_search",
@@ -185,9 +190,10 @@ _TOOL_TO_CATEGORY: dict[str, str] = {}
 for _cat, _tools in CATEGORY_TOOLS.items():
     for _t in _tools:
         if _t in _TOOL_TO_CATEGORY:
-            raise ValueError(
+            msg = (
                 f"Tool '{_t}' is mapped to both '{_TOOL_TO_CATEGORY[_t]}' and '{_cat}'"
             )
+            raise ValueError(msg)
         _TOOL_TO_CATEGORY[_t] = _cat
 
 
