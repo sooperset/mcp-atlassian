@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # Underscores are also allowed to support non-standard project key formats.
 # Hyphenated numeric parts (e.g., B7-214-68901) are supported for Server/DC
 # instances that use non-standard issue key formats.
-ISSUE_KEY_PATTERN = r"^[A-Z][A-Z0-9_]+-\d[\d-]*\d$|^[A-Z][A-Z0-9_]+-\d+$"
+ISSUE_KEY_PATTERN = r"^[A-Z][A-Z0-9_]+-\d+(?:-\d+)*$"
 PROJECT_KEY_PATTERN = r"^[A-Z][A-Z0-9_]+$"
 
 jira_mcp = FastMCP(
