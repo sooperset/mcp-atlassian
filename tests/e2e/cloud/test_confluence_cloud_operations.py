@@ -158,6 +158,108 @@ class TestConfluenceCloudPageHierarchy:
         assert any(page.id == child.id for page in children)
 
 
+class TestConfluenceCloudPageLayout:
+    """Page width and table layout handling."""
+
+    def test_markdown_table_layout_and_page_width(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        cloud_instance: CloudInstanceInfo,
+        resource_tracker: CloudResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        page = confluence_fetcher.create_page(
+            space_key=cloud_instance.space_key,
+            title=f"Cloud E2E Layout Test {uid}",
+            body="| Alpha | Beta |\n| --- | --- |\n| one | two |",
+            page_width="full-width",
+            table_layout="full-width",
+        )
+        resource_tracker.add_confluence_page(page.id)
+
+        assert page.page_width == "full-width"
+
+        raw_page = confluence_fetcher.confluence.get_page_by_id(
+            page.id,
+            expand="body.storage,version",
+        )
+        storage_body = raw_page["body"]["storage"]["value"]
+        assert 'data-layout="full-width"' in storage_body
+        assert 'data-table-width="1800"' in storage_body
+
+
+class TestConfluenceCloudCopyAndRestrictions:
+    """Page copy and restriction operations."""
+
+    def test_copy_page(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        cloud_instance: CloudInstanceInfo,
+        resource_tracker: CloudResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        source = confluence_fetcher.create_page(
+            space_key=cloud_instance.space_key,
+            title=f"Cloud E2E Copy Source {uid}",
+            body=f"<p>Cloud copy source {uid}</p>",
+            is_markdown=False,
+            content_representation="storage",
+        )
+        resource_tracker.add_confluence_page(source.id)
+
+        copied = confluence_fetcher.copy_page(
+            source_page_id=source.id,
+            destination_space_key=cloud_instance.space_key,
+            new_title=f"Cloud E2E Copy Target {uid}",
+        )
+        resource_tracker.add_confluence_page(copied.id)
+
+        assert copied.id != source.id
+        assert copied.title == f"Cloud E2E Copy Target {uid}"
+        copied_raw = confluence_fetcher.get_page_content(
+            copied.id,
+            convert_to_markdown=False,
+        )
+        assert f"Cloud copy source {uid}" in (copied_raw.content or "")
+
+    def test_set_and_get_page_restrictions(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        cloud_instance: CloudInstanceInfo,
+        resource_tracker: CloudResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        page = confluence_fetcher.create_page(
+            space_key=cloud_instance.space_key,
+            title=f"Cloud E2E Restrictions Test {uid}",
+            body="<p>Restriction test.</p>",
+        )
+        resource_tracker.add_confluence_page(page.id)
+
+        current_user = confluence_fetcher.confluence.get(
+            f"{confluence_fetcher._v1_rest_base_url()}/rest/api/user/current",
+            absolute=True,
+        )
+        account_id = current_user.get("accountId")
+        if not account_id:
+            pytest.skip("Current Cloud user response did not include accountId")
+
+        try:
+            result = confluence_fetcher.set_page_restrictions(
+                page.id,
+                read_users=[account_id],
+                edit_users=[account_id],
+            )
+            assert result["read"]["users"] == [account_id]
+            assert result["update"]["users"] == [account_id]
+
+            restrictions = confluence_fetcher.get_page_restrictions(page.id)
+            assert account_id in restrictions["read"]["users"]
+            assert account_id in restrictions["update"]["users"]
+        finally:
+            confluence_fetcher.set_page_restrictions(page.id)
+
+
 class TestConfluenceCloudLabels:
     """Label operations on Cloud."""
 

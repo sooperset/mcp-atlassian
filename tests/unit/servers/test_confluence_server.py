@@ -898,6 +898,8 @@ def test_page_content_file_parameters_preserve_positional_order():
         "include_content",
         "emoji",
         "content_file",
+        "page_width",
+        "table_layout",
     ]
 
     update_impl = inspect.unwrap(
@@ -917,6 +919,8 @@ def test_page_content_file_parameters_preserve_positional_order():
         "include_content",
         "emoji",
         "content_file",
+        "page_width",
+        "table_layout",
     ]
 
 
