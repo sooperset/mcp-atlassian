@@ -435,3 +435,66 @@ def test_circuit_breaker_cooldown_then_reset(monkeypatch: pytest.MonkeyPatch):
     time.sleep(0.15)
     resp = adapter.send(MagicMock())
     assert resp.status_code == 200
+
+
+def test_circuit_breaker_allows_only_one_half_open_probe(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("ATLASSIAN_CIRCUIT_BREAKER_THRESHOLD", "1")
+    monkeypatch.setenv("ATLASSIAN_CIRCUIT_BREAKER_COOLDOWN", "0.1")
+
+    session = Session()
+    probe_started = threading.Event()
+    release_probe = threading.Event()
+    call_count = 0
+    lock = threading.Lock()
+
+    def fake_send(*args, **kwargs):
+        nonlocal call_count
+        with lock:
+            call_count += 1
+            current_call = call_count
+        resp = MagicMock()
+        if current_call == 1:
+            resp.status_code = 429
+            return resp
+
+        probe_started.set()
+        assert release_probe.wait(timeout=1.0)
+        resp.status_code = 200
+        return resp
+
+    for adapter in session.adapters.values():
+        adapter.send = fake_send  # type: ignore[method-assign]
+
+    configure_circuit_breaker(session, service="Test")
+    adapter = session.adapters["https://"]
+
+    adapter.send(MagicMock())  # trips immediately
+    time.sleep(0.15)
+
+    results: list[str] = []
+
+    def send_request() -> None:
+        try:
+            adapter.send(MagicMock())
+        except CircuitBreakerOpenError:
+            results.append("blocked")
+        else:
+            results.append("sent")
+
+    probe_thread = threading.Thread(target=send_request)
+    probe_thread.start()
+    assert probe_started.wait(timeout=1.0)
+
+    blocked_threads = [threading.Thread(target=send_request) for _ in range(3)]
+    for thread in blocked_threads:
+        thread.start()
+    for thread in blocked_threads:
+        thread.join()
+
+    release_probe.set()
+    probe_thread.join()
+
+    assert results.count("sent") == 1
+    assert results.count("blocked") == 3

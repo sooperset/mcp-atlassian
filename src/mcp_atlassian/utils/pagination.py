@@ -11,7 +11,8 @@ Disabled by default — opt in via ATLASSIAN_MAX_PAGINATION_LIMIT.
 """
 
 import logging
-import os
+
+from .env import get_int_env
 
 logger = logging.getLogger("mcp-atlassian.pagination")
 
@@ -25,19 +26,7 @@ def clamp_limit(requested: int, *, context: str = "pagination") -> int:
     if requested <= 0:
         return requested
 
-    raw = os.getenv("ATLASSIAN_MAX_PAGINATION_LIMIT")
-    if not raw:
-        return requested
-
-    try:
-        cap = int(raw)
-    except ValueError:
-        logger.warning(
-            "Invalid ATLASSIAN_MAX_PAGINATION_LIMIT=%r; clamping disabled",
-            raw,
-        )
-        return requested
-
+    cap = get_int_env("ATLASSIAN_MAX_PAGINATION_LIMIT", 0)
     if cap <= 0:
         return requested
     if requested > cap:

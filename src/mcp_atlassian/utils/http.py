@@ -90,20 +90,26 @@ class _CircuitBreaker:
         self.cooldown = cooldown
         self.failures = 0
         self.opened_at: float | None = None
+        self.probe_in_flight = False
         self.lock = threading.Lock()
 
-    def before_send(self) -> None:
+    def before_send(self) -> bool:
         with self.lock:
             if self.opened_at is None:
-                return
-            if time.monotonic() - self.opened_at >= self.cooldown:
-                # Half-open: clear opened_at so a request goes through, but
-                # leave failures at threshold so a single 429/503 in
-                # on_response re-opens the breaker immediately. A 2xx will
-                # reset failures to 0 (closed).
-                self.opened_at = None
-                return
-            remaining = self.cooldown - (time.monotonic() - self.opened_at)
+                return False
+
+            elapsed = time.monotonic() - self.opened_at
+            if elapsed >= self.cooldown:
+                if self.probe_in_flight:
+                    raise CircuitBreakerOpenError(
+                        "Atlassian circuit breaker half-open probe already in "
+                        "flight. Wait for the probe request to complete before "
+                        "retrying."
+                    )
+                self.probe_in_flight = True
+                return True
+
+            remaining = self.cooldown - elapsed
             raise CircuitBreakerOpenError(
                 f"Atlassian circuit breaker open after {self.threshold} consecutive "
                 f"429/503 responses. Cooling down for ~{remaining:.1f}s before "
@@ -111,8 +117,26 @@ class _CircuitBreaker:
                 "back off and retry later."
             )
 
-    def on_response(self, status_code: int) -> None:
+    def on_response(self, status_code: int | None, *, probe: bool) -> None:
         with self.lock:
+            if probe:
+                self.probe_in_flight = False
+                if status_code in (429, 503):
+                    self.failures = max(self.failures, self.threshold)
+                    self.opened_at = time.monotonic()
+                    logger.warning(
+                        "Circuit breaker probe failed with %d; cooling down %.1fs",
+                        status_code,
+                        self.cooldown,
+                    )
+                else:
+                    self.failures = 0
+                    self.opened_at = None
+                return
+
+            if status_code is None or self.opened_at is not None:
+                return
+
             if status_code in (429, 503):
                 self.failures += 1
                 if self.failures >= self.threshold and self.opened_at is None:
@@ -125,6 +149,18 @@ class _CircuitBreaker:
                     )
             else:
                 self.failures = 0
+
+    def on_exception(self, *, probe: bool) -> None:
+        if not probe:
+            return
+        with self.lock:
+            self.probe_in_flight = False
+            self.failures = max(self.failures, self.threshold)
+            self.opened_at = time.monotonic()
+            logger.warning(
+                "Circuit breaker probe failed before response; cooling down %.1fs",
+                self.cooldown,
+            )
 
 
 _circuit_breaker: _CircuitBreaker | None = None
@@ -335,11 +371,14 @@ def _wrap_adapter_circuit_breaker(
     original_send = adapter.send
 
     def breaker_send(*args: object, **kwargs: object) -> object:
-        breaker.before_send()
-        response = original_send(*args, **kwargs)
+        probe = breaker.before_send()
+        try:
+            response = original_send(*args, **kwargs)
+        except Exception:
+            breaker.on_exception(probe=probe)
+            raise
         status = getattr(response, "status_code", None)
-        if isinstance(status, int):
-            breaker.on_response(status)
+        breaker.on_response(status if isinstance(status, int) else None, probe=probe)
         return response
 
     adapter.send = breaker_send  # type: ignore[method-assign]
