@@ -79,11 +79,26 @@ class TestJiraUser:
         )
         simplified = user.to_simplified_dict()
         assert isinstance(simplified, dict)
+        assert simplified["account_id"] == "user123"
         assert simplified["display_name"] == "Test User"
         assert simplified["email"] == "test@example.com"
         assert simplified["avatar_url"] == "https://example.com/avatar.png"
-        assert "account_id" not in simplified
         assert "time_zone" not in simplified
+
+    def test_to_simplified_dict_account_id_none(self):
+        """Server/DC users have no account_id; the key should still be present."""
+        user = JiraUser(
+            account_id=None,
+            username="jdoe",
+            display_name="John Doe",
+            email="jdoe@example.com",
+            active=True,
+            avatar_url="https://example.com/avatar.png",
+        )
+        simplified = user.to_simplified_dict()
+        assert "account_id" in simplified
+        assert simplified["account_id"] is None
+        assert simplified["name"] == "jdoe"
 
     def test_from_api_response_server_dc_with_name_and_key(self):
         """Test JiraUser captures username and key from Server/DC API response."""

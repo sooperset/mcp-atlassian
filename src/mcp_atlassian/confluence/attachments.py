@@ -2,6 +2,7 @@
 
 import logging
 import os
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,94 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                 session=self.confluence._session, base_url=self.confluence.url
             )
         return None
+
+    def _rest_base_url(self) -> str:
+        """Return the REST API base URL, adding the Cloud ``/wiki`` prefix.
+
+        On Confluence Cloud, ``config.url`` is the bare site URL
+        (``https://site.atlassian.net``) but the REST API is served under
+        ``/wiki``. Hand-built URLs must include this prefix or requests 404.
+        The ``endswith`` guard avoids producing ``/wiki/wiki`` when the
+        configured URL already includes the prefix.
+
+        Returns:
+            The base URL to use for direct REST API calls.
+        """
+        base_url = self.config.url.rstrip("/")
+        if self.config.is_cloud and not base_url.endswith("/wiki"):
+            base_url = f"{base_url}/wiki"
+        return base_url
+
+    def _resolve_attachment_download_url(
+        self,
+        download_url: str | None,
+        attachment_id: str | None = None,
+        content_id: str | None = None,
+    ) -> str:
+        """Resolve an attachment's download URL to an absolute URL.
+
+        Confluence Cloud removed the legacy ``/download/attachments/{cid}/{file}``
+        endpoint that the attachment's ``_links.download`` still points to; it now
+        returns 401 for API-token / scoped-token auth (while metadata endpoints
+        keep working). Depending on ``config.attachment_download_use_v1`` this
+        rewrites the link to the v1 REST endpoint
+        ``/rest/api/content/{cid}/child/attachment/{aid}/download`` (which still
+        authenticates correctly):
+
+        - ``None`` (default): auto — v1 on Cloud, the legacy link on Server/DC.
+        - ``True``: always use v1.
+        - ``False``: always use the legacy link.
+
+        Args:
+            download_url: The (possibly relative) download link from the API.
+            attachment_id: The attachment ID (e.g. ``att123``); required for v1.
+            content_id: The parent content ID. If omitted, it is parsed from the
+                legacy download link.
+
+        Returns:
+            An absolute URL to fetch the attachment binary from, or an empty
+            string when ``download_url`` is falsy.
+        """
+        resolved = (
+            resolve_relative_url(download_url, self.config.url) if download_url else ""
+        )
+        use_v1 = self.config.attachment_download_use_v1
+        if use_v1 is None:
+            # Auto: Cloud removed the legacy endpoint, so default to v1 there;
+            # Server/DC keeps the legacy link.
+            use_v1 = self.config.is_cloud
+        if not (use_v1 and attachment_id and download_url):
+            return resolved
+
+        parsed = urllib.parse.urlsplit(download_url)
+        if not content_id:
+            # Legacy path form: /download/attachments/{content_id}/{filename}
+            # (match with or without a leading slash on the path).
+            marker = "download/attachments/"
+            if marker not in parsed.path:
+                logger.debug(
+                    "Could not derive content_id from download URL %s; "
+                    "falling back to the original link",
+                    download_url,
+                )
+                return resolved
+            content_id = parsed.path.split(marker, 1)[1].split("/", 1)[0]
+
+        base = self._rest_base_url()
+        # v1 "Get attachment download" endpoint — not part of the deprecated
+        # /download/attachments/... paths. See:
+        # https://developer.atlassian.com/cloud/confluence/rest/v1/api-group-content---attachments/
+        v1_url = (
+            f"{base}/rest/api/content/{content_id}"
+            f"/child/attachment/{attachment_id}/download"
+        )
+        # Keep only the documented ``version`` query param (the endpoint honours
+        # it) so a version-specific link still resolves to that version; drop the
+        # other legacy params (api / cacheVersion / modificationDate).
+        version = urllib.parse.parse_qs(parsed.query).get("version", [None])[0]
+        if version:
+            v1_url = f"{v1_url}?{urllib.parse.urlencode({'version': version})}"
+        return v1_url
 
     def upload_attachment(
         self,
@@ -399,9 +488,11 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             safe_filename = Path(attachment.title).name
             file_path = target_path / safe_filename
 
-            # Prepend base URL if download URL is relative
-            download_url = resolve_relative_url(
-                attachment.download_url, self.config.url
+            # Resolve to an absolute URL (and optionally the v1 endpoint)
+            download_url = self._resolve_attachment_download_url(
+                attachment.download_url,
+                attachment_id=attachment.id,
+                content_id=content_id,
             )
 
             # Download the attachment
@@ -543,19 +634,17 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
         Returns:
             Attachment metadata dict if successful, None otherwise
         """
-        file_handle = None
         try:
-            # Open the file and reuse the shared multipart upload helper
-            file_handle = open(file_path, "rb")
-            return self._send_attachment_request(
-                content_id, filename, file_handle, comment, minor_edit
-            )
+            with open(file_path, "rb") as file_handle:
+                return self._send_attachment_request(
+                    content_id, filename, file_handle, comment, minor_edit
+                )
         except Exception as e:
-            logger.error(f"Direct API upload failed: {e}")
-            return None
-        finally:
-            if file_handle is not None:
-                file_handle.close()
+            logger.error(
+                f"Direct API upload failed: {type(e).__name__}: {e}", exc_info=True
+            )
+            # Propagate error details instead of swallowing them
+            raise
 
     def _upload_attachment_from_bytes(
         self,
@@ -587,8 +676,11 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                 content_id, filename, content, comment, minor_edit
             )
         except Exception as e:
-            logger.error(f"In-memory API upload failed: {e}")
-            return None
+            logger.error(
+                f"In-memory API upload failed: {type(e).__name__}: {e}",
+                exc_info=True,
+            )
+            raise
 
     def _send_attachment_request(
         self,
@@ -617,30 +709,58 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
         Returns:
             Attachment metadata dict.
         """
-        # Build the API endpoint URL
-        base_url = self.config.url.rstrip("/")
+
+        def make_files(content: Any) -> dict[str, Any]:
+            files: dict[str, Any] = {"file": (filename, content)}
+            if comment:
+                files["comment"] = (None, comment, "text/plain; charset=utf-8")
+            return files
+
+        base_url = self._rest_base_url()
         url = f"{base_url}/rest/api/content/{content_id}/child/attachment"
 
-        # Prepare headers (X-Atlassian-Token required for file uploads)
-        headers = {"X-Atlassian-Token": "nocheck"}
+        # Server/DC requires "no-check" (with hyphen) to bypass XSRF validation.
+        headers = {"X-Atlassian-Token": "no-check"}
 
-        # Prepare multipart form data
-        files = {"file": (filename, file_obj)}
-
-        # Comment must be sent with text/plain content-type for proper encoding
-        if comment:
-            files["comment"] = (None, comment, "text/plain; charset=utf-8")
-
-        data = {}
+        data: dict[str, str] = {}
         if minor_edit is not None:
             data["minorEdit"] = str(minor_edit).lower()
 
-        # Use PUT to support creating new versions of existing attachments
-        # PUT will create a new attachment if it doesn't exist, OR create a new
-        # version if an attachment with the same filename already exists
-        response = self.confluence._session.put(
-            url, headers=headers, files=files, data=data
+        # Use POST to create a new attachment on Server/DC. PUT on the list
+        # endpoint is not supported by Confluence Server/DC.
+        response = self.confluence._session.post(
+            url, headers=headers, files=make_files(file_obj), data=data
         )
+
+        # Server/DC returns HTTP 400 for an existing attachment name. Look up the
+        # attachment ID and POST to its /data endpoint to create a new version.
+        if response.status_code == 400 and "same file name" in response.text:
+            logger.debug(
+                f"Attachment '{filename}' already exists on content {content_id}, "
+                "updating existing attachment version"
+            )
+            encoded_filename = urllib.parse.quote(filename, safe="")
+            att_list = self.confluence._session.get(
+                f"{url}?filename={encoded_filename}",
+                headers=headers,
+            )
+            att_list.raise_for_status()
+            att_results = att_list.json().get("results", [])
+            if att_results:
+                if hasattr(file_obj, "seek"):
+                    file_obj.seek(0)
+                att_id = att_results[0]["id"]
+                update_url = (
+                    f"{base_url}/rest/api/content/{content_id}"
+                    f"/child/attachment/{att_id}/data"
+                )
+                response = self.confluence._session.post(
+                    update_url,
+                    headers=headers,
+                    files=make_files(file_obj),
+                    data=data,
+                )
+
         response.raise_for_status()
 
         # Parse response
@@ -681,7 +801,7 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                     f"Using v1 API for token/basic authentication to delete attachment '{attachment_id}'"
                 )
                 # Use v1 API endpoint for deletion
-                base_url = self.config.url.rstrip("/")
+                base_url = self._rest_base_url()
                 url = f"{base_url}/rest/api/content/{attachment_id}"
                 response = self.confluence._session.delete(url)
                 response.raise_for_status()
