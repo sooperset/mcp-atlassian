@@ -285,6 +285,10 @@ class ConfluencePage(ApiModel, TimestampMixin):
         # Add version information if available
         if self.version:
             result["version"] = self.version.number
+            if self.version.by:
+                result["version_author"] = self.version.by.display_name
+            if self.version.when:
+                result["version_date"] = self.format_timestamp(self.version.when)
 
         # Add attachments if available
         result["attachments"] = [

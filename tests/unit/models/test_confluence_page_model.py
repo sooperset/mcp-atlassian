@@ -137,6 +137,30 @@ class TestConfluencePage:
         assert page.subtype == "live"
         assert page.to_simplified_dict()["subtype"] == "live"
 
+    def test_to_simplified_dict_includes_version_author_and_date(
+        self, confluence_page_data
+    ):
+        """Test that version author and timestamp are surfaced."""
+        page = ConfluencePage.from_api_response(confluence_page_data)
+
+        simplified = page.to_simplified_dict()
+
+        assert simplified["version"] == 1
+        assert simplified["version_author"] == "Example User (Unlicensed)"
+        assert simplified["version_date"] == "2024-01-01 09:00:00"
+
+    def test_to_simplified_dict_omits_version_details_when_absent(self):
+        """Test that version author and date are omitted when unavailable."""
+        page = ConfluencePage.from_api_response(
+            {"id": "123456", "title": "No Version Details", "version": {"number": 3}}
+        )
+
+        simplified = page.to_simplified_dict()
+
+        assert simplified["version"] == 3
+        assert "version_author" not in simplified
+        assert "version_date" not in simplified
+
     def test_from_api_response_with_expandable_space(self):
         """Test creating a ConfluencePage from data with space info in _expandable."""
         page_data = {
