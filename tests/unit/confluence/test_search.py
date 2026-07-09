@@ -102,15 +102,20 @@ class TestSearchMixin:
         # The method should still handle them as pages since we're using models
         assert len(results) > 0
 
-    def test_search_key_error(self, search_mixin):
-        """Test handling of KeyError in search results."""
-        # Mock a response missing required keys
+    def test_search_malformed_response_missing_results(self, search_mixin):
+        """Test that a response missing the 'results' key raises an error.
+
+        A malformed response (e.g. an API/network/processing failure) must not
+        be silently treated as an empty result set. Only a genuine
+        ``{"results": []}`` response should return an empty list.
+        """
+        # Mock a response missing the required "results" key
         search_mixin.confluence.cql.return_value = {"incomplete": "data"}
 
-        results = search_mixin.search("invalid query")
-
-        assert isinstance(results, list)
-        assert len(results) == 0
+        with pytest.raises(
+            ValueError, match="Error processing search results.*malformed response"
+        ):
+            search_mixin.search("invalid query")
 
     def test_search_request_exception(self, search_mixin):
         """Test handling of RequestException during search."""

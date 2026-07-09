@@ -67,6 +67,16 @@ class SearchMixin(ConfluenceClient):
         # Execute the CQL search query
         results = self.confluence.cql(cql=cql, limit=limit)
 
+        # A well-formed response always carries a "results" field (which may be
+        # an empty list). A response missing it entirely indicates an API,
+        # network, or processing failure that must surface as an error rather
+        # than be silently treated as an empty result set.
+        if not isinstance(results, dict) or "results" not in results:
+            raise ValueError(
+                "Confluence search returned a malformed response "
+                "missing the 'results' field"
+            )
+
         # Convert the response to a search result model
         search_result = ConfluenceSearchResult.from_api_response(
             results,
